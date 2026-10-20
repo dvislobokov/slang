@@ -29,7 +29,7 @@
 | `math` | `std.math` | ✅ есть | int-варианты (`IMin`), константы `MaxInt` |
 | `math/bits` | `std.math.bits` | ✅ есть (`LeadingZeros/TrailingZeros/OnesCount/Len/RotateLeft/Reverse/ReverseBytes` (+`32`), `Add64/Sub64/Mul64/Div64` кортежами, `Add32/Mul32`; C-builtins) | кортежи вместо пар результатов |
 | `math/cmplx` | `std.math.complex` | ✅ есть (`Complex{Re, Im}`: `Add/Sub/Mul/Div/Neg/Conj/Abs/Phase/Scale/String`; `Exp/Log/Sqrt/Pow/Sin/Cos/Polar/Rect/IsNaN/IsInf`) | методы с именами интерфейсов операторов (операторы — когда появятся) |
-| `math/big` | `std.math.big` | ✅ есть (`Int`: арифметика, `Quo/Rem/Div/Mod`, `Exp`, `ModInverse`, `GCD`, `Sqrt`, `Lsh/Rsh`, `ProbablyPrime`, `Text/ParseInt` 2..36, `Bytes/FromBytes`; `Rat`; `Decimal` с 7 режимами округления; лимбы на C: Karatsuba, Knuth D); нет `Float` | неизменяемые значения, `Decimal` в stdlib, методы с именами интерфейсов операторов |
+| `math/big` | `std.math.big` | ✅ есть (`Int`: арифметика и операторы `+ - * / % < ==` (`/` усекает как `int`, евклидово — `DivEuclid`/`Mod`), `Quo/Rem`, `Exp`, `ModInverse`, `GCD`, `Sqrt`, `Lsh/Rsh`, `ProbablyPrime`, `Text/ParseInt` 2..36, `Bytes/FromBytes`; `Rat`; `Decimal` с 7 режимами округления (`/` и `%` дают `Decimal!`, `DivRound(y, scale, mode)`); лимбы на C: Karatsuba, Knuth D); нет `Float` | неизменяемые значения, `Decimal` в stdlib, методы с именами интерфейсов операторов |
 | `unicode`, `unicode/utf8`, `unicode/utf16` | `std.unicode`, `std.unicode.utf8/utf16` | ✅ есть (полные таблицы Unicode 15 из Go: `Is*`, `ToUpper/ToLower/ToTitle`, `SimpleFold`; utf8 `RuneLen/EncodeRune/AppendRune/DecodeRune*/Valid*/RuneCount*/FullRune`; utf16 `Encode/Decode/EncodeRune/DecodeRune`); нет нормализации NFC/NFD | генератор таблиц `scripts/gen-unicode-tables.py` |
 | `strings` | `std.strings` | ✅ есть | `Builder`, `Runes`, `Reverse`, `Pad*`, `Title` |
 | `bytes` | `std.bytes` | ✅ есть (`Buffer` + функции `strings` над `[]byte`) | `Buffer` реализует `io.Reader/Writer` |
@@ -37,12 +37,12 @@
 | `slices` | `std.slices` | ✅ есть (`Sort/SortBy/SortFunc` стабильные, `BinarySearch*`, `Index*/Contains*`, `Map/Filter/Reduce`, `Unique/Compact`, `Chunk/Window/Zip/Flatten/GroupBy`, `Min/Max/Sum`, `Equal/Compare`, `Insert/Delete`, `Fill/Repeat/Shuffle`) | `Map`, `Filter`, `Reduce`, `Chunk`, `Window`, `Unique`, `Zip` generic |
 | `maps` | `std.maps` | ✅ есть (`Keys`, `Values`, `SortedKeys/Values`, `Merge`, `Copy`, `Invert/InvertAll`, `Filter`, `DeleteFunc`, `MapValues`, `Equal*`, `Clone`) | `SortedKeys`, `Invert` |
 | `sort` | `std.slices.Sort*` | ✅ есть | generic, стабильная сортировка по умолчанию, `SortBy(key)` |
-| `container/list`, `ring`, `heap` | `std.collections` (`List`, `Map`, `Set`, `Queue`, `Stack`) + `LinkedList`, `Ring`, `Heap<T>`, `PriorityQueue<T>`, `Deque<T>`, `OrderedMap`, `LRU`, `BitSet` | ✅ есть (новые типы обходятся через `Items()`/`Keys()`) | generic, без `any` |
+| `container/list`, `ring`, `heap` | `std.collections` (`List`, `Map`, `Set`, `Queue`, `Stack`) + `LinkedList`, `Ring`, `Heap<T>`, `PriorityQueue<T>`, `Deque<T>`, `OrderedMap`, `LRU`, `BitSet` | ✅ есть (`for x in c` по протоколу итерации: `Iter()` у `LinkedList`/`OrderedMap`/`LRU`, `Items()` у остальных; `BitSet` с `b[i]`) | generic, без `any` |
 | `iter` | `for x in` + `iter.Seq<T>` интерфейс | ❌ нет | ленивые генераторы через async? — нет; итератор-интерфейс |
 | `hash`, `hash/fnv`, `crc32`, `crc64`, `adler32`, `maphash` | `std.hash` (+ `.fnv`, `.crc32`, `.crc64`, `.adler32`, `.maphash`) | ✅ есть (интерфейсы `Hasher/Hash32/Hash64`, `hash.Combine`; maphash — SipHash-1-3 на C) | — |
 | `encoding/binary` | `std.encoding.binary` | ✅ есть (`BigEndian/LittleEndian.*`, varint, `Encode/Decode/Read/Write<T>` через compile-time рефлексию, `@binary(endian:)`) | `Read<T>`/`Write<T>` структур через compile-time рефлексию, `@binary(endian)` |
 | `time` (типы) | `std.time` | ✅ есть (`Duration`, `Time` с раскладками Go и strftime, `ParseTime`, `Location` из tzdata + POSIX-правила, `Instant`, `Ticker/Timer` async); имена `Now/Since/Sleep/Parse` заняты старыми int-функциями: `Time.Now()`, `Elapsed`, `SleepFor`, `ParseTime` | типы `Time`, `Duration`, `Instant` монотонный |
-| `unsafe` | `std.unsafe` (только FFI) | ❌ нет | минимальный, помечает capability |
+| `unsafe` | `std.unsafe` (только FFI) | 🟡 частично (`ReadInt/ReadUint/ReadFloat/WriteInt/ReadBytes/WriteBytes/CString/AddrOf/TypeOf/CallFunc`; импорт только с `[capabilities] unsafe = true`, ABI.md §22.5) | минимальный, помечает capability |
 | `weak`, `unique` | `weak *T` в языке; `std.intern` | ✅ есть (weak) / нет | язык |
 
 ## Уровень 1 — базовый ввод-вывод, ОС, синхронизация
@@ -62,7 +62,7 @@
 | `sync`, `sync/atomic` | `std.task` (`Mutex`, `WaitGroup`) + `std.sync` (`RwMutex`, `Semaphore`, `Barrier`, `Once`, `AtomicInt/AtomicBool`, `Atomic<T>`, `Pool<T>`) | ✅ есть | async-aware мьютексы, generic атомики |
 | `context` | контекст задачи в `std.task` | ✅ есть | неявная передача, типизированные ключи, отмена дерева |
 | `math/rand`, `crypto/rand` | `std.random`, `std.crypto.rand` | ✅ есть | — |
-| `crypto/*` примитивы | `std.crypto.{hash,hmac,aes,chacha,x25519,ecdsa,ed25519,rsa,hkdf,kdf,password}` | 🟡 есть hash, hmac, aes-gcm, chacha, x25519, p256, ed25519, rsa, hkdf; нет kdf (argon2/pbkdf2), password | `password.Hash/Verify` на Argon2 из коробки |
+| `crypto/*` примитивы | `std.crypto.{hash,hmac,aes,chacha,x25519,ecdsa,ed25519,rsa,hkdf,kdf,password}` | ✅ есть hash (+ BLAKE2b), hmac, aes-gcm, aes-cbc + PKCS#7, chacha, x25519, P-256 и P-384 (ECDH/ECDSA, RFC 6979), ed25519, rsa (подпись, OAEP, генерация ключей), hkdf, kdf (PBKDF2, scrypt, Argon2d/i/id по RFC 9106), password (PHC `$argon2id$`, `Verify`, `NeedsRehash`); нет P-521, SHA-3 | `password.Hash/Verify` на Argon2 из коробки |
 | `encoding/base64`, `base32`, `hex`, `ascii85`, `pem`, `asn1` | `std.encoding.*` | 🟡 есть base64, hex, base32, pem (с заголовками), asn1 (DER reader/Builder поверх ридера x509); нет ascii85 | — |
 | `runtime` | `std.runtime` (`NumCPU`, `Version`, `GC` → нет) | 🟡 частично (`diag.Runtime()`) | — |
 | `testing` | `std.testing` + `slang test` | ✅ есть (`@test` с `*testing.T`/без параметров, бенчмарки `@test func B(b *testing.B)`, `t.Run`, `Fatal/Error/Skip/Log`, assert-функции, `--filter/--json/--bench/-v/--parallel`, тест в отдельном процессе) | `@test`, табличные тесты, assert; нет snapshot |
@@ -86,7 +86,7 @@
 | `text/scanner`, `text/tabwriter` | `std.text.scanner`, `std.text.table` | ✅ есть (scanner — токены и сообщения об ошибках как в Go, сверено с Go; table — стили Plain/ASCII/Unicode/Markdown, выравнивание, ширина CJK/комбинирующих символов, многострочные ячейки) | таблицы с рамками и Markdown вместо `tabwriter` |
 | `html` | `std.html` (escape/unescape) | ✅ есть (`EscapeString/UnescapeString`, все 2231 сущности HTML5; сверено с Go) | — |
 | `mime`, `mime/multipart`, `mime/quotedprintable` | `std.mime` | ✅ есть (`TypeByExtension/ExtensionsByType`, `ParseMediaType` с RFC 2231, `EncodeWord/DecodeHeader`; `std.mime.multipart` — `Reader/Writer`, `ReadForm`; `std.mime.quotedprintable`; сверено с Go) | — |
-| `compress/gzip`, `zlib`, `flate`, `bzip2`, `lzw` + zstd, brotli | `std.compress.{gzip,zlib,deflate,zstd,brotli}` | 🟡 есть deflate/zlib/gzip (кодер и декодер на C, уровни 0–9, потоковые `Writer/Reader` по кускам `[]byte` и адаптеры `std.io`: `gzip.NewStreamReader/NewStreamWriter`), декодер zstd (RFC 8878, XXH64); нет кодера zstd, brotli, bzip2, lzw | zstd из коробки; gzip быстрее Go в 1.4 раза (сжатие) и в 3 раза (распаковка) |
+| `compress/gzip`, `zlib`, `flate`, `bzip2`, `lzw` + zstd, brotli | `std.compress.{gzip,zlib,deflate,zstd,brotli}` | 🟡 есть deflate/zlib/gzip (кодер и декодер на C, уровни 0–9, потоковые `Writer/Reader` по кускам `[]byte` и адаптеры `std.io`: `gzip.NewStreamReader/NewStreamWriter`), zstd: декодер (RFC 8878, XXH64) и кодер (`zstd.Compress(data, level)`: хеш-цепочки, Huffman-литералы, FSE-таблицы последовательностей, repeat offsets; кадры читает `zstd -d`; степень сжатия около эталонных уровней 1–3), декодер brotli (RFC 7932: словарь и 121 преобразование, все режимы контекста; словарь хранится сжатым zstd и разворачивается при первом использовании; сверено с CLI `brotli` на уровнях 0–11 и окнах 10–24); нет кодера brotli, bzip2, lzw | zstd из коробки; gzip быстрее Go в 1.4 раза (сжатие) и в 3 раза (распаковка) |
 | `archive/zip`, `archive/tar` | `std.archive.{zip,tar}` | ✅ есть (zip: чтение/запись, Zip64, deflate/store, расширенные метки времени, `ExtractTo` с защитой от zip-slip, `FromDir`; tar: ustar/pax/GNU, длинные имена, base-256, ссылки; совместимо с zip(1)/unzip/tar) | защита от zip-slip по умолчанию |
 | `net` (TCP/UDP/Unix/DNS/IP) | `std.net` | ✅ есть; в работе (закрытие пробелов) | async без потока на соединение, типизированные ошибки, Happy Eyeballs |
 | `net/netip` | `net.IP`, `net.Addr` | 🔧 в работе | — |
@@ -94,26 +94,37 @@
 | `net/textproto` | `std.net.textproto` | ✅ есть (`Header` с каноническими ключами, `ReadHeader` с продолжениями строк, `DotEncode/DotDecode`, `ReadResponse` многострочных ответов; на строках, без `Reader`) | — |
 | `image`, `image/png`, `jpeg`, `gif`, `color`, `draw` | `std.image` | ❌ нет | + webp, avif декодеры позже |
 | `index/suffixarray` | `std.text.suffixarray` | ⛔ не нужно (пакет) | — |
-| `database/sql`, `sql/driver` | `std.database.sql` | ❌ нет | async, `Query<T>` в структуры, пул |
+| `database/sql`, `sql/driver` | `std.database.sql` + драйверы `std.database.postgres` (на Slang), `std.database.sqlite` (системная libsqlite3) | ✅ есть (интерфейс драйвера `Driver/DriverConn/DriverStmt/DriverRows/DriverTx`, `sql.Register/Open/OpenDriver`, асинхронный пул: max open/idle, время простоя и жизни, health check, ожидание с отменой; `Exec`, `QueryRows`, `QueryRow`, `Query<T>`/`QueryOne<T>` в структуры через compile-time рефлексию с `@sql.column`, `Null<T>`, указатели для NULL, `time.Time`, `big.Decimal`, `json.Value`; именованные `:name` → `$1`/`?`; транзакции, `Transact`, `Prepare` с кэшем подготовленных выражений на соединение, `Conn`, `Raw`; отмена и таймауты через контекст задачи; PostgreSQL: протокол 3.0, trust/password/MD5/SCRAM-SHA-256, sslmode до verify-full, simple и extended протоколы, бинарные результаты, COPY, уведомления; проверено на PostgreSQL 16) | async, `Query<T>` в структуры, пул, `Query<T>` вместо `Scan` |
 | `go/*` (ast, parser, types…) | `std.slang.{ast,parser,types}` — экспорт компилятора как библиотеки | 🟡 частично (внутри компилятора) | — |
 | `debug/elf`, `dwarf`, `pe`, `macho` | `std.debug.*` | ❌ нет (для `diag` частично) | — |
-| `plugin` | `std.plugin` (dlopen) | ❌ нет | capability-помечен; используется `std.debug` |
-| `runtime/debug` (частично), — | `std.debug` — отладочный агент на Slang (DAP, DWARF, точки, задачи) | ❌ нет | см. `docs/DEBUGGER.md` |
+| `plugin` | `std.plugin` (dlopen) | 🟡 частично (внутренние `rtOpen/rtSym/rtClose`, capability `plugin`) | capability-помечен; используется `std.debug` |
+| `runtime/debug` (частично), — | `std.debug` — отладочный агент на Slang (DAP, DWARF, точки, задачи) | ✅ есть (DAP-агент: точки, условия, логпоинты, шаги по задачам, исключения, переменные, выражения v1; без DWARF — по таблицам компилятора) + `std.thread` (`Spawn/Join/Sleep`) | см. `docs/DEBUGGER.md` этап 2 |
 
 ## Уровень 3 — протоколы и сервисы
 
 | Go | Slang | Статус | Лучше чем в Go |
 |---|---|---|---|
-| `crypto/tls` | `std.net.tls` | ✅ есть (1.3 + 1.2 ECDHE/AEAD, interop с OpenSSL) | только современные наборы, без C-зависимостей |
-| `crypto/x509`, `x509/pkix` | `std.crypto.x509` | ✅ есть (без OCSP/CRL, без P-384) | — |
-| `net/http` | `std.net.http` | ✅ есть (1.1 клиент/сервер, роутер); нет (пул, HTTP/2, HTTP/3) | async, роутер с параметрами в stdlib, graceful shutdown |
-| `net/http/httputil`, `httptest`, `cookiejar`, `fcgi`, `cgi`, `pprof` | `std.net.http.{util,test,cookies}`, `diag` endpoints | ❌ нет | — |
-| — (websocket в Go нет) | `std.net.ws` | ❌ нет | в stdlib |
-| `net/mail`, `net/smtp` | `std.net.mail` | ❌ нет | — |
+| `crypto/tls` | `std.net.tls` | ✅ есть (1.3 + 1.2 ECDHE/AEAD, группы X25519/P-256/P-384, подписи ECDSA P-256/P-384, interop с OpenSSL) | только современные наборы, без C-зависимостей |
+| `crypto/x509`, `x509/pkix` | `std.crypto.x509` | ✅ есть (P-256 и P-384; без OCSP/CRL, без P-521) | — |
+| `net/http` | `std.net.http` | ✅ есть (HTTP/1.1 и HTTP/2 (h2 по ALPN, h2c) клиент/сервер; пул соединений с прокси, gzip, cookies, потоковые тела; роутер с middleware (Recover, Logging, CORS, Gzip, BodyLimit, TimeoutHandler), ServeFile/ServeDir с диапазонами и ETag, SSE; interop с curl и Go); нет HTTP/3, server push | async, роутер с параметрами и middleware в stdlib, graceful shutdown с GOAWAY, сервер на уровне Go `net/http` по скорости |
+| `net/http/httptest`, `cookiejar` | `std.net.http.test`, `http.CookieJar` | ✅ есть (`NewServer`/`NewTLSServer`/`NewH2CServer`, `NewRecorder`, `NewRequest`, `Serve`; jar по RFC 6265) | тестовый сервер сразу с настроенным клиентом |
+| `net/http/httputil`, `fcgi`, `cgi`, `pprof` | `std.net.http.util`, `diag` endpoints | ❌ нет | — |
+| `golang.org/x/net/http2/hpack` | `std.net.http.hpack` | ✅ есть (RFC 7541, векторы приложения C) | — |
+| — (websocket в Go нет) | `std.net.ws` | ✅ есть (RFC 6455: Upgrade/Dial, фрагментация, ping/pong, коды закрытия, `for msg in conn`; interop с Go и curl); нет permessage-deflate | в stdlib |
+| `net/mail`, `net/smtp` | `std.net.mail` | ✅ есть (`Address`, `ParseAddress/ParseAddressList` с RFC 2047 и группами, `Message{From, To, Cc, Bcc, Subject, Text, HTML, Attachments}.Build()` — MIME multipart/mixed/alternative/related, quoted-printable, base64, кодирование и перенос заголовков; SMTP-клиент `Dial/Send/SendWith` со STARTTLS и SMTPS, AUTH PLAIN/LOGIN/CRAM-MD5, типизированные `SMTPError`); нет DKIM | `Send` в одну строку, TLS по умолчанию |
 | `net/rpc`, `rpc/jsonrpc` | `slang.grpc`, `std.net.jsonrpc` | ❌ нет | gRPC вместо net/rpc |
 | `testing/fstest`, `iotest`, `quick` | `std.testing.*` | ❌ нет | property-based `quick` с generics |
 | `syscall` | `std.sys` (слой платформы) | 🟡 частично (внутри рантайма) | единый API на всех ОС |
 | `time` (таймеры, тикеры) | `task.Delay`, `time.NewTicker/NewTimer/After` | ✅ есть | async (`await t.Tick()`) |
+
+## Уровень 3б — клиенты инфраструктуры (в Go внешние библиотеки)
+
+| Go (внешние) | Slang | Статус | Лучше чем в Go |
+|---|---|---|---|
+| `go-redis` | `std.data.redis` | ❌ нет | RESP3, pipelining, pub/sub, транзакции, Lua-скрипты, cluster, **Sentinel** с автоматическим failover, типизированные команды, async |
+| `sarama`/`franz-go` | `std.data.kafka` | ❌ нет | producer с батчами и idempotence, consumer groups с rebalance, SASL (PLAIN/SCRAM), TLS, компрессия gzip/zstd, транзакции позже; один клиент на Slang без C |
+| `aws-sdk-go` S3 | `std.cloud.s3` | ❌ нет | SigV4, Get/Put/Delete/List, multipart upload с параллельными частями, presigned URLs, потоковые тела, совместимо с MinIO/R2/GCS-S3 |
+| `minio-go`, `gocloud blob` | `std.cloud.blob` (абстракция над s3/fs) | ❌ нет | единый интерфейс для S3 и локальной ФС |
 
 ## Уровень 4 — фреймворк (`docs/FRAMEWORK.md`)
 
