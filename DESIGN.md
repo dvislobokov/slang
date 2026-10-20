@@ -941,6 +941,32 @@ async func Search(query string) []Result! {
 }
 ```
 
+### Значения в контексте задачи
+
+Аналог `AsyncLocal<T>` и `context.WithValue`, но с типизированными ключами и
+без параметра `ctx` в сигнатурах:
+
+```slang
+const CurrentSpan = task.Key<SpanInfo>()      // уникальный типизированный ключ
+
+await task.With(CurrentSpan, span, async () => {   // действует на время fn
+    await next(ctx)?                               // и на всех детей
+})?
+
+var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в любой глубине
+```
+
+- `task.Key<T>()` — ключ; `task.Get(key) *T`; `task.With(key, value, fn)`
+  устанавливает значение на время `fn` и восстанавливает прежнее после.
+- Значения наследуются дочерними задачами на момент их запуска; изменения
+  ребёнка родителю не видны.
+- `task.CurrentContext()` возвращает контекст как значение для явной
+  передачи (`task.Spawn(ctx, fn)`, колбэки из C, пулы).
+- Реализация: неизменяемый список кадров; `With` — один кадр, `Get` — проход
+  по списку, наследование — копия указателя.
+- Используется `slang.diag` (текущий span), `slang.log` (`Enrich.FromContext`),
+  `http.Client` и `sql` (автоматический `traceparent`), DI-scope в `slang.web`.
+
 ## Память
 
 Сборщика мусора нет и не планируется. Модель — подсчёт ссылок (ARC) с
