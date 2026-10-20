@@ -550,7 +550,9 @@ func ToJson<T>(value T) string {
     for f in reflect.Fields<T>() {       // разворачивается при компиляции
         var tag = f.Attribute<json>()    // константа
         if tag != nil && tag.skip { continue }
-        b.Write(fmt.Format("\"{0}\":", tag?.name ?? f.Name))
+        var name = f.Name
+        if tag != nil && tag.name != "" { name = tag.name }
+        b.Write(fmt.Format("\"{0}\":", name))
         b.Write(ToJson(f.Get(value)))   // прямой доступ к полю, без reflect.Value
     }
     b.Write("}")
