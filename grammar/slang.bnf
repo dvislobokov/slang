@@ -125,7 +125,7 @@ tuple_type ::= LPAREN type (COMMA type)+ RPAREN
 // ---------------------------------------------------------------------------
 
 block ::= LBRACE statement* RBRACE
-statement ::= (var_decl | const_decl | if_stmt | for_stmt | switch_stmt | return_stmt
+statement ::= (var_decl | const_decl | if_stmt | for_stmt | switch_stmt | try_stmt | return_stmt
              | break_stmt | continue_stmt | defer_stmt | block | assign_stmt | expr_stmt) eos?
 
 if_stmt ::= IF expr block (ELSE (if_stmt | block))?
@@ -142,6 +142,9 @@ default_case ::= DEFAULT COLON statement*
 pattern ::= range_pattern | type_bind_pattern | expr
 range_pattern ::= range_expr
 type_bind_pattern ::= type IDENTIFIER
+
+// `try { ... } catch err { ... }`: `?` inside the block jumps to catch
+try_stmt ::= TRY block CATCH var_name block
 
 return_stmt ::= RETURN (expr (COMMA expr)*)?
 break_stmt ::= BREAK

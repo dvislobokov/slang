@@ -340,6 +340,33 @@ try Save("out.txt", data) catch err {
   инициализирована.
 - `try ... else` подставляет значение по умолчанию и отбрасывает ошибку.
 
+### Блочная форма `try`
+
+Когда нужно обработать ошибку для нескольких операций разом, `try` берёт
+блок. Внутри него `?` переходит в `catch` этого блока, а не возвращает из
+функции:
+
+```slang
+try {
+    var text = io.ReadFile(path)?
+    var cfg = ParseConfig(text)?
+    Apply(cfg)?
+} catch err {
+    println("config:", err)
+    return
+}
+```
+
+- Ошибки внутри блока всё так же помечаются `?`; неявного проброса нет.
+- Чтобы пробросить дальше, в `catch` пишут `return err` (в функции с `T!`).
+- Переменные блока видны только в нём; результат выносят через переменную,
+  объявленную до `try`.
+- `catch` блочной формы не обязан завершать функцию: после него выполнение
+  продолжается. `else` у блочной формы нет.
+- Блоки вкладываются; `?` идёт в ближайший `catch`.
+- Если из многострочного кода нужно значение, идиоматично вынести его в
+  функцию с типом `T!` и использовать `?` или `try f() catch`.
+
 ### Игнорирование и обязательность
 
 Значение типа `T!` нельзя использовать, не обработав: `var x = ParseInt(s)`
@@ -855,7 +882,7 @@ type        = path [ "!" ] | "*" type | "[" [ int ] "]" type
             | "map" "[" type "]" type | "func" "(" [ types ] ")" [ type ]
             | "(" types ")" ;
 block       = "{" { stmt } "}" ;
-stmt        = var | const | if | for | switch | "return" [ exprs ]
+stmt        = var | const | if | for | switch | trystmt | "return" [ exprs ]
             | "break" | "continue" | "defer" expr | expr [ assignop expr ] ;
 var         = "var" ident [ type ] [ "=" expr ] ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
@@ -866,6 +893,7 @@ pattern     = expr | expr ".." expr | path "(" [ idents ] ")" | type ident ;
 expr        = unary { binop unary } ;
 unary       = ( "-" | "!" | "&" | "*" | "await" ) unary | tryexpr | postfix ;
 tryexpr     = "try" expr ( "catch" ident block | "else" expr ) ;
+trystmt     = "try" block "catch" ident block ;
 postfix     = primary { "." ident | "(" [ exprs ] ")" | "[" ( expr | range ) "]"
             | "?" [ "(" expr ")" ] } ;
 range       = [ expr ] ".." [ expr ] ;
