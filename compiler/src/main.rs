@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::process::exit;
 
 fn main() {
@@ -26,7 +27,8 @@ fn main() {
             if diags.has_errors() {
                 exit(1);
             }
-            println!("{:#?}", ast.unwrap());
+            // Ignore write errors such as a closed pipe (`slang parse f | head`).
+            let _ = writeln!(std::io::stdout(), "{:#?}", ast.unwrap());
         }
         cmd => {
             eprintln!("error: command `{cmd}` is not implemented yet");

@@ -1,8 +1,662 @@
-//! Lexer: source text -> tokens. TODO: implemented by the lexer/parser task.
+//! Lexer: source text -> tokens.
+//!
+//! Besides ordinary tokenization the lexer performs Go-style automatic
+//! semicolon insertion: at a newline (or at end of file) a `Semi` token is
+//! emitted when the previous token can end a statement
+//! (see [`TokenKind::ends_statement`]). Unlike Go, no semicolons are inserted
+//! while directly inside `( )` or `[ ]`, so argument lists and slice literals
+//! may span lines without trailing commas. Inside `{ }` the normal rule applies.
 
 use crate::diagnostics::Diagnostics;
-use crate::token::Token;
+use crate::span::Span;
+use crate::token::{Token, TokenKind};
 
-pub fn lex(_src: &str, _diags: &mut Diagnostics) -> Vec<Token> {
-    unimplemented!("lexer")
+/// Tokenizes `src`. Lexical errors are reported to `diags` and lexing
+/// continues; the result always ends with an `Eof` token.
+pub fn lex(src: &str, diags: &mut Diagnostics) -> Vec<Token> {
+    let mut lexer = Lexer { src, pos: 0, tokens: Vec::new(), delims: Vec::new(), diags };
+    lexer.run();
+    lexer.tokens
+}
+
+struct Lexer<'a, 'd> {
+    src: &'a str,
+    /// Current byte offset.
+    pos: usize,
+    tokens: Vec<Token>,
+    /// Stack of currently open `(`, `[` and `{`.
+    delims: Vec<TokenKind>,
+    diags: &'d mut Diagnostics,
+}
+
+impl Lexer<'_, '_> {
+    fn run(&mut self) {
+        loop {
+            self.skip_trivia();
+            let Some(c) = self.peek() else { break };
+            let start = self.pos;
+            let kind = if is_ident_start(c) {
+                self.ident_or_keyword()
+            } else if c.is_ascii_digit() {
+                self.number()
+            } else if c == '"' {
+                self.string()
+            } else if c == '\'' {
+                self.char_lit()
+            } else {
+                match self.punct() {
+                    Some(k) => k,
+                    None => continue,
+                }
+            };
+            self.track_delims(&kind);
+            self.push(kind, start);
+        }
+        self.insert_semi();
+        let end = self.src.len() as u32;
+        self.tokens.push(Token { kind: TokenKind::Eof, span: Span::new(end, end) });
+    }
+
+    // ----- helpers -------------------------------------------------------
+
+    fn peek(&self) -> Option<char> {
+        self.src[self.pos..].chars().next()
+    }
+
+    fn peek_at(&self, n: usize) -> Option<char> {
+        self.src[self.pos..].chars().nth(n)
+    }
+
+    fn bump(&mut self) -> Option<char> {
+        let c = self.peek()?;
+        self.pos += c.len_utf8();
+        Some(c)
+    }
+
+    fn eat(&mut self, c: char) -> bool {
+        if self.peek() == Some(c) {
+            self.pos += c.len_utf8();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn push(&mut self, kind: TokenKind, start: usize) {
+        self.tokens.push(Token { kind, span: Span::new(start as u32, self.pos as u32) });
+    }
+
+    fn error(&mut self, msg: impl Into<String>, start: usize, end: usize) {
+        self.diags.error(msg, Span::new(start as u32, end as u32));
+    }
+
+    fn track_delims(&mut self, kind: &TokenKind) {
+        match kind {
+            TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => self.delims.push(kind.clone()),
+            TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                self.delims.pop();
+            }
+            _ => {}
+        }
+    }
+
+    /// Emits an automatic `Semi` (zero-width, right after the previous token)
+    /// if the previous token can end a statement and we are not inside `()`/`[]`.
+    fn insert_semi(&mut self) {
+        if matches!(self.delims.last(), Some(TokenKind::LParen | TokenKind::LBracket)) {
+            return;
+        }
+        let n = self.tokens.len();
+        if let Some(last) = self.tokens.last() {
+            // A keyword right after `.` is used as a name (`namespace examples.async`).
+            let keyword_name = n >= 2
+                && self.tokens[n - 2].kind == TokenKind::Dot
+                && TokenKind::keyword(last.kind.text()).is_some();
+            if last.kind.ends_statement() || keyword_name {
+                let end = last.span.end;
+                self.tokens.push(Token { kind: TokenKind::Semi, span: Span::new(end, end) });
+            }
+        }
+    }
+
+    /// Skips whitespace and comments, inserting semicolons at newlines.
+    fn skip_trivia(&mut self) {
+        while let Some(c) = self.peek() {
+            match c {
+                '\n' => {
+                    self.insert_semi();
+                    self.pos += 1;
+                }
+                c if c.is_whitespace() => {
+                    self.bump();
+                }
+                '/' if self.peek_at(1) == Some('/') => {
+                    while let Some(c) = self.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        self.bump();
+                    }
+                }
+                '/' if self.peek_at(1) == Some('*') => self.block_comment(),
+                _ => break,
+            }
+        }
+    }
+
+    /// `/* ... */`, nestable. A comment spanning lines acts like a newline.
+    fn block_comment(&mut self) {
+        let start = self.pos;
+        self.pos += 2;
+        let mut depth = 1;
+        let mut saw_newline = false;
+        while depth > 0 {
+            match self.bump() {
+                None => {
+                    self.error("unterminated block comment", start, start + 2);
+                    break;
+                }
+                Some('\n') => saw_newline = true,
+                Some('*') if self.eat('/') => depth -= 1,
+                Some('/') if self.eat('*') => depth += 1,
+                Some(_) => {}
+            }
+        }
+        if saw_newline {
+            self.insert_semi();
+        }
+    }
+
+    // ----- token classes -------------------------------------------------
+
+    fn ident_or_keyword(&mut self) -> TokenKind {
+        let start = self.pos;
+        while self.peek().is_some_and(is_ident_continue) {
+            self.bump();
+        }
+        let text = &self.src[start..self.pos];
+        TokenKind::keyword(text).unwrap_or_else(|| TokenKind::Ident(text.to_string()))
+    }
+
+    /// Integer (decimal, `0x`, `0b`, `0o`) or float literal; `_` separators allowed.
+    fn number(&mut self) -> TokenKind {
+        let start = self.pos;
+        let radix = match (self.peek(), self.peek_at(1)) {
+            (Some('0'), Some('x' | 'X')) => 16,
+            (Some('0'), Some('b' | 'B')) => 2,
+            (Some('0'), Some('o' | 'O')) => 8,
+            _ => 10,
+        };
+        if radix != 10 {
+            self.pos += 2;
+            let digits_start = self.pos;
+            while self.peek().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+                self.bump();
+            }
+            let digits = &self.src[digits_start..self.pos];
+            let name = match radix {
+                16 => "hexadecimal",
+                2 => "binary",
+                _ => "octal",
+            };
+            if !digits.chars().any(|c| c != '_') {
+                self.error(format!("{name} literal has no digits"), start, self.pos);
+                return TokenKind::Int("0".into());
+            }
+            if let Some((i, bad)) = digits.char_indices().find(|&(_, c)| c != '_' && !c.is_digit(radix)) {
+                let at = digits_start + i;
+                self.error(format!("invalid digit `{bad}` in {name} literal"), at, at + bad.len_utf8());
+                return TokenKind::Int("0".into());
+            }
+            let text: String = self.src[start..self.pos].chars().filter(|&c| c != '_').collect();
+            return TokenKind::Int(text);
+        }
+
+        self.digits();
+        let mut is_float = false;
+        // `1.5` is a float, but `0..10` is a range and `x.0` stays a field access.
+        if self.peek() == Some('.') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) {
+            is_float = true;
+            self.bump();
+            self.digits();
+        }
+        if matches!(self.peek(), Some('e' | 'E')) {
+            let sign = matches!(self.peek_at(1), Some('+' | '-'));
+            let digit_at = if sign { 2 } else { 1 };
+            if self.peek_at(digit_at).is_some_and(|c| c.is_ascii_digit()) {
+                is_float = true;
+                self.pos += digit_at;
+                self.digits();
+            } else {
+                let end = self.pos + digit_at;
+                self.bump();
+                if sign {
+                    self.bump();
+                }
+                self.error("float exponent has no digits", start, end.min(self.src.len()));
+                return TokenKind::Float("0".into());
+            }
+        }
+        let end = self.pos;
+        if self.peek().is_some_and(is_ident_start) {
+            while self.peek().is_some_and(is_ident_continue) {
+                self.bump();
+            }
+            self.error(format!("invalid suffix `{}` on number literal", &self.src[end..self.pos]), end, self.pos);
+        }
+        let text: String = self.src[start..end].chars().filter(|&c| c != '_').collect();
+        if is_float {
+            TokenKind::Float(text)
+        } else {
+            TokenKind::Int(text)
+        }
+    }
+
+    fn digits(&mut self) {
+        while self.peek().is_some_and(|c| c.is_ascii_digit() || c == '_') {
+            self.bump();
+        }
+    }
+
+    fn string(&mut self) -> TokenKind {
+        let start = self.pos;
+        self.bump(); // opening quote
+        let mut value = String::new();
+        loop {
+            match self.peek() {
+                None | Some('\n') => {
+                    self.error("unterminated string literal", start, self.pos);
+                    break;
+                }
+                Some('"') => {
+                    self.bump();
+                    break;
+                }
+                Some('\\') => {
+                    if let Some(c) = self.escape() {
+                        value.push(c);
+                    }
+                }
+                Some(c) => {
+                    self.bump();
+                    value.push(c);
+                }
+            }
+        }
+        TokenKind::Str(value)
+    }
+
+    fn char_lit(&mut self) -> TokenKind {
+        let start = self.pos;
+        self.bump(); // opening quote
+        let value = match self.peek() {
+            None | Some('\n') => {
+                self.error("unterminated char literal", start, self.pos);
+                return TokenKind::Char('\0');
+            }
+            Some('\'') => {
+                self.bump();
+                self.error("empty char literal", start, self.pos);
+                return TokenKind::Char('\0');
+            }
+            Some('\\') => self.escape().unwrap_or('\0'),
+            Some(c) => {
+                self.bump();
+                c
+            }
+        };
+        if self.eat('\'') {
+            return TokenKind::Char(value);
+        }
+        // Too many characters or missing quote: find the closing quote on this line.
+        let rest = &self.src[self.pos..];
+        let line_end = rest.find('\n').unwrap_or(rest.len());
+        match rest[..line_end].find('\'') {
+            Some(i) => {
+                self.pos += i + 1;
+                self.error("char literal must contain exactly one character", start, self.pos);
+            }
+            None => self.error("unterminated char literal", start, self.pos),
+        }
+        TokenKind::Char(value)
+    }
+
+    /// Parses an escape sequence starting at `\`. Returns `None` after
+    /// reporting an invalid escape.
+    fn escape(&mut self) -> Option<char> {
+        let start = self.pos;
+        self.bump(); // backslash
+        let c = match self.peek() {
+            Some(c) if c != '\n' => c,
+            _ => {
+                self.error("incomplete escape sequence", start, self.pos);
+                return None;
+            }
+        };
+        self.bump();
+        Some(match c {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '0' => '\0',
+            '\\' => '\\',
+            '"' => '"',
+            '\'' => '\'',
+            'u' => return self.unicode_escape(start),
+            other => {
+                self.error(format!("unknown escape sequence `\\{other}`"), start, self.pos);
+                return None;
+            }
+        })
+    }
+
+    /// The `{XXXX}` part of `\u{XXXX}`; `start` points at the backslash.
+    fn unicode_escape(&mut self, start: usize) -> Option<char> {
+        if !self.eat('{') {
+            self.error("expected `{` after `\\u`", start, self.pos);
+            return None;
+        }
+        let digits_start = self.pos;
+        while self.peek().is_some_and(|c| c.is_ascii_hexdigit()) {
+            self.bump();
+        }
+        let digits = &self.src[digits_start..self.pos];
+        if !self.eat('}') {
+            self.error("unterminated unicode escape, expected `}`", start, self.pos);
+            return None;
+        }
+        if digits.is_empty() || digits.len() > 6 {
+            self.error("unicode escape must have 1 to 6 hex digits", start, self.pos);
+            return None;
+        }
+        let value = u32::from_str_radix(digits, 16).ok().and_then(char::from_u32);
+        if value.is_none() {
+            self.error(format!("invalid unicode scalar value `{digits}`"), start, self.pos);
+        }
+        value
+    }
+
+    /// Punctuation. Returns `None` (after reporting) for an unknown character.
+    fn punct(&mut self) -> Option<TokenKind> {
+        use TokenKind::*;
+        let start = self.pos;
+        let c = self.bump()?;
+        Some(match c {
+            '(' => LParen,
+            ')' => RParen,
+            '{' => LBrace,
+            '}' => RBrace,
+            '[' => LBracket,
+            ']' => RBracket,
+            ',' => Comma,
+            ':' => Colon,
+            ';' => Semi,
+            '?' => Question,
+            '@' => At,
+            '.' => {
+                if self.eat('.') {
+                    DotDot
+                } else {
+                    Dot
+                }
+            }
+            '!' => {
+                if self.eat('=') {
+                    NotEq
+                } else {
+                    Bang
+                }
+            }
+            '=' => {
+                if self.eat('=') {
+                    EqEq
+                } else if self.eat('>') {
+                    Arrow
+                } else {
+                    Assign
+                }
+            }
+            '&' => {
+                if self.eat('&') {
+                    AndAnd
+                } else if self.eat('=') {
+                    AmpEq
+                } else {
+                    Amp
+                }
+            }
+            '|' => {
+                if self.eat('|') {
+                    OrOr
+                } else if self.eat('=') {
+                    PipeEq
+                } else {
+                    Pipe
+                }
+            }
+            '<' => {
+                if self.eat('<') {
+                    if self.eat('=') {
+                        ShlEq
+                    } else {
+                        Shl
+                    }
+                } else if self.eat('=') {
+                    Le
+                } else {
+                    Lt
+                }
+            }
+            '>' => {
+                if self.eat('>') {
+                    if self.eat('=') {
+                        ShrEq
+                    } else {
+                        Shr
+                    }
+                } else if self.eat('=') {
+                    Ge
+                } else {
+                    Gt
+                }
+            }
+            '+' => self.with_eq(Plus, PlusEq),
+            '-' => self.with_eq(Minus, MinusEq),
+            '*' => self.with_eq(Star, StarEq),
+            '/' => self.with_eq(Slash, SlashEq),
+            '%' => self.with_eq(Percent, PercentEq),
+            '^' => self.with_eq(Caret, CaretEq),
+            other => {
+                self.error(format!("unexpected character `{}`", other.escape_debug()), start, self.pos);
+                return None;
+            }
+        })
+    }
+
+    fn with_eq(&mut self, plain: TokenKind, with_eq: TokenKind) -> TokenKind {
+        if self.eat('=') {
+            with_eq
+        } else {
+            plain
+        }
+    }
+}
+
+fn is_ident_start(c: char) -> bool {
+    c == '_' || c.is_alphabetic()
+}
+
+fn is_ident_continue(c: char) -> bool {
+    c == '_' || c.is_alphanumeric()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use TokenKind::*;
+
+    fn kinds(src: &str) -> Vec<TokenKind> {
+        let mut d = Diagnostics::new();
+        let toks = lex(src, &mut d);
+        assert!(d.is_empty(), "unexpected diagnostics: {:?}", d.items);
+        toks.into_iter().map(|t| t.kind).collect()
+    }
+
+    fn errors(src: &str) -> Vec<String> {
+        let mut d = Diagnostics::new();
+        let toks = lex(src, &mut d);
+        assert_eq!(toks.last().map(|t| &t.kind), Some(&Eof));
+        d.items.into_iter().map(|d| d.message).collect()
+    }
+
+    fn ident(s: &str) -> TokenKind {
+        Ident(s.into())
+    }
+
+    #[test]
+    fn keywords_and_idents() {
+        assert_eq!(
+            kinds("namespace app import as func x _ _y привет"),
+            vec![Namespace, ident("app"), Import, As, Func, ident("x"), Underscore, ident("_y"), ident("привет"), Semi, Eof]
+        );
+    }
+
+    #[test]
+    fn integers() {
+        assert_eq!(
+            kinds("123 1_000 0xff 0XFF 0b1010 0o17 0x_ff"),
+            vec![
+                Int("123".into()),
+                Int("1000".into()),
+                Int("0xff".into()),
+                Int("0XFF".into()),
+                Int("0b1010".into()),
+                Int("0o17".into()),
+                Int("0xff".into()),
+                Semi,
+                Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn floats_and_ranges() {
+        assert_eq!(
+            kinds("1.5 2e10 3.0e-2 1E+3 1_0.5"),
+            vec![
+                Float("1.5".into()),
+                Float("2e10".into()),
+                Float("3.0e-2".into()),
+                Float("1E+3".into()),
+                Float("10.5".into()),
+                Semi,
+                Eof
+            ]
+        );
+        assert_eq!(kinds("0..10"), vec![Int("0".into()), DotDot, Int("10".into()), Semi, Eof]);
+        assert_eq!(kinds("t.0"), vec![ident("t"), Dot, Int("0".into()), Semi, Eof]);
+    }
+
+    #[test]
+    fn strings_and_escapes() {
+        assert_eq!(
+            kinds(r#""a\nb\t\\\"\r\0\u{41}\u{1F600}""#),
+            vec![Str("a\nb\t\\\"\r\0A\u{1F600}".into()), Semi, Eof]
+        );
+        assert_eq!(kinds("\"привет\""), vec![Str("привет".into()), Semi, Eof]);
+    }
+
+    #[test]
+    fn chars() {
+        assert_eq!(
+            kinds(r"'a' '\n' '\'' '\u{263A}' 'я'"),
+            vec![Char('a'), Char('\n'), Char('\''), Char('☺'), Char('я'), Semi, Eof]
+        );
+    }
+
+    #[test]
+    fn punctuation() {
+        assert_eq!(
+            kinds("( ) { } [ ] , . .. : ; ? @ ! => & * + - / % | ^ << >> && || < > <= >= == != = += -= *= /= %= &= |= ^= <<= >>="),
+            vec![
+                LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Dot, DotDot, Colon, Semi,
+                Question, At, Bang, Arrow, Amp, Star, Plus, Minus, Slash, Percent, Pipe, Caret, Shl, Shr,
+                AndAnd, OrOr, Lt, Gt, Le, Ge, EqEq, NotEq, Assign, PlusEq, MinusEq, StarEq, SlashEq,
+                PercentEq, AmpEq, PipeEq, CaretEq, ShlEq, ShrEq, Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn comments() {
+        assert_eq!(kinds("a // comment\nb"), vec![ident("a"), Semi, ident("b"), Semi, Eof]);
+        assert_eq!(kinds("a /* x */ b"), vec![ident("a"), ident("b"), Semi, Eof]);
+        assert_eq!(kinds("a /* x\n y */ b"), vec![ident("a"), Semi, ident("b"), Semi, Eof]);
+        assert_eq!(kinds("a /* /* nested */ */ b"), vec![ident("a"), ident("b"), Semi, Eof]);
+    }
+
+    #[test]
+    fn semicolon_insertion() {
+        assert_eq!(
+            kinds("var x = 1\nx +\n2\nreturn\n}\n"),
+            vec![
+                Var, ident("x"), Assign, Int("1".into()), Semi,
+                ident("x"), Plus, Int("2".into()), Semi,
+                Return, Semi,
+                RBrace, Semi,
+                Eof
+            ]
+        );
+        // No semicolon after `{`, `,` or operators; none at EOF after `{`.
+        assert_eq!(kinds("f(a,\nb)\n{"), vec![ident("f"), LParen, ident("a"), Comma, ident("b"), RParen, Semi, LBrace, Eof]);
+        // Inside parentheses newlines are ignored, inside braces they count.
+        assert_eq!(
+            kinds("f(\na\n)\n"),
+            vec![ident("f"), LParen, ident("a"), RParen, Semi, Eof]
+        );
+        assert_eq!(
+            kinds("f(func() {\na\n})"),
+            vec![ident("f"), LParen, Func, LParen, RParen, LBrace, ident("a"), Semi, RBrace, RParen, Semi, Eof]
+        );
+        // A keyword used as a name after `.` ends a statement too.
+        assert_eq!(kinds("a.async\nb"), vec![ident("a"), Dot, Async, Semi, ident("b"), Semi, Eof]);
+        // Fallible types and `?` end statements.
+        assert_eq!(kinds("int!\nx?\n"), vec![ident("int"), Bang, Semi, ident("x"), Question, Semi, Eof]);
+    }
+
+    #[test]
+    fn spans() {
+        let mut d = Diagnostics::new();
+        let toks = lex("var xy = \"s\"\n", &mut d);
+        let spans: Vec<(u32, u32)> = toks.iter().map(|t| (t.span.start, t.span.end)).collect();
+        assert_eq!(spans, vec![(0, 3), (4, 6), (7, 8), (9, 12), (12, 12), (13, 13)]);
+    }
+
+    #[test]
+    fn lexical_errors_are_reported_and_lexing_continues() {
+        assert_eq!(errors("\"abc"), vec!["unterminated string literal"]);
+        assert_eq!(errors("\"a\\qb\""), vec!["unknown escape sequence `\\q`"]);
+        assert_eq!(errors("''"), vec!["empty char literal"]);
+        assert_eq!(errors("'ab'"), vec!["char literal must contain exactly one character"]);
+        assert_eq!(errors("0b102"), vec!["invalid digit `2` in binary literal"]);
+        assert_eq!(errors("0x"), vec!["hexadecimal literal has no digits"]);
+        assert_eq!(errors("1e"), vec!["float exponent has no digits"]);
+        assert_eq!(errors("12abc"), vec!["invalid suffix `abc` on number literal"]);
+        assert_eq!(errors("/* never closed"), vec!["unterminated block comment"]);
+        assert_eq!(errors("\"\\u{110000}\""), vec!["invalid unicode scalar value `110000`"]);
+        assert_eq!(errors("\"\\u{}\""), vec!["unicode escape must have 1 to 6 hex digits"]);
+        assert_eq!(errors("a $ b # c"), vec!["unexpected character `$`", "unexpected character `#`"]);
+
+        let mut d = Diagnostics::new();
+        let toks = lex("x = $ 1", &mut d);
+        assert_eq!(d.items[0].span, Span::new(4, 5));
+        let k: Vec<_> = toks.into_iter().map(|t| t.kind).collect();
+        assert_eq!(k, vec![ident("x"), Assign, Int("1".into()), Semi, Eof]);
+    }
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(kinds(""), vec![Eof]);
+        assert_eq!(kinds("\n\n  // only a comment"), vec![Eof]);
+    }
 }

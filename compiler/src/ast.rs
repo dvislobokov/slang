@@ -30,6 +30,8 @@ impl Path {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
+    /// Attributes written before `namespace`.
+    pub attrs: Vec<Attribute>,
     pub namespace: Path,
     pub imports: Vec<Import>,
     pub decls: Vec<Decl>,
@@ -40,6 +42,30 @@ pub struct File {
 pub struct Import {
     pub path: Path,
     pub alias: Option<Ident>,
+    pub span: Span,
+}
+
+/// `@json(name: "id")`, `@reflect`, `@deprecated("use Save")`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attribute {
+    pub path: Path,
+    pub args: Vec<AttrArg>,
+    pub span: Span,
+}
+
+/// `name: value` or a positional `value` inside an attribute.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttrArg {
+    pub name: Option<Ident>,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// Generic parameter `T` or `T: Bound` in `func F<T>(..)` / `struct S<T>`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GenericParam {
+    pub name: Ident,
+    pub bound: Option<TypeExpr>,
     pub span: Span,
 }
 
@@ -68,7 +94,9 @@ impl Decl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructDecl {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
+    pub generics: Vec<GenericParam>,
     pub fields: Vec<Field>,
     /// Embedded types: a bare type name on its own line inside the struct.
     pub embeds: Vec<TypeExpr>,
@@ -78,14 +106,19 @@ pub struct StructDecl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Field {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
     pub ty: TypeExpr,
+    /// Default value, `message string = "..."` (attribute structs).
+    pub default: Option<Expr>,
     pub span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InterfaceDecl {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
+    pub generics: Vec<GenericParam>,
     /// Method signatures; `body` is always `None`.
     pub methods: Vec<FuncDecl>,
     pub span: Span,
@@ -93,6 +126,7 @@ pub struct InterfaceDecl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnumDecl {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
     pub variants: Vec<Variant>,
     pub span: Span,
@@ -100,6 +134,7 @@ pub struct EnumDecl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Variant {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
     /// Empty for plain variants like `Red`; named fields for `Ok(value int)`.
     pub fields: Vec<Field>,
@@ -108,7 +143,9 @@ pub struct Variant {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FuncDecl {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
+    pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     /// `None` means `void`.
     pub ret: Option<TypeExpr>,
@@ -121,6 +158,7 @@ pub struct FuncDecl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Param {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
     pub ty: TypeExpr,
     pub span: Span,
@@ -129,6 +167,7 @@ pub struct Param {
 /// `var x = 1`, `var x int`, `var (a, b) = f()`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VarDecl {
+    pub attrs: Vec<Attribute>,
     /// One name normally; several for tuple destructuring `var (a, b) = ...`.
     /// `_` is represented as an Ident named "_".
     pub names: Vec<Ident>,
@@ -139,6 +178,7 @@ pub struct VarDecl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConstDecl {
+    pub attrs: Vec<Attribute>,
     pub name: Ident,
     pub ty: Option<TypeExpr>,
     pub value: Expr,
@@ -266,8 +306,8 @@ pub struct Pattern {
 pub enum PatternKind {
     /// `1`, `"a"`, `n > 100`, `Result.Ok(v)` (parsed as a call expression).
     Expr(Expr),
-    /// `3..10`
-    Range(Expr, Expr),
+    /// `3..10`, `..0`, `100..`; a missing end is `None`.
+    Range(Option<Expr>, Option<Expr>),
     /// `Circle c`: type followed by a binding name.
     TypeBind { ty: TypeExpr, name: Ident },
 }
@@ -304,7 +344,11 @@ pub enum ExprKind {
     Try { expr: Box<Expr>, handler: TryHandler },
     Await(Box<Expr>),
     /// `Point{X: 1, Y: 2}`; `path` is empty-segment-free, e.g. `Point` or `app.models.User`.
-    StructLit { path: Path, fields: Vec<FieldInit> },
+    /// `generics` holds explicit type arguments: `List<int>{}`.
+    StructLit { path: Path, generics: Vec<TypeExpr>, fields: Vec<FieldInit> },
+    /// Explicit type arguments on a callee: `reflect.TypeOf<User>`, usually
+    /// the callee of a `Call`.
+    TypeArgs { base: Box<Expr>, args: Vec<TypeExpr> },
     /// `new Point{...}` / `new int`
     New(Box<Expr>),
     /// `[1, 2, 3]`
@@ -313,8 +357,9 @@ pub enum ExprKind {
     MapLit { key_ty: Box<TypeExpr>, val_ty: Box<TypeExpr>, entries: Vec<(Expr, Expr)> },
     /// `(a, b)` with two or more elements.
     Tuple(Vec<Expr>),
-    /// `a..b`; only valid as a `for` iterator or a `case` pattern.
-    Range(Box<Expr>, Box<Expr>),
+    /// `a..b`, `a..`, `..b`; only valid as a `for` iterator, an index
+    /// (sub-slice `s[1..3]`) or a `case` pattern. A missing end is `None`.
+    Range(Option<Box<Expr>>, Option<Box<Expr>>),
     /// `func(x int) int { ... }` or `(x int) => x * 2`
     Lambda { params: Vec<Param>, ret: Option<Box<TypeExpr>>, body: Box<LambdaBody> },
     /// `(expr)` kept for faithful formatting; semantics are those of `expr`.

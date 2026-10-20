@@ -70,6 +70,7 @@ pub enum TokenKind {
     Question,  // ?
     Bang,      // !
     Arrow,     // =>
+    At,        // @ (attributes)
     Amp,       // &
     Star,      // *
     Plus,      // +
@@ -182,7 +183,7 @@ impl TokenKind {
             True => "true", False => "false", Map => "map", This => "this",
             LParen => "(", RParen => ")", LBrace => "{", RBrace => "}", LBracket => "[",
             RBracket => "]", Comma => ",", Dot => ".", DotDot => "..", Colon => ":", Semi => ";",
-            Question => "?", Bang => "!", Arrow => "=>", Amp => "&", Star => "*", Plus => "+",
+            Question => "?", Bang => "!", Arrow => "=>", At => "@", Amp => "&", Star => "*", Plus => "+",
             Minus => "-", Slash => "/", Percent => "%", Pipe => "|", Caret => "^", Shl => "<<",
             Shr => ">>", AndAnd => "&&", OrOr => "||", Lt => "<", Gt => ">", Le => "<=", Ge => ">=",
             EqEq => "==", NotEq => "!=", Assign => "=", PlusEq => "+=", MinusEq => "-=",

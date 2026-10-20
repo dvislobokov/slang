@@ -65,7 +65,9 @@ file ::= namespace_decl import_decl* top_level_decl*
 
 namespace_decl ::= NAMESPACE qualified_name eos
 import_decl ::= IMPORT qualified_name (AS IDENTIFIER)? eos
-qualified_name ::= IDENTIFIER (DOT IDENTIFIER)*
+qualified_name ::= name_segment (DOT name_segment)*
+// keywords are allowed as path segments (`examples.async`, `@default`)
+name_segment ::= IDENTIFIER | NAMESPACE | IMPORT | AS | STRUCT | INTERFACE | ENUM | FUNC | STATIC | ASYNC | AWAIT | VAR | CONST | IF | ELSE | FOR | IN | SWITCH | CASE | DEFAULT | RETURN | BREAK | CONTINUE | DEFER | TRY | CATCH | NEW | NIL | TRUE | FALSE | MAP | THIS
 
 top_level_decl ::= attribute* (struct_decl | interface_decl | enum_decl | func_decl | var_decl eos | const_decl eos)
 
