@@ -1,0 +1,144 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Slang",
+  "scopeName": "source.slang",
+  "fileTypes": ["sl"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#namespace" },
+    { "include": "#attributes" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#literals" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.slang", "match": "//.*$" },
+        { "name": "comment.block.slang", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "namespace": {
+      "patterns": [
+        {
+          "match": "\\b(namespace|import)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": { "name": "keyword.other.namespace.slang" },
+            "2": { "name": "entity.name.namespace.slang" },
+            "3": { "name": "keyword.other.as.slang" },
+            "4": { "name": "entity.name.namespace.alias.slang" }
+          }
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "match": "(@)([A-Za-z_][A-Za-z0-9_.]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.slang" },
+            "2": { "name": "entity.name.tag.attribute.slang" }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(struct|interface|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.slang" },
+            "2": { "name": "entity.name.type.slang" }
+          }
+        },
+        {
+          "match": "\\b(?:(static)\\s+)?(?:(async)\\s+)?(func)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.static.slang" },
+            "2": { "name": "storage.modifier.async.slang" },
+            "3": { "name": "storage.type.function.slang" },
+            "4": { "name": "entity.name.function.slang" }
+          }
+        },
+        {
+          "match": "\\b(var|const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.var.slang" },
+            "2": { "name": "variable.other.declaration.slang" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.slang", "match": "\\b(if|else|for|in|switch|case|default|return|break|continue|defer)\\b" },
+        { "name": "keyword.control.error.slang", "match": "\\b(try|catch)\\b" },
+        { "name": "keyword.control.async.slang", "match": "\\b(async|await)\\b" },
+        { "name": "keyword.operator.new.slang", "match": "\\b(new)\\b" },
+        { "name": "storage.type.slang", "match": "\\b(struct|interface|enum|func|var|const|map)\\b" },
+        { "name": "storage.modifier.slang", "match": "\\b(static)\\b" },
+        { "name": "variable.language.this.slang", "match": "\\b(this)\\b" },
+        { "name": "constant.language.slang", "match": "\\b(nil|true|false)\\b" },
+        { "name": "support.function.builtin.slang", "match": "\\b(error|panic|append|len|cap|typeof)\\b(?=\\s*\\()" }
+      ]
+    },
+    "literals": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.slang",
+          "begin": "\"", "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.slang", "match": "\\\\(u\\{[0-9A-Fa-f]+\\}|[nrt0\\\\\"'])" },
+            { "name": "constant.other.placeholder.slang", "match": "\\{[0-9]+\\}" }
+          ]
+        },
+        {
+          "name": "string.quoted.single.slang",
+          "begin": "'", "end": "'",
+          "patterns": [{ "name": "constant.character.escape.slang", "match": "\\\\(u\\{[0-9A-Fa-f]+\\}|[nrt0\\\\\"'])" }]
+        },
+        { "name": "constant.numeric.hex.slang", "match": "\\b0[xX][0-9A-Fa-f_]+\\b" },
+        { "name": "constant.numeric.binary.slang", "match": "\\b0[bB][01_]+\\b" },
+        { "name": "constant.numeric.octal.slang", "match": "\\b0[oO][0-7_]+\\b" },
+        { "name": "constant.numeric.float.slang", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.float.slang", "match": "\\b[0-9][0-9_]*[eE][+-]?[0-9]+\\b" },
+        { "name": "constant.numeric.integer.slang", "match": "\\b[0-9][0-9_]*\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "support.type.primitive.slang", "match": "\\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|byte|float|float32|float64|bool|string|char|void|error|Task)\\b" },
+        { "name": "entity.name.type.slang", "match": "\\b[A-Z][A-Za-z0-9_]*\\b(?=\\s*[{<]|\\s*$|\\s*[,)\\]!]|\\s+[a-zA-Z_])" }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        { "name": "entity.name.function.call.slang", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.assignment.slang", "match": "(<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|=(?!=))" },
+        { "name": "keyword.operator.comparison.slang", "match": "(==|!=|<=|>=|<|>)" },
+        { "name": "keyword.operator.logical.slang", "match": "(&&|\\|\\||!(?!=))" },
+        { "name": "keyword.operator.arithmetic.slang", "match": "(\\+|-|\\*|/|%|<<|>>|&|\\||\\^)" },
+        { "name": "keyword.operator.error.slang", "match": "\\?" },
+        { "name": "keyword.operator.arrow.slang", "match": "=>" },
+        { "name": "keyword.operator.range.slang", "match": "\\.\\." }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.separator.slang", "match": "[,;:]" },
+        { "name": "punctuation.accessor.slang", "match": "\\." },
+        { "name": "punctuation.section.braces.slang", "match": "[{}]" },
+        { "name": "punctuation.section.brackets.slang", "match": "[\\[\\]]" },
+        { "name": "punctuation.section.parens.slang", "match": "[()]" }
+      ]
+    }
+  }
+}

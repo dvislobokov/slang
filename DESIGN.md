@@ -149,6 +149,31 @@ var q = Point{X: 3, Y: 4}
   поля и методы.
 - Свободные `func` на уровне пространства имён допустимы для утилит и `main`.
 
+## Атрибуты
+
+Атрибуты — метаданные на объявлениях, доступные через рефлексию и
+компилятору. Пишутся через `@` перед объявлением, пространства имён,
+структур, полей, методов, функций, вариантов enum и параметров.
+
+```slang
+@json(name: "user_id")
+struct User {
+    @json(name: "id")       Id    int
+    @json(omitEmpty: true)  Email string
+    @json(skip: true)       cache string
+
+    @deprecated("use Save")
+    func Store() void! { ... }
+}
+```
+
+- Атрибут — это обычная структура, помеченная `@attribute`; её поля —
+  параметры атрибута. Аргументы — константы времени компиляции.
+- Встроенные: `@reflect` (принудительно сохранить метаданные типа),
+  `@deprecated`, `@inline`, `@test`, `@attribute`.
+- Библиотечные: `@json`, `@xml`, `@db(column: "...")`, `@validate(...)`.
+- Неизвестный атрибут — ошибка компиляции (в отличие от строковых тегов Go).
+
 ## Интерфейсы
 
 Структурная типизация, как в Go: структура реализует интерфейс, если имеет
@@ -450,6 +475,107 @@ async func main() {
 - Реализация в LLVM: через LLVM coroutines (`llvm.coro.*`), каждая `async`
   функция превращается в конечный автомат с выделенным фреймом.
 
+## Рефлексия
+
+Цель: удобнее, чем в Go (типизированные атрибуты, методы, enum,
+создание значений, generics-дружественный API) и быстрее, чем в C#
+(никакого JIT, никаких `MethodInfo.Invoke` через boxing: метаданные —
+статические таблицы в бинарнике, доступ к полям по смещению, вызов
+методов через указатель на функцию).
+
+### Устройство
+
+- Для каждого типа компилятор генерирует **статическую таблицу**
+  `TypeInfo` в секции только для чтения: имя, полный путь, размер,
+  выравнивание, вид (struct/enum/interface/...), поля (имя, тип, смещение,
+  атрибуты), методы (имя, сигнатура, указатель на функцию), варианты enum,
+  реализуемые интерфейсы, атрибуты типа. Таблицы ссылаются друг на друга
+  указателями, поэтому обход графа типов — обычное чтение памяти без
+  аллокаций и без поиска по строкам.
+- Атрибуты хранятся как готовые значения своих структур, а не как строки:
+  `field.Attribute<json>()` возвращает `*json` или `nil` за O(1) по
+  количеству атрибутов поля.
+- Интерфейсные значения и `*T` несут указатель на `TypeInfo`, поэтому
+  `reflect.TypeOf(x)` — одно чтение.
+- **Урезание**: таблицы генерируются только для типов, которые достижимы
+  из `reflect.TypeOf`, `typeof`, сериализаторов и `@reflect`. Остальные
+  типы не раздувают бинарник. Линковщик удаляет неиспользуемые таблицы.
+
+### API (`std.reflect`)
+
+```slang
+var t = reflect.TypeOf<User>()         // статически, без значения
+var t2 = typeof(u)                     // по значению, встроенная функция
+
+t.Name                                 // "User"
+t.FullName                             // "app.models.User"
+t.Kind                                 // reflect.Kind.Struct
+for f in t.Fields {
+    println(f.Name, f.Type.Name, f.Offset)
+    var tag = f.Attribute<json>()      // *json или nil
+    if tag != nil && tag.skip { continue }
+}
+
+var v = reflect.ValueOf(&u)            // reflect.Value: {ptr, type}
+v.Field("Email").Set("a@b.c")          // проверка типа во время выполнения
+var email = v.Field("Email").Get<string>()
+
+var m = t.Method("Store")              // *MethodInfo или nil
+var res = m.Call(&u)?                  // вызов через указатель на функцию
+var fresh = t.New()                    // новое нулевое значение в куче, *User как any
+
+for variant in reflect.TypeOf<Color>().Variants { println(variant.Name) }
+```
+
+- `reflect.Value` — пара `{указатель, *TypeInfo}` на стеке, без boxing.
+  Чтение поля — сложение смещения; запись проверяет совместимость типов.
+- `Call` принимает аргументы как `[]any` только в универсальной форме;
+  типизированная форма `m.Call<func(*User) void!>()` возвращает обычный
+  указатель на функцию и вызывает его напрямую, без накладных расходов.
+- `any` — пустой интерфейс (`interface {}`); значения в нём несут
+  `TypeInfo`, поэтому `switch x { case User u: }` работает за одно сравнение
+  указателей.
+
+### Статическая рефлексия (нулевая стоимость)
+
+Для сериализаторов и ORM обычная рефлексия всё же обходит таблицы во
+время выполнения. Вторая половина механизма — **compile-time рефлексия**
+в generic-коде: компилятор раскрывает обход полей на этапе компиляции,
+когда тип известен (мономорфизация).
+
+```slang
+func ToJson<T>(value T) string {
+    var b = strings.Builder{}
+    b.Write("{")
+    for f in reflect.Fields<T>() {       // разворачивается при компиляции
+        var tag = f.Attribute<json>()    // константа
+        if tag != nil && tag.skip { continue }
+        b.Write(fmt.Format("\"{0}\":", tag?.name ?? f.Name))
+        b.Write(ToJson(f.Get(value)))   // прямой доступ к полю, без reflect.Value
+    }
+    b.Write("}")
+    return b.String()
+}
+```
+
+`reflect.Fields<T>()` в generic-функции — не вызов, а инструкция
+компилятору: цикл раскрывается в прямые обращения `value.Id`, `value.Email`
+и т. д. Результат — скорость ручного кода (как у `serde` в Rust или
+source generators в C#), без генерации исходников и без отдельного шага
+сборки. Тот же `std.encoding.json` использует это и не падает в
+медленный путь, если тип известен статически.
+
+### Сравнение
+
+| | Go | C# | Slang |
+|---|---|---|---|
+| Метаданные | runtime таблицы | metadata + JIT | статические таблицы, урезаемые |
+| Теги полей | строки `json:"id"` | типизированные атрибуты | типизированные атрибуты, проверяются компилятором |
+| Вызов метода | `Value.Call` с boxing | `MethodInfo.Invoke`, boxing, медленно | указатель на функцию, типизированный `Call<F>` |
+| Enum | нет | есть | варианты с полями |
+| Нулевая стоимость | нет | source generators (отдельный шаг) | `reflect.Fields<T>()` в generics |
+| Создание типов в рантайме | нет | `Reflection.Emit` | нет (сознательно) |
+
 ## Память
 
 - Значения (структуры, массивы фиксированной длины, примитивы) — на стеке.
@@ -531,7 +657,7 @@ async func main() {
 | `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты |
 | `std.random` | ГПСЧ для не-криптографических задач |
 | `std.sync` | атомики, `Once`, `RwMutex` |
-| `std.reflect` | минимальная рефлексия для `json` и подобных |
+| `std.reflect` | `TypeOf<T>`, `ValueOf`, `TypeInfo`/`FieldInfo`/`MethodInfo`, атрибуты, compile-time `Fields<T>()` (см. раздел «Рефлексия») |
 | `std.process` | запуск внешних процессов, пайпы |
 | `std.uuid` | генерация и разбор UUID |
 
@@ -557,6 +683,9 @@ slang test ./src              # тесты (func Test*)
 ```
 
 - Расширение файлов: `.sl`.
+- Компилятор — библиотека; LSP-сервер, форматтер, отладчик и IDE-плагины
+  строятся на ней. Подробно: `docs/TOOLING.md`. Каноническая грамматика
+  для IDE: `grammar/slang.bnf`; подсветка VS Code: `editors/vscode/`.
 - Проект описывается файлом `slang.toml` (имя, версия, зависимости, точка
   входа).
 
@@ -611,9 +740,11 @@ async func main() {
 ```
 file        = "namespace" path { import } { decl } ;
 import      = "import" path [ "as" ident ] ;
-decl        = struct | interface | enum | func | var | const ;
+decl        = { attribute } ( struct | interface | enum | func | var | const ) ;
+attribute   = "@" path [ "(" [ attrarg { "," attrarg } ] ")" ] ;
+attrarg     = [ ident ":" ] expr ;
 struct      = "struct" ident "{" { field | method } "}" ;
-field       = ident type ;
+field       = { attribute } ident type ;
 method      = [ "static" ] func ;
 func        = [ "async" ] "func" ident "(" [ params ] ")" [ type ] block ;
 params      = param { "," param } ;
@@ -655,6 +786,10 @@ primary     = literal | ident | path "{" [ fields ] "}" | "new" primary
 8. **Сеть и криптография** — `std.net`, `std.net.http`, `std.crypto.*` через
    BoringSSL/libsodium, `std.encoding.json`.
 9. **Остальная стандартная библиотека** — форматы, сжатие, regex, SQL, log.
+10. **Рефлексия** — атрибуты, таблицы `TypeInfo`, `std.reflect`, compile-time
+    `Fields<T>()`; `std.encoding.json` поверх неё.
+11. **Инструменты** — `slang lsp`, `slang fmt`, DWARF и DAP, плагины для
+    VS Code и IDEA (`docs/TOOLING.md`).
 
 ## Открытые вопросы
 

@@ -1,0 +1,187 @@
+// Slang grammar in IntelliJ Grammar-Kit format.
+// Canonical syntax reference for IDE tooling; keep in sync with DESIGN.md
+// and compiler/src/parser.rs. Generates a PSI parser for the IDEA plugin.
+
+{
+  parserClass="org.slang.lang.parser.SlangParser"
+  extends="com.intellij.extapi.psi.ASTWrapperPsiElement"
+
+  psiClassPrefix="Slang"
+  psiImplClassSuffix="Impl"
+  psiPackage="org.slang.lang.psi"
+  psiImplPackage="org.slang.lang.psi.impl"
+
+  elementTypeHolderClass="org.slang.lang.psi.SlangTypes"
+  elementTypeClass="org.slang.lang.psi.SlangElementType"
+  tokenTypeClass="org.slang.lang.psi.SlangTokenType"
+
+  tokens = [
+    // Keywords
+    NAMESPACE='namespace' IMPORT='import' AS='as'
+    STRUCT='struct' INTERFACE='interface' ENUM='enum'
+    FUNC='func' STATIC='static' ASYNC='async' AWAIT='await'
+    VAR='var' CONST='const'
+    IF='if' ELSE='else' FOR='for' IN='in'
+    SWITCH='switch' CASE='case' DEFAULT='default'
+    RETURN='return' BREAK='break' CONTINUE='continue' DEFER='defer'
+    TRY='try' CATCH='catch' NEW='new'
+    NIL='nil' TRUE='true' FALSE='false' MAP='map' THIS='this'
+
+    // Punctuation
+    LPAREN='(' RPAREN=')' LBRACE='{' RBRACE='}' LBRACKET='[' RBRACKET=']'
+    COMMA=',' DOT='.' DOTDOT='..' COLON=':' SEMI=';'
+    QUESTION='?' BANG='!' ARROW='=>' AT='@'
+    AMP='&' STAR='*' PLUS='+' MINUS='-' SLASH='/' PERCENT='%'
+    PIPE='|' CARET='^' SHL='<<' SHR='>>'
+    ANDAND='&&' OROR='||'
+    LT='<' GT='>' LE='<=' GE='>=' EQEQ='==' NOTEQ='!='
+    ASSIGN='=' PLUSEQ='+=' MINUSEQ='-=' STAREQ='*=' SLASHEQ='/=' PERCENTEQ='%='
+    AMPEQ='&=' PIPEEQ='|=' CARETEQ='^=' SHLEQ='<<=' SHREQ='>>='
+    UNDERSCORE='_'
+
+    // Literals and trivia (regex for the JFlex lexer)
+    LINE_COMMENT='regexp://.*'
+    BLOCK_COMMENT='regexp:/\*([^*]|\*+[^*/])*\*+/'
+    INT_LITERAL='regexp:(0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*)'
+    FLOAT_LITERAL='regexp:[0-9][0-9_]*(\.[0-9][0-9_]*)?([eE][+-]?[0-9]+)?'
+    STRING_LITERAL='regexp:"([^"\\\n]|\\.)*"'
+    CHAR_LITERAL="regexp:'([^'\\\n]|\\.)'"
+    IDENTIFIER='regexp:[a-zA-Z][a-zA-Z0-9_]*'
+    NEWLINE='regexp:\n'
+    WHITE_SPACE='regexp:[ \t\r]+'
+  ]
+
+  // Statement terminators: the lexer layer inserts SEMI at a newline after
+  // IDENTIFIER, literals, RETURN, BREAK, CONTINUE, NIL, TRUE, FALSE, THIS,
+  // UNDERSCORE, RPAREN, RBRACE, RBRACKET, QUESTION, BANG (Go-style).
+  // `eos` below accepts either an explicit or an inserted SEMI.
+}
+
+// ---------------------------------------------------------------------------
+// File
+// ---------------------------------------------------------------------------
+
+file ::= namespace_decl import_decl* top_level_decl*
+
+namespace_decl ::= NAMESPACE qualified_name eos
+import_decl ::= IMPORT qualified_name (AS IDENTIFIER)? eos
+qualified_name ::= IDENTIFIER (DOT IDENTIFIER)*
+
+top_level_decl ::= attribute* (struct_decl | interface_decl | enum_decl | func_decl | var_decl eos | const_decl eos)
+
+// `@json("name")`, `@reflect`, `@deprecated(reason: "...")`
+attribute ::= AT qualified_name attribute_args?
+attribute_args ::= LPAREN (attribute_arg (COMMA attribute_arg)*)? RPAREN
+attribute_arg ::= (IDENTIFIER COLON)? expr
+
+// ---------------------------------------------------------------------------
+// Declarations
+// ---------------------------------------------------------------------------
+
+struct_decl ::= STRUCT IDENTIFIER generic_params? LBRACE struct_member* RBRACE
+struct_member ::= attribute* (method_decl | field_decl | embed_decl) eos?
+field_decl ::= IDENTIFIER type
+embed_decl ::= type
+method_decl ::= STATIC? func_decl
+
+interface_decl ::= INTERFACE IDENTIFIER generic_params? LBRACE (func_signature eos?)* RBRACE
+
+enum_decl ::= ENUM IDENTIFIER LBRACE enum_variant ((COMMA | eos) enum_variant)* (COMMA | eos)? RBRACE
+enum_variant ::= attribute* IDENTIFIER (LPAREN param_list? RPAREN)?
+
+func_decl ::= func_signature block
+func_signature ::= ASYNC? FUNC IDENTIFIER generic_params? LPAREN param_list? RPAREN type?
+param_list ::= param_group (COMMA param_group)* COMMA?
+// `a, b int` groups names under one type, like Go
+param_group ::= IDENTIFIER (COMMA IDENTIFIER)* type
+
+generic_params ::= LT generic_param (COMMA generic_param)* GT
+generic_param ::= IDENTIFIER (COLON type)?
+
+var_decl ::= VAR (IDENTIFIER | var_tuple) type? (ASSIGN expr)?
+var_tuple ::= LPAREN var_name (COMMA var_name)* RPAREN
+var_name ::= IDENTIFIER | UNDERSCORE
+const_decl ::= CONST IDENTIFIER type? ASSIGN expr
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type ::= prefix_type BANG?
+prefix_type ::= pointer_type | slice_type | array_type | map_type | func_type | tuple_type | named_type
+named_type ::= qualified_name generic_args?
+generic_args ::= LT type (COMMA type)* GT
+pointer_type ::= STAR prefix_type
+slice_type ::= LBRACKET RBRACKET prefix_type
+array_type ::= LBRACKET INT_LITERAL RBRACKET prefix_type
+map_type ::= MAP LBRACKET type RBRACKET prefix_type
+func_type ::= FUNC LPAREN (type (COMMA type)*)? RPAREN type?
+tuple_type ::= LPAREN type (COMMA type)+ RPAREN
+
+// ---------------------------------------------------------------------------
+// Statements
+// ---------------------------------------------------------------------------
+
+block ::= LBRACE statement* RBRACE
+statement ::= (var_decl | const_decl | if_stmt | for_stmt | switch_stmt | return_stmt
+             | break_stmt | continue_stmt | defer_stmt | block | assign_stmt | expr_stmt) eos?
+
+if_stmt ::= IF expr block (ELSE (if_stmt | block))?
+
+for_stmt ::= FOR for_header? block
+for_header ::= for_in | expr
+for_in ::= var_name (COMMA var_name)? IN expr
+
+switch_stmt ::= SWITCH expr? LBRACE switch_case* default_case? RBRACE
+switch_case ::= CASE pattern (COMMA pattern)* COLON statement*
+default_case ::= DEFAULT COLON statement*
+pattern ::= range_pattern | type_bind_pattern | expr
+range_pattern ::= expr DOTDOT expr
+type_bind_pattern ::= type IDENTIFIER
+
+return_stmt ::= RETURN (expr (COMMA expr)*)?
+break_stmt ::= BREAK
+continue_stmt ::= CONTINUE
+defer_stmt ::= DEFER expr
+assign_stmt ::= expr assign_op expr
+assign_op ::= ASSIGN | PLUSEQ | MINUSEQ | STAREQ | SLASHEQ | PERCENTEQ | AMPEQ | PIPEEQ | CARETEQ | SHLEQ | SHREQ
+expr_stmt ::= expr
+
+eos ::= SEMI
+
+// ---------------------------------------------------------------------------
+// Expressions (lowest to highest precedence)
+// ---------------------------------------------------------------------------
+
+expr ::= try_expr | lambda_expr | or_expr
+try_expr ::= TRY expr (CATCH var_name block | ELSE else_value)
+else_value ::= CONTINUE | BREAK | return_stmt | expr
+lambda_expr ::= FUNC LPAREN param_list? RPAREN type? block
+              | LPAREN param_list? RPAREN ARROW (block | expr)
+
+or_expr ::= and_expr (OROR and_expr)*
+and_expr ::= cmp_expr (ANDAND cmp_expr)*
+cmp_expr ::= add_expr ((EQEQ | NOTEQ | LT | LE | GT | GE) add_expr)*
+add_expr ::= mul_expr ((PLUS | MINUS | PIPE | CARET) mul_expr)*
+mul_expr ::= unary_expr ((STAR | SLASH | PERCENT | SHL | SHR | AMP) unary_expr)*
+unary_expr ::= (MINUS | BANG | AMP | STAR | AWAIT) unary_expr | postfix_expr
+postfix_expr ::= primary_expr postfix*
+postfix ::= DOT IDENTIFIER
+          | LPAREN arg_list? RPAREN
+          | LBRACKET expr RBRACKET
+          | QUESTION (LPAREN expr RPAREN)?
+arg_list ::= expr (COMMA expr)* COMMA?
+
+primary_expr ::= literal | THIS | NIL
+               | struct_literal | slice_literal | map_literal
+               | NEW primary_expr
+               | LPAREN expr (COMMA expr)* RPAREN
+               | IDENTIFIER
+literal ::= INT_LITERAL | FLOAT_LITERAL | STRING_LITERAL | CHAR_LITERAL | TRUE | FALSE
+
+// `Point{X: 1}`; not allowed directly in if/for/switch headers (Go rule)
+struct_literal ::= qualified_name generic_args? LBRACE (field_init (COMMA field_init)* COMMA?)? RBRACE
+field_init ::= IDENTIFIER COLON expr
+slice_literal ::= LBRACKET (expr (COMMA expr)* COMMA?)? RBRACKET
+map_literal ::= map_type LBRACE (map_entry (COMMA map_entry)* COMMA?)? RBRACE
+map_entry ::= expr COLON expr
