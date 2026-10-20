@@ -310,8 +310,47 @@ var f = try Open("a.txt") catch err {
 }
 ```
 
-- Оборачивание: `error.Wrap(err, "context")` сохраняет исходную ошибку,
-  `error.Unwrap(err)` достаёт её, `error.Is(err, target)` проверяет цепочку.
+### Проверка через цепочку обёрток
+
+Если ошибку обернули контекстом (`?("loading config")` или `errors.Wrap`),
+исходная ошибка сохраняется внутри. Для проверки по цепочке служат
+`errors.Is` и `errors.As`:
+
+```slang
+// Ошибки-значения объявляются как константы и сравниваются через Is
+const ErrNotFound = error("not found")
+const ErrTimeout  = error("timeout")
+
+var cfg = try ReadConfig("app.toml") catch err {
+    if errors.Is(err, fs.ErrNotFound) {
+        cfg = DefaultConfig()           // нет файла: это нормально
+    } else {
+        return err                      // пробросить дальше
+    }
+}
+
+// Достать типизированную ошибку из цепочки
+var nf NotFound
+if errors.As(err, &nf) {
+    println(nf.Path)
+}
+
+// Несколько условий в одном месте
+try Connect(addr) catch err {
+    switch {
+        case errors.Is(err, net.ErrTimeout): retry()
+        case errors.Is(err, net.ErrRefused): return err
+        default:                             panic(err)
+    }
+}
+```
+
+- `errors.Wrap(err, "context")` оборачивает, `errors.Unwrap(err)` достаёт
+  исходную ошибку.
+- `errors.Is(err, target)` — есть ли `target` в цепочке (сравнение по
+  значению).
+- `errors.As(err, &target)` — есть ли в цепочке ошибка типа `target`;
+  если да, записывает её.
 - `panic(msg)` — для невосстановимых ситуаций (баг, нарушение инварианта);
   не используется для ожидаемых ошибок.
 
@@ -439,7 +478,7 @@ async func main() {
 | `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы |
 | `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути |
 | `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат |
-| `std.errors` | `Wrap`, `Unwrap`, `Is`, `New` |
+| `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New` |
 
 ### Сеть и протоколы
 
