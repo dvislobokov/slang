@@ -1,0 +1,229 @@
+# ООП и паттерны в Slang
+
+В Slang нет наследования классов. Четыре механизма заменяют его:
+
+1. **Структуры со встраиванием** — композиция и подъём методов.
+2. **Структурные интерфейсы** — полиморфизм без объявления связи.
+3. **Enum с данными + `switch`** — закрытые множества вариантов.
+4. **Замыкания** — поведение как значение.
+
+Плюс generics для обобщённых контейнеров и алгоритмов. Ниже — как на это
+ложатся привычные паттерны и где кроются отличия от C#/Java.
+
+## Встраивание — это композиция, не наследование
+
+```slang
+struct Base {
+    Name string
+    func Run() { println("run"); this.Step() }
+    func Step() { println("base step") }
+}
+
+struct Derived {
+    Base
+    func Step() { println("derived step") }
+}
+
+var d = Derived{}
+d.Run()      // печатает "run", затем "base step" — НЕ "derived step"
+```
+
+`Base.Run` вызывает `Base.Step`: виртуальной диспетчеризации через
+встраивание нет (как в Go). Это сделано намеренно: поведение `Base` нельзя
+сломать снаружи. Когда нужна подмена шага, используйте интерфейс:
+
+```slang
+interface Stepper { func Step() }
+
+struct Runner {
+    stepper Stepper
+    func Run() { println("run"); this.stepper.Step() }
+    static func New(s Stepper) Runner { return Runner{stepper: s} }
+}
+
+struct Loud { func Step() { println("LOUD") } }
+Runner.New(Loud{}).Run()     // run, LOUD
+```
+
+Это и есть «шаблонный метод» по-слэнговски: изменяемая часть вынесена в
+интерфейс и передаётся явно.
+
+## Таблица паттернов
+
+| Паттерн | Как в Slang |
+|---|---|
+| Стратегия | интерфейс с одним методом или значение `func(...)` |
+| Наблюдатель | срез `[]func(Event)` или интерфейс `Observer`; `events.Hub<T>` в stdlib |
+| Команда | замыкание или структура с методом `Execute()` |
+| Состояние | enum состояний + `switch`, либо интерфейс `State` с переходами |
+| Декоратор | структура, хранящая интерфейс и реализующая его же |
+| Адаптер | структура-обёртка, реализующая целевой интерфейс |
+| Прокси | то же, что декоратор, с ленивой инициализацией или кэшем |
+| Фасад | пространство имён с несколькими функциями |
+| Фабрика | `static func New(...)`; интерфейс `Factory<T>` при необходимости |
+| Строитель | методы-цепочки на `*Builder`; functional options |
+| Синглтон | глобальная `var` + `sync.Once`; чаще — DI-контейнер |
+| Посетитель | enum с данными + исчерпывающий `switch` |
+| Интерпретатор | enum-дерево + рекурсивный `switch` |
+| Компоновщик | интерфейс `Node` + структура со срезом `[]Node` |
+| Итератор | `for x in` поверх срезов/map/коллекций; интерфейс `Iterator<T>` |
+| Цепочка обязанностей | срез обработчиков `[]Handler` или middleware `func(ctx, next)` |
+| Внедрение зависимостей | поля-интерфейсы + конструктор; контейнер в `slang.web` |
+| Repository / Unit of Work | интерфейсы + generics (`Repo<T>`), `slang.data` |
+
+## Примеры
+
+### Декоратор
+
+```slang
+struct Cached {
+    inner Store
+    cache map[string]string
+
+    static func New(inner Store) Cached {
+        return Cached{inner: inner, cache: map[string]string{}}
+    }
+
+    func Get(key string) string! {
+        if this.cache.Has(key) {
+            return this.cache[key]
+        }
+        var v = this.inner.Get(key)?
+        this.cache[key] = v
+        return v
+    }
+
+    func Set(key, value string) void! {
+        this.inner.Set(key, value)?
+        this.cache[key] = value
+    }
+}
+
+var s Store = Cached.New(DiskStore{Path: "/tmp"})   // Cached тоже Store
+```
+
+### Строитель с functional options
+
+```slang
+struct Server {
+    addr    string
+    timeout int
+
+    static func New(addr string, opts ...func(*Server)) Server {
+        var s = Server{addr: addr, timeout: 30}
+        for opt in opts { opt(&s) }
+        return s
+    }
+}
+
+func WithTimeout(sec int) func(*Server) {
+    return (s *Server) => { s.timeout = sec }
+}
+
+var srv = Server.New(":8080", WithTimeout(10))
+```
+
+### Посетитель через enum
+
+```slang
+enum Expr {
+    Num(value float)
+    Add(left *Expr, right *Expr)
+    Mul(left *Expr, right *Expr)
+}
+
+func Eval(e *Expr) float {
+    switch *e {
+        case Expr.Num(v):    return v
+        case Expr.Add(l, r): return Eval(l) + Eval(r)
+        case Expr.Mul(l, r): return Eval(l) * Eval(r)
+    }
+}
+```
+
+Один enum и одна функция вместо иерархии классов и интерфейса `Visitor`.
+Новая операция — новая функция; новый вариант — компилятор укажет все
+`switch`, где его нет (для `sealed` множеств, см. ниже).
+
+### Состояние
+
+```slang
+enum OrderState { Created, Paid, Shipped, Delivered, Cancelled }
+
+struct Order {
+    State OrderState
+
+    func Pay() void! {
+        switch this.State {
+            case OrderState.Created: this.State = OrderState.Paid
+            default: return error("cannot pay in state " + string(this.State))
+        }
+    }
+}
+```
+
+### Внедрение зависимостей
+
+```slang
+struct UserService {
+    repo  UserRepo      // интерфейс
+    mail  Mailer        // интерфейс
+    log   log.Logger
+
+    static func New(repo UserRepo, mail Mailer, log log.Logger) UserService {
+        return UserService{repo: repo, mail: mail, log: log}
+    }
+}
+```
+
+В тестах подставляются структуры-заглушки; в `slang.web` контейнер
+собирает граф по типам при компиляции.
+
+## Чего нет и чем заменяется
+
+| В C#/Java | В Slang |
+|---|---|
+| `abstract class` с общими полями и абстрактными методами | интерфейс для контракта + встраиваемая структура для общих полей/методов |
+| `virtual`/`override` | интерфейс, переданный явно (см. «шаблонный метод») |
+| `protected` | приватные (строчные) члены видны всему пространству имён |
+| Глубокие иерархии | плоские структуры, композиция из нескольких встраиваний |
+| `base.Method()` | `this.Base.Method()` — явный вызов встроенного |
+| `is`/`as` с классами | `switch x { case T v: }`, работает для интерфейсов и `any` |
+| Перегрузка методов | разные имена или generics; нет перегрузки по типам |
+| Перегрузка операторов | нет; методы `Add`, `Equals`, `Compare`; `Ordered`/`Equatable` для generics |
+| Свойства с геттерами/сеттерами | поля; метод, если нужна логика; `@observable` в GUI генерирует уведомления |
+| События (`event`) | `events.Hub<T>` или срез обработчиков |
+| Исключения и иерархия исключений | значения-ошибки, типизированные структуры, `errors.As` |
+
+## Расширения языка для паттернов
+
+Три небольших дополнения, которые закрывают оставшиеся неудобства без
+наследования:
+
+1. **Методы по умолчанию в интерфейсах.** Интерфейс может содержать метод
+   с телом, выраженный через остальные методы интерфейса. Реализация
+   обязана дать только абстрактные методы.
+
+   ```slang
+   interface Logger {
+       func Log(level int, msg string)
+       func Info(msg string)  { this.Log(1, msg) }
+       func Error(msg string) { this.Log(3, msg) }
+   }
+   ```
+
+   Это не наследование состояния: у интерфейса нет полей, `this` внутри
+   тела — значение интерфейса.
+
+2. **Встраивание интерфейсов.** `interface ReadWriter { Reader; Writer }`
+   объединяет методы.
+
+3. **`sealed` интерфейсы.** Реализовать `sealed interface Shape` можно
+   только в том же пространстве имён. Тогда компилятор знает все
+   реализации, и `switch` по типу проверяется на полноту так же, как для
+   enum. Это закрытые иерархии: узлы AST, события, команды.
+
+4. **Опциональная проверка `implements`.** `struct Circle implements Shape`
+   ничего не меняет в семантике (интерфейсы остаются структурными), но
+   ошибка «не реализует» показывается на объявлении структуры, а не в
+   далёком месте использования. Удобно для публичных API.

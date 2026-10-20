@@ -240,6 +240,20 @@ func Describe(s Shape) {
 }
 ```
 
+### Методы по умолчанию, встраивание и `sealed`
+
+- Интерфейс может содержать методы с телом, выраженные через остальные его
+  методы; реализация обязана дать только методы без тела. Состояния у
+  интерфейса нет, `this` в таком теле — значение интерфейса.
+- `interface ReadWriter { Reader; Writer }` встраивает интерфейсы.
+- `sealed interface Shape { ... }` — реализации только в том же пространстве
+  имён; `switch` по типу такого интерфейса проверяется на полноту.
+- `struct Circle implements Shape { ... }` — опциональная проверка на месте
+  объявления; семантика интерфейсов остаётся структурной.
+
+Наследования классов нет; встраивание структур — композиция без
+виртуальной диспетчеризации. Как выражать паттерны: `docs/PATTERNS.md`.
+
 ## Перечисления
 
 ```slang
@@ -348,7 +362,7 @@ try Save("out.txt", data) catch err {
 блок. Внутри него `?` переходит в `catch` этого блока, а не возвращает из
 функции:
 
-```slang pending
+```slang
 try {
     var text = io.ReadFile(path)?
     var cfg = ParseConfig(text)?
@@ -1045,7 +1059,8 @@ import      = "import" path [ "as" ident ] ;
 decl        = { attribute } ( struct | interface | enum | func | var | const ) ;
 attribute   = "@" path [ "(" [ attrarg { "," attrarg } ] ")" ] ;
 attrarg     = [ ident ":" ] expr ;
-struct      = "struct" ident "{" { field | method } "}" ;
+struct      = "struct" ident [ "implements" type { "," type } ] "{" { field | method } "}" ;
+interface   = [ "sealed" ] "interface" ident "{" { type | func } "}" ;
 field       = { attribute } ident type ;
 method      = [ "static" ] func ;
 func        = [ "async" ] "func" ident "(" [ params ] ")" [ type ] block ;
