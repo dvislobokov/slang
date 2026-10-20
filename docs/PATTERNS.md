@@ -195,6 +195,60 @@ struct UserService {
 | События (`event`) | `events.Hub<T>` или срез обработчиков |
 | Исключения и иерархия исключений | значения-ошибки, типизированные структуры, `errors.As` |
 
+## Пример: `implements`, методы по умолчанию и `sealed`
+
+```slang
+namespace app.shapes
+
+import std
+import std.io
+
+sealed interface Shape {
+    func Area() float
+    func Name() string
+
+    // Метод по умолчанию: выражен через остальные методы интерфейса.
+    func Describe() string {
+        return fmt.Format("{0} with area {1}", this.Name(), this.Area())
+    }
+}
+
+// Ошибка «не реализует» показывается здесь, а не в месте использования.
+struct Circle implements Shape {
+    R float
+    func Area() float  { return math.Pi * this.R * this.R }
+    func Name() string { return "circle" }
+}
+
+struct Rect implements Shape {
+    W float
+    H float
+    func Area() float  { return this.W * this.H }
+    func Name() string { return "rect" }
+    func Describe() string { return fmt.Format("rect {0}x{1}", this.W, this.H) } // переопределение
+}
+
+func Kind(s Shape) string {
+    // Shape — sealed: switch должен покрыть все реализации, default не нужен.
+    switch s {
+        case Circle c: return "round, r=" + string(c.R)
+        case Rect r:   return "boxy, w=" + string(r.W)
+    }
+}
+
+func main() {
+    var shapes []Shape = [Circle{R: 1}, Rect{W: 2, H: 3}]
+    for s in shapes {
+        println(s.Describe(), "|", Kind(s))
+    }
+}
+```
+
+- `implements` не меняет семантику: интерфейсы структурные, но для `sealed`
+  аннотация обязательна, чтобы компилятор знал все реализации.
+- `this` в методе по умолчанию — значение интерфейса; полей у интерфейса нет.
+- Новая реализация `sealed`-интерфейса подсвечивает каждый неполный `switch`.
+
 ## Расширения языка для паттернов
 
 Три небольших дополнения, которые закрывают оставшиеся неудобства без
