@@ -97,7 +97,8 @@
 | `database/sql`, `sql/driver` | `std.database.sql` | нет | async, `Query<T>` в структуры, пул |
 | `go/*` (ast, parser, types…) | `std.slang.{ast,parser,types}` — экспорт компилятора как библиотеки | частично (внутри компилятора) | — |
 | `debug/elf`, `dwarf`, `pe`, `macho` | `std.debug.*` | нет (для `diag` частично) | — |
-| `plugin` | `std.plugin` (dlopen) | нет | capability-помечен |
+| `plugin` | `std.plugin` (dlopen) | нет | capability-помечен; используется `std.debug` |
+| `runtime/debug` (частично), — | `std.debug` — отладочный агент на Slang (DAP, DWARF, точки, задачи) | нет | см. `docs/DEBUGGER.md` |
 
 ## Уровень 3 — протоколы и сервисы
 
