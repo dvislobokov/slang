@@ -769,7 +769,7 @@ source generators в C#), без генерации исходников и бе
 | `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы |
 | `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (после generics) |
 | `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Timeout` |
-| `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы |
+| `std.os` | аргументы, переменные окружения, `Exit`, `Hostname`, `Pid`, `Cwd`, сигналы (`OnInterrupt`), константы `Name`/`Arch`/`PathSeparator`; единое поведение на Linux, macOS, Windows (`docs/PLATFORMS.md`) |
 | `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути |
 | `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат |
 | `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New`, `Trace`, `Frames` |
@@ -837,6 +837,14 @@ enrichers), `slang.diag` (профилировщик CPU/памяти/задач
 | `std.reflect` | `TypeOf<T>`, `ValueOf`, `TypeInfo`/`FieldInfo`/`MethodInfo`, атрибуты, compile-time `Fields<T>()` (см. раздел «Рефлексия») |
 | `std.process` | запуск внешних процессов, пайпы |
 | `std.uuid` | генерация и разбор UUID |
+
+## Платформы
+
+Linux, macOS и Windows на amd64 и arm64 — tier 1 с CI и релизными
+бинарниками; кросс-компиляция `slang build --target windows-amd64` с
+любой машины через LLVM и вшитый `lld`; условная компиляция `@cfg(os: ...)`
+и суффиксы файлов `_windows.sl`. Платформозависимый код рантайма изолирован
+в `runtime/src/platform/`. Подробно: `docs/PLATFORMS.md`.
 
 ## Компилятор и инструменты
 
