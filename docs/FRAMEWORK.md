@@ -286,6 +286,70 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 - Интеграция: `slang.web` пишет запросы одной строкой на запрос
   (как Serilog RequestLogging), `slang.data` логирует SQL с параметрами.
 
+### Статус реализации (`std.log`)
+
+Пока нет реестра пакетов, логгер живёт в стандартной библиотеке как
+`std.log` (`compiler/src/sema/stdlib_src/log.sl`, C-помощники файлового
+приёмника — `runtime/src/diag.c`). Пример — `examples/log.sl`, тесты —
+`compiler/tests/log_diag.rs`, `tests/spec/stdlib/log_*`.
+
+- **Шаблоны компилируются.** Вызов `logger.Info("...", args)` (у любого
+  `log.Logger` и у `*log.Pipeline`) и `log.Info("...", args)` (логгер по
+  умолчанию) разбирает `sema/logtmpl.rs`: шаблон обязан быть строковым
+  литералом, число плейсхолдеров должно совпадать с числом аргументов
+  (иначе ошибка компиляции: `Logger.Info: the template has 2 placeholders
+  ({UserId}, {Amount}) but 1 argument is given`), синтаксис проверяется
+  (`{Name}`, `{@Name}`, `{$Name}`, `{0}`, `,align`, `:format`, `{{`/`}}`).
+  Вызов опускается в `log.enabled(l, lvl) && log.emit(l, lvl, err, text,
+  parts, names, formats, values)`: литеральные куски, имена и форматы —
+  константы, значения упакованы в `any` (`{@X}` — через
+  `log.destructure<T>` на compile-time рефлексии с `@log(skip: true)`,
+  `{$X}` — текст `println`, числа/строки/bool/ошибки — напрямую, прочее —
+  `log.capture<T>`). Уровень проверяется **до** вычисления аргументов, если
+  получатель — переменная/поле (иначе получатель вычисляется один раз, а
+  уровень проверяет `emit`).
+- Уровни — `log.Level.Verbose/Debug/Information/Warning/Error/Fatal`
+  (а не `log.Debug`: это имя занято функцией `log.Debug("...")`); методы
+  `Verbose`, `Debug`, `Information`/`Info`, `Warning`/`Warn`, `Error`,
+  `Fatal`, каждый принимает ошибку первым аргументом (`Error(err, ...)`
+  добавляет свойства `ErrorMessage` и `ErrorTrace` = `errors.Trace(err)`).
+- Конфигурация: `log.New()`, `MinimumLevel`, `MinimumLevelOverride(prefix,
+  lvl)` (по категории, самый длинный префикс), `MinimumLevelControlledBy(
+  log.NewLevelSwitch(lvl))` (смена уровня на ходу), `Clock(f)` (тестовые
+  часы), `Enrich.WithProperty/WithMachineName/WithProcessId/FromContext/
+  With(e)/WithFunc(f)`, `WriteTo.Console(log.ConsoleOptions{Template,
+  Stdout, Colors})`, `WriteTo.File(path, log.FileOptions{Template, Json,
+  RollingInterval: log.RollingInterval.Day|Hour|Month|Year, FileSizeLimit,
+  Retain})`, `WriteTo.Json(log.JsonOptions{Path, Stdout})` (CLEF:
+  `@t @mt @m @l @x` + свойства), `WriteTo.Sink(s)`, `WriteTo.Async(s,
+  capacity)` (канал + фоновая задача; `await logger.Close()` дренирует),
+  `Filter.ByExcluding/ByIncludingOnly(func(*log.Event) bool)`,
+  `CreateLogger() log.Logger`.
+- `log.Logger` — интерфейс (`IsEnabled`, `Write`, `ForContext`,
+  `ForCategory`, `Close`); `log.For<T>()` — логгер по умолчанию с
+  категорией `SourceContext` = полное имя `T`; `log.Global()` /
+  `log.SetGlobal(l)` вместо присваиваемого `Log.Logger` (в исходниках stdlib
+  нет глобальных переменных; состояние — в слотах рантайма);
+  `log.CloseAndFlush()`. По умолчанию — `INFO msg` в stderr с уровня
+  Information.
+- `log.Event{Timestamp (Unix мс), Level, Template, Message, Properties
+  map[string]any, Error, Category}` плюс `Keys()` (порядок свойств), `Get`,
+  `Has`, `Set`, `AddIfAbsent`, `Render(literal)`. `Message` отрисован как
+  `{Message:lj}` (строки без кавычек); `{Message}` в шаблоне вывода — с
+  кавычками, как в Serilog. Шаблон вывода: `Timestamp:<формат .NET>`,
+  `Level:u3|w3|t3|u4|w4|u|w`, `Message[:lj]`, `NewLine`, `Exception`,
+  `Properties[:j]`, `SourceContext`/`Category`, любое свойство; форматы
+  чисел `0.00`, `F2`, `N2`, `E2`, `P1`, `D5`, `x`/`X`.
+- `log.Context.Push(name, value)` кладёт свойство в контекст задачи (кадр
+  `task`-контекста с ключом -101, наследуется дочерними задачами) и
+  возвращает `ContextScope`; `scope.Pop()` (нет `using` — пишите `defer
+  scope.Pop()`). `Enrich.FromContext()` добавляет эти свойства и
+  `TraceId`/`SpanId` текущего span'а `std.diag`.
+- Нет: Seq, Elasticsearch/Loki/Splunk/Syslog/OTLP-logs/Email/webhook
+  приёмников, батчинга (кроме `Async`), `Destructure.ByTransforming`,
+  `Enrich.WithRequestId`/потока/окружения, logfmt, интеграции со
+  `slang.web`/`slang.data`, `{@X}` для enum с полями (печатается имя типа).
+
 ## 5. Диагностика: `slang.diag` (аналог pprof и dotnet-counters)
 
 - **Профилирование CPU**: сэмплирующий профилировщик в рантайме
@@ -317,6 +381,59 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   (среднее, p50/p99, аллокации), сравнение с базой (`--compare`).
 - **Отладка**: DWARF по умолчанию, `slang tool debug` поверх lldb с
   форматтерами типов Slang (см. docs/TOOLING.md).
+
+### Статус реализации (`std.diag`)
+
+Живёт в `std.diag` (`compiler/src/sema/stdlib_src/diag.sl`, рантайм —
+`runtime/src/diag.c`, `runtime/src/profile.c`, сэмплер в
+`runtime/src/platform/posix.c`). Примеры — `examples/metrics.sl`,
+`examples/tracing.sl`, `examples/cpuprofile.sl`; тесты —
+`compiler/tests/log_diag.rs`.
+
+- **Метрики**: `diag.NewCounter(name, help, labels)` (`Inc`, `Add`,
+  `With(values)`, `Value`), `NewGauge` (`Set`, `Inc`, `Dec`, `Add`, `Sub`),
+  `NewHistogram(name, help, labels, buckets)` (`Observe`; `DefBuckets()`);
+  повторная регистрация имени возвращает то же семейство.
+  `diag.PrometheusText()` — формат 0.0.4; `diag.ServeMetrics` — функция-
+  обработчик для `Router` (`r.Get("/metrics", diag.ServeMetrics)`),
+  `diag.MetricsHandler()` — `http.Handler`. Рантайм: `diag.Runtime()`
+  (`LiveObjects`, `Allocations`, `Tasks`, `QueueLength`, `Workers`) и
+  `diag.EnableRuntimeMetrics()` (метрики `slang_*` в `PrometheusText`).
+- **Трассировка**: `diag.StartSpan(name)` / `StartSpanKind(name, kind)` →
+  `*diag.Span` (поля OpenTelemetry: `TraceId` 16 байт hex, `SpanId` 8,
+  `ParentSpanId`, `Kind`, `StartNanos`/`EndNanos`, `Attributes`, `Status`,
+  `StatusMessage`), `SetAttribute`, `SetStatus`, `RecordError`, `defer
+  span.End()`. Текущий span — кадр контекста задачи (ключ -102):
+  наследуется дочерними задачами, а изменения внутри `async`-функции не
+  видны вызывающему (рантайм восстанавливает контекст вызывающего при
+  первой приостановке, ABI.md 10.8). `diag.AddExporter(e)`, интерфейс
+  `diag.Exporter`, `diag.ConsoleExporter{ShowDuration}`,
+  `diag.NewOtlpExporter(endpoint)` (OTLP/HTTP JSON на `/v1/traces`,
+  пачками по `BatchSize`, остаток — `await diag.Shutdown()`),
+  `diag.SetTraceSeed(seed, clock)` для воспроизводимых id и времени.
+  W3C `traceparent`: `http.Client` добавляет заголовок текущего span'а,
+  `http.Server` делает span из заголовка родителем на время обработчика;
+  `diag.Traceparent()`, `diag.ParseTraceparent(h)`.
+- **CPU-профиль**: `diag.StartCPUProfile(path)` / `StartCPUProfileRate`,
+  `diag.StopCPUProfile() int!` (число сэмплов). `ITIMER_PROF` + `SIGPROF`,
+  обработчик обходит frame pointers в пределах стека потока (границы
+  запоминаются при старте воркеров) и пишет в предвыделенный буфер без
+  блокировок; при остановке адреса символизируются по `.symtab`
+  исполняемого файла (ELF, Linux; иначе `dladdr`) и записываются в
+  `profile.proto` (ручное protobuf-кодирование, без сжатия). Код Slang
+  собирается с `"frame-pointer"="all"`, рантайм — с
+  `-fno-omit-frame-pointer`. Проверено `go tool pprof -top`:
+  `demo.p1.fib` flat, `spin`/`main` — cum. Сборки `--release` стрипаются,
+  поэтому в их профилях только адреса.
+- **Heap**: `diag.WriteHeapProfile(path)` (pprof, `inuse_objects` /
+  `inuse_space` по типам) и `diag.HeapProfile()` (текст) — из списка живых
+  объектов детектора утечек, поэтому только под `slang run --leak-check`
+  без `--release`; места аллокаций и сэмплирование `allocs` — нет.
+- **CLI**: `slang tool pprof [флаги] файл` вызывает `go tool pprof` (или
+  `pprof`).
+- Нет: эндпоинтов `/debug/pprof/*`, профилей задач/блокировок, `diag.Trace`
+  (Perfetto), `slang tool trace/counters/dump/stack`, сокета диагностики,
+  `@bench`/`slang bench`, `traceparent` в SQL, сэмплера на Windows.
 
 ## 6. Прочие «плюшки» уровня .NET
 

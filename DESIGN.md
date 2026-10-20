@@ -196,7 +196,7 @@ struct User {
   (аргументы и значения полей по умолчанию), вшитое в таблицы рефлексии;
   у встроенных это структуры `std.reflect` (`json`, `deprecated`, ...).
   Читается через `Attribute<A>()` / `Attributes<A>()` (раздел «Рефлексия»).
-- Библиотечные: `@json`, `@xml`, `@db(column: "...")`, `@validate(...)`.
+- Библиотечные: `@json`, `@log(skip: true)` (поле не попадает в `{@X}` логгера), `@xml`, `@db(column: "...")`, `@validate(...)`.
 - Неизвестный атрибут — ошибка компиляции (в отличие от строковых тегов Go).
 
 ### Свои атрибуты
@@ -304,8 +304,7 @@ func Describe(s Shape) {
 - Операнды одного типа `T`; смешанные типы — через явные методы.
 - Компилятор вызывает метод напрямую (без динамической диспетчеризации),
   в generic-коде `T: Add` даёт `+` на `T`.
-- Используется `std.tensor`, `std.math.Decimal`, `std.time.Duration`,
-  `std.big`; см. `docs/ML.md`.
+- Используется `std.math.Decimal`, `std.time.Duration`, `std.big`.
 
 ## Перечисления
 
@@ -937,7 +936,7 @@ for variant in reflect.TypeOf<Color>().Variants { println(variant.Name) }
   указателей.
 - Встроенные атрибуты со значениями — структуры `std.reflect`: `json`
   (`name string`, `omitEmpty bool`, `skip bool`), `deprecated`
-  (`message string`), `inline`, `test`; имя атрибута можно писать как тип
+  (`message string`), `inline`, `test`, `log` (`skip bool`); имя атрибута можно писать как тип
   (`f.Attribute<json>()`), а поля этих структур читаются из любого
   пространства имён. `@attribute` и `@reflect` в списках атрибутов не
   появляются.
@@ -1074,6 +1073,10 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   передачи (`task.Spawn(ctx, fn)`, колбэки из C, пулы).
 - Реализация: неизменяемый список кадров; `With` — один кадр, `Get` — проход
   по списку, наследование — копия указателя.
+- Значения, установленные внутри `async`-функции (`task.With`, span'ы
+  `diag.StartSpan`, `log.Context.Push`), не видны вызывающему после
+  первой приостановки или завершения функции: рантайм возвращает контекст
+  вызывающего (runtime/ABI.md, 10.8).
 - Используется `slang.diag` (текущий span), `slang.log` (`Enrich.FromContext`),
   `http.Client` и `sql` (автоматический `traceparent`), DI-scope в `slang.web`.
 
@@ -1365,7 +1368,8 @@ accessibility из коробки, hot reload, `ui.TestHost` для CI. Подр
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.log` | базовый интерфейс `Logger`; полноценный логгер уровня Serilog — `slang.log` (docs/FRAMEWORK.md) |
+| `std.log` | логгер уровня Serilog (docs/FRAMEWORK.md, раздел 4); пока нет реестра пакетов, живёт в `std.log` вместо `slang.log` |
+| `std.diag` | метрики (Prometheus), трассировка (OpenTelemetry, W3C traceparent), профили CPU/heap в формате pprof (docs/FRAMEWORK.md, раздел 5); вместо `slang.diag` |
 | `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты |
 | `std.random` | ГПСЧ для не-криптографических задач |
 | `std.sync` | атомики, `Once`, `RwMutex` |
@@ -1375,8 +1379,19 @@ accessibility из коробки, hot reload, `ui.TestHost` для CI. Подр
 
 Реализовано: `std.random` — `Seed`, `Int`, `IntN`, `Float`, `Bytes`,
 `Shuffle` (только `[]int` до generics; xoshiro256**, общий для процесса
-генератор под мьютексом); `std.uuid` — `New` (v4), `IsValid`. Остальное —
-пока нет.
+генератор под мьютексом); `std.uuid` — `New` (v4), `IsValid`;
+`std.log` — `New()…CreateLogger()` (`MinimumLevel`, `MinimumLevelOverride`,
+`MinimumLevelControlledBy`, `Clock`, `Enrich.*`, `WriteTo.Console/File/Json/
+Sink/Async`, `Filter.*`), интерфейсы `Logger`/`Sink`/`Enricher`, `Event`,
+`Global`/`SetGlobal`, `For<T>`, `Context.Push`, шаблоны сообщений,
+разбираемые при компиляции (`sema/logtmpl.rs`), атрибут `@log(skip:)`;
+`std.diag` — `NewCounter`/`NewGauge`/`NewHistogram` с метками,
+`PrometheusText`, `ServeMetrics`/`MetricsHandler`, `Runtime()`, `Span`
+(`StartSpan`, `End`, атрибуты, статус), `ConsoleExporter`, `OtlpExporter`
+(OTLP/HTTP JSON), `traceparent` в `http.Client`/`http.Server`,
+`StartCPUProfile`/`StopCPUProfile`, `WriteHeapProfile`/`HeapProfile`
+(подробности и пробелы — docs/FRAMEWORK.md, «Статус»). Остальное — пока
+нет.
 
 ## Платформы
 
