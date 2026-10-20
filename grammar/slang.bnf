@@ -45,6 +45,7 @@
     INT_LITERAL='regexp:(0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*)'
     FLOAT_LITERAL='regexp:[0-9][0-9_]*(\.[0-9][0-9_]*)?([eE][+-]?[0-9]+)?'
     STRING_LITERAL='regexp:"([^"\\\n]|\\.)*"'
+    RAW_STRING_LITERAL='regexp:`[^`]*`'
     CHAR_LITERAL="regexp:'([^'\\\n]|\\.)'"
     IDENTIFIER='regexp:[a-zA-Z][a-zA-Z0-9_]*'
     NEWLINE='regexp:\n'
@@ -196,7 +197,7 @@ primary_expr ::= literal | THIS | NIL
                | NEW primary_expr
                | LPAREN expr (COMMA expr)* RPAREN
                | IDENTIFIER
-literal ::= INT_LITERAL | FLOAT_LITERAL | STRING_LITERAL | CHAR_LITERAL | TRUE | FALSE
+literal ::= INT_LITERAL | FLOAT_LITERAL | STRING_LITERAL | RAW_STRING_LITERAL | CHAR_LITERAL | TRUE | FALSE
 
 // `Point{X: 1}`; not allowed directly in if/for/switch headers (Go rule)
 struct_literal ::= qualified_name generic_args? LBRACE (field_init (COMMA field_init)* COMMA?)? RBRACE
