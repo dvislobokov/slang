@@ -1269,7 +1269,7 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   Proto, Headers, Body, Params, RemoteAddr}` с `Header`, `Param`,
   `QueryValue`; `ParseURL`, `ParseQuery`, `StatusText`, `CanonicalHeader`.
   Нет: TLS, HTTP/2, пула соединений клиента, middleware.
-| `std.net.tls` | Собственная реализация **TLS 1.3** (без 1.2): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Slang; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `slang.web` |
+| `std.net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Slang; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `slang.web` |
 | `std.net.ws` | WebSocket клиент и сервер |
 | `std.net.url` | разбор и сборка URL, query-параметры |
 | `std.net.mail` | отправка писем по SMTP |

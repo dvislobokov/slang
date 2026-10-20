@@ -81,17 +81,24 @@ switch any {
 
 Собственная реализация, сразу, без BoringSSL/OpenSSL:
 
-- **Только TLS 1.3**: один handshake, cipher suites `AES_128_GCM_SHA256`,
-  `AES_256_GCM_SHA384`, `CHACHA20_POLY1305_SHA256`; обмен ключами X25519 и
-  P-256; подписи Ed25519, ECDSA P-256, RSA-PSS (проверка сертификатов).
-  Без TLS 1.2, RSA key exchange, renegotiation, CBC. 0-RTT выключен.
+- **TLS 1.3**: cipher suites `AES_128_GCM_SHA256`, `AES_256_GCM_SHA384`,
+  `CHACHA20_POLY1305_SHA256`; обмен ключами X25519 и P-256; подписи Ed25519,
+  ECDSA P-256, RSA-PSS. 0-RTT выключен.
+- **TLS 1.2 в современном подмножестве**: только ECDHE (X25519, P-256) и
+  только AEAD: `ECDHE_ECDSA/ECDHE_RSA_WITH_AES_128/256_GCM_SHA256/384`,
+  `ECDHE_*_WITH_CHACHA20_POLY1305_SHA256`; подписи ECDSA, RSA-PKCS1 и RSA-PSS;
+  `extended_master_secret` и `encrypt_then_mac` обязательны, session tickets
+  (RFC 5077). Без RSA key exchange, CBC, RC4, 3DES, SHA-1-suites, compression,
+  renegotiation, SSLv3/TLS 1.0/1.1. По умолчанию `MinVersion: tls.V12`;
+  клиент предлагает 1.3 и откатывается на 1.2 по правилам RFC 8446 с защитой
+  от downgrade (`DOWNGRD` sentinel в ServerHello.random).
 - **Протокол на Slang**: машина состояний handshake, record layer, HKDF и
   расписание ключей, X.509-парсер (DER) и проверка цепочек, SNI, ALPN,
   session tickets, OCSP stapling, горячая перезагрузка сертификатов.
 - **Примитивы на C** в рантайме с константным временем (AES-GCM,
   ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS, SHA-2, HMAC, HKDF);
   AES-NI/NEON через intrinsics; в wasm — чистый C.
-- **Тесты**: трассы RFC 8448 байт в байт, векторы Wycheproof для каждого
+- **Тесты**: трассы RFC 8448 (1.3) байт в байт, тестовые handshake 1.2 против OpenSSL с фиксированными ключами, векторы Wycheproof для каждого
   примитива, interop с `openssl s_server`/`s_client` и `curl` в CI, fuzzing
   record layer и X.509 через libFuzzer. До внешнего аудита — пометка в
   документации.
