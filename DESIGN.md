@@ -795,11 +795,16 @@ async func main() {
   ожидающему (FIFO). `task.Spawn(f)` запускает `f` на воркере,
   `task.Yield()` уступает поток, `await task.Timeout(t, ms)` — `true`, если
   `t` завершилась за `ms` мс (иначе `false`, `t` продолжает работать).
-- Контекст задачи: `task.RunWith(ctx, f)` запускает `f` с контекстом `ctx`
-  (`task.CurrentContext().With("user", "ann")`); его видят все `await`,
-  вызовы и `Spawn` внутри, а вызывающий код — нет. Значения читаются
-  `task.Value<string>("user")` (`T!`: ошибка, если ключа нет или тип иной).
-  Это основа для `log.Context` и трассировки (docs/FRAMEWORK.md).
+- Контекст задачи (значения и отмена) — см. «Отмена и структурированная
+  конкурентность» и «Значения в контексте задачи» ниже. Реализация v1:
+  `task.Spawn(f)` требует результата (`Spawn<void>` невыразим), для
+  `func() Task<void>` есть `task.Go(f)`; явный контекст —
+  `task.SpawnWith(ctx, f)` (перегрузки нет); ключи — `var K = task.Key<T>()`
+  (не `const`: вызов не константное выражение). Отменённое ожидание с
+  результатом `T!` (`Recv`, сеть) возвращает `task.ErrCancelled`; `Delay` и
+  `Send` просыпаются сразу, но ошибку вернуть не могут — проверка
+  `task.CheckCancelled()?`; `Mutex.Lock` не отменяется; `await` чужой задачи
+  ждёт её завершения (runtime/ABI.md §10.11).
 - Методы интерфейсов не бывают `async`: асинхронный метод интерфейса
   объявляется как возвращающий `Task<T>` и реализуется вызовом `async`
   функции (так устроен `http.Handler`).
@@ -1217,7 +1222,7 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 | `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё (`Builder{}` с `Write`, `String`, `Len`, `Reset`), плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
 | `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
 | `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓ |
-| `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, контекст задачи `Context` (`Get<V>(key) V!`, `Has`, `With(key, value any) Context`, `Keys`), `CurrentContext()`, `RunWith(ctx, f)`, `Value<V>(key) V!` |
+| `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, `Go(f func() Task<void>)`; значения контекста `Key<T>()`, `Get(key) *T`, `With(key, value, f)`, `CurrentContext() Context`, `RunWith(ctx, f)`, `SpawnWith(ctx, f)`; отмена `NewCancel() CancelHandle` (`Context`, `Cancel()`, `IsCancelled()`), `WithTimeout(ms, f)`, `CheckCancelled() void!`, `IsCancelled()`, `ErrCancelled`; `Any` отменяет проигравших. Нет: `Scope`, `WithDeadline`, `OnCancel`, отмены остальных в `All` |
 | `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; нет процессов и сигналов |
 | `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir`; `fs.ErrNotFound` — ошибка-константа, которую оборачивают все ошибки «файл не найден» (`errors.Is(err, fs.ErrNotFound)`) |
 | `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; нет `Duration`/`Timer` (нужны типы в stdlib) |
@@ -1264,7 +1269,7 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   Proto, Headers, Body, Params, RemoteAddr}` с `Header`, `Param`,
   `QueryValue`; `ParseURL`, `ParseQuery`, `StatusText`, `CanonicalHeader`.
   Нет: TLS, HTTP/2, пула соединений клиента, middleware.
-| `std.net.tls` | TLS 1.3/1.2 клиент и сервер поверх async-сокетов: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`, SNI, session resumption, горячая перезагрузка сертификатов, системные корни через слой платформы. Этап 1 — BoringSSL статически через memory BIO (линкуется только при использовании); этап 2 — собственная реализация TLS 1.3 на Slang поверх `std.crypto`; ACME в `slang.web` |
+| `std.net.tls` | Собственная реализация **TLS 1.3** (без 1.2): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Slang; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `slang.web` |
 | `std.net.ws` | WebSocket клиент и сервер |
 | `std.net.url` | разбор и сборка URL, query-параметры |
 | `std.net.mail` | отправка писем по SMTP |
@@ -1284,9 +1289,10 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 | `std.crypto.x509` | разбор и проверка сертификатов, PEM/DER |
 | `std.crypto.password` | `Hash`/`Verify` на базе Argon2 для паролей |
 
-Реализация: первая версия линкуется с проверенными C-библиотеками (BoringSSL
-или libsodium), чтобы не писать криптографию самостоятельно. Интерфейс
-стабилен, бэкенд можно заменить.
+Реализация: примитивы — на C в рантайме, по проверенным реализациям с
+константным временем (без ветвлений и обращений к памяти по секретам),
+с векторами Wycheproof и RFC в тестах; протоколы (TLS, x509, JWT) — на Slang.
+Внешних криптобиблиотек нет; до внешнего аудита это отмечено в документации.
 
 Реализовано: `std.crypto.hash` — `Sha256`, `Sha512`, `Sha1`, `Md5` (`[]byte`)
 и их `...Hex` (строка), `Crc32`; `std.crypto.hmac` — `Sha256`, `Sha256Hex`,

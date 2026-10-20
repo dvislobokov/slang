@@ -79,21 +79,28 @@ switch any {
 
 ### TLS
 
-- `std.net.tls`: этап 1 — BoringSSL, статически, за нашим API, интегрирован с
-  планировщиком через memory BIO (шифрование в буферы, ввод-вывод — наши
-  async-сокеты, без потока на соединение). Линкуется только если пакет
-  использует TLS (+1.5–2 MB к бинарнику). Этап 2 — собственный TLS 1.3 на
-  Slang, как `crypto/tls` в Go, для кросс-компиляции и wasm.
-- Клиент: `tls.Dial`, SNI, ALPN (`h2`), session resumption, системные корни
-  через `runtime/src/platform/` (Linux `/etc/ssl/certs`, macOS Security.framework,
-  Windows CryptoAPI), `RootCAs`, mTLS через `ClientCert`,
-  `InsecureSkipVerify` только явно.
-- Сервер: несколько сертификатов по SNI, горячая перезагрузка без рестарта,
-  OCSP stapling, `ClientAuth: RequireAndVerify`, `MinVersion: tls.V13`,
-  0-RTT выключен по умолчанию.
-- `http.Get("https://...")` и `http.Server{TLS: ...}` используют это
-  автоматически; `slang.web` добавляет `web.AutoTLS("example.com")` через
-  ACME (Let's Encrypt), как Caddy.
+Собственная реализация, сразу, без BoringSSL/OpenSSL:
+
+- **Только TLS 1.3**: один handshake, cipher suites `AES_128_GCM_SHA256`,
+  `AES_256_GCM_SHA384`, `CHACHA20_POLY1305_SHA256`; обмен ключами X25519 и
+  P-256; подписи Ed25519, ECDSA P-256, RSA-PSS (проверка сертификатов).
+  Без TLS 1.2, RSA key exchange, renegotiation, CBC. 0-RTT выключен.
+- **Протокол на Slang**: машина состояний handshake, record layer, HKDF и
+  расписание ключей, X.509-парсер (DER) и проверка цепочек, SNI, ALPN,
+  session tickets, OCSP stapling, горячая перезагрузка сертификатов.
+- **Примитивы на C** в рантайме с константным временем (AES-GCM,
+  ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS, SHA-2, HMAC, HKDF);
+  AES-NI/NEON через intrinsics; в wasm — чистый C.
+- **Тесты**: трассы RFC 8448 байт в байт, векторы Wycheproof для каждого
+  примитива, interop с `openssl s_server`/`s_client` и `curl` в CI, fuzzing
+  record layer и X.509 через libFuzzer. До внешнего аудита — пометка в
+  документации.
+- **Интеграция**: шифрование в буферы, ввод-вывод — наши async-сокеты, без
+  потока на соединение; `http.Get("https://...")`, `http.Server{TLS: ...}`,
+  `h2` через ALPN; системные корни через `runtime/src/platform/`;
+  `web.AutoTLS("example.com")` через ACME в `slang.web`.
+- **Результат**: TLS добавляет ~300–400 KB к бинарнику, одна сборка под
+  все платформы, wasm и мобильные без C-зависимостей.
 
 ### `slang.web` (фреймворк)
 
