@@ -1,0 +1,22 @@
+namespace bench.strs
+
+import std
+import std.io
+
+func main() {
+    var parts []string = []
+    for i in 0..200000 {
+        parts = append(parts, "item" + string(char(97 + i % 26)))
+    }
+    var joined = strings.Join(parts, ",")
+    var total = 0
+    for _ in 0..20 {
+        var split = strings.Split(joined, ",")
+        var upper = strings.ToUpper(joined)
+        total += len(split) + len(upper)
+        if strings.Contains(upper, "ITEMZ") {
+            total += 1
+        }
+    }
+    println(len(joined), total)
+}

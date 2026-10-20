@@ -1,0 +1,30 @@
+namespace bench.sieve
+
+import std.io
+
+func CountPrimes(n int) int {
+    var sieve []bool = []
+    for _ in 0..n + 1 {
+        sieve = append(sieve, true)
+    }
+    var count = 0
+    for i in 2..n + 1 {
+        if sieve[i] {
+            count += 1
+            var j = i * i
+            for j <= n {
+                sieve[j] = false
+                j += i
+            }
+        }
+    }
+    return count
+}
+
+func main() {
+    var total = 0
+    for _ in 0..5 {
+        total += CountPrimes(10000000)
+    }
+    println(total)
+}

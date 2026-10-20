@@ -1,0 +1,15 @@
+namespace bench.maps
+
+import std.io
+
+func main() {
+    var m = map[int]int{}
+    for i in 0..2000000 {
+        m[i * 7919 % 1000003] += i
+    }
+    var sum = 0
+    for i in 0..2000000 {
+        sum += m[i % 1000003]
+    }
+    println(len(m), sum)
+}
