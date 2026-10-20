@@ -174,6 +174,52 @@ struct User {
 - Библиотечные: `@json`, `@xml`, `@db(column: "...")`, `@validate(...)`.
 - Неизвестный атрибут — ошибка компиляции (в отличие от строковых тегов Go).
 
+### Свои атрибуты
+
+Атрибут объявляется как структура с `@attribute`. Поля — параметры,
+значения по умолчанию допускаются.
+
+```slang
+namespace app.validation
+
+import std.reflect
+
+@attribute(targets: [reflect.Target.Field])
+struct range {
+    min int
+    max int
+    message string = "value out of range"
+}
+
+@attribute(targets: [reflect.Target.Struct, reflect.Target.Func], repeatable: true)
+struct tag {
+    name string
+}
+```
+
+```slang
+@tag("entity")
+@tag("audited")
+struct User {
+    @range(min: 0, max: 150)  Age  int
+    @range(1, 64)             Name string   // позиционно, по порядку полей
+}
+```
+
+- Аргументы передаются по имени или позиционно; поля со значением по
+  умолчанию можно опустить. Один параметр — короткая форма `@deprecated("why")`.
+- `targets` ограничивает места применения: `Namespace`, `Struct`,
+  `Interface`, `Enum`, `Variant`, `Field`, `Func`, `Param`. Без указания —
+  везде. Нарушение — ошибка компиляции.
+- `repeatable: true` разрешает несколько одинаковых атрибутов на одном
+  объявлении; иначе повтор — ошибка.
+- Допустимые типы параметров: примитивы, `string`, enum, срезы из них и
+  другие атрибут-структуры. Значения вычисляются при компиляции.
+- Атрибут — только данные. Он не выполняет код при компиляции и не меняет
+  генерируемый код; поведение живёт в библиотеке, которая его читает
+  (через `f.Attribute<range>()`, `f.Attributes<tag>()` для повторяемых, или
+  compile-time `reflect.Fields<T>()`, см. раздел «Рефлексия»).
+
 ## Интерфейсы
 
 Структурная типизация, как в Go: структура реализует интерфейс, если имеет
