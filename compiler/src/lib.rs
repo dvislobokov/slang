@@ -3,8 +3,11 @@
 
 pub mod ast;
 pub mod diagnostics;
+pub mod driver;
+pub mod hir;
 pub mod lexer;
 pub mod parser;
+pub mod sema;
 pub mod span;
 pub mod token;
 pub mod types;

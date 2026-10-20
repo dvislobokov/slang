@@ -16,15 +16,25 @@ pub struct Diagnostic {
     pub span: Span,
     /// Optional extra lines, e.g. "note: declared here".
     pub notes: Vec<(String, Option<Span>)>,
+    /// Index of the source file the span refers to, for multi-file
+    /// compilations (the order of files passed to `sema::analyze`).
+    /// Single-file phases leave it at 0.
+    pub file: usize,
 }
 
 impl Diagnostic {
     pub fn error(message: impl Into<String>, span: Span) -> Diagnostic {
-        Diagnostic { severity: Severity::Error, message: message.into(), span, notes: vec![] }
+        Diagnostic { severity: Severity::Error, message: message.into(), span, notes: vec![], file: 0 }
     }
 
     pub fn warning(message: impl Into<String>, span: Span) -> Diagnostic {
-        Diagnostic { severity: Severity::Warning, message: message.into(), span, notes: vec![] }
+        Diagnostic { severity: Severity::Warning, message: message.into(), span, notes: vec![], file: 0 }
+    }
+
+    /// Sets the file index (see [`Diagnostic::file`]).
+    pub fn in_file(mut self, file: usize) -> Diagnostic {
+        self.file = file;
+        self
     }
 
     pub fn with_note(mut self, note: impl Into<String>, span: Option<Span>) -> Diagnostic {
@@ -95,6 +105,12 @@ impl Diagnostics {
         self.items.push(d);
     }
 
+    /// True if a diagnostic was already reported at exactly this span and
+    /// file (lets later phases avoid duplicate messages).
+    pub fn has_errors_at(&self, span: Span, file: usize) -> bool {
+        self.items.iter().any(|d| d.span == span && d.file == file)
+    }
+
     pub fn has_errors(&self) -> bool {
         self.items.iter().any(|d| d.severity == Severity::Error)
     }
@@ -105,5 +121,17 @@ impl Diagnostics {
 
     pub fn render_all(&self, file: &SourceFile) -> String {
         self.items.iter().map(|d| d.render(file)).collect::<Vec<_>>().join("\n")
+    }
+
+    /// Renders every diagnostic against `files[d.file]` (multi-file builds).
+    pub fn render_all_files(&self, files: &[SourceFile]) -> String {
+        self.items
+            .iter()
+            .map(|d| match files.get(d.file) {
+                Some(f) => d.render(f),
+                None => format!("{d}\n"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }

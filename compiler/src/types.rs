@@ -40,8 +40,10 @@ pub enum Type {
     Float64,
     Char,
     String,
-    /// The built-in `error` interface.
+    /// The built-in `error` interface (`interface error { func Message() string }`).
     Error,
+    /// The empty interface `any`: holds any value together with its type info.
+    Any,
     /// `nil` literal before it is unified with a pointer/slice/map/func type.
     Nil,
     Pointer(TypeId),
@@ -54,11 +56,18 @@ pub enum Type {
     /// `Task<T>` produced by `async func`.
     Task(TypeId),
     Func(FuncSig),
+    /// User struct; the `DeclId` indexes `hir::Program::structs`.
+    /// (`Interface` ids index `hir::Program::interfaces`, `Enum` ids index
+    /// `hir::Program::enums`: each kind has its own id space.)
     Struct(DeclId),
     Interface(DeclId),
     Enum(DeclId),
     /// Placeholder for inference; must not survive type checking.
     Infer(u32),
+    /// Type of an ill-typed expression, used by the checker to suppress
+    /// cascading diagnostics. Never present in a program returned by
+    /// `sema::analyze` (analysis fails if any error was reported).
+    Invalid,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -82,6 +91,8 @@ pub struct TypeTable {
     pub error: TypeId,
     pub nil: TypeId,
     pub byte: TypeId,
+    pub any: TypeId,
+    pub invalid: TypeId,
 }
 
 impl TypeTable {
@@ -96,7 +107,19 @@ impl TypeTable {
         t.error = t.intern(Type::Error);
         t.nil = t.intern(Type::Nil);
         t.byte = t.intern(Type::Int(IntKind::U8));
+        t.any = t.intern(Type::Any);
+        t.invalid = t.intern(Type::Invalid);
         t
+    }
+
+    /// Number of interned types; valid ids are `0..len()`.
+    pub fn len(&self) -> usize {
+        self.types.len()
+    }
+
+    /// True if no type has been interned (never the case after `new()`).
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
     }
 
     pub fn intern(&mut self, ty: Type) -> TypeId {
@@ -142,16 +165,33 @@ impl TypeTable {
             "char" => self.char_,
             "string" => self.string,
             "error" => self.error,
+            "any" => self.any,
             _ => return None,
         })
     }
+
+    /// `[N]T` array type.
+    pub fn array(&mut self, of: TypeId, n: u64) -> TypeId { self.intern(Type::Array(of, n)) }
+
+    /// The `T` of `T!`, if `id` is fallible.
+    pub fn fallible_inner(&self, id: TypeId) -> Option<TypeId> {
+        match self.get(id) { Type::Fallible(t) => Some(*t), _ => None }
+    }
+    /// True for `T!`.
+    pub fn is_fallible(&self, id: TypeId) -> bool { matches!(self.get(id), Type::Fallible(_)) }
+    /// True for interface-like types: user interfaces, `error`, `any`.
+    pub fn is_interface(&self, id: TypeId) -> bool { matches!(self.get(id), Type::Interface(_) | Type::Error | Type::Any) }
+    /// True for `Invalid` (an earlier error was reported).
+    pub fn is_invalid(&self, id: TypeId) -> bool { matches!(self.get(id), Type::Invalid) }
+    /// True for signed integer types.
+    pub fn is_signed(&self, id: TypeId) -> bool { matches!(self.get(id), Type::Int(k) if k.signed()) }
 
     pub fn is_integer(&self, id: TypeId) -> bool { matches!(self.get(id), Type::Int(_)) }
     pub fn is_float(&self, id: TypeId) -> bool { matches!(self.get(id), Type::Float32 | Type::Float64) }
     pub fn is_numeric(&self, id: TypeId) -> bool { self.is_integer(id) || self.is_float(id) }
     /// Types that may hold `nil`.
     pub fn is_nilable(&self, id: TypeId) -> bool {
-        matches!(self.get(id), Type::Pointer(_) | Type::Slice(_) | Type::Map(..) | Type::Func(_) | Type::Interface(_) | Type::Error | Type::Nil)
+        matches!(self.get(id), Type::Pointer(_) | Type::Slice(_) | Type::Map(..) | Type::Func(_) | Type::Interface(_) | Type::Error | Type::Any | Type::Nil)
     }
 
     /// Readable form for diagnostics; `names` resolves declared types.
@@ -170,6 +210,8 @@ impl TypeTable {
             Char => "char".into(),
             String => "string".into(),
             Error => "error".into(),
+            Any => "any".into(),
+            Invalid => "<invalid>".into(),
             Nil => "nil".into(),
             Pointer(t) => format!("*{}", self.display(*t, names)),
             Slice(t) => format!("[]{}", self.display(*t, names)),
