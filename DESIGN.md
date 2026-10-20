@@ -783,6 +783,22 @@ async func main() {
 - Примитивы: `task.All`, `task.Any`, `task.Delay`, `Channel<T>`, `Mutex`.
   `await task.Any(t1, ..., tn)` (все `Task<T>` одного типа) даёт результат
   первой завершившейся задачи; остальные продолжают работать.
+  `task.Channel<int>(n)` создаёт канал с буфером на `n` значений (0 —
+  небуферизованный: `Send` ждёт своего `Recv`); копии канала разделяют его;
+  `await ch.Recv()` имеет тип `T!` и падает, когда канал закрыт и пуст;
+  `Send` в закрытый канал — паника. Нулевое значение `task.Mutex` и
+  `task.WaitGroup` готово к работе; `Unlock` передаёт владение старейшему
+  ожидающему (FIFO). `task.Spawn(f)` запускает `f` на воркере,
+  `task.Yield()` уступает поток, `await task.Timeout(t, ms)` — `true`, если
+  `t` завершилась за `ms` мс (иначе `false`, `t` продолжает работать).
+- Контекст задачи: `task.RunWith(ctx, f)` запускает `f` с контекстом `ctx`
+  (`task.CurrentContext().With("user", "ann")`); его видят все `await`,
+  вызовы и `Spawn` внутри, а вызывающий код — нет. Значения читаются
+  `task.Value<string>("user")` (`T!`: ошибка, если ключа нет или тип иной).
+  Это основа для `log.Context` и трассировки (docs/FRAMEWORK.md).
+- Методы интерфейсов не бывают `async`: асинхронный метод интерфейса
+  объявляется как возвращающий `Task<T>` и реализуется вызовом `async`
+  функции (так устроен `http.Handler`).
 - Асинхронные лямбды: `async func(n int) int { ... }` и
   `async (n int) => ...`; вызов возвращает `Task<T>`.
 - Реализация в LLVM: через LLVM coroutines (`llvm.coro.*`), каждая `async`
@@ -890,6 +906,40 @@ source generators в C#), без генерации исходников и бе
 | Enum | нет | есть | варианты с полями |
 | Нулевая стоимость | нет | source generators (отдельный шаг) | `reflect.Fields<T>()` в generics |
 | Создание типов в рантайме | нет | `Reflection.Emit` | нет (сознательно) |
+
+### Отмена и структурированная конкурентность
+
+Отмена живёт в контексте задачи и распространяется по дереву задач сама,
+как в Kotlin и Swift; явного токена в сигнатурах нет.
+
+- У каждой задачи есть родитель; контекст (отмена, дедлайн, значения)
+  наследуется детьми. `task.Spawn` без явного контекста берёт текущий.
+- Отмена кооперативная: срабатывает в точках `await`. Отменённый `await`
+  возвращает ошибку `task.ErrCancelled`, которая идёт наверх через `?`.
+  Ожидания ввода-вывода, `Delay`, `Channel.Recv`, `Mutex.Lock` просыпаются
+  сразу с этой ошибкой.
+- Отмена родителя отменяет детей. Внутри `task.Scope` ошибка одного ребёнка
+  отменяет остальных, а scope не завершается, пока живы его дети: задачи не
+  утекают.
+- `task.WithTimeout(ms, fn)` и `task.WithDeadline(at, fn)` — scope с дедлайном.
+- `task.NewCancel()` даёт ручку `{Context, Cancel()}` для отмены снаружи
+  (кнопка «Стоп», shutdown сервера).
+- `task.CheckCancelled() void!` — явная проверка в длинном синхронном цикле.
+- `task.OnCancel(fn)` — обратный вызов при отмене (обычно с `defer`).
+- `task.Any` отменяет проигравшие задачи; `task.All` при первой ошибке
+  отменяет остальные.
+
+```slang
+async func Search(query string) []Result! {
+    return await task.WithTimeout(5000, async () => {
+        return await task.Scope(async (s *task.Scope) => {
+            var a = s.Spawn(SearchDb(query))
+            var b = s.Spawn(SearchIndex(query))
+            return await task.Any(a, b)?        // проигравший отменяется
+        })?
+    })?
+}
+```
 
 ## Память
 
@@ -1060,7 +1110,7 @@ source generators в C#), без генерации исходников и бе
 | `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё, кроме `Builder`, плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
 | `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
 | `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓ |
-| `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Timeout` | ✓ `All`, `Delay` |
+| `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, контекст задачи `Context` (`Get<V>(key) V!`, `Has`, `With(key, value any) Context`, `Keys`), `CurrentContext()`, `RunWith(ctx, f)`, `Value<V>(key) V!` |
 | `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; нет процессов и сигналов |
 | `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir`; `fs.ErrNotFound` — ошибка-константа, которую оборачивают все ошибки «файл не найден» (`errors.Is(err, fs.ErrNotFound)`) |
 | `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; нет `Duration`/`Timer` (нужны типы в stdlib) |
@@ -1072,6 +1122,41 @@ source generators в C#), без генерации исходников и бе
 |--------------|------------|
 | `std.net` | TCP/UDP сокеты, `Dial`, `Listen`, DNS, IP-адреса; всё асинхронное |
 | `std.net.http` | клиент: `Get`, `Post`, `Request`, `Client` с таймаутами и заголовками; сервер: `Server`, `Router`, `Handler`, middleware; HTTP/1.1 и HTTP/2 |
+
+Реализовано (Slang-код в `compiler/src/sema/stdlib_src/`, рантайм —
+`runtime/ABI.md` §10.9, §16):
+
+- `std.net`: `Dial(addr) Task<Conn!>`, `DialTimeout(addr, ms)`,
+  `Listen(addr) Listener!`, `ResolveIP(host) Task<[]string!>` (IPv4 первыми),
+  `SplitHostPort(addr) HostPort!` / `JoinHostPort(host, port)`,
+  `ListenUDP(addr) UDPConn!`. `Conn`: `Read(n) Task<[]byte!>` (пустой срез —
+  конец потока), `ReadString(n)`, `Write(b []byte) Task<int!>` (пишет всё),
+  `WriteString(s)`, `SetTimeout(ms)` (таймаут каждой операции, ошибка
+  `i/o timeout`), `Close()`, `IsClosed()`, `LocalAddr()`, `RemoteAddr()`.
+  `Listener`: `Accept() Task<Conn!>`, `Close()`, `Addr()`, `Port()`.
+  `UDPConn`: `RecvFrom(n) Task<Packet!>` (`Packet{Data, Addr}`),
+  `SendTo(b, addr) Task<int!>`, `SetTimeout`, `Close`, `Addr`, `Port`.
+  Сокеты неблокирующие, ожидание — через поллер рантайма (epoll), поток
+  воркера никогда не блокируется. `Conn`/`Listener` — копируемые ручки на
+  объект сокета, `Drop` которого закрывает дескриптор. `Listen` принимает
+  только IP или `localhost`.
+- `std.net.http` (HTTP/1.1 без TLS; `https` — ошибка `https is not supported
+  yet`): `Get(url) Task<Response!>`, `Post(url, body, contentType)`,
+  `Client{Timeout, MaxRedirects, Headers}` с `Get`/`Post`/`Do(method, url,
+  body, headers)`; `Response{Status int, Headers map[string]string, Body
+  string}` с `Header(name)`, `SetHeader`, `Write`, `Text(status, body)`,
+  `Json(status, body)`; chunked-тела, редиректы (до 10), заголовки в
+  каноническом виде (`Content-Type`). Сервер: `Server{Addr, Handler,
+  IdleTimeout}` с `Listen() void!`, `Port()`, `Serve() Task<void!>`,
+  `Shutdown() Task<void>` (перестаёт принимать, закрывает простаивающие
+  соединения, ждёт текущие запросы); задача на соединение, keep-alive.
+  `interface Handler { func Serve(req *Request, res *Response) Task<void!> }`
+  (метод интерфейса не может быть `async`, поэтому он возвращает задачу),
+  `NewRouter()` с `Get/Post/Put/Delete/Handle(pattern, handler)`, параметры
+  пути `{id}` (`req.Param("id")`) и `*` в конце; `Request{Method, Path, Query,
+  Proto, Headers, Body, Params, RemoteAddr}` с `Header`, `Param`,
+  `QueryValue`; `ParseURL`, `ParseQuery`, `StatusText`, `CanonicalHeader`.
+  Нет: TLS, HTTP/2, пула соединений клиента, middleware.
 | `std.net.tls` | TLS-соединения поверх `net`, сертификаты, конфигурация |
 | `std.net.ws` | WebSocket клиент и сервер |
 | `std.net.url` | разбор и сборка URL, query-параметры |
