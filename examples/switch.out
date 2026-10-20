@@ -1,0 +1,37 @@
+0 zero
+1 small
+2 small
+3 medium
+9 medium
+10 large
+50 large
+101 huge
+-4 slightly negative
+-10 slightly negative
+-11 very negative
+sun weekend
+wed weekday
+xyz not a day
+95 A
+85 B
+72 C
+10 F
+3 divisible by 3
+  (no fallthrough)
+4 remainder 1
+5 remainder 2
+1
+2
+Fizz
+4
+Buzz
+Fizz
+7
+8
+Fizz
+Buzz
+11
+Fizz
+13
+14
+FizzBuzz

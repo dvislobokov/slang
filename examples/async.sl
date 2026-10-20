@@ -1,0 +1,72 @@
+namespace examples.async
+
+import std.io
+import std
+
+// An async func returns Task<T>; calling it starts the task immediately.
+async func Square(n int, delayMs int) int {
+    await task.Delay(delayMs)
+    return n * n
+}
+
+async func Half(n int) int! {
+    await task.Delay(1)
+    if n % 2 != 0 {
+        return error(fmt.Format("{0} is odd", n))
+    }
+    return n / 2
+}
+
+// await and ? combine: await the task, then propagate its error.
+async func SumHalves(a, b int) int! {
+    var x = await Half(a)?
+    var y = await Half(b)?
+    return x + y
+}
+
+// Awaited right away, so the prints are strictly ordered.
+async func Step(i int) {
+    await task.Delay(5)
+    println("step", i)
+}
+
+async func main() {
+    println("start")
+
+    // Two tasks run concurrently; the slower one was started first.
+    var a = Square(3, 30)
+    var b = Square(4, 10)
+    var (ra, rb) = await task.All(a, b)
+    println("squares:", ra, rb)
+
+    var s = await Square(5, 0)
+    println("sequential:", s)
+
+    var t = try await SumHalves(4, 10) catch err {
+        println("unexpected:", err)
+        return
+    }
+    println("halves:", t)
+
+    var u = try await SumHalves(4, 7) else -1
+    println("halves with odd input:", u)
+
+    try await SumHalves(3, 4) catch err {
+        println("error:", err)
+    }
+
+    // task.All over fallible tasks fails if any task fails.
+    var (h1, h2) = try await task.All(Half(8), Half(6)) catch err {
+        println("unexpected:", err)
+        return
+    }
+    println("all halves:", h1, h2)
+    try await task.All(Half(2), Half(9)) catch err {
+        println("all failed:", err)
+    }
+
+    for i in 0..3 {
+        await Step(i)
+    }
+    println("done")
+}

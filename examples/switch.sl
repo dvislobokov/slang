@@ -1,0 +1,98 @@
+namespace examples.switches
+
+import std.io
+
+// Values, value lists, ranges (half-open) and guards; first match wins.
+func Size(n int) string {
+    switch n {
+        case 0:
+            return "zero"
+        case 1, 2:
+            return "small"
+        case 3..10:
+            return "medium"
+        case -10..0:
+            return "slightly negative"
+        case n > 100:
+            return "huge"
+        case n < 0:
+            return "very negative"
+        default:
+            return "large"
+    }
+}
+
+func Day(d string) string {
+    switch d {
+        case "sat", "sun":
+            return "weekend"
+        case "mon", "tue", "wed", "thu", "fri":
+            return "weekday"
+        default:
+            return "not a day"
+    }
+}
+
+// No-subject switch: each case is a condition.
+func Grade(score int) string {
+    switch {
+        case score >= 90:
+            return "A"
+        case score >= 80:
+            return "B"
+        case score >= 70:
+            return "C"
+        default:
+            return "F"
+    }
+}
+
+// Multi-statement bodies; no fallthrough between cases.
+func Remainder(n int) {
+    switch n % 3 {
+        case 0:
+            println(n, "divisible by 3")
+            println("  (no fallthrough)")
+        case 1:
+            println(n, "remainder 1")
+        default:
+            println(n, "remainder 2")
+    }
+}
+
+func main() {
+    for n in [0, 1, 2, 3, 9, 10, 50, 101, -4, -10, -11] {
+        println(n, Size(n))
+    }
+
+    for d in ["sun", "wed", "xyz"] {
+        println(d, Day(d))
+    }
+
+    for s in [95, 85, 72, 10] {
+        println(s, Grade(s))
+    }
+
+    for n in [3, 4, 5] {
+        Remainder(n)
+    }
+
+    // A switch with no matching case and no default does nothing.
+    switch 42 {
+        case 1:
+            println("never printed")
+    }
+
+    for i in 1..16 {
+        switch {
+            case i % 15 == 0:
+                println("FizzBuzz")
+            case i % 3 == 0:
+                println("Fizz")
+            case i % 5 == 0:
+                println("Buzz")
+            default:
+                println(i)
+        }
+    }
+}

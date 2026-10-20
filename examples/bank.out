@@ -1,0 +1,17 @@
+tx 1 ok: deposit $25.50 to alice
+tx 2 ok: withdraw $19.99 from bob
+tx 3 ok: transfer $40.00 from alice to carol
+tx 4 rejected: insufficient funds in carol: balance $40.00, needed $50.00
+  short by $10.00
+tx 5 rejected: dave: unknown account
+  hint: open the account first
+tx 6 rejected: transfer to alice: insufficient funds in bob: balance $30.01, needed $99.99
+  short by $69.98
+tx 7 rejected: deposit must be positive
+tx 8 ok: withdraw $15.05 from carol
+== Slang Savings report ==
+alice: $85.50 (+$25.50 -$40.00)
+bob: $30.01 (+$0.00 -$19.99)
+carol: $24.95 (+$40.00 -$15.05)
+total held: $140.46
+processed: 4 failed: 4

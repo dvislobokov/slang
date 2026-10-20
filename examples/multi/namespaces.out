@@ -1,0 +1,6 @@
+max users: 3
+first user: Alice (id 1)
+users: 3 of 3
+ - 1 Alice <alice@example.com>
+ - 2 Robert <bob@example.com>
+ - 3 Carol <carol@example.com>

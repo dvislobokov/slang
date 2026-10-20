@@ -130,13 +130,15 @@ if_stmt ::= IF expr block (ELSE (if_stmt | block))?
 
 for_stmt ::= FOR for_header? block
 for_header ::= for_in | expr
-for_in ::= var_name (COMMA var_name)? IN expr
+for_in ::= var_name (COMMA var_name)? IN (range_expr | expr)
+// `0..10`, `s[1..]`, `s[..3]`; only valid as a for iterator, index or case pattern
+range_expr ::= expr? DOTDOT expr?
 
 switch_stmt ::= SWITCH expr? LBRACE switch_case* default_case? RBRACE
 switch_case ::= CASE pattern (COMMA pattern)* COLON statement*
 default_case ::= DEFAULT COLON statement*
 pattern ::= range_pattern | type_bind_pattern | expr
-range_pattern ::= expr DOTDOT expr
+range_pattern ::= range_expr
 type_bind_pattern ::= type IDENTIFIER
 
 return_stmt ::= RETURN (expr (COMMA expr)*)?
@@ -168,7 +170,7 @@ unary_expr ::= (MINUS | BANG | AMP | STAR | AWAIT) unary_expr | postfix_expr
 postfix_expr ::= primary_expr postfix*
 postfix ::= DOT IDENTIFIER
           | LPAREN arg_list? RPAREN
-          | LBRACKET expr RBRACKET
+          | LBRACKET (range_expr | expr) RBRACKET
           | QUESTION (LPAREN expr RPAREN)?
 arg_list ::= expr (COMMA expr)* COMMA?
 

@@ -1,0 +1,22 @@
+body
+deferred 2
+deferred 1
+loop finished
+loop defer 2
+loop defer 1
+loop defer 0
+x = 2
+deferred sees x = 1
+x = 2
+closure sees x = 2
+log: working
+steps taken: 6
+log: cleanup
+open good
+read good
+close good
+got 4
+open bad
+close bad
+error: cannot read bad
+main exits

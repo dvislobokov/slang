@@ -1,0 +1,83 @@
+namespace examples.control
+
+import std.io
+
+func Classify(n int) string {
+    if n < 0 {
+        return "negative"
+    } else if n == 0 {
+        return "zero"
+    } else if n < 10 {
+        return "small"
+    } else {
+        return "large"
+    }
+}
+
+func main() {
+    // if / else if / else
+    for n in [-5, 0, 7, 42] {
+        println(n, "is", Classify(n))
+    }
+
+    // Range: half-open [0, 5).
+    var sum = 0
+    for i in 0..5 {
+        sum += i
+    }
+    println("sum 0..5:", sum)
+
+    var lo = 3
+    var hi = 6
+    for i in lo..hi {
+        println("i =", i)
+    }
+
+    // Slice with index.
+    var fruits = ["apple", "banana", "cherry"]
+    for i, fruit in fruits {
+        println(i, fruit)
+    }
+
+    // While-style.
+    var n = 1
+    for n < 100 {
+        n *= 2
+    }
+    println("first power of two >= 100:", n)
+
+    var k = 3
+    for k > 0 {
+        println("countdown", k)
+        k -= 1
+    }
+    println("liftoff")
+
+    // Infinite loop with break.
+    var count = 0
+    for {
+        count += 1
+        if count == 4 {
+            break
+        }
+    }
+    println("count:", count)
+
+    // continue
+    for i in 0..10 {
+        if i % 2 == 0 {
+            continue
+        }
+        println("odd:", i)
+    }
+
+    // break only leaves the innermost loop.
+    for i in 1..4 {
+        for j in 1..4 {
+            if j > i {
+                break
+            }
+            println(i, "x", j, "=", i * j)
+        }
+    }
+}

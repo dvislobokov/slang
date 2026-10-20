@@ -1,0 +1,13 @@
+color: green
+printed directly: Green
+ordinal of Blue: 2
+c == Color.Green: true c == Color.Red: false
+red warm: true
+green warm: false
+blue warm: false
+area: 3
+area: 7
+area: 0
+ok: 3
+fail: 1 division by zero
+big result 5

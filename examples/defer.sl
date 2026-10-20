@@ -1,0 +1,75 @@
+namespace examples.defers
+
+import std.io
+
+// Deferred calls run when the function returns, last-in first-out.
+func Basic() {
+    defer println("deferred 1")
+    defer println("deferred 2")
+    println("body")
+}
+
+func InLoop() {
+    for i in 0..3 {
+        defer println("loop defer", i)
+    }
+    println("loop finished")
+}
+
+// Arguments of a deferred call are evaluated at the defer statement.
+func ArgsEvaluatedEarly() {
+    var x = 1
+    defer println("deferred sees x =", x)
+    x = 2
+    println("x =", x)
+}
+
+// A deferred closure reads variables when it runs.
+func ClosureSeesLatest() {
+    var x = 1
+    defer func() {
+        println("closure sees x =", x)
+    }()
+    x = 2
+    println("x =", x)
+}
+
+func Steps() {
+    var log = func(msg string) {
+        println("log:", msg)
+    }
+    defer log("cleanup")
+    var steps = 0
+    defer func() {
+        println("steps taken:", steps)
+    }()
+    for i in 0..4 {
+        steps += i
+    }
+    log("working")
+}
+
+// Defers also run when returning early, including with an error.
+func Read(name string) int! {
+    println("open", name)
+    defer println("close", name)
+    if name == "bad" {
+        return error("cannot read " + name)
+    }
+    println("read", name)
+    return len(name)
+}
+
+func main() {
+    defer println("main exits")
+    Basic()
+    InLoop()
+    ArgsEvaluatedEarly()
+    ClosureSeesLatest()
+    Steps()
+    var n = try Read("good") else 0
+    println("got", n)
+    try Read("bad") catch err {
+        println("error:", err)
+    }
+}

@@ -1,0 +1,12 @@
+start
+squares: 9 16
+sequential: 25
+halves: 7
+halves with odd input: -1
+error: 3 is odd
+all halves: 4 3
+all failed: 9 is odd
+step 0
+step 1
+step 2
+done

@@ -1,0 +1,188 @@
+namespace examples.bank
+
+import std.io
+import std
+
+const ErrUnknownAccount = error("unknown account")
+
+// A transaction request.
+enum Tx {
+    Deposit(account string, amount int)
+    Withdraw(account string, amount int)
+    Transfer(from string, to string, amount int)
+}
+
+// What ended up in an account's history.
+enum EntryKind { Credit, Debit }
+
+struct Entry {
+    Kind EntryKind
+    Amount int
+}
+
+struct InsufficientFunds {
+    Account string
+    Balance int
+    Needed int
+
+    func Message() string {
+        return fmt.Format("insufficient funds in {0}: balance {1}, needed {2}", this.Account, Money(this.Balance), Money(this.Needed))
+    }
+}
+
+// Amounts are integer cents.
+func Money(cents int) string {
+    var frac = cents % 100
+    if frac < 10 {
+        return fmt.Format("${0}.0{1}", cents / 100, frac)
+    }
+    return fmt.Format("${0}.{1}", cents / 100, frac)
+}
+
+struct Account {
+    Owner string
+    balance int
+    history []Entry
+
+    func Balance() int {
+        return this.balance
+    }
+
+    func Deposit(amount int) void! {
+        if amount <= 0 {
+            return error("deposit must be positive")
+        }
+        this.balance += amount
+        this.history = append(this.history, Entry{Kind: EntryKind.Credit, Amount: amount})
+    }
+
+    func Withdraw(amount int) void! {
+        if amount <= 0 {
+            return error("withdrawal must be positive")
+        }
+        if amount > this.balance {
+            return InsufficientFunds{Account: this.Owner, Balance: this.balance, Needed: amount}
+        }
+        this.balance -= amount
+        this.history = append(this.history, Entry{Kind: EntryKind.Debit, Amount: amount})
+    }
+
+    func Summary() string {
+        var credits = 0
+        var debits = 0
+        for e in this.history {
+            switch e.Kind {
+                case EntryKind.Credit:
+                    credits += e.Amount
+                case EntryKind.Debit:
+                    debits += e.Amount
+            }
+        }
+        return fmt.Format("+{0} -{1}", Money(credits), Money(debits))
+    }
+
+    static func Open(owner string, initial int) *Account {
+        return new Account{Owner: owner, balance: initial}
+    }
+}
+
+func Describe(tx Tx) string {
+    switch tx {
+        case Tx.Deposit(who, amount):
+            return fmt.Format("deposit {0} to {1}", Money(amount), who)
+        case Tx.Withdraw(who, amount):
+            return fmt.Format("withdraw {0} from {1}", Money(amount), who)
+        case Tx.Transfer(from, to, amount):
+            return fmt.Format("transfer {0} from {1} to {2}", Money(amount), from, to)
+    }
+    return "unknown transaction"
+}
+
+struct Bank {
+    Name string
+    accounts map[string]*Account
+    order []string
+    processed int
+    failed int
+
+    static func New(name string) Bank {
+        return Bank{Name: name, accounts: map[string]*Account{}}
+    }
+
+    func Open(owner string, initial int) {
+        this.accounts[owner] = Account.Open(owner, initial)
+        this.order = append(this.order, owner)
+    }
+
+    func Require(owner string) void! {
+        if this.accounts[owner] == nil {
+            return errors.Wrap(ErrUnknownAccount, owner)
+        }
+    }
+
+    func Apply(tx Tx) void! {
+        switch tx {
+            case Tx.Deposit(who, amount):
+                this.Require(who)?
+                this.accounts[who].Deposit(amount)?
+            case Tx.Withdraw(who, amount):
+                this.Require(who)?
+                this.accounts[who].Withdraw(amount)?
+            case Tx.Transfer(from, to, amount):
+                this.Require(from)?
+                this.Require(to)?
+                this.accounts[from].Withdraw(amount)?("transfer to " + to)
+                this.accounts[to].Deposit(amount)?
+        }
+    }
+
+    func Process(txs []Tx) {
+        for i, tx in txs {
+            try this.Apply(tx) catch err {
+                this.failed += 1
+                println(fmt.Format("tx {0} rejected: {1}", i + 1, err))
+                var short InsufficientFunds
+                if errors.As(err, &short) {
+                    println("  short by", Money(short.Needed - short.Balance))
+                } else if errors.Is(err, ErrUnknownAccount) {
+                    println("  hint: open the account first")
+                }
+                continue
+            }
+            this.processed += 1
+            println(fmt.Format("tx {0} ok: {1}", i + 1, Describe(tx)))
+        }
+    }
+
+    func Report() {
+        println("==", this.Name, "report ==")
+        var total = 0
+        for owner in this.order {
+            var acc = this.accounts[owner]
+            total += acc.Balance()
+            println(fmt.Format("{0}: {1} ({2})", owner, Money(acc.Balance()), acc.Summary()))
+        }
+        println("total held:", Money(total))
+        println("processed:", this.processed, "failed:", this.failed)
+    }
+}
+
+func main() {
+    var bank = Bank.New("Slang Savings")
+    bank.Open("alice", 10000)
+    bank.Open("bob", 5000)
+    bank.Open("carol", 0)
+
+    var txs = [
+        Tx.Deposit("alice", 2550),
+        Tx.Withdraw("bob", 1999),
+        Tx.Transfer("alice", "carol", 4000),
+        Tx.Withdraw("carol", 5000),
+        Tx.Deposit("dave", 100),
+        Tx.Transfer("bob", "alice", 9999),
+        Tx.Deposit("bob", 0),
+        Tx.Withdraw("carol", 1505),
+    ]
+    bank.Process(txs)
+    bank.Report()
+}

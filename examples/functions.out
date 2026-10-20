@@ -1,0 +1,21 @@
+Add: 5
+Scale: 12
+Swap: world hello
+DivMod: 3 2
+MinMax: -2 9
+remainder only: 2
+5! = 120
+10! = 3628800
+fib(10) = 55
+fib(20) = 6765
+double(21): 42
+square(9): 81
+Apply(square, 7): 49
+Apply(lambda, 7): 107
+double(square(3)): 18
+counter: 3
+other counter: 1
+mapped: [2 4 6 8]
+log: functions are values
+op(6, 7): 13
+op(6, 7): 42

@@ -1,0 +1,32 @@
+Quarter(8): 2
+Quarter(6) failed: halving again: 3 is odd
+Quarter(5) failed: 5 is odd
+Half(7) or default: -1
+sum of valid inputs: 14
+valid age 30
+invalid age -1 -> age: negative
+invalid age 200 -> age: too large
+lookup a = 1
+lookup zz failed: no such key: zz
+  missing key zz
+parse "" failed: empty input
+  other error: empty input
+parse "0" failed: value: must be positive
+  bad field value - must be positive
+parsed 12
+profile of alice
+error: loading profile: not found
+is ErrNotFound: true
+is ErrEmpty: false
+unwrapped: not found
+unwrapped is ErrNotFound: true
+signup: email: missing @
+As found field: email
+As NotFound: false
+request: signup: email: missing @
+twice is ErrNotFound: false
+unwrap twice: email: missing @
+unwrap plain: nil
+made with errors.New
+Noisy called
+done

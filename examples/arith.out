@@ -1,0 +1,43 @@
+a b c: 17 5 0
+sum: 22
+diff: 12
+prod: 85
+quot: 3
+rem: 2
+neg quot: -3
+neg rem: -2
+rem neg divisor: 2
+2 + 3 * 4 = 14
+(2 + 3) * 4 = 20
+10 - 4 - 3 = 3
+100 / 10 / 5 = 2
+1 + 2 << 3 = 17
+6 & 3, 6 | 3, 6 ^ 3: 2 7 5
+1 << 10 = 1024 1024 >> 3 = 128
+compound: 1
+x y z: 0.5 2 0
+x + y: 2.5
+x * y: 1
+y / 4.0: 0.5
+7.0 / 2.0: 3.5
+0.1 + 0.2: 0.30000000000000004
+1.5e3: 1500
+-x: -0.5
+area: 12.56636
+sqrt(2): 1.4142135623730951
+pow: 1024
+floor: 3
+abs: 2.5
+float(i) / 2.0: 3.5
+int(3.99): 3
+int(-3.99): -3
+a > b: true a == 17: true a != 17: false
+b <= 5: true b >= 6: false x < y: true
+t && f: false
+t || f: true
+!t: false
+true || false && false: true
+(true || false) && false: false
+in range: true
+const: 42 const string
+local const: 84

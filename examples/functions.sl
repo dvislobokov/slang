@@ -1,0 +1,127 @@
+namespace examples.functions
+
+import std.io
+
+func Add(a, b int) int {
+    return a + b
+}
+
+func Scale(x int, factor int) int {
+    return x * factor
+}
+
+func Swap(a, b string) (string, string) {
+    return b, a
+}
+
+func DivMod(a, b int) (int, int) {
+    return a / b, a % b
+}
+
+func MinMax(values []int) (int, int) {
+    var lo = values[0]
+    var hi = values[0]
+    for v in values {
+        if v < lo {
+            lo = v
+        }
+        if v > hi {
+            hi = v
+        }
+    }
+    return lo, hi
+}
+
+func Factorial(n int) int {
+    if n <= 1 {
+        return 1
+    }
+    return n * Factorial(n - 1)
+}
+
+func Fib(n int) int {
+    if n < 2 {
+        return n
+    }
+    return Fib(n - 1) + Fib(n - 2)
+}
+
+// Functions as parameters and results.
+func Apply(f func(int) int, x int) int {
+    return f(x)
+}
+
+func Compose(f func(int) int, g func(int) int) func(int) int {
+    return (x int) => f(g(x))
+}
+
+func MakeCounter() func() int {
+    var count = 0
+    return func() int {
+        count += 1
+        return count
+    }
+}
+
+func Map(values []int, f func(int) int) []int {
+    var out []int = []
+    for v in values {
+        out = append(out, f(v))
+    }
+    return out
+}
+
+func Log(msg string) {
+    println("log:", msg)
+}
+
+func main() {
+    println("Add:", Add(2, 3))
+    println("Scale:", Scale(4, 3))
+
+    // Multiple return values and tuple destructuring.
+    var (first, second) = Swap("hello", "world")
+    println("Swap:", first, second)
+    var (q, r) = DivMod(17, 5)
+    println("DivMod:", q, r)
+    var (lo, hi) = MinMax([3, 9, -2, 7])
+    println("MinMax:", lo, hi)
+    var (_, onlyRem) = DivMod(10, 4)
+    println("remainder only:", onlyRem)
+
+    // Recursion.
+    println("5! =", Factorial(5))
+    println("10! =", Factorial(10))
+    println("fib(10) =", Fib(10))
+    println("fib(20) =", Fib(20))
+
+    // Lambdas: block form and short form.
+    var double = func(x int) int {
+        return x * 2
+    }
+    var square = (x int) => x * x
+    println("double(21):", double(21))
+    println("square(9):", square(9))
+    println("Apply(square, 7):", Apply(square, 7))
+    println("Apply(lambda, 7):", Apply((x int) => x + 100, 7))
+    var squareThenDouble = Compose(double, square)
+    println("double(square(3)):", squareThenDouble(3))
+
+    // Closures keep their own state.
+    var counter = MakeCounter()
+    counter()
+    counter()
+    println("counter:", counter())
+    var other = MakeCounter()
+    println("other counter:", other())
+
+    println("mapped:", Map([1, 2, 3, 4], double))
+
+    // Named functions are values too.
+    var logger func(string) = Log
+    logger("functions are values")
+    var ops = [Add, (a int, b int) => a * b]
+    for op in ops {
+        println("op(6, 7):", op(6, 7))
+    }
+}

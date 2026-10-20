@@ -1,0 +1,22 @@
+p: (3, 4) length: 5
+moved: (4, 5)
+q: (1.5, -2)
+origin: (0, 0)
+a: (1, 2) b: (99, 2)
+after Shift: a = (1, 2) result = (101, 2)
+after ptr.X = 10: a = (10, 2)
+after (*ptr).Y = 20: a = (10, 20)
+after ShiftInPlace: a = (110, 20)
+snapshot: (0, 20) a: (110, 20)
+after ptr.Move: a = (111, 21)
+counter: 3
+heap: (0, 0) length: 0
+heap via alias: (5, 0)
+empty list is nil: true
+list head: 2 sum: 3
+end of list is nil: true
+I am Rex
+Rex says woof
+breed: beagle name: Rex
+Max says woof
+via embedded field: Max

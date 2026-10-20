@@ -93,7 +93,7 @@ var count int        // без инициализатора: нулевое зн
 | Специальные | `void`, `T!` (результат или ошибка), `Task<T>` (асинхронный результат) |
 
 Строки — неизменяемые, UTF-8. Срезы и map — как в Go (ссылочная семантика
-на общий буфер).
+на общий буфер). Подсрез записывается диапазоном: `s[1..3]`, `s[..2]`, `s[2..]`.
 
 ## Функции
 
@@ -742,8 +742,8 @@ slang test ./src              # тесты (func Test*)
 ```slang
 namespace app
 
+import std
 import std.io
-import std.strings
 
 struct Counter {
     count int
@@ -762,7 +762,7 @@ struct Parser {
 }
 
 async func Load(path string) []string! {
-    var text = await ReadFileAsync(path)?
+    var text = await io.ReadFileAsync(path)?
     return strings.Split(text, "\n")
 }
 
@@ -805,15 +805,16 @@ stmt        = var | const | if | for | switch | "return" [ exprs ]
             | "break" | "continue" | "defer" expr | expr [ assignop expr ] ;
 var         = "var" ident [ type ] [ "=" expr ] ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
-for         = "for" [ ident [ "," ident ] "in" expr | expr ] block ;
+for         = "for" [ ident [ "," ident ] "in" ( expr | range ) | expr ] block ;
 switch      = "switch" expr "{" { "case" pattern { "," pattern } ":" stmts }
               [ "default" ":" stmts ] "}" ;
 pattern     = expr | expr ".." expr | path "(" [ idents ] ")" | type ident ;
 expr        = unary { binop unary } ;
 unary       = ( "-" | "!" | "&" | "*" | "await" ) unary | tryexpr | postfix ;
 tryexpr     = "try" expr ( "catch" ident block | "else" expr ) ;
-postfix     = primary { "." ident | "(" [ exprs ] ")" | "[" expr "]"
+postfix     = primary { "." ident | "(" [ exprs ] ")" | "[" ( expr | range ) "]"
             | "?" [ "(" expr ")" ] } ;
+range       = [ expr ] ".." [ expr ] ;
 primary     = literal | ident | path "{" [ fields ] "}" | "new" primary
             | "(" expr ")" | lambda ;
 ```

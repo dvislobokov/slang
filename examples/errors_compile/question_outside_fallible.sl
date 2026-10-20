@@ -1,0 +1,16 @@
+// error: ? outside of fallible function
+namespace examples.bad
+
+import std.io
+
+func Parse(s string) int! {
+    if s == "" {
+        return error("empty")
+    }
+    return 1
+}
+
+func main() {
+    var n = Parse("1")?
+    println(n)
+}
