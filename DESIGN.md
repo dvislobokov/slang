@@ -808,8 +808,8 @@ source generators в C#), без генерации исходников и бе
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.encoding.json` | `Marshal`/`Unmarshal` в структуры, потоковый парсер, теги полей |
-| `std.encoding.xml`, `std.encoding.yaml`, `std.encoding.toml` | аналогично |
+| `std.encoding.json` | `Parse<T>`/`Format` через compile-time рефлексию, `Value` для динамики, `Reader`/`Writer`, `Schema<T>`, атрибуты `@json`/`@serde` |
+| `std.encoding.xml`, `std.encoding.yaml`, `std.encoding.toml` | та же модель; XML pull-reader и атрибуты `@xml(attr)`, YAML якоря и многодокументные потоки, TOML с сохранением комментариев |
 | `std.encoding.base64`, `std.encoding.hex` | кодировки |
 | `std.encoding.csv` | чтение и запись CSV |
 | `std.compress` | gzip, zlib, zstd |
@@ -817,11 +817,20 @@ source generators в C#), без генерации исходников и бе
 | `std.unicode` | классификация символов, нормализация |
 | `std.database.sql` | единый интерфейс к SQL, драйверы PostgreSQL/SQLite/MySQL отдельными пакетами |
 
+### Фреймворк
+
+Поверх стандартной библиотеки строится фреймворк уровня ASP.NET Core:
+`slang.web` (маршруты через атрибуты, DI, middleware, OpenAPI),
+`slang.data` (ORM уровня EF Core с переводом лямбд в SQL при компиляции и
+миграциями), `slang.log` (структурированный логгер уровня Serilog с sinks и
+enrichers), `slang.diag` (профилировщик CPU/памяти/задач в формате pprof,
+метрики, OpenTelemetry, `slang tool pprof`). Подробно: `docs/FRAMEWORK.md`.
+
 ### Прочее
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.log` | структурированное логирование, уровни, вывод в JSON/текст |
+| `std.log` | базовый интерфейс `Logger`; полноценный логгер уровня Serilog — `slang.log` (docs/FRAMEWORK.md) |
 | `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты |
 | `std.random` | ГПСЧ для не-криптографических задач |
 | `std.sync` | атомики, `Once`, `RwMutex` |
