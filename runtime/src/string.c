@@ -185,12 +185,53 @@ slang_string *slang_string_from_uint(uint64_t v) {
 int slang__format_float(char *buf, size_t cap, double v) {
     if (isnan(v)) return snprintf(buf, cap, "NaN");
     if (isinf(v)) return snprintf(buf, cap, v > 0 ? "+Inf" : "-Inf");
-    int n = 0;
-    for (int prec = 1; prec <= 17; prec++) {
-        n = snprintf(buf, cap, "%.*g", prec, v);
-        if (strtod(buf, NULL) == v) break;
+    if (v == 0) return snprintf(buf, cap, signbit(v) ? "-0" : "0");
+
+    /* Shortest precision that round-trips, in %e form to learn the exponent. */
+    char tmp[64];
+    int prec = 1;
+    for (; prec <= 17; prec++) {
+        snprintf(tmp, sizeof tmp, "%.*e", prec - 1, v);
+        if (strtod(tmp, NULL) == v) break;
     }
-    return n;
+    /* tmp looks like "-d.ddde+XX"; extract exponent and digits. */
+    char *epos = strchr(tmp, 'e');
+    int exp = atoi(epos + 1);
+    char digits[32];
+    int nd = 0;
+    for (char *c = tmp; c < epos; c++) {
+        if (*c >= '0' && *c <= '9') digits[nd++] = *c;
+    }
+    digits[nd] = 0;
+    bool neg = v < 0;
+
+    /* Go %v (strconv 'g', shortest precision): exponent form when
+       exp < -4 || exp >= 6, else fixed form without trailing zeros. */
+    if (exp < -4 || exp >= 6) {
+        if (nd > 1)
+            return snprintf(buf, cap, "%s%c.%se%c%02d", neg ? "-" : "", digits[0], digits + 1,
+                            exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+        return snprintf(buf, cap, "%s%ce%c%02d", neg ? "-" : "", digits[0],
+                        exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+    }
+    size_t n = 0;
+    if (neg && n < cap) buf[n++] = '-';
+    if (exp < 0) {
+        /* 0.000ddd */
+        n += (size_t)snprintf(buf + n, cap - n, "0.");
+        for (int i = 0; i < -exp - 1 && n < cap; i++) buf[n++] = '0';
+        n += (size_t)snprintf(buf + n, cap - n, "%s", digits);
+    } else {
+        int int_len = exp + 1;
+        if (nd <= int_len) {
+            n += (size_t)snprintf(buf + n, cap - n, "%s", digits);
+            for (int i = nd; i < int_len && n < cap; i++) buf[n++] = '0';
+            if (n < cap) buf[n] = 0;
+        } else {
+            n += (size_t)snprintf(buf + n, cap - n, "%.*s.%s", int_len, digits, digits + int_len);
+        }
+    }
+    return (int)n;
 }
 
 slang_string *slang_string_from_float(double v) {
