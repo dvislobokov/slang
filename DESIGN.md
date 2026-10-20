@@ -188,8 +188,12 @@ struct User {
 
 - Атрибут — это обычная структура, помеченная `@attribute`; её поля —
   параметры атрибута. Аргументы — константы времени компиляции.
-- Встроенные: `@reflect` (принудительно сохранить метаданные типа),
-  `@deprecated`, `@inline`, `@test`, `@attribute`.
+- Встроенные: `@reflect` (принудительно сохранить метаданные типа, в
+  том числе методы), `@deprecated`, `@inline`, `@test`, `@attribute`.
+- Каждый применённый атрибут — константное значение своей структуры
+  (аргументы и значения полей по умолчанию), вшитое в таблицы рефлексии;
+  у встроенных это структуры `std.reflect` (`json`, `deprecated`, ...).
+  Читается через `Attribute<A>()` / `Attributes<A>()` (раздел «Рефлексия»).
 - Библиотечные: `@json`, `@xml`, `@db(column: "...")`, `@validate(...)`.
 - Неизвестный атрибут — ошибка компиляции (в отличие от строковых тегов Go).
 
@@ -816,19 +820,30 @@ async func main() {
 
 - Для каждого типа компилятор генерирует **статическую таблицу**
   `TypeInfo` в секции только для чтения: имя, полный путь, размер,
-  выравнивание, вид (struct/enum/interface/...), поля (имя, тип, смещение,
+  выравнивание, вид (`reflect.Kind`), поля (имя, тип, смещение,
   атрибуты), методы (имя, сигнатура, указатель на функцию), варианты enum,
-  реализуемые интерфейсы, атрибуты типа. Таблицы ссылаются друг на друга
-  указателями, поэтому обход графа типов — обычное чтение памяти без
-  аллокаций и без поиска по строкам.
+  тип элемента/ключа (`Elem`, `Key`, `Len`), атрибуты типа. Таблицы
+  ссылаются друг на друга указателями, поэтому обход графа типов — обычное
+  чтение памяти без аллокаций и без поиска по строкам.
 - Атрибуты хранятся как готовые значения своих структур, а не как строки:
   `field.Attribute<json>()` возвращает `*json` или `nil` за O(1) по
   количеству атрибутов поля.
-- Интерфейсные значения и `*T` несут указатель на `TypeInfo`, поэтому
-  `reflect.TypeOf(x)` — одно чтение.
-- **Урезание**: таблицы генерируются только для типов, которые достижимы
-  из `reflect.TypeOf`, `typeof`, сериализаторов и `@reflect`. Остальные
-  типы не раздувают бинарник. Линковщик удаляет неиспользуемые таблицы.
+- Значения `any`, интерфейсов и ошибок несут указатель на `TypeInfo`: это
+  тот же указатель, что тип бокса и `vtable[0]`, поэтому `typeof(x)` —
+  одно чтение, а `switch x { case User u: }` — одно сравнение указателей.
+- **Урезание**: если программа не использует `std.reflect` (ни прямо, ни
+  через `typeof`, `json` или тип атрибута), таблиц нет вовсе — у типов
+  остаётся минимальный заголовок `{name, size, drop}`. Иначе таблица
+  создаётся только для типов, на которые ссылается код или другая таблица;
+  методы перечисляются только у «полных» типов (названных в
+  `reflect.TypeOf<T>()`, в статическом `typeof(x)`, в
+  `reflect.Fields<T>()` или помеченных `@reflect`). Неиспользуемые таблицы
+  удаляет `globaldce`.
+- Раскладка таблиц (общая для компилятора и рантайма) — `runtime/ABI.md`,
+  раздел 17: таблица — неуничтожимый объект `{-1, null, TypeInfo}`, первые
+  три слова `TypeInfo` — заголовок `slang_type_info` рантайма; поля,
+  методы, варианты и значения атрибутов — тоже неуничтожимые объекты,
+  срезы таблиц без `backing` (подсчёт ссылок на них ничего не делает).
 
 ### API (`std.reflect`)
 
@@ -845,7 +860,7 @@ for f in t.Fields {
     if tag != nil && tag.skip { continue }
 }
 
-var v = reflect.ValueOf(&u)            // reflect.Value: {ptr, type}
+var v = reflect.ValueOf(&u)            // reflect.Value: {владелец, адрес, *TypeInfo}
 v.Field("Email").Set("a@b.c")          // проверка типа во время выполнения
 var email = v.Field("Email").Get<string>()
 
@@ -856,14 +871,47 @@ var fresh = t.New()                    // новое нулевое значен
 for variant in reflect.TypeOf<Color>().Variants { println(variant.Name) }
 ```
 
-- `reflect.Value` — пара `{указатель, *TypeInfo}` на стеке, без boxing.
-  Чтение поля — сложение смещения; запись проверяет совместимость типов.
-- `Call` принимает аргументы как `[]any` только в универсальной форме;
-  типизированная форма `m.Call<func(*User) void!>()` возвращает обычный
-  указатель на функцию и вызывает его напрямую, без накладных расходов.
+- `reflect.TypeOf<T>()` и `typeof(x)` возвращают `*reflect.TypeInfo`;
+  таблица у типа одна, поэтому `==` сравнивает типы. `typeof(x)` от
+  значения статического типа — таблица этого типа (операнд не
+  вычисляется, как `sizeof`), от `any`, интерфейса или `error` —
+  динамический тип (`nil` для `nil`; у ошибки без структуры — `error`).
+- `TypeInfo`: `Name` (короткое имя в написании Go: `User`, `*User`, `int`,
+  `[]int`, `map[string]int`), `FullName`, `Kind`, `Size`, `Align`,
+  `Fields []*FieldInfo` (в порядке объявления, `Offset` — раскладка C с
+  естественным выравниванием), `Methods []*MethodInfo`,
+  `Variants []*VariantInfo` (`Name`, `Index`, `Fields`), `Elem`, `Key`,
+  `Len`; методы `Field(name)`, `Method(name)`, `Variant(name)` (`nil`,
+  если нет), `Attribute<A>() *A`, `Attributes<A>() []*A` (порядок в
+  исходнике), `New() any` (держит `*T`; только у полных типов, иначе
+  паника), `Same(other)`. `FieldInfo`: `Name`, `Type`, `Offset`, `Index`,
+  `Embedded`, `Exported`, `Attribute<A>()`, `Attributes<A>()`.
+  `reflect.Kind`: `Bool`, `Int` (`int`/`int64`), `Int8`…`Int32`, `Uint`,
+  `Uint8` (`byte`)…`Uint32`, `Float`, `Float32`, `Char`, `String`, `Error`,
+  `Any`, `Interface`, `Struct`, `Enum`, `Pointer`, `Weak`, `Slice`,
+  `Array`, `Map`, `Tuple`, `Func`, `Fallible`, `Task`, `Void`, `Invalid`.
+  Поле, тип которого записан синонимом (`int64`, `uint`, `uint8`,
+  `float64`), показывает это написание в `f.Type.Name`.
+- `reflect.Value` — `{владелец any, адрес, *TypeInfo}`: владелец держит
+  память живой, чтение поля — сложение смещения. `ValueOf(x any)`,
+  `Field(name) Value` (сквозь указатель на структуру; паника, если поля
+  нет), `Get<T>() T` и `Set<T>(v T)` проверяют тип и паникуют при
+  несовпадении (сообщение называет поле), `IsValid()`, поле `Type`.
+- `m.Call(recv, args...)` — универсальная форма: аргументы упаковываются в
+  `[]any`, приёмник — `*S` (или `S`: метод работает с копией), результат —
+  `any!` (ошибка метода или проверки типов `reflect: S.M: ...`).
+  Типизированная форма `m.Call<func(*User) void!>()` возвращает обычную
+  функцию (первый параметр — приёмник) и вызывает её напрямую, без
+  накладных расходов; несовпадение сигнатуры — паника.
 - `any` — пустой интерфейс (`interface {}`); значения в нём несут
   `TypeInfo`, поэтому `switch x { case User u: }` работает за одно сравнение
   указателей.
+- Встроенные атрибуты со значениями — структуры `std.reflect`: `json`
+  (`name string`, `omitEmpty bool`, `skip bool`), `deprecated`
+  (`message string`), `inline`, `test`; имя атрибута можно писать как тип
+  (`f.Attribute<json>()`), а поля этих структур читаются из любого
+  пространства имён. `@attribute` и `@reflect` в списках атрибутов не
+  появляются.
 
 ### Статическая рефлексия (нулевая стоимость)
 
@@ -877,12 +925,12 @@ func ToJson<T>(value T) string {
     var b = strings.Builder{}
     b.Write("{")
     for f in reflect.Fields<T>() {       // разворачивается при компиляции
-        var tag = f.Attribute<json>()    // константа
+        var tag = f.Attribute<json>()
         if tag != nil && tag.skip { continue }
         var name = f.Name
         if tag != nil && tag.name != "" { name = tag.name }
         b.Write(fmt.Format("\"{0}\":", name))
-        b.Write(ToJson(f.Get(value)))   // прямой доступ к полю, без reflect.Value
+        b.Write(Scalar(f.Get(value)))   // прямой доступ к полю, без reflect.Value
     }
     b.Write("}")
     return b.String()
@@ -890,11 +938,44 @@ func ToJson<T>(value T) string {
 ```
 
 `reflect.Fields<T>()` в generic-функции — не вызов, а инструкция
-компилятору: цикл раскрывается в прямые обращения `value.Id`, `value.Email`
-и т. д. Результат — скорость ручного кода (как у `serde` в Rust или
-source generators в C#), без генерации исходников и без отдельного шага
-сборки. Тот же `std.encoding.json` использует это и не падает в
-медленный путь, если тип известен статически.
+компилятору: тело цикла проверяется и генерируется отдельно для каждого
+поля структуры `T` (`f` — `*FieldInfo` этого поля), а `f.Get(value)` —
+прямое обращение `value.Id`, `value.Email` и т. д. со статическим типом
+поля. Копии выбираются счётчиком цикла, поэтому `continue` и `break`
+значат то же, что в обычном цикле. Результат — скорость ручного кода (как
+у `serde` в Rust или source generators в C#), без генерации исходников и
+без отдельного шага сборки. Вне generic-функции и для `T`, не являющегося
+структурой, — ошибка компиляции; при проверке generic-тела с абстрактным
+`T` тело проверяется один раз, а `f.Get(v)` не имеет типа.
+
+Вторая инструкция — **статический `if`**: условие из проверок вида
+`reflect.TypeOf<T>().Kind == reflect.Kind.Struct` (в том числе через
+`.Elem` и `.Key`) или `reflect.TypeOf<A>() == reflect.TypeOf<B>()`,
+соединённых `!`, `&&`, `||`, вычисляется при компиляции; ветка, которая не
+выполнится, не проверяется. Так generic-код выбирает обработку по виду
+типа (`json.Format<T>` для структур, срезов, map, чисел...).
+
+### Реализовано
+
+- `std.reflect` целиком в описанном объёме (кроме списка реализуемых
+  интерфейсов и методов у таблиц интерфейсов); исходник на Slang —
+  `compiler/src/sema/reflect_src/reflect.sl`, тела нескольких внутренних
+  функций генерирует компилятор (`codegen/reflect.rs`).
+- `std.encoding.json`: `Parse<T>(text) T!` и `Format<T>(v T) string`
+  через compile-time рефлексию (структуры с `@json(name:, omitEmpty:,
+  skip:)`, вложенные структуры, срезы, массивы, `map` со строковыми
+  ключами — при выводе отсортированы, указатели, `nil` → `null`, строки,
+  числа, `bool`, простые enum по имени варианта, `json.Value`, `any`),
+  ошибки с путём (`users[2].id: expected int, found string`);
+  `ParseValue(text) Value!` — динамическое дерево (`Type`, `IsNull`,
+  `Bool`, `Float`, `Int`, `String`, `Len`, `Index`, `Get`, `Has`, `Keys`,
+  `Items`, `Format`), конструкторы `NewNull`/`NewBool`/`NewNumber`/
+  `NewString`/`NewArray`/`NewObject`, `Decode<T>(v)`, `Quote(s)`.
+  Токенизатор — C (`runtime/src/std_json.c`). Нет `Reader`/`Writer`,
+  `Options{Indent}`, `Schema<T>`, конвертеров.
+- `std.strings.Builder` (`Write`, `String`, `Len`, `Reset`).
+- Библиотеки на Slang загружаются при первом обращении к их именам,
+  поэтому программы без рефлексии не платят ничего.
 
 ### Сравнение
 
@@ -1133,7 +1214,7 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 |--------------|------------|-------------|
 | `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; нет `Reader`/`Writer` |
 | `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`, `Sprintf` (глаголы Go: `%v %d %s %f %.2f %5d %-4d %03d %x %q %c %t %e %%`); даты — `time.Format` |
-| `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё, кроме `Builder`, плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
+| `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё (`Builder{}` с `Write`, `String`, `Len`, `Reset`), плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
 | `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
 | `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓ |
 | `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, контекст задачи `Context` (`Get<V>(key) V!`, `Has`, `With(key, value any) Context`, `Keys`), `CurrentContext()`, `RunWith(ctx, f)`, `Value<V>(key) V!` |
@@ -1183,7 +1264,7 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   Proto, Headers, Body, Params, RemoteAddr}` с `Header`, `Param`,
   `QueryValue`; `ParseURL`, `ParseQuery`, `StatusText`, `CanonicalHeader`.
   Нет: TLS, HTTP/2, пула соединений клиента, middleware.
-| `std.net.tls` | TLS-соединения поверх `net`, сертификаты, конфигурация |
+| `std.net.tls` | TLS 1.3/1.2 клиент и сервер поверх async-сокетов: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`, SNI, session resumption, горячая перезагрузка сертификатов, системные корни через слой платформы. Этап 1 — BoringSSL статически через memory BIO (линкуется только при использовании); этап 2 — собственная реализация TLS 1.3 на Slang поверх `std.crypto`; ACME в `slang.web` |
 | `std.net.ws` | WebSocket клиент и сервер |
 | `std.net.url` | разбор и сборка URL, query-параметры |
 | `std.net.mail` | отправка писем по SMTP |
@@ -1229,7 +1310,9 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 
 Реализовано: `std.encoding.base64` — `Encode`, `EncodeString`, `Decode`,
 `DecodeString`, URL-safe `EncodeURL`/`DecodeURL`; `std.encoding.hex` —
-`Encode`, `EncodeString`, `Decode`, `DecodeString`. Остальное — пока нет.
+`Encode`, `EncodeString`, `Decode`, `DecodeString`; `std.encoding.json` —
+`Parse<T>`, `Format`, `Decode<T>`, `ParseValue`/`Value`, `Quote` (см.
+«Рефлексия», «Реализовано»). Остальное — пока нет.
 
 ### Фреймворк
 
@@ -1411,7 +1494,8 @@ lambda      = [ "async" ] "func" "(" [ params ] ")" [ type ] block
    BoringSSL/libsodium, `std.encoding.json`.
 9. **Остальная стандартная библиотека** — форматы, сжатие, regex, SQL, log.
 10. **Рефлексия** — атрибуты, таблицы `TypeInfo`, `std.reflect`, compile-time
-    `Fields<T>()`; `std.encoding.json` поверх неё.
+    `Fields<T>()`; `std.encoding.json` поверх неё. ✓ (см. «Рефлексия»,
+    «Реализовано»).
 11. **Инструменты** — `slang lsp`, `slang fmt`, DWARF и DAP, плагины для
     VS Code и IDEA (`docs/TOOLING.md`).
 

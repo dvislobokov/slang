@@ -77,6 +77,24 @@ switch any {
   `http.Get<T>(url)` с автоматическим разбором JSON.
 - WebSocket, Server-Sent Events, graceful shutdown, Unix-сокеты.
 
+### TLS
+
+- `std.net.tls`: этап 1 — BoringSSL, статически, за нашим API, интегрирован с
+  планировщиком через memory BIO (шифрование в буферы, ввод-вывод — наши
+  async-сокеты, без потока на соединение). Линкуется только если пакет
+  использует TLS (+1.5–2 MB к бинарнику). Этап 2 — собственный TLS 1.3 на
+  Slang, как `crypto/tls` в Go, для кросс-компиляции и wasm.
+- Клиент: `tls.Dial`, SNI, ALPN (`h2`), session resumption, системные корни
+  через `runtime/src/platform/` (Linux `/etc/ssl/certs`, macOS Security.framework,
+  Windows CryptoAPI), `RootCAs`, mTLS через `ClientCert`,
+  `InsecureSkipVerify` только явно.
+- Сервер: несколько сертификатов по SNI, горячая перезагрузка без рестарта,
+  OCSP stapling, `ClientAuth: RequireAndVerify`, `MinVersion: tls.V13`,
+  0-RTT выключен по умолчанию.
+- `http.Get("https://...")` и `http.Server{TLS: ...}` используют это
+  автоматически; `slang.web` добавляет `web.AutoTLS("example.com")` через
+  ACME (Let's Encrypt), как Caddy.
+
 ### `slang.web` (фреймворк)
 
 ```slang
