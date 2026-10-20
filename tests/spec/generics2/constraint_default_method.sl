@@ -1,5 +1,5 @@
 // test: a constraint interface with a default method: the generic body may call the default
-// status: pending
+// status: passing
 namespace spec.generics2.constraint_default_method
 
 import std.io

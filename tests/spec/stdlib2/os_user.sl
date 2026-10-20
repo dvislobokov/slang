@@ -1,0 +1,30 @@
+// test: std.os.user Current, Lookup, LookupId, LookupGroup(Id) against the passwd/group databases
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.os_user
+
+import std
+import std.io
+import std.os
+
+func main() void! {
+    var me = user.Current()?
+    var again = user.LookupId(me.Uid)?
+    var byName = user.Lookup(me.Username)?
+    println(me.Username == again.Username, byName.Uid == me.Uid, me.HomeDir != "", me.Gid != "")
+    var root = user.LookupId("0")?
+    println(root.Username, root.Uid, root.HomeDir)
+    var g = user.LookupGroupId("0")?
+    var g2 = user.LookupGroup(g.Name)?
+    println(g.Name, g2.Gid)
+    try {
+        _ = user.Lookup("no-such-user-slang")?
+    } catch err {
+        println(err)
+    }
+    try {
+        _ = user.LookupId("x1")?
+    } catch err {
+        println(err)
+    }
+}

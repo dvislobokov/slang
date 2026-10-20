@@ -1,0 +1,74 @@
+-W-xxW-
+---
+--xx-
+-[]-[xx]-
+-$-$-
+-$-$-
+-a-b-c-
+-a-c-
+world hello bar foo
+1=a, 2=b
+a b c
+cafe e
+.a.b.c.
+aabbcaabb
+[b] []
+abc
+bye bye
+>abc
+abc<
+>a
+>b
+|ab| |cd|
+XXa
+a<10>b<220>c<3330>
+x
+b${n${n${
+bnn
+bnn
+-${1}W-${1}W-
+-$1W-$1W-
+-$1-$1-
+-[$x]-[$x]-
+-$$-$$-
+-$-$-
+-a-b-c-
+-a-c-
+["a" "b" "c"]
+["a" "b,c"]
+["a" "" "b" ""]
+["a" ",b,"]
+["a" "b" "c"]
+["a" "b,c"]
+["a" "b" "c"]
+["a" "bxxc"]
+["a" "b" "c"]
+["a" "bc"]
+[""]
+[""]
+[]
+[]
+["b" "n" "n" ""]
+["b" "nana"]
+["x" "y" "z" ""]
+["x" "y2z3"]
+["h" "é" "l" "l" "o"]
+["h" "éllo"]
+["abc"]
+["abc"]
+["abc"]
+["abc"]
+["abc"]
+["abc"]
+["b" "c"]
+["b" "c"]
+a\.b\*c true
+x\+y\? true
+\(a\|b\) true
+\[x\] true
+\{1\} true
+\^\$ true
+\\d true
+plain true
+ true
+hEllO wOrld

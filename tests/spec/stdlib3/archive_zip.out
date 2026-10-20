@@ -1,0 +1,19 @@
+hello.txt 0 18 1706933106 false
+docs/ 0 0 1706933106 true
+docs/lllllll...ll.txt 0 5 1706933106 false
+docs/rep.txt 8 2400 1706933106 false
+hello from zip(1)
+2400 true true
+zip: no file nope in the archive
+zip: duplicate file name a.txt
+made by slang [a.txt dir/ dir/b.bin dir/big.txt]
+a.txt 8 5 7 0 420 
+dir/ 0 0 0 1700000000 493 
+dir/b.bin 0 3 3 1700000001 384 raw
+dir/big.txt 8 13000 58 0 420 
+alpha [0 1 2]
+[x] zip64 entry
+zip: not a valid zip file
+zip: a.txt: checksum error
+[docs hello.txt] true
+zip: unsafe file name ../escape.txt

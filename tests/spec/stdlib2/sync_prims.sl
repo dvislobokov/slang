@@ -1,0 +1,121 @@
+// test: std.sync RwMutex, Semaphore, Barrier, Once, AtomicInt/AtomicBool, Atomic<T> and Pool<T> across tasks
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.sync_prims
+
+import std
+import std.io
+import std.sync
+
+struct Counter {
+    mu RwMutex
+    n int
+}
+
+async func reader(c *Counter, seen *AtomicInt) {
+    await c.mu.RLock()
+    _ = seen.Add(c.n)
+    await task.Delay(1)
+    c.mu.RUnlock()
+}
+
+async func writer(c *Counter) {
+    await c.mu.Lock()
+    var v = c.n
+    await task.Delay(1)
+    c.n = v + 1
+    c.mu.Unlock()
+}
+
+async func limited(sem *Semaphore, active *AtomicInt, peak *AtomicInt) {
+    await sem.Acquire()
+    var now = active.Add(1)
+    for {
+        var p = peak.Load()
+        if now <= p || peak.CompareAndSwap(p, now) {
+            break
+        }
+    }
+    await task.Delay(2)
+    _ = active.Add(-1)
+    sem.Release()
+}
+
+async func party(b Barrier, hits *AtomicInt) {
+    if await b.Wait() {
+        _ = hits.Add(1)
+    }
+    if await b.Wait() {
+        _ = hits.Add(1)
+    }
+}
+
+async func main() {
+    var c = new Counter{}
+    var seen = new AtomicInt{}
+    var ts []Task<void> = []
+    for i in 0..20 {
+        if i % 4 == 0 {
+            ts = append(ts, writer(c))
+        } else {
+            ts = append(ts, reader(c, seen))
+        }
+    }
+    for t in ts {
+        await t
+    }
+    println("writes:", c.n, "trylock:", c.mu.TryLock(), c.mu.TryRLock())
+    c.mu.Unlock()
+    println("rlock after unlock:", c.mu.TryRLock(), c.mu.TryLock())
+    c.mu.RUnlock()
+
+    var semv = Semaphore(2)
+    var sem = &semv
+    var active = new AtomicInt{}
+    var peak = new AtomicInt{}
+    var ls []Task<void> = []
+    for _ in 0..8 {
+        ls = append(ls, limited(sem, active, peak))
+    }
+    for t in ls {
+        await t
+    }
+    println("semaphore peak:", peak.Load(), "available:", sem.Available(), sem.TryAcquire(), sem.TryAcquire(), sem.TryAcquire())
+
+    var b = Barrier(3)
+    var hits = new AtomicInt{}
+    var ps = [party(b, hits), party(b, hits), party(b, hits)]
+    for p in ps {
+        await p
+    }
+    println("barrier last arrivals:", hits.Load(), "rounds:", b.Rounds())
+
+    var once = Once{}
+    var calls = 0
+    for _ in 0..3 {
+        once.Do(func() {
+            calls += 1
+        })
+    }
+    println("once:", calls, once.Done())
+
+    var ai = AtomicInt{}
+    ai.Store(5)
+    println(ai.Add(3), ai.Swap(1), ai.Load(), ai.CompareAndSwap(1, 7), ai.CompareAndSwap(1, 9), ai.Load())
+    var ab = AtomicBool{}
+    println(ab.Load(), ab.Swap(true), ab.Load(), ab.CompareAndSwap(true, false), ab.Load())
+    var at = Atomic<string>{}
+    at.Store("a")
+    println(at.Load(), at.Swap("b"), at.CompareAndSwap("b", "c"), at.CompareAndSwap("b", "d"), at.Load())
+
+    var made = 0
+    var pool = Pool<[]byte>(func() []byte {
+        made += 1
+        return [byte(0), 0, 0, 0]
+    })
+    var x = pool.Get()
+    var y = pool.Get()
+    pool.Put(x)
+    var z = pool.Get()
+    println("pool made:", made, len(y), len(z), pool.Len())
+}

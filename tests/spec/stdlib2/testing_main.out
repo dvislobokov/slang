@@ -1,0 +1,20 @@
+    context line
+    got 1, want 2
+    got "got", want "want"
+    got [1], want [2]
+    error "other" is not "No such file or directory"
+    expected true: must hold
+--- FAIL: TestBad
+    got 1, want 3
+--- FAIL: TestFatal
+    === RUN   TestTable/square_2
+    --- PASS: TestTable/square_2
+    === RUN   TestTable/square_3
+        got 9, want 10
+    --- FAIL: TestTable/square_3
+--- FAIL: TestTable
+panic: boom
+    (exit status 2)
+--- FAIL: TestPanic
+FAIL
+FAIL	1 passed, 4 failed, 1 skipped

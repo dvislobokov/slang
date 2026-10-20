@@ -1,0 +1,12 @@
+// error: unknown @cfg key platform
+// status: passing
+namespace spec.diagnostics.cfg_unknown_key
+
+import std.io
+
+@cfg(platform: "linux")
+func F() string { return "f" }
+
+func main() {
+    println(F())
+}

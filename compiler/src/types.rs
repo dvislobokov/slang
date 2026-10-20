@@ -141,6 +141,11 @@ impl TypeTable {
         id
     }
 
+    /// The id of `ty` if it was interned already.
+    pub fn lookup(&self, ty: &Type) -> Option<TypeId> {
+        self.index.get(ty).copied()
+    }
+
     pub fn get(&self, id: TypeId) -> &Type {
         &self.types[id.0 as usize]
     }

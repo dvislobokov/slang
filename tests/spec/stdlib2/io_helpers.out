@@ -1,0 +1,21 @@
+hello 6 32
+hello w 0
+abcd
+4 teed teed
+x2 x2 4
+3 teed123
+copyn: EOF true
+readfull: io: unexpected EOF
+line 16
+line one | line  | two | last | EOF
+é ! 0
+0 10 6
+buffered !a long string that bypasses the buffer
+[the quick brown fox]
+4 [a b  c]
+a;é;
+false bufio.Scanner: token too long
+[0 0 0 1 255 255 255 254]
+1 -2
+pipe: abcdefgh
+io: pipe empty

@@ -1,5 +1,5 @@
 // test: arena.New() allocates objects that are all released at once by Free
-// status: pending
+// status: passing
 namespace spec.memory.arena_basic
 
 import std

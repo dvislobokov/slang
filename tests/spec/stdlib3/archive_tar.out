@@ -1,0 +1,15 @@
+hello.txt 0 18 18 1706933106 420 0 false
+docs/ 5 0 0 1706933106 493 0 true
+docs/lllllll...ll.txt 0 5 5 1706933106 420 0 false
+docs/rep.txt 0 2400 2400 1706933106 420 0 false
+true
+plain.txt 9 0 5 plain  0 
+d/ 2 5 0   0 
+segment/segm...le.txt 128 0 4 deep  0 
+ünïcödé.txt 15 0 4 utf8  0 
+xxxxxxxxxxxx...xxxxxx 300 0 4 long  0 
+link 4 2 0  plain.txt 5000000 someone
+tar: invalid header checksum
+0
+[docs/ docs/lllllll...ll.txt docs/rep.txt hello.txt]
+tar: unsafe file name a/../../x

@@ -37,7 +37,7 @@ async func main() void! {
     await srv?
     println("closed", c.IsClosed())
     var e = try await c.Read(1) catch err {
-        println("read after close:", err)
+        println("read after close:", errors.Is(err, net.ErrClosed), strings.HasSuffix(err.Message(), ": use of closed network connection"))
         l.Close()
         return
     }

@@ -1,0 +1,81 @@
+0 "Shop"
+1 "\"Shop\""
+2 "2 0.25 true"
+3 "[{pen 1.5 [a b] 2} {ink 3 [] 0}]"
+4 "map[k:v u:javascript:alert(1) u2:https://example.com/a b?c=d&e=f]"
+5 "[1 2 3 4]"
+6 "<nil>"
+7 "v|<no value>|"
+8 "[pen][ink]"
+9 "0=1;1=2;2=3;3=4;"
+10 "empty"
+11 "k:v,u:javascript:alert(1),u2:https://example.com/a b?c=d&e=f,"
+12 "12"
+13 "134"
+14 "012"
+15 "yes"
+16 "some"
+17 "botheithernone"
+18 "nouser"
+19 "[Shop]"
+20 "2"
+21 "Shop changed"
+22 "Shop"
+23 "Shop-pen Shop-ink "
+24 "2 4 3"
+25 "2 v {pen 1.5 [a b] 2}"
+26 "ho [2 3 4]"
+27 "a1 2bc3.5"
+28 "x 1\n"
+29 "42|   42|42   |00042|ff|FF|10|101|A"
+30 "3.14|   2.500|1.234568e+03|1.2e-05|2|Shop|\"Shop\"|true"
+31 "2 %!v(MISSING)"
+32 "%!d(string=str)"
+33 exec error
+34 "&lt;a href=&#39;x&#39;&gt;&amp;&lt;/a&gt; it\\'s \\\"q\\\" \\u003Ctag\\u003E a+b%26c%3Dd%2F%C3%A9"
+35 "Shop 4"
+36 "<pen><ink>"
+37 "[Shop]"
+38 "X=2"
+39 "aShopb"
+40 "x  y"
+41 "xy"
+42 "literal raw 1 -3 1.5 true"
+43 "002"
+44 "ink"
+45 "0.2"
+46 "a/b/;;"
+47 "noum"
+e0 error
+e1 error
+e2 error
+e3 error
+e4 error
+e5 error
+e6 error
+e7 error
+e8 error
+e9 error
+e10 error
+e11 error
+e12 error
+e13 error
+e14 error
+h0 "<p>&lt;b&gt;&#34;Fish &amp; Chips&#34; it&#39;s&lt;/b&gt;</p>"
+h1 "<a title=\"&lt;b&gt;&#34;Fish &amp; Chips&#34; it&#39;s&lt;/b&gt;\">x</a>"
+h2 "<a title=&lt;b&gt;&#34;Fish&#32;&amp;&#32;Chips&#34;&#32;it&#39;s&lt;/b&gt;>x</a>"
+h3 "<a href=\"http://x.org/?a=1&amp;b=2\">l</a>"
+h4 "<a href=\"/p?q=%3cb%3e%22Fish%20%26%20Chips%22%20it%27s%3c%2fb%3e\">l</a>"
+h5 "<a href=\"Shop\">l</a>"
+h6 "<script>var x = \"\\u003cb\\u003e\\\"Fish \\u0026 Chips\\\" it's\\u003c/b\\u003e\"; var n =  2 ; var a = [1,2,3,4];</script>"
+h7 "<script>var s = '\\u003cb\\u003e\\u0022Fish \\u0026 Chips\\u0022 it\\u0027s\\u003c\\/b\\u003e';</script>"
+h8 "<button onclick=\"f(&#34;\\u003cb\\u003e\\&#34;Fish \\u0026 Chips\\&#34; it&#39;s\\u003c/b\\u003e&#34;)\">b</button>"
+h9 "<style>p { color: Shop }</style>"
+h10 "<div style=\"color: ZgotmplZ\">d</div>"
+h11 "<b>Shop</b>"
+h12 "<textarea>&lt;b&gt;&#34;Fish &amp; Chips&#34; it&#39;s&lt;/b&gt;</textarea>"
+h13 "<title>&lt;b&gt;&#34;Fish &amp; Chips&#34; it&#39;s&lt;/b&gt;</title>"
+h14 "<li data-x=\"pen\">pen</li><li data-x=\"ink\">ink</li>"
+h15 "<a href=\"#ZgotmplZ\">u</a>"
+h16 "<img src=\"https://example.com/a%20b?c=d&amp;e=f\">"
+h17 "<p class=\"on\">"

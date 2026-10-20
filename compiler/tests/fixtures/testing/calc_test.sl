@@ -1,0 +1,77 @@
+namespace calc
+
+import std
+import std.io
+
+struct addCase {
+    A int
+    B int
+    Want int
+}
+
+@test
+func TestAdd(t *testing.T) {
+    var cases = [addCase{A: 1, B: 2, Want: 3}, addCase{A: -1, B: 1, Want: 0}, addCase{A: 0, B: 0, Want: 0}]
+    for c in cases {
+        t.Run(fmt.Format("{0}+{1}", c.A, c.B), func(t *testing.T) {
+            testing.Equal(t, Add(c.A, c.B), c.Want)
+        })
+    }
+}
+
+@test
+func TestDiv(t *testing.T) {
+    var q = try Div(7, 2) catch err {
+        t.Fatal("unexpected: " + err.Message())
+        return
+    }
+    testing.Equal(t, q, 3)
+    try {
+        _ = Div(1, 0)?
+        t.Error("expected an error")
+    } catch err {
+        testing.Contains(t, err.Message(), "zero")
+    }
+}
+
+@test
+func TestFailing(t *testing.T) {
+    t.Log("about to fail")
+    testing.Equal(t, Add(2, 2), 5)
+    testing.Equal(t, "a", "b")
+}
+
+@test
+func TestFatalStops(t *testing.T) {
+    t.Fatal("stop here")
+    t.Log("never printed")
+}
+
+@test
+func TestSkipped(t *testing.T) {
+    t.Skip("not on this machine")
+}
+
+@test
+func TestPanics(t *testing.T) {
+    var xs []int = []
+    println(xs[3])
+}
+
+@test
+func plainTest() {
+    if Add(1, 1) != 2 {
+        panic("broken")
+    }
+}
+
+@test
+func BenchAdd(b *testing.B) {
+    var s = 0
+    for i in 0..b.N {
+        s = Add(s, i)
+    }
+    if s < 0 {
+        b.Log("overflow")
+    }
+}

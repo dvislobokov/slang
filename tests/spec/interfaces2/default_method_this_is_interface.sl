@@ -1,5 +1,5 @@
 // test: `this` in a default method is the interface value: it can be passed on, and calls dispatch dynamically
-// status: pending
+// status: passing
 namespace spec.interfaces2.default_method_this_is_interface
 
 import std.io

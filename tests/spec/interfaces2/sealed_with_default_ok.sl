@@ -1,5 +1,5 @@
 // test: a switch over a sealed interface may leave implementations to a default case
-// status: pending
+// status: passing
 namespace spec.interfaces2.sealed_with_default_ok
 
 import std.io

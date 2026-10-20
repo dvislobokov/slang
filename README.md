@@ -34,6 +34,7 @@ slang manifest convert <toml|json|yaml> [dir]
 slang parse <file.sl>               # print the AST
 slang fmt   [paths] [--check] [--diff] [--stdin]   # format .sl files (canonical style)
 slang lsp                           # language server on stdio
+slang debug [--lldb|--gdb] [path] [options] [-- args]   # build with DWARF, start the debugger
 ```
 
 `path` selects what to build:
@@ -51,7 +52,9 @@ Build options:
 | Option | Effect |
 |---|---|
 | `-o <path>` | output file (one package) |
-| `--release` | `-O2`, linked with `--gc-sections` and stripped (`-s`), no `-rdynamic` |
+| `--release` | `-O2`, linked with `--gc-sections` and stripped (`-s`), no `-rdynamic`, no debug info |
+| `-g` | keep DWARF debug info (and symbols) in a `--release` build; debug builds always have it |
+| `--strip` | no debug info, stripped executable |
 | `-O0` … `-O3` | optimisation level |
 | `--static` | fully static executable (`clang -static`) |
 | `--emit=exe\|obj\|llvm-ir` | what to produce (`obj`/`llvm-ir`: whole program, one file) |
@@ -59,6 +62,31 @@ Build options:
 | `-p, --package <name>` | one member (repeatable) |
 | `--locked` | fail if `slang.lock` would change |
 | `-v, --verbose` | log the object cache and the link step to stderr |
+
+### Debugging
+
+Debug builds carry DWARF 5 (types, locals, async frames, line tables; see
+`docs/DEBUGGER.md`). `slang debug` builds and starts lldb with the Slang
+formatters loaded, so values print in Slang terms:
+
+```
+$ slang debug --lldb app.sl          # or --gdb; -- args are the program's
+(lldb) b app.sl:12
+(lldb) run
+(lldb) v
+(string) name = "slang"
+([]int) nums = [5, 3, 8]
+(map[string]int) ages = {"alice": 30, "bob": 31}
+(app.Result) r = Ok(value = 1)
+(app.Shape) s = app.Circle (R = 2)
+(lldb) slang-next                    # `next` that follows an `await` to the next line
+```
+
+With a plain lldb or gdb, load the formatters by hand:
+`command script import tools/lldb/slang_formatters.py` (lldb) or
+`source tools/gdb/slang_printers.py` (gdb); `slang debug --formatters lldb`
+prints the path. VS Code: debug type `slang` (lldb-dap), see
+`editors/vscode/README.md`.
 
 ### Formatting
 

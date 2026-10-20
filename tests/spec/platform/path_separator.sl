@@ -1,5 +1,5 @@
 // test: os.PathSeparator and os.LineSeparator are string constants ("/" and "\n" on linux)
-// status: pending
+// status: passing
 namespace spec.platform.path_separator
 
 import std.io

@@ -1,6 +1,6 @@
 // error: embeds itself
 // (mutual embedding A -> B -> A)
-// status: pending
+// status: passing
 namespace spec.interfaces2.embedding_cycle_error
 
 import std.io

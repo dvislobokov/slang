@@ -1,0 +1,4 @@
+INF Card { Holder: "Ann" } pays 3.14 as ann { Card: Card { Holder: "Ann" }, Sum: 3.14159, Name: "ann", App: "spec", Req: 7 }
+{"@t":"1970-01-01T00:00:00.000Z","@mt":"{@Card} pays {Sum:0.00} as {Name}","@m":"Card { Holder: \"Ann\" } pays 3.14 as ann","Card":{"$type":"Card","Holder":"Ann"},"Sum":3.14159,"Name":"ann","App":"spec","Req":7}
+WRN    5|ff|[1 2] { N: 5, H: 255, V: "[1 2]", App: "spec" }
+{"@t":"1970-01-01T00:00:00.000Z","@mt":"{N,4}|{H:x}|{$V}","@m":"   5|ff|[1 2]","@l":"Warning","N":5,"H":255,"V":"[1 2]","App":"spec"}

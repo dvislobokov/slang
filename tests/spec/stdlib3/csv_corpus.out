@@ -1,0 +1,38 @@
+0 [["a" "b" "c"]]
+1 [["a" "b" "c"] ["d" "e" "f"]]
+2 [["a" "b"] ["c" "d"]]
+3 [["a" "b"]]
+4 [["a\nb" "c"]]
+5 [["a\nb" "c"]]
+6 [["a\"b" "c"]]
+7 error parse error on line 1, column 5: extraneous or missing " in quoted-field
+8 [["a" "b\"c\n"]]
+9 error parse error on line 1, column 4: bare " in non-quoted-field
+10 [["a" "b\"c"]]
+11 error parse error on line 1, column 7: extraneous or missing " in quoted-field
+12 [["a" "bc\n"]]
+13 [["a" "b" "c"]]
+14 [["a" "b"]]
+15 [["a" "b"] ["c" "d"]]
+16 [["a" "b"] ["c" "d"]]
+17 [["a" "b"]]
+18 [["  a" "  b"]]
+19 error record on line 2: wrong number of fields
+20 [["a" "b"] ["c"]]
+21 [["a" "b"] ["c" "d"]]
+22 error record on line 1: wrong number of fields
+23 [["" "" ""]]
+24 [[""]]
+25 [["a" ""]]
+26 [["x"]]
+27 [["x"]]
+28 [["a" "b"]]
+29 [["a\"b,c\n"]]
+30 [["é" "ü"]]
+31 [["a" "b"]]
+32 [["1" "two\nlines" "3"] ["4" "5" "6"]]
+33 [["a" "b"] ["c" "d"]]
+34 []
+35 []
+"a,b\n\"with,comma\",\"with\"\"quote\"\n,\" lead\",trail \n\"new\nline\",\"cr\rx\"\n\"\\.\",tab\tin\n\"\tlead\",x\né,日本\n"
+"a,b\r\n\"with,comma\",\"with\"\"quote\"\r\n,\" lead\",trail \r\n\"new\r\nline\",\"crx\"\r\n\"\\.\",tab\tin\r\n\"\tlead\",x\r\né,日本\r\n"

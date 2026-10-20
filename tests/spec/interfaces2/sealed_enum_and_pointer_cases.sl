@@ -1,0 +1,35 @@
+// test: a sealed interface may be implemented by an enum; `case *T` also covers an implementation; a nil value reaching an exhaustive switch panics
+// status: passing
+// exit: 2
+// stderr: no case of an exhaustive switch matched
+namespace spec.interfaces2.sealed_enum_and_pointer_cases
+
+import std.io
+
+sealed interface Node {
+    func Size() int
+}
+
+struct Leaf {
+    func Size() int { return 1 }
+}
+
+enum Empty implements Node {
+    Nothing
+    func Size() int { return 0 }
+}
+
+func Kind(n Node) string {
+    switch n {
+        case *Leaf l: return "leaf"
+        case Empty e: return "empty"
+    }
+}
+
+func main() {
+    var a Node = new Leaf{}
+    var b Node = Empty.Nothing
+    println(Kind(a), Kind(b), a.Size() + b.Size())
+    var none Node
+    println(Kind(none))
+}

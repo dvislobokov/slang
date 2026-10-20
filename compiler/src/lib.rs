@@ -3,6 +3,7 @@
 
 pub mod ast;
 pub mod build;
+pub mod cfg;
 pub mod codegen;
 pub mod diagnostics;
 pub mod driver;
@@ -14,5 +15,6 @@ pub mod parser;
 pub mod sema;
 pub mod session;
 pub mod span;
+pub mod target;
 pub mod token;
 pub mod types;

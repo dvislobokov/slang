@@ -452,10 +452,17 @@ impl<'a> Fmt<'a> {
 
     /// `name<G> {` for structs, interfaces and enums; returns the doc and
     /// the position of `{`.
-    fn type_header(&mut self, kw: &str, attrs: &[Attribute], start: u32, name: &Ident, gs: &[GenericParam]) -> (Doc, u32) {
+    fn type_header(&mut self, kw: &str, attrs: &[Attribute], start: u32, name: &Ident, gs: &[GenericParam], implements: &[TypeExpr]) -> (Doc, u32) {
         let at = self.after_attrs(attrs, start);
-        let head = concat(vec![self.attrs(attrs, at), text(format!("{kw} {}", name.name)), self.generics(gs), text(" {")]);
-        let brace = self.tok_after(gs.last().map_or(name.span.end, |g| g.span.end), &TokenKind::LBrace).unwrap_or(name.span.end);
+        let mut parts = vec![self.attrs(attrs, at), text(format!("{kw} {}", name.name)), self.generics(gs)];
+        for (i, t) in implements.iter().enumerate() {
+            parts.push(text(if i == 0 { " implements " } else { ", " }));
+            parts.push(self.ty(t));
+        }
+        parts.push(text(" {"));
+        let head = concat(parts);
+        let after = implements.last().map(|t| t.span.end).or(gs.last().map(|g| g.span.end)).unwrap_or(name.span.end);
+        let brace = self.tok_after(after, &TokenKind::LBrace).unwrap_or(name.span.end);
         (head, brace)
     }
 
@@ -477,13 +484,13 @@ impl<'a> Fmt<'a> {
     }
 
     fn struct_decl(&mut self, s: &StructDecl) -> Doc {
-        let (head, brace) = self.type_header("struct", &s.attrs, s.span.start, &s.name, &s.generics);
+        let (head, brace) = self.type_header("struct", &s.attrs, s.span.start, &s.name, &s.generics, &s.implements);
         let members = Self::members(&s.fields, &s.embeds, &s.methods);
         self.body(head, brace, s.span.end - 1, &members)
     }
 
     fn interface_decl(&mut self, i: &InterfaceDecl) -> Doc {
-        let (head, brace) = self.type_header("interface", &i.attrs, i.span.start, &i.name, &i.generics);
+        let (head, brace) = self.type_header(if i.is_sealed { "sealed interface" } else { "interface" }, &i.attrs, i.span.start, &i.name, &i.generics, &[]);
         let members = Self::members(&[], &i.embeds, &i.methods);
         self.body(head, brace, i.span.end - 1, &members)
     }
@@ -574,7 +581,7 @@ impl<'a> Fmt<'a> {
     }
 
     fn enum_decl(&mut self, e: &EnumDecl) -> Doc {
-        let (head, brace) = self.type_header("enum", &e.attrs, e.span.start, &e.name, &e.generics);
+        let (head, brace) = self.type_header("enum", &e.attrs, e.span.start, &e.name, &e.generics, &e.implements);
         let close = e.span.end - 1;
         let first = e.variants.first().map_or(close, |v| v.span.start);
         let multiline = !e.methods.is_empty() || self.newline_between(brace, first) || self.pending_before(close);
@@ -960,6 +967,7 @@ impl<'a> Fmt<'a> {
             }
             ExprKind::Lambda { params, ret, body, is_async } => self.lambda(e.span, params, ret.as_deref(), body, *is_async),
             ExprKind::Paren(x) => concat(vec![text("("), self.expr(x), text(")")]),
+            ExprKind::NamedArg { name, value } => concat(vec![text(format!("{}: ", name.name)), self.expr(value)]),
             ExprKind::Error => text(self.slice(e.span)),
         }
     }

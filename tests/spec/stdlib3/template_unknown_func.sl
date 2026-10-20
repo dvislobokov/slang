@@ -1,0 +1,13 @@
+// error: invalid template: template: template:1: function "shout" not defined
+// status: passing
+namespace spec.stdlib3.template_unknown_func
+
+import std
+
+struct Page {
+    Title string
+}
+
+func main() {
+    _ = text.template.Parse<Page>("{{.Title | shout}}")
+}

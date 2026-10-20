@@ -178,6 +178,7 @@ impl<'a> Sema<'a> {
             }
             None => self.infer_type_args(t, decl, args, &mut typed, span),
         };
+        let checked = types.clone();
         let fid = match types.and_then(|ts| if ts.is_empty() { self.plain_std_inst(t, span).or_else(|| self.instantiate(t, ts, span)) } else { self.instantiate(t, ts, span) }) {
             Some(Inst::Func(f)) => f,
             _ => {
@@ -189,6 +190,8 @@ impl<'a> Sema<'a> {
                 return self.invalid(span);
             }
         };
+        // `regex.Pattern("...")`, `template.Parse<T>("...")`: literal checks (litcheck.rs).
+        self.std_literal_check(t, checked.as_deref().unwrap_or(&[]), args);
         let sig = self.sigs[fid.0 as usize].clone();
         let fname = self.funcs[fid.0 as usize].name.clone();
         let mut hargs: Vec<hir::Expr> = recv.into_iter().collect();
@@ -233,6 +236,11 @@ impl<'a> Sema<'a> {
             if n == segs.len() {
                 if let PathRes::Member(Member::Generic(t)) = res {
                     return self.generic_call(t, Some(targs), None, args, span);
+                }
+                if let PathRes::Member(Member::Special(sp)) = res {
+                    if let Some(e) = self.typed_special(sp, targs, args, span) {
+                        return e;
+                    }
                 }
                 self.err(format!("{} is not generic (type arguments are only allowed on generic functions, methods and types)", last.name), last.span);
                 self.check_args_loose(args);

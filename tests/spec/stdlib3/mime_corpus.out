@@ -1,0 +1,58 @@
+0 text/html {}
+1 text/html {charset="UTF-8"}
+2 text/html {charset="utf-8"}
+3 multipart/form-data {boundary="--abc--"}
+4 attachment {filename="a b.txt"}
+5 form-data {filename="C:\\x\\y.txt" name="f"}
+6 application/x-stuff {title="This is ***fun***"}
+7 message/external-body {access-type="URL" url="ftp://cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar"}
+8 application/x-stuff {title="This is even more ***fun*** isn't it!"}
+9 text/plain {name="€ rates"}
+10 text/plain {}
+11 error
+12 error
+13 error
+14 error
+15 error
+16 error
+17 error
+18 error
+19 inline {}
+20 text/plain {charset="utf-8" format="flowed"}
+"text/html"
+"text/html; charset=utf-8"
+"attachment; filename=\"a b.txt\""
+"text/plain; a=\"x\\\"y\"; name*=utf-8''%E2%82%AC%20rates"
+"noslash"
+""
+"text/plain; a=2; m=tok; z=1"
+"text/html; charset=utf-8"
+"text/html; charset=utf-8"
+"image/png"
+"application/json"
+"text/css; charset=utf-8"
+"image/svg+xml"
+""
+""
+"image/webp"
+"text/javascript; charset=utf-8"
+"plain text"
+"caf=C3=A9 =3D =C3=A9t=C3=A9"
+"trailing space=20\r\nnext"
+"tab\tend=09"
+"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=\r\naaaaaaaaaaaaaaaaaaaaaaaaa"
+"x=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=\r\n=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3Dx=3D=\r\nx=3Dx=3Dx=3D"
+"line1\r\nline2\r\n"
+"=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=\r\n=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF=\r\n=C3=BF=C3=BF=C3=BF=C3=BF=C3=BF"
+"foobar"
+"café"
+"=="
+"trailing\r\nnext"
+"bad=ZZ"
+"softbreak"
+"end"
+"--XyZ-boundary\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nAnn \"A\"\r\n--XyZ-boundary\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"dir/report.txt\"\r\nContent-Type: application/octet-stream\r\n\r\nfile\r\ncontent\n\r\n--XyZ-boundary\r\nContent-Type: text/plain\r\nX-Custom: 1\r\n\r\nraw part\r\n--XyZ-boundary--\r\n"
+multipart/form-data; boundary=XyZ-boundary
+"name" "" "" "Ann \"A\""
+"upload" "report.txt" "application/octet-stream" "file\r\ncontent\n"
+"" "" "text/plain" "raw part"

@@ -1,5 +1,5 @@
 // test: os.Arch is the target architecture, one of the tier 1 values
-// status: pending
+// status: passing
 namespace spec.platform.os_arch
 
 import std.io

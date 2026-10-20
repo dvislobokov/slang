@@ -1,0 +1,9 @@
+writes: 5 trylock: true false
+rlock after unlock: true false
+semaphore peak: 2 available: 2 true true false
+barrier last arrivals: 2 rounds: 2
+once: 1 true
+8 8 1 true false 7
+false false true true false
+a a true false c
+pool made: 2 4 4 0

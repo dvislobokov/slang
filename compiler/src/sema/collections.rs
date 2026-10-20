@@ -356,7 +356,9 @@ impl<'a> Sema<'a> {
     /// requirements the element type does not meet are not checked.
     pub(crate) fn std_instance_hook(&mut self, sid: u32) {
         let Some((name, args)) = self.std_collection(sid) else { return };
-        let elem = args[0];
+        // Only the List methods need `==` (the newer collections have
+        // their own constraints, or no type parameter at all: BitSet).
+        let Some(&elem) = args.first() else { return };
         if self.is_comparable(elem) {
             return;
         }
@@ -372,7 +374,7 @@ impl<'a> Sema<'a> {
     /// Checks the extra requirements of a stdlib collection method call.
     pub(crate) fn check_std_method(&mut self, sid: u32, method: &str, span: Span) {
         let Some((name, args)) = self.std_collection(sid) else { return };
-        if !NEEDS_EQUATABLE.iter().any(|(s, n)| *s == name && *n == method) {
+        if args.is_empty() || !NEEDS_EQUATABLE.iter().any(|(s, n)| *s == name && *n == method) {
             return;
         }
         let elem = args[0];
@@ -401,6 +403,11 @@ impl<'a> Sema<'a> {
     pub(crate) fn collection_for(&mut self, vars: &[ast::Ident], seq: hir::Expr, body: &ast::Block) -> Result<StmtKind, hir::Expr> {
         let Some(sid) = self.struct_of(seq.ty) else { return Err(seq) };
         let Some((name, args)) = self.std_collection(sid) else { return Err(seq) };
+        // The slice-backed core collections only (stdlib_src/collections2.sl
+        // types iterate through their Items()/Keys() methods).
+        if !matches!(name, "List" | "Map" | "Set" | "Queue" | "Stack") {
+            return Err(seq);
+        }
         let (name, args) = (name.to_string(), args.to_vec());
         let field = |s: &Self, f: &str| s.structs[sid as usize].fields.iter().position(|x| x.name == f).unwrap() as u32;
         let span = seq.span;

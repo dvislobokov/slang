@@ -1,5 +1,5 @@
 // test: @cfg(not(os: "linux")) excludes a declaration on linux; @cfg(not(os: "windows")) keeps it
-// status: pending
+// status: passing
 namespace spec.platform.cfg_not
 
 import std.io

@@ -27,6 +27,7 @@ Contents
 15. [Platform layer](#15-platform-layer)
 16. [Networking: std.net and std.net.http](#16-networking-stdnet-and-stdnethttp)
 17. [Reflection tables and std.encoding.json](#17-reflection-tables-and-stdencodingjson)
+19. [Cryptography and TLS](#19-cryptography-and-tls)
 
 ---
 
@@ -183,7 +184,9 @@ compiler never retains interior pointers, see DESIGN.md "Память").
 
 The refcount word holds the count in its low 62 bits
 (`SLANG_RC_COUNT_MASK`); bit 62 (`SLANG_RC_WEAK_FLAG`) marks an object that
-has a weak box (3.4). `-1` (`SLANG_RC_IMMORTAL`) is immortal.
+has a weak box (3.4). `-1` (`SLANG_RC_IMMORTAL`) is immortal; `-2`
+(`SLANG_RC_ARENA`) marks an object owned by an arena (3.6). Retain and release
+ignore every negative count.
 
 ### 3.2 Functions
 
@@ -277,11 +280,48 @@ it must be enabled before the first allocation). At the end of
 ```
 leak: N objects
   K x TypeName        (mode 2 only, by count, then name)
+  cycle through Type.Field (make one field of the cycle `weak *T` to break it)
 ```
 
 to stderr and exits with status `SLANG_LEAK_EXIT_CODE` (66). The compiler
 enables it for `--leak-check` (mode 2 in debug builds, 1 with `--release`)
 and releases the program's globals before calling the shutdown.
+
+`void slang_leak_fields(const slang_type_info *type, const slang_leak_field *fields)`
+registers the `*T` fields of objects of `type` (`slang_leak_field` = `{ i64
+offset, const char *name }`, 16 bytes; `offset` is from the payload, the
+array ends with `offset == -1`; both must stay valid until exit). The
+compiler calls it at startup in mode 2 for every struct type info with
+pointer fields, naming them `"Type.Field"`. In mode 2 the report then
+lists, once per field name, every registered field of a leaked object that
+points at another leaked object from which the first is reachable again
+(the field lies on a reference cycle). Only the first 100000 leaked objects
+are examined.
+
+### 3.6 Arenas (`std.arena`)
+
+An arena allocates objects whose refcount word is `SLANG_RC_ARENA` (`-2`):
+like immortal objects, `slang_retain`/`slang_release` ignore them (every
+runtime check for "immortal" is `refcount < 0`), so compiled code handles
+arena pointers, strings and slices exactly like others. Arena objects are
+not counted by `slang_live_objects` and are not in the mode-2 leak list.
+Handles are raw pointers passed as `int64_t`; arenas are not thread-safe.
+
+| Function | Semantics |
+|---|---|
+| `int64_t slang_arena_create(void)` | a new empty arena |
+| `void *slang_arena_object(int64_t a, const slang_type_info *type, int64_t size)` | a zeroed object of `size` bytes (header included) in the arena, header `{SLANG_RC_ARENA, type}`; returns the header (borrowed) |
+| `void slang_arena_slice(slang_slice *out, int64_t a, int64_t elem_size, int64_t n, const slang_value_ops *ops)` | `*out` = `n` zeroed elements in a backing array in the arena (layout of 5.1); `ops` releases elements at `Free`. `n == 0` gives the nil slice. Growing it by `append` copies it to the heap (the count is never 1) |
+| `slang_string *slang_arena_string(int64_t a, const slang_string *s)` | a copy of `s` (borrowed) in the arena; NULL for `""` |
+| `void slang_arena_free(int64_t a)` | runs `type->drop` of every object in allocation order (releasing what they reference outside the arena; objects allocated by a drop are freed too), then frees all memory; the arena stays usable |
+| `void slang_arena_destroy(int64_t a)` | `slang_arena_free`, then frees the arena itself |
+| `int64_t slang_arena_objects(int64_t a)` | number of objects allocated since the last free |
+
+Memory: 64 KB chunks (an object larger than 16 KB gets a chunk of its own);
+each object is preceded by a 16-byte record prefix. After `free` every
+pointer into the arena is dangling (not checked). `std.arena.Arena` (a
+Slang source, `compiler/src/sema/stdlib_src/arena.sl`) holds the handle in
+a refcounted object whose `Drop` destroys the arena.
 
 ---
 
@@ -902,27 +942,64 @@ Propagation, with no help from compiled code:
 - A worker sets the job's context before calling `fn(arg)` and releases whatever
   is current when `fn` returns, so contexts never leak between jobs.
 - Calling an `async` function starts it on the caller's thread, so it inherits
-  the caller's context. `std.task.RunWith(ctx, f)` sets `ctx`, calls `f`, and
+  the caller's context. `slang_task_new` (the ramp) also records the caller's
+  context in the new task, and when that task first suspends
+  (`slang_task_add_continuation` returning true) or completes while current,
+  the recorded context is made current again (like the current task in
+  10.11): whatever the coroutine set (`task.With` inside it, a `std.diag`
+  span, `log.Context.Push`) stays with the coroutine and never leaks into the
+  caller. `std.task.RunWith(ctx, f)` sets `ctx`, calls `f`, and
   restores the previous context before returning `f`'s task.
 
 ### 10.9 I/O readiness waits (`src/task_io.c`)
 
-One I/O thread (started lazily, stopped by `slang_runtime_shutdown` after the
-timers; pending waits are then released without completing) runs the platform
-poller (epoll on Linux, section 15). A wait is a `Task<int>` completed by the I/O
-thread, which posts the continuations to the scheduler exactly like a timer.
+**Sharded pollers.** The runtime runs S poller shards (`SLANG_IO_POLLERS`,
+default half the scheduler workers, at least 1, at most 8), started on the
+first wait and stopped by `slang_runtime_shutdown` after the timers. Each
+shard owns one platform poller (an epoll instance on Linux, a kqueue on
+macOS/BSD; section 15), the thread that waits on it, a mutex and a binary
+min-heap of its waits' deadlines. A descriptor is assigned to the least
+loaded shard (ties round-robin) when it is registered — `slang_io_register`
+at socket creation, or implicitly by its first wait — and stays there until
+`slang_io_forget`; so shards share no lock or poller on the hot path. A
+wait is a `Task<int>` completed by its shard's thread, which posts the
+continuations to the scheduler exactly like a timer.
 
 | Function | Semantics |
 |---|---|
-| `slang_task *slang_io_wait_readable(int64_t fd, int64_t timeout_ms)` | +1 task whose `int64_t` result is **0** when `fd` is readable (or at end of stream / error), **1** when `timeout_ms` (>= 0) elapsed first, **2** when `slang_io_forget(fd)` was called. `timeout_ms < 0`: no timeout |
+| `slang_task *slang_io_wait_readable(int64_t fd, int64_t timeout_ms)` | +1 task whose `int64_t` result is **0** when `fd` is readable (or at end of stream / error), **1** when `timeout_ms` (>= 0) elapsed first, **2** when `slang_io_forget(fd)` was called (or the descriptor is closed), **3** when the waiting task was cancelled (10.11). `timeout_ms < 0`: no timeout |
 | `slang_task *slang_io_wait_writable(int64_t fd, int64_t timeout_ms)` | the same for writability |
-| `void slang_io_forget(int64_t fd)` | completes pending waits on `fd` with 2 and unregisters it. **Call it before `close(fd)`** (a reused descriptor number must not inherit waits) |
+| `void slang_io_register(int64_t fd)` | optional: assigns `fd` to a shard now (std.net does it when a socket is created, so connections spread over the shards at accept/connect time) |
+| `void slang_io_forget(int64_t fd)` | completes pending waits on `fd` with 2, removes it from its poller and unassigns it. **Call it before `close(fd)`** (a reused descriptor number must not inherit waits). std.net never calls `close` itself: its socket handles do both (section 16) |
 
-Rules: `fd` must be non-blocking. At most one reader and one writer may wait on a
-descriptor at a time (a second one panics `two tasks wait to read file descriptor
-N at the same time`). The poller is level-triggered and an fd is registered only
-while somebody waits on it, so a wait completes at once when data is already
-there. A descriptor that cannot be polled (a regular file) is always ready.
+Rules and guarantees:
+
+- `fd` must be non-blocking. Any number of tasks may wait on one descriptor
+  in each direction; a report wakes **every** waiter of that direction.
+- **Level-triggered, one-shot**: each wait arms the fd once (one
+  `epoll_ctl(EPOLL_CTL_MOD, EPOLLONESHOT)` / `kevent(EV_ONESHOT)`), so data
+  that is already there is reported at once and nothing is lost between a
+  read that saw `EAGAIN` and the arm. Edge-triggered mode was not chosen:
+  it saves the re-arm call but needs every reader to drain the socket to
+  `EAGAIN`, which the stdlib cannot promise for user code (a `ReadExact(4)`
+  leaves data behind); measured on `benchmarks/tcp_echo` only 1 in 15
+  operations waits at all (the rest succeed on the first try), so the arm
+  call is not the bottleneck.
+- **Reports may be spurious** (a readiness that is gone, a direction nobody
+  asked for); every caller retries its operation and waits again.
+- **Stale reports** are dropped: poller events carry `(generation << 32) |
+  fd`, and the generation changes with every `slang_io_forget`, so a report
+  that raced with forget + close + reuse of the number never reaches the
+  new owner's waits.
+- **EINTR** from the platform wait counts as a timeout of 0 events and the
+  loop recomputes its deadline; wake-ups between threads go through the
+  poller's eventfd (EVFILT_USER on kqueue) and only when a new wait has an
+  earlier deadline than the one the shard sleeps toward, or at shutdown.
+- A descriptor that cannot be polled (a regular file) is always ready (the
+  wait completes with 0 at once); a closed one completes with 2.
+- **Shutdown with pending waits**: the shard threads are woken and joined;
+  waits still pending are released without completing (the scheduler has
+  stopped, nobody would run their continuations), like pending timers.
 
 ### 10.10 Primitives for the Slang-source `std.task`
 
@@ -1256,6 +1333,29 @@ RFC 2104 (HMAC) and IEEE CRC-32. Inputs are the bytes of the string; hex is lowe
 | `New() string` | `slang_string *slang_uuid_new(void)` | random version-4 UUID (RFC 9562) from `crypto.rand`, lowercase `8-4-4-4-12`; panics if no entropy source works |
 | `IsValid(s) bool` | `bool slang_uuid_is_valid(const slang_string *s)` | canonical 36-char form, hex digits of either case, any version |
 
+
+### 14.4 Tier 0/1 stdlib (docs/STDLIB.md)
+
+C halves of the Slang-source modules in `compiler/src/sema/stdlib_src/`;
+same conventions as 14.1 (borrowed arguments, owned results, trailing
+`slang_error **`, `[]T` results through a trailing `slang_slice *out`).
+`[]uint32` slices have `elem_size` 4, `[]int` 8, both with NULL ops. The
+internal `rt*` externs are only called by the stdlib sources.
+
+| File | Symbols | Notes |
+|---|---|---|
+| `std_strconv.c` | `slang_strconv_rt_format_float(double, int64 fmt, int64 prec)`, `slang_strconv_rt_parse_float(s, err)`, sentinels `slang_strconv_err_syntax/range()` | `fmt` is `'f' 'e' 'E' 'g' 'G'`; `prec < 0` = shortest round-trip digits (Go); overflow returns ±Inf with `ErrRange` |
+| `std_unicode.c`, `std_unicode_tables.c` | `slang_unicode_is_{letter,digit,number,space,upper,lower,title,punct,symbol,mark,control,print,graphic}(int32)`, `slang_unicode_to_{upper,lower,title}`, `slang_unicode_simple_fold` | tables generated by `scripts/gen-unicode-tables.py` from Go's `unicode/tables.go` (Unicode 15) |
+| `std_math_bits.c` | `slang_math_bits_*` (uint64/uint32), `slang_math_bits_rt_mul_hi`, `rt_div_quo/rem` (panic on y == 0 or overflow), `slang_math_float64bits/frombits`, `float32bits/frombits` | |
+| `std_math_big.c` | `slang_math_big_rt_{add,sub,cmp,mul,divmod,shl,shr,bit_len,format,parse,from_bytes,to_bytes,from_uint}` | normalized little-endian `[]uint32` magnitudes (zero = empty); `divmod` writes `[len(q), q..., r...]`; Karatsuba above 48 limbs |
+| `std_hash.c` | `slang_hash_maphash_rt_sip13(k0, k1, []byte)`, `_str(k0, k1, string)` | SipHash-1-3 |
+| `std_time_zone.c` | `slang_time_rt_local_tzif(err)` | TZif bytes of `$TZ` / `/etc/localtime`, read once; `""` = UTC |
+| `std_os_file.c` | `slang_os_rt_{open,read,pread,write,write_str,seek,close,sync,truncate,fstat,stat,read_dir,chmod}`, `slang_io_err_eof()` (= `slang_err_eof`) | blocking file descriptors; `rt_read` fills the caller's `[]byte` in place; `fstat`/`stat` give `[size, perm, kind, mtime_s, mtime_ns]`; writes to fd 1/2 flush stdio first |
+| `std_os_signal.c` | `slang_os_signal_rt_{wait,catch,ignore,reset,raise,pending}` | `rt_wait` returns a `Task<void>` completed by a dedicated thread reading a self-pipe written by the `sigaction` handler; deliveries without waiters are counted |
+| `std_process.c` | `slang_process_rt_{spawn,read,write,close,wait_pid,kill,executable,wait_readable,wait_writable}` | fork/exec, pipe ends non-blocking and `FD_CLOEXEC`; `rt_spawn` returns `[pid, pidfd, stdin, stdout, stderr]` (-1 = none); `rt_read`/`rt_write` return -1 for "would block", then the Slang side awaits `slang_io_wait_readable/writable` (10.9) |
+| `std_os_user.c` | `slang_os_user_rt_{lookup,group,uid}` | `getpwuid_r` & co. |
+| `std_sync.c` | `slang_sync_rt_{load,store,add,swap,cas}(int64_t *, ...)`, `slang_sync_rt_yield` | sequentially consistent `__atomic` builtins on a field passed as `&field` |
+
 ---
 
 ## 15. Platform layer
@@ -1267,52 +1367,146 @@ see `docs/PLATFORMS.md`.
 | File | Contents |
 |---|---|
 | `platform/posix.c` | threads (`slang__plat_thread_start[_detached]`, `_join`), `cpu_count`, `yield`, monotonic clock `mono_ns`, entropy `random_bytes` (`getrandom`/`getentropy`, then `/dev/urandom`), `backtrace` (execinfo) |
-| `platform/poll_epoll.c` | the readiness poller on Linux: level-triggered epoll plus an eventfd for wake-ups (`poller_new/free/set/remove/wait/wake`) |
-| `platform/poll_kqueue.c` | the poller for macOS/BSD: not implemented, the file stops the build there with `#error` |
-| `platform/net_posix.c` | non-blocking TCP/UDP sockets (`tcp_connect`, `tcp_connect_result`, `tcp_listen`, `tcp_accept`, `udp_bind`, `sock_recv/send`, `udp_recvfrom/sendto`, `sock_close`, `sock_addr`, `sock_port`), `is_ip`, `resolve` (getaddrinfo), `strerror`. Results are `>= 0` or `-errno`; "would block" is `-SLANG_PLAT_EAGAIN` |
+| `platform/poll_epoll.c` | the readiness poller on Linux: level-triggered one-shot epoll (`EPOLLONESHOT`, re-armed per wait) plus an eventfd for wake-ups (`poller_new/free/arm/remove/wait/wake`; events carry a 64-bit token) |
+| `platform/poll_kqueue.c` | the same poller on macOS and the BSDs: `EVFILT_READ`/`EVFILT_WRITE` with `EV_ONESHOT` (no `EV_CLEAR`), `EVFILT_USER` wake-ups (a self-pipe where it does not exist). Compiles only there; syntax-checked on Linux with stub headers (docs/PLATFORMS.md) |
+| `platform/net_posix.c` | `process_init` (SIGPIPE ignored, open-files soft limit raised to the hard one), socket addresses (`addr_ip/unix/family/parts/format`, `parse_ip`, `format_ip`, interface name/index), non-blocking sockets (`sock_open/connect/error/bind/listen/accept/recv/send/sendv/recvfrom/sendto/shutdown/close/name`), options (`sock_setopt/getopt`: TCP_NODELAY, keep-alive idle/interval/count, SO_RCVBUF/SNDBUF, SO_LINGER, SO_REUSEADDR/PORT, SO_BROADCAST, TCP_CORK/TCP_NOPUSH, IPV6_V6ONLY, TCP_FASTOPEN, multicast loop/TTL/interface; `sock_mcast` join/leave), `sendfile` (sendfile(2) on Linux/FreeBSD/macOS, pread+send elsewhere), `file_open/size/close`, `unlink`, blocking `resolve` (getaddrinfo, RFC 6724 order or IPv4 first), `reverse` (getnameinfo), `lookup_port`, `interfaces` (getifaddrs), `err_class` (errno to the std.net sentinel classes), `strerror` (lower case). Results are `>= 0` or `-errno`; "would block" is `-SLANG_PLAT_EAGAIN` |
+| `platform/certroots.c` | `cert_bundle_path`: the PEM bundle of trusted roots (`$SSL_CERT_FILE`, then the Linux/BSD distribution paths; macOS/Windows: only the variable), used by `std.crypto.x509.SystemRoots` (section 19) |
 
-Users of the layer: `task.c` (worker and timer threads, CPU count), `task_io.c`
-(poller), `panic.c` (backtrace), `std_crypto.c`/`std_random.c` (entropy),
-`std_net.c` (sockets). Mutexes and condition variables are still pthreads used
+Users of the layer: `task.c` (worker and timer threads, CPU count,
+`process_init` once at scheduler start), `task_io.c` (pollers), `panic.c`
+(backtrace), `std_crypto.c`/`std_random.c` (entropy), `std_net.c` (sockets,
+resolver pool). Mutexes and condition variables are still pthreads used
 directly in `task.c`; `std_time.c`/`std_fs.c`/`std_os.c` still call POSIX
 directly (the Windows port moves them).
 
 ## 16. Networking: std.net and std.net.http
 
-`std.net` and `std.net.http` are Slang (`compiler/src/sema/stdlib_src/net.sl`,
-`http.sl`, see `compiler/src/sema/stdsrc.rs`) over the internal externs below
+`std.net` and `std.net.http` are Slang (`compiler/src/sema/stdlib_src/net.sl`
+and `net_udp.sl` (UDP, buffered I/O, interfaces), `http.sl`, see
+`compiler/src/sema/stdsrc.rs`) over the internal externs below
 (`src/std_net.c`, platform-independent; Slang names start with `rt`). Every
 socket is non-blocking; an operation that would block reports it and the Slang
-code awaits `slang_net_rt_wait_readable/writable` (10.9), so no worker thread
-ever blocks on the network.
+code awaits `rtWaitReadable/rtWaitWritable` (10.9), so no worker thread ever
+blocks on the network.
 
-| Slang (internal) | C signature | Semantics |
+### 16.1 Architecture decisions
+
+- **Pollers: per-worker shards, not one I/O thread.** S shards (default
+  `ceil(workers / 2)`, max 8, `SLANG_IO_POLLERS`) each with its own
+  epoll/kqueue instance, thread, lock and deadline heap; a socket is pinned
+  to the least loaded shard when it is created (accept/connect/listen) and
+  deregistered when it closes. Chosen over a single poller with a lock-free
+  registration ring because the shards remove the shared state entirely
+  (no ring to size, no single thread that every readiness report and every
+  deadline has to pass through, no O(n) deadline scan), and because the
+  run queue is global: a worker-affine poller could not deliver locality
+  anyway, so the shard threads complete waits and post the continuations
+  to the shared scheduler queue (10.1). The shard threads (not the workers)
+  wait on the pollers because workers park on the run queue's condition
+  variable; integrating the poll into idle workers (Go's netpoller) needs a
+  scheduler with per-worker queues and is the next step if the queue ever
+  becomes the bottleneck (it is not on `benchmarks/tcp_echo`, see
+  `benchmarks/README.md`). Level-triggered one-shot arming, stale-event
+  generations, EINTR, wake-ups and shutdown: 10.9.
+- **Sockets are handles that own the descriptor** (`net_sock` in
+  std_net.c). Each operation acquires the handle (an atomic count of
+  operations in flight with a closed bit), so a closed socket fails with
+  `net.ErrClosed` without touching the descriptor, and `rtClose` sets the
+  closed bit, wakes every waiter (`slang_io_forget`: they fail with
+  `ErrClosed`) and closes the descriptor only when the last operation in
+  flight has finished (then forgets it again, so a wait registered in that
+  window is released too). A descriptor number can therefore never be
+  reused while another thread may still pass it to a system call — close is
+  race-free by construction, not by convention. The Slang `sock` object owns
+  the handle; its `Drop` calls `rtFree` (close if needed, then free), so
+  every `Conn`/`Listener`/`UDPConn` is closed by `Close()` or when its last
+  copy goes away, and a double `Close` is a no-op.
+- **DNS: a resolver pool.** `getaddrinfo`/`getnameinfo` run on up to
+  `SLANG_RESOLVERS` (default 4) detached threads that start on demand and
+  retire after 30 s idle; a lookup is a task completed by the pool, so a
+  slow DNS server never blocks a worker. Address literals (with `%zone`)
+  complete at once. Results keep the system's RFC 6724 order (std.net then
+  interleaves families for Happy Eyeballs) or IPv4 first (`ResolveIP`). At
+  shutdown queued lookups are dropped and running ones discard their
+  result. Timeouts and retries are the system resolver's (`resolv.conf`
+  `timeout:`/`attempts:`); a lookup cannot be cancelled. A native DNS client
+  (UDP, `/etc/hosts`, TXT/MX) is not implemented, so there is no
+  `LookupTXT/LookupMX`.
+- **Errors**: the C side reports the *cause* — one of the immortal
+  sentinels below for the errno classes std.net names, else an error with
+  the lower-case system text — and net.sl wraps it in a `net.OpError`
+  (`"dial tcp 10.0.0.1:80: connection refused"`). `rtOpError` builds that
+  wrapper as an ordinary `slang_error` whose own text is the prefix and
+  whose `inner` is the cause (so `errors.Is` sees the sentinel through it),
+  carrying the boxed `OpError` as its typed payload (so `errors.As` finds
+  it).
+- **SIGPIPE** is ignored process-wide at scheduler start (like Rust's
+  runtime) and every send uses `MSG_NOSIGNAL` / `SO_NOSIGPIPE`; a write to
+  a peer that went away fails with `net.ErrReset`. The open-files soft
+  limit is raised to the hard one at the same time (like Go).
+
+### 16.2 Sentinels (`std.net` constants, `StdConst::Error`)
+
+| Slang | C | Message | errno classes |
+|---|---|---|---|
+| `net.ErrClosed` | `slang_net_err_closed()` | `use of closed network connection` | operation on a closed socket, a wait woken by Close, `EBADF` |
+| `net.ErrTimeout` | `slang_net_err_timeout()` | `i/o timeout` | deadline / timeout, `ETIMEDOUT` |
+| `net.ErrRefused` | `slang_net_err_refused()` | `connection refused` | `ECONNREFUSED` |
+| `net.ErrReset` | `slang_net_err_reset()` | `connection reset by peer` | `ECONNRESET`, `EPIPE`, `ECONNABORTED` |
+| `net.ErrUnreachable` | `slang_net_err_unreachable()` | `network is unreachable` | `ENETUNREACH`, `EHOSTUNREACH`, `ENETDOWN`, `EHOSTDOWN` |
+| `net.ErrAddrInUse` | `slang_net_err_addr_in_use()` | `address already in use` | `EADDRINUSE` |
+| `net.ErrNotFound` | `slang_net_err_not_found()` | `no such host` | `EAI_NONAME`/`EAI_NODATA`, no addresses |
+| `net.ErrEOF` | `slang_net_err_eof()` (= `slang_err_eof`) | `EOF` | `ReadExact`/`ReadLine`/`ReadByte` at the end of the stream |
+
+### 16.3 Internal externs
+
+Handles are `int64_t` (a `net_sock *`, never 0 or -1). "Would block" is
+**-1** for the `int!` operations and an empty slice with `rtAgain()` for the
+`[]byte!` reads. Error outputs are the causes of 16.1.
+
+| Slang (internal) | C | Semantics |
 |---|---|---|
-| `rtConnect(ip, port) int!` | `int64_t slang_net_rt_connect(const slang_string *ip, int64_t port, slang_error **err)` | new TCP socket, connect started; the caller awaits writability, then `rtConnectResult` |
-| `rtConnectResult(fd) void!` | `void slang_net_rt_connect_result(int64_t fd, slang_error **err)` | `SO_ERROR` of the connect (`connect: Connection refused`) |
-| `rtListen(ip, port) int!` | `int64_t slang_net_rt_listen(const slang_string *ip, int64_t port, slang_error **err)` | bound, listening socket (`SO_REUSEADDR`, backlog 128); `ip` must be numeric |
-| `rtAccept(fd) int!` | `int64_t slang_net_rt_accept(int64_t fd, slang_error **err)` | new connection fd, or **-1** if none is pending |
-| `rtRead(fd, n) []byte!` | `void slang_net_rt_read(int64_t fd, int64_t n, slang_slice *out, slang_error **err)` | up to `n` bytes; empty at end of stream **or** when it would block: `rtAgain()` tells which |
-| `rtAgain() bool` | `bool slang_net_rt_again(void)` | the last `rtRead`/`rtRecvFrom` on this thread would have blocked (read it right after the call) |
-| `rtWrite(fd, data, off) int!` / `rtWriteStr(fd, s, off) int!` | `int64_t slang_net_rt_write(int64_t fd, const slang_slice *data, int64_t off, slang_error **err)` / `_write_str(..., const slang_string *s, ...)` | writes from byte `off`; bytes written or **-1** if it would block (`MSG_NOSIGNAL`: no SIGPIPE) |
-| `rtClose(fd)` | `void slang_net_rt_close(int64_t fd)` | `slang_io_forget` + close |
-| `rtWaitReadable(fd, ms)` / `rtWaitWritable` `Task<int>` | `slang_task *slang_net_rt_wait_readable(int64_t fd, int64_t ms)` | `slang_io_wait_*` with `ms <= 0` meaning no timeout |
-| `rtLocalAddr(fd)` / `rtRemoteAddr(fd) string`, `rtPort(fd) int` | `slang_string *slang_net_rt_local_addr(int64_t)`, ... | `"ip:port"` (`"[ip]:port"` for IPv6), local port |
-| `rtIsIP(s) bool` | `bool slang_net_rt_is_ip(const slang_string *s)` | numeric IPv4/IPv6 |
-| `rtResolve(host) Task<int>` / `rtResolveTake(h) []string!` | `slang_task *slang_net_rt_resolve(const slang_string *host)` / `void slang_net_rt_resolve_take(int64_t h, slang_slice *out, slang_error **err)` | getaddrinfo on a detached helper thread; the task's result is a request handle that `rtResolveTake` turns into the addresses (IPv4 first, no duplicates) or `lookup host: reason`, freeing it. IP literals complete at once |
-| `rtUdpBind(ip, port) int!`, `rtRecvFrom(fd, n) []byte!`, `rtLastFrom() string`, `rtLastFromPort() int`, `rtSendTo(fd, data, ip, port) int!` | `slang_net_rt_udp_bind`, `_recv_from`, `_last_from`, `_last_from_port`, `_send_to` | UDP; the sender of the last datagram is kept per thread like `rtAgain` |
+| `rtDial(ip, port, lip, lport) int!` | `slang_net_rt_dial(const slang_string *ip, int64_t port, const slang_string *lip, int64_t lport, slang_error **err)` | TCP socket (TCP_NODELAY on), optional local bind (`lip == ""` and `lport == 0`: none), connect started; `ip` may carry `%zone` |
+| `rtDialUnix(path) int!` | `slang_net_rt_dial_unix` | Unix stream connect (`@name`: Linux abstract namespace) |
+| `rtConnectResult(h) void!` / `rtConnectCheck(h) int!` | `slang_net_rt_connect_result` / `_connect_check` | `SO_ERROR` of the connect / 1 connected, 0 still connecting, or the error |
+| `rtWaitAnyWritable(hs []int, ms) Task<int>` | `slang_net_rt_wait_any_writable(const slang_slice *hs, int64_t ms)` | index of the first handle to become writable (or whose `ms` wait ended); Happy Eyeballs |
+| `rtListen(ip, port, backlog, flags) int!` | `slang_net_rt_listen` | bound, listening TCP socket. `ip == ""`: `::` with `IPV6_V6ONLY` off (dual-stack), `0.0.0.0` without IPv6. `flags`: 1 no `SO_REUSEADDR` (on by default), 2 `SO_REUSEPORT`, 4 `IPV6_V6ONLY`, 8 `TCP_FASTOPEN`. `backlog <= 0`: 4096 |
+| `rtListenUnix(path, backlog) int!` | `slang_net_rt_listen_unix` | Unix listener; the socket file is unlinked when the handle closes (not for `@name`) |
+| `rtAccept(h) int!` | `slang_net_rt_accept` | new connection handle (non-blocking, close-on-exec, TCP_NODELAY), or -1 |
+| `rtRead(h, n) []byte!` / `rtAgain() bool` | `slang_net_rt_read` / `_again` | up to `n` bytes (received into a per-thread 64 KB buffer and copied into an exact-size slice); empty at end of stream **or** when it would block: `rtAgain()` (read right after the call) tells which |
+| `rtReadInto(h, buf, off) int!` | `slang_net_rt_read_into(int64_t h, const slang_slice *buf, int64_t off, slang_error **err)` | reads into `buf[off..]` (no allocation): bytes read, 0 at end of stream, -1 would block |
+| `rtWrite(h, data, off)` / `rtWriteStr(h, s, off)` / `rtWriteV(h, bufs [][]byte, off) int!` | `slang_net_rt_write`, `_write_str`, `_write_v` | writes from byte `off` (of the concatenation for `WriteV`, one `sendmsg` of up to 64 buffers); bytes written or -1 |
+| `rtShutdown(h, how) void!` | `slang_net_rt_shutdown` | `how`: 1 read, 2 write, 3 both |
+| `rtClose(h)` / `rtFree(h)` / `rtIsClosed(h) bool` / `rtFd(h) int` | `slang_net_rt_close`, `_free`, `_is_closed`, `_fd` | 16.1; `rtFree` only from `Drop`; `rtFd` is -1 once closed |
+| `rtWaitReadable(h, ms)` / `rtWaitWritable` `Task<int>` | `slang_net_rt_wait_readable(int64_t h, int64_t ms)` | `slang_io_wait_*` (codes of 10.9) with `ms <= 0` meaning no timeout; a closed handle gives a completed task with 2 |
+| `rtLocalAddr(h)` / `rtRemoteAddr(h) string`, `rtPort(h) int` | `slang_net_rt_local_addr` ... | `"ip:port"`, `"[ip%zone]:port"` or the Unix path; IPv4-mapped peers of dual-stack sockets as plain IPv4; the remote address is kept from dial/accept (valid after Close) |
+| `rtSetOpt(h, opt, v) void!` / `rtGetOpt(h, opt) int!` | `slang_net_rt_set_opt` / `_get_opt` | `opt` = `SLANG_PLAT_OPT_*` of platform.h: 1 NODELAY, 2 KEEPALIVE, 3 KEEPIDLE, 4 KEEPINTVL, 5 KEEPCNT, 6 RCVBUF, 7 SNDBUF, 8 LINGER (seconds, < 0 default), 9 REUSEADDR, 10 REUSEPORT, 11 BROADCAST, 12 CORK (TCP_NOPUSH on BSD), 13 V6ONLY, 14 FASTOPEN, 15 MCAST_LOOP, 16 MCAST_TTL, 17 MCAST_IF (interface index) |
+| `rtMcast(h, join, group, ifname) void!` | `slang_net_rt_mcast` | join/leave an IPv4/IPv6 multicast group |
+| `rtOpenFile(path) int!`, `rtFileSize(fd) int`, `rtCloseFile(fd)`, `rtSendFile(h, fd, off, n) int!` | `slang_net_rt_open_file` ... `_send_file` | `SendFile`: bytes sent, 0 at end of file, -1 would block |
+| `rtParseIP(s) []byte`, `rtFormatIP(b) string`, `rtIsIP(s) bool`, `rtIfIndex(name) int`, `rtIfName(i) string` | `slang_net_rt_parse_ip` ... | 4/16 bytes (empty if invalid), `inet_ntop` text |
+| `rtInterfaces() []string!` | `slang_net_rt_interfaces` | one line per interface: `name\tindex\t0\tflags\taddr/bits,...` (flags `u l m b p`) |
+| `rtLookupPort(net, service) int` | `slang_net_rt_lookup_port` | port of a service name (or a number), -1 if unknown |
+| `rtResolve(host, flags) Task<int>`, `rtReverse(ip) Task<int>`, `rtResolveTake(h) []string!`, `rtResolveSync(host, flags) []string!` | `slang_net_rt_resolve` ... | resolver pool (16.1): the task's result is a request handle that `rtResolveTake` turns into the addresses or `lookup host: cause` (cause `ErrNotFound` for unknown names), freeing it. `flags`: 1 IPv4 first, 2 passive. `rtResolveSync` resolves on the calling thread (`Listen` with a host name) |
+| `rtUdp(ip, port, flags) int!`, `rtUdpDial(ip, port, lip, lport) int!` | `slang_net_rt_udp`, `_udp_dial` | bound UDP socket (`ip == ""`: dual-stack any) / connected UDP socket |
+| `rtRecvFrom(h, n) []byte!`, `rtReadFrom(h, buf) int!`, `rtLastFrom() string`, `rtLastFromPort() int`, `rtLastTrunc() bool`, `rtSendTo(h, data, ip, port) int!` | `slang_net_rt_recv_from` ... | datagrams; the sender of the last datagram and whether it was truncated (`MSG_TRUNC`) are kept per thread like `rtAgain`; `rtSendTo` with `ip == ""` sends on a connected socket; IPv4 targets of a dual-stack socket are sent IPv4-mapped |
+| `rtOpError(boxed error, prefix, inner error) error` | `slang_net_rt_op_error` | 16.1 |
+| `rtBytes(n) []byte`, `rtCopyBytes(dst, doff, src, soff, n) int`, `rtIndexByte(b, from, c) int`, `rtJoin(a, b, bn) []byte` | `slang_net_rt_bytes` ... | byte helpers (zeroed buffer, memmove, memchr, `a ++ b[..bn]`) |
 
-**Public Slang API** (the authoritative list with semantics is DESIGN.md, "Сеть и
-протоколы"): `net.Dial(addr) Task<Conn!>`, `net.DialTimeout(addr, ms)`,
-`net.Listen(addr) Listener!`, `net.ListenUDP(addr) UDPConn!`,
-`net.ResolveIP(host) Task<[]string!>`, `net.SplitHostPort`, `net.JoinHostPort`;
-`Conn` (`Read(n)`, `ReadString(n)`, `Write(b)`, `WriteString(s)`, `SetTimeout(ms)`,
-`Close()`, `IsClosed()`, `LocalAddr()`, `RemoteAddr()`), `Listener` (`Accept()`,
-`Close()`, `Addr()`, `Port()`), `UDPConn` (`RecvFrom(n) Task<Packet!>`,
-`SendTo(b, addr)`, ...). `Conn`, `Listener` and `UDPConn` are handles to a heap
-socket object whose `Drop` closes the descriptor, so a socket is closed by
-`Close()` or when the last copy goes away (and `--leak-check` sees forgotten
-ones).
+### 16.4 Public Slang API
+
+The authoritative list with semantics is DESIGN.md, "Сеть и протоколы":
+addresses (`IP`, `Addr`, `ParseIP`, `ParseAddr`, `SplitHostPort`,
+`JoinHostPort`, `Interfaces`), resolution (`ResolveIP`, `Resolve`,
+`LookupHost`, `LookupAddr`, `LookupPort`, `ResolveAddr`), TCP (`Dial`,
+`DialTimeout`, `Dialer`, `Listen`, `ListenConfig`, `Conn`, `Listener`),
+Unix (`ListenUnix`, `DialUnix`), UDP (`ListenUDP`, `DialUDP`, `UDPConn`),
+buffered I/O (`BufferedReader`, `BufferedWriter`, `MakeBuffer`) and errors
+(`OpError`, the sentinels of 16.2, `IsTimeout`). The pre-existing API
+(`Conn.Read(n)`, `ReadString`, `Write`, `WriteString`, `SetTimeout`,
+`Close`, `IsClosed`, `LocalAddr`, `RemoteAddr`, `Listener.Accept/Close/
+Addr/Port`, `UDPConn.RecvFrom/SendTo/...`) is unchanged; error *messages*
+follow Go now (`dial tcp 127.0.0.1:1: connection refused` instead of
+`connect: Connection refused`).
 
 **HTTP** (`http.sl`): parsing and formatting are Slang, over a buffered reader
 on `net.Conn`; bodies are strings. Client: `http.Get(url)`, `http.Post(url, body,
@@ -1320,7 +1514,10 @@ contentType)` and `http.Client{Timeout, MaxRedirects, Headers}` with
 `Get/Post/Do`, returning `Task<Response!>`; HTTP/1.1 with `Connection: close`
 (no pooling), `Content-Length`, chunked and read-to-end bodies, redirects
 301/302/303/307/308 (at most 10; 303 and a redirected POST become GET); `https`
-fails with `https is not supported yet`. Server: `http.Server{Addr, Handler,
+URLs dial `std.net.tls` (section 19; `Client.TLS *tls.Config`, default:
+system roots, SNI from the URL, ALPN `http/1.1`); both sides read and write
+through the internal `stream` interface (`std.net.Conn` or `tls.Conn`).
+Server: `http.Server{Addr, Handler, TLS *tls.ServerConfig,
 IdleTimeout}` with `Listen()`, `Port()`, `Serve() Task<void!>`, `Shutdown()
 Task<void>`; one task per connection, HTTP/1.1 keep-alive, request bodies with
 `Content-Length` or chunked, handler errors become 500. `interface Handler {
@@ -1419,3 +1616,163 @@ returned as the error. `fnval` is a closure-convention thunk
 
 The parser, `json.Value`, `Parse<T>` and `Format<T>` are Slang
 (`compiler/src/sema/reflect_src/json.sl`).
+
+## 18. std.diag and std.log
+
+Runtime halves of the Slang-source `std.diag` / `std.log`
+(`compiler/src/sema/stdlib_src/{diag,log}.sl`), declared in the std.diag
+section of `slang_rt.h`. Implemented in `src/diag.c` (slots, metrics,
+files), `src/profile.c` (pprof profiles) and `src/platform/posix.c`
+(SIGPROF sampler, stack bounds, ELF symbols).
+
+| Slang (internal) | C | Notes |
+|---|---|---|
+| `diag.rtSlots()` | `slang_object *slang_diag_rt_slots(void)` | the process-wide `map[string]any` of the libraries' global state (+1, NULL until set). Callers hold `rtLock` while using it |
+| `diag.rtSetSlots(m)` | `void slang_diag_rt_set_slots(slang_object *m)` | stores `m` (retained). The map is released by `slang_runtime_shutdown` before the leak report |
+| `diag.rtLock()` / `rtUnlock()` | `void slang_diag_rt_lock(void)` / `slang_diag_rt_unlock(void)` | one global spin lock (yields while contended) |
+| `diag.rtLiveObjects()` / `rtAllocations()` | `int64_t slang_diag_rt_live_objects(void)` / `slang_diag_rt_allocations(void)` | live objects; objects allocated since start (one relaxed atomic add per allocation) |
+| `diag.rtLiveTasks()` / `rtQueueLen()` / `rtWorkers()` | `int64_t slang_diag_rt_live_tasks(void)` / `_queue_len` / `_workers` | live task objects; jobs in the run queue (walks it under the queue lock); `slang_sched_workers()` |
+| `diag.rtMonoNanos()` | `int64_t slang_diag_rt_mono_nanos(void)` | monotonic clock |
+| `diag.rtStartCPUProfile(path, hz)` | `void slang_diag_rt_start_cpu_profile(const slang_string *path, int64_t hz, slang_error **err)` | creates `path` (error if it cannot), allocates an 8 MB sample buffer and starts `ITIMER_PROF` at `hz` (default 100). Errors: already running, unsupported platform |
+| `diag.rtStopCPUProfile()` | `int64_t slang_diag_rt_stop_cpu_profile(slang_error **err)` | stops, writes the profile, returns the number of samples. Samples that do not fit the buffer are dropped |
+| `diag.rtHeapText()` | `slang_string *slang_diag_rt_heap_text(void)` | `"<count> <type> <bytes>\n"` per type of the live objects, most frequent first; `""` unless leak tracking with type names is on (`--leak-check` without `--release`) |
+| `diag.rtWriteHeapProfile(path)` | `void slang_diag_rt_write_heap_profile(const slang_string *path, slang_error **err)` | the same as a pprof profile (`inuse_objects`, `inuse_space`; one pseudo-function per type); error without tracking |
+| `log.rtOpen(path)` | `int64_t slang_log_rt_open(const slang_string *path, slang_error **err)` | `open(O_WRONLY\|O_CREAT\|O_APPEND\|O_CLOEXEC, 0644)`; error `open <path>: <strerror>` |
+| `log.rtWrite(fd, s)` | `void slang_log_rt_write(int64_t fd, const slang_string *s, slang_error **err)` | writes all of `s` (retries `EINTR`) |
+| `log.rtClose(fd)` / `log.rtIsatty(fd)` | `void slang_log_rt_close(int64_t fd)` / `bool slang_log_rt_isatty(int64_t fd)` | |
+
+**CPU profile format.** An uncompressed `perftools.profiles.Profile`
+(`github.com/google/pprof/proto/profile.proto`): sample types
+`samples/count` and `cpu/nanoseconds` (values `1` and the period), one
+sample per SIGPROF tick with location ids leaf first, one location per
+distinct address (non-leaf addresses are return address - 1), one function
+per symbol name (`slang_app__main__run` is shown as `app.main.run`), one
+mapping for the executable's text (`has_functions`), `time_nanos`,
+`duration_nanos`, `period_type` `cpu/nanoseconds`, `period` = 1e9/hz.
+
+**Sampler.** The SIGPROF handler (`SA_RESTART`) reads PC/FP/SP from the
+`ucontext` (x86-64 and AArch64, Linux and macOS) and follows `{saved FP,
+return address}` pairs while FP stays 8-aligned, increasing and inside the
+thread's stack bounds; bounds are recorded by
+`slang__plat_thread_stack_init` (every worker at start, and the thread that
+starts the profiler); other threads report only the PC. Compiled Slang code
+keeps frame pointers (`"frame-pointer"="all"` on every function, set in
+`build.rs`) and the runtime is built with `-fno-omit-frame-pointer`.
+
+---
+
+## 19. Cryptography and TLS
+
+The primitives behind `std.crypto.{aes, chacha, x25519, ecdh, ecdsa,
+ed25519, rsa, hkdf}`, the additions to `std.crypto.{hash, hmac}`, and the
+internal helpers of the Slang-source `std.crypto.x509`
+(`compiler/src/sema/stdlib_src/x509.sl`) and `std.net.tls`
+(`tls.sl`, `tls_client.sl`, `tls_server.sl`). C declarations:
+`include/slang_crypto.h`; wrappers: `src/crypto/api.c`; primitives:
+`src/crypto/*.c` behind the private header `src/crypto/crypto.h`
+(`slang__` symbols, not ABI). Calling convention of 14.1: `[]byte`
+arguments are borrowed slices (NULL = empty), `[]byte` results are
+written to a trailing `slang_slice *out` (`elem_size` 1, NULL ops), `T!`
+adds a trailing `slang_error **err`; on error `*out` is the empty slice.
+Hash names are `"sha256"`, `"sha384"`, `"sha512"`, `"sha1"` (case and `-`
+ignored); an unknown one is the error `crypto: unknown hash "<name>" ...`.
+
+**Primitives** (all constant time in secret data unless noted):
+
+| File | Contents |
+|---|---|
+| `sha2.c` | SHA-256/384/512, SHA-1; streaming `slang_hash_ctx` (plain bytes, copyable); HMAC |
+| `hkdf.c` | HKDF-Extract/Expand (RFC 5869) |
+| `aes.c` | AES-128/192/256 encryption and GCM. Portable path: 64-bit bitsliced AES (4 blocks per call; Boyar-Peralta S-box circuit), GHASH by integer multiplication with holes (BearSSL `ctmul64` style). x86-64: AES-NI + PCLMULQDQ intrinsics (`__attribute__((target))`) when cpuid reports AES, PCLMULQDQ, SSSE3 and SSE4.1; `SLANG_NO_AESNI=1` forces the portable path. The key schedule always runs on the bitsliced S-box |
+| `chacha20poly1305.c` | ChaCha20, Poly1305 (26-bit limbs), the RFC 8439 AEAD |
+| `fe25519.h`, `x25519.c`, `ed25519.c` | GF(2^255-19) with 51-bit limbs (`unsigned __int128`), X25519 ladder (RFC 7748), Ed25519 (RFC 8032; extended coordinates, double-and-always-add with conditional moves, bit-serial mod-L reduction) |
+| `p256.c` | P-256: Montgomery arithmetic mod p and mod n on 4x64-bit limbs, complete projective addition (Renes-Costello-Batina 2016, alg. 4), 4-bit fixed windows with full-table scans; ECDH, ECDSA with RFC 6979 nonces hedged with 32 random bytes; verification uses the same constant-time code |
+| `rsa.c` | RSA up to 8192 bits, 64-bit limbs, Montgomery. Verify PKCS#1 v1.5 / PSS (public, variable time). Sign from a PKCS#1 `RSAPrivateKey` DER: CRT, exponent blinding `d_p + r(p-1)`, constant-time 4-bit window exponentiation, result checked with `e` |
+| `util.c` | wiping, constant-time compare, CSPRNG (`slang__plat_random_bytes`), cpuid |
+
+**Public externs** (`std.crypto.*`):
+
+| Slang | C | Notes |
+|---|---|---|
+| `hash.Sha384(s)` / `Sha384Hex(s)` | `void slang_crypto_hash_sha384(const slang_string *, slang_slice *out)` / `slang_string *slang_crypto_hash_sha384_hex(const slang_string *)` | like `Sha256` (14.3) |
+| `hash.Sum(alg, data) []byte!` | `void slang_crypto_hash_sum(const slang_string *alg, const slang_slice *data, slang_slice *out, slang_error **err)` | digest of bytes |
+| `hmac.Sum(alg, key, data) []byte!` | `void slang_crypto_hmac_sum(alg, key, data, out, err)` | |
+| `hkdf.Extract(alg, salt, ikm)` / `Expand(alg, prk, info, n)` | `slang_crypto_hkdf_extract(alg, salt, ikm, out, err)` / `slang_crypto_hkdf_expand(alg, prk, info, int64_t n, out, err)` | empty salt = HashLen zeros; `n > 255*HashLen` is an error |
+| `aes.GcmSeal(key, nonce, pt, aad)` / `GcmOpen(key, nonce, ct, aad)` | `slang_crypto_aes_gcm_seal(key, nonce, pt, aad, out, err)` / `_open` | 16/24/32-byte key, 12-byte nonce; output = ciphertext \|\| 16-byte tag; a bad tag is `aes-gcm: message authentication failed` |
+| `aes.EncryptBlock(key, block)` / `aes.HasHardware()` | `slang_crypto_aes_encrypt_block(key, block, out, err)` / `bool slang_crypto_aes_has_hardware(void)` | one raw block (16 bytes) |
+| `chacha.Seal` / `chacha.Open` | `slang_crypto_chacha_seal(key, nonce, pt, aad, out, err)` / `_open` | 32-byte key |
+| `x25519.GenerateKey()` / `PublicKey(priv)` / `SharedSecret(priv, peer)` | `slang_crypto_x25519_generate_key(out, err)` / `_public_key(priv, out, err)` / `_shared_secret(priv, peer, out, err)` | 32-byte values; an all-zero result (small-order peer) is an error |
+| `ecdh.GenerateKey()` / `PublicKey(priv)` / `SharedSecret(priv, peer)` | `slang_crypto_ecdh_*` | P-256: 32-byte scalar, 65-byte uncompressed point (validated), 32-byte x coordinate |
+| `ecdsa.GenerateKey` / `PublicKey` / `Sign(priv, digest)` / `Verify(pub, digest, sig) bool` | `slang_crypto_ecdsa_*`; `bool slang_crypto_ecdsa_verify(pub, digest, sig)` | P-256; signatures are ASN.1 DER; the leftmost 256 bits of longer digests are used; `Verify` requires strict DER |
+| `ed25519.GenerateKey()` / `PublicKey(seed)` / `Sign(seed, msg)` / `Verify(pub, msg, sig) bool` | `slang_crypto_ed25519_*` | 32-byte seed, 32-byte key, 64-byte signature |
+| `rsa.VerifyPKCS1v15(n, e, hash, digest, sig) bool` / `VerifyPSS(...)` | `bool slang_crypto_rsa_verify_pkcs1v15(n, e, hash, digest, sig)` / `_verify_pss` | big-endian modulus and exponent; PSS: MGF1 with the same hash, any salt length |
+| `rsa.SignPKCS1v15(key, hash, digest)` / `SignPSS(key, hash, digest)` | `slang_crypto_rsa_sign_pkcs1v15(key, hash, digest, out, err)` / `_sign_pss` | `key` = PKCS#1 `RSAPrivateKey` DER; PSS salt = hash length |
+
+**Internal externs** (Slang names start with `rt`):
+
+| Slang (internal) | C | Semantics |
+|---|---|---|
+| `hash.rtNew(alg) []byte!` / `rtWrite(st, data)` / `rtSum(st) []byte` | `slang_crypto_hash_rt_new`, `_rt_write(const slang_slice *st, const slang_slice *data)`, `_rt_sum(st, out)` | streaming hash whose state is the bytes of a `slang_hash_ctx` kept in a `[]byte` (`rtWrite` updates it in place; `rtSum` finalizes a copy, so hashing can continue); a malformed state panics |
+| `x509.rtSystemRootsPath() string` | `slang_string *slang_crypto_x509_rt_system_roots_path(void)` | `slang__plat_cert_bundle_path()` (15: `$SSL_CERT_FILE`, then the Linux/BSD bundle locations; NULL -> `""`) |
+| `tls.rtConcat(a, b) []byte` | `void slang_net_tls_rt_concat(a, b, out)` | new slice `a \|\| b` |
+| `tls.rtZeros(n) []byte` | `void slang_net_tls_rt_zeros(int64_t n, out)` | `n` zero bytes |
+| `tls.rtCopy(dst, off, src)` | `void slang_net_tls_rt_copy(const slang_slice *dst, int64_t off, const slang_slice *src)` | `dst[off..off+len(src)] = src` in place; out of range panics |
+| `tls.rtAeadNew(kind, key) []byte!` | `void slang_net_tls_rt_aead_new(int64_t kind, key, out, err)` | record-layer AEAD context: byte 0 = kind (1 AES-GCM: followed by the `slang_gcm_ctx` image with expanded keys and H; 2 ChaCha20-Poly1305: followed by the key) |
+| `tls.rtAeadSeal(ctx, nonce, aad, pt) []byte` / `rtAeadOpen(ctx, nonce, aad, ct) []byte!` | `slang_net_tls_rt_aead_seal(ctx, nonce, aad, pt, out)` / `_open(..., out, err)` | 12-byte nonce; a bad tag is the error `tls: bad record MAC`; an invalid context panics |
+
+The TLS protocol itself (record framing, key schedule, handshake state
+machines, tickets) is Slang over these and over `std.net` (16); TLS
+connections use the same non-blocking sockets and readiness waits, so a
+handshake never blocks a worker thread. Platform layer (15):
+`src/platform/certroots.c` provides `slang__plat_cert_bundle_path()`
+(Linux/BSD paths; stubs elsewhere).
+
+## 20. Debugger support
+
+The DWARF the compiler emits (compiler/src/codegen/debug.rs) describes the
+layouts of sections 3-7 directly; the lldb formatters and gdb printers in
+`tools/` read them from memory (no calls into the debuggee, so they also
+work on core dumps). The one private layout they need is exported by
+`src/task.c`:
+
+```c
+const int64_t slang_debug_task_layout[4] = {
+    1,                                   /* version of this table */
+    offsetof(struct slang_task, state),  /* int32_t, atomic */
+    offsetof(struct slang_task, slot),   /* result slot (result_size bytes) */
+    TASK_DONE,                           /* value of `state` once completed */
+};
+```
+
+It is read-only data and never used by compiled code; a `--release` link
+(`--gc-sections`) may drop it, and the formatters then fall back to the
+x86-64 glibc offsets (104, 208, 1).
+
+## 21. Tier-2 stdlib helpers (regex, compress, xml, html, mime)
+
+The tier-2 libraries (`docs/STDLIB.md`, level 2) are Slang
+(`compiler/src/sema/stdlib_src/`); C does only the parts that need tight
+loops over bytes or large generated tables. All functions follow the usual
+conventions: `string` by `const slang_string *`, slices in/out by
+`slang_slice *`, `T!` results with a trailing `slang_error **err`. They hold
+no global mutable state except the mime table (under a mutex). The C tests
+are `runtime/tests/test_std3.c`.
+
+| Slang | C | Notes |
+|---|---|---|
+| `regex.rtUnicode(name) []int` | `void slang_regex_rt_unicode(name, out)` | sorted `lo, hi` rune ranges of a Unicode category or script (`std_regex_tables.h`, generated from Go 1.24's `unicode`; 199 names); empty for an unknown name |
+| `regex.rtFold(c) int` | `int64_t slang_regex_rt_fold(c)` | next rune of the simple case-folding orbit of `c` (`c` itself if none), as Go's `unicode.SimpleFold` |
+| `regex.rtInts(n) []int`, `rtBytes(n) []byte` | `slang_regex_rt_ints(n, out)`, `_bytes` | zeroed buffers (DFA tables) |
+| `regex.rtIndex(s, sub, from) int` | `int64_t slang_regex_rt_index(s, sub, from)` | `memchr`/`memmem` search from byte offset `from`; -1 if absent (also used by textproto/multipart) |
+| `regex.rtTryLock(*int) bool`, `rtUnlock(*int)` | `slang_regex_rt_try_lock(slot)`, `_unlock` | an atomic CAS flag guarding a compiled regex's lazy-DFA cache; a matcher that loses the race uses the Pike VM instead of waiting |
+| `compress.rtCrc32(crc, b)`, `rtAdler32(a, b)` | `int64_t slang_compress_rt_crc32(crc, data)` / `_adler32` | running checksums (CRC-32 IEEE slicing-by-8); start with 0 / 1 |
+| `compress.rtInflateNew() []byte` | `void slang_compress_rt_inflate_new(out)` | a resumable inflate state; it is POD (window, tables, bit buffer) stored in a `[]byte`, so it is freed with the slice |
+| `compress.rtInflate(st, in) []byte!` | `void slang_compress_rt_inflate(st, in, out, err)` | feeds raw DEFLATE input, returns the bytes produced; errors `flate: corrupt input (...)` |
+| `compress.rtInflateDone/Tail/Unused(st)` | `bool _done`, `_tail(st, out)`, `int64_t _unused` | final block seen / input bytes after the end of the stream / their count |
+| `compress.rtDeflate(dict, data, level, final) []byte` | `void slang_compress_rt_deflate(dict, data, level, final, out)` | compresses `data` with up to 32 KiB of preceding `dict` as history (streaming); levels 0–9 (zlib-like lazy matching), stored/fixed/dynamic block choice; a non-final call ends with a sync flush (byte aligned) |
+| `compress.rtConcat(a, b)`, `rtCopy(b, lo, hi)`, `rtZeros(n)` | `slang_compress_rt_concat/copy/zeros` | memcpy helpers |
+| `compress.rtZstdDecode(b) []byte!` | `void slang_compress_rt_zstd_decode(data, out, err)` | RFC 8878 decoder (all frames, skippable frames, checksums, dictionaries are not supported); `rtZstdFrameLen(b)` is the length of the first complete frame or -1; `rtXxh64(b)` is XXH64 with seed 0 |
+| `encoding.xml.rtScan(text, strict) []string!` | `void slang_encoding_xml_rt_scan(text, strict, out, err)` | tokenizes a document into lines: first char `S` start tag, `A`/`V` attribute name/value, `>`/`/` end of start tag (self-closing), `E` end tag, `T` text (entities decoded), `C` comment, `P` proc-inst, `D` directive; errors carry the line |
+| `encoding.xml.rtEscape(s, attr) string` | `slang_string *slang_encoding_xml_rt_escape(s, attr)` | `&<>"'` (and `\t\n\r` in attributes) |
+| `html.Escape`, `html.Unescape` | `slang_html_escape(s)`, `slang_html_unescape(s)` | Go's `html.EscapeString`/`UnescapeString` with all 2231 HTML5 entities (`std_html_entities.h`) |
+| `mime.rtType(ext)`, `rtAdd(ext, type)`, `rtExts(type)` | `slang_mime_rt_type/add/exts` | the extension table (built-ins + additions) |

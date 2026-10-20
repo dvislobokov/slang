@@ -105,6 +105,9 @@ pub struct StructDecl {
     /// Embedded types: a bare type name on its own line inside the struct.
     pub embeds: Vec<TypeExpr>,
     pub methods: Vec<FuncDecl>,
+    /// `struct S implements A, B { ... }`: interfaces checked at the
+    /// declaration (semantics stay structural).
+    pub implements: Vec<TypeExpr>,
     pub span: Span,
 }
 
@@ -123,10 +126,13 @@ pub struct InterfaceDecl {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
-    /// Method signatures; `body` is always `None`.
+    /// Methods: signatures (`body` is `None`) and default methods with a
+    /// body, in which `this` is the interface value.
     pub methods: Vec<FuncDecl>,
     /// Embedded interfaces: a bare interface name on its own line.
     pub embeds: Vec<TypeExpr>,
+    /// `sealed interface I`: implementations only in the same namespace.
+    pub is_sealed: bool,
     pub span: Span,
 }
 
@@ -138,6 +144,8 @@ pub struct EnumDecl {
     pub variants: Vec<Variant>,
     /// Methods declared after the variants; `this` is the enum value.
     pub methods: Vec<FuncDecl>,
+    /// `enum E implements A { ... }` (see [`StructDecl::implements`]).
+    pub implements: Vec<TypeExpr>,
     pub span: Span,
 }
 
@@ -158,7 +166,8 @@ pub struct FuncDecl {
     pub params: Vec<Param>,
     /// `None` means `void`.
     pub ret: Option<TypeExpr>,
-    /// `None` for interface method signatures.
+    /// `None` for interface method signatures (a body there makes a
+    /// default method).
     pub body: Option<Block>,
     pub is_async: bool,
     pub is_static: bool,
@@ -388,6 +397,9 @@ pub enum ExprKind {
     Lambda { params: Vec<Param>, ret: Option<Box<TypeExpr>>, body: Box<LambdaBody>, is_async: bool },
     /// `(expr)` kept for faithful formatting; semantics are those of `expr`.
     Paren(Box<Expr>),
+    /// `name: value` as an argument of a call inside attribute arguments
+    /// (`@cfg(not(os: "windows"))`); rejected anywhere else by sema.
+    NamedArg { name: Ident, value: Box<Expr> },
     /// An expression that failed to parse (error recovery), e.g. the
     /// missing operand in `x + ` or an argument of an unfinished `f(`.
     /// Sema gives it the `Invalid` type without further diagnostics.

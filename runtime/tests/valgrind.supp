@@ -1,0 +1,25 @@
+# Valgrind suppressions for Slang programs and runtime tests
+#   valgrind --suppressions=runtime/tests/valgrind.supp ./program
+#
+# glibc keeps a per-thread resolver context (resolv.conf contents) for every
+# thread that called getaddrinfo; the resolver pool threads of std.net
+# (runtime/src/std_net.c) are parked, not joined, at exit, and memcheck
+# reports the context reachable only from their TLS as lost.
+{
+   glibc-resolver-per-thread-context
+   Memcheck:Leak
+   match-leak-kinds: definite,possible
+   fun:malloc
+   ...
+   fun:__resolv_conf_allocate
+   ...
+   fun:getaddrinfo
+}
+{
+   glibc-resolver-per-thread-context-gethostbyname
+   Memcheck:Leak
+   match-leak-kinds: definite,possible
+   fun:malloc
+   ...
+   fun:__resolv_context_get
+}

@@ -1,5 +1,5 @@
 // test: a type switch case may name an interface that has default methods, and call them on the binding
-// status: pending
+// status: passing
 namespace spec.interfaces2.type_switch_default_iface
 
 import std.io

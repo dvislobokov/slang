@@ -1,0 +1,126 @@
+0 s="http" o="" u=- h="www.google.com" p="" path="" raw="" q="" f="" str="http://www.google.com"
+1 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="" f="" str="http://www.google.com/"
+2 s="http" o="" u=- h="www.google.com" p="" path="/file one&two" raw="/file%20one%26two" q="" f="" str="http://www.google.com/file%20one%26two"
+3 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="" f="file one&two" str="http://www.google.com/#file%20one%26two"
+4 s="ftp" o="" u=webmaster//false h="www.google.com" p="" path="/" raw="" q="" f="" str="ftp://webmaster@www.google.com/"
+5 s="ftp" o="" u=john doe//false h="www.google.com" p="" path="/" raw="" q="" f="" str="ftp://john%20doe@www.google.com/"
+6 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="" f="" str="http://www.google.com/?"
+7 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="foo=bar?" f="" str="http://www.google.com/?foo=bar?"
+8 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="q=go+language" f="" str="http://www.google.com/?q=go+language"
+9 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="q=go%20language" f="" str="http://www.google.com/?q=go%20language"
+10 s="http" o="" u=- h="www.google.com" p="" path="/a b" raw="" q="q=c+d" f="" str="http://www.google.com/a%20b?q=c+d"
+11 s="http" o="www.google.com/" u=- h="" p="" path="" raw="" q="q=go+language" f="" str="http:www.google.com/?q=go+language"
+12 s="http" o="%2f%2fwww.google.com/" u=- h="" p="" path="" raw="" q="q=go+language" f="" str="http:%2f%2fwww.google.com/?q=go+language"
+13 s="mailto" o="" u=- h="" p="" path="/webmaster@golang.org" raw="" q="" f="" str="mailto:/webmaster@golang.org"
+14 s="mailto" o="webmaster@golang.org" u=- h="" p="" path="" raw="" q="" f="" str="mailto:webmaster@golang.org"
+15 s="" o="" u=- h="" p="" path="/foo" raw="" q="query=http://bad" f="" str="/foo?query=http://bad"
+16 s="" o="" u=- h="foo" p="" path="" raw="" q="" f="" str="//foo"
+17 s="" o="" u=user//false h="foo" p="" path="/path" raw="" q="a=b" f="" str="//user@foo/path?a=b"
+18 s="" o="" u=- h="" p="" path="///threeslashes" raw="" q="" f="" str="///threeslashes"
+19 s="http" o="" u=user/password/true h="google.com" p="" path="" raw="" q="" f="" str="http://user:password@google.com"
+20 s="http" o="" u=j@ne/password/true h="google.com" p="" path="" raw="" q="" f="" str="http://j%40ne:password@google.com"
+21 s="http" o="" u=jane/p@ssword/true h="google.com" p="" path="" raw="" q="" f="" str="http://jane:p%40ssword@google.com"
+22 s="http" o="" u=j@ne/password/true h="google.com" p="" path="/p@th" raw="" q="q=@go" f="" str="http://j%40ne:password@google.com/p@th?q=@go"
+23 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="q=go+language" f="foo" str="http://www.google.com/?q=go+language#foo"
+24 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="q=go+language" f="foo&bar" str="http://www.google.com/?q=go+language#foo&bar"
+25 s="http" o="" u=- h="www.google.com" p="" path="/" raw="" q="q=go+language" f="foo&bar" str="http://www.google.com/?q=go+language#foo%26bar"
+26 s="file" o="" u=- h="" p="" path="/home/adg/rabbits" raw="" q="" f="" str="file:///home/adg/rabbits"
+27 s="file" o="" u=- h="" p="" path="/C:/FooBar/Baz.txt" raw="" q="" f="" str="file:///C:/FooBar/Baz.txt"
+28 s="mailto" o="webmaster@golang.org" u=- h="" p="" path="" raw="" q="" f="" str="mailto:webmaster@golang.org"
+29 s="" o="" u=- h="" p="" path="a/b/c" raw="" q="" f="" str="a/b/c"
+30 s="http" o="" u=?am/pa?sword/true h="google.com" p="" path="" raw="" q="" f="" str="http://%3Fam:pa%3Fsword@google.com"
+31 s="http" o="" u=- h="192.168.0.1" p="" path="/" raw="" q="" f="" str="http://192.168.0.1/"
+32 s="http" o="" u=- h="192.168.0.1" p="8080" path="/" raw="" q="" f="" str="http://192.168.0.1:8080/"
+33 s="http" o="" u=- h="fe80::1" p="" path="/" raw="" q="" f="" str="http://[fe80::1]/"
+34 s="http" o="" u=- h="fe80::1" p="8080" path="/" raw="" q="" f="" str="http://[fe80::1]:8080/"
+35 s="http" o="" u=- h="fe80::1%en0" p="" path="/" raw="" q="" f="" str="http://[fe80::1%25en0]/"
+36 s="http" o="" u=- h="rest.rsc.io" p="" path="/foo/bar/baz/quux" raw="/foo%2fbar/baz%2Fquux" q="alt=media" f="" str="http://rest.rsc.io/foo%2fbar/baz%2Fquux?alt=media"
+37 s="mysql" o="" u=- h="a,b,c" p="" path="/bar" raw="" q="" f="" str="mysql://a,b,c/bar"
+38 s="scheme" o="" u=- h="!$&'()*+,;=hello!" p="1" path="/path" raw="" q="" f="" str="scheme://!$&'()*+,;=hello!:1/path"
+39 s="http" o="" u=- h="host" p="" path="/!$&'()*+,;=:@[hello]" raw="/!$&'()*+,;=:@[hello]" q="" f="" str="http://host/!$&'()*+,;=:@[hello]"
+40 s="http" o="" u=- h="example.com" p="" path="/oid/[order_id]" raw="/oid/[order_id]" q="" f="" str="http://example.com/oid/[order_id]"
+41 s="http" o="" u=- h="192.168.0.2" p="8080" path="/foo" raw="" q="" f="" str="http://192.168.0.2:8080/foo"
+42 s="http" o="" u=- h="2b01:e34:ef40:7730:8e70:5aff:fefe:edac" p="8080" path="/foo" raw="" q="" f="" str="http://[2b01:e34:ef40:7730:8e70:5aff:fefe:edac]:8080/foo"
+43 s="http" o="" u=- h="hello.世界.com" p="" path="/foo" raw="" q="" f="" str="http://hello.%E4%B8%96%E7%95%8C.com/foo"
+44 s="http" o="" u=- h="example.com" p="" path="//foo" raw="" q="" f="" str="http://example.com//foo"
+45 s="myscheme" o="" u=- h="authority<\"hi\">" p="" path="/foo" raw="" q="" f="" str="myscheme://authority<\"hi\">/foo"
+46 s="tcp" o="" u=- h="2020::2020:20:2020:2020%Windows Loves Spaces" p="2020" path="" raw="" q="" f="" str="tcp://[2020::2020:20:2020:2020%25Windows%20Loves%20Spaces]:2020"
+47 s="magnet" o="" u=- h="" p="" path="" raw="" q="xt=urn:btih:c12fe1c06bba254a9dc9f519b335aa7c1367a88a&dn" f="" str="magnet:?xt=urn:btih:c12fe1c06bba254a9dc9f519b335aa7c1367a88a&dn"
+48 s="mailto" o="" u=- h="" p="" path="" raw="" q="subject=hi" f="" str="mailto:?subject=hi"
+49 error parse "http://[::1": missing ']' in host
+50 error parse "http://a b.com/": invalid character " " in host name
+51 error parse "http://host:port/": invalid port ":port" after host
+52 error parse "%gh&%ij": invalid URL escape "%gh"
+53 error parse "http://example.com/%zz": invalid URL escape "%zz"
+54 error parse "1http://foo": first path segment in URL cannot contain colon
+55 error parse ":foo": missing protocol scheme
+56 error parse "cache_object:foo/bar": first path segment in URL cannot contain colon
+57 error parse "http://x.com/a\x7fb": net/url: invalid control character in URL
+58 s="" o="" u=- h="" p="" path="" raw="" q="" f="" str=""
+59 s="" o="" u=- h="" p="" path="*" raw="" q="" f="" str="*"
+60 s="https" o="" u=user//false h="host" p="8443" path="/p/a/t/h" raw="" q="query=1&other=%20" f="frag ment" str="https://user@host:8443/p/a/t/h?query=1&other=%20#frag%20ment"
+g:h
+http://a/b/c/g
+http://a/b/c/g
+http://a/b/c/g/
+http://a/g
+http://g
+http://a/b/c/d;p?y
+http://a/b/c/g?y
+http://a/b/c/d;p?q#s
+http://a/b/c/g#s
+http://a/b/c/g?y#s
+http://a/b/c/;x
+http://a/b/c/g;x
+http://a/b/c/g;x?y#s
+http://a/b/c/d;p?q
+http://a/b/c/
+http://a/b/c/
+http://a/b/
+http://a/b/
+http://a/b/g
+http://a/
+http://a/
+http://a/g
+http://a/g
+http://a/g
+http://a/g
+http://a/g
+http://a/b/c/g.
+http://a/b/c/.g
+http://a/b/c/g..
+http://a/b/c/..g
+http://a/b/g
+http://a/b/c/g/
+http://a/b/c/g/h
+http://a/b/c/h
+http://a/b/c/g;x=1/y
+http://a/b/c/y
+http://a/b/c/g?y/./x
+http://a/b/c/g?y/../x
+http://a/b/c/g#s/./x
+http://a/b/c/g#s/../x
+http:g
+mailto:x
+mailto:a@b#f
+http://foo.com?q=1
+http://foo.com/a/d
+a=1&b=2 false
+a=1&a=2&b= false
+y=1 true
+ true
+q=go+lang&q2=go+lang false
+=empty&k= false
+ false
+%E2%82%AC=euro false
+https://go.dev/x/y
+https://go.dev/b/c/
+https://go.dev/a/b/c/d
+up
+https://go.dev/
+https://go.dev/a%2fb/c
+a+b%2Fc%3Fd%26e%3Df%2Bg a%20b%2Fc%3Fd&e=f+g
+100%25 100%25
+%2Fpath %2Fpath
+%C3%BC %C3%BC
+a%3Ab%40c a:b@c

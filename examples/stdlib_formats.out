@@ -1,0 +1,25 @@
+shop 0.0.0.0 8080 false 2
+# service config
+Name = "shop"
+Tags = ["web", "eu"]
+
+[Server]
+Host = "0.0.0.0"   # all interfaces
+Port = 9090
+debug_mode = false
+Timeout = "30s"
+3 items, total 106
+sku,Qty,Price
+A-1,3,1.5
+B-7,10,0.25
+"C,9",1,99
+<h1>Tom &amp; Jerry&#39;s &lt;shop&gt;</h1>
+<ul><li><a href="/item?sku=A-1">A-1</a> x3</li><li><a href="/item?sku=B-7">B-7</a> x10</li><li><a href="/item?sku=C%2c9">C,9</a> x1</li></ul>
+┌─────┬─────┬───────┐
+│ SKU │ Qty │ Price │
+├─────┼─────┼───────┤
+│ A-1 │   3 │  1.50 │
+│ B-7 │  10 │  0.25 │
+│ C,9 │   1 │ 99.00 │
+└─────┴─────┴───────┘
+43000 -> 198 bytes, round trip ok: true

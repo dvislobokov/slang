@@ -109,6 +109,39 @@ switch any {
 - **Результат**: TLS добавляет ~300–400 KB к бинарнику, одна сборка под
   все платформы, wasm и мобильные без C-зависимостей.
 
+**Статус (реализовано, `std.net.tls` + `std.crypto.*`, см. DESIGN.md
+«Сеть и протоколы» / «Криптография» и `runtime/ABI.md` §19):**
+
+- ✓ TLS 1.3 и TLS 1.2 (ECDHE + AEAD), клиент и сервер, все перечисленные
+  выше наборы, группы X25519/P-256, подписи ECDSA P-256, Ed25519, RSA-PSS,
+  RSA PKCS#1 (1.2 и сертификаты); HelloRetryRequest, SNI, ALPN, KeyUpdate,
+  сертификаты клиента, PSK-возобновление (1.3) и session tickets (1.2,
+  RFC 5077), `extended_master_secret` обязателен, `DOWNGRD`-защита, 0-RTT
+  выключен, renegotiation нет.
+- ✓ Примитивы на C с постоянным временем: bitsliced AES + GHASH без таблиц,
+  AES-NI/PCLMULQDQ по cpuid (на этой машине AES-128-GCM ~1 GB/s с AES-NI и
+  ~70 MB/s без него, ChaCha20-Poly1305 ~270 MB/s), X25519 и Ed25519 (поле
+  2^255-19 на 51-битных лимбах), P-256 (Монтгомери, полные формулы RCB),
+  RSA (CRT + ослепление экспоненты), SHA-2, HMAC, HKDF. NEON — нет.
+- ✓ X.509 на Slang: DER/PEM, цепочки, сроки, CA/pathlen, keyUsage/EKU,
+  dNSName name constraints, проверка имени хоста; системные корни через
+  `runtime/src/platform/certroots.c` (Linux/BSD; macOS/Windows — только
+  `$SSL_CERT_FILE`).
+- ✓ Интеграция: `http.Get("https://...")`, `http.Client{TLS}`,
+  `http.Server{TLS: &tls.ServerConfig{...}}`.
+- ✓ Тесты: векторы RFC/NIST/Wycheproof-стиля для каждого примитива
+  (`runtime/tests/test_crypto.c`), расписание ключей и записи RFC 8448 байт в
+  байт (`tests/spec/stdlib/tls_rfc8448.sl`), полная трасса рукопожатия
+  TLS 1.3 «The Illustrated TLS 1.3 Connection» (AES-256-GCM-SHA384, RSA-PSS:
+  секреты, расшифровка записей, CertificateVerify, оба Finished —
+  `tests/spec/stdlib/tls_trace13.sl`), interop с `openssl s_server` /
+  `s_client` в обе стороны для 1.3 и 1.2 (`compiler/tests/tls.rs`),
+  fuzz-smoke парсеров X.509, record layer и рукопожатий (без паник и утечек).
+  libFuzzer-цели и interop с `curl` — пока нет.
+- Нет: OCSP stapling, горячая перезагрузка сертификатов, `h2` (нет HTTP/2),
+  ACME/`web.AutoTLS`, P-384, wasm-сборка не проверялась. Внешнего аудита не
+  было (`docs/SECURITY.md`).
+
 ### `slang.web` (фреймворк)
 
 ```slang

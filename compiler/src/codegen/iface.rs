@@ -72,29 +72,126 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         Ok(thunk)
     }
 
-    /// Vtable of dynamic type `dyn_ty` (`S` or `*S`) for interface `iface`.
+    /// Vtable of dynamic type `dyn_ty` (`S` or `*S`) for interface `iface`:
+    /// `{ typeinfo, boxed, fn... }` with one slot per interface method. A
+    /// default method the struct does not declare gets a thunk calling the
+    /// default with the interface value rebuilt from the data pointer.
     fn vtable(&mut self, dyn_ty: TypeId, sid: u32, iface: TypeId) -> R<PointerValue<'ctx>> {
         if let Some(g) = self.vtables.get(&(dyn_ty, iface)) {
             return Ok(g.as_pointer_value());
         }
         let Type::Interface(d) = self.ty(iface) else { return unsupported("vtable for a non-interface") };
-        let names: Vec<String> = self.prog.interfaces[d.0 as usize].methods.iter().map(|m| m.name.clone()).collect();
+        let methods = self.prog.interfaces[d.0 as usize].methods.clone();
         let boxed = !matches!(self.ty(dyn_ty), Type::Pointer(_));
         let tid = self.type_info(dyn_ty);
-        let mut vals: Vec<BasicValueEnum> = vec![tid.into(), self.i64_ty().const_int(boxed as u64, false).into()];
-        for n in &names {
-            let f = self.method_entry(sid, n)?;
-            vals.push(f.as_global_value().as_pointer_value().into());
-        }
-        let tys: Vec<inkwell::types::BasicTypeEnum> = vals.iter().map(|v| v.get_type()).collect();
+        let mut tys: Vec<inkwell::types::BasicTypeEnum> = vec![self.ptr_ty().into(), self.i64_ty().into()];
+        tys.extend(methods.iter().map(|_| inkwell::types::BasicTypeEnum::from(self.ptr_ty())));
         let st = self.ctx.struct_type(&tys, false);
         let k = self.fresh();
+        // Registered before its slots are built: a default method's thunk
+        // may need this very vtable.
         let g = self.module.add_global(st, None, &format!("vt.{k}"));
         g.set_linkage(Linkage::Internal);
         g.set_constant(true);
-        g.set_initializer(&st.const_named_struct(&vals));
         self.vtables.insert((dyn_ty, iface), g);
+        let mut vals: Vec<BasicValueEnum> = vec![tid.into(), self.i64_ty().const_int(boxed as u64, false).into()];
+        let is_enum = matches!(self.ty(dyn_ty), Type::Enum(_));
+        for m in &methods {
+            let own = if is_enum { self.enum_method(sid, &m.name).is_some() } else { self.resolve_method(sid, &m.name).is_some() };
+            let f = match (own, m.default) {
+                (false, Some(def)) => self.default_thunk(dyn_ty, sid, def)?,
+                _ if is_enum => self.enum_entry(sid, &m.name)?,
+                _ => self.method_entry(sid, &m.name)?,
+            };
+            vals.push(f.as_global_value().as_pointer_value().into());
+        }
+        g.set_initializer(&st.const_named_struct(&vals));
         Ok(g.as_pointer_value())
+    }
+
+    /// Method `name` of enum `eid`.
+    fn enum_method(&self, eid: u32, name: &str) -> Option<FuncId> {
+        self.prog.enums[eid as usize].methods.iter().find(|(n, _)| n == name).map(|(_, f)| *f)
+    }
+
+    /// A vtable slot `(ptr data, args...)` calling method `name` of enum
+    /// `eid` with the enum value stored at `data`.
+    fn enum_entry(&mut self, eid: u32, name: &str) -> R<FunctionValue<'ctx>> {
+        let key = (eid, name.to_string());
+        if let Some(f) = self.enum_thunks.get(&key) {
+            return Ok(*f);
+        }
+        let Some(fid) = self.enum_method(eid, name) else {
+            return unsupported(format!("method {name} not found on {}", self.prog.enums[eid as usize].full_name));
+        };
+        let target = self.funcs[fid.0 as usize];
+        let f = &self.prog.funcs[fid.0 as usize];
+        let ety = f.locals[f.params[0].0 as usize].ty;
+        let mut ps: Vec<BasicMetadataTypeEnum> = vec![self.ptr_ty().into()];
+        for p in f.params.iter().skip(1) {
+            let t = f.locals[p.0 as usize].ty;
+            ps.push(self.llty(t).into());
+        }
+        let fty = match self.llty_opt(f.ret) {
+            Some(t) => t.fn_type(&ps, false),
+            None => self.ctx.void_type().fn_type(&ps, false),
+        };
+        let n = self.fresh();
+        let thunk = self.module.add_function(&format!("enum.thunk.{n}"), fty, Some(Linkage::Internal));
+        self.enum_thunks.insert(key, thunk);
+        self.with_helper(thunk, |cg| {
+            let data = thunk.get_nth_param(0).unwrap().into_pointer_value();
+            let lt = cg.llty(ety);
+            let v = cg.b.build_load(lt, data, "").unwrap();
+            let mut args: Vec<BasicMetadataValueEnum> = vec![v.into()];
+            args.extend(thunk.get_params().iter().skip(1).map(|p| BasicMetadataValueEnum::from(*p)));
+            let r = cg.b.build_call(target, &args, "").unwrap().try_as_basic_value().left();
+            match r {
+                Some(v) => cg.b.build_return(Some(&v)).unwrap(),
+                None => cg.b.build_return(None).unwrap(),
+            };
+            Ok(())
+        })?;
+        Ok(thunk)
+    }
+
+    /// A vtable slot `(ptr data, args...)` for dynamic type `dyn_ty` that
+    /// calls interface default method `def` (whose `this` is a value of the
+    /// declaring interface) on `{data, vtable of dyn_ty for that interface}`.
+    fn default_thunk(&mut self, dyn_ty: TypeId, sid: u32, def: FuncId) -> R<FunctionValue<'ctx>> {
+        let key = (dyn_ty, def);
+        if let Some(f) = self.default_thunks.get(&key) {
+            return Ok(*f);
+        }
+        let df = &self.prog.funcs[def.0 as usize];
+        let owner = df.locals[df.params[0].0 as usize].ty;
+        let target = self.funcs[def.0 as usize];
+        let mut ps: Vec<BasicMetadataTypeEnum> = vec![self.ptr_ty().into()];
+        for p in df.params.iter().skip(1) {
+            let t = df.locals[p.0 as usize].ty;
+            ps.push(self.llty(t).into());
+        }
+        let fty = match self.llty_opt(df.ret) {
+            Some(t) => t.fn_type(&ps, false),
+            None => self.ctx.void_type().fn_type(&ps, false),
+        };
+        let n = self.fresh();
+        let thunk = self.module.add_function(&format!("default.thunk.{n}"), fty, Some(Linkage::Internal));
+        self.default_thunks.insert(key, thunk);
+        let vt = self.vtable(dyn_ty, sid, owner)?;
+        self.with_helper(thunk, |cg| {
+            let data = thunk.get_nth_param(0).unwrap().into_pointer_value();
+            let this = cg.make_pair(data, vt);
+            let mut args: Vec<BasicMetadataValueEnum> = vec![this.into()];
+            args.extend(thunk.get_params().iter().skip(1).map(|p| BasicMetadataValueEnum::from(*p)));
+            let r = cg.b.build_call(target, &args, "").unwrap().try_as_basic_value().left();
+            match r {
+                Some(v) => cg.b.build_return(Some(&v)).unwrap(),
+                None => cg.b.build_return(None).unwrap(),
+            };
+            Ok(())
+        })?;
+        Ok(thunk)
     }
 
     /// The vtable for interface `to` of the dynamic type behind vtable `vt`
@@ -135,16 +232,39 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     }
 
     /// True if struct `sid` has every method of interface `iface` with the
-    /// same signature.
+    /// same signature (default methods may be missing); a sealed interface
+    /// also requires the struct to be declared in its namespace.
+    fn enum_implements(&self, eid: u32, iface: TypeId) -> bool {
+        let Type::Interface(d) = self.ty(iface) else { return false };
+        let it = &self.prog.interfaces[d.0 as usize];
+        let en = &self.prog.enums[eid as usize];
+        if it.sealed && (it.namespace != en.namespace || en.full_name.starts_with("std.") != it.full_name.starts_with("std.")) {
+            return false;
+        }
+        it.methods.iter().all(|m| match self.enum_method(eid, &m.name) {
+            Some(fid) => {
+                let f = &self.prog.funcs[fid.0 as usize];
+                let ps: Vec<TypeId> = f.params.iter().skip(1).map(|l| f.locals[l.0 as usize].ty).collect();
+                ps == m.params && f.ret == m.ret && !f.is_async
+            }
+            None => m.default.is_some(),
+        })
+    }
+
     fn struct_implements(&self, sid: u32, iface: TypeId) -> bool {
         let Type::Interface(d) = self.ty(iface) else { return false };
-        self.prog.interfaces[d.0 as usize].methods.iter().all(|m| match self.resolve_method(sid, &m.name) {
+        let it = &self.prog.interfaces[d.0 as usize];
+        let st = &self.prog.structs[sid as usize];
+        if it.sealed && (it.namespace != st.namespace || st.full_name.starts_with("std.") != it.full_name.starts_with("std.")) {
+            return false;
+        }
+        it.methods.iter().all(|m| match self.resolve_method(sid, &m.name) {
             Some((fid, _)) => {
                 let f = &self.prog.funcs[fid.0 as usize];
                 let ps: Vec<TypeId> = f.params.iter().skip(1).map(|l| f.locals[l.0 as usize].ty).collect();
                 ps == m.params && f.ret == m.ret && !f.is_async
             }
-            None => false,
+            None => m.default.is_some(),
         })
     }
 
@@ -152,6 +272,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// against the type id of every type stored in some interface.
     pub(crate) fn finish_iface_convs(&mut self) -> R<()> {
         let mut dyn_tys: Vec<TypeId> = self.vtables.keys().map(|(t, _)| *t).collect();
+        dyn_tys.extend(self.any_dyn_tys.iter().copied());
         dyn_tys.sort();
         dyn_tys.dedup();
         let mut i = 0;
@@ -160,15 +281,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             i += 1;
             let mut cases = Vec::new();
             for &t in &dyn_tys {
-                let sid = match self.ty(t) {
-                    Type::Struct(d) => d.0,
+                let (sid, ok) = match self.ty(t) {
+                    Type::Struct(d) => (d.0, self.struct_implements(d.0, to)),
+                    Type::Enum(d) => (d.0, self.enum_implements(d.0, to)),
                     Type::Pointer(p) => match self.ty(*p) {
-                        Type::Struct(d) => d.0,
+                        Type::Struct(d) => (d.0, self.struct_implements(d.0, to)),
                         _ => continue,
                     },
                     _ => continue,
                 };
-                if self.struct_implements(sid, to) {
+                if ok {
                     let tid = self.type_info(t);
                     let vt = self.vtable(t, sid, to)?;
                     cases.push((tid, vt));
@@ -252,6 +374,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let data = self.payload(obj);
                 Ok(Val::owned(self.make_pair(data, vt)))
             }
+            (Type::Interface(_), Type::Enum(d)) => {
+                let v = self.expr_owned(value)?;
+                let vt = self.vtable(from, d.0, to)?;
+                let obj = self.new_box(from, v);
+                let data = self.payload(obj);
+                Ok(Val::owned(self.make_pair(data, vt)))
+            }
             (Type::Interface(_), Type::Pointer(inner)) => {
                 let Type::Struct(d) = self.ty(inner).clone() else { return unsupported("non-struct pointer in an interface") };
                 let pv = self.expr(value)?;
@@ -272,6 +401,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             (Type::Any, Type::Any) => self.expr(value),
             (Type::Any, _) => {
+                if !self.any_dyn_tys.contains(&from) {
+                    self.any_dyn_tys.push(from);
+                }
                 let v = self.expr_owned(value)?;
                 let obj = self.new_box(from, v);
                 let data = self.payload(obj);
@@ -375,10 +507,35 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.b.build_store(slot, np).unwrap();
                 self.b.build_store(datap, slot).unwrap();
             }
+            Type::Any if matches!(self.ty(pat), Type::Interface(_)) => {
+                // `case Named n:` on `any`: look the vtable up by the
+                // dynamic type id. An `any` boxes a stored `*S`, while an
+                // interface stores the pointer itself (vtable `boxed` = 0).
+                let pair = subj.into_struct_value();
+                let data = self.b.build_extract_value(pair, 0, "").unwrap().into_pointer_value();
+                let tid = self.b.build_extract_value(pair, 1, "").unwrap().into_pointer_value();
+                let nn = self.b.build_is_not_null(tid, "").unwrap();
+                self.b.build_conditional_branch(nn, has, done).unwrap();
+                self.b.position_at_end(has);
+                let f = self.iface_conv_fn(pat);
+                let nvt = self.b.build_call(f, &[tid.into()], "").unwrap().try_as_basic_value().left().unwrap().into_pointer_value();
+                let ok = self.b.build_is_not_null(nvt, "").unwrap();
+                self.b.build_store(res, ok).unwrap();
+                let found = self.block("tt.iface");
+                self.b.build_conditional_branch(ok, found, done).unwrap();
+                self.b.position_at_end(found);
+                let bp = self.byte_gep(nvt, 8);
+                let boxed = self.b.build_load(self.i64_ty(), bp, "").unwrap().into_int_value();
+                let is_ptr = self.b.build_int_compare(IntPredicate::EQ, boxed, self.i64_ty().const_zero(), "").unwrap();
+                let inner = self.b.build_load(self.ptr_ty(), data, "").unwrap().into_pointer_value();
+                let d = self.b.build_select(is_ptr, inner, data, "").unwrap().into_pointer_value();
+                let pt = self.llty(pat);
+                let slot = self.entry_alloca(pt, "tiface", false);
+                let np = self.make_pair(d, nvt);
+                self.b.build_store(slot, np).unwrap();
+                self.b.build_store(datap, slot).unwrap();
+            }
             Type::Interface(_) | Type::Any => {
-                if matches!(self.ty(pat), Type::Interface(_)) {
-                    return unsupported("interface type patterns on any");
-                }
                 let pair = subj.into_struct_value();
                 let data = self.b.build_extract_value(pair, 0, "").unwrap().into_pointer_value();
                 let vt = self.b.build_extract_value(pair, 1, "").unwrap().into_pointer_value();

@@ -1,0 +1,17 @@
+pos 26 true
+after close: file already closed
+5 hello
+end
+[hello][world][third line][end]
+wor
+a.txt 26 false true true true
+hello
+excl: true
+missing: true
+copied 12
+a.txt false false true
+b.bin false false true
+sub true false true
+true sub
+to stdout
+2

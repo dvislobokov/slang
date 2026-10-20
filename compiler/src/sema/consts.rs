@@ -87,6 +87,7 @@ impl<'a> Sema<'a> {
                         stdlib::StdConst::Float(v) => untyped(ConstValue::Float(v)),
                         stdlib::StdConst::Int(v) => untyped(ConstValue::Int(v)),
                         stdlib::StdConst::Error(_) => None,
+                        stdlib::StdConst::Target(t) => Some(Folded { value: ConstValue::Str(t.value()), ty: Some(self.tt.string) }),
                     },
                     PathRes::Variant(en, v) if self.enums[en as usize].variants[v as usize].fields.is_empty() => {
                         let ty = self.enum_ty(en);

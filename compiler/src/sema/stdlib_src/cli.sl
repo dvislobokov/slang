@@ -1,0 +1,746 @@
+namespace std.cli
+
+// std.cli: command-line apps with subcommands, typed flags from struct
+// fields (compile-time reflection), env fallbacks, generated help,
+// "did you mean" suggestions and shell completion scripts.
+//
+//   struct ServeFlags {
+//       @flag(name: "port", short: "p", env: "PORT", help: "listen port") Port int = 8080
+//       @flag(help: "log every request") Verbose bool
+//   }
+//
+//   var app = cli.App{Name: "tool", Version: "1.2.0", Commands: [
+//       cli.Command{Name: "serve", Help: "start the server", Args: "[dir]",
+//           Flags: cli.FlagsOf<ServeFlags>(),
+//           Run: func(c *cli.Context) void! {
+//               var f = cli.Bind<ServeFlags>(c)?
+//               println(f.Port, f.Verbose, c.Args)
+//           }},
+//   ]}
+//   os.Exit(app.Run(os.Args()))
+//
+// Flag syntax: --name value, --name=value, -s value, -s=value; bool flags
+// take no value (--name, --name=false); "--" ends flag parsing. A flag's
+// default is the struct field's default value; unset flags fall back to
+// their env variable. -h/--help on any command and `help [command]`
+// print help; --version prints the version. Exit codes of App.Run: 0 ok,
+// 1 the command failed, 2 usage error.
+
+// Field attribute of a flags struct (all parameters optional). The flag
+// name defaults to the field name in kebab-case (MaxConns -> max-conns).
+@attribute(targets: [std.reflect.Target.Field])
+struct flag {
+    name string = ""
+    short string = ""
+    env string = ""
+    help string = ""
+    required bool = false
+    // Leave the field out of the command line.
+    skip bool = false
+}
+
+// One flag definition (normally built by FlagsOf).
+struct Flag {
+    Name string
+    Short string
+    Env string
+    Help string
+    // "bool", "int", "uint", "float", "string", "strings" (repeatable)
+    Kind string
+    Default string
+    Required bool
+    // The struct field it binds to.
+    Field string
+}
+
+// The parse state handed to Command.Run.
+struct Context {
+    // The command path, e.g. ["tool", "serve"].
+    Path []string
+    // Positional arguments.
+    Args []string
+    values map[string][]string
+    flags []Flag
+
+    // The last value given for flag name (or its env / default).
+    func String(name string) string {
+        var vs = this.values[name]
+        if len(vs) > 0 {
+            return vs[len(vs) - 1]
+        }
+        for f in this.flags {
+            if f.Name == name {
+                if f.Env != "" && std.os.Getenv(f.Env) != "" {
+                    return std.os.Getenv(f.Env)
+                }
+                return f.Default
+            }
+        }
+        return ""
+    }
+
+    // Every value given for a repeatable flag.
+    func Strings(name string) []string {
+        return this.values[name]
+    }
+
+    func Int(name string) int! {
+        return std.strconv.ParseInt(this.String(name), 0)?("flag --" + name)
+    }
+
+    func Bool(name string) bool {
+        return this.String(name) == "true"
+    }
+
+    // True if the flag was given on the command line (or via its env).
+    func IsSet(name string) bool {
+        if len(this.values[name]) > 0 {
+            return true
+        }
+        for f in this.flags {
+            if f.Name == name && f.Env != "" && std.os.Getenv(f.Env) != "" {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+// A (sub)command.
+struct Command {
+    Name string
+    // Alternative names.
+    Aliases []string
+    // One-line description.
+    Help string
+    // Longer text shown by `help <command>`.
+    Description string
+    // Positional arguments in the usage line, e.g. "<src> [dst]".
+    Args string
+    Flags []Flag
+    Commands []Command
+    // Runs the command; nil for a group that only has subcommands.
+    Run func(*Context) void!
+    // Hidden from help and completion.
+    Hidden bool
+}
+
+// The application: global flags and the top-level commands. Without
+// Commands, App.Run runs Action.
+struct App {
+    Name string
+    Version string
+    Help string
+    Flags []Flag
+    Commands []Command
+    // Runs when the app has no Commands (or none was given and Action is set).
+    Action func(*Context) void!
+    // Where error messages go (nil: stderr).
+    Errors std.io.Writer
+
+    // Parses args (os.Args() form: args[0] is the program) and runs the
+    // selected command. Returns the process exit code.
+    func Run(args []string) int {
+        var root = Command{Name: this.Name, Help: this.Help, Flags: this.Flags, Commands: this.Commands, Run: this.Action}
+        var rest = args
+        if len(rest) > 0 {
+            rest = rest[1..]
+        }
+        var path = [this.Name]
+        var values = map[string][]string{}
+        var flags = root.Flags
+        var cmd = root
+        var positional []string = []
+        var i = 0
+        var flagsDone = false
+        for i < len(rest) {
+            var a = rest[i]
+            i += 1
+            if flagsDone || a == "-" || !std.strings.HasPrefix(a, "-") {
+                if !flagsDone && len(positional) == 0 && len(cmd.Commands) > 0 {
+                    if a == "help" {
+                        this.printHelpFor(rest[i..])
+                        return 0
+                    }
+                    var sub = findCommand(cmd.Commands, a)
+                    if sub < 0 {
+                        return usageError(this.Errors, "unknown command " + std.strconv.Quote(a) + suggest(a, commandNames(cmd.Commands)), path)
+                    }
+                    cmd = cmd.Commands[sub]
+                    path = append(path, cmd.Name)
+                    for f in cmd.Flags {
+                        flags = append(flags, f)
+                    }
+                    continue
+                }
+                positional = append(positional, a)
+                continue
+            }
+            if a == "--" {
+                flagsDone = true
+                continue
+            }
+            if a == "-h" || a == "--help" {
+                std.io.print(helpText(*this, cmd, path, flags))
+                return 0
+            }
+            if a == "--version" && this.Version != "" {
+                std.io.println(this.Name + " " + this.Version)
+                return 0
+            }
+            var name = a
+            var value = ""
+            var hasValue = false
+            var eq = std.strings.Index(a, "=")
+            if eq > 0 {
+                name = a[..eq]
+                value = a[eq + 1..]
+                hasValue = true
+            }
+            var fi = -1
+            if std.strings.HasPrefix(name, "--") {
+                fi = findFlag(flags, name[2..], false)
+            } else {
+                fi = findFlag(flags, name[1..], true)
+            }
+            if fi < 0 {
+                var names []string = []
+                for f in flags {
+                    names = append(names, "--" + f.Name)
+                }
+                return usageError(this.Errors, "unknown flag " + name + suggest(name, names), path)
+            }
+            var f = flags[fi]
+            if f.Kind == "bool" {
+                if !hasValue {
+                    value = "true"
+                } else if value != "true" && value != "false" {
+                    var b = try std.strconv.ParseBool(value) catch err {
+                        return usageError(this.Errors, "invalid value " + std.strconv.Quote(value) + " for flag --" + f.Name + " (want true or false)", path)
+                    }
+                    value = std.strconv.FormatBool(b)
+                }
+            } else if !hasValue {
+                if i >= len(rest) {
+                    return usageError(this.Errors, "flag --" + f.Name + " needs a value", path)
+                }
+                value = rest[i]
+                i += 1
+            }
+            var bad = checkValue(f, value)
+            if bad != "" {
+                return usageError(this.Errors, bad, path)
+            }
+            values[f.Name] = append(values[f.Name], value)
+        }
+        for f in flags {
+            if f.Required && len(values[f.Name]) == 0 && (f.Env == "" || std.os.Getenv(f.Env) == "") {
+                return usageError(this.Errors, "missing required flag --" + f.Name, path)
+            }
+            if len(values[f.Name]) == 0 && f.Env != "" && std.os.Getenv(f.Env) != "" {
+                var bad = checkValue(f, std.os.Getenv(f.Env))
+                if bad != "" {
+                    return usageError(this.Errors, bad + " (from $" + f.Env + ")", path)
+                }
+            }
+        }
+        if cmd.Run == nil {
+            if len(cmd.Commands) > 0 {
+                std.io.print(helpText(*this, cmd, path, flags))
+                return 2
+            }
+            return 0
+        }
+        var ctx = new Context{Path: path, Args: positional, values: values, flags: flags}
+        var run = cmd.Run
+        try run(ctx) catch err {
+            eprintln(this.Errors, "error: " + err.Message())
+            return 1
+        }
+        return 0
+    }
+
+    func printHelpFor(names []string) {
+        var cmd = Command{Name: this.Name, Help: this.Help, Flags: this.Flags, Commands: this.Commands}
+        var path = [this.Name]
+        var flags = this.Flags
+        for n in names {
+            var i = findCommand(cmd.Commands, n)
+            if i < 0 {
+                eprintln(this.Errors, this.Name + ": unknown command " + std.strconv.Quote(n) + suggest(n, commandNames(cmd.Commands)))
+                return
+            }
+            cmd = cmd.Commands[i]
+            path = append(path, cmd.Name)
+            for f in cmd.Flags {
+                flags = append(flags, f)
+            }
+        }
+        std.io.print(helpText(*this, cmd, path, flags))
+    }
+
+    // The help text of the command at path (names after the app name).
+    func HelpText(path []string) string {
+        var cmd = Command{Name: this.Name, Help: this.Help, Flags: this.Flags, Commands: this.Commands}
+        var full = [this.Name]
+        var flags = this.Flags
+        for n in path {
+            var i = findCommand(cmd.Commands, n)
+            if i < 0 {
+                return ""
+            }
+            cmd = cmd.Commands[i]
+            full = append(full, cmd.Name)
+            for f in cmd.Flags {
+                flags = append(flags, f)
+            }
+        }
+        return helpText(*this, cmd, full, flags)
+    }
+
+    // A completion script for shell "bash", "zsh" or "fish" (commands and
+    // flags; source it from the shell's startup file).
+    func Completion(shell string) string! {
+        if shell == "bash" {
+            return bashCompletion(*this)
+        }
+        if shell == "zsh" {
+            return "#compdef " + this.Name + "\nautoload -U bashcompinit && bashcompinit\n" + bashCompletion(*this)
+        }
+        if shell == "fish" {
+            return fishCompletion(*this)
+        }
+        return error("cli: unsupported shell " + std.strconv.Quote(shell) + " (bash, zsh or fish)")
+    }
+}
+
+func checkValue(f Flag, value string) string {
+    if f.Kind == "int" {
+        var ok = try std.strconv.ParseInt(value, 0) catch err {
+            return "invalid value " + std.strconv.Quote(value) + " for flag --" + f.Name + " (want an integer)"
+        }
+        _ = ok
+    } else if f.Kind == "uint" {
+        var ok = try std.strconv.ParseUint(value, 0) catch err {
+            return "invalid value " + std.strconv.Quote(value) + " for flag --" + f.Name + " (want a non-negative integer)"
+        }
+        _ = ok
+    } else if f.Kind == "float" {
+        var ok = try std.strconv.ParseFloat(value) catch err {
+            return "invalid value " + std.strconv.Quote(value) + " for flag --" + f.Name + " (want a number)"
+        }
+        _ = ok
+    }
+    return ""
+}
+
+func eprintln(w std.io.Writer, msg string) {
+    if w == nil {
+        std.io.Eprintln(msg)
+        return
+    }
+    try {
+        _ = std.io.WriteString(w, msg + "\n")?
+    } catch err {
+    }
+}
+
+func usageError(w std.io.Writer, msg string, path []string) int {
+    eprintln(w, "error: " + msg)
+    eprintln(w, "Run '" + std.strings.Join(path, " ") + " --help' for usage.")
+    return 2
+}
+
+func findCommand(cs []Command, name string) int {
+    for i, c in cs {
+        if c.Name == name {
+            return i
+        }
+        for a in c.Aliases {
+            if a == name {
+                return i
+            }
+        }
+    }
+    return -1
+}
+
+func commandNames(cs []Command) []string {
+    var out []string = []
+    for c in cs {
+        if !c.Hidden {
+            out = append(out, c.Name)
+        }
+    }
+    return out
+}
+
+func findFlag(fs []Flag, name string, short bool) int {
+    var i = len(fs) - 1
+    for i >= 0 {
+        if (short && fs[i].Short == name && name != "") || (!short && fs[i].Name == name) {
+            return i
+        }
+        i -= 1
+    }
+    return -1
+}
+
+// Levenshtein distance (for suggestions).
+func distance(a string, b string) int {
+    var prev []int = []
+    for j in 0..len(b) + 1 {
+        prev = append(prev, j)
+    }
+    for i in 1..len(a) + 1 {
+        var cur = [i]
+        for j in 1..len(b) + 1 {
+            var cost = 1
+            if a[i - 1] == b[j - 1] {
+                cost = 0
+            }
+            var best = prev[j] + 1
+            if cur[j - 1] + 1 < best {
+                best = cur[j - 1] + 1
+            }
+            if prev[j - 1] + cost < best {
+                best = prev[j - 1] + cost
+            }
+            cur = append(cur, best)
+        }
+        prev = cur
+    }
+    return prev[len(b)]
+}
+
+// ` (did you mean "x"?)` for the closest candidate within distance 2
+// (or a prefix match), else "".
+func suggest(word string, candidates []string) string {
+    var best = ""
+    var bestD = 3
+    for c in candidates {
+        var d = distance(word, c)
+        if std.strings.HasPrefix(c, word) && len(word) >= 2 {
+            d = 1
+        }
+        if d < bestD {
+            bestD = d
+            best = c
+        }
+    }
+    if best == "" {
+        return ""
+    }
+    return " (did you mean " + std.strconv.Quote(best) + "?)"
+}
+
+func padRight(s string, n int) string {
+    var out = s
+    for len(out) < n {
+        out += " "
+    }
+    return out
+}
+
+func flagLabel(f Flag) string {
+    var s = "  "
+    if f.Short != "" {
+        s += "-" + f.Short + ", "
+    } else {
+        s += "    "
+    }
+    s += "--" + f.Name
+    if f.Kind != "bool" {
+        s += " " + f.Kind
+    }
+    return s
+}
+
+func helpText(app App, cmd Command, path []string, flags []Flag) string {
+    var out = ""
+    var title = cmd.Help
+    if len(path) == 1 && app.Help != "" {
+        title = app.Help
+    }
+    if title != "" {
+        out += title + "\n\n"
+    }
+    if cmd.Description != "" {
+        out += cmd.Description + "\n\n"
+    }
+    out += "Usage:\n  " + std.strings.Join(path, " ")
+    if len(flags) > 0 {
+        out += " [flags]"
+    }
+    if len(cmd.Commands) > 0 {
+        out += " <command>"
+    }
+    if cmd.Args != "" {
+        out += " " + cmd.Args
+    }
+    out += "\n"
+    var visible []Command = []
+    for c in cmd.Commands {
+        if !c.Hidden {
+            visible = append(visible, c)
+        }
+    }
+    if len(visible) > 0 {
+        out += "\nCommands:\n"
+        var w = 4
+        for c in visible {
+            if len(c.Name) > w {
+                w = len(c.Name)
+            }
+        }
+        for c in visible {
+            out += "  " + padRight(c.Name, w + 2) + c.Help + "\n"
+        }
+        out += "  " + padRight("help", w + 2) + "Show help for a command\n"
+    }
+    out += "\nFlags:\n"
+    var labels []string = []
+    var w = len("      --version")
+    for f in flags {
+        var l = flagLabel(f)
+        labels = append(labels, l)
+        if len(l) > w {
+            w = len(l)
+        }
+    }
+    for i, f in flags {
+        var desc = f.Help
+        var extra []string = []
+        if f.Default != "" && f.Default != "false" && f.Default != "0" && f.Kind != "strings" {
+            extra = append(extra, "default " + f.Default)
+        }
+        if f.Env != "" {
+            extra = append(extra, "env $" + f.Env)
+        }
+        if f.Required {
+            extra = append(extra, "required")
+        }
+        if len(extra) > 0 {
+            if desc != "" {
+                desc += " "
+            }
+            desc += "(" + std.strings.Join(extra, ", ") + ")"
+        }
+        out += std.strings.TrimRight(padRight(labels[i], w + 2) + desc, " ") + "\n"
+    }
+    out += padRight("  -h, --help", w + 2) + "Show help\n"
+    if app.Version != "" && len(path) == 1 {
+        out += padRight("      --version", w + 2) + "Print the version\n"
+    }
+    return out
+}
+
+func collectWords(cmd Command, prefix string, out *[]string) {
+    for c in cmd.Commands {
+        if c.Hidden {
+            continue
+        }
+        var words []string = []
+        for s in c.Commands {
+            if !s.Hidden {
+                words = append(words, s.Name)
+            }
+        }
+        for f in c.Flags {
+            words = append(words, "--" + f.Name)
+        }
+        *out = append(*out, prefix + c.Name + "=" + std.strings.Join(words, " "))
+        collectWords(c, prefix + c.Name + "_", out)
+    }
+}
+
+func bashCompletion(app App) string {
+    var fn = "_" + std.strings.Replace(app.Name, "-", "_") + "_complete"
+    var top []string = []
+    for c in app.Commands {
+        if !c.Hidden {
+            top = append(top, c.Name)
+        }
+    }
+    for f in app.Flags {
+        top = append(top, "--" + f.Name)
+    }
+    top = append(top, "--help")
+    var cases []string = []
+    var root = Command{Commands: app.Commands}
+    collectWords(root, "", &cases)
+    var out = "# bash completion for " + app.Name + "\n"
+    out += fn + "() {\n"
+    out += "    local cur=${COMP_WORDS[COMP_CWORD]} path=\"\" w\n"
+    out += "    for w in \"${COMP_WORDS[@]:1:COMP_CWORD-1}\"; do\n"
+    out += "        case \"$w\" in -*) ;; *) path=\"${path:+${path}_}$w\" ;; esac\n"
+    out += "    done\n"
+    out += "    local words=\"" + std.strings.Join(top, " ") + "\"\n"
+    out += "    case \"$path\" in\n"
+    for c in cases {
+        var eq = std.strings.Index(c, "=")
+        out += "        " + c[..eq] + ") words=\"" + c[eq + 1..] + " --help\" ;;\n"
+    }
+    out += "    esac\n"
+    out += "    COMPREPLY=($(compgen -W \"$words\" -- \"$cur\"))\n"
+    out += "}\n"
+    out += "complete -F " + fn + " " + app.Name + "\n"
+    return out
+}
+
+func fishCompletion(app App) string {
+    var out = "# fish completion for " + app.Name + "\n"
+    var top []string = []
+    for c in app.Commands {
+        if !c.Hidden {
+            top = append(top, c.Name)
+        }
+    }
+    for c in app.Commands {
+        if c.Hidden {
+            continue
+        }
+        out += "complete -c " + app.Name + " -f -n \"not __fish_seen_subcommand_from " + std.strings.Join(top, " ") + "\" -a " + c.Name + " -d " + std.strconv.Quote(c.Help) + "\n"
+        for f in c.Flags {
+            out += "complete -c " + app.Name + " -n \"__fish_seen_subcommand_from " + c.Name + "\" -l " + f.Name
+            if f.Short != "" {
+                out += " -s " + f.Short
+            }
+            if f.Kind != "bool" {
+                out += " -r"
+            }
+            out += " -d " + std.strconv.Quote(f.Help) + "\n"
+        }
+    }
+    for f in app.Flags {
+        out += "complete -c " + app.Name + " -l " + f.Name
+        if f.Short != "" {
+            out += " -s " + f.Short
+        }
+        out += " -d " + std.strconv.Quote(f.Help) + "\n"
+    }
+    return out
+}
+
+// MaxConns -> max-conns.
+func kebab(name string) string {
+    var out = ""
+    for i in 0..len(name) {
+        var c = name[i]
+        if c >= 65 && c <= 90 {
+            if i > 0 && !(name[i - 1] >= 65 && name[i - 1] <= 90) {
+                out += "-"
+            } else if i > 0 && i + 1 < len(name) && name[i + 1] >= 97 && name[i + 1] <= 122 {
+                out += "-"
+            }
+            out += std.strings.FromBytes([c + 32])
+        } else {
+            out += std.strings.FromBytes([c])
+        }
+    }
+    return out
+}
+
+func kindOf<F>() string {
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool {
+        return "bool"
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.String {
+        return "string"
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
+        return "float"
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
+        return "uint"
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+        return "strings"
+    }
+    return "int"
+}
+
+func defaultText<F>(v F) string {
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+        return std.strings.Join(v, ",")
+    } else {
+        return std.strconv.Format(v)
+    }
+}
+
+func flagOf<F>(name string, tag *flag, v F) Flag {
+    var f = Flag{Name: kebab(name), Kind: kindOf<F>(), Default: defaultText(v), Field: name}
+    if tag != nil {
+        if tag.name != "" {
+            f.Name = tag.name
+        }
+        f.Short = tag.short
+        f.Env = tag.env
+        f.Help = tag.help
+        f.Required = tag.required
+    }
+    return f
+}
+
+// The flags of a flags struct T: every field (bool, integers, floats,
+// string, []string for repeatable flags) unless @flag(skip: true); the
+// field's default value is the flag's default.
+func FlagsOf<T>() []Flag {
+    var zero T
+    var out []Flag = []
+    for f in std.reflect.Fields<T>() {
+        var tag = f.Attribute<flag>()
+        if tag != nil && tag.skip {
+            continue
+        }
+        out = append(out, flagOf(f.Name, tag, f.Get(zero)))
+    }
+    return out
+}
+
+func setFrom<F>(p *F, values []string, fallback string) void! {
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+        if len(values) > 0 {
+            *p = values
+        } else if fallback != "" {
+            *p = std.strings.Split(fallback, ",")
+        }
+    } else {
+        var s = fallback
+        if len(values) > 0 {
+            s = values[len(values) - 1]
+        }
+        if s == "" {
+            return
+        }
+        if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 {
+            // accept 0x / 0o / 0b prefixes like checkValue
+            var n = std.strconv.ParseInt(s, 0)?
+            *p = std.strconv.Parse<F>(std.strconv.Itoa(n))?
+        } else {
+            *p = std.strconv.Parse<F>(s)?
+        }
+    }
+}
+
+// The flags struct T filled from c: given values, then env, then the
+// field defaults.
+func Bind<T>(c *Context) T! {
+    var out T
+    for f in std.reflect.Fields<T>() {
+        var tag = f.Attribute<flag>()
+        if tag != nil && tag.skip {
+            continue
+        }
+        var name = kebab(f.Name)
+        var env = ""
+        if tag != nil {
+            if tag.name != "" {
+                name = tag.name
+            }
+            env = tag.env
+        }
+        var fallback = ""
+        if env != "" {
+            fallback = std.os.Getenv(env)
+        }
+        setFrom(&f.Get(out), c.values[name], fallback)?("flag --" + name)
+    }
+    return out
+}

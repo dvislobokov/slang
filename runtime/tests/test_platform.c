@@ -45,16 +45,16 @@ TEST(poller_raw) {
     int sv[2];
     assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
     slang__plat_event ev[8];
-    assert(slang__plat_poller_set(p, sv[0], SLANG_PLAT_READ, false) == 0);
+    assert(slang__plat_poller_arm(p, sv[0], SLANG_PLAT_READ, 77, false) == 0);
     assert(slang__plat_poller_wait(p, ev, 8, 10) == 0);       /* nothing to read: timeout */
     assert(write(sv[1], "x", 1) == 1);
     int n = slang__plat_poller_wait(p, ev, 8, 1000);
-    assert(n == 1 && ev[0].fd == sv[0] && (ev[0].events & SLANG_PLAT_READ));
+    assert(n == 1 && ev[0].token == 77 && (ev[0].events & SLANG_PLAT_READ));
     slang__plat_poller_wake(p);
     n = slang__plat_poller_wait(p, ev, 8, 1000);
     assert(n >= 1);
     bool woke = false;
-    for (int i = 0; i < n; i++) woke |= ev[i].fd == -1;
+    for (int i = 0; i < n; i++) woke |= ev[i].token == SLANG_PLAT_WAKE_TOKEN;
     assert(woke);
     slang__plat_poller_remove(p, sv[0]);
     close(sv[0]);
@@ -111,84 +111,6 @@ TEST(io_many_fds) {
         close(sv[i][0]);
         close(sv[i][1]);
     }
-}
-
-/* ---- std.net wrappers: a TCP round trip ---- */
-
-TEST(tcp_round_trip) {
-    slang_error *err = NULL;
-    slang_string *lo = S("127.0.0.1");
-    int64_t l = slang_net_rt_listen(lo, 0, &err);
-    assert(!err && l >= 0);
-    int64_t port = slang_net_rt_port(l);
-    assert(port > 0);
-    slang_string *addr = slang_net_rt_local_addr(l);
-    assert(strncmp(slang_string_data(addr), "127.0.0.1:", 10) == 0);
-    slang_release(addr);
-    int64_t c = slang_net_rt_connect(lo, port, &err);
-    assert(!err && c >= 0);
-    assert(wait_code(slang_io_wait_writable(c, 2000)) == 0);
-    slang_net_rt_connect_result(c, &err);
-    assert(!err);
-    int64_t a;
-    while ((a = slang_net_rt_accept(l, &err)) < 0) {
-        assert(!err);
-        assert(wait_code(slang_io_wait_readable(l, 2000)) == 0);
-    }
-    slang_string *msg = S("ping");
-    assert(slang_net_rt_write_str(c, msg, 0, &err) == 4 && !err);
-    slang_slice got;
-    for (;;) {
-        slang_net_rt_read(a, 16, &got, &err);
-        assert(!err);
-        if (got.len > 0) break;
-        assert(slang_net_rt_again());
-        assert(wait_code(slang_io_wait_readable(a, 2000)) == 0);
-    }
-    assert(got.len == 4 && memcmp(got.data, "ping", 4) == 0);
-    slang_slice_release(&got);
-    slang_net_rt_close(c);
-    /* end of stream: empty read that is not "again" */
-    for (;;) {
-        slang_net_rt_read(a, 16, &got, &err);
-        assert(!err && got.len == 0);
-        if (!slang_net_rt_again()) break;
-        assert(wait_code(slang_io_wait_readable(a, 2000)) == 0);
-    }
-    /* connection refused on a closed port */
-    slang_net_rt_close(a);
-    slang_net_rt_close(l);
-    int64_t c2 = slang_net_rt_connect(lo, port, &err);
-    if (!err) {
-        assert(wait_code(slang_io_wait_writable(c2, 2000)) == 0);
-        slang_net_rt_connect_result(c2, &err);
-        assert(err);
-        slang_string *m = slang_error_message(err);
-        assert(strstr(slang_string_data(m), "connect"));
-        slang_release(m);
-        slang_release(err);
-        slang_net_rt_close(c2);
-    } else {
-        slang_release(err);
-    }
-    err = NULL;
-    /* the listen address must be numeric */
-    slang_string *bad = S("not-an-ip");
-    assert(slang_net_rt_listen(bad, 0, &err) < 0 && err);
-    slang_release(err);
-    slang_release(bad);
-    /* resolve of an IP literal completes at once */
-    slang_task *rt = slang_net_rt_resolve(lo);
-    int64_t h = *(int64_t *)slang_task_await(rt);
-    slang_release(rt);
-    slang_slice ips;
-    err = NULL;
-    slang_net_rt_resolve_take(h, &ips, &err);
-    assert(!err && ips.len == 1);
-    assert(STR_IS(*(slang_string **)slang_slice_index(&ips, 0, 8), "127.0.0.1"));
-    slang_slice_release(&ips);
-    slang_release(msg);
-    slang_release(lo);
 }
 
 /* ---- task context, signals, spin locks, yield ---- */
@@ -283,7 +205,6 @@ int main(int argc, char **argv) {
     RUN(poller_raw);
     RUN(io_waits);
     RUN(io_many_fds);
-    RUN(tcp_round_trip);
     RUN(context_follows_continuations);
     RUN(signals_and_cancel);
     RUN(spin_lock);

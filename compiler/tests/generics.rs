@@ -84,10 +84,10 @@ fn inference_errors() {
 
 #[test]
 fn constraints_are_checked_at_instantiation() {
-    err(&format!("struct P {{\n    X int\n}}\n{MAX}func main() {{\n    var m = Max(P{{X: 1}}, P{{X: 2}})\n    _ = m\n}}"), "type t.P does not satisfy constraint Ordered");
+    err(&format!("struct P {{\n    X int\n}}\n{MAX}func main() {{\n    var m = Max(P{{X: 1}}, P{{X: 2}})\n    _ = m\n}}"), "type P does not satisfy constraint Ordered");
     err(&format!("{MAX}func main() {{\n    println(Max(true, false))\n}}"), "does not satisfy constraint Ordered");
     let shape = "interface Shape {\n    func Area() float\n}\nstruct Sq {\n    S float\n}\nfunc Total<T: Shape>(xs []T) float {\n    var t = 0.0\n    for x in xs {\n        t += x.Area()\n    }\n    return t\n}\n";
-    err(&format!("{shape}func main() {{\n    println(Total([Sq{{S: 1}}]))\n}}"), "type t.Sq does not satisfy constraint t.Shape: missing method Area");
+    err(&format!("{shape}func main() {{\n    println(Total([Sq{{S: 1}}]))\n}}"), "type Sq does not satisfy constraint Shape: missing method Area");
     err("func Eq<T: Comparable>(a, b T) bool {\n    return a == b\n}\nfunc main() {\n    println(Eq([1], [2]))\n}", "does not satisfy constraint Comparable");
 }
 

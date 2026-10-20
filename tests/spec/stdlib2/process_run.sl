@@ -1,0 +1,57 @@
+// test: std.process Run/RunWith/Output/Start with pipes, exit codes, env, dir, Kill, Timeout and LookPath
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.process_run
+
+import std
+import std.io
+
+async func main() void! {
+    var r = await process.Run("sh", ["-c", "echo out; echo err >&2; exit 3"])?
+    println(r.ExitCode, r.Success(), strings.Trim(r.Stdout), strings.Trim(r.Stderr))
+    var env = await process.RunWith("sh", ["-c", "echo $SLANG_X; pwd"], process.Options{Env: ["SLANG_X=hello"], Dir: "/"})?
+    println(strings.Replace(env.Stdout, "\n", "|"))
+    var clean = await process.RunWith("sh", ["-c", "echo [$HOME]"], process.Options{ClearEnv: true})?
+    println(strings.Trim(clean.Stdout))
+    println(strings.Trim(await process.Output("echo", ["a", "b c"])?))
+    try {
+        _ = await process.Output("sh", ["-c", "echo boom >&2; exit 1"])?
+    } catch err {
+        println("output error:", err)
+    }
+    try {
+        _ = await process.Run("/nonexistent/binary", [])?
+    } catch err {
+        println("start error:", strings.Contains(err.Message(), "No such file"))
+    }
+
+    var p = process.Start("sort", [], process.Options{Stdin: process.Pipe, Stdout: process.Pipe})?
+    _ = await p.Stdin.WriteString("pear\napple\nfig\n")?
+    p.Stdin.Close()
+    var sorted = await p.Stdout.ReadAll()?
+    println(strings.Replace(strings.FromBytes(sorted), "\n", " "), await p.Wait()?, await p.Wait()?, p.Pid() > 0)
+
+    var big = process.Start("sh", ["-c", "head -c 300000 /dev/zero"], process.Options{Stdout: process.Pipe})?
+    var n = 0
+    for {
+        var chunk = await big.Stdout.Read(4096)?
+        if len(chunk) == 0 {
+            break
+        }
+        n += len(chunk)
+    }
+    println("bytes:", n, await big.Wait()?)
+
+    var sl = process.Start("sleep", ["10"], process.Options{})?
+    sl.Kill()?
+    println("killed:", await sl.Wait()?)
+    var slow = process.Start("sleep", ["10"], process.Options{Timeout: time.Milliseconds(50)})?
+    println("timeout:", await slow.Wait()?)
+
+    println(strings.HasSuffix(process.LookPath("sh")?, "/sh"), process.LookPath("/bin/sh")?)
+    try {
+        _ = process.LookPath("no-such-tool-xyz")?
+    } catch err {
+        println(err)
+    }
+}

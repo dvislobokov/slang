@@ -89,6 +89,7 @@ fn parse_impl(mut tokens: Vec<Token>, diags: &mut Diagnostics) -> (File, usize) 
         pos: 0,
         prev_span: Span::DUMMY,
         no_struct_lit: false,
+        attr_args: false,
         depth: 0,
         silent: false,
         error_count: 0,
@@ -129,6 +130,9 @@ struct Parser<'d> {
     /// `>>` tokens split into two `>` (for nested generics), so a
     /// speculative parse can undo them: (index, original token).
     splits: Vec<(usize, Token)>,
+    /// Inside attribute arguments: calls take `name: value` arguments
+    /// (`@cfg(not(os: "windows"))`).
+    attr_args: bool,
     diags: &'d mut Diagnostics,
 }
 
@@ -363,6 +367,14 @@ impl Parser<'_> {
         let mut decl = match self.peek() {
             TokenKind::Struct => Decl::Struct(self.struct_decl()?),
             TokenKind::Interface => Decl::Interface(self.interface_decl()?),
+            // `sealed` is a contextual keyword: only before `interface`.
+            TokenKind::Ident(s) if s == "sealed" && self.peek_n(1) == &TokenKind::Interface => {
+                let start = self.bump().span;
+                let mut d = self.interface_decl()?;
+                d.is_sealed = true;
+                d.span = start.to(d.span);
+                Decl::Interface(d)
+            }
             TokenKind::Enum => Decl::Enum(self.enum_decl()?),
             TokenKind::Func | TokenKind::Async => Decl::Func(self.func_decl(true)?),
             TokenKind::Var => Decl::Var(self.var_decl()?),
@@ -406,7 +418,10 @@ impl Parser<'_> {
                         } else {
                             None
                         };
-                        let value = p.parse_expr()?;
+                        let saved = std::mem::replace(&mut p.attr_args, true);
+                        let value = p.parse_expr();
+                        p.attr_args = saved;
+                        let value = value?;
                         args.push(AttrArg { name, value, span: p.span_from(arg_start) });
                         if !p.eat(&TokenKind::Comma) {
                             break;
@@ -445,6 +460,7 @@ impl Parser<'_> {
         let start = self.expect(&TokenKind::Struct)?;
         let name = self.ident()?;
         let generics = self.generic_params()?;
+        let implements = self.implements_clause()?;
         self.expect(&TokenKind::LBrace)?;
         let (mut fields, mut embeds, mut methods) = (Vec::new(), Vec::new(), Vec::new());
         self.member_list(|p| {
@@ -470,7 +486,24 @@ impl Parser<'_> {
             }
             Ok(())
         })?;
-        Ok(StructDecl { attrs: Vec::new(), name, generics, fields, embeds, methods, span: self.span_from(start) })
+        Ok(StructDecl { attrs: Vec::new(), name, generics, fields, embeds, methods, implements, span: self.span_from(start) })
+    }
+
+    /// Optional `implements A, B` before the body of a struct or enum
+    /// (`implements` is a contextual keyword).
+    fn implements_clause(&mut self) -> PResult<Vec<TypeExpr>> {
+        let mut out = Vec::new();
+        if !matches!(self.peek(), TokenKind::Ident(s) if s == "implements") {
+            return Ok(out);
+        }
+        self.bump();
+        loop {
+            out.push(self.parse_type()?);
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     /// `X, Y float [= default]`: one or more field names sharing a type.
@@ -541,7 +574,7 @@ impl Parser<'_> {
             methods.push(method);
             Ok(())
         })?;
-        Ok(InterfaceDecl { attrs: Vec::new(), name, generics, methods, embeds, span: self.span_from(start) })
+        Ok(InterfaceDecl { attrs: Vec::new(), name, generics, methods, embeds, is_sealed: false, span: self.span_from(start) })
     }
 
     /// `enum Name { A, B }` or `enum Name { Ok(value int) \n Fail(code int) }`
@@ -549,6 +582,7 @@ impl Parser<'_> {
         let start = self.expect(&TokenKind::Enum)?;
         let name = self.ident()?;
         let generics = self.generic_params()?;
+        let implements = self.implements_clause()?;
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
         let mut methods = Vec::new();
@@ -592,7 +626,7 @@ impl Parser<'_> {
             }
         }
         self.close_brace()?;
-        Ok(EnumDecl { attrs: Vec::new(), name, generics, variants, methods, span: self.span_from(start) })
+        Ok(EnumDecl { attrs: Vec::new(), name, generics, variants, methods, implements, span: self.span_from(start) })
     }
 
     fn variant(&mut self) -> PResult<Variant> {
@@ -611,7 +645,7 @@ impl Parser<'_> {
     }
 
     /// `[static] [async] func Name(params) [ret] body`. With `body == false`
-    /// (interfaces) no body is allowed.
+    /// (interfaces) the body is optional: a method with one is a default.
     fn func_decl(&mut self, body: bool) -> PResult<FuncDecl> {
         let start = self.span();
         let (mut is_async, mut is_static) = (false, false);
@@ -633,10 +667,9 @@ impl Parser<'_> {
                 return Err(self.unexpected("`{`"));
             }
             Some(self.block()?)
+        } else if self.at(&TokenKind::LBrace) {
+            Some(self.block()?)
         } else {
-            if self.at(&TokenKind::LBrace) {
-                return Err(self.error_at(self.span(), "interface methods cannot have a body"));
-            }
             None
         };
         Ok(FuncDecl {
@@ -1366,7 +1399,22 @@ impl Parser<'_> {
     /// `(a, b, c)` with optional trailing comma.
     fn call_args(&mut self) -> PResult<Vec<Expr>> {
         self.expect(&TokenKind::LParen)?;
-        self.with_struct_lit(true, |p| p.recovering_list(&TokenKind::RParen, |p| p.parse_expr(), Expr::error))
+        self.with_struct_lit(true, |p| {
+            p.recovering_list(
+                &TokenKind::RParen,
+                |p| {
+                    if p.attr_args && matches!(p.peek(), TokenKind::Ident(_)) && p.peek_n(1) == &TokenKind::Colon {
+                        let name = p.ident()?;
+                        p.bump(); // `:`
+                        let value = p.parse_expr()?;
+                        let span = name.span.to(value.span);
+                        return Ok(Expr { kind: ExprKind::NamedArg { name, value: Box::new(value) }, span });
+                    }
+                    p.parse_expr()
+                },
+                Expr::error,
+            )
+        })
     }
 
     /// `{ Name: value, ... }` after a struct literal's path.

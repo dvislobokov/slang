@@ -1,0 +1,175 @@
+namespace std.compress.zlib
+
+// zlib streams (RFC 1950): a 2-byte header, raw DEFLATE, the Adler-32 of
+// the data (big-endian). Preset dictionaries are not supported.
+
+// Compresses data at level 0..9 (-1: default).
+func Compress(data []byte, level int) []byte {
+    var w = NewWriter(level)
+    w.Write(data)
+    w.Close()
+    return w.Bytes()
+}
+
+// Decompresses one complete zlib stream (trailing bytes are an error).
+func Decompress(data []byte) []byte! {
+    var r = NewReader()
+    r.Feed(data)?
+    r.Close()?
+    if len(r.Rest()) > 0 {
+        return error("zlib: data after the end of the stream")
+    }
+    return r.Read()
+}
+
+func header(level int) []byte {
+    var lv = 2
+    if level <= 1 {
+        lv = 0
+    } else if level <= 5 {
+        lv = 1
+    } else if level >= 7 {
+        lv = 3
+    }
+    var flg = lv << 6
+    flg += 31 - ((120 * 256 + flg) % 31)
+    return [byte(120), byte(flg)]
+}
+
+// A streaming zlib compressor (see deflate.Writer).
+struct Writer {
+    d *std.compress.deflate.Writer
+    adler int
+    out []byte
+    started bool
+    closed bool
+
+    func Write(p []byte) {
+        this.start()
+        this.adler = std.compress.Adler32(this.adler, p)
+        this.d.Write(p)
+    }
+
+    func WriteString(s string) {
+        this.Write(std.strings.Bytes(s))
+    }
+
+    func Flush() {
+        this.start()
+        this.d.Flush()
+    }
+
+    func Close() {
+        if this.closed {
+            return
+        }
+        this.start()
+        this.d.Close()
+        this.out = std.compress.rtConcat(this.out, this.d.Bytes())
+        this.out = std.compress.putBE32(this.out, this.adler)
+        this.closed = true
+    }
+
+    // The compressed bytes produced since the last call.
+    func Bytes() []byte {
+        if !this.closed {
+            this.out = std.compress.rtConcat(this.out, this.d.Bytes())
+        }
+        var b = this.out
+        this.out = []
+        return b
+    }
+
+    func start() {
+        if !this.started {
+            this.started = true
+            this.out = header(this.d.level)
+        }
+    }
+}
+
+func NewWriter(level int) *Writer {
+    return &Writer{d: std.compress.deflate.NewWriter(level), adler: 1}
+}
+
+// A streaming zlib decompressor (see deflate.Reader); the checksum is
+// verified when the stream ends.
+struct Reader {
+    state int
+    buf []byte
+    d *std.compress.deflate.Reader
+    adler int
+    out []byte
+    rest []byte
+
+    func Feed(chunk []byte) void! {
+        if this.state == 3 {
+            this.rest = std.compress.rtConcat(this.rest, chunk)
+            return
+        }
+        var input = chunk
+        if this.state == 0 {
+            this.buf = std.compress.rtConcat(this.buf, chunk)
+            if len(this.buf) < 2 {
+                return
+            }
+            var cmf = int(this.buf[0])
+            var flg = int(this.buf[1])
+            if (cmf & 15) != 8 || (cmf >> 4) > 7 || (cmf * 256 + flg) % 31 != 0 {
+                return error("zlib: invalid header")
+            }
+            if (flg & 32) != 0 {
+                return error("zlib: preset dictionaries are not supported")
+            }
+            input = std.compress.rtCopy(this.buf, 2, len(this.buf))
+            this.buf = []
+            this.state = 1
+        }
+        if this.state == 1 {
+            this.d.Feed(input)?
+            var b = this.d.Read()
+            this.adler = std.compress.Adler32(this.adler, b)
+            this.out = std.compress.rtConcat(this.out, b)
+            if !this.d.Done() {
+                return
+            }
+            this.state = 2
+            input = this.d.Rest()
+        }
+        this.buf = std.compress.rtConcat(this.buf, input)
+        if len(this.buf) >= 4 {
+            if std.compress.be32(this.buf, 0) != this.adler {
+                return error("zlib: checksum mismatch")
+            }
+            this.rest = std.compress.rtCopy(this.buf, 4, len(this.buf))
+            this.buf = []
+            this.state = 3
+        }
+    }
+
+    // The decompressed bytes produced since the last call.
+    func Read() []byte {
+        var b = this.out
+        this.out = []
+        return b
+    }
+
+    // True once the trailer was read and verified.
+    func Done() bool {
+        return this.state == 3
+    }
+
+    func Rest() []byte {
+        return this.rest
+    }
+
+    func Close() void! {
+        if this.state != 3 {
+            return error("zlib: unexpected end of compressed data")
+        }
+    }
+}
+
+func NewReader() *Reader {
+    return &Reader{d: std.compress.deflate.NewReader(), adler: 1}
+}

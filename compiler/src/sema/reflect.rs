@@ -59,7 +59,12 @@ const REFLECT: usize = 0;
 const JSON: usize = 1;
 
 /// Builtin attributes whose values are structs of `std.reflect`.
-pub(crate) const ATTR_STRUCTS: &[&str] = &["json", "deprecated", "inline", "test"];
+pub(crate) const ATTR_STRUCTS: &[&str] = &["json", "deprecated", "inline", "test", "log", "csv", "xml", "yaml", "toml", "serde"];
+
+/// Builtin attributes whose value struct has another name in
+/// `reflect.sl`: `@log`'s is `logAttr`, so that `import std` (namespace
+/// `log`) and `import std.reflect` can be used together.
+const ATTR_STRUCT_NAMES: &[(&str, &str)] = &[("log", "logAttr"), ("csv", "csvAttr"), ("xml", "xmlAttr"), ("yaml", "yamlAttr"), ("toml", "tomlAttr")];
 
 /// Builtin type names whose canonical spelling differs (`int64` is `int`).
 const ALIAS_SPELLINGS: &[&str] = &["int64", "uint", "uint8", "float64"];
@@ -220,6 +225,9 @@ impl<'a> Sema<'a> {
                 self.nss[ns].members.remove(name);
                 if m == REFLECT {
                     self.refl.structs.remove(name);
+                    if let Some((attr, _)) = ATTR_STRUCT_NAMES.iter().find(|(_, n)| n == name) {
+                        self.refl.structs.remove(*attr);
+                    }
                     self.refl.enums.remove(name);
                     self.refl.funcs.remove(name);
                     self.refl.templates.remove(name);
@@ -253,6 +261,9 @@ impl<'a> Sema<'a> {
                     self.nss[ns].members.insert(s.name.name.clone(), (Member::Struct(id), Span::DUMMY, fi));
                     if path == "std.reflect" {
                         self.refl.structs.insert(s.name.name.clone(), id);
+                        if let Some((attr, _)) = ATTR_STRUCT_NAMES.iter().find(|(_, n)| *n == s.name.name) {
+                            self.refl.structs.insert(attr.to_string(), id);
+                        }
                     }
                     structs.push(id as usize);
                     for m in &s.methods {
@@ -275,6 +286,7 @@ impl<'a> Sema<'a> {
                         namespace: hns,
                         variants: Vec::new(),
                         is_plain: e.variants.iter().all(|v| v.fields.is_empty()),
+                        methods: Vec::new(),
                         attrs: Vec::new(),
                         exported: is_exported(&e.name.name),
                         file: fi,

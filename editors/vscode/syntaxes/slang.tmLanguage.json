@@ -96,6 +96,7 @@
             { "name": "constant.other.placeholder.slang", "match": "\\{[0-9]+\\}" }
           ]
         },
+        { "name": "string.quoted.other.raw.slang", "begin": "`", "end": "`" },
         {
           "name": "string.quoted.single.slang",
           "begin": "'", "end": "'",

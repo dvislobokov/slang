@@ -1,0 +1,13 @@
+5 short false true
+8 a much l true
+sent 60000
+received 60000
+connected to true
+hello peer true
+reply
+4 into
+broadcast: to all
+multicast: group message
+true true
+deadline: true
+closed: true

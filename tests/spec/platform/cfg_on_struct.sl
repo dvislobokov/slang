@@ -1,5 +1,5 @@
 // test: @cfg works on structs: each platform declares its own Handle type
-// status: pending
+// status: passing
 namespace spec.platform.cfg_on_struct
 
 import std.io

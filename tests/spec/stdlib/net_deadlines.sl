@@ -1,0 +1,71 @@
+// test: per-operation timeouts and absolute read/write deadlines fail with ErrTimeout; clearing them; cancellation of a blocked read; Accept timeout
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.net_deadlines
+
+import std.io
+import std
+
+async func main() void! {
+    var l = net.Listen("127.0.0.1:0")?
+    var c = await net.Dial(l.Addr())?
+    var s = await l.Accept()?
+
+    // a read deadline 30 ms from now
+    var t0 = time.Now()
+    s.SetReadDeadline(time.Now() + 30)
+    try await s.Read(10) catch err {
+        println("read deadline:", errors.Is(err, net.ErrTimeout), net.IsTimeout(err), time.Now() - t0 >= 25)
+        var oe net.OpError
+        println("timeout op:", errors.As(err, &oe), oe.Op, oe.Timeout())
+    }
+    // a deadline in the past fails at once, even with data available
+    _ = await c.WriteString("data")?
+    s.SetReadDeadline(time.Now() - 1)
+    try await s.Read(10) catch err {
+        println("past deadline:", errors.Is(err, net.ErrTimeout))
+    }
+    // cleared: the data is still there
+    s.SetReadDeadline(0)
+    println("after clearing:", strings.FromBytes(await s.Read(10)?))
+
+    // SetTimeout: each wait may take at most 20 ms
+    s.SetTimeout(20)
+    try await s.ReadLine() catch err {
+        println("per-op timeout:", net.IsTimeout(err), strings.HasSuffix(err.Message(), ": i/o timeout"))
+    }
+    s.SetTimeout(0)
+
+    // a write deadline while the peer does not read: the socket buffer fills up
+    c.SetWriteBuffer(4096)?
+    c.SetWriteDeadline(time.Now() + 50)
+    var chunk = strings.Bytes(strings.Repeat("w", 65536))
+    var wrote = 0
+    for {
+        var n = try await c.Write(chunk) catch err {
+            println("write deadline:", errors.Is(err, net.ErrTimeout), wrote > 0)
+            break
+        }
+        wrote += n
+    }
+    c.SetWriteDeadline(0)
+
+    // cancellation wakes a blocked read with task.ErrCancelled
+    try await task.WithTimeout(30, async func() void! {
+        var c2 = await net.Dial(l.Addr())?
+        _ = await c2.Read(1)?
+    }) catch err {
+        println("cancelled read:", errors.Is(err, task.ErrCancelled))
+    }
+    var s3 = await l.Accept()?
+    s3.Close()
+
+    // Accept with a timeout
+    l.SetTimeout(20)
+    try await l.Accept() catch err {
+        println("accept timeout:", net.IsTimeout(err))
+    }
+    c.Close()
+    s.Close()
+    l.Close()
+}

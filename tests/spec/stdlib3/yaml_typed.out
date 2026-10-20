@@ -1,0 +1,65 @@
+version: "3.9"
+services:
+  - name: web
+    image: nginx:1.25
+    ports: [80, 443]
+    env:
+      A: "yes"
+      TZ: UTC
+    limits:
+      cpu: 0.5
+      memory: 512M
+    mode: Prod
+    replicas: 3
+    command:
+      - nginx
+      - -g
+      - daemon off;
+    notes: |
+      line one
+      line two
+  - name: db
+    image: postgres
+    ports: []
+    limits: null
+    mode: Dev
+    replicas: 0
+    command:
+      - "true"
+      - ""
+      - "null"
+      - "123"
+      - " padded "
+      - "a: b"
+      - "#hash"
+      - "- dash"
+3.9 2 [80 443] yes 0.5 Prod 3
+[true  null 123  padded  a: b #hash - dash] 0 true "line one\nline two\n"
+true
+15 255 -150 c true
+"n": 15
+h: 255
+f: -150.0
+list:
+  - a
+  - b: c
+k:
+  - 1
+  - two
+  - null
+2 1G
+yaml: line 2: bad indentation of a mapping entry
+yaml: line 2: duplicate key "a"
+yaml: line 1: unterminated quoted scalar
+yaml: line 2: tabs are not allowed for indentation
+yaml: line 1: unknown alias *nope
+yaml: line 2: expected a mapping key, found "b"
+yaml: line 2: unexpected content (bad indentation?)
+yaml: line 3: unterminated flow collection
+yaml: line 1: mapping values are not allowed here
+yaml: expected one document, found 2 (use ParseAll)
+yaml: line 6: too many alias expansions (a "billion laughs" document?)
+yaml: services[0].replicas: number 1000 out of range for int8
+yaml: services[0].ports: expected seq, found int
+yaml: services[0].mode: unknown Mode value "Test"
+3

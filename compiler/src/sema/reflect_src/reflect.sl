@@ -57,6 +57,52 @@ struct deprecated {
     message string = ""
 }
 
+// @log(skip: true): std.log leaves the field out of `{@X}` (named
+// logAttr so that it does not clash with the namespace std.log; the
+// compiler maps @log to it).
+struct logAttr {
+    skip bool = false
+}
+
+// @csv, @xml, @yaml, @toml: field mappings of the std.encoding.* codecs
+// (named ...Attr so that they do not clash with those namespaces); @serde
+// is the format-independent fallback every codec reads after its own.
+struct csvAttr {
+    name string = ""
+    index int = -1
+    skip bool = false
+    omitEmpty bool = false
+}
+
+struct xmlAttr {
+    name string = ""
+    attr bool = false
+    text bool = false
+    omitEmpty bool = false
+    ns string = ""
+    skip bool = false
+}
+
+struct yamlAttr {
+    name string = ""
+    omitEmpty bool = false
+    skip bool = false
+    flow bool = false
+}
+
+struct tomlAttr {
+    name string = ""
+    omitEmpty bool = false
+    skip bool = false
+    inline bool = false
+}
+
+struct serde {
+    name string = ""
+    omitEmpty bool = false
+    skip bool = false
+}
+
 struct inline {
 }
 

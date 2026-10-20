@@ -1,0 +1,79 @@
+// test: Conn.SendFile (sendfile(2)) with offsets, WriteV, SetCork/SetNoDelay/keep-alive options, BufferedReader/BufferedWriter, ReadLine/ReadInto
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.net_sendfile
+
+import std.io
+import std
+
+async func main() void! {
+    var path = fs.Join(fs.TempDir(), fmt.Format("slang-net-sendfile-{0}.txt", os.Pid()))
+    var body = strings.Repeat("0123456789", 100000)   // 1 MB
+    io.WriteFile(path, body)?
+
+    var l = net.Listen("127.0.0.1:0")?
+    var c = await net.Dial(l.Addr())?
+    var s = await l.Accept()?
+    c.SetNoDelay(false)?
+    c.SetNoDelay(true)?
+    c.SetKeepAlive(30, 5, 3)?
+    c.SetKeepAlive(0, 0, 0)?
+    c.SetReadBuffer(1 << 16)?
+    c.SetLinger(-1)?
+
+    // header + whole file + trailer, corked into full frames
+    c.SetCork(true)?
+    _ = await c.WriteV([strings.Bytes("HEAD "), strings.Bytes("1000000"), strings.Bytes("\n")])?
+    var n = await c.SendFile(path, 0, -1)?
+    _ = await c.WriteString("\nTAIL\n")?
+    c.SetCork(false)?
+    // a slice of the file: 25 bytes from offset 999990 (only 10 are left)
+    var m = await c.SendFile(path, 999990, 25)?
+    c.CloseWrite()?
+    println("sent", n, m)
+
+    var r = net.NewBufferedReader(s, 8192)
+    println(await r.ReadLine()?)
+    var got = await r.ReadExact(1000000)?
+    println("file bytes match:", strings.FromBytes(got) == body)
+    println(await r.ReadLine()?, await r.ReadLine()?)
+    var rest = std.bytes.Repeat(strings.Bytes("."), 64)
+    var k = await r.ReadInto(rest)?
+    println(strings.FromBytes(rest[..k]), await r.ReadInto(rest)?)
+    try await r.ReadLine() catch err {
+        println("end:", errors.Is(err, net.ErrEOF))
+    }
+    try await c.SendFile(path + ".missing", 0, -1) catch err {
+        println("missing file:", errors.Is(err, fs.ErrNotFound))
+    }
+
+    // BufferedWriter: many small writes, one flush
+    var c2 = await net.Dial(l.Addr())?
+    var s2 = await l.Accept()?
+    var w = net.NewBufferedWriter(c2, 0)
+    for i in 0..100 {
+        _ = await w.WriteString(fmt.Format("line {0}\n", i))?
+    }
+    println("buffered:", w.Buffered() > 0)
+    await w.Flush()?
+    c2.CloseWrite()?
+    var br = net.NewBufferedReader(s2, 16)
+    var lines = 0
+    var last = ""
+    for {
+        var line = try await br.ReadLine() catch err {
+            break
+        }
+        lines += 1
+        last = line
+    }
+    println(lines, last)
+    try await br.ReadUntil(10) catch err {
+        println("after end:", errors.Is(err, net.ErrEOF))
+    }
+    fs.Remove(path)?
+    for x in [c, s, c2, s2] {
+        x.Close()
+    }
+    l.Close()
+}

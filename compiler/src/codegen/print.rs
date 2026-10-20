@@ -9,7 +9,22 @@ use inkwell::IntPredicate;
 
 impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn print(&mut self, items: &[PrintItem]) -> R<()> {
-        for it in items {
+        // Every argument is evaluated before anything is written (Go's
+        // fmt.Println; spec decision 61). Values that a later argument could
+        // invalidate are owned while held.
+        let d = self.depth();
+        let mut vals = Vec::with_capacity(items.len());
+        for (k, it) in items.iter().enumerate() {
+            match &it.arg {
+                Some(a) => {
+                    let later = items[k + 1..].iter().any(|x| x.arg.as_ref().is_some_and(|y| self.may_run_code(y)));
+                    let (v, _) = self.arg(a, false, false, later)?;
+                    vals.push(Some(v));
+                }
+                None => vals.push(None),
+            }
+        }
+        for (it, v) in items.iter().zip(vals) {
             match it.op {
                 PrintOp::Space => {
                     self.call_rt("slang_print_space", &[]);
@@ -18,8 +33,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     self.call_rt("slang_print_newline", &[]);
                 }
                 op => {
-                    let Some(arg) = &it.arg else { return unsupported("print item without argument") };
-                    let v = self.expr(arg)?;
+                    let Some(v) = v else { return unsupported("print item without argument") };
                     let x = v.get();
                     match op {
                         PrintOp::Int | PrintOp::Uint => {
@@ -46,10 +60,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                             self.call_rt("slang_print_str", &[x.into()]);
                         }
                     }
-                    self.drop_val(arg.ty, v);
                 }
             }
         }
+        self.release_temps_from(d);
         Ok(())
     }
 

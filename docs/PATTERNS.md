@@ -231,8 +231,8 @@ struct Rect implements Shape {
 func Kind(s Shape) string {
     // Shape — sealed: switch должен покрыть все реализации, default не нужен.
     switch s {
-        case Circle c: return "round, r=" + string(c.R)
-        case Rect r:   return "boxy, w=" + string(r.W)
+        case Circle c: return fmt.Format("round, r={0}", c.R)
+        case Rect r:   return fmt.Format("boxy, w={0}", r.W)
     }
 }
 
@@ -244,8 +244,10 @@ func main() {
 }
 ```
 
-- `implements` не меняет семантику: интерфейсы структурные, но для `sealed`
-  аннотация обязательна, чтобы компилятор знал все реализации.
+- `implements` не меняет семантику: интерфейсы структурные. Реализации
+  `sealed`-интерфейса — все типы его пространства имён с нужными методами
+  (с `implements` или без); тип из другого пространства имён его не
+  реализует. Пример лежит в `examples/sealed_shapes.sl`.
 - `this` в методе по умолчанию — значение интерфейса; полей у интерфейса нет.
 - Новая реализация `sealed`-интерфейса подсвечивает каждый неполный `switch`.
 

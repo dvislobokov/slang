@@ -73,13 +73,16 @@ impl Session {
     /// Parses (cached) and analyses all files.
     pub fn analyze(&self) -> Analysis {
         let files: Vec<SourceFile> = self.files.values().map(|f| f.source.clone()).collect();
-        let asts: Vec<ast::File> = self.files.values().map(|f| f.ast.clone()).collect();
+        let mut asts: Vec<ast::File> = self.files.values().map(|f| f.ast.clone()).collect();
         let texts: Vec<&str> = files.iter().map(|f| f.text.as_str()).collect();
         let mut diagnostics = Vec::new();
         for (i, f) in self.files.values().enumerate() {
             diagnostics.extend(f.parse_diags.iter().cloned().map(|d| d.in_file(i)));
         }
         let mut diags = Diagnostics::new();
+        // Declarations excluded by `@cfg` (or files by their suffix) on
+        // this target are not analysed, as in a build.
+        crate::driver::apply_cfg(&mut asts, &files, &crate::cfg::CfgEnv::current(), &mut diags);
         let (hir, index) = index::analyze_indexed(&asts, &texts, &mut diags);
         let ok = !diags.has_errors() && !diagnostics.iter().any(|d: &Diagnostic| d.severity == Severity::Error);
         diagnostics.extend(diags.items);

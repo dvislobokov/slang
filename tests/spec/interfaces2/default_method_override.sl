@@ -1,5 +1,5 @@
 // test: a struct that declares a method with the name of a default method overrides the default
-// status: pending
+// status: passing
 namespace spec.interfaces2.default_method_override
 
 import std.io

@@ -1,0 +1,903 @@
+namespace std.diag
+
+// std.diag: metrics (Prometheus text), tracing (OpenTelemetry-compatible
+// spans propagated through the task context, W3C traceparent), CPU and
+// heap profiles in pprof format (docs/FRAMEWORK.md section 5). See
+// sema/stdsrc.rs for the rules of these sources. Global state (registry,
+// tracer) lives in the runtime's slot map (rtSlots, guarded by rtLock);
+// the current span is a task-context frame with the reserved key -102.
+
+// ---- process-wide slots ---------------------------------------------------
+
+func slots() map[string]any {
+    var m = rtSlots()
+    if m == nil {
+        m = map[string]any{}
+        rtSetSlots(m)
+    }
+    return m
+}
+
+// ---- metrics --------------------------------------------------------------
+
+struct series {
+    values []string
+    value float
+    // histograms
+    counts []int
+    sum float
+    count int
+}
+
+// A metric family: name, help, label names and one series per label
+// value combination (in creation order).
+struct family {
+    guard int
+    name string
+    help string
+    kind string
+    labels []string
+    buckets []float
+    keys []string
+    series []*series
+
+    func get(values []string) *series {
+        var key = std.strings.Join(values, "\u{1}")
+        for i, k in this.keys {
+            if k == key {
+                return this.series[i]
+            }
+        }
+        var s = new series{}
+        for v in values {
+            s.values = append(s.values, v)
+        }
+        for _ in this.buckets {
+            s.counts = append(s.counts, 0)
+        }
+        this.keys = append(this.keys, key)
+        this.series = append(this.series, s)
+        return s
+    }
+
+    func add(values []string, d float) {
+        std.task.rtLock(&this.guard)
+        var s = this.get(values)
+        s.value += d
+        std.task.rtUnlock(&this.guard)
+    }
+
+    func set(values []string, v float) {
+        std.task.rtLock(&this.guard)
+        var s = this.get(values)
+        s.value = v
+        std.task.rtUnlock(&this.guard)
+    }
+
+    func observe(values []string, v float) {
+        std.task.rtLock(&this.guard)
+        var s = this.get(values)
+        for i, b in this.buckets {
+            if v <= b {
+                s.counts[i] += 1
+            }
+        }
+        s.sum += v
+        s.count += 1
+        std.task.rtUnlock(&this.guard)
+    }
+
+    func read(values []string) float {
+        std.task.rtLock(&this.guard)
+        var s = this.get(values)
+        var v = s.value
+        std.task.rtUnlock(&this.guard)
+        return v
+    }
+
+    func text() string {
+        var b = std.strings.Builder{}
+        b.Write("# HELP " + this.name + " " + escapeHelp(this.help) + "\n")
+        b.Write("# TYPE " + this.name + " " + this.kind + "\n")
+        std.task.rtLock(&this.guard)
+        for s in this.series {
+            if this.kind == "histogram" {
+                for i, bound in this.buckets {
+                    b.Write(this.name + "_bucket" + labelText(this.labels, s.values, "le", num(bound)) + " " + std.fmt.Format("{0}", s.counts[i]) + "\n")
+                }
+                b.Write(this.name + "_bucket" + labelText(this.labels, s.values, "le", "+Inf") + " " + std.fmt.Format("{0}", s.count) + "\n")
+                b.Write(this.name + "_sum" + labelText(this.labels, s.values, "", "") + " " + num(s.sum) + "\n")
+                b.Write(this.name + "_count" + labelText(this.labels, s.values, "", "") + " " + std.fmt.Format("{0}", s.count) + "\n")
+            } else {
+                b.Write(this.name + labelText(this.labels, s.values, "", "") + " " + num(s.value) + "\n")
+            }
+        }
+        std.task.rtUnlock(&this.guard)
+        return b.String()
+    }
+}
+
+func escapeHelp(s string) string {
+    return std.strings.Replace(std.strings.Replace(s, "\\", "\\\\"), "\n", "\\n")
+}
+
+func escapeLabel(s string) string {
+    return std.strings.Replace(std.strings.Replace(std.strings.Replace(s, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n")
+}
+
+func labelText(names []string, values []string, extra string, extraValue string) string {
+    if len(names) == 0 && extra == "" {
+        return ""
+    }
+    var b = std.strings.Builder{}
+    b.Write("{")
+    var first = true
+    for i, n in names {
+        if !first {
+            b.Write(",")
+        }
+        first = false
+        var v = ""
+        if i < len(values) {
+            v = values[i]
+        }
+        b.Write(n + "=\"" + escapeLabel(v) + "\"")
+    }
+    if extra != "" {
+        if !first {
+            b.Write(",")
+        }
+        b.Write(extra + "=\"" + extraValue + "\"")
+    }
+    b.Write("}")
+    return b.String()
+}
+
+// Prometheus number text.
+func num(x float) string {
+    if std.math.IsInf(x, 1) {
+        return "+Inf"
+    }
+    if std.math.IsInf(x, -1) {
+        return "-Inf"
+    }
+    if std.math.IsNaN(x) {
+        return "NaN"
+    }
+    return std.fmt.Format("{0}", x)
+}
+
+struct registry {
+    families []*family
+}
+
+func registryOf() *registry {
+    rtLock()
+    var m = slots()
+    switch m["diag.registry"] {
+        case *registry r:
+            rtUnlock()
+            return r
+    }
+    var r = new registry{}
+    m["diag.registry"] = r
+    rtUnlock()
+    return r
+}
+
+// Registers a family; a family with the same name is returned instead (so
+// metrics can be declared where they are used).
+func register(name string, help string, kind string, labels []string, buckets []float) *family {
+    var r = registryOf()
+    rtLock()
+    for f in r.families {
+        if f.name == name {
+            rtUnlock()
+            return f
+        }
+    }
+    var f = new family{name: name, help: help, kind: kind}
+    for l in labels {
+        f.labels = append(f.labels, l)
+    }
+    for b in buckets {
+        f.buckets = append(f.buckets, b)
+    }
+    r.families = append(r.families, f)
+    rtUnlock()
+    return f
+}
+
+// A monotonically increasing value (`requests_total`).
+struct Counter {
+    f *family
+    values []string
+
+    func Inc() {
+        this.f.add(this.values, 1.0)
+    }
+
+    // Adds d (must not be negative: negative values are ignored).
+    func Add(d float) {
+        if d >= 0.0 {
+            this.f.add(this.values, d)
+        }
+    }
+
+    // The series for these label values (in label order).
+    func With(values []string) Counter {
+        return Counter{f: this.f, values: values}
+    }
+
+    func Value() float {
+        return this.f.read(this.values)
+    }
+}
+
+// A value that goes up and down (`queue_length`).
+struct Gauge {
+    f *family
+    values []string
+
+    func Set(v float) {
+        this.f.set(this.values, v)
+    }
+
+    func Inc() {
+        this.f.add(this.values, 1.0)
+    }
+
+    func Dec() {
+        this.f.add(this.values, -1.0)
+    }
+
+    func Add(d float) {
+        this.f.add(this.values, d)
+    }
+
+    func Sub(d float) {
+        this.f.add(this.values, -d)
+    }
+
+    func With(values []string) Gauge {
+        return Gauge{f: this.f, values: values}
+    }
+
+    func Value() float {
+        return this.f.read(this.values)
+    }
+}
+
+// Observations counted in cumulative buckets (`request_seconds`).
+struct Histogram {
+    f *family
+    values []string
+
+    func Observe(v float) {
+        this.f.observe(this.values, v)
+    }
+
+    func With(values []string) Histogram {
+        return Histogram{f: this.f, values: values}
+    }
+}
+
+// Prometheus' default buckets (seconds).
+func DefBuckets() []float {
+    return [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+}
+
+// A counter with the given label names (nil or [] for none).
+func NewCounter(name string, help string, labels []string) Counter {
+    return Counter{f: register(name, help, "counter", labels, [])}
+}
+
+func NewGauge(name string, help string, labels []string) Gauge {
+    return Gauge{f: register(name, help, "gauge", labels, [])}
+}
+
+// A histogram with upper bounds `buckets` (ascending; +Inf is implicit;
+// nil = DefBuckets()).
+func NewHistogram(name string, help string, labels []string, buckets []float) Histogram {
+    var bs = buckets
+    if len(bs) == 0 {
+        bs = DefBuckets()
+    }
+    return Histogram{f: register(name, help, "histogram", labels, bs)}
+}
+
+// Runtime figures (std.diag.Runtime()).
+struct RuntimeStats {
+    // Live heap objects (strings, slices' arrays, boxes, closures, tasks...).
+    LiveObjects int
+    // Objects allocated since the start.
+    Allocations int
+    // Live task objects (pending and finished but still referenced).
+    Tasks int
+    // Jobs waiting in the scheduler's run queue.
+    QueueLength int
+    // Worker threads of the scheduler.
+    Workers int
+}
+
+func Runtime() RuntimeStats {
+    return RuntimeStats{LiveObjects: rtLiveObjects(), Allocations: rtAllocations(), Tasks: rtLiveTasks(), QueueLength: rtQueueLen(), Workers: rtWorkers()}
+}
+
+// Adds the runtime metrics (slang_live_objects, slang_allocations_total,
+// slang_tasks, slang_scheduler_queue_length, slang_scheduler_workers) to
+// PrometheusText.
+func EnableRuntimeMetrics() {
+    rtLock()
+    var m = slots()
+    m["diag.runtime"] = true
+    rtUnlock()
+}
+
+func runtimeText() string {
+    rtLock()
+    var on = false
+    switch slots()["diag.runtime"] {
+        case bool b:
+            on = b
+    }
+    rtUnlock()
+    if !on {
+        return ""
+    }
+    var r = Runtime()
+    var b = std.strings.Builder{}
+    b.Write("# HELP slang_live_objects Live heap objects.\n# TYPE slang_live_objects gauge\nslang_live_objects " + std.fmt.Format("{0}", r.LiveObjects) + "\n")
+    b.Write("# HELP slang_allocations_total Heap objects allocated.\n# TYPE slang_allocations_total counter\nslang_allocations_total " + std.fmt.Format("{0}", r.Allocations) + "\n")
+    b.Write("# HELP slang_tasks Live tasks.\n# TYPE slang_tasks gauge\nslang_tasks " + std.fmt.Format("{0}", r.Tasks) + "\n")
+    b.Write("# HELP slang_scheduler_queue_length Jobs waiting for a worker.\n# TYPE slang_scheduler_queue_length gauge\nslang_scheduler_queue_length " + std.fmt.Format("{0}", r.QueueLength) + "\n")
+    b.Write("# HELP slang_scheduler_workers Scheduler worker threads.\n# TYPE slang_scheduler_workers gauge\nslang_scheduler_workers " + std.fmt.Format("{0}", r.Workers) + "\n")
+    return b.String()
+}
+
+// Every registered metric (in registration order), then the runtime
+// metrics if enabled, in the Prometheus text exposition format 0.0.4.
+func PrometheusText() string {
+    var r = registryOf()
+    rtLock()
+    var fams []*family = []
+    for f in r.families {
+        fams = append(fams, f)
+    }
+    rtUnlock()
+    var b = std.strings.Builder{}
+    for f in fams {
+        b.Write(f.text())
+    }
+    b.Write(runtimeText())
+    return b.String()
+}
+
+// An http handler function serving PrometheusText():
+// `router.Get("/metrics", diag.ServeMetrics)`.
+async func ServeMetrics(req *std.net.http.Request, res *std.net.http.Response) void! {
+    res.SetHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+    res.Write(PrometheusText())
+}
+
+struct metricsHandler {
+    func Serve(req *std.net.http.Request, res *std.net.http.Response) Task<void!> {
+        return ServeMetrics(req, res)
+    }
+}
+
+// An http.Handler serving PrometheusText() (for http.Server{Handler: ...}).
+func MetricsHandler() std.net.http.Handler {
+    return new metricsHandler{}
+}
+
+// ---- tracing --------------------------------------------------------------
+
+enum SpanKind { Internal, Server, Client, Producer, Consumer }
+
+enum StatusCode { Unset, Ok, Error }
+
+struct Attribute {
+    Key string
+    Value any
+}
+
+// A span (OpenTelemetry data model): ids are lowercase hex (TraceId 16
+// bytes, SpanId 8), times are Unix nanoseconds. StartSpan makes it the
+// current span of the task until End.
+struct Span {
+    Name string
+    TraceId string
+    SpanId string
+    ParentSpanId string
+    Kind SpanKind
+    StartNanos int
+    EndNanos int
+    Attributes []Attribute
+    Status StatusCode
+    StatusMessage string
+    // The span came from a traceparent header (another process).
+    Remote bool
+    ended bool
+    pushed bool
+    prev map[string]any
+    startMono int
+
+    func SetAttribute(key string, value any) {
+        for i, a in this.Attributes {
+            if a.Key == key {
+                this.Attributes[i].Value = value
+                return
+            }
+        }
+        this.Attributes = append(this.Attributes, Attribute{Key: key, Value: value})
+    }
+
+    func SetStatus(code StatusCode, message string) {
+        this.Status = code
+        this.StatusMessage = message
+    }
+
+    // Records err: status Error with its message, and the attribute
+    // exception.message.
+    func RecordError(err error) {
+        if err == nil {
+            return
+        }
+        this.SetAttribute("exception.message", err.Message())
+        this.SetStatus(StatusCode.Error, err.Message())
+    }
+
+    // Ends the span (once), restores the context of before StartSpan and
+    // hands the span to the exporters.
+    func End() {
+        if this.ended {
+            return
+        }
+        this.ended = true
+        var t = tracerOf()
+        if t.clock != nil {
+            this.EndNanos = t.clock()
+        } else {
+            this.EndNanos = this.StartNanos + (rtMonoNanos() - this.startMono)
+        }
+        if this.pushed {
+            std.task.rtSetCtx(this.prev)
+            this.prev = nil
+            this.pushed = false
+        }
+        for e in t.exporters {
+            e.Export(this)
+        }
+    }
+
+    // Duration in nanoseconds (0 before End).
+    func Duration() int {
+        if !this.ended {
+            return 0
+        }
+        return this.EndNanos - this.StartNanos
+    }
+
+    // The W3C traceparent header value: 00-<trace>-<span>-01.
+    func Traceparent() string {
+        return "00-" + this.TraceId + "-" + this.SpanId + "-01"
+    }
+}
+
+// Receives finished spans.
+interface Exporter {
+    func Export(s *std.diag.Span)
+    func Shutdown() Task<void>
+}
+
+struct tracer {
+    exporters []Exporter
+    seeded bool
+    state int
+    clock func() int
+    service string
+}
+
+func tracerOf() *tracer {
+    rtLock()
+    var m = slots()
+    switch m["diag.tracer"] {
+        case *tracer t:
+            rtUnlock()
+            return t
+    }
+    var t = new tracer{service: "slang"}
+    m["diag.tracer"] = t
+    rtUnlock()
+    return t
+}
+
+// Adds an exporter for finished spans.
+func AddExporter(e Exporter) {
+    var t = tracerOf()
+    rtLock()
+    t.exporters = append(t.exporters, e)
+    rtUnlock()
+}
+
+// The service.name resource attribute of exported spans.
+func SetServiceName(name string) {
+    tracerOf().service = name
+}
+
+// Deterministic ids (xorshift from seed) and timestamps (clock, Unix
+// nanoseconds; nil = real time): reproducible traces in tests.
+func SetTraceSeed(seed int, clock func() int) {
+    var t = tracerOf()
+    rtLock()
+    t.seeded = true
+    t.state = seed ^ 88172645463325252
+    t.clock = clock
+    rtUnlock()
+}
+
+// Flushes and shuts the exporters down.
+async func Shutdown() {
+    var t = tracerOf()
+    for e in t.exporters {
+        await e.Shutdown()
+    }
+}
+
+func hexBytes(n int) string {
+    var t = tracerOf()
+    if !t.seeded {
+        return try std.crypto.rand.Hex(n) else std.encoding.hex.Encode(std.random.Bytes(n))
+    }
+    rtLock()
+    var b = std.strings.Builder{}
+    var left = n
+    for left > 0 {
+        // xorshift64 (13, 7, 17) on the int as 64 bits
+        var x = t.state
+        x = x ^ (x << 13)
+        x = x ^ ((x >> 7) & 144115188075855871)
+        x = x ^ (x << 17)
+        t.state = x
+        var h = std.fmt.Sprintf("%016x", uint(x))
+        if left < 8 {
+            h = h[..left * 2]
+        }
+        b.Write(h)
+        left -= 8
+    }
+    rtUnlock()
+    return b.String()
+}
+
+// The current span of the task (nil if none).
+func CurrentSpan() *Span {
+    var c = std.task.CurrentContext()
+    var f = c.top()
+    for f != nil {
+        if f.key == -102 {
+            switch f.val {
+                case *Span s:
+                    return s
+            }
+            return nil
+        }
+        f = f.next
+    }
+    return nil
+}
+
+// Starts a span as a child of the current span (or a remote parent from
+// a traceparent header) and makes it current: `var s =
+// diag.StartSpan("load"); defer s.End()`.
+func StartSpan(name string) *Span {
+    return StartSpanKind(name, SpanKind.Internal)
+}
+
+func StartSpanKind(name string, kind SpanKind) *Span {
+    var parent = CurrentSpan()
+    var t = tracerOf()
+    var s = new Span{Name: name, Kind: kind}
+    if parent != nil {
+        s.TraceId = parent.TraceId
+        s.ParentSpanId = parent.SpanId
+    } else {
+        s.TraceId = hexBytes(16)
+    }
+    s.SpanId = hexBytes(8)
+    s.startMono = rtMonoNanos()
+    if t.clock != nil {
+        s.StartNanos = t.clock()
+    } else {
+        s.StartNanos = std.time.NowNanos()
+    }
+    s.prev = push(s)
+    s.pushed = true
+    return s
+}
+
+// Makes s current; returns the previous context.
+func push(s *Span) map[string]any {
+    var old = std.task.rtGetCtx()
+    var c = std.task.CurrentContext()
+    var fr = new std.task.ctxFrame{key: -102, val: s, next: c.top()}
+    var m = map[string]any{}
+    m[""] = fr
+    std.task.rtSetCtx(m)
+    return old
+}
+
+// The traceparent header value for the current span ("" if none).
+func Traceparent() string {
+    var s = CurrentSpan()
+    if s == nil {
+        return ""
+    }
+    return s.Traceparent()
+}
+
+// Parses a W3C traceparent value (version 00) into a remote span; nil if
+// malformed.
+func ParseTraceparent(h string) *Span {
+    var p = std.strings.Split(std.strings.Trim(h), "-")
+    if len(p) != 4 || p[0] != "00" || len(p[1]) != 32 || len(p[2]) != 16 || len(p[3]) != 2 {
+        return nil
+    }
+    if !isHex(p[1]) || !isHex(p[2]) || !isHex(p[3]) || p[1] == "00000000000000000000000000000000" || p[2] == "0000000000000000" {
+        return nil
+    }
+    return new Span{TraceId: p[1], SpanId: p[2], Remote: true, ended: true}
+}
+
+func isHex(s string) bool {
+    for i in 0..len(s) {
+        var c = s[i..i + 1]
+        if !std.strings.Contains("0123456789abcdef", c) {
+            return false
+        }
+    }
+    return true
+}
+
+struct remoteScope {
+    old map[string]any
+    pushed bool
+}
+
+// Makes the remote parent of a traceparent header current (http.Server
+// calls it per request); the result goes to leaveRemote.
+func enterRemote(h string) remoteScope {
+    if h == "" {
+        return remoteScope{}
+    }
+    var s = ParseTraceparent(h)
+    if s == nil {
+        return remoteScope{}
+    }
+    return remoteScope{old: push(s), pushed: true}
+}
+
+func leaveRemote(r remoteScope) {
+    if r.pushed {
+        std.task.rtSetCtx(r.old)
+    }
+}
+
+// ---- exporters ------------------------------------------------------------
+
+// Prints one line per finished span to stdout:
+// `span <name> trace=<id> span=<id> parent=<id|-> kind=... status=... [duration=...] {attrs}`.
+struct ConsoleExporter {
+    // Print the duration (off for reproducible output).
+    ShowDuration bool
+
+    func Export(s *Span) {
+        var parent = s.ParentSpanId
+        if parent == "" {
+            parent = "-"
+        }
+        var line = "span " + s.Name + " trace=" + s.TraceId + " span=" + s.SpanId + " parent=" + parent + " kind=" + std.fmt.Format("{0}", s.Kind) + " status=" + std.fmt.Format("{0}", s.Status)
+        if s.StatusMessage != "" {
+            line += " (" + s.StatusMessage + ")"
+        }
+        if this.ShowDuration {
+            line += " duration=" + std.fmt.Format("{0}", s.Duration() / 1000) + "us"
+        }
+        if len(s.Attributes) > 0 {
+            line += " {"
+            for i, a in s.Attributes {
+                if i > 0 {
+                    line += ","
+                }
+                line += " " + a.Key + "=" + attrText(a.Value)
+            }
+            line += " }"
+        }
+        println(line)
+    }
+
+    func Shutdown() Task<void> {
+        return std.task.Delay(0)
+    }
+}
+
+func attrText(v any) string {
+    switch v {
+        case string s:
+            return "\"" + s + "\""
+    }
+    return std.fmt.Format("{0}", v)
+}
+
+func jsonString(s string) string {
+    var b = std.strings.Builder{}
+    b.Write("\"")
+    var start = 0
+    for i in 0..len(s) {
+        var c = s[i..i + 1]
+        var esc = ""
+        if c == "\"" {
+            esc = "\\\""
+        } else if c == "\\" {
+            esc = "\\\\"
+        } else if s[i] < 32 {
+            esc = std.fmt.Sprintf("\\u%04x", int(s[i]))
+        }
+        if esc != "" {
+            b.Write(s[start..i])
+            b.Write(esc)
+            start = i + 1
+        }
+    }
+    b.Write(s[start..])
+    b.Write("\"")
+    return b.String()
+}
+
+// An OTLP AnyValue in the JSON encoding.
+func otlpValue(v any) string {
+    switch v {
+        case string s:
+            return "{\"stringValue\":" + jsonString(s) + "}"
+        case int n:
+            return "{\"intValue\":\"" + std.fmt.Format("{0}", n) + "\"}"
+        case float x:
+            return "{\"doubleValue\":" + std.fmt.Format("{0}", x) + "}"
+        case bool t:
+            if t {
+                return "{\"boolValue\":true}"
+            }
+            return "{\"boolValue\":false}"
+    }
+    return "{\"stringValue\":" + jsonString(std.fmt.Format("{0}", v)) + "}"
+}
+
+// One span in OTLP/JSON (opentelemetry-proto, JSON mapping).
+func OtlpSpanJson(s *Span) string {
+    var b = std.strings.Builder{}
+    b.Write("{\"traceId\":\"" + s.TraceId + "\",\"spanId\":\"" + s.SpanId + "\"")
+    if s.ParentSpanId != "" {
+        b.Write(",\"parentSpanId\":\"" + s.ParentSpanId + "\"")
+    }
+    b.Write(",\"name\":" + jsonString(s.Name))
+    b.Write(",\"kind\":" + std.fmt.Format("{0}", int(s.Kind) + 1))
+    b.Write(",\"startTimeUnixNano\":\"" + std.fmt.Format("{0}", s.StartNanos) + "\"")
+    b.Write(",\"endTimeUnixNano\":\"" + std.fmt.Format("{0}", s.EndNanos) + "\"")
+    b.Write(",\"attributes\":[")
+    for i, a in s.Attributes {
+        if i > 0 {
+            b.Write(",")
+        }
+        b.Write("{\"key\":" + jsonString(a.Key) + ",\"value\":" + otlpValue(a.Value) + "}")
+    }
+    b.Write("],\"status\":{")
+    if s.Status != StatusCode.Unset {
+        b.Write("\"code\":" + std.fmt.Format("{0}", int(s.Status)))
+        if s.StatusMessage != "" {
+            b.Write(",\"message\":" + jsonString(s.StatusMessage))
+        }
+    }
+    b.Write("}}")
+    return b.String()
+}
+
+// An ExportTraceServiceRequest in OTLP/JSON for spans.
+func OtlpTraceJson(service string, spans []string) string {
+    return "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":" + jsonString(service) + "}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"slang.diag\"},\"spans\":[" + std.strings.Join(spans, ",") + "]}]}]}"
+}
+
+// Batches spans and POSTs them as OTLP/HTTP JSON to <Endpoint>/v1/traces
+// (every BatchSize spans and at Shutdown).
+struct OtlpExporter {
+    guard int
+    Endpoint string
+    BatchSize int
+    batch []string
+    pending []Task<void>
+    // Status of the last POST (0 before, -1 on a transport error).
+    LastStatus int
+    LastError string
+
+    func Export(s *Span) {
+        var j = OtlpSpanJson(s)
+        std.task.rtLock(&this.guard)
+        this.batch = append(this.batch, j)
+        var full = this.BatchSize > 0 && len(this.batch) >= this.BatchSize
+        var spans = this.batch
+        if full {
+            this.batch = []
+        }
+        std.task.rtUnlock(&this.guard)
+        if full {
+            var t = post(this, OtlpTraceJson(tracerOf().service, spans))
+            std.task.rtLock(&this.guard)
+            this.pending = append(this.pending, t)
+            std.task.rtUnlock(&this.guard)
+        }
+    }
+
+    func Shutdown() Task<void> {
+        return otlpShutdown(this)
+    }
+}
+
+async func otlpShutdown(e *OtlpExporter) {
+    std.task.rtLock(&e.guard)
+    var spans = e.batch
+    e.batch = []
+    var pending = e.pending
+    e.pending = []
+    std.task.rtUnlock(&e.guard)
+    for t in pending {
+        await t
+    }
+    if len(spans) > 0 {
+        await post(e, OtlpTraceJson(tracerOf().service, spans))
+    }
+}
+
+async func post(e *OtlpExporter, body string) {
+    var url = std.strings.TrimSuffix(e.Endpoint, "/") + "/v1/traces"
+    var res = try await std.net.http.Post(url, body, "application/json") catch err {
+        e.LastStatus = -1
+        e.LastError = err.Message()
+        return
+    }
+    e.LastStatus = res.Status
+}
+
+func NewOtlpExporter(endpoint string) *OtlpExporter {
+    return new OtlpExporter{Endpoint: endpoint, BatchSize: 64}
+}
+
+// ---- profiles -------------------------------------------------------------
+
+// Starts the CPU profiler (100 samples per CPU second) writing a pprof
+// profile to path when StopCPUProfile is called.
+func StartCPUProfile(path string) void! {
+    rtStartCPUProfile(path, 100)?
+}
+
+func StartCPUProfileRate(path string, hz int) void! {
+    rtStartCPUProfile(path, hz)?
+}
+
+// Stops the CPU profiler, writes the profile and returns the number of
+// samples taken.
+func StopCPUProfile() int! {
+    return rtStopCPUProfile()?
+}
+
+// Writes the live objects by type as a pprof profile (inuse_objects,
+// inuse_space). Needs object tracking: `slang run --leak-check` (not with
+// --release).
+func WriteHeapProfile(path string) void! {
+    rtWriteHeapProfile(path)?
+}
+
+// "count type bytes" lines of the live objects, most frequent first (""
+// without object tracking).
+func HeapProfile() string {
+    return rtHeapText()
+}

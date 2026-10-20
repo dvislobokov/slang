@@ -1,0 +1,13 @@
+version: TLS 1.3 alpn: echo/1 peer: localhost
+echo: hello over TLS
+big echo ok: true
+after KeyUpdate: still talking
+who: anonymous
+dial 1 TLS 1.2 verified: 1 resumed: false who: example client
+dial 2 TLS 1.2 verified: 1 resumed: true who: example client
+dial 1 TLS 1.3 resumed: false ok
+dial 2 TLS 1.3 resumed: true ok
+wrong name: tls: server certificate: certificate is valid for localhost, not example.com
+unknown root: tls: server certificate: certificate signed by unknown authority (issuer "O=Slang example,CN=localhost")
+200 hello over https
+done

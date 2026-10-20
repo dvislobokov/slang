@@ -1,4 +1,4 @@
-// test: the http client decodes chunked bodies, combines repeated headers, rejects https, and times out with Client{Timeout}
+// test: the http client decodes chunked bodies, combines repeated headers, dials https through std.net.tls, and times out with Client{Timeout}
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib.http_client_raw
@@ -35,7 +35,7 @@ async func main() void! {
     await s2?
     l.Close()
 
-    try await http.Get("https://example.org/") catch err {
+    try await http.Get("https://127.0.0.1:1/") catch err {
         println(err)
     }
     try await http.Get("ftp://example.org/") catch err {

@@ -14,6 +14,10 @@ The script builds both with release settings and reports wall time, CPU time
 | `nbody` | structs in a slice, float math, method calls (5M steps) |
 | `json_like` | string building: `fmt.Format` of 100k JSON-like records (ints, floats, bools) + `Join`, 5 rounds |
 | `struct_map` | map[string]Point insert/update/lookup (100k keys, 2M updates, 100k lookups) |
+| `tcp_echo` | std.net: 1000 concurrent loopback TCP connections, 1 MB each written in 64 KB chunks and echoed back (`ReadInto` into per-connection buffers) |
+| `http_hello` | std.net.http server answering a keep-alive load generator (64 connections, 200k `GET /` in all); `run.sh` cross-measures both servers with both load generators in separate processes |
+| `regex` | std.regex: `FindAll` of an e-mail pattern over a 10 MB generated text (lazy DFA with prefix acceleration vs Go's `regexp`) |
+| `gzip` | std.compress.gzip: level-6 compression and decompression of 20 MB of mixed text, round trip checked |
 
 ## Results (2026-10-20, x86-64, clang/LLVM 18, go 1.24, `--release`)
 
@@ -77,3 +81,57 @@ Notes on the first measurement (2026-10-20, naive ARC, before the changes
 above): fib 0.15 / nbody 0.59 / sieve 2.23 / map 0.94 / strings 0.70 s
 against Go 0.26 / 0.51 / 0.77 / 0.53 / 0.24 s; `sieve` and `map` paid a
 runtime call per element operation, `strings` per-element `malloc` traffic.
+
+## Networking (2026-10-20, 4 vCPU x86-64 gVisor sandbox, loopback, go 1.24)
+
+`tcp_echo` (`./scripts/bench-perf.sh tcp_echo` measures one run; the table is the best of 5, wall time for
+1000 connections x 1 MB echoed = 2 GB through the kernel):
+
+| | wall s | CPU s (user+sys) | peak RSS MB | throughput |
+|---|---|---|---|---|
+| Slang | 0.52 | 1.64 | 57 | ~1.9 GB/s echoed |
+| Go | 0.62 | 1.91 | 110 | ~1.6 GB/s echoed |
+
+The kernel copies dominate both (sys time); only about 1 in 15 reads or
+writes has to wait for readiness, so the poller round trip (epoll_ctl
+one-shot arm, shard thread, run-queue post) is not the limit here. The
+first version of the benchmark built its buffers with `std.bytes.Repeat`
+(a Slang append loop: 196M appends, 5 s of user time); `net.MakeBuffer(n)`
+/ `strings.Bytes(strings.Repeat(..))` allocate in one C call.
+
+`http_hello` (`benchmarks/http_hello/run.sh`, requests/s, 64 keep-alive
+connections, one request in flight each, server and load generator in
+separate processes sharing the 4 vCPUs; two runs, the better one):
+
+| server \ load generator | Slang load | Go load |
+|---|---|---|
+| Slang `std.net.http` | 43 900 | 51 700 |
+| Go `net/http` | 59 400 | 104 300 |
+
+The Slang server reaches about half of Go's `net/http`. A callgrind
+profile of the in-process run puts most of the server's time in the
+Slang-source HTTP layer (`http.sl`: header canonicalisation, splitting,
+string building) and in per-call task allocation of `async` functions;
+the socket layer itself (`sock.read/readInto/waitRead`) is a few percent.
+Fixed on the way: `Conn.Read(n)` used to allocate and zero an n-byte slice
+per call (16 KB per HTTP read, 24% of all instructions in memset); it now
+receives into a per-thread 64 KB buffer and copies exactly the bytes
+received. Each wait still costs a hop from the shard's poller thread to a
+worker through the global run queue (Go polls inside its workers): that is
+the next step if the HTTP layer stops dominating (ABI.md 16.1).
+
+## Tier-2 stdlib (2026-10-20, `--release`, go 1.24)
+
+The time inside the measured section, as each program prints it (best of 3);
+the wall time from `bench-perf.sh` also includes generating the input.
+
+| bench | slang ms | go ms | slang / go | note |
+|---|---|---|---|---|
+| regex `FindAll` (10 MB, 30323 matches) | 55 | 505 | 0.11 | Go's `regexp` has no DFA (NFA or backtracker); Slang runs a lazy DFA forward, then a reverse DFA for the start |
+| gzip compress, level 6 (20 MB) | 1444 | 1705 | 0.85 | output 3 044 375 vs 3 022 734 bytes (+0.7%) |
+| gzip decompress | 83 | 203 | 0.41 | table-driven inflate in C |
+
+Peak RSS is higher for Slang (46 / 104 MB vs 27 / 76 MB): the inputs are
+built by appending, and the gzip program keeps the input, output and
+round-trip copy alive.
+

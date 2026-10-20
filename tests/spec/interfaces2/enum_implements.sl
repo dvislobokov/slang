@@ -1,0 +1,45 @@
+// test: an enum with methods implements an interface: it is stored in the interface, gets its defaults and matches type switch cases
+// status: passing
+// run-flags: --leak-check
+namespace spec.interfaces2.enum_implements
+
+import std.io
+
+interface Stringer {
+    func String() string
+    func Loud() string { return this.String() + "!" }
+}
+
+enum Color implements Stringer {
+    Red, Green
+
+    func String() string {
+        switch this {
+            case Color.Red: return "red"
+            case Color.Green: return "green"
+        }
+    }
+}
+
+enum Msg implements Stringer {
+    Text(s string)
+    Num(n int)
+
+    func String() string {
+        switch this {
+            case Msg.Text(s): return "text " + s
+            case Msg.Num(n): return "num"
+        }
+    }
+}
+
+func main() {
+    var xs []Stringer = [Color.Red, Msg.Text("hi" + "!"), Color.Green, Msg.Num(3)]
+    for x in xs {
+        switch x {
+            case Color c: println("color", x.Loud(), c == Color.Red)
+            case Msg m: println("msg", x.String())
+        }
+    }
+    println(Color.Green.Loud())
+}

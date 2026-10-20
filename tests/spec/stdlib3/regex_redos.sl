@@ -1,0 +1,25 @@
+// test: std.regex is linear time: ReDoS-shaped patterns ((a+)+$, (a|aa)*b, (x+x+)+y, (.*a){12}, nested quantifiers) on 10k-50k byte inputs finish quickly, with and without captures (Pike VM)
+// status: passing
+namespace spec.stdlib3.regex_redos
+
+import std
+import std.io
+
+func main() {
+    var t0 = time.Now()
+    var aa = strings.Repeat("a", 10000)
+    var r1 = regex.Pattern(`(a+)+$`)
+    println(r1.Match(aa + "!"), r1.Match(aa))
+    var g = r1.Groups(aa)
+    println(len(g.At(0)), len(g.At(1)))
+    println(regex.Pattern(`^(a|aa)*b$`).Match(aa))
+    println(regex.Pattern(`(x+x+)+y`).Match(strings.Repeat("x", 20000)))
+    println(regex.Pattern(`(.*a){12}`).Match(strings.Repeat("ab", 5000)))
+    println(regex.Pattern(`(.*a){12}x`).Match(strings.Repeat("ab", 5000)))
+    println(regex.Pattern(`((a*)*)*b`).Groups(aa + "b").At(0) == aa + "b")
+    println(regex.Pattern(`(\w+\s?)*$`).Match(strings.Repeat("word ", 10000) + "!"))
+    println(len(regex.Pattern(`a*?`).FindAll(strings.Repeat("a", 50000))))
+    println(regex.Pattern(`(a?){30}a{30}`).Match(strings.Repeat("a", 30)))
+    var ms = time.Now() - t0
+    println("fast:", ms < 5000)
+}

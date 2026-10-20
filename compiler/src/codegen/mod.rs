@@ -50,9 +50,25 @@
 //! storing a `*S` stores the pointer (`boxed = 0`). Either way a non-nil
 //! interface value owns one reference to the object whose payload `data`
 //! is (released with `slang_ptr_release(data)`). Method `m` is `vtable[2 + m](data, args...)`;
-//! methods promoted from embedded structs get an adjusting thunk. Storing a
+//! methods promoted from embedded structs get an adjusting thunk. An
+//! interface default method is one function `F(iface this, args...)`; the
+//! slot of a type that does not declare the method holds a thunk
+//! `(data, args) -> F({data, vtable of the type for the declaring
+//! interface}, args)`. Enum values are boxed like struct values; their slots
+//! are thunks loading the enum from `data` (enum methods take the value).
+//! `case I x:` on an `any` looks the vtable up with `iface.conv.N(typeid)`
+//! (NULL = no match) and unwraps a stored `*S` when `boxed = 0`. Storing a
 //! struct in an `error` boxes it and calls `slang_error_new_typed` with a
 //! `Message()` thunk; `error` method 0 is `slang_error_message`.
+//!
+//! **Arenas.** `Builtin::ArenaNew` (`*T`) and `ArenaSlice` (`[]T`) call
+//! `slang_arena_object` / `slang_arena_slice` (runtime/ABI.md 3.6): the
+//! objects carry refcount `SLANG_RC_ARENA`, so the ordinary retain/release
+//! calls on them are no-ops and no special casing is emitted.
+//!
+//! **Leak check names.** With `--leak-check` type names (mode 2), C `main`
+//! calls `leak.fields`, which registers the `*T` field offsets of every
+//! struct type info as `"Type.Field"` (`slang_leak_fields`, ABI.md 3.5).
 //!
 //! **Closures.** A closure is `{fn, env}`. `env` is NULL for closures without
 //! captures, else an object `{hdr, i64 n, ptr cell[n]}` whose drop releases
@@ -143,6 +159,8 @@
 
 mod async_;
 mod cleanup;
+mod debug;
+pub use debug::dedup_declares;
 mod expr;
 mod funcs;
 mod iface;
@@ -252,6 +270,12 @@ pub struct Options {
     /// Do not record error traces (`--no-error-trace`): the trace calls are
     /// elided; `errors.Trace` then returns "".
     pub no_error_trace: bool,
+    /// Emit DWARF debug information ([`debug`]): compile units, subprograms,
+    /// variables, types and line locations. Does not change the generated
+    /// code.
+    pub debug_info: bool,
+    /// The module will be optimised (`DW_AT_..._optimized` in the debug info).
+    pub optimized: bool,
 }
 
 /// Coroutine state of an `async` function being emitted.
@@ -319,8 +343,17 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) rc_helpers: HashMap<TypeId, (FunctionValue<'ctx>, FunctionValue<'ctx>)>,
     pub(crate) value_ops: HashMap<TypeId, PointerValue<'ctx>>,
     pub(crate) vtables: HashMap<(TypeId, TypeId), GlobalValue<'ctx>>,
+    /// Vtable slots calling an interface default method: (dynamic type, default).
+    pub(crate) default_thunks: HashMap<(TypeId, FuncId), FunctionValue<'ctx>>,
+    /// Dynamic types stored in an `any` (candidates of `case I x:` on `any`).
+    pub(crate) any_dyn_tys: Vec<TypeId>,
+    /// `--leak-check` with type names: registers the `*T` fields of every
+    /// struct type info (`slang_leak_fields`); body emitted last.
+    pub(crate) leak_fields_fn: Option<FunctionValue<'ctx>>,
     pub(crate) thunks: HashMap<FuncId, FunctionValue<'ctx>>,
     pub(crate) method_thunks: HashMap<(u32, String), FunctionValue<'ctx>>,
+    /// Vtable slots of enum methods (they take the enum value, not a pointer).
+    pub(crate) enum_thunks: HashMap<(u32, String), FunctionValue<'ctx>>,
     pub(crate) msg_thunks: HashMap<u32, FunctionValue<'ctx>>,
     pub(crate) tostr_fns: HashMap<TypeId, FunctionValue<'ctx>>,
     pub(crate) enum_names: HashMap<u32, GlobalValue<'ctx>>,
@@ -334,6 +367,8 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) facts: hir::ownership::ParamFacts,
     /// Memoised [`rc::RcKind`] per type.
     pub(crate) rc_cache: std::cell::RefCell<HashMap<TypeId, rc::RcKind>>,
+    /// Debug-info state when [`Options::debug_info`] is set.
+    pub(crate) dbg: Option<Box<debug::DebugInfo>>,
 }
 
 /// Creates a target machine for the host.
@@ -384,8 +419,12 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         rc_helpers: HashMap::new(),
         value_ops: HashMap::new(),
         vtables: HashMap::new(),
+        default_thunks: HashMap::new(),
+        any_dyn_tys: Vec::new(),
+        leak_fields_fn: None,
         thunks: HashMap::new(),
         method_thunks: HashMap::new(),
+        enum_thunks: HashMap::new(),
         msg_thunks: HashMap::new(),
         tostr_fns: HashMap::new(),
         enum_names: HashMap::new(),
@@ -396,7 +435,9 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         opts,
         facts: hir::ownership::param_facts(program),
         rc_cache: Default::default(),
+        dbg: None,
     };
+    cg.init_debug();
     let mut errors = Vec::new();
     if let Err(e) = cg.declare_all() {
         return Err(vec![e]);
@@ -431,6 +472,10 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
     if let Err(e) = cg.finish_iface_convs() {
         errors.push(e);
     }
+    if let Err(e) = cg.finish_leak_fields() {
+        errors.push(e);
+    }
+    cg.finish_debug();
     if errors.is_empty() {
         Ok(cg.module)
     } else {
@@ -504,6 +549,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         };
         let saved = self.f.replace(st);
         self.b.position_at_end(body);
+        self.dbg_begin_fn(func, hir);
         saved
     }
 
@@ -525,6 +571,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
         }
         self.f = saved;
+        self.dbg_end_fn();
         if let Some(bb) = saved_pos {
             self.b.position_at_end(bb);
         }
@@ -580,6 +627,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if self.opts.leak_check != 0 {
             let m = self.ctx.i32_type().const_int(self.opts.leak_check as u64, false);
             self.call_rt("slang_leak_check_enable", &[m.into()]);
+            if self.opts.leak_check >= 2 {
+                let f = self.module.add_function("leak.fields", self.ctx.void_type().fn_type(&[], false), Some(Linkage::Internal));
+                self.leak_fields_fn = Some(f);
+                self.b.build_call(f, &[], "").unwrap();
+            }
         }
         self.call_rt("slang_runtime_init", &[argc.into(), argv.into()]);
         for gid in &self.prog.global_init_order {

@@ -1,5 +1,5 @@
 // test: std.log writes leveled lines to stderr, stdout stays clean
-// status: pending
+// status: passing
 // stderr: INFO service started
 namespace spec.stdlib.log_basic
 

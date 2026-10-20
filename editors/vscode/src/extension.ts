@@ -9,6 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { Executable, LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
+import { registerDebugging } from "./debug";
 
 let client: LanguageClient | undefined;
 let output: vscode.OutputChannel | undefined;
@@ -121,6 +122,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(output);
   context.subscriptions.push(vscode.commands.registerCommand("slang.restartServer", restartClient));
   context.subscriptions.push(vscode.commands.registerCommand("slang.fmt", formatDocument));
+  registerDebugging(context);
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("slang.serverPath") || e.affectsConfiguration("slang.serverArgs")) {

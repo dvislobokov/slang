@@ -1,0 +1,170 @@
+//! The compilation target (docs/PLATFORMS.md): operating system and
+//! architecture names as Slang sees them (`os.Name`, `os.Arch`, `@cfg`,
+//! file-name suffixes).
+//!
+//! The target is process-wide: the host by default, or the one chosen with
+//! `--target <triple|alias>` (set once by the CLI through [`set_current`]
+//! before the front end runs).
+
+use std::sync::RwLock;
+
+/// Operating systems recognised in `@cfg(os: ...)` and file suffixes.
+pub const KNOWN_OS: &[&str] = &["linux", "macos", "windows", "freebsd", "android", "ios", "wasi"];
+/// Architectures recognised in `@cfg(arch: ...)` and file suffixes.
+pub const KNOWN_ARCH: &[&str] = &["amd64", "arm64", "wasm32"];
+
+/// A compilation target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Target {
+    /// `linux`, `macos`, `windows`, ... (one of [`KNOWN_OS`] or the triple's OS).
+    pub os: String,
+    /// `amd64`, `arm64`, ... (one of [`KNOWN_ARCH`] or the triple's CPU).
+    pub arch: String,
+    /// LLVM target triple, e.g. `x86_64-unknown-linux-gnu`.
+    pub triple: String,
+}
+
+impl Target {
+    /// The machine the compiler runs on.
+    pub fn host() -> Target {
+        let os = match std::env::consts::OS {
+            "macos" => "macos",
+            o => o,
+        };
+        let arch = arch_name(std::env::consts::ARCH);
+        let triple = match (std::env::consts::ARCH, os) {
+            (a, "linux") => format!("{a}-unknown-linux-gnu"),
+            (a, "macos") => format!("{}-apple-darwin", if a == "aarch64" { "arm64" } else { a }),
+            (a, "windows") => format!("{a}-pc-windows-msvc"),
+            (a, o) => format!("{a}-unknown-{o}"),
+        };
+        Target { os: os.to_string(), arch, triple }
+    }
+
+    /// Parses `--target`: an alias `os-arch` (`linux-amd64`, `macos-arm64`,
+    /// `windows-amd64`) or an LLVM triple (`aarch64-apple-darwin`).
+    pub fn parse(s: &str) -> Result<Target, String> {
+        if let Some((os, arch)) = s.split_once('-') {
+            if KNOWN_OS.contains(&os) && KNOWN_ARCH.contains(&arch) {
+                let cpu = match arch {
+                    "amd64" => "x86_64",
+                    "arm64" => "aarch64",
+                    a => a,
+                };
+                let triple = match os {
+                    "linux" => format!("{cpu}-unknown-linux-gnu"),
+                    "macos" => format!("{cpu}-apple-darwin"),
+                    "windows" => format!("{cpu}-pc-windows-msvc"),
+                    o => format!("{cpu}-unknown-{o}"),
+                };
+                return Ok(Target { os: os.into(), arch: arch.into(), triple });
+            }
+        }
+        let parts: Vec<&str> = s.split('-').collect();
+        if parts.len() < 2 {
+            return Err(format!("unknown target `{s}` (use a triple such as x86_64-unknown-linux-gnu or an alias such as linux-amd64)"));
+        }
+        let arch = arch_name(parts[0]);
+        let rest = &parts[1..];
+        let os = if rest.iter().any(|p| p.starts_with("linux")) {
+            if rest.iter().any(|p| *p == "android") { "android" } else { "linux" }
+        } else if rest.iter().any(|p| *p == "darwin" || p.starts_with("macos")) {
+            "macos"
+        } else if rest.iter().any(|p| p.starts_with("ios")) {
+            "ios"
+        } else if rest.iter().any(|p| *p == "windows") {
+            "windows"
+        } else if rest.iter().any(|p| p.starts_with("freebsd")) {
+            "freebsd"
+        } else if rest.iter().any(|p| *p == "wasi") {
+            "wasi"
+        } else {
+            return Err(format!("unknown operating system in target `{s}`"));
+        };
+        Ok(Target { os: os.into(), arch, triple: s.to_string() })
+    }
+
+    /// `os.PathSeparator`.
+    pub fn path_separator(&self) -> &'static str {
+        if self.os == "windows" { "\\" } else { "/" }
+    }
+
+    /// `os.LineSeparator`.
+    pub fn line_separator(&self) -> &'static str {
+        if self.os == "windows" { "\r\n" } else { "\n" }
+    }
+
+    /// True if a file named `path` is excluded on this target by its name
+    /// suffix (Go style): `x_linux.sl`, `x_arm64.sl`, `x_windows_amd64.sl`.
+    /// Only known OS and architecture names count as suffixes.
+    pub fn excludes_file(&self, path: &str) -> bool {
+        let name = std::path::Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let parts: Vec<&str> = name.split('_').collect();
+        if parts.len() < 2 {
+            return false;
+        }
+        let last = parts[parts.len() - 1];
+        let prev = if parts.len() >= 3 { Some(parts[parts.len() - 2]) } else { None };
+        if KNOWN_ARCH.contains(&last) {
+            if let Some(os) = prev.filter(|p| KNOWN_OS.contains(p)) {
+                return os != self.os || last != self.arch;
+            }
+            return last != self.arch;
+        }
+        if KNOWN_OS.contains(&last) {
+            return last != self.os;
+        }
+        false
+    }
+}
+
+/// Slang's name of an LLVM/Rust CPU name.
+fn arch_name(cpu: &str) -> String {
+    match cpu {
+        "x86_64" | "amd64" => "amd64".into(),
+        "aarch64" | "arm64" => "arm64".into(),
+        c => c.to_string(),
+    }
+}
+
+static CURRENT: RwLock<Option<Target>> = RwLock::new(None);
+
+/// Sets the target of this process (`--target`).
+pub fn set_current(t: Target) {
+    *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = Some(t);
+}
+
+/// The current target: the one set with [`set_current`], else the host.
+pub fn current() -> Target {
+    CURRENT.read().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(Target::host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_aliases_and_triples() {
+        let t = Target::parse("windows-amd64").unwrap();
+        assert_eq!((t.os.as_str(), t.arch.as_str(), t.triple.as_str()), ("windows", "amd64", "x86_64-pc-windows-msvc"));
+        let t = Target::parse("aarch64-apple-darwin").unwrap();
+        assert_eq!((t.os.as_str(), t.arch.as_str()), ("macos", "arm64"));
+        let t = Target::parse("x86_64-unknown-linux-gnu").unwrap();
+        assert_eq!((t.os.as_str(), t.arch.as_str()), ("linux", "amd64"));
+        assert!(Target::parse("nonsense").is_err());
+    }
+
+    #[test]
+    fn file_suffixes() {
+        let linux = Target::parse("linux-amd64").unwrap();
+        assert!(!linux.excludes_file("src/paths_linux.sl"));
+        assert!(linux.excludes_file("src/paths_windows.sl"));
+        assert!(linux.excludes_file("paths_arm64.sl"));
+        assert!(!linux.excludes_file("paths_amd64.sl"));
+        assert!(!linux.excludes_file("paths_linux_amd64.sl"));
+        assert!(linux.excludes_file("paths_linux_arm64.sl"));
+        assert!(!linux.excludes_file("my_paths.sl"));
+        assert!(!linux.excludes_file("linux.sl"));
+        assert_eq!(linux.path_separator(), "/");
+    }
+}

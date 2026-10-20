@@ -220,6 +220,45 @@ impl Project {
         ImportPolicy { file_package: file_pkg, packages }
     }
 
+    /// Features enabled for each package of `closure` (same order), for
+    /// `@cfg(feature: ...)`: every package's `default` feature, the
+    /// features its dependents request (`features = [...]` on the
+    /// dependency) and, transitively, what enabled features enable (plain
+    /// names in the package itself, `dep/feature` in a dependency).
+    pub fn enabled_features(&self, closure: &[PkgId]) -> Vec<std::collections::HashSet<String>> {
+        let local = |name: &str| closure.iter().position(|&c| self.packages[c].name == name);
+        let mut on: Vec<std::collections::HashSet<String>> = vec![Default::default(); closure.len()];
+        let mut work: Vec<(usize, String)> = Vec::new();
+        for (i, &id) in closure.iter().enumerate() {
+            let m = &self.packages[id].manifest.manifest;
+            if m.features.contains_key("default") {
+                work.push((i, "default".into()));
+            }
+            for (name, dep) in &m.dependencies {
+                if let Some(d) = local(name) {
+                    work.extend(dep.features().iter().map(|f| (d, f.clone())));
+                }
+            }
+        }
+        while let Some((i, f)) = work.pop() {
+            if !on[i].insert(f.clone()) {
+                continue;
+            }
+            let m = &self.packages[closure[i]].manifest.manifest;
+            for item in m.features.get(&f).into_iter().flatten() {
+                match item.split_once('/') {
+                    Some((dep, df)) => {
+                        if let Some(d) = local(dep) {
+                            work.push((d, df.to_string()));
+                        }
+                    }
+                    None => work.push((i, item.clone())),
+                }
+            }
+        }
+        on
+    }
+
     /// Directory of build outputs and the object cache.
     pub fn target_dir(&self) -> PathBuf {
         self.root.join("target")

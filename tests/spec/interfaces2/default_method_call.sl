@@ -1,5 +1,5 @@
 // test: an interface method with a body is a default: implementations only provide the methods without a body
-// status: pending
+// status: passing
 namespace spec.interfaces2.default_method_call
 
 import std.io

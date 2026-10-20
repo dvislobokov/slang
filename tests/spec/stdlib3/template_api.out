@@ -1,0 +1,8 @@
+Q3! 6 2=two 10=ten 33=x 42 Pro Q
+template: template:1: error calling fail: deliberate failure
+report [head row] [q3]<1:a><2:b> [q3]
+template: report:1: can't evaluate field Id in type Report
+template: no template "nope" defined in report
+template: template:1: can't evaluate field Count in type []Row
+template: template:1: error calling index: index out of range: 5
+<div><em>trusted</em></div><a href="javascript:void(0)">q3</a><script>var c = {a: 1};</script><ul><li>a</li><li>b</li></ul>

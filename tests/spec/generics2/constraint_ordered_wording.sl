@@ -1,5 +1,5 @@
 // error: type Point does not satisfy constraint Ordered
-// status: pending
+// status: passing
 namespace spec.generics2.constraint_ordered_wording
 
 import std.io

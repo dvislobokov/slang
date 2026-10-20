@@ -1,0 +1,50 @@
+0 {"a":1 "b":-2 "c":3 "d":1000 "e":3735928559 "f":493 "g":13}
+1 {"f1":1.0 "f10":nan "f11":1.5 "f2":-0.5 "f3":5e+22 "f4":100000.0 "f5":-0.02 "f6":6.626e-34 "f7":224617.445991 "f8":inf "f9":-inf}
+2 {"b1":true "b2":false}
+3 {"s1":"basic \"q\" \t é 😀 \\" "s2":"literal \\\\no escape" "s3":"" "s4":""}
+4 {"s":"Roses are red\nViolets are blue" "t":"The quick brown fox." "u":"a\"\"b" "v":"\"\"quotes\"\""}
+5 {"lit":"first\n  second\n" "q":"'one quote'" "raw":"I [dw]on't need \\d{2}"}
+6 {"a":{"b":{"c":{"z":3}}} "quoted key":{"y":2} "table":{"key":"value" "sub":{"x":1}}}
+7 {"name":"x" "physical":{"color":"orange" "shape":"round"} "site":{"google.com":true}}
+8 {"fruit":{"apple":{"color":"red" "taste":{"sweet":true} "texture":{"smooth":true}}}}
+9 {"products":[{"name":"Hammer" "sku":738594937} {} {"color":"gray" "name":"Nail"}]}
+10 {"fruits":[{"name":"apple" "physical":{"color":"red"} "varieties":[{"name":"red delicious"} {"name":"granny smith"}]} {"name":"banana" "varieties":[{"name":"plantain"}]}]}
+11 {"arr1":[1 2 3] "arr2":["red" "yellow" "green"] "arr3":[[1 2] [3 4 5]] "arr4":["all" "strings" "are the same" "type"] "arr5":[[1 2] ["a" "b" "c"]] "arr6":[1 2] "arr7":[] "mixed":[0.1 0.2 0.5 1 2 5]}
+12 {"animal":{"type":{"name":"pug"}} "empty":{} "name":{"first":"Tom" "last":"Preston-Werner"} "nested":{"a":{"b":[1 {"c":2}]}} "point":{"x":1 "y":2}}
+13 {"indented":1 "key":"value" "spaced":{"z":0}}
+14 {"":"empty" "-":"dash" "1234":"numeric key" "_":"under"}
+15 {"x":{"a":1 "y":{"z":{"w":{}}}}}
+16 {"str1":"The quick brown fox jumps over the lazy dog." "str2":"The quick brown fox jumps over the lazy dog."}
+17 {"key_ü":1 "utf":"日本語 ☺"}
+18 {"a":{"b":1 "c":2} "d":{"e":3}}
+19 {"v":-0.0 "w":0.0 "x":0 "y":0 "z":0}
+e0 error
+e1 error
+e2 error
+e3 error
+e4 error
+e5 error
+e6 error
+e7 error
+e8 error
+e9 error
+e10 error
+e11 error
+e12 error
+e13 error
+e14 error
+e15 error
+e16 error
+e17 error
+e18 error
+e19 error
+e20 error
+e21 error
+e22 error
+e23 error
+e24 error
+e25 error
+e26 error
+e27 error
+e28 error
+e29 error

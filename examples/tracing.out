@@ -1,0 +1,8 @@
+log: loading 7 trace=7969088c00ece857abc9043b3653c447 span=f758a4c77efb40eb
+span GET /users trace=7969088c00ece857abc9043b3653c447 span=751b8619ff9fecaa parent=f758a4c77efb40eb kind=Server status=Unset { http.route="/users/{id}" }
+span load user trace=7969088c00ece857abc9043b3653c447 span=f758a4c77efb40eb parent=7631a6b98858920f kind=Internal status=Unset { user.id=7 }
+span validate trace=7969088c00ece857abc9043b3653c447 span=14e0a484a5e8b9f3 parent=7631a6b98858920f kind=Internal status=Error (name too short) { exception.message="name too short" }
+span handle request trace=7969088c00ece857abc9043b3653c447 span=7631a6b98858920f parent=- kind=Internal status=Ok { client="cli" }
+user: alice current span after End: true
+traceparent: 00-7969088c00ece857abc9043b3653c447-7631a6b98858920f-01
+otlp: {"traceId":"7969088c00ece857abc9043b3653c447","spanId":"7631a6b98858920f","name":"handle request","kind":1,"startTimeUnixNano":"1700000000000250000","endTimeUnixNano":"1700000000002000000","attributes":[{"key":"client","value":{"stringValue":"cli"}}],"status":{"code":1}}

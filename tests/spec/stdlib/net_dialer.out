@@ -1,0 +1,10 @@
+local port used: true true
+addresses: true true true true
+fd after close: -1 true true
+defaults: true 300 true 0
+dialed localhost: true
+family mismatch: true
+dial timeout or unreachable: true
+shared port: true
+no reuseaddr: true
+shared udp port: true

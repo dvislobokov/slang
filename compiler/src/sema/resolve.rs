@@ -19,7 +19,7 @@ pub(crate) enum PathRes {
 const MAX_EMBED_DEPTH: usize = 16;
 
 /// Builtin attribute names.
-pub(crate) const BUILTIN_ATTRS: &[&str] = &["attribute", "reflect", "deprecated", "inline", "test", "json"];
+pub(crate) const BUILTIN_ATTRS: &[&str] = &["attribute", "reflect", "deprecated", "inline", "test", "json", "log", "csv", "xml", "yaml", "toml", "serde"];
 
 impl<'a> Sema<'a> {
     // -- namespace tree ------------------------------------------------------
@@ -149,6 +149,7 @@ impl<'a> Sema<'a> {
                             full_name: format!("{}.{}", self.nss[ns].path, it.name.name),
                             namespace: hns,
                             methods: Vec::new(),
+                            sealed: it.is_sealed,
                             attrs: Vec::new(),
                             exported: is_exported(&it.name.name),
                             file: fi,
@@ -158,6 +159,18 @@ impl<'a> Sema<'a> {
                         self.register(ns, &it.name, Member::Interface(id));
                         let c = self.ide_cur_ns();
                         self.ide_def(index::SymKey::Interface(id), &it.name, it.span, c);
+                        for m in it.methods.iter().filter(|m| m.body.is_some()) {
+                            if m.is_static || m.is_async || !m.generics.is_empty() {
+                                self.err("default methods of interfaces cannot be static, async or generic", m.name.span);
+                                continue;
+                            }
+                            if self.iface_defaults.contains_key(&(id, m.name.name.clone())) {
+                                continue; // reported as a duplicate method by `resolve_signatures`
+                            }
+                            let fid = self.new_func(m, FuncKind::Free, FuncSrc::Free(m), &format!("{}.{}", it.name.name, m.name.name));
+                            self.iface_defaults.insert((id, m.name.name.clone()), fid);
+                            self.iface_default_owner.insert(fid.0, id);
+                        }
                     }
                     ast::Decl::Enum(e) if !e.generics.is_empty() => {
                         let t = self.new_template(&e.name.name, generics::TmplDecl::Enum(e), &e.generics, Vec::new(), false);
@@ -171,6 +184,7 @@ impl<'a> Sema<'a> {
                             namespace: hns,
                             variants: Vec::new(),
                             is_plain: e.variants.iter().all(|v| v.fields.is_empty()),
+                            methods: Vec::new(),
                             attrs: Vec::new(),
                             exported: is_exported(&e.name.name),
                             file: fi,
@@ -191,6 +205,7 @@ impl<'a> Sema<'a> {
                             }
                             let fid = self.new_func(m, FuncKind::Free, FuncSrc::Free(m), &format!("{}.{}", e.name.name, m.name.name));
                             self.enum_methods.insert((id, m.name.name.clone()), fid);
+                            self.enums[id as usize].methods.push((m.name.name.clone(), fid));
                             self.enum_method_owner.insert(fid.0, id);
                             self.ide_def(index::SymKey::Func(fid.0), &m.name, m.span, Some(index::SymKey::Enum(id)));
                         }
@@ -414,6 +429,13 @@ impl<'a> Sema<'a> {
         let mut i = 1;
         while i < segs.len() {
             let seg = segs[i];
+            // A plain stdlib struct/enum template (`log.Level.Debug`,
+            // `log.Context.Push`) resolves like the type it names.
+            if let PathRes::Member(Member::Generic(t)) = cur {
+                if let Some(m) = self.plain_std_member(t, seg.span) {
+                    cur = PathRes::Member(m);
+                }
+            }
             let next = match cur {
                 PathRes::Member(Member::Ns(ns)) => match self.member_of(ns, seg, report) {
                     Some(m) => PathRes::Member(m),
@@ -661,7 +683,8 @@ impl<'a> Sema<'a> {
                 self.ide_def(index::SymKey::IfaceMethod(iid as u32, ms.len() as u32), &m.name, m.span, Some(index::SymKey::Interface(iid as u32)));
                 let params = m.params.iter().map(|p| self.resolve_type(&p.ty)).collect();
                 let ret = m.ret.as_ref().map(|r| self.resolve_type(r)).unwrap_or(self.tt.void);
-                ms.push(hir::MethodSig { name: m.name.name.clone(), params, ret });
+                let default = if m.body.is_some() { self.iface_defaults.get(&(iid as u32, m.name.name.clone())).copied() } else { None };
+                ms.push(hir::MethodSig { name: m.name.name.clone(), params, ret, default });
             }
             self.interfaces[iid].methods = ms;
         }
@@ -697,6 +720,9 @@ impl<'a> Sema<'a> {
                 }
             }
             embeds.push(v);
+        }
+        for (i, other) in self.embedding_cycles(&embeds) {
+            embeds[i].retain(|(o, _)| *o != other);
         }
         // Fixpoint: nested embeddings settle in at most `n` rounds.
         for _ in 0..=self.interfaces.len() {
@@ -804,6 +830,11 @@ impl<'a> Sema<'a> {
         if let Some(&e) = self.enum_method_owner.get(&(fid as u32)) {
             // Enum methods receive the value itself.
             let ty = self.enum_ty(e);
+            locals.push(hir::Local { name: "this".into(), ty, kind: LocalKind::This, captured: false, address_taken: false, span: decl.name.span });
+        }
+        if let Some(&i) = self.iface_default_owner.get(&(fid as u32)) {
+            // Default methods receive the interface value.
+            let ty = self.tt.intern(Type::Interface(crate::types::DeclId(i)));
             locals.push(hir::Local { name: "this".into(), ty, kind: LocalKind::This, captured: false, address_taken: false, span: decl.name.span });
         }
         for p in &decl.params {

@@ -1,0 +1,26 @@
+[]  
+[MY======] f CO======
+[MZXQ====] fo CPNG====
+[MZXW6===] foo CPNMU===
+[MZXW6YQ=] foob CPNMUOG=
+[MZXW6YTB] fooba CPNMUOJ1
+[MZXW6YTBOI======] foobar CPNMUOJ1E8======
+MZXW6YTB MZXW6YQ foob pad required
+foob bad char foo
+fooba nbuq====
+RSA PRIVATE KEY 4,ENCRYPTED AES-128-CBC,ABCD true hello world [Proc-Type DEK-Info]
+true
+2 CERTIFICATE [1 2 3]
+-----BEGIN RSA PRIVATE KEY-----
+Proc-Type: 4,ENCRYPTED
+DEK-Info: AES-128-CBC,ABCD
+
+aGVsbG8gd29ybGQ=
+-----END RSA PRIVATE KEY-----
+-----BEGIN TEST-----
+AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v
+MDE=
+-----END TEST-----
+true true
+true no pem here
+0

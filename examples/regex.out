@@ -1,0 +1,8 @@
+INFO 12:00:01 3 fields, user: alice
+WARN 12:00:09 3 fields, user: bob
+ERROR 12:01:30 3 fields, user: alice
+user:<alice> ip:<10.0.0.7>
+[a b c d]
+1\.5\+2 true false
+regex: missing closing ) at offset 0 in "(unclosed"
+false

@@ -1,0 +1,15 @@
+45 bytes, fnv64a e4c6df16908ad7c0
+item 1 -> ab 2
+item 2 -> abab 4
+item 3 -> ababab 6
+records: 00000001fffb0100011170012c02 size 7
+second: 70000 300 2
+uvarint: [172 2] 300 2
+-----BEGIN RECORDS-----
+Count: 2
+
+AAAAAf/7AQABEXABLAI=
+-----END RECORDS-----
+2 true crc32 40206708
+AAAAAAP7 edm62rj7
+letters: 5 ß ǅ

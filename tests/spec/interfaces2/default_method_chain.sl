@@ -1,5 +1,5 @@
 // test: a default method may call other default methods of the same interface
-// status: pending
+// status: passing
 namespace spec.interfaces2.default_method_chain
 
 import std.io

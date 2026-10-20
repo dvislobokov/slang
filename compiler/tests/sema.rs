@@ -148,8 +148,9 @@ fn multi_file_example_checks_cleanly() {
 const ERROR_KEYWORDS: &[(&str, &str)] = &[
     ("await_outside_async.sl", "await outside async"),
     ("catch_falls_through.sl", "catch block must return"),
-    ("copy_drop_value.sl", "cannot copy a value of type app.File"),
+    ("copy_drop_value.sl", "cannot copy a value of type File"),
     ("interior_pointer_escape.sl", "cannot keep an interior pointer"),
+    ("log_template_args.sl", "the template has 2 placeholders ({UserId}, {Amount}) but 3 arguments are given"),
     ("missing_return.sl", "missing return"),
     ("question_outside_fallible.sl", "? outside of fallible function"),
     ("type_mismatch.sl", "cannot assign string to int"),
@@ -350,7 +351,7 @@ fn structural_interfaces() {
     let uses = func(&p, "Use");
     let StmtKind::Return(ReturnValue::Value(e)) = &uses.body.stmts[0].kind else { panic!() };
     assert!(matches!(e.kind, ExprKind::Call { callee: Callee::Interface { method: 0, .. }, .. }));
-    err(&format!("{src}\nfunc main() {{ _ = Use(Bad{{}}) }}"), "Bad does not implement t.Shape: method Area has type func() int, want func() float");
+    err(&format!("{src}\nfunc main() {{ _ = Use(Bad{{}}) }}"), "Bad does not implement Shape: method Area has type func() int, want func() float");
     err(&format!("{src}\nstruct None {{}}\nfunc main() {{ _ = Use(None{{}}) }}"), "missing method Area");
 }
 
@@ -582,9 +583,9 @@ struct E { N }
 fn destructors_are_checked() {
     let res = "struct R { name string\n func Drop() { println(this.name) } }\n";
     ok(&prog(&format!("{res}\nstruct H {{ r R }}\nfunc mk() R {{ return R{{name: \"x\"}} }}\nfunc take(r R) {{ println(r.name) }}\nfunc main() {{\n var a = R{{name: \"a\"}}\n take(mk())\n var h = new H{{r: mk()}}\n println(h.r.name)\n a = mk()\n var ps []*R\n ps = append(ps, new R{{}})\n println(len(ps))\n}}")));
-    err(&prog(&format!("{res}\nfunc main() {{\n var a = R{{}}\n var b = a\n println(b.name)\n}}")), "cannot copy a value of type t.R");
-    err(&prog(&format!("{res}\nfunc take(r R) {{}}\nfunc main() {{\n var a = R{{}}\n take(a)\n}}")), "cannot copy a value of type t.R");
-    err(&prog(&format!("{res}\nfunc main() {{\n var rs = [R{{}}]\n println(len(rs))\n}}")), "cannot be stored as a slice of t.R");
+    err(&prog(&format!("{res}\nfunc main() {{\n var a = R{{}}\n var b = a\n println(b.name)\n}}")), "cannot copy a value of type R");
+    err(&prog(&format!("{res}\nfunc take(r R) {{}}\nfunc main() {{\n var a = R{{}}\n take(a)\n}}")), "cannot copy a value of type R");
+    err(&prog(&format!("{res}\nfunc main() {{\n var rs = [R{{}}]\n println(len(rs))\n}}")), "cannot be stored as a slice of R");
     err(&prog(&format!("{res}\nfunc main() {{\n var a = R{{}}\n a.Drop()\n}}")), "Drop cannot be called directly");
     err(&prog("struct R { func Drop(x int) {} }\nfunc main() {}"), "must be declared as `func Drop()`");
     err(&prog("var keep []*R\nstruct R { func Drop() { keep = append(keep, this) } }\nfunc main() {}"), "must not let `this` escape");

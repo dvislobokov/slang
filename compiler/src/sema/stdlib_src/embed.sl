@@ -1,0 +1,61 @@
+namespace std.embed
+
+// std.embed: files embedded at compile time. `@embed("path")` on a global
+// (resolved relative to the source file) gives `var X string` (UTF-8
+// text), `var X []byte`, `const X = ""` (text, the placeholder is
+// replaced), or `var X embed.FS` for a directory ("assets": every file,
+// recursively) or a glob ("templates/*.html").
+
+// A read-only set of embedded files, by slash-separated path relative to
+// the declaring source file (as written in the @embed pattern).
+struct FS {
+    names []string
+    data [][]byte
+
+    func find(name string) int {
+        var n = std.strings.TrimPrefix(name, "./")
+        var (i, ok) = std.slices.BinarySearch(this.names, n)
+        if ok {
+            return i
+        }
+        return -1
+    }
+
+    // The contents of name.
+    func ReadFile(name string) []byte! {
+        var i = this.find(name)
+        if i < 0 {
+            return std.errors.Wrap(std.fs.ErrNotFound, "embed: open " + name)
+        }
+        return this.data[i]
+    }
+
+    // The contents of name as text.
+    func ReadString(name string) string! {
+        return std.strings.FromBytes(this.ReadFile(name)?)
+    }
+
+    func Has(name string) bool {
+        return this.find(name) >= 0
+    }
+
+    // Every file path, sorted.
+    func Names() []string {
+        return std.slices.Clone(this.names)
+    }
+
+    // The paths starting with prefix ("" = all), sorted.
+    func List(prefix string) []string {
+        var out []string = []
+        for n in this.names {
+            if std.strings.HasPrefix(n, prefix) {
+                out = append(out, n)
+            }
+        }
+        return out
+    }
+
+    func Len() int {
+        return len(this.names)
+    }
+}

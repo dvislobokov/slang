@@ -294,3 +294,33 @@ fn plain_directory_without_manifest_still_builds() {
         assert!(err.contains("could not find slang.toml, slang.json, slang.yaml"), "{err}");
     }
 }
+
+#[test]
+fn cfg_features_and_file_suffixes_in_packages() {
+    ensure_runtime();
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let root = std::env::temp_dir().join(format!("slang-pkg-{}-{}-cfg", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    let _ = std::fs::remove_dir_all(&root);
+    let write = |p: &str, s: &str| {
+        let f = root.join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, s).unwrap();
+    };
+    write("app/slang.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.sl\"\n\n[dependencies]\nlib = { path = \"../lib\", features = [\"fast\"] }\n\n[features]\ndefault = [\"verbose\"]\nverbose = [\"lib/extra\"]\nunused = []\n");
+    write(
+        "app/src/main.sl",
+        "namespace app\nimport std.io\nimport lib\n@cfg(feature: \"verbose\")\nfunc Mode() string { return \"verbose\" }\n@cfg(feature: \"unused\")\nfunc Mode() string { return nope }\nfunc main() { println(Mode(), lib.Speed(), lib.Extra(), lib.Base(), lib.Os()) }\n",
+    );
+    write("lib/slang.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nnamespace = \"lib\"\n\n[features]\ndefault = [\"base\"]\nbase = []\nfast = []\nextra = []\nslow = []\n");
+    write(
+        "lib/src/lib.sl",
+        "namespace lib\n@cfg(feature: \"fast\")\nfunc Speed() string { return \"fast\" }\n@cfg(not(feature: \"fast\"))\nfunc Speed() string { return \"slow\" }\n@cfg(feature: \"extra\")\nfunc Extra() string { return \"extra\" }\n@cfg(all(feature: \"base\", not(feature: \"slow\")))\nfunc Base() string { return \"base\" }\n",
+    );
+    let host = slang::target::Target::host();
+    let other = if host.os == "windows" { "linux" } else { "windows" };
+    write(&format!("lib/src/os_{}.sl", host.os), "namespace lib\nfunc Os() string { return \"host\" }\n");
+    write(&format!("lib/src/os_{other}.sl"), "namespace lib\nfunc Os() string { return \"other\" }\n");
+    let (out, _) = ok(&root.join("app"), &["run"]);
+    assert_eq!(out, "verbose fast extra base host\n");
+    let _ = std::fs::remove_dir_all(&root);
+}

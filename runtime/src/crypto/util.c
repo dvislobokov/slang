@@ -1,0 +1,50 @@
+/* util.c - shared helpers of the crypto primitives: wiping, constant-time
+ * comparison, the CSPRNG entry point and CPU feature detection. */
+#include "crypto.h"
+#include "../platform/platform.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+void slang__crypto_wipe(void *p, size_t n) {
+    volatile uint8_t *v = p;
+    while (n--) *v++ = 0;
+}
+
+int slang__crypto_ct_eq(const uint8_t *a, const uint8_t *b, size_t n) {
+    uint32_t acc = 0;
+    for (size_t i = 0; i < n; i++) acc |= (uint32_t)(a[i] ^ b[i]);
+    return (int)(1 & ((acc - 1) >> 8));
+}
+
+bool slang__crypto_random(uint8_t *buf, size_t n) {
+    return n == 0 || slang__plat_random_bytes(buf, n);
+}
+
+#if defined(__x86_64__) || defined(__i386__)
+#include <cpuid.h>
+static int aesni_state = -1;   /* -1 unknown, 0 no, 1 yes */
+static int aes_forced_portable;
+
+bool slang__cpu_has_aesni(void) {
+    if (aes_forced_portable) return false;
+    int s = __atomic_load_n(&aesni_state, __ATOMIC_RELAXED);
+    if (s < 0) {
+        unsigned a, b, c, d;
+        s = 0;
+        if (__get_cpuid(1, &a, &b, &c, &d)) {
+            /* ECX bit 25 AES, bit 1 PCLMULQDQ, bit 19 SSE4.1, bit 9 SSSE3 */
+            s = (c & (1u << 25)) && (c & (1u << 1)) && (c & (1u << 19)) && (c & (1u << 9));
+        }
+        const char *env = getenv("SLANG_NO_AESNI");
+        if (env && env[0] == '1') s = 0;
+        __atomic_store_n(&aesni_state, s, __ATOMIC_RELAXED);
+    }
+    return s == 1;
+}
+
+void slang__aes_force_portable(int on) { aes_forced_portable = on; }
+#else
+bool slang__cpu_has_aesni(void) { return false; }
+void slang__aes_force_portable(int on) { (void)on; }
+#endif

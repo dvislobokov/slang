@@ -2,6 +2,6 @@ request: GET /data?x=1 HTTP/1.1
 200 1, 2 [Wikipedia in chunks, ok.]
 request: GET /data?x=1 HTTP/1.1
 timeout: true
-GET https://example.org/: https is not supported yet (std.net.http v1 has no TLS)
+GET https://127.0.0.1:1/: dial tcp 127.0.0.1:1: connection refused
 GET ftp://example.org/: unsupported URL scheme "ftp"
 ::1 8080 /a/b q=1 /a/b?q=1

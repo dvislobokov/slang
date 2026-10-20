@@ -81,6 +81,10 @@ impl<'a> Sema<'a> {
             }
             K::Lambda { params, ret, body, is_async } => self.lambda(params, ret.as_deref(), body, *is_async, span),
             K::Paren(x) => self.expr(x, expected),
+            K::NamedArg { name, .. } => {
+                self.err(format!("named argument {}: is only allowed inside attribute arguments", name.name), span);
+                self.invalid(span)
+            }
             // Syntax error, already reported by the parser.
             K::Error => self.invalid(span),
         }
@@ -198,6 +202,7 @@ impl<'a> Sema<'a> {
                 let value = match c {
                     stdlib::StdConst::Float(v) => hir::ConstValue::Float(v),
                     stdlib::StdConst::Int(v) => hir::ConstValue::Int(v),
+                    stdlib::StdConst::Target(t) => return mk(ExprKind::Const(hir::ConstValue::Str(t.value())), self.tt.string, span),
                     stdlib::StdConst::Error(sym) => {
                         let x = self.extern_id(format!("{ns}.{cname}"), sym, Vec::new(), self.tt.error);
                         return mk(ExprKind::Call { callee: hir::Callee::Extern(x), args: Vec::new() }, self.tt.error, span);

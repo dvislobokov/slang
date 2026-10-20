@@ -1,0 +1,22 @@
+Content-Type X-Forwarded-For bad key
+[From To Received] bob@example.org, carol@example.org [a b] true body text
+From: ann@example.org
+To: bob@example.org, carol@example.org
+X-Tag: 1
+X-Tag: 2
+textproto: malformed MIME header initial line: " leading"
+"Hi\r\n..hidden\r\n...two\r\nend\r\n.\r\n"
+"Hi\n.hidden\n..two\nend\n" true NEXT
+250 "mail.example.org\nSIZE 1000\nOK"
+550 no such user
+application/x-slang-pkg [.jpeg .jpg] [.slx]
+mime: extension "noDot" missing leading dot
+café au lait€ and été
+plain =?utf-8?q?Gr=C3=BC=C3=9Fe=2C_J=C3=BCrgen?=
+Grüße, Jürgen
+Hello [a b] true
+note.txt 9 café = 1 text/plain false
+multipart: NextPart: no boundary "zz" found
+multipart: unexpected end of body (no closing boundary)
+60
+mime: invalid boundary character

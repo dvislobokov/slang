@@ -414,6 +414,50 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         g.as_pointer_value()
     }
 
+    /// Body of `leak.fields` (see [`CodeGen::leak_fields_fn`]): one
+    /// `slang_leak_fields(ti, {offset, "Type.Field"}..., {-1, NULL})` per
+    /// struct type info with `*T` fields (runtime/ABI.md 3.5).
+    pub(crate) fn finish_leak_fields(&mut self) -> super::R<()> {
+        let Some(f) = self.leak_fields_fn else { return Ok(()) };
+        let mut tis: Vec<(TypeId, PointerValue<'ctx>)> = self.type_infos.iter().map(|(t, p)| (*t, *p)).collect();
+        tis.sort_by_key(|(t, _)| *t);
+        let ent = self.ctx.struct_type(&[self.i64_ty().into(), self.ptr_ty().into()], false);
+        let mut regs = Vec::new();
+        for (t, ti) in tis {
+            let Type::Struct(d) = self.ty(t).clone() else { continue };
+            let st = self.struct_llty(d.0);
+            let sname = self.prog.structs[d.0 as usize].name.clone();
+            let fields = self.prog.structs[d.0 as usize].fields.clone();
+            let mut ents = Vec::new();
+            for (i, fd) in fields.iter().enumerate() {
+                if !matches!(self.ty(fd.ty), Type::Pointer(_)) {
+                    continue;
+                }
+                let off = self.td.offset_of_element(&st, i as u32).unwrap_or(0);
+                let name = self.cstr(&format!("{sname}.{}", fd.name));
+                ents.push(ent.const_named_struct(&[self.i64_ty().const_int(off, false).into(), name.into()]));
+            }
+            if ents.is_empty() {
+                continue;
+            }
+            ents.push(ent.const_named_struct(&[self.i64_ty().const_all_ones().into(), self.ptr_ty().const_null().into()]));
+            let arr = ent.const_array(&ents);
+            let n = self.fresh();
+            let g = self.module.add_global(arr.get_type(), None, &format!("leak.fields.{n}"));
+            g.set_linkage(Linkage::Internal);
+            g.set_constant(true);
+            g.set_initializer(&arr);
+            regs.push((ti, g.as_pointer_value()));
+        }
+        self.with_helper(f, |cg| {
+            for (ti, g) in regs {
+                cg.call_rt("slang_leak_fields", &[ti.into(), g.into()]);
+            }
+            cg.b.build_return(None).unwrap();
+            Ok(())
+        })
+    }
+
     /// Allocates a heap object holding `v` (owned, moved in); returns the
     /// object pointer (+1).
     pub(crate) fn new_box(&mut self, t: TypeId, v: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {

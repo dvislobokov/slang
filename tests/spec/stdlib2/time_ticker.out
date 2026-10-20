@@ -1,0 +1,5 @@
+ticks: 3 true true
+fired: true false
+stopped pending: true false
+after reset: true
+after: true

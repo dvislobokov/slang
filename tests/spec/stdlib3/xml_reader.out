@@ -1,0 +1,46 @@
+namespaces:
+  1 StartElement {urn:default}root root [{}xmlns="urn:default" {xmlns}a="urn:a"]
+  1 StartElement {urn:a}item a:item [{urn:a}id="1" {}plain="x"]
+  1 EndElement {urn:a}item a:item []
+  1 StartElement {urn:inner}inner inner [{}xmlns="urn:inner"]
+  1 StartElement {urn:inner}leaf leaf []
+  1 EndElement {urn:inner}leaf leaf []
+  1 EndElement {urn:inner}inner inner []
+  1 StartElement {b}u b:u [{http://www.w3.org/XML/1998/namespace}lang="en"]
+  1 EndElement {b}u b:u []
+  1 EndElement {urn:default}root root []
+  EOF
+text:
+  1 ProcInst xml "version=\"1.0\" encoding=\"UTF-8\""
+  1 CharData  "\n"
+  2 Comment  " note "
+  2 CharData  "\n"
+  3 StartElement {}t t [{}a="x\ty  z" {}b="<&>\"'"]
+  4 CharData  "1 < 2 ☺ A <not> &markup; end\nline"
+  5 EndElement {}t t []
+  EOF
+doctype:
+  error: xml: undefined entity (DTD entities are not expanded) on line 1
+errors:
+  1 StartElement {}a a []
+  1 StartElement {}b b []
+  error: xml: element <b> closed by </a> on line 1
+  1 StartElement {}a a []
+  error: xml: unexpected end of input: element <a> not closed
+  error: xml: unexpected end element </a> on line 1
+  error: xml: duplicate attribute x on line 1
+  error: xml: unquoted attribute value on line 1
+  error: xml: < in an attribute value on line 1
+  error: xml: undefined entity (DTD entities are not expanded) on line 1
+  error: xml: invalid character entity (no semicolon) on line 1
+  error: xml: unterminated comment on line 1
+  1 StartElement {}a a []
+  1 CharData  "\n\n"
+  3 StartElement {}b b []
+  3 CharData  "\n"
+  error: xml: element <b> closed by </c> on line 4
+  error: xml: expected a name on line 1
+  error: xml: invalid character reference on line 1
+lenient:
+  &nbsp;&copy; 1
+a&lt;b&gt;&amp;c"d a&lt;b&gt;&amp;c&quot;d&#xA;

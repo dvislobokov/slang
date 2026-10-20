@@ -1,0 +1,8 @@
+got SIGUSR1
+pending: 1
+pending after wait: 0
+any: SIGTERM
+notify 0 SIGINT
+notify 1 SIGINT
+notify 2 SIGINT
+ignored, still running signal 99

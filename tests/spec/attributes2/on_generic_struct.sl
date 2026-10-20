@@ -1,5 +1,5 @@
 // test: attributes on a generic struct and its fields are shared by every instantiation
-// status: pending
+// status: passing
 namespace spec.attributes2.on_generic_struct
 
 import std.io

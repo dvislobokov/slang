@@ -1,0 +1,85 @@
+// test: UDP: ReadFrom/WriteTo into caller buffers, truncation of long datagrams, connected sockets (DialUDP), broadcast and multicast on loopback, deadlines
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.net_udp_more
+
+import std.io
+import std
+
+async func main() void! {
+    var a = net.ListenUDP("127.0.0.1:0")?
+    var b = net.ListenUDP("127.0.0.1:0")?
+    var buf = std.bytes.Repeat(strings.Bytes("."), 8)
+
+    // ReadFrom fills the caller's buffer; a longer datagram is truncated
+    _ = await a.WriteTo(strings.Bytes("short"), b.Local())?
+    var d = await b.ReadFrom(buf)?
+    println(d.N, strings.FromBytes(buf[..d.N]), d.Truncated, d.From.String() == a.Addr())
+    _ = await a.WriteTo(strings.Bytes("a much longer datagram"), b.Local())?
+    d = await b.ReadFrom(buf)?
+    println(d.N, strings.FromBytes(buf[..d.N]), d.Truncated)
+
+    // a large datagram (60000 bytes) arrives whole
+    var big = std.bytes.Repeat(strings.Bytes("B"), 60000)
+    b.SetReadBuffer(1 << 20)?
+    println("sent", await a.WriteTo(big, b.Local())?)
+    var p = await b.RecvFrom(65536)?
+    println("received", len(p.Data))
+
+    // connected UDP: Read/Write with one peer
+    var c = await net.DialUDP(b.Addr())?
+    println("connected to", c.Remote().String() == b.Addr())
+    _ = await c.Write(strings.Bytes("hello peer"))?
+    var q = await b.RecvFrom(64)?
+    println(strings.FromBytes(q.Data), q.Addr == c.Addr())
+    _ = await b.SendTo(strings.Bytes("reply"), q.Addr)?
+    println(strings.FromBytes(await c.Read(64)?))
+    _ = await b.SendTo(strings.Bytes("into"), q.Addr)?
+    var k = await c.ReadInto(buf)?
+    println(k, strings.FromBytes(buf[..k]))
+
+    // broadcast on the loopback network
+    var r = net.ListenUDP("0.0.0.0:0")?
+    a.SetBroadcast(true)?
+    _ = await a.SendTo(strings.Bytes("to all"), fmt.Format("127.255.255.255:{0}", r.Port()))?
+    r.SetTimeout(2000)
+    var bp = await r.RecvFrom(64)?
+    println("broadcast:", strings.FromBytes(bp.Data))
+
+    // multicast: join a group, send to it, leave
+    var m = net.ListenUDP("0.0.0.0:0")?
+    var lo = ""
+    for it in net.Interfaces()? {
+        if it.Loopback {
+            lo = it.Name
+        }
+    }
+    try m.JoinGroup("239.1.2.3", lo) catch err {
+        println("multicast: join failed", err)
+        return
+    }
+    var sender = net.ListenUDP("127.0.0.1:0")?
+    sender.SetMulticastInterface(lo)?
+    sender.SetMulticastLoopback(true)?
+    sender.SetMulticastTTL(1)?
+    _ = await sender.SendTo(strings.Bytes("group message"), fmt.Format("239.1.2.3:{0}", m.Port()))?
+    m.SetTimeout(2000)
+    var mp = await m.RecvFrom(64)?
+    println("multicast:", strings.FromBytes(mp.Data))
+    m.LeaveGroup("239.1.2.3", lo)?
+    try m.JoinGroup("not-an-ip", "") catch err {
+        println(strings.HasPrefix(err.Message(), "join udp 0.0.0.0:"), strings.HasSuffix(err.Message(), ": invalid multicast group"))
+    }
+
+    // deadline in the past
+    b.SetReadDeadline(time.Now() - 1)
+    try await b.ReadFrom(buf) catch err {
+        println("deadline:", net.IsTimeout(err))
+    }
+    for u in [a, b, c, r, m, sender] {
+        u.Close()
+    }
+    try await a.WriteTo(buf, b.Local()) catch err {
+        println("closed:", errors.Is(err, net.ErrClosed))
+    }
+}

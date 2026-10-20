@@ -122,7 +122,13 @@ impl<'a> Sema<'a> {
                 self.err(format!("{} is a namespace, not a function", name.name), name.span);
                 self.invalid(span)
             }
-            PathRes::Member(Member::Generic(t)) => self.generic_call(t, None, None, args, span),
+            PathRes::Member(Member::Generic(t)) => {
+                // `log.Info("...", args)`: compiled message template (logtmpl.rs).
+                if let Some(e) = self.log_func_call(t, args, span) {
+                    return e;
+                }
+                self.generic_call(t, None, None, args, span)
+            }
         }
     }
 
@@ -159,6 +165,11 @@ impl<'a> Sema<'a> {
             return self.invalid(span);
         }
         let base = match self.reflect_method_call(base, name, targs, args, span) {
+            Ok(e) => return e,
+            Err(b) => b,
+        };
+        // std.log level methods: compiled message templates (logtmpl.rs).
+        let base = match self.log_method_call(base, name, targs, args, span) {
             Ok(e) => return e,
             Err(b) => b,
         };
@@ -207,6 +218,9 @@ impl<'a> Sema<'a> {
                 let f = self.field_access(base, name);
                 return self.call_value(f, args, span);
             }
+            if let Some(iface) = self.default_method_iface(base.ty, name) {
+                return self.default_method_call(base, iface, name, args, span);
+            }
             let sname = self.structs[sid as usize].name.clone();
             self.err(format!("struct {sname} has no method {}", name.name), name.span);
             self.check_args_loose(args);
@@ -221,6 +235,9 @@ impl<'a> Sema<'a> {
                 hargs.extend(self.check_args(&sig.params, args, &fname, span));
                 let ty = if sig.is_async { self.tt.task(sig.ret) } else { sig.ret };
                 return mk(ExprKind::Call { callee: Callee::Func(fid), args: hargs }, ty, span);
+            }
+            if let Some(iface) = self.default_method_iface(base.ty, name) {
+                return self.default_method_call(base, iface, name, args, span);
             }
         }
         if let Some(methods) = self.param_methods(base.ty) {
@@ -255,6 +272,42 @@ impl<'a> Sema<'a> {
         );
         self.check_args_loose(args);
         self.invalid(span)
+    }
+
+    /// Calls default method `name` of interface `iface` on `base` (a struct
+    /// or enum value implementing it) converted to the interface.
+    fn default_method_call(&mut self, base: hir::Expr, iface: TypeId, name: &ast::Ident, args: &[ast::Expr], span: Span) -> hir::Expr {
+        let methods = self.iface_methods(iface);
+        let idx = methods.iter().position(|m| m.name == name.name).unwrap();
+        let m = methods[idx].clone();
+        let fname = format!("{}.{}", self.tn(iface), m.name);
+        let recv = self.coerce(base, iface, Ctx::Other);
+        let args = self.check_args(&m.params, args, &fname, span);
+        mk(ExprKind::Call { callee: Callee::Interface { recv: Box::new(recv), method: idx as u32 }, args }, m.ret, span)
+    }
+
+    /// The interface whose default method `name` a value of type `ty`
+    /// (`S`, `*S` or an enum) gets: an interface with that default which
+    /// the type implements (also how a generic body reaches the defaults
+    /// of its constraint). Several interfaces with different defaults of
+    /// that name are reported as ambiguous.
+    fn default_method_iface(&mut self, ty: TypeId, name: &ast::Ident) -> Option<TypeId> {
+        let mut found: Vec<(FuncId, TypeId)> = Vec::new();
+        for iid in 0..self.interfaces.len() {
+            let Some(def) = self.interfaces[iid].methods.iter().find(|m| m.name == name.name).and_then(|m| m.default) else { continue };
+            if found.iter().any(|(f, _)| *f == def) {
+                continue;
+            }
+            let it = self.tt.intern(Type::Interface(crate::types::DeclId(iid as u32)));
+            if self.missing_methods(ty, it).is_empty() {
+                found.push((def, it));
+            }
+        }
+        if found.len() > 1 {
+            let names: Vec<String> = found.iter().map(|(_, t)| self.tn(*t)).collect();
+            self.err(format!("ambiguous default method {}: provided by interfaces {}; convert the value to one of them", name.name, names.join(" and ")), name.span);
+        }
+        found.first().map(|(_, t)| *t)
     }
 
     fn arity(&mut self, name: &str, args: &[ast::Expr], n: usize, span: Span) -> bool {
@@ -422,6 +475,11 @@ impl<'a> Sema<'a> {
 
     fn special(&mut self, sp: Special, args: &[ast::Expr], span: Span) -> hir::Expr {
         match sp {
+            Special::ArenaNew | Special::ArenaAlloc => {
+                self.err("this arena intrinsic needs a type argument (use Arena.New<T>() or Arena.Alloc<T>(n))", span);
+                self.check_args_loose(args);
+                self.invalid(span)
+            }
             Special::Println | Special::Print => {
                 let mut items = Vec::new();
                 let mut prev_str: Option<bool> = None;

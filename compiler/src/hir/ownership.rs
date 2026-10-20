@@ -46,6 +46,16 @@ pub fn drop_method(p: &Program, sid: u32) -> Option<FuncId> {
     s.methods.iter().find(|(n, f)| n == "Drop" && matches!(p.funcs[f.0 as usize].kind, FuncKind::Method { is_static: false, .. })).map(|(_, f)| *f)
 }
 
+/// `return x` of a local variable `x` of function `f` holding a value with
+/// a destructor moves it to the caller (spec decision 31): the local is not
+/// dropped at exit. Only plain variables qualify (not parameters, captured
+/// or address-taken locals). Returns the local.
+pub fn moved_return(p: &Program, f: &Function, e: &Expr) -> Option<LocalId> {
+    let ExprKind::Local(l) = e.kind else { return None };
+    let loc = f.locals.get(l.0 as usize)?;
+    (loc.kind == LocalKind::Var && !loc.captured && !loc.address_taken && has_dtor(p, loc.ty)).then_some(l)
+}
+
 /// True if a value of type `t` holds a struct with a destructor by value
 /// (directly, in a field, array element, `T!` or enum payload).
 pub fn has_dtor(p: &Program, t: TypeId) -> bool {

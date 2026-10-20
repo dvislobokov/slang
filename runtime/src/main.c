@@ -27,6 +27,7 @@ void slang_runtime_shutdown(void) {
     slang__sched_stop();
     slang__io_flush_all();
     slang_slice_release(&g_args);
+    slang__diag_shutdown();
     g_initialized = 0;
     slang__leak_report();
 }

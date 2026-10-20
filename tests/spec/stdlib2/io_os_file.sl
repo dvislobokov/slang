@@ -1,0 +1,89 @@
+// test: std.os.File implements std.io Reader/Writer/Seeker/Closer; Stat, ReadDir, OpenFile flags, Copy and helpers
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.io_os_file
+
+import std
+import std.io
+
+func main() void! {
+    var dir = fs.Join(fs.TempDir(), "slang_io_os_file_" + strconv.Itoa(os.Pid()))
+    try fs.RemoveAll(dir) catch err {
+    }
+    fs.MkdirAll(dir)?
+    defer func() {
+        try {
+            fs.RemoveAll(dir)?
+        } catch err {
+        }
+    }()
+    var path = fs.Join(dir, "a.txt")
+    var f = os.Create(path)?
+    _ = f.WriteString("hello\nworld\n")?
+    _ = io.WriteString(f, "third line\n")?
+    var w io.Writer = f
+    _ = w.Write(strings.Bytes("end"))?
+    var pos = f.Seek(0, io.SeekCurrent)?
+    println("pos", pos, f.Name() == path)
+    f.Sync()?
+    f.Close()?
+    try {
+        _ = f.Write(strings.Bytes("x"))?
+    } catch err {
+        println("after close:", err)
+    }
+
+    var r = os.Open(path)?
+    var buf = [byte(0), 0, 0, 0, 0]
+    var n = r.Read(buf)?
+    println(n, strings.FromBytes(buf))
+    _ = r.Seek(-3, io.SeekEnd)?
+    println(strings.FromBytes(io.ReadAllFrom(r)?))
+    _ = r.Seek(0, io.SeekStart)?
+    var sc = io.NewScanner(r)
+    for sc.Scan() {
+        print("[", sc.Text(), "]")
+    }
+    println()
+    var at = [byte(0), 0, 0]
+    _ = r.ReadAt(at, 6)?
+    println(strings.FromBytes(at))
+    var info = r.Stat()?
+    println(info.Name, info.Size, info.IsDir, info.IsRegular(), info.Mode > 0, info.ModTime().Year() >= 2024)
+    r.Close()?
+
+    var a = os.OpenFile(path, os.O_WRONLY | os.O_APPEND, 0)?
+    _ = a.WriteString("!")?
+    a.Close()?
+    var t = os.OpenFile(path, os.O_RDWR, 0)?
+    t.Truncate(5)?
+    var whole = t.ReadAll()?
+    println(strings.FromBytes(whole))
+    t.Close()?
+    try {
+        _ = os.OpenFile(path, os.O_WRONLY | os.O_CREATE | os.O_EXCL, 420)?
+    } catch err {
+        println("excl:", strings.Contains(err.Message(), "exists"))
+    }
+    try {
+        _ = os.Open(fs.Join(dir, "missing"))?
+    } catch err {
+        println("missing:", errors.Is(err, fs.ErrNotFound))
+    }
+
+    fs.Mkdir(fs.Join(dir, "sub"))?
+    var c = os.Create(fs.Join(dir, "b.bin"))?
+    var copied = io.Copy(c, io.NewStringReader("copied bytes"))?
+    c.Close()?
+    println("copied", copied)
+    for e in os.ReadDir(dir)? {
+        var i = e.Info()?
+        println(e.Name, e.IsDir, e.IsSymlink, i.Size > 0 || e.IsDir)
+    }
+    var st = os.Stat(fs.Join(dir, "sub"))?
+    println(st.IsDir, st.Name)
+    var out = os.Stdout()
+    _ = out.WriteString("to stdout\n")?
+    var nr = os.Stderr()
+    println(nr.Fd())
+}

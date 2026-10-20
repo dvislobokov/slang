@@ -1,0 +1,2 @@
+# ThreadSanitizer suppressions for `make tsan` (runtime/Makefile).
+# (none needed so far: keep this file for future, documented entries)

@@ -1,0 +1,38 @@
+// test: std.unicode classification and case mapping with full Unicode tables, utf8 and utf16 codecs
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.unicode_classes
+
+import std
+import std.io
+import std.unicode
+
+func main() {
+    var rs = ['a', 'Z', '5', ' ', 'é', 'Ж', 'ǅ', '٣', '½', '!', '€', '\u{0301}', '\u{2003}', '中', '\u{1F600}', '\t']
+    for r in rs {
+        print(string(r) == "\t", unicode.IsLetter(r), unicode.IsDigit(r), unicode.IsNumber(r), unicode.IsSpace(r), unicode.IsUpper(r), unicode.IsLower(r), unicode.IsTitle(r))
+        println("", unicode.IsPunct(r), unicode.IsSymbol(r), unicode.IsMark(r), unicode.IsPrint(r), unicode.IsGraphic(r), unicode.IsControl(r))
+    }
+    println(string(unicode.ToUpper('ß')), string(unicode.ToUpper('é')), string(unicode.ToLower('Ж')), string(unicode.ToTitle('ǆ')), string(unicode.ToUpper('ǆ')), string(unicode.ToLower('Ǆ')))
+    println(string(unicode.ToUpper('ā')), string(unicode.ToLower('Ā')), string(unicode.ToUpper('ω')), string(unicode.ToUpper('ﬀ')), string(unicode.SimpleFold('A')), string(unicode.SimpleFold('a')))
+    println(unicode.MaxRune, unicode.ReplacementChar)
+
+    println(utf8.RuneLen('a'), utf8.RuneLen('é'), utf8.RuneLen('€'), utf8.RuneLen('\u{1F600}'), utf8.RuneLen(char(0xD800)), utf8.ValidRune(char(0x110000)))
+    println(utf8.EncodeRune('€'), utf8.AppendRune([byte(65)], 'é'), utf8.EncodeRune(char(-1)))
+    var (r, n) = utf8.DecodeRune([byte(0xE2), 0x82, 0xAC, 65])
+    var (r2, n2) = utf8.DecodeRune([byte(0xC0), 0x80])
+    var (r3, n3) = utf8.DecodeRuneInString("")
+    var (r4, n4) = utf8.DecodeLastRuneInString("aé")
+    var (r5, n5) = utf8.DecodeRuneAt("x\u{1F600}", 1)
+    var (r6, n6) = utf8.DecodeRune([byte(0xED), 0xA0, 0x80])
+    println(string(r), n, int(r2) == utf8.RuneError, n2, int(r3) == utf8.RuneError, n3, string(r4), n4, string(r5), n5, int(r6) == utf8.RuneError, n6)
+    var (r7, n7) = utf8.DecodeLastRune([byte(65), 0x82])
+    println(int(r7) == utf8.RuneError, n7)
+    println(utf8.Valid(strings.Bytes("héllo")), utf8.Valid([byte(0xFF)]), utf8.ValidString("€"), utf8.ValidString(strings.FromBytes([byte(0xE2), 0x82])))
+    println(utf8.RuneCount(strings.Bytes("héllo")), utf8.RuneCountInString("€€€"), utf8.RuneCountInString(strings.FromBytes([byte(0xE2), 0x82])), utf8.RuneStart(0x82), utf8.FullRune([byte(0xE2), 0x82]), utf8.FullRune([byte(65)]))
+
+    var u = utf16.Encode(['a', '€', '\u{1F600}'])
+    println(u, utf16.Decode(u), utf16.Decode([uint16(0xD800), 65]))
+    var (hi, lo) = utf16.EncodeRune('\u{1F600}')
+    println(int(hi), int(lo), int(utf16.DecodeRune(hi, lo)), utf16.IsSurrogate(hi), utf16.RuneLen('a'), utf16.RuneLen('\u{10000}'))
+}

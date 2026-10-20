@@ -1,5 +1,5 @@
 // error: unknown identifier WindowsOnly
-// status: pending
+// status: passing
 namespace spec.platform.cfg_excluded_use_error
 
 import std.io

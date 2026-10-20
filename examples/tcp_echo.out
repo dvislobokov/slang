@@ -1,0 +1,4 @@
+HELLO FROM ALICE | BYE FROM ALICE
+HELLO FROM BOB | BYE FROM BOB
+timeout: true
+after shutdown: true

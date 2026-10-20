@@ -1,0 +1,79 @@
+// test: std.encoding.asn1 DER Builder and Reader round trip (INTEGER, big INTEGER, OID, strings, times, BIT STRING, SET, [n])
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.encoding_asn1
+
+import std
+import std.io
+import std.encoding
+import std.math
+
+func main() void! {
+    var b = asn1.NewBuilder()
+    var when = time.Date(2024, 2, 29, 13, 4, 5, 0, nil)
+    var oidErr = ""
+    b.AddSequence(func(s *asn1.Builder) {
+        s.AddInt(0)
+        s.AddInt(127)
+        s.AddInt(128)
+        s.AddInt(-129)
+        s.AddBigInt(big.MustParseInt("123456789012345678901234567890"))
+        s.AddBigInt(big.NewInt(-128))
+        try s.AddOID("1.2.840.113549.1.1.11") catch err {
+            oidErr = err.Message()
+        }
+        s.AddBool(true)
+        s.AddNull()
+        s.AddUTF8String("héllo")
+        s.AddPrintableString("Printable")
+        s.AddOctetString([byte(1), 2, 3])
+        s.AddBitString(asn1.BitString{Bytes: [byte(0xA0)], UnusedBits: 5})
+        s.AddUTCTime(when)
+        s.AddGeneralizedTime(when.Add(time.Milliseconds(250)))
+        s.AddSet(func(t *asn1.Builder) {
+            t.AddIA5String("in a set")
+        })
+        s.AddExplicit(3, func(t *asn1.Builder) {
+            t.AddInt(42)
+        })
+    })
+    var der = b.Bytes()
+    println(len(der), encoding.hex.Encode(der[..24]), oidErr == "")
+    var r = asn1.NewReader(der)
+    var seq = r.ReadSequence()?
+    println(seq.ReadInt()?, seq.ReadInt()?, seq.ReadInt()?, seq.ReadInt()?)
+    println(seq.ReadBigInt()?.String(), seq.ReadBigInt()?.String(), seq.ReadOID()?, seq.ReadBool()?)
+    seq.ReadNull()?
+    println(seq.ReadString()?, seq.ReadString()?, seq.ReadOctetString()?)
+    var bs = seq.ReadBitString()?
+    println(bs.Len(), bs.At(0), bs.At(1), bs.At(2), bs.UnusedBits)
+    println(seq.ReadTime()?.Format(time.RFC3339Nano), seq.ReadTime()?.Format(time.RFC3339Nano))
+    var set = seq.ReadSet()?
+    println(set.ReadString()?, set.More())
+    println(seq.HasExplicit(3), seq.HasExplicit(2))
+    var ex = seq.ReadExplicit(3)?
+    println(ex.ReadInt()?, seq.More(), r.More())
+    var raw = asn1.NewReader(der).Next()?
+    println(raw.Tag, raw.Class(), raw.Constructed(), raw.Number() == asn1.TagSequence, len(raw.FullBytes) == len(der))
+    try {
+        _ = asn1.NewReader([byte(2), 2, 0, 1]).ReadInt()?
+    } catch err {
+        println(err)
+    }
+    try {
+        _ = asn1.NewReader([byte(4), 5, 1]).ReadOctetString()?
+    } catch err {
+        println(err)
+    }
+    try {
+        _ = asn1.NewReader([byte(4), 0]).ReadInt()?
+    } catch err {
+        println(err)
+    }
+    var bad = asn1.NewBuilder()
+    try {
+        bad.AddOID("3.1")?
+    } catch err {
+        println(err)
+    }
+}

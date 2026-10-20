@@ -62,7 +62,8 @@
 // File
 // ---------------------------------------------------------------------------
 
-file ::= namespace_decl import_decl* top_level_decl*
+// `@cfg(...)` before `namespace` excludes the whole file.
+file ::= attribute* namespace_decl import_decl* top_level_decl*
 
 namespace_decl ::= NAMESPACE qualified_name eos
 import_decl ::= IMPORT qualified_name (AS IDENTIFIER)? eos
@@ -81,17 +82,21 @@ attribute_arg ::= (IDENTIFIER COLON)? expr
 // Declarations
 // ---------------------------------------------------------------------------
 
-struct_decl ::= STRUCT IDENTIFIER generic_params? LBRACE struct_member* RBRACE
+struct_decl ::= STRUCT IDENTIFIER generic_params? implements_clause? LBRACE struct_member* RBRACE
+// `implements` is a contextual keyword (an IDENTIFIER spelled "implements").
+implements_clause ::= IDENTIFIER type (COMMA type)*
 struct_member ::= attribute* (method_decl | field_decl | embed_decl) eos?
 field_decl ::= IDENTIFIER type
 embed_decl ::= type
 method_decl ::= STATIC? func_decl
 
-// An embedded interface is a bare interface name on its own line.
-interface_decl ::= INTERFACE IDENTIFIER generic_params? LBRACE ((func_signature | named_type) eos?)* RBRACE
+// An embedded interface is a bare interface name on its own line. A method
+// with a body is a default method (`this` is the interface value).
+// `sealed` is a contextual keyword (an IDENTIFIER spelled "sealed").
+interface_decl ::= IDENTIFIER? INTERFACE IDENTIFIER generic_params? LBRACE ((attribute* func_signature block? | named_type) eos?)* RBRACE
 
 // Methods (with `this` = the enum value) follow the variants.
-enum_decl ::= ENUM IDENTIFIER generic_params? LBRACE enum_variant ((COMMA | eos) enum_variant)* (COMMA | eos)?
+enum_decl ::= ENUM IDENTIFIER generic_params? implements_clause? LBRACE enum_variant ((COMMA | eos) enum_variant)* (COMMA | eos)?
               (attribute* func_decl eos?)* RBRACE
 enum_variant ::= attribute* IDENTIFIER (LPAREN param_list? RPAREN)?
 
@@ -190,7 +195,9 @@ postfix ::= DOT IDENTIFIER
           // explicit type arguments `Max<int>(1, 2)`, `Option<int>.Some(1)`, `F<int>`;
           // the compiler accepts them only before ( { . ) ] } , or the end of a statement
           | generic_args
-arg_list ::= expr (COMMA expr)* COMMA?
+// `name: value` arguments only inside attribute arguments (`@cfg(not(os: "windows"))`).
+arg_list ::= call_arg (COMMA call_arg)* COMMA?
+call_arg ::= (IDENTIFIER COLON)? expr
 
 primary_expr ::= literal | THIS | NIL
                | struct_literal | slice_literal | map_literal

@@ -54,6 +54,9 @@ the `.vsix` (Extensions view, "Install from VSIX...").
 | `slang.trace.server` | `off` | `messages` / `verbose` LSP tracing |
 | `slang.inlayHints.types.enabled` | `true` | inferred type after `var x = ...` / `for x in ...` names |
 | `slang.inlayHints.parameterNames.enabled` | `true` | parameter names before literal call arguments |
+| `slang.path` | `slang` | CLI used to build for debugging and to find the formatters |
+| `slang.debug.lldbDapPath` | `""` | `lldb-dap` executable (default: `lldb-dap`, `lldb-dap-18`, ... on `PATH`) |
+| `slang.debug.formatters` | `""` | path of `slang_formatters.py` (default: `slang debug --formatters lldb`) |
 
 Command palette: **Slang: Restart server** (also done automatically when
 `slang.serverPath` changes) and **Slang: Format document (slang fmt)**.
@@ -71,6 +74,53 @@ add to your settings:
 
 **Format Selection** formats only the changed lines inside the selection.
 A file with syntax errors is left unchanged.
+
+## Debugging
+
+The extension contributes the debug type **`slang`**. It runs
+[`lldb-dap`](https://lldb.llvm.org/use/lldbdap.html) (LLDB 18+; install
+`lldb-18` on Ubuntu, or point `slang.debug.lldbDapPath` at it) with the
+Slang formatters (`tools/lldb/slang_formatters.py`, located with
+`slang debug --formatters lldb`) loaded through `initCommands`, so strings,
+slices, maps, errors, `T!`, enums, interfaces, closures and tasks show as
+Slang values. Breakpoints, stepping, the call stack, variables, watch and
+the debug console (lldb commands; expressions in C syntax) work.
+
+F5 on a `.sl` file without a `launch.json` builds it (`slang build`; debug
+info is on by default) and debugs it. A `launch.json`:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "slang",
+      "request": "launch",
+      "name": "Debug Slang file",
+      "source": "${file}",
+      "program": "${workspaceFolder}/target/slang-debug/${fileBasenameNoExtension}",
+      "args": [],
+      "env": { "SLANG_WORKERS": "2" },
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "slang: build"
+    },
+    { "type": "slang", "request": "attach", "name": "Attach", "pid": "${command:pickProcess}" }
+  ]
+}
+```
+
+- `launch`: `program` (executable), or `source` (file / project) which is
+  built first unless a `preLaunchTask` is set (`build: false` skips it,
+  `buildArgs` adds flags, e.g. `["--release", "-g"]`); `args`, `env`
+  (object or `["K=V"]`), `cwd`, `stopOnEntry`, and lldb-dap's
+  `initCommands`, `preRunCommands`, `stopCommands`.
+- `attach`: `pid` (asked for when missing), optionally `program`.
+- Task type `slang` (`"command": "build"`, `source`, `program`, `args`):
+  the provided task **slang: build** runs
+  `slang build ${file} -o target/slang-debug/<name>`.
+- In the debug console, `slang-next` steps over a statement and follows an
+  `await` to the coroutine's next line (plain `next` stops in the caller
+  when the `await` suspends); a panic stops at `slang_panic`.
 
 ## Project discovery
 

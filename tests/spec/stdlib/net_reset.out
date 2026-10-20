@@ -1,0 +1,6 @@
+read after reset: true true
+write to closed peer: true
+peer closed during read: 0
+blocked read: true true
+blocked write: true
+dropped peer: 0

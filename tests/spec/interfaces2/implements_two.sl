@@ -1,5 +1,5 @@
 // test: `implements A, B` checks several interfaces
-// status: pending
+// status: passing
 namespace spec.interfaces2.implements_two
 
 import std.io

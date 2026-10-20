@@ -1,0 +1,73 @@
+namespace tlstest.client
+
+import std.io
+import std
+import std.net
+import std.crypto
+
+// Interop client for compiler/tests/tls.rs.
+// args: addr roots.pem|- version(12|13|any) dials message [cert.pem key.pem]
+// Each dial writes message + "\n", reads one line back (on the first TLS 1.3
+// dial again after a KeyUpdate) and prints a summary.
+async func run() void! {
+    var a = os.Args()
+    var cfg = tls.Config{ServerName: "localhost", Sessions: tls.NewSessionCache(), ALPN: ["h2", "http/1.1"]}
+    if a[2] == "-" {
+        cfg.InsecureSkipVerify = true
+    } else {
+        var pool = x509.NewCertPool()
+        if pool.AppendPEM(io.ReadFile(a[2])?) == 0 {
+            return error("no certificates in " + a[2])
+        }
+        cfg.RootCAs = pool
+    }
+    if a[3] == "12" {
+        cfg.MaxVersion = tls.V12
+    } else if a[3] == "13" {
+        cfg.MinVersion = tls.V13
+    }
+    if len(a) > 7 {
+        var kp = tls.LoadKeyPairFiles(a[6], a[7])?
+        cfg.ClientCert = &kp
+    }
+    var dials = strings.ToInt(a[4])?
+    for i in 0..dials {
+        var c = await tls.Dial(a[1], cfg)?
+        _ = await c.WriteString(a[5] + "\n")?
+        var got = ""
+        for !strings.Contains(got, "\n") {
+            var s = await c.ReadString(4096)?
+            if s == "" {
+                break
+            }
+            got += s
+        }
+        var st = c.ConnectionState()
+        if st.Version == tls.V13 && i == 0 {
+            // KeyUpdate with update_requested: both sides move to new keys
+            // (openssl s_server -rev answers the next line after ~1 s)
+            await c.KeyUpdate()?
+            _ = await c.WriteString(a[5] + "\n")?
+            var again = ""
+            for !strings.Contains(again, "\n") {
+                var s = await c.ReadString(4096)?
+                if s == "" {
+                    break
+                }
+                again += s
+            }
+            if again != got {
+                return error("reply after KeyUpdate differs: " + again)
+            }
+        }
+        println("dial", i + 1, st.VersionName(), st.CipherSuiteName, "resumed=" + fmt.Format("{0}", st.Resumed),
+            "alpn=" + st.ALPN, "verified=" + fmt.Format("{0}", len(st.VerifiedChain)), "reply=" + strings.Trim(got))
+        c.Close()
+    }
+}
+
+async func main() {
+    try await run() catch err {
+        println("error:", err)
+    }
+}

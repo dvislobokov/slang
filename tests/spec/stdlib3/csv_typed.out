@@ -1,0 +1,18 @@
+Ann 31 4.5 true High annie true
+Bob 25 3 false Low nil true
+full_name,Age,Score,Active,Level,nick
+Ann,31,4.5,true,High,annie
+Bob,25,3,false,Low,
+1 2 a
+3 4 b, c
+X,Y,Label
+1,2,a
+3,4,"b, c"
+csv: line 2, column "Age": invalid integer "old"
+csv: line 2, column "Age": number 300 out of range for int8
+csv: line 2, column "Active": invalid bool "maybe"
+csv: line 2, column "Level": unknown Level value "Medium"
+csv: line 2: no column "Level"
+csv: missing header row
+parse error on line 2, column 6: extraneous or missing " in quoted-field
+csv: line 1: no column 1 (the record has 1 fields)

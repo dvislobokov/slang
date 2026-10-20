@@ -20,7 +20,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn scoped_block(&mut self, b: &Block) -> R<()> {
         let d = self.depth();
         self.push_scope();
+        self.dbg_push_block(b.span);
         let r = self.block_stmts(b);
+        self.dbg_pop_block();
         self.pop_scope(d);
         r
     }
@@ -48,6 +50,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             self.dead_block();
         }
         let d = self.depth();
+        self.dbg_span(s.span);
         let r = self.stmt_inner(s);
         self.release_temps_from(d);
         r
@@ -207,7 +210,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         for v in vars.iter().flatten() {
             self.scope_local(*v);
         }
+        self.dbg_push_block(body.span);
         let r = self.block_stmts(body);
+        self.dbg_pop_block();
         self.pop_scope(depth);
         self.fs_mut().loops.pop();
         r?;
@@ -566,7 +571,18 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             ReturnValue::Value(e) => {
                 let (p, t) = self.ret_info()?;
-                let v = self.expr_owned(e)?;
+                let v = match self.fs().hir.and_then(|f| crate::hir::ownership::moved_return(self.prog, f, e)) {
+                    // `return x` of a local with a destructor: moved out,
+                    // its drop flag cleared so the exit does not drop it.
+                    Some(l) => {
+                        let v = self.expr(e)?.get();
+                        if let Some(flag) = self.fs().flags.get(l.0 as usize).copied().flatten() {
+                            self.b.build_store(flag, self.ctx.bool_type().const_zero()).unwrap();
+                        }
+                        v
+                    }
+                    None => self.expr_owned(e)?,
+                };
                 if let Type::Fallible(inner) = self.ty(t).clone() {
                     if *self.ty(inner) == Type::Void {
                         self.b.build_store(p, self.ptr_ty().const_null()).unwrap();

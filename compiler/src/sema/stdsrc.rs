@@ -1,7 +1,15 @@
 //! Parts of the standard library written in Slang: `std.task` (`Channel<T>`,
 //! `Mutex`, `WaitGroup`, `Spawn`, `Timeout`, `Context`), `std.net` (TCP
-//! over non-blocking sockets) and `std.net.http` (HTTP/1.1 client and
-//! server). The sources live in `sema/stdlib_src/*.sl`; like
+//! over non-blocking sockets), `std.net.http` (HTTP/1.1 client and
+//! server), `std.log` (structured logging, with compiled message templates
+//! in [`super::logtmpl`]), `std.diag` (metrics, tracing, profiles),
+//! `std.crypto.x509` (certificates) and `std.net.tls` (TLS 1.3/1.2 in three
+//! files: `tls.sl`, `tls_client.sl`, `tls_server.sl` share the namespace), and
+//! the tier 0/1 library of docs/STDLIB.md (`std.slices`, `maps`, `cmp`,
+//! `bytes`, `strconv`, `time` types, `math.bits/big/complex`,
+//! `unicode.utf8/utf16`, `hash.*`, `encoding.binary/base32/pem/asn1`, `io`,
+//! `os` files, `os.signal`, `os.user`, `process`, more `collections`, `sync`,
+//! `cli`, `testing`, `embed`). The sources live in `sema/stdlib_src/*.sl`; like
 //! `std.collections` ([`super::collections`]) they are parsed once per
 //! process and registered as stdlib templates, so only what a program uses
 //! is instantiated, checked and compiled.
@@ -28,7 +36,76 @@ use std::sync::OnceLock;
 const MODULES: &[(&str, &str, &str)] = &[
     ("std.task", "task.sl", include_str!("stdlib_src/task.sl")),
     ("std.net", "net.sl", include_str!("stdlib_src/net.sl")),
+    ("std.net", "net_udp.sl", include_str!("stdlib_src/net_udp.sl")),
     ("std.net.http", "http.sl", include_str!("stdlib_src/http.sl")),
+    ("std.crypto.x509", "x509.sl", include_str!("stdlib_src/x509.sl")),
+    ("std.net.tls", "tls.sl", include_str!("stdlib_src/tls.sl")),
+    ("std.net.tls", "tls_client.sl", include_str!("stdlib_src/tls_client.sl")),
+    ("std.net.tls", "tls_server.sl", include_str!("stdlib_src/tls_server.sl")),
+    ("std.log", "log.sl", include_str!("stdlib_src/log.sl")),
+    ("std.diag", "diag.sl", include_str!("stdlib_src/diag.sl")),
+    ("std.arena", "arena.sl", include_str!("stdlib_src/arena.sl")),
+    // >>> tier 2 stdlib (docs/STDLIB.md level 2)
+    ("std.regex", "regex.sl", include_str!("stdlib_src/regex.sl")),
+    ("std.regex", "regex_syntax.sl", include_str!("stdlib_src/regex_syntax.sl")),
+    ("std.regex", "regex_vm.sl", include_str!("stdlib_src/regex_vm.sl")),
+    ("std.compress", "compress.sl", include_str!("stdlib_src/compress.sl")),
+    ("std.compress.deflate", "deflate.sl", include_str!("stdlib_src/deflate.sl")),
+    ("std.compress.zlib", "zlib.sl", include_str!("stdlib_src/zlib.sl")),
+    ("std.compress.gzip", "gzip.sl", include_str!("stdlib_src/gzip.sl")),
+    ("std.compress.zstd", "zstd.sl", include_str!("stdlib_src/zstd.sl")),
+    ("std.archive.zip", "zip.sl", include_str!("stdlib_src/zip.sl")),
+    ("std.archive.tar", "tar.sl", include_str!("stdlib_src/tar.sl")),
+    ("std.encoding.csv", "csv.sl", include_str!("stdlib_src/csv.sl")),
+    ("std.encoding", "codec.sl", include_str!("stdlib_src/codec.sl")),
+    ("std.encoding.xml", "xml.sl", include_str!("stdlib_src/xml.sl")),
+    ("std.encoding.yaml", "yaml.sl", include_str!("stdlib_src/yaml.sl")),
+    ("std.encoding.toml", "toml.sl", include_str!("stdlib_src/toml.sl")),
+    ("std.text.template", "template.sl", include_str!("stdlib_src/template.sl")),
+    ("std.text.template", "template_exec.sl", include_str!("stdlib_src/template_exec.sl")),
+    ("std.text.template", "template_check.sl", include_str!("stdlib_src/template_check.sl")),
+    ("std.text.template", "htmlctx.sl", include_str!("stdlib_src/htmlctx.sl")),
+    ("std.html.template", "htmltemplate.sl", include_str!("stdlib_src/htmltemplate.sl")),
+    ("std.net.textproto", "textproto.sl", include_str!("stdlib_src/textproto.sl")),
+    ("std.mime", "mime.sl", include_str!("stdlib_src/mime.sl")),
+    ("std.mime.quotedprintable", "quotedprintable.sl", include_str!("stdlib_src/quotedprintable.sl")),
+    ("std.mime.multipart", "multipart.sl", include_str!("stdlib_src/multipart.sl")),
+    ("std.net.url", "url.sl", include_str!("stdlib_src/url.sl")),
+    ("std.text.scanner", "scanner.sl", include_str!("stdlib_src/scanner.sl")),
+    ("std.text.table", "table.sl", include_str!("stdlib_src/table.sl")),
+    // <<< tier 2 stdlib
+    // tier 0/1 stdlib (docs/STDLIB.md)
+    ("std.slices", "slices.sl", include_str!("stdlib_src/slices.sl")),
+    ("std.maps", "maps.sl", include_str!("stdlib_src/maps.sl")),
+    ("std.cmp", "cmp.sl", include_str!("stdlib_src/cmp.sl")),
+    ("std.bytes", "bytes.sl", include_str!("stdlib_src/bytes.sl")),
+    ("std.strconv", "strconv.sl", include_str!("stdlib_src/strconv.sl")),
+    ("std.unicode.utf8", "utf8.sl", include_str!("stdlib_src/utf8.sl")),
+    ("std.unicode.utf16", "utf16.sl", include_str!("stdlib_src/utf16.sl")),
+    ("std.math.bits", "bits.sl", include_str!("stdlib_src/bits.sl")),
+    ("std.math.complex", "complex.sl", include_str!("stdlib_src/complex.sl")),
+    ("std.math.big", "big.sl", include_str!("stdlib_src/big.sl")),
+    ("std.hash", "hash.sl", include_str!("stdlib_src/hash.sl")),
+    ("std.hash.fnv", "fnv.sl", include_str!("stdlib_src/fnv.sl")),
+    ("std.hash.crc32", "crc32.sl", include_str!("stdlib_src/crc32.sl")),
+    ("std.hash.crc64", "crc64.sl", include_str!("stdlib_src/crc64.sl")),
+    ("std.hash.adler32", "adler32.sl", include_str!("stdlib_src/adler32.sl")),
+    ("std.hash.maphash", "maphash.sl", include_str!("stdlib_src/maphash.sl")),
+    ("std.encoding.binary", "binary.sl", include_str!("stdlib_src/binary.sl")),
+    ("std.encoding.base32", "base32.sl", include_str!("stdlib_src/base32.sl")),
+    ("std.encoding.pem", "pem.sl", include_str!("stdlib_src/pem.sl")),
+    ("std.encoding.asn1", "asn1.sl", include_str!("stdlib_src/asn1.sl")),
+    ("std.collections", "collections2.sl", include_str!("stdlib_src/collections2.sl")),
+    ("std.sync", "sync.sl", include_str!("stdlib_src/sync.sl")),
+    ("std.os.signal", "signal.sl", include_str!("stdlib_src/signal.sl")),
+    ("std.process", "process.sl", include_str!("stdlib_src/process.sl")),
+    ("std.os.user", "user.sl", include_str!("stdlib_src/user.sl")),
+    ("std.cli", "cli.sl", include_str!("stdlib_src/cli.sl")),
+    ("std.testing", "testing.sl", include_str!("stdlib_src/testing.sl")),
+    ("std.embed", "embed.sl", include_str!("stdlib_src/embed.sl")),
+    ("std.time", "time.sl", include_str!("stdlib_src/time.sl")),
+    ("std.io", "io.sl", include_str!("stdlib_src/io.sl")),
+    ("std.os", "os.sl", include_str!("stdlib_src/os.sl")),
 ];
 
 /// The parsed [`MODULES`] (parsed once per process).
@@ -131,12 +208,18 @@ impl<'a> Sema<'a> {
                     ast::Decl::Func(f) => (&f.name.name, self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false)),
                     ast::Decl::Enum(e) => (&e.name.name, self.new_template(&e.name.name, TmplDecl::Enum(e), &e.generics, Vec::new(), false)),
                     ast::Decl::Interface(it) => {
+                        assert!(
+                            it.methods.iter().all(|m| m.body.is_none()),
+                            "internal error: default methods are not supported in stdlib sources yet (interface {})",
+                            it.name.name
+                        );
                         let id = self.interfaces.len() as u32;
                         self.interfaces.push(hir::Interface {
                             name: it.name.name.clone(),
                             full_name: format!("{}.{}", self.nss[ns].path, it.name.name),
                             namespace: hir::NamespaceId(0),
                             methods: Vec::new(),
+                            sealed: it.is_sealed,
                             attrs: Vec::new(),
                             exported: true,
                             file: 0,
@@ -203,6 +286,19 @@ impl<'a> Sema<'a> {
             Some(Inst::Enum(e)) => self.enum_ty(e),
             _ => self.tt.invalid,
         })
+    }
+
+    /// The struct or enum of plain stdlib type template `t` as a member
+    /// (for paths through it: `log.Level.Debug`, `log.Context.Push`).
+    pub(crate) fn plain_std_member(&mut self, t: u32, span: Span) -> Option<Member> {
+        if !self.is_plain_std(t) || !matches!(self.gen.templates[t as usize].decl, TmplDecl::Struct(_) | TmplDecl::Enum(_)) {
+            return None;
+        }
+        match self.plain_std_inst(t, span)? {
+            Inst::Struct(s) => Some(Member::Struct(s)),
+            Inst::Enum(e) => Some(Member::Enum(e)),
+            Inst::Func(_) => None,
+        }
     }
 
     /// The struct of plain stdlib struct template `t` (literals `task.Mutex{}`).

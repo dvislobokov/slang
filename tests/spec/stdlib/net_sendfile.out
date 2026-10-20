@@ -1,0 +1,10 @@
+sent 1000000 10
+HEAD 1000000
+file bytes match: true
+ TAIL
+0123456789 0
+end: true
+missing file: true
+buffered: true
+100 line 99
+after end: true

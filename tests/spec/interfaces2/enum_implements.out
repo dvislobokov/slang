@@ -1,0 +1,5 @@
+color red! true
+msg text hi!
+color green! false
+msg num
+green!

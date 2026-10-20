@@ -1,7 +1,7 @@
 //! Attribute resolution and checking.
 //!
 //! An attribute is either a builtin (`@attribute`, `@reflect`,
-//! `@deprecated`, `@inline`, `@test`, `@json`) or a struct declared with
+//! `@deprecated`, `@inline`, `@test`, `@json`, `@log`) or a struct declared with
 //! `@attribute`, whose fields are its parameters. Arguments are positional
 //! (in field order) or named, must be compile-time constants, and are stored
 //! evaluated in [`hir::Attr`].
@@ -18,6 +18,7 @@ pub(crate) const TARGETS: &[&str] = &["Namespace", "Struct", "Interface", "Enum"
 enum PKind {
     Str,
     Bool,
+    Int,
     Targets,
 }
 
@@ -26,35 +27,55 @@ fn builtin_params(name: &str) -> &'static [(&'static str, PKind)] {
         "attribute" => &[("targets", PKind::Targets), ("repeatable", PKind::Bool)],
         "deprecated" => &[("message", PKind::Str)],
         "json" => &[("name", PKind::Str), ("omitEmpty", PKind::Bool), ("skip", PKind::Bool)],
+        // std.log destructuring (`{@X}`): `@log(skip: true)` hides a field.
+        "log" => &[("skip", PKind::Bool)],
+        // `@embed("path")` on a global: the file's contents (see embed_global).
+        "embed" => &[("path", PKind::Str)],
+        // std.encoding.* field mappings (tier 2): csv, xml, yaml, toml and
+        // the format-independent serde.
+        "csv" => &[("name", PKind::Str), ("index", PKind::Int), ("skip", PKind::Bool), ("omitEmpty", PKind::Bool)],
+        "xml" => &[("name", PKind::Str), ("attr", PKind::Bool), ("text", PKind::Bool), ("omitEmpty", PKind::Bool), ("ns", PKind::Str), ("skip", PKind::Bool)],
+        "yaml" => &[("name", PKind::Str), ("omitEmpty", PKind::Bool), ("skip", PKind::Bool), ("flow", PKind::Bool)],
+        "toml" => &[("name", PKind::Str), ("omitEmpty", PKind::Bool), ("skip", PKind::Bool), ("inline", PKind::Bool)],
+        "serde" => &[("name", PKind::Str), ("omitEmpty", PKind::Bool), ("skip", PKind::Bool)],
         _ => &[],
     }
 }
 
 impl<'a> Sema<'a> {
+    /// Evaluates the attributes (and field defaults) of struct `sid` and
+    /// its fields in the current scope. Also used for instances of generic
+    /// structs created after [`check_attributes`](Self::check_attributes):
+    /// the attributes of a generic struct belong to every instance.
+    pub(crate) fn struct_attrs(&mut self, sid: usize) {
+        let src = self.struct_src[sid];
+        let attrs = self.eval_attrs(&src.attrs, "Struct");
+        self.structs[sid].attrs = attrs;
+        for f in &src.fields {
+            let attrs = self.eval_attrs(&f.attrs, "Field");
+            let ty = self.structs[sid].fields.iter().find(|x| x.name == f.name.name).map(|x| x.ty);
+            let default = match (&f.default, ty) {
+                (Some(d), Some(ty)) => self.attr_value(d, ty),
+                _ => None,
+            };
+            if let Some(field) = self.structs[sid].fields.iter_mut().find(|x| x.name == f.name.name) {
+                field.attrs = attrs;
+                field.default = default;
+            }
+        }
+    }
+
     /// Evaluates the attributes of every declaration.
     pub(crate) fn check_attributes(&mut self) {
         // Attribute structs first: their own `@attribute(...)` and field
         // defaults are needed to check uses.
         let order: Vec<usize> = (0..self.structs.len()).filter(|&s| self.structs[s].is_attribute).chain((0..self.structs.len()).filter(|&s| !self.structs[s].is_attribute)).collect();
         for sid in order {
-            let src = self.struct_src[sid];
             self.cur_file = self.structs[sid].file;
             self.cur_ns = self.file_scopes[self.cur_file].ns;
-            let attrs = self.eval_attrs(&src.attrs, "Struct");
-            self.structs[sid].attrs = attrs;
-            for f in &src.fields {
-                let attrs = self.eval_attrs(&f.attrs, "Field");
-                let ty = self.structs[sid].fields.iter().find(|x| x.name == f.name.name).map(|x| x.ty);
-                let default = match (&f.default, ty) {
-                    (Some(d), Some(ty)) => self.attr_value(d, ty),
-                    _ => None,
-                };
-                if let Some(field) = self.structs[sid].fields.iter_mut().find(|x| x.name == f.name.name) {
-                    field.attrs = attrs;
-                    field.default = default;
-                }
-            }
+            self.struct_attrs(sid);
         }
+        self.attrs_done = true;
         let files = self.files;
         for (fi, file) in files.iter().enumerate() {
             self.cur_file = fi;
@@ -109,6 +130,7 @@ impl<'a> Sema<'a> {
             };
             let attrs = self.eval_attrs(attrs, "Var");
             self.globals[gid].attrs = attrs;
+            self.embed_global(gid);
         }
     }
 
@@ -131,7 +153,15 @@ impl<'a> Sema<'a> {
                 return None;
             }
         }
-        if segs.len() == 1 && BUILTIN_ATTRS.contains(&name.as_str()) {
+        if let Some((PathRes::Member(Member::Generic(t)), n)) = res {
+            if n == segs.len() {
+                if let Some(s) = self.std_attribute_struct(t, a.path.span) {
+                    self.resolve_segments(&segs, true);
+                    return Some(AttrKind::User(s));
+                }
+            }
+        }
+        if segs.len() == 1 && (BUILTIN_ATTRS.contains(&name.as_str()) || name == "embed") {
             return Some(AttrKind::Builtin(name));
         }
         self.err(format!("unknown attribute @{name}"), a.path.span);
@@ -227,6 +257,7 @@ impl<'a> Sema<'a> {
                 PKind::Targets => self.targets_value(e),
                 PKind::Str => self.attr_value(e, self.tt.string),
                 PKind::Bool => self.attr_value(e, self.tt.bool_),
+                PKind::Int => self.attr_value(e, self.tt.int),
             };
             if let Some(v) = v {
                 out.push((pname.to_string(), v));
@@ -338,4 +369,175 @@ impl<'a> Sema<'a> {
             _ => None,
         }
     }
+
+    /// A struct declared with `@attribute` in a Slang-source stdlib module
+    /// (`@binary(endian: "big")` of `std.encoding.binary`, `@flag` of
+    /// `std.cli`): such structs are plain templates, instantiated here on
+    /// first use as an attribute, marked as attribute structs and given
+    /// their own attribute values (field defaults, `targets`).
+    fn std_attribute_struct(&mut self, t: u32, span: Span) -> Option<u32> {
+        let tm = &self.gen.templates[t as usize];
+        if !tm.is_std || !tm.params.is_empty() {
+            return None;
+        }
+        let super::generics::TmplDecl::Struct(decl) = tm.decl else { return None };
+        if !decl.attrs.iter().any(|a| a.path.to_string() == "attribute") {
+            return None;
+        }
+        let sid = self.plain_std_struct(t, span)?;
+        if !self.structs[sid as usize].is_attribute {
+            self.structs[sid as usize].is_attribute = true;
+            self.struct_attrs(sid as usize);
+        }
+        Some(sid)
+    }
+
+    /// `@embed("path")` on a global (DESIGN.md "Атрибуты"): the contents of
+    /// the file, relative to the declaring source file, become the value.
+    /// `var X string` / `const X = ""` (UTF-8 text; the const's own value
+    /// is replaced), `var X []byte` (any bytes), or `var X embed.FS` for a
+    /// directory or a `dir/*.ext` glob (every regular file, recursively for
+    /// a directory, sorted by path).
+    fn embed_global(&mut self, gid: usize) {
+        let Some(attr) = self.globals[gid].attrs.iter().find(|a| a.kind == AttrKind::Builtin("embed".into())) else { return };
+        let span = attr.span;
+        let rel = match attr.args.iter().find(|(k, _)| k == "path") {
+            Some((_, ConstValue::Str(p))) => p.clone(),
+            _ => {
+                self.err("@embed needs a path: @embed(\"file.txt\")", span);
+                return;
+            }
+        };
+        let file = self.globals[gid].file;
+        let base = super::stdlib::embed_source_dir(file);
+        let (declared, is_const) = match self.global_src[gid] {
+            GlobalSrc::Var(v) => {
+                if v.init.is_some() {
+                    self.err("a variable with @embed takes its value from the file: remove the initializer", span);
+                    return;
+                }
+                (v.ty.as_ref(), false)
+            }
+            GlobalSrc::Const(c) => (c.ty.as_ref(), true),
+        };
+        let ty = match declared {
+            Some(t) => self.resolve_type(t),
+            None if is_const => self.tt.string,
+            None => {
+                self.err("@embed needs a declared type: string, []byte or embed.FS", span);
+                return;
+            }
+        };
+        let bytes_ty = self.tt.slice(self.tt.byte);
+        let string = self.tt.string;
+        let init = if ty == string || ty == bytes_ty {
+            let path = base.join(&rel);
+            let data = match std::fs::read(&path) {
+                Ok(d) => d,
+                Err(e) => {
+                    self.err(format!("@embed: cannot read {}: {e}", path.display()), span);
+                    return;
+                }
+            };
+            if ty == string {
+                match String::from_utf8(data) {
+                    Ok(text) => mk(hir::ExprKind::Const(ConstValue::Str(text)), string, span),
+                    Err(_) => {
+                        self.err(format!("@embed: {rel} is not valid UTF-8 text (embed it as []byte)"), span);
+                        return;
+                    }
+                }
+            } else {
+                self.byte_slice_lit(&data, span)
+            }
+        } else if let Some(sid) = self.struct_of(ty).filter(|&s| self.structs[s as usize].full_name == "std.embed.FS") {
+            if is_const {
+                self.err("@embed of an embed.FS must be a var", span);
+                return;
+            }
+            let files = match embed_glob(&base, &rel) {
+                Ok(f) => f,
+                Err(e) => {
+                    self.err(format!("@embed: {e}"), span);
+                    return;
+                }
+            };
+            let strs = self.tt.slice(string);
+            let bytess = self.tt.slice(bytes_ty);
+            let names = files.iter().map(|(n, _)| mk(hir::ExprKind::Const(ConstValue::Str(n.clone())), string, span)).collect();
+            let datas = files.iter().map(|(_, d)| self.byte_slice_lit(d, span)).collect();
+            let field = |s: &Self, n: &str| s.structs[sid as usize].fields.iter().position(|f| f.name == n).unwrap_or(0) as u32;
+            let (fnames, fdata) = (field(self, "names"), field(self, "data"));
+            mk(
+                hir::ExprKind::StructLit {
+                    struct_id: sid,
+                    fields: vec![(fnames, mk(hir::ExprKind::SliceLit(names), strs, span)), (fdata, mk(hir::ExprKind::SliceLit(datas), bytess, span))],
+                },
+                ty,
+                span,
+            )
+        } else {
+            let tn = self.tn(ty);
+            self.err(format!("@embed works on string, []byte and embed.FS, not {tn}"), span);
+            return;
+        };
+        if is_const {
+            let hir::ExprKind::Const(v) = &init.kind else {
+                self.err("@embed on a const needs type string (use var for []byte)", span);
+                return;
+            };
+            let v = v.clone();
+            self.global_folded.insert(gid as u32, super::consts::Folded { value: v.clone(), ty: Some(string) });
+            self.globals[gid].ty = string;
+            self.globals[gid].value = Some(v);
+        } else {
+            self.globals[gid].ty = ty;
+            self.globals[gid].init = Some(init);
+        }
+        self.global_state[gid] = super::GState::Done;
+        self.global_order.push(hir::GlobalId(gid as u32));
+    }
+
+    fn byte_slice_lit(&mut self, data: &[u8], span: Span) -> hir::Expr {
+        let byte = self.tt.byte;
+        let elems = data.iter().map(|b| mk(hir::ExprKind::Const(ConstValue::Int(*b as i128)), byte, span)).collect();
+        let ty = self.tt.slice(byte);
+        mk(hir::ExprKind::SliceLit(elems), ty, span)
+    }
+}
+
+/// The files of an `embed.FS` pattern: a directory (all regular files,
+/// recursively) or `dir/*suffix` (files of dir whose name ends with
+/// suffix); names are relative to `base`, with `/` separators, sorted.
+fn embed_glob(base: &std::path::Path, pattern: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let (dir, suffix) = match pattern.rsplit_once('/') {
+        Some((d, last)) if last.starts_with('*') => (d.to_string(), Some(last[1..].to_string())),
+        _ if pattern.starts_with('*') => (".".to_string(), Some(pattern[1..].to_string())),
+        _ => (pattern.trim_end_matches('/').to_string(), None),
+    };
+    let root = base.join(&dir);
+    let mut out = Vec::new();
+    let mut stack = vec![(root.clone(), dir.clone())];
+    while let Some((d, rel)) = stack.pop() {
+        let entries = std::fs::read_dir(&d).map_err(|e| format!("cannot read directory {}: {e}", d.display()))?;
+        for e in entries {
+            let e = e.map_err(|e| e.to_string())?;
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            let rel_name = if rel == "." || rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            if p.is_dir() {
+                if suffix.is_none() {
+                    stack.push((p, rel_name));
+                }
+            } else if suffix.as_ref().is_none_or(|s| name.ends_with(s.as_str())) {
+                let data = std::fs::read(&p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;
+                out.push((rel_name, data));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    if out.is_empty() {
+        return Err(format!("no files match {pattern:?}"));
+    }
+    Ok(out)
 }

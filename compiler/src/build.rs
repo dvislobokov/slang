@@ -71,6 +71,15 @@ pub struct BuildOptions {
     pub leak_check: bool,
     /// `--no-error-trace`: errors do not record their return trace.
     pub no_error_trace: bool,
+    /// `--target <triple|alias>`: the target of `@cfg`, file suffixes and
+    /// `os.Name`/`os.Arch` (docs/PLATFORMS.md); `None` = the host. Only
+    /// `check` accepts a target other than the host so far.
+    pub target: Option<crate::target::Target>,
+    /// `-g`: DWARF debug information in a `--release` build (debug builds
+    /// always have it, docs/DEBUGGER.md).
+    pub debug_info: bool,
+    /// `--strip`: no debug information and a stripped executable.
+    pub strip: bool,
 }
 
 impl BuildOptions {
@@ -88,7 +97,16 @@ impl BuildOptions {
             packages: Vec::new(),
             leak_check: false,
             no_error_trace: false,
+            target: None,
+            debug_info: false,
+            strip: false,
         }
+    }
+
+    /// Whether the build emits DWARF: debug builds unless `--strip`,
+    /// release builds only with `-g`.
+    pub fn emits_debug_info(&self) -> bool {
+        !self.strip && (!self.release || self.debug_info)
     }
 }
 
@@ -111,11 +129,18 @@ pub fn parse_args(args: &[String]) -> Result<(BuildOptions, Vec<String>), String
                 i += 1;
                 o.output = Some(PathBuf::from(args.get(i).ok_or("-o needs a path")?));
             }
+            "--target" => {
+                i += 1;
+                let t = args.get(i).ok_or("--target needs a triple (x86_64-unknown-linux-gnu) or an alias (linux-amd64)")?;
+                o.target = Some(crate::target::Target::parse(t)?);
+            }
             "-p" | "--package" => {
                 i += 1;
                 o.packages.push(args.get(i).ok_or("-p needs a package name")?.clone());
             }
             "--release" => o.release = true,
+            "-g" | "--debug-info" => o.debug_info = true,
+            "--strip" => o.strip = true,
             "--leak-check" => o.leak_check = true,
             "--no-error-trace" => o.no_error_trace = true,
             "--static" => o.static_link = true,
@@ -294,9 +319,26 @@ fn sync_lock(project: &Project, opts: &BuildOptions) -> Result<(), String> {
 
 // -- commands -------------------------------------------------------------------
 
+/// Makes `--target` the process-wide target ([`crate::target::set_current`]).
+/// Code generation only exists for the host so far, so `codegen` refuses
+/// any other target.
+fn use_target(opts: &BuildOptions, codegen: bool) -> Result<(), String> {
+    let Some(t) = &opts.target else { return Ok(()) };
+    let host = crate::target::Target::host();
+    if codegen && (t.os != host.os || t.arch != host.arch) {
+        return Err(format!(
+            "cross-compilation to {} is not supported yet (host: {}); `slang check --target {}` checks the code for it",
+            t.triple, host.triple, t.triple
+        ));
+    }
+    crate::target::set_current(t.clone());
+    Ok(())
+}
+
 /// `slang build`: builds every selected target; returns the produced files
 /// (executables, or nothing for libraries).
 pub fn build(opts: &BuildOptions) -> Result<Vec<PathBuf>, String> {
+    use_target(opts, true)?;
     match plan(opts)? {
         Plan::Plain(input) => Ok(vec![build_plain(&input, opts)?]),
         Plan::Project(project, targets) => {
@@ -313,6 +355,7 @@ pub fn build(opts: &BuildOptions) -> Result<Vec<PathBuf>, String> {
 /// `slang run`: builds the program and runs it; returns its exit code.
 pub fn run(mut opts: BuildOptions, args: &[String]) -> Result<i32, String> {
     opts.emit = Emit::Exe;
+    use_target(&opts, true)?;
     let (exe, tmp) = match plan(&opts)? {
         Plan::Plain(input) => {
             let dir = std::env::temp_dir().join(format!("slang-run-{}", std::process::id()));
@@ -353,6 +396,7 @@ pub fn run(mut opts: BuildOptions, args: &[String]) -> Result<i32, String> {
 /// `slang check` (`dev`: `slang test`, dev-dependencies visible): runs the
 /// front end; with `dump_hir`, prints the HIR of each target.
 pub fn check(opts: &BuildOptions, dump_hir: bool, dev: bool) -> Result<usize, String> {
+    use_target(opts, false)?;
     match plan(opts)? {
         Plan::Plain(input) => {
             let (files, program) = front_end_plain(&input)?;
@@ -410,13 +454,41 @@ fn front_end_package(project: &Project, target: PkgId, dev: bool) -> Result<(pac
 
 fn build_plain(input: &Path, opts: &BuildOptions) -> Result<PathBuf, String> {
     let (_, program) = front_end_plain(input)?;
+    let output = opts.output.clone().unwrap_or_else(|| default_output(input, opts.emit));
+    let name = input.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into());
+    emit_plain(&program, &name, output, opts)
+}
+
+/// `slang test`: builds an executable from in-memory sources (the user's
+/// files, with `main` renamed, plus the generated test driver; see
+/// `main.rs`/`testrun.rs`). Paths stay those of the original files, so
+/// diagnostics and `@embed` resolve as usual.
+pub fn build_sources(files: Vec<crate::span::SourceFile>, output: &Path, opts: &BuildOptions) -> Result<PathBuf, String> {
+    use_target(opts, true)?;
+    let mut diags = Diagnostics::new();
+    let program = driver::check(&files, &mut diags);
+    if !diags.is_empty() {
+        eprint!("{}", diags.render_all_files(&files));
+    }
+    let program = match program {
+        Some(p) if !diags.has_errors() => p,
+        _ => return Err("compilation failed".into()),
+    };
+    let mut opts = opts.clone();
+    opts.emit = Emit::Exe;
+    emit_plain(&program, "test", output.to_path_buf(), &opts)
+}
+
+/// Code generation, optimisation and linking of a checked plain program.
+fn emit_plain(program: &Program, name: &str, output: PathBuf, opts: &BuildOptions) -> Result<PathBuf, String> {
     if program.entry.is_none() && opts.emit == Emit::Exe {
         return Err("no `main` function: cannot build an executable".into());
     }
-    let output = opts.output.clone().unwrap_or_else(|| default_output(input, opts.emit));
+    if let Some(dir) = output.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
     let ctx = Context::create();
-    let name = input.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into());
-    let module = lower(&program, &ctx, &name, &output, opts)?;
+    let module = lower(program, &ctx, name, &output, opts)?;
     let machine = codegen::host_machine(opt_level(opts.opt))?;
     set_sections(&module);
     optimise(&module, &machine, opts.opt)?;
@@ -446,7 +518,7 @@ fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path,
         (true, true) => 1,
         (true, false) => 2,
     };
-    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace }) {
+    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace, debug_info: opts.emits_debug_info(), optimized: opts.opt > 0 }) {
         Ok(m) => m,
         Err(errs) => {
             for e in &errs {
@@ -455,6 +527,7 @@ fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path,
             return Err("code generation failed".into());
         }
     };
+    keep_frame_pointers(ctx, &module);
     if let Err(e) = module.verify() {
         let ll = output.with_extension("ll");
         let _ = module.print_to_file(&ll);
@@ -463,9 +536,23 @@ fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path,
     Ok(module)
 }
 
+/// Every defined function keeps its frame pointer (`"frame-pointer"="all"`,
+/// like the runtime's `-fno-omit-frame-pointer`): the std.diag CPU profiler
+/// walks stacks through them (docs/FRAMEWORK.md section 5).
+fn keep_frame_pointers(ctx: &Context, module: &Module) {
+    let fp = ctx.create_string_attribute("frame-pointer", "all");
+    for f in module.get_functions() {
+        if f.count_basic_blocks() > 0 {
+            f.add_attribute(inkwell::attributes::AttributeLoc::Function, fp);
+        }
+    }
+}
+
 fn optimise(module: &Module, machine: &TargetMachine, opt: u8) -> Result<(), String> {
     let pipeline = format!("default<O{}>", opt.min(3));
-    module.run_passes(&pipeline, machine, PassBuilderOptions::create()).map_err(|e| format!("internal compiler error: optimisation failed: {}", e.to_string()))
+    module.run_passes(&pipeline, machine, PassBuilderOptions::create()).map_err(|e| format!("internal compiler error: optimisation failed: {}", e.to_string()))?;
+    codegen::dedup_declares(module);
+    Ok(())
 }
 
 fn write_object(machine: &TargetMachine, module: &Module, path: &Path) -> Result<(), String> {
@@ -479,9 +566,13 @@ fn link(objs: &[PathBuf], output: &Path, opts: &BuildOptions) -> Result<(), Stri
     let mut cmd = Command::new(&clang);
     cmd.args(objs).arg(&rt).arg("-lpthread").arg("-lm").arg("-o").arg(output);
     if opts.release {
-        cmd.arg("-Wl,--gc-sections").arg("-s");
+        cmd.arg("-Wl,--gc-sections");
     } else if !opts.static_link {
         cmd.arg("-rdynamic");
+    }
+    // Release builds are stripped unless `-g` asked for debug info.
+    if opts.strip || (opts.release && !opts.debug_info) {
+        cmd.arg("-s");
     }
     if opts.static_link {
         cmd.arg("-static");
@@ -531,7 +622,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
         set_sections(&part);
         let mut h = Sha256::new();
         h.update(compiler.as_bytes());
-        h.update(format!("\0opt={}\0release={}\0leak={}\0trace={}\0triple={}\0", opts.opt, opts.release, opts.leak_check, !opts.no_error_trace, machine.get_triple()).as_bytes());
+        h.update(format!("\0opt={}\0release={}\0leak={}\0trace={}\0debug={}\0triple={}\0", opts.opt, opts.release, opts.leak_check, !opts.no_error_trace, opts.emits_debug_info(), machine.get_triple()).as_bytes());
         h.update(part.print_to_string().to_bytes());
         let key = lock::hex(&h.finalize()[..8]);
         let obj = cache.join(format!("{name}-{key}.o"));

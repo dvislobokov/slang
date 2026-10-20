@@ -57,7 +57,12 @@
 //! `std.math.MaxInt`/`MinInt`/`MaxInt32`/`MinInt32`/`MaxUint32`/`MaxUint`
 //! (untyped int), all inlined, and the sentinel error `std.fs.ErrNotFound`
 //! (runtime `slang_fs_err_not_found()`, wrapped by every "file not found"
-//! error of `std.io`/`std.fs`).
+//! error of `std.io`/`std.fs`), the `std.net` sentinels `ErrClosed`,
+//! `ErrTimeout`, `ErrRefused`, `ErrReset`, `ErrUnreachable`, `ErrAddrInUse`,
+//! `ErrNotFound`, `ErrEOF` (`slang_net_err_*()`, runtime/ABI.md 16.2); the
+//! target constants `std.os.Name`,
+//! `Arch`, `PathSeparator`, `LineSeparator` (`string`, folded at compile
+//! time from [`crate::target::current`]).
 //!
 //! Specials (no extern; see `hir`):
 //! `std.io.println` / `std.io.print` → [`crate::hir::ExprKind::Print`]
@@ -69,7 +74,9 @@
 //! `std.errors.New` → [`crate::hir::Builtin::ErrorNew`],
 //! `std.errors.As` → [`crate::hir::Builtin::ErrorsAs`].
 //!
-//! Slang-source stdlib (`std.task` types, `std.net`, `std.net.http`):
+//! Slang-source stdlib (`std.task` types, `std.net`, `std.net.http`,
+//! `std.crypto.x509`, `std.net.tls`; the C crypto primitives behind the
+//! latter are the `std.crypto.*` rows below, `runtime/ABI.md` section 19):
 //! [`super::stdsrc`]; their runtime primitives are the `rt*` externs below
 //! (internal; `runtime/ABI.md` 10.10, 10.11 and 16).
 //!
@@ -113,6 +120,7 @@ fn std_struct_decls() -> &'static [ast::StructDecl] {
                     .collect(),
                 embeds: Vec::new(),
                 methods: Vec::new(),
+                implements: Vec::new(),
                 span: Span::DUMMY,
             })
             .collect()
@@ -184,6 +192,76 @@ pub const NAMESPACES: &[&str] = &[
     "std.uuid",
     "std.net",
     "std.net.http",
+    // TLS and the crypto primitives behind it (runtime/ABI.md section 19)
+    "std.net.tls",
+    "std.crypto.aes",
+    "std.crypto.chacha",
+    "std.crypto.x25519",
+    "std.crypto.ecdh",
+    "std.crypto.ecdsa",
+    "std.crypto.ed25519",
+    "std.crypto.rsa",
+    "std.crypto.hkdf",
+    "std.crypto.x509",
+    "std.log",
+    "std.diag",
+    "std.arena",
+    // >>> tier 2 stdlib (docs/STDLIB.md level 2)
+    "std.regex",
+    "std.compress",
+    "std.compress.deflate",
+    "std.compress.zlib",
+    "std.compress.gzip",
+    "std.compress.zstd",
+    "std.compress.brotli",
+    "std.archive",
+    "std.archive.zip",
+    "std.archive.tar",
+    "std.encoding.csv",
+    "std.encoding.xml",
+    "std.encoding.yaml",
+    "std.encoding.toml",
+    "std.html",
+    "std.html.template",
+    "std.text",
+    "std.text.template",
+    "std.mime",
+    "std.mime.multipart",
+    "std.mime.quotedprintable",
+    "std.net.textproto",
+    "std.net.url",
+    "std.text.scanner",
+    "std.text.table",
+    // <<< tier 2 stdlib
+    // tier 0/1 stdlib (docs/STDLIB.md)
+    "std.slices",
+    "std.maps",
+    "std.cmp",
+    "std.bytes",
+    "std.strconv",
+    "std.unicode",
+    "std.unicode.utf8",
+    "std.unicode.utf16",
+    "std.math.bits",
+    "std.math.complex",
+    "std.math.big",
+    "std.hash",
+    "std.hash.fnv",
+    "std.hash.crc32",
+    "std.hash.crc64",
+    "std.hash.adler32",
+    "std.hash.maphash",
+    "std.encoding.binary",
+    "std.encoding.base32",
+    "std.encoding.pem",
+    "std.encoding.asn1",
+    "std.sync",
+    "std.os.signal",
+    "std.process",
+    "std.os.user",
+    "std.cli",
+    "std.testing",
+    "std.embed",
 ];
 
 /// An ordinary stdlib function implemented by the runtime.
@@ -224,6 +302,12 @@ pub enum Special {
     /// `std.errors.Frames(err error) []errors.Frame` (extern
     /// `slang_errors_frames`; the result type names a [`STRUCTS`] entry).
     ErrorsFrames,
+    /// `std.arena.rtArenaNew<T>(h int) *T` (internal, used by
+    /// `Arena.New<T>`) → [`crate::hir::Builtin::ArenaNew`].
+    ArenaNew,
+    /// `std.arena.rtArenaAlloc<T>(h int, n int) []T` (internal, used by
+    /// `Arena.Alloc<T>`) → [`crate::hir::Builtin::ArenaSlice`].
+    ArenaAlloc,
 }
 
 /// Special functions by namespace and name.
@@ -237,6 +321,8 @@ pub const SPECIALS: &[(&str, &str, Special)] = &[
     ("std.errors", "New", Special::ErrorsNew),
     ("std.errors", "As", Special::ErrorsAs),
     ("std.errors", "Frames", Special::ErrorsFrames),
+    ("std.arena", "rtArenaNew", Special::ArenaNew),
+    ("std.arena", "rtArenaAlloc", Special::ArenaAlloc),
 ];
 
 /// Builtin stdlib struct types: (namespace, name, fields as (name, type)).
@@ -265,6 +351,35 @@ pub enum StdConst {
     /// Sentinel error: a zero-argument runtime function returning the
     /// immortal error object (so `errors.Is` compares identity).
     Error(&'static str),
+    /// `string` constant describing the compilation target
+    /// ([`crate::target::current`]): `os.Name`, `os.Arch`,
+    /// `os.PathSeparator`, `os.LineSeparator`.
+    Target(TargetConst),
+}
+
+/// Target-dependent `std.os` string constants.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TargetConst {
+    Name,
+    Arch,
+    PathSeparator,
+    LineSeparator,
+    /// A fixed string constant (not target dependent): `time.RFC3339`.
+    Str(&'static str),
+}
+
+impl TargetConst {
+    /// The value for the current target.
+    pub fn value(self) -> String {
+        let t = crate::target::current();
+        match self {
+            TargetConst::Name => t.os.clone(),
+            TargetConst::Arch => t.arch.clone(),
+            TargetConst::PathSeparator => t.path_separator().to_string(),
+            TargetConst::LineSeparator => t.line_separator().to_string(),
+            TargetConst::Str(v) => v.to_string(),
+        }
+    }
 }
 
 impl std::fmt::Display for StdConst {
@@ -273,6 +388,7 @@ impl std::fmt::Display for StdConst {
             StdConst::Float(v) => write!(f, "{v} (untyped float)"),
             StdConst::Int(v) => write!(f, "{v} (untyped int)"),
             StdConst::Error(_) => write!(f, "error (sentinel)"),
+            StdConst::Target(t) => write!(f, "{:?} (string)", t.value()),
         }
     }
 }
@@ -289,6 +405,151 @@ pub const CONSTS: &[(&str, &str, StdConst)] = &[
     ("std.math", "MaxUint", StdConst::Int(u64::MAX as i128)),
     ("std.fs", "ErrNotFound", StdConst::Error("slang_fs_err_not_found")),
     ("std.task", "ErrCancelled", StdConst::Error("slang_task_err_cancelled")),
+    // std.net sentinels (runtime/src/std_net.c); every net error wraps one
+    // of them when its cause is of that kind
+    ("std.net", "ErrClosed", StdConst::Error("slang_net_err_closed")),
+    ("std.net", "ErrTimeout", StdConst::Error("slang_net_err_timeout")),
+    ("std.net", "ErrRefused", StdConst::Error("slang_net_err_refused")),
+    ("std.net", "ErrReset", StdConst::Error("slang_net_err_reset")),
+    ("std.net", "ErrUnreachable", StdConst::Error("slang_net_err_unreachable")),
+    ("std.net", "ErrAddrInUse", StdConst::Error("slang_net_err_addr_in_use")),
+    ("std.net", "ErrNotFound", StdConst::Error("slang_net_err_not_found")),
+    ("std.net", "ErrEOF", StdConst::Error("slang_net_err_eof")),
+    // std.net.tls: protocol versions and ServerConfig.ClientAuth modes
+    ("std.net.tls", "V12", StdConst::Int(0x0303)),
+    ("std.net.tls", "V13", StdConst::Int(0x0304)),
+    ("std.net.tls", "NoClientCert", StdConst::Int(0)),
+    ("std.net.tls", "RequestClientCert", StdConst::Int(1)),
+    ("std.net.tls", "RequireAnyClientCert", StdConst::Int(2)),
+    ("std.net.tls", "VerifyClientCertIfGiven", StdConst::Int(3)),
+    ("std.net.tls", "RequireAndVerifyClientCert", StdConst::Int(4)),
+    // tier 0/1 stdlib (docs/STDLIB.md)
+    ("std.strconv", "ErrSyntax", StdConst::Error("slang_strconv_err_syntax")),
+    ("std.strconv", "ErrRange", StdConst::Error("slang_strconv_err_range")),
+    ("std.unicode", "MaxRune", StdConst::Int(0x10FFFF)),
+    ("std.unicode", "ReplacementChar", StdConst::Int(0xFFFD)),
+    ("std.unicode.utf8", "RuneError", StdConst::Int(0xFFFD)),
+    ("std.unicode.utf8", "UTFMax", StdConst::Int(4)),
+    ("std.unicode.utf8", "RuneSelf", StdConst::Int(0x80)),
+    ("std.math.bits", "UintSize", StdConst::Int(64)),
+    ("std.hash.crc32", "IEEE", StdConst::Int(0xEDB88320)),
+    ("std.hash.crc32", "Castagnoli", StdConst::Int(0x82F63B78)),
+    ("std.hash.crc32", "Koopman", StdConst::Int(0xEB31D82E)),
+    ("std.hash.crc64", "ISO", StdConst::Int(0xD800000000000000)),
+    ("std.hash.crc64", "ECMA", StdConst::Int(0xC96C5795D7870F42)),
+    ("std.encoding.binary", "MaxVarintLen16", StdConst::Int(3)),
+    ("std.encoding.binary", "MaxVarintLen32", StdConst::Int(5)),
+    ("std.encoding.binary", "MaxVarintLen64", StdConst::Int(10)),
+    // std.time layouts (Go reference layouts)
+    ("std.time", "Layout", StdConst::Target(TargetConst::Str("01/02 03:04:05PM '06 -0700"))),
+    ("std.time", "ANSIC", StdConst::Target(TargetConst::Str("Mon Jan _2 15:04:05 2006"))),
+    ("std.time", "UnixDate", StdConst::Target(TargetConst::Str("Mon Jan _2 15:04:05 MST 2006"))),
+    ("std.time", "RubyDate", StdConst::Target(TargetConst::Str("Mon Jan 02 15:04:05 -0700 2006"))),
+    ("std.time", "RFC822", StdConst::Target(TargetConst::Str("02 Jan 06 15:04 MST"))),
+    ("std.time", "RFC822Z", StdConst::Target(TargetConst::Str("02 Jan 06 15:04 -0700"))),
+    ("std.time", "RFC850", StdConst::Target(TargetConst::Str("Monday, 02-Jan-06 15:04:05 MST"))),
+    ("std.time", "RFC1123", StdConst::Target(TargetConst::Str("Mon, 02 Jan 2006 15:04:05 MST"))),
+    ("std.time", "RFC1123Z", StdConst::Target(TargetConst::Str("Mon, 02 Jan 2006 15:04:05 -0700"))),
+    ("std.time", "RFC3339", StdConst::Target(TargetConst::Str("2006-01-02T15:04:05Z07:00"))),
+    ("std.time", "RFC3339Nano", StdConst::Target(TargetConst::Str("2006-01-02T15:04:05.999999999Z07:00"))),
+    ("std.time", "Kitchen", StdConst::Target(TargetConst::Str("3:04PM"))),
+    ("std.time", "Stamp", StdConst::Target(TargetConst::Str("Jan _2 15:04:05"))),
+    ("std.time", "StampMilli", StdConst::Target(TargetConst::Str("Jan _2 15:04:05.000"))),
+    ("std.time", "StampMicro", StdConst::Target(TargetConst::Str("Jan _2 15:04:05.000000"))),
+    ("std.time", "StampNano", StdConst::Target(TargetConst::Str("Jan _2 15:04:05.000000000"))),
+    ("std.time", "DateTime", StdConst::Target(TargetConst::Str("2006-01-02 15:04:05"))),
+    ("std.time", "DateOnly", StdConst::Target(TargetConst::Str("2006-01-02"))),
+    ("std.time", "TimeOnly", StdConst::Target(TargetConst::Str("15:04:05"))),
+    // >>> tier 2 stdlib constants
+    ("std.compress", "NoCompression", StdConst::Int(0)),
+    ("std.compress", "BestSpeed", StdConst::Int(1)),
+    ("std.compress", "BestCompression", StdConst::Int(9)),
+    ("std.compress", "DefaultCompression", StdConst::Int(-1)),
+    ("std.archive.zip", "Store", StdConst::Int(0)),
+    ("std.archive.zip", "Deflate", StdConst::Int(8)),
+    ("std.archive.tar", "TypeReg", StdConst::Int(48)),
+    ("std.archive.tar", "TypeLink", StdConst::Int(49)),
+    ("std.archive.tar", "TypeSymlink", StdConst::Int(50)),
+    ("std.archive.tar", "TypeDir", StdConst::Int(53)),
+    ("std.text.scanner", "EOF", StdConst::Int(-1)),
+    ("std.text.scanner", "Ident", StdConst::Int(-2)),
+    ("std.text.scanner", "Int", StdConst::Int(-3)),
+    ("std.text.scanner", "Float", StdConst::Int(-4)),
+    ("std.text.scanner", "Char", StdConst::Int(-5)),
+    ("std.text.scanner", "String", StdConst::Int(-6)),
+    ("std.text.scanner", "RawString", StdConst::Int(-7)),
+    ("std.text.scanner", "Comment", StdConst::Int(-8)),
+    ("std.text.scanner", "ScanIdents", StdConst::Int(4)),
+    ("std.text.scanner", "ScanInts", StdConst::Int(8)),
+    ("std.text.scanner", "ScanFloats", StdConst::Int(16)),
+    ("std.text.scanner", "ScanChars", StdConst::Int(32)),
+    ("std.text.scanner", "ScanStrings", StdConst::Int(64)),
+    ("std.text.scanner", "ScanRawStrings", StdConst::Int(128)),
+    ("std.text.scanner", "ScanComments", StdConst::Int(256)),
+    ("std.text.scanner", "SkipComments", StdConst::Int(512)),
+    ("std.text.scanner", "GoTokens", StdConst::Int(1012)),
+    ("std.text.scanner", "GoWhitespace", StdConst::Int(4294977024)),
+    ("std.text.table", "Plain", StdConst::Int(0)),
+    ("std.text.table", "ASCII", StdConst::Int(1)),
+    ("std.text.table", "Unicode", StdConst::Int(2)),
+    ("std.text.table", "Markdown", StdConst::Int(3)),
+    ("std.text.table", "Left", StdConst::Int(0)),
+    ("std.text.table", "Right", StdConst::Int(1)),
+    ("std.text.table", "Center", StdConst::Int(2)),
+    // <<< tier 2 stdlib constants
+    ("std.io", "EOF", StdConst::Error("slang_io_err_eof")),
+    ("std.io", "SeekStart", StdConst::Int(0)),
+    ("std.io", "SeekCurrent", StdConst::Int(1)),
+    ("std.io", "SeekEnd", StdConst::Int(2)),
+    ("std.os", "O_RDONLY", StdConst::Int(0)),
+    ("std.os", "O_WRONLY", StdConst::Int(1)),
+    ("std.os", "O_RDWR", StdConst::Int(2)),
+    ("std.os", "O_APPEND", StdConst::Int(8)),
+    ("std.os", "O_CREATE", StdConst::Int(64)),
+    ("std.os", "O_EXCL", StdConst::Int(128)),
+    ("std.os", "O_SYNC", StdConst::Int(256)),
+    ("std.os", "O_TRUNC", StdConst::Int(512)),
+    ("std.encoding.asn1", "TagBoolean", StdConst::Int(1)),
+    ("std.encoding.asn1", "TagInteger", StdConst::Int(2)),
+    ("std.encoding.asn1", "TagBitString", StdConst::Int(3)),
+    ("std.encoding.asn1", "TagOctetString", StdConst::Int(4)),
+    ("std.encoding.asn1", "TagNull", StdConst::Int(5)),
+    ("std.encoding.asn1", "TagOID", StdConst::Int(6)),
+    ("std.encoding.asn1", "TagEnum", StdConst::Int(10)),
+    ("std.encoding.asn1", "TagUTF8String", StdConst::Int(12)),
+    ("std.encoding.asn1", "TagSequence", StdConst::Int(16)),
+    ("std.encoding.asn1", "TagSet", StdConst::Int(17)),
+    ("std.encoding.asn1", "TagNumericString", StdConst::Int(18)),
+    ("std.encoding.asn1", "TagPrintableString", StdConst::Int(19)),
+    ("std.encoding.asn1", "TagT61String", StdConst::Int(20)),
+    ("std.encoding.asn1", "TagIA5String", StdConst::Int(22)),
+    ("std.encoding.asn1", "TagUTCTime", StdConst::Int(23)),
+    ("std.encoding.asn1", "TagGeneralizedTime", StdConst::Int(24)),
+    ("std.encoding.asn1", "TagBMPString", StdConst::Int(30)),
+    ("std.encoding.asn1", "ClassUniversal", StdConst::Int(0)),
+    ("std.encoding.asn1", "ClassApplication", StdConst::Int(1)),
+    ("std.encoding.asn1", "ClassContextSpecific", StdConst::Int(2)),
+    ("std.encoding.asn1", "ClassPrivate", StdConst::Int(3)),
+    // std.os.signal numbers (Linux values)
+    ("std.os.signal", "SIGHUP", StdConst::Int(1)),
+    ("std.os.signal", "SIGINT", StdConst::Int(2)),
+    ("std.os.signal", "SIGQUIT", StdConst::Int(3)),
+    ("std.os.signal", "SIGABRT", StdConst::Int(6)),
+    ("std.os.signal", "SIGKILL", StdConst::Int(9)),
+    ("std.os.signal", "SIGUSR1", StdConst::Int(10)),
+    ("std.os.signal", "SIGUSR2", StdConst::Int(12)),
+    ("std.os.signal", "SIGPIPE", StdConst::Int(13)),
+    ("std.os.signal", "SIGALRM", StdConst::Int(14)),
+    ("std.os.signal", "SIGTERM", StdConst::Int(15)),
+    ("std.os.signal", "SIGCHLD", StdConst::Int(17)),
+    ("std.os.signal", "SIGWINCH", StdConst::Int(28)),
+    ("std.process", "Inherit", StdConst::Int(0)),
+    ("std.process", "Pipe", StdConst::Int(1)),
+    ("std.process", "Null", StdConst::Int(2)),
+    ("std.os", "Name", StdConst::Target(TargetConst::Name)),
+    ("std.os", "Arch", StdConst::Target(TargetConst::Arch)),
+    ("std.os", "PathSeparator", StdConst::Target(TargetConst::PathSeparator)),
+    ("std.os", "LineSeparator", StdConst::Target(TargetConst::LineSeparator)),
 ];
 
 macro_rules! f {
@@ -331,6 +592,11 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.errors", "Unwrap", "error", "error", "slang_errors_unwrap"),
     f!("std.errors", "Is", "error, error", "bool", "slang_errors_is"),
     f!("std.errors", "Trace", "error", "string", "slang_errors_trace"),
+    f!("std.arena", "rtArenaCreate", "", "int", "slang_arena_create"),
+    f!("std.arena", "rtArenaDestroy", "int", "void", "slang_arena_destroy"),
+    f!("std.arena", "rtArenaFree", "int", "void", "slang_arena_free"),
+    f!("std.arena", "rtArenaString", "int, string", "string", "slang_arena_string"),
+    f!("std.arena", "rtArenaLen", "int", "int", "slang_arena_objects"),
     f!("std.task", "Delay", "int", "Task<void>", "slang_task_delay"),
     f!("std.task", "Yield", "", "Task<void>", "slang_task_yield"),
     // internal primitives of the Slang-source std.task (sema/stdlib_src/task.sl)
@@ -469,29 +735,265 @@ pub const FUNCS: &[StdFunc] = &[
     // std.encoding.json: the C half (std_json.c); the rest is Slang (sema/reflect_src/json.sl)
     f!("std.encoding.json", "Quote", "string", "string", "slang_encoding_json_quote"),
     f!("std.encoding.json", "scan", "string", "[]string!", "slang_encoding_json_scan"),
-    // internal primitives of the Slang-source std.net (sema/stdlib_src/net.sl)
-    f!("std.net", "rtConnect", "string, int", "int!", "slang_net_rt_connect"),
+    // internal primitives of the Slang-source std.net (sema/stdlib_src/net.sl, net_udp.sl);
+    // sockets are runtime handles (ABI.md 16)
+    f!("std.net", "rtOpError", "error, string, error", "error", "slang_net_rt_op_error"),
+    f!("std.net", "rtDial", "string, int, string, int", "int!", "slang_net_rt_dial"),
+    f!("std.net", "rtDialUnix", "string", "int!", "slang_net_rt_dial_unix"),
     f!("std.net", "rtConnectResult", "int", "void!", "slang_net_rt_connect_result"),
-    f!("std.net", "rtListen", "string, int", "int!", "slang_net_rt_listen"),
+    f!("std.net", "rtConnectCheck", "int", "int!", "slang_net_rt_connect_check"),
+    f!("std.net", "rtWaitAnyWritable", "[]int, int", "Task<int>", "slang_net_rt_wait_any_writable"),
+    f!("std.net", "rtListen", "string, int, int, int", "int!", "slang_net_rt_listen"),
+    f!("std.net", "rtListenUnix", "string, int", "int!", "slang_net_rt_listen_unix"),
     f!("std.net", "rtAccept", "int", "int!", "slang_net_rt_accept"),
     f!("std.net", "rtRead", "int, int", "[]byte!", "slang_net_rt_read"),
+    f!("std.net", "rtReadInto", "int, []byte, int", "int!", "slang_net_rt_read_into"),
     f!("std.net", "rtAgain", "", "bool", "slang_net_rt_again"),
     f!("std.net", "rtWrite", "int, []byte, int", "int!", "slang_net_rt_write"),
     f!("std.net", "rtWriteStr", "int, string, int", "int!", "slang_net_rt_write_str"),
+    f!("std.net", "rtWriteV", "int, [][]byte, int", "int!", "slang_net_rt_write_v"),
+    f!("std.net", "rtShutdown", "int, int", "void!", "slang_net_rt_shutdown"),
     f!("std.net", "rtClose", "int", "void", "slang_net_rt_close"),
+    f!("std.net", "rtFree", "int", "void", "slang_net_rt_free"),
+    f!("std.net", "rtIsClosed", "int", "bool", "slang_net_rt_is_closed"),
+    f!("std.net", "rtFd", "int", "int", "slang_net_rt_fd"),
     f!("std.net", "rtWaitReadable", "int, int", "Task<int>", "slang_net_rt_wait_readable"),
     f!("std.net", "rtWaitWritable", "int, int", "Task<int>", "slang_net_rt_wait_writable"),
     f!("std.net", "rtLocalAddr", "int", "string", "slang_net_rt_local_addr"),
     f!("std.net", "rtRemoteAddr", "int", "string", "slang_net_rt_remote_addr"),
     f!("std.net", "rtPort", "int", "int", "slang_net_rt_port"),
+    f!("std.net", "rtSetOpt", "int, int, int", "void!", "slang_net_rt_set_opt"),
+    f!("std.net", "rtGetOpt", "int, int", "int!", "slang_net_rt_get_opt"),
+    f!("std.net", "rtMcast", "int, bool, string, string", "void!", "slang_net_rt_mcast"),
+    f!("std.net", "rtOpenFile", "string", "int!", "slang_net_rt_open_file"),
+    f!("std.net", "rtFileSize", "int", "int", "slang_net_rt_file_size"),
+    f!("std.net", "rtCloseFile", "int", "void", "slang_net_rt_close_file"),
+    f!("std.net", "rtSendFile", "int, int, int, int", "int!", "slang_net_rt_send_file"),
+    f!("std.net", "rtParseIP", "string", "[]byte", "slang_net_rt_parse_ip"),
+    f!("std.net", "rtFormatIP", "[]byte", "string", "slang_net_rt_format_ip"),
     f!("std.net", "rtIsIP", "string", "bool", "slang_net_rt_is_ip"),
-    f!("std.net", "rtResolve", "string", "Task<int>", "slang_net_rt_resolve"),
+    f!("std.net", "rtIfIndex", "string", "int", "slang_net_rt_if_index"),
+    f!("std.net", "rtIfName", "int", "string", "slang_net_rt_if_name"),
+    f!("std.net", "rtInterfaces", "", "[]string!", "slang_net_rt_interfaces"),
+    f!("std.net", "rtLookupPort", "string, string", "int", "slang_net_rt_lookup_port"),
+    f!("std.net", "rtResolve", "string, int", "Task<int>", "slang_net_rt_resolve"),
+    f!("std.net", "rtReverse", "string", "Task<int>", "slang_net_rt_reverse"),
     f!("std.net", "rtResolveTake", "int", "[]string!", "slang_net_rt_resolve_take"),
-    f!("std.net", "rtUdpBind", "string, int", "int!", "slang_net_rt_udp_bind"),
+    f!("std.net", "rtResolveSync", "string, int", "[]string!", "slang_net_rt_resolve_sync"),
+    f!("std.net", "rtUdp", "string, int, int", "int!", "slang_net_rt_udp"),
+    f!("std.net", "rtUdpDial", "string, int, string, int", "int!", "slang_net_rt_udp_dial"),
     f!("std.net", "rtRecvFrom", "int, int", "[]byte!", "slang_net_rt_recv_from"),
+    f!("std.net", "rtReadFrom", "int, []byte", "int!", "slang_net_rt_read_from"),
     f!("std.net", "rtLastFrom", "", "string", "slang_net_rt_last_from"),
     f!("std.net", "rtLastFromPort", "", "int", "slang_net_rt_last_from_port"),
+    f!("std.net", "rtLastTrunc", "", "bool", "slang_net_rt_last_trunc"),
     f!("std.net", "rtSendTo", "int, []byte, string, int", "int!", "slang_net_rt_send_to"),
+    f!("std.net", "rtBytes", "int", "[]byte", "slang_net_rt_bytes"),
+    f!("std.net", "rtCopyBytes", "[]byte, int, []byte, int, int", "int", "slang_net_rt_copy_bytes"),
+    f!("std.net", "rtIndexByte", "[]byte, int, int", "int", "slang_net_rt_index_byte"),
+    f!("std.net", "rtJoin", "[]byte, []byte, int", "[]byte", "slang_net_rt_join"),
+    // internal primitives of the Slang-source std.diag / std.log
+    // (sema/stdlib_src/{diag,log}.sl; runtime diag.c, profile.c)
+    f!("std.diag", "rtSlots", "", "map[string]any", "slang_diag_rt_slots"),
+    f!("std.diag", "rtSetSlots", "map[string]any", "void", "slang_diag_rt_set_slots"),
+    f!("std.diag", "rtLock", "", "void", "slang_diag_rt_lock"),
+    f!("std.diag", "rtUnlock", "", "void", "slang_diag_rt_unlock"),
+    f!("std.diag", "rtLiveObjects", "", "int", "slang_diag_rt_live_objects"),
+    f!("std.diag", "rtAllocations", "", "int", "slang_diag_rt_allocations"),
+    f!("std.diag", "rtLiveTasks", "", "int", "slang_diag_rt_live_tasks"),
+    f!("std.diag", "rtQueueLen", "", "int", "slang_diag_rt_queue_len"),
+    f!("std.diag", "rtWorkers", "", "int", "slang_diag_rt_workers"),
+    f!("std.diag", "rtMonoNanos", "", "int", "slang_diag_rt_mono_nanos"),
+    f!("std.diag", "rtStartCPUProfile", "string, int", "void!", "slang_diag_rt_start_cpu_profile"),
+    f!("std.diag", "rtStopCPUProfile", "", "int!", "slang_diag_rt_stop_cpu_profile"),
+    f!("std.diag", "rtHeapText", "", "string", "slang_diag_rt_heap_text"),
+    f!("std.diag", "rtWriteHeapProfile", "string", "void!", "slang_diag_rt_write_heap_profile"),
+    f!("std.log", "rtOpen", "string", "int!", "slang_log_rt_open"),
+    f!("std.log", "rtWrite", "int, string", "void!", "slang_log_rt_write"),
+    f!("std.log", "rtClose", "int", "void", "slang_log_rt_close"),
+    f!("std.log", "rtIsatty", "int", "bool", "slang_log_rt_isatty"),
+    // std.crypto primitives (runtime/src/crypto/, ABI.md section 19)
+    f!("std.crypto.hash", "Sha384", "string", "[]byte", "slang_crypto_hash_sha384"),
+    f!("std.crypto.hash", "Sha384Hex", "string", "string", "slang_crypto_hash_sha384_hex"),
+    f!("std.crypto.hash", "Sum", "string, []byte", "[]byte!", "slang_crypto_hash_sum"),
+    f!("std.crypto.hash", "rtNew", "string", "[]byte!", "slang_crypto_hash_rt_new"),
+    f!("std.crypto.hash", "rtWrite", "[]byte, []byte", "void", "slang_crypto_hash_rt_write"),
+    f!("std.crypto.hash", "rtSum", "[]byte", "[]byte", "slang_crypto_hash_rt_sum"),
+    f!("std.crypto.hmac", "Sum", "string, []byte, []byte", "[]byte!", "slang_crypto_hmac_sum"),
+    f!("std.crypto.hkdf", "Extract", "string, []byte, []byte", "[]byte!", "slang_crypto_hkdf_extract"),
+    f!("std.crypto.hkdf", "Expand", "string, []byte, []byte, int", "[]byte!", "slang_crypto_hkdf_expand"),
+    f!("std.crypto.aes", "GcmSeal", "[]byte, []byte, []byte, []byte", "[]byte!", "slang_crypto_aes_gcm_seal"),
+    f!("std.crypto.aes", "GcmOpen", "[]byte, []byte, []byte, []byte", "[]byte!", "slang_crypto_aes_gcm_open"),
+    f!("std.crypto.aes", "EncryptBlock", "[]byte, []byte", "[]byte!", "slang_crypto_aes_encrypt_block"),
+    f!("std.crypto.aes", "HasHardware", "", "bool", "slang_crypto_aes_has_hardware"),
+    f!("std.crypto.chacha", "Seal", "[]byte, []byte, []byte, []byte", "[]byte!", "slang_crypto_chacha_seal"),
+    f!("std.crypto.chacha", "Open", "[]byte, []byte, []byte, []byte", "[]byte!", "slang_crypto_chacha_open"),
+    f!("std.crypto.x25519", "GenerateKey", "", "[]byte!", "slang_crypto_x25519_generate_key"),
+    f!("std.crypto.x25519", "PublicKey", "[]byte", "[]byte!", "slang_crypto_x25519_public_key"),
+    f!("std.crypto.x25519", "SharedSecret", "[]byte, []byte", "[]byte!", "slang_crypto_x25519_shared_secret"),
+    f!("std.crypto.ecdh", "GenerateKey", "", "[]byte!", "slang_crypto_ecdh_generate_key"),
+    f!("std.crypto.ecdh", "PublicKey", "[]byte", "[]byte!", "slang_crypto_ecdh_public_key"),
+    f!("std.crypto.ecdh", "SharedSecret", "[]byte, []byte", "[]byte!", "slang_crypto_ecdh_shared_secret"),
+    f!("std.crypto.ecdsa", "GenerateKey", "", "[]byte!", "slang_crypto_ecdsa_generate_key"),
+    f!("std.crypto.ecdsa", "PublicKey", "[]byte", "[]byte!", "slang_crypto_ecdsa_public_key"),
+    f!("std.crypto.ecdsa", "Sign", "[]byte, []byte", "[]byte!", "slang_crypto_ecdsa_sign"),
+    f!("std.crypto.ecdsa", "Verify", "[]byte, []byte, []byte", "bool", "slang_crypto_ecdsa_verify"),
+    f!("std.crypto.ed25519", "GenerateKey", "", "[]byte!", "slang_crypto_ed25519_generate_key"),
+    f!("std.crypto.ed25519", "PublicKey", "[]byte", "[]byte!", "slang_crypto_ed25519_public_key"),
+    f!("std.crypto.ed25519", "Sign", "[]byte, []byte", "[]byte!", "slang_crypto_ed25519_sign"),
+    f!("std.crypto.ed25519", "Verify", "[]byte, []byte, []byte", "bool", "slang_crypto_ed25519_verify"),
+    f!("std.crypto.rsa", "VerifyPKCS1v15", "[]byte, []byte, string, []byte, []byte", "bool", "slang_crypto_rsa_verify_pkcs1v15"),
+    f!("std.crypto.rsa", "VerifyPSS", "[]byte, []byte, string, []byte, []byte", "bool", "slang_crypto_rsa_verify_pss"),
+    f!("std.crypto.rsa", "SignPKCS1v15", "[]byte, string, []byte", "[]byte!", "slang_crypto_rsa_sign_pkcs1v15"),
+    f!("std.crypto.rsa", "SignPSS", "[]byte, string, []byte", "[]byte!", "slang_crypto_rsa_sign_pss"),
+    // internal primitives of the Slang-source std.crypto.x509 / std.net.tls
+    // (sema/stdlib_src/{x509,tls}.sl)
+    f!("std.crypto.x509", "rtSystemRootsPath", "", "string", "slang_crypto_x509_rt_system_roots_path"),
+    f!("std.net.tls", "rtConcat", "[]byte, []byte", "[]byte", "slang_net_tls_rt_concat"),
+    f!("std.net.tls", "rtZeros", "int", "[]byte", "slang_net_tls_rt_zeros"),
+    f!("std.net.tls", "rtCopy", "[]byte, int, []byte", "void", "slang_net_tls_rt_copy"),
+    f!("std.net.tls", "rtAeadNew", "int, []byte", "[]byte!", "slang_net_tls_rt_aead_new"),
+    f!("std.net.tls", "rtAeadSeal", "[]byte, []byte, []byte, []byte", "[]byte", "slang_net_tls_rt_aead_seal"),
+    f!("std.net.tls", "rtAeadOpen", "[]byte, []byte, []byte, []byte", "[]byte!", "slang_net_tls_rt_aead_open"),
+    // tier 0/1 stdlib (docs/STDLIB.md): std.strconv (std_strconv.c), std.unicode (std_unicode.c)
+    f!("std.strconv", "rtFormatFloat", "float, int, int", "string", "slang_strconv_rt_format_float"),
+    f!("std.strconv", "rtParseFloat", "string", "float!", "slang_strconv_rt_parse_float"),
+    f!("std.unicode", "IsLetter", "char", "bool", "slang_unicode_is_letter"),
+    f!("std.unicode", "IsDigit", "char", "bool", "slang_unicode_is_digit"),
+    f!("std.unicode", "IsNumber", "char", "bool", "slang_unicode_is_number"),
+    f!("std.unicode", "IsSpace", "char", "bool", "slang_unicode_is_space"),
+    f!("std.unicode", "IsUpper", "char", "bool", "slang_unicode_is_upper"),
+    f!("std.unicode", "IsLower", "char", "bool", "slang_unicode_is_lower"),
+    f!("std.unicode", "IsTitle", "char", "bool", "slang_unicode_is_title"),
+    f!("std.unicode", "IsPunct", "char", "bool", "slang_unicode_is_punct"),
+    f!("std.unicode", "IsSymbol", "char", "bool", "slang_unicode_is_symbol"),
+    f!("std.unicode", "IsMark", "char", "bool", "slang_unicode_is_mark"),
+    f!("std.unicode", "IsControl", "char", "bool", "slang_unicode_is_control"),
+    f!("std.unicode", "IsPrint", "char", "bool", "slang_unicode_is_print"),
+    f!("std.unicode", "IsGraphic", "char", "bool", "slang_unicode_is_graphic"),
+    f!("std.unicode", "ToUpper", "char", "char", "slang_unicode_to_upper"),
+    f!("std.unicode", "ToLower", "char", "char", "slang_unicode_to_lower"),
+    f!("std.unicode", "ToTitle", "char", "char", "slang_unicode_to_title"),
+    f!("std.unicode", "SimpleFold", "char", "char", "slang_unicode_simple_fold"),
+    // std.math.bits (std_math_bits.c)
+    f!("std.math", "Float64bits", "float", "uint", "slang_math_float64bits"),
+    f!("std.math", "Float64frombits", "uint", "float", "slang_math_float64frombits"),
+    f!("std.math", "Float32bits", "float32", "uint32", "slang_math_float32bits"),
+    f!("std.math", "Float32frombits", "uint32", "float32", "slang_math_float32frombits"),
+    f!("std.math.bits", "LeadingZeros", "uint", "int", "slang_math_bits_leading_zeros"),
+    f!("std.math.bits", "LeadingZeros32", "uint32", "int", "slang_math_bits_leading_zeros32"),
+    f!("std.math.bits", "TrailingZeros", "uint", "int", "slang_math_bits_trailing_zeros"),
+    f!("std.math.bits", "TrailingZeros32", "uint32", "int", "slang_math_bits_trailing_zeros32"),
+    f!("std.math.bits", "OnesCount", "uint", "int", "slang_math_bits_ones_count"),
+    f!("std.math.bits", "OnesCount32", "uint32", "int", "slang_math_bits_ones_count32"),
+    f!("std.math.bits", "Len", "uint", "int", "slang_math_bits_len"),
+    f!("std.math.bits", "Len32", "uint32", "int", "slang_math_bits_len32"),
+    f!("std.math.bits", "RotateLeft", "uint, int", "uint", "slang_math_bits_rotate_left"),
+    f!("std.math.bits", "RotateLeft32", "uint32, int", "uint32", "slang_math_bits_rotate_left32"),
+    f!("std.math.bits", "Reverse", "uint", "uint", "slang_math_bits_reverse"),
+    f!("std.math.bits", "Reverse32", "uint32", "uint32", "slang_math_bits_reverse32"),
+    f!("std.math.bits", "ReverseBytes", "uint", "uint", "slang_math_bits_reverse_bytes"),
+    f!("std.math.bits", "ReverseBytes32", "uint32", "uint32", "slang_math_bits_reverse_bytes32"),
+    f!("std.math.bits", "ReverseBytes16", "uint16", "uint16", "slang_math_bits_reverse_bytes16"),
+    f!("std.math.bits", "rtMulHi", "uint, uint", "uint", "slang_math_bits_rt_mul_hi"),
+    f!("std.math.bits", "rtDivQuo", "uint, uint, uint", "uint", "slang_math_bits_rt_div_quo"),
+    f!("std.math.bits", "rtDivRem", "uint, uint, uint", "uint", "slang_math_bits_rt_div_rem"),
+    // >>> tier 2 stdlib externs
+    // std.regex: the C half (std_regex.c); the engine is Slang (sema/stdlib_src/regex*.sl)
+    f!("std.regex", "rtUnicode", "string", "[]int", "slang_regex_rt_unicode"),
+    f!("std.regex", "rtFold", "int", "int", "slang_regex_rt_fold"),
+    f!("std.regex", "rtInts", "int", "[]int", "slang_regex_rt_ints"),
+    f!("std.regex", "rtBytes", "int", "[]byte", "slang_regex_rt_bytes"),
+    f!("std.regex", "rtIndex", "string, string, int", "int", "slang_regex_rt_index"),
+    f!("std.regex", "rtTryLock", "*int", "bool", "slang_regex_rt_try_lock"),
+    f!("std.regex", "rtUnlock", "*int", "void", "slang_regex_rt_unlock"),
+    // std.compress: DEFLATE coder and checksums (std_compress.c), zstd decoder (std_zstd.c)
+    f!("std.compress", "rtCrc32", "int, []byte", "int", "slang_compress_rt_crc32"),
+    f!("std.compress", "rtAdler32", "int, []byte", "int", "slang_compress_rt_adler32"),
+    f!("std.compress", "rtInflateNew", "", "[]byte", "slang_compress_rt_inflate_new"),
+    f!("std.compress", "rtInflate", "[]byte, []byte", "[]byte!", "slang_compress_rt_inflate"),
+    f!("std.compress", "rtInflateDone", "[]byte", "bool", "slang_compress_rt_inflate_done"),
+    f!("std.compress", "rtInflateTail", "[]byte", "[]byte", "slang_compress_rt_inflate_tail"),
+    f!("std.compress", "rtInflateUnused", "[]byte", "int", "slang_compress_rt_inflate_unused"),
+    f!("std.compress", "rtDeflate", "[]byte, []byte, int, bool", "[]byte", "slang_compress_rt_deflate"),
+    f!("std.compress", "rtConcat", "[]byte, []byte", "[]byte", "slang_compress_rt_concat"),
+    f!("std.compress", "rtCopy", "[]byte, int, int", "[]byte", "slang_compress_rt_copy"),
+    f!("std.compress", "rtZstdDecode", "[]byte", "[]byte!", "slang_compress_rt_zstd_decode"),
+    f!("std.compress", "rtZstdFrameLen", "[]byte", "int", "slang_compress_rt_zstd_frame_len"),
+    f!("std.compress", "rtXxh64", "[]byte", "int", "slang_compress_rt_xxh64"),
+    f!("std.compress", "rtZeros", "int", "[]byte", "slang_compress_rt_zeros"),
+    // std.encoding.xml: the tokenizer (std_xml.c); the rest is Slang (sema/stdlib_src/xml.sl)
+    f!("std.encoding.xml", "rtScan", "string, bool", "[]string!", "slang_encoding_xml_rt_scan"),
+    f!("std.encoding.xml", "rtEscape", "string, bool", "string", "slang_encoding_xml_rt_escape"),
+    // std.html (std_html.c)
+    f!("std.html", "Escape", "string", "string", "slang_html_escape"),
+    f!("std.html", "Unescape", "string", "string", "slang_html_unescape"),
+    // std.mime extension table (std_mime.c)
+    f!("std.mime", "rtType", "string", "string", "slang_mime_rt_type"),
+    f!("std.mime", "rtAdd", "string, string", "void", "slang_mime_rt_add"),
+    f!("std.mime", "rtExts", "string", "[]string", "slang_mime_rt_exts"),
+    // <<< tier 2 stdlib externs
+    // std.math.big limb arithmetic (std_math_big.c)
+    f!("std.math.big", "rtAdd", "[]uint32, []uint32", "[]uint32", "slang_math_big_rt_add"),
+    f!("std.math.big", "rtSub", "[]uint32, []uint32", "[]uint32", "slang_math_big_rt_sub"),
+    f!("std.math.big", "rtCmp", "[]uint32, []uint32", "int", "slang_math_big_rt_cmp"),
+    f!("std.math.big", "rtMul", "[]uint32, []uint32", "[]uint32", "slang_math_big_rt_mul"),
+    f!("std.math.big", "rtDivMod", "[]uint32, []uint32", "[]uint32", "slang_math_big_rt_divmod"),
+    f!("std.math.big", "rtShl", "[]uint32, int", "[]uint32", "slang_math_big_rt_shl"),
+    f!("std.math.big", "rtShr", "[]uint32, int", "[]uint32", "slang_math_big_rt_shr"),
+    f!("std.math.big", "rtBitLen", "[]uint32", "int", "slang_math_big_rt_bit_len"),
+    f!("std.math.big", "rtFormat", "[]uint32, int", "string", "slang_math_big_rt_format"),
+    f!("std.math.big", "rtParse", "string, int", "[]uint32!", "slang_math_big_rt_parse"),
+    f!("std.math.big", "rtFromBytes", "[]byte", "[]uint32", "slang_math_big_rt_from_bytes"),
+    f!("std.math.big", "rtToBytes", "[]uint32", "[]byte", "slang_math_big_rt_to_bytes"),
+    f!("std.math.big", "rtFromUint", "uint", "[]uint32", "slang_math_big_rt_from_uint"),
+    // std.hash.maphash (std_hash.c)
+    f!("std.hash.maphash", "rtSip13", "uint, uint, []byte", "uint", "slang_hash_maphash_rt_sip13"),
+    f!("std.hash.maphash", "rtSip13Str", "uint, uint, string", "uint", "slang_hash_maphash_rt_sip13_str"),
+    // std.time types (time.sl): the local zone's TZif bytes (std_time_zone.c)
+    f!("std.time", "rtLocalTZif", "", "string!", "slang_time_rt_local_tzif"),
+    // std.os files (os.sl over std_os_file.c)
+    f!("std.os", "rtOpen", "string, int, int", "int!", "slang_os_rt_open"),
+    f!("std.os", "rtRead", "int, []byte", "int!", "slang_os_rt_read"),
+    f!("std.os", "rtPread", "int, []byte, int", "int!", "slang_os_rt_pread"),
+    f!("std.os", "rtWrite", "int, []byte", "int!", "slang_os_rt_write"),
+    f!("std.os", "rtWriteStr", "int, string", "int!", "slang_os_rt_write_str"),
+    f!("std.os", "rtSeek", "int, int, int", "int!", "slang_os_rt_seek"),
+    f!("std.os", "rtClose", "int", "void!", "slang_os_rt_close"),
+    f!("std.os", "rtSync", "int", "void!", "slang_os_rt_sync"),
+    f!("std.os", "rtTruncate", "int, int", "void!", "slang_os_rt_truncate"),
+    f!("std.os", "rtFstat", "int", "[]int!", "slang_os_rt_fstat"),
+    f!("std.os", "rtStat", "string, bool", "[]int!", "slang_os_rt_stat"),
+    f!("std.os", "rtReadDir", "string", "[]string!", "slang_os_rt_read_dir"),
+    f!("std.os", "rtChmod", "string, int", "void!", "slang_os_rt_chmod"),
+    // std.sync atomics (std_sync.c)
+    f!("std.sync", "rtLoad", "*int", "int", "slang_sync_rt_load"),
+    f!("std.sync", "rtStore", "*int, int", "void", "slang_sync_rt_store"),
+    f!("std.sync", "rtAdd", "*int, int", "int", "slang_sync_rt_add"),
+    f!("std.sync", "rtSwap", "*int, int", "int", "slang_sync_rt_swap"),
+    f!("std.sync", "rtCas", "*int, int, int", "bool", "slang_sync_rt_cas"),
+    f!("std.sync", "rtYield", "", "void", "slang_sync_rt_yield"),
+    // std.os.signal (std_os_signal.c)
+    f!("std.os.signal", "rtWait", "int", "Task<void>", "slang_os_signal_rt_wait"),
+    f!("std.os.signal", "rtIgnore", "int", "void", "slang_os_signal_rt_ignore"),
+    f!("std.os.signal", "rtReset", "int", "void", "slang_os_signal_rt_reset"),
+    f!("std.os.signal", "rtRaise", "int", "void", "slang_os_signal_rt_raise"),
+    f!("std.os.signal", "rtPending", "int", "int", "slang_os_signal_rt_pending"),
+    f!("std.os.signal", "rtCatch", "int", "void", "slang_os_signal_rt_catch"),
+    // std.process (std_process.c)
+    f!("std.process", "rtSpawn", "string, []string, []string, bool, string, int, int, int", "[]int!", "slang_process_rt_spawn"),
+    f!("std.process", "rtRead", "int, []byte", "int!", "slang_process_rt_read"),
+    f!("std.process", "rtWrite", "int, []byte, int", "int!", "slang_process_rt_write"),
+    f!("std.process", "rtClose", "int", "void", "slang_process_rt_close"),
+    f!("std.process", "rtWaitPid", "int", "int!", "slang_process_rt_wait_pid"),
+    f!("std.process", "rtKill", "int, int", "void!", "slang_process_rt_kill"),
+    f!("std.process", "rtExecutable", "string", "bool", "slang_process_rt_executable"),
+    f!("std.process", "rtWaitReadable", "int, int", "Task<int>", "slang_process_rt_wait_readable"),
+    f!("std.process", "rtWaitWritable", "int, int", "Task<int>", "slang_process_rt_wait_writable"),
+    // std.os.user (std_os_user.c)
+    f!("std.os.user", "rtLookup", "string, int, bool", "[]string!", "slang_os_user_rt_lookup"),
+    f!("std.os.user", "rtGroup", "string, int, bool", "[]string!", "slang_os_user_rt_group"),
+    f!("std.os.user", "rtUid", "", "int", "slang_os_user_rt_uid"),
     // std.uuid
     f!("std.uuid", "New", "", "string", "slang_uuid_new"),
     f!("std.uuid", "IsValid", "string", "bool", "slang_uuid_is_valid"),
@@ -540,6 +1042,34 @@ impl StdFunc {
     pub fn path(&self) -> String {
         format!("{}.{}", self.ns, self.name)
     }
+}
+
+// -- @embed source paths (sema/attrs.rs embed_global) ----------------------------
+
+thread_local! {
+    /// Source paths of the files being analysed (by file index), for
+    /// `@embed` paths; set by the driver around analysis.
+    static SOURCE_PATHS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `f` with the source paths of the files being analysed known to
+/// `@embed` (relative embed paths resolve against their directories;
+/// without them, against the current directory).
+pub fn with_source_paths<R>(paths: Vec<String>, f: impl FnOnce() -> R) -> R {
+    let saved = SOURCE_PATHS.with(|p| std::mem::replace(&mut *p.borrow_mut(), paths));
+    let r = f();
+    SOURCE_PATHS.with(|p| *p.borrow_mut() = saved);
+    r
+}
+
+/// The directory of source file `file` (for `@embed`; empty if unknown).
+pub(crate) fn embed_source_dir(file: usize) -> std::path::PathBuf {
+    SOURCE_PATHS.with(|p| {
+        p.borrow()
+            .get(file)
+            .and_then(|f| std::path::Path::new(f).parent().map(|d| d.to_path_buf()))
+            .unwrap_or_default()
+    })
 }
 
 #[cfg(test)]

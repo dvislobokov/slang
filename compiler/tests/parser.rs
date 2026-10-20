@@ -122,6 +122,7 @@ fn show(e: &Expr) -> String {
         ),
         ExprKind::Lambda { params, .. } => format!("lambda/{}", params.len()),
         ExprKind::Paren(e) => format!("[{}]", show(e)),
+        ExprKind::NamedArg { name, value } => format!("{}: {}", name.name, show(value)),
         ExprKind::Error => "<error>".into(),
     }
 }
@@ -454,6 +455,46 @@ fn interface_and_enums() {
     assert_eq!(r.variants[1].fields.len(), 2);
     let Decl::Enum(t) = &d[3] else { panic!() };
     assert_eq!(t.variants.len(), 2);
+}
+
+#[test]
+fn default_methods_sealed_and_implements() {
+    let d = decls(
+        "sealed interface Logger {
+            Base
+            func Log(level int, msg string)
+            func Info(msg string) { this.Log(1, msg) }
+        }
+        struct Console implements Logger, fmt.Stringer {
+            func Log(level int, msg string) {}
+        }
+        struct Box<T> implements Logger {}
+        enum Level implements Logger { Low, High }
+        var sealed = 1
+        func implements() {}",
+    );
+    let Decl::Interface(i) = &d[0] else { panic!() };
+    assert!(i.is_sealed);
+    assert_eq!(i.embeds.len(), 1);
+    assert!(i.methods[0].body.is_none());
+    assert!(i.methods[1].body.is_some());
+    let Decl::Struct(s) = &d[1] else { panic!() };
+    let imps: Vec<_> = s.implements.iter().map(named).collect();
+    assert_eq!(imps, ["Logger", "fmt.Stringer"]);
+    let Decl::Struct(b) = &d[2] else { panic!() };
+    assert_eq!((b.generics.len(), b.implements.len()), (1, 1));
+    let Decl::Enum(e) = &d[3] else { panic!() };
+    assert_eq!((e.variants.len(), e.implements.len()), (2, 1));
+    // `@cfg` conditions: named arguments inside attribute calls.
+    let c = decls("@cfg(not(os: \"windows\"), any(arch: \"arm64\", feature: \"x\"))\nfunc F() {}");
+    let Decl::Func(f) = &c[0] else { panic!() };
+    let args: Vec<String> = f.attrs[0].args.iter().map(|a| show(&a.value)).collect();
+    assert_eq!(args.len(), 2);
+    assert!(args[0].contains("os: \"windows\""), "{args:?}");
+    assert!(args[1].contains("feature: \"x\""), "{args:?}");
+    // Both words stay usable as names.
+    assert!(matches!(&d[4], Decl::Var(v) if v.names[0].name == "sealed"));
+    assert!(matches!(&d[5], Decl::Func(f) if f.name.name == "implements"));
 }
 
 #[test]
@@ -1020,7 +1061,7 @@ fn error_messages_are_expected_found() {
         ["multiple `default` clauses in switch"]
     );
     assert_eq!(messages("namespace t\nfunc f() { switch x { x } }"), ["expected `case`, `default` or `}`, found identifier `x`"]);
-    assert_eq!(messages("namespace t\ninterface I { func M() {} }"), ["interface methods cannot have a body"]);
+    assert_eq!(messages("namespace t\nstruct S implements { }"), ["expected type, found `{`"]);
     assert_eq!(messages("namespace t\n@json(name: ) struct S {}"), ["expected expression, found `)`"]);
 }
 

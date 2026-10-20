@@ -1,5 +1,5 @@
 // test: an arena allocates linked nodes with a.New<T>(); Free releases them all at once (leak-check clean)
-// status: pending
+// status: passing
 // run-flags: --leak-check
 namespace spec.memory2.arena_many_objects
 

@@ -5,5 +5,5 @@ hello, world!
 404 true
 405 GET
 500 500 Internal Server Error: database is down
-error: GET https://example.com/: https is not supported yet (std.net.http v1 has no TLS)
+error: GET https://127.0.0.1:1/: dial tcp 127.0.0.1:1: connection refused
 server stopped

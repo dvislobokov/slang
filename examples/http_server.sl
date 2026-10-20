@@ -53,7 +53,8 @@ async func main() void! {
     var f = await http.Get(base + "/fail")?
     print(f.Status, " ", f.Body)
 
-    try await http.Get("https://example.com/") catch err {
+    // https goes through std.net.tls; nothing listens on port 1
+    try await http.Get("https://127.0.0.1:1/") catch err {
         println("error:", err)
     }
 

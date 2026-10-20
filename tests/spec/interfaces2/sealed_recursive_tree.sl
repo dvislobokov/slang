@@ -1,5 +1,5 @@
 // test: an exhaustive switch over a sealed interface works over a recursive tree of implementations
-// status: pending
+// status: passing
 namespace spec.interfaces2.sealed_recursive_tree
 
 import std.io

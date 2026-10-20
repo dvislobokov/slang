@@ -1,0 +1,4 @@
+tcp over ::1: true
+udp over ::1: true
+dual-stack accepts IPv4: true true
+dual-stack accepts IPv6: true

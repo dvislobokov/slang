@@ -1,0 +1,46 @@
+// test: std.strconv integer parsing/formatting with bases, ranges and Go-style errors
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.strconv_ints
+
+import std
+import std.io
+
+func show(s string, base int) {
+    var v = try strconv.ParseInt(s, base) catch err {
+        println("err:", err, errors.Is(err, strconv.ErrSyntax), errors.Is(err, strconv.ErrRange))
+        return
+    }
+    println(v)
+}
+
+func main() {
+    show("-42", 10)
+    show("+7f", 16)
+    show("0x_1F", 0)
+    show("0b101", 0)
+    show("0o17", 0)
+    show("017", 0)
+    show("1_000", 0)
+    show("9223372036854775807", 10)
+    show("-9223372036854775808", 10)
+    show("9223372036854775808", 10)
+    show("12a", 10)
+    show("", 10)
+    show("1_0", 10)
+    show("z", 36)
+    println(try strconv.ParseIntBits("127", 10, 8) else 0, try strconv.ParseIntBits("-128", 10, 8) else 0, try strconv.ParseIntBits("128", 10, 8) else 0)
+    println(try strconv.ParseUint("18446744073709551615", 10) else 0)
+    println(try strconv.ParseUint("18446744073709551616", 10) else 1)
+    println(try strconv.Atoi("123") else 0, try strconv.Atoi("12 ") else -1)
+    try {
+        _ = strconv.Atoi("x")?
+    } catch err {
+        println(err)
+    }
+    try {
+        _ = strconv.ParseIntBits("300", 10, 8)?
+    } catch err {
+        println(err)
+    }
+}

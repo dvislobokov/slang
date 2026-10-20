@@ -1,0 +1,33 @@
+// test: std.compress frees everything (one-shot and streaming coders, errors, zstd)
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib3.compress_leaks
+
+import std
+import std.io
+
+func main() {
+    var data = strings.Bytes(strings.Repeat("leak check data ", 5000))
+    for i in 0..3 {
+        var g = compress.gzip.Compress(data, 6)
+        var back = try compress.gzip.Decompress(g) else []
+        var w = compress.zlib.NewWriter(1)
+        w.Write(data)
+        w.Flush()
+        w.Write(data)
+        w.Close()
+        var z = w.Bytes()
+        var r = compress.zlib.NewReader()
+        try r.Feed(z) catch err {
+            println(err.Message())
+        }
+        var bad = try compress.deflate.Decompress([byte(7)]) catch err {
+            println(err.Message())
+            continue
+        }
+        println(i, len(back), len(r.Read()), len(bad))
+    }
+    var zs = try encoding.hex.Decode("28b52ffd200a5100006672616d652074776f0a") else []
+    var out = try compress.zstd.Decompress(zs) else []
+    println(strings.FromBytes(out))
+}

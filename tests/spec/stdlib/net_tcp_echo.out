@@ -3,4 +3,4 @@ remote is local true
 hello, tcp
 server echoed 10 bytes
 closed true
-read after close: use of closed network connection
+read after close: true true

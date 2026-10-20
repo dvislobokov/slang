@@ -59,6 +59,7 @@ static job *pop_locked(void) {
 static void *worker_main(void *spare_flag) {
     int spare = spare_flag != NULL;
     t_is_worker = 1;
+    slang__plat_thread_stack_init(); /* frame walks of the CPU profiler */
     pthread_mutex_lock(&q_mu);
     for (;;) {
         job *j = pop_locked();
@@ -115,6 +116,8 @@ static void timers_start(void);
 static void timers_stop(void);
 
 void slang__sched_start(void) {
+    static pthread_once_t proc_once = PTHREAD_ONCE_INIT;
+    pthread_once(&proc_once, slang__plat_process_init);  /* SIGPIPE, open-files limit */
     pthread_mutex_lock(&q_mu);
     if (q_started) { pthread_mutex_unlock(&q_mu); return; }
     q_stopping = 0;
@@ -198,6 +201,8 @@ typedef struct hook {
     void (*fn)(slang_task *w);
     slang_task *w;              /* owned */
     struct hook *next;
+    void (*fn_data)(slang_task *w, uintptr_t data);  /* instead of fn when set */
+    uintptr_t data;
 } hook;
 
 struct slang_task {
@@ -218,17 +223,38 @@ struct slang_task {
     hook *hooks;
     int32_t cancelled;          /* atomic */
     int32_t nhooks;
+    /* The caller's context when a coroutine started (slang_task_new; owned,
+     * valid while ctx_saved): put back when the coroutine first suspends or
+     * completes, so context changes made inside it (task context values,
+     * std.diag spans) never leak into the caller (10.8). */
+    slang_object *caller_ctx;
+    int32_t ctx_saved;
+    int32_t _pad2;
     unsigned char slot[];       /* result_size bytes (8-aligned) */
 };
 
+static int64_t g_live_tasks; /* std.diag */
+
+int64_t slang__live_tasks(void) { return __atomic_load_n(&g_live_tasks, __ATOMIC_RELAXED); }
+
+int64_t slang__sched_queue_len(void) {
+    int64_t n = 0;
+    pthread_mutex_lock(&q_mu);
+    for (job *j = q_head; j; j = j->next) n++;
+    pthread_mutex_unlock(&q_mu);
+    return n;
+}
+
 static void task_drop(void *obj) {
     slang_task *t = obj;
+    __atomic_sub_fetch(&g_live_tasks, 1, __ATOMIC_RELAXED);
     if (t->state == TASK_DONE && t->ops && t->ops->release)
         t->ops->release(t->slot + t->ops_offset);
     cont *c = t->conts;
     while (c) { cont *n = c->next; slang_release(c->ctx); slang_release(c->cur); free(c); c = n; }
     hook *h = t->hooks;
     while (h) { hook *n = h->next; slang_release(h->w); free(h); h = n; }
+    if (t->ctx_saved) slang_release(t->caller_ctx);
     if (t->parent) {
         slang_task *p = t->parent;
         pthread_mutex_lock(&p->mu);
@@ -249,6 +275,7 @@ static slang_task *task_new_ex(int64_t result_size, const slang_value_ops *ops, 
                                      (int64_t)sizeof(slang_task) + SLANG_ROUND8(result_size));
     pthread_mutex_init(&t->mu, NULL);
     pthread_cond_init(&t->cv, NULL);
+    __atomic_add_fetch(&g_live_tasks, 1, __ATOMIC_RELAXED);
     t->result_size = result_size;
     t->ops = ops;
     t->ops_offset = ops_off;
@@ -273,6 +300,9 @@ static void task_attach(slang_task *t, slang_task *parent) {
 slang_task *slang_task_new(int64_t result_size, const slang_value_ops *result_ops) {
     slang_task *t = task_new_ex(result_size, result_ops, 0);
     task_attach(t, t_cur);
+    slang_retain(t_ctx);
+    t->caller_ctx = t_ctx;
+    t->ctx_saved = 1;
     slang_retain(t);
     slang_task *old = t_cur;
     t_cur = t;
@@ -287,6 +317,16 @@ slang_task *slang_task_new_plain(int64_t result_size, const slang_value_ops *res
 /* The current task stops running on this thread: its parent is current. */
 static void restore_parent(slang_task *t) {
     if (t_cur != t) return;
+    if (t->ctx_saved) {
+        /* Back on the caller's stack (first suspension or completion): the
+         * caller's context too. The task's own context lives on in its
+         * continuations. */
+        slang_object *old = t_ctx;
+        t_ctx = t->caller_ctx;
+        t->caller_ctx = NULL;
+        t->ctx_saved = 0;
+        slang_release(old);
+    }
     slang_retain(t->parent);
     t_cur = t->parent;
     slang_release(t);
@@ -1039,7 +1079,8 @@ void slang_task_cancel(slang_task *t) {
     cancel_collect(t, &hs);
     while (hs) {
         hook *n = hs->next;
-        hs->fn(hs->w);
+        if (hs->fn_data) hs->fn_data(hs->w, hs->data);
+        else hs->fn(hs->w);
         slang_release(hs->w);
         free(hs);
         hs = n;
@@ -1054,13 +1095,14 @@ bool slang_task_cur_cancelled(void) { return slang_task_is_cancelled(t_cur); }
 
 /* Registers fn(w) to run when the current task is cancelled (at once if it
  * already is). Hooks of waits that completed meanwhile are pruned. */
-static void cancel_hook(void (*fn)(slang_task *), slang_task *w) {
+static void cancel_hook_ex(void (*fn)(slang_task *), void (*fn_data)(slang_task *, uintptr_t), uintptr_t data, slang_task *w) {
     slang_task *t = t_cur;
     if (!t) return;
     pthread_mutex_lock(&t->mu);
     if (__atomic_load_n(&t->cancelled, __ATOMIC_ACQUIRE)) {
         pthread_mutex_unlock(&t->mu);
-        fn(w);
+        if (fn_data) fn_data(w, data);
+        else fn(w);
         return;
     }
     if (t->nhooks >= 8) {
@@ -1081,6 +1123,8 @@ static void cancel_hook(void (*fn)(slang_task *), slang_task *w) {
     if (!h) slang_panic("out of memory (cancel hook)");
     slang_retain(w);
     h->fn = fn;
+    h->fn_data = fn_data;
+    h->data = data;
     h->w = w;
     h->next = t->hooks;
     t->hooks = h;
@@ -1088,7 +1132,13 @@ static void cancel_hook(void (*fn)(slang_task *), slang_task *w) {
     pthread_mutex_unlock(&t->mu);
 }
 
+static void cancel_hook(void (*fn)(slang_task *), slang_task *w) { cancel_hook_ex(fn, NULL, 0, w); }
+
 void slang__cancel_hook(void (*fn)(slang_task *), slang_task *w) { cancel_hook(fn, w); }
+
+void slang__cancel_hook_data(void (*fn)(slang_task *, uintptr_t), slang_task *w, uintptr_t data) {
+    cancel_hook_ex(NULL, fn, data, w);
+}
 
 static void signal_cancelled(slang_task *w) { slang_task_rt_fire(w); }
 
@@ -1144,3 +1194,13 @@ int64_t slang_task_next_key(void) {
     static int64_t next;
     return __atomic_add_fetch(&next, 1, __ATOMIC_RELAXED);
 }
+
+/* Debugger support (ABI.md §20): where the lldb/gdb formatters in tools/
+ * find a task's state and result slot. They read memory only (no calls into
+ * the debuggee), so this works on core dumps too. */
+const int64_t slang_debug_task_layout[4] = {
+    1, /* version of this table */
+    (int64_t)offsetof(struct slang_task, state),
+    (int64_t)offsetof(struct slang_task, slot),
+    TASK_DONE,
+};

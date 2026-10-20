@@ -1,7 +1,7 @@
 {
   "name": "slang-lang",
   "displayName": "Slang",
-  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics with quick fixes, navigation, hover, rename, completion, signature help, inlay hints, formatting, semantic highlighting)",
+  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics with quick fixes, navigation, hover, rename, completion, signature help, inlay hints, formatting, semantic highlighting) and debugging through lldb-dap with Slang value formatters",
   "version": "0.3.0",
   "publisher": "slang",
   "license": "MIT",
@@ -14,7 +14,10 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onLanguage:slang",
-    "workspaceContains:**/slang.{toml,json,yaml,yml}"
+    "workspaceContains:**/slang.{toml,json,yaml,yml}",
+    "onDebugResolve:slang",
+    "onDebugDynamicConfigurations:slang",
+    "onDebugInitialConfigurations"
   ],
   "contributes": {
     "languages": [
@@ -84,6 +87,21 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Show parameter names before literal arguments at call sites (`Open(owner: \"alice\", initial: 100)`)."
+        },
+        "slang.path": {
+          "type": "string",
+          "default": "slang",
+          "markdownDescription": "The `slang` CLI used to build programs for debugging (`slang build`) and to locate the lldb formatters (`slang debug --formatters lldb`)."
+        },
+        "slang.debug.lldbDapPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `lldb-dap` (LLVM 18+; `lldb-vscode` in older LLVMs). Empty: look for `lldb-dap`, `lldb-dap-18`, ... on `PATH`."
+        },
+        "slang.debug.formatters": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `tools/lldb/slang_formatters.py`. Empty: ask `slang debug --formatters lldb`."
         }
       }
     },
@@ -100,7 +118,203 @@
           "when": "editorLangId == slang"
         }
       ]
-    }
+    },
+    "breakpoints": [
+      {
+        "language": "slang"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "slang",
+        "label": "Slang (lldb-dap)",
+        "languages": [
+          "slang"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Executable to debug (built with debug info: any non-release `slang build`, or `--release -g`)."
+              },
+              "source": {
+                "type": "string",
+                "description": "A .sl file or project directory: built with `slang build` before launching when no preLaunchTask is set (`program` defaults to target/slang-debug/<name>)."
+              },
+              "build": {
+                "type": "boolean",
+                "default": true,
+                "description": "Build `source` before launching (ignored with a preLaunchTask)."
+              },
+              "buildArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Extra `slang build` arguments, e.g. [\"--release\", \"-g\"]."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Program arguments."
+              },
+              "env": {
+                "type": [
+                  "object",
+                  "array"
+                ],
+                "default": {},
+                "description": "Environment variables: an object {\"NAME\": \"value\"} or [\"NAME=value\"]."
+              },
+              "cwd": {
+                "type": "string",
+                "default": "${workspaceFolder}",
+                "description": "Working directory of the program."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Stop at the program entry point."
+              },
+              "initCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Extra lldb commands run before the target is created (after the Slang formatters are imported)."
+              },
+              "preRunCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "lldb commands run just before launching or attaching."
+              },
+              "stopCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "lldb commands run each time the process stops."
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "pid": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "Process id to attach to (asked for when missing)."
+              },
+              "program": {
+                "type": "string",
+                "description": "Executable of the process (optional with pid)."
+              },
+              "waitFor": {
+                "type": "boolean",
+                "default": false,
+                "description": "Wait for a process named after `program` to start."
+              },
+              "initCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Extra lldb commands run before the target is created (after the Slang formatters are imported)."
+              },
+              "preRunCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "lldb commands run just before launching or attaching."
+              },
+              "stopCommands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "lldb commands run each time the process stops."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "slang",
+            "request": "launch",
+            "name": "Debug Slang file",
+            "source": "${file}",
+            "program": "${workspaceFolder}/target/slang-debug/${fileBasenameNoExtension}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "slang: build"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Slang: Launch",
+            "description": "Build a .sl file with debug info and debug it",
+            "body": {
+              "type": "slang",
+              "request": "launch",
+              "name": "Debug ${1:program}",
+              "source": "^\"\\${file}\"",
+              "args": [],
+              "cwd": "^\"\\${workspaceFolder}\""
+            }
+          },
+          {
+            "label": "Slang: Attach to process",
+            "description": "Attach lldb-dap to a running Slang program",
+            "body": {
+              "type": "slang",
+              "request": "attach",
+              "name": "Attach",
+              "pid": "^\"\\${command:pickProcess}\""
+            }
+          }
+        ]
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "slang",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "build"
+            ],
+            "description": "`build`: slang build <source> -o <program> (debug info included)."
+          },
+          "source": {
+            "type": "string",
+            "description": "File or project to build (default: the active file)."
+          },
+          "program": {
+            "type": "string",
+            "description": "Output executable (default: target/slang-debug/<name>)."
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra `slang build` arguments."
+          }
+        }
+      }
+    ]
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",

@@ -1,5 +1,5 @@
 // error: type Sq does not satisfy constraint Shape: missing method Area
-// status: pending
+// status: passing
 namespace spec.generics2.constraint_interface_wording
 
 import std.io

@@ -1,0 +1,70 @@
+// test: std.testing.Main runs each case in a child process: assertions, Fatal, Skip, subtests, panics; summary and exit code 1
+// status: passing
+// exit: 1
+// args: --no-time
+namespace spec.stdlib2.testing_main
+
+import std
+
+struct sq {
+    In int
+    Want int
+}
+
+func testGood(t *testing.T) {
+    testing.Equal(t, 2 + 2, 4)
+    testing.NotEqual(t, "a", "b")
+    testing.True(t, len("x") == 1, "len")
+    testing.False(t, false, "never")
+    testing.EqualSlices(t, [1, 2], [1, 2])
+    testing.Contains(t, "haystack", "st")
+    var p *sq = nil
+    testing.Nil(t, p)
+    testing.NotNil(t, new sq{})
+    testing.NoError(t, nil)
+    testing.Error(t, error("x"))
+    testing.ErrorIs(t, errors.Wrap(fs.ErrNotFound, "open"), fs.ErrNotFound)
+}
+
+func testBad(t *testing.T) {
+    t.Log("context line")
+    testing.Equal(t, 1, 2)
+    testing.Equal(t, "got", "want")
+    testing.EqualSlices(t, [1], [2])
+    testing.ErrorIs(t, error("other"), fs.ErrNotFound)
+    testing.True(t, false, "must hold")
+}
+
+func testFatal(t *testing.T) {
+    testing.EqualFatal(t, 1, 3)
+    t.Log("not reached")
+}
+
+func testSkip(t *testing.T) {
+    t.Skip("skipped for a reason")
+}
+
+func testTable(t *testing.T) {
+    var cases = [sq{In: 2, Want: 4}, sq{In: 3, Want: 10}]
+    for c in cases {
+        t.Run(fmt.Format("square {0}", c.In), func(t *testing.T) {
+            testing.Equal(t, c.In * c.In, c.Want)
+        })
+    }
+}
+
+func testPanic(t *testing.T) {
+    panic("boom")
+}
+
+async func main() {
+    var cases = [
+        testing.Case{Name: "TestGood", Run: testGood},
+        testing.Case{Name: "TestBad", Run: testBad},
+        testing.Case{Name: "TestFatal", Run: testFatal},
+        testing.Case{Name: "TestSkip", Run: testSkip},
+        testing.Case{Name: "TestTable", Run: testTable},
+        testing.Case{Name: "TestPanic", Run: testPanic},
+    ]
+    os.Exit(await testing.Main(cases))
+}

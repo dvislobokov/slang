@@ -1,0 +1,17 @@
+22:13:20.123 [INF] user 42 bought Order { Id: 7, Total: 99.5, Items: [Item { Sku: "A-1", Qty: 2 }] } for 99.50
+22:13:20.123 [DBG] alice is written as is by {Message:lj}
+evaluated: 0
+22:13:20.123 [VRB] now 42
+evaluated: 1
+cart has 3 items { Count: 3, RequestId: "req-1" }
+in a child task true { Flag: true, RequestId: "req-1" }
+after Pop true { Done: true }
+22:13:20.123 [WRN] cache miss rate 25.0%
+ready with 3 retries { Retries: 3, SourceContext: "examples.log.PaymentService" }
+[ERR] payment of 99.50 failed for 42 ("card declined")
+{"@t":"2023-11-14T22:13:20.123Z","@mt":"disk {Disk} at {Used:0.0}%","@m":"disk /var at 91.3%","@l":"Warning","Disk":"/var","Used":91.27,"App":"shop"}
+{"@t":"2023-11-14T22:13:20.123Z","@mt":"order {@Order}","@m":"order Order { Id: 7, Total: 99.5, Items: [Item { Sku: \"A-1\", Qty: 2 }] }","Order":{"$type":"Order","Id":7,"Total":99.5,"Items":[{"$type":"Item","Sku":"A-1","Qty":2}]},"App":"shop"}
+file: app-20231114.log
+2023-11-14 22:13:20.123 +00:00 [INF] written by the file sink
+2023-11-14 22:13:20.123 +00:00 [ERR] and flushed on Close
+goodbye from "log.Info" { Where: "log.Info" }

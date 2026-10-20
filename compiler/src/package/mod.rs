@@ -65,7 +65,10 @@ pub fn check(project: &Project, target: PkgId, dev: bool, diags: &mut Diagnostic
     }
     let policy = project.policy(&closure, file_pkg.clone(), dev);
     let scopes: Vec<(String, String)> = closure.iter().map(|&id| (project.packages[id].name.clone(), project.packages[id].namespace.clone())).collect();
-    let mut program = crate::driver::check_with_policy(&files, diags, &policy, |asts, d| check_namespaces(asts, &file_pkg, &scopes, d));
+    let features = project.enabled_features(&closure);
+    let feature_of = |i: usize| features[file_pkg[i]].clone();
+    let env = crate::cfg::CfgEnv { target: crate::target::current(), features: Some(&feature_of) };
+    let mut program = crate::driver::check_with_policy(&files, diags, &policy, &env, |asts, d| check_namespaces(asts, &file_pkg, &scopes, d));
     let t = &project.packages[target];
     if let (Some(prog), Some(entry)) = (&program, t.entry()) {
         let entry = entry.canonicalize().unwrap_or(entry);

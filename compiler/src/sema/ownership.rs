@@ -13,7 +13,7 @@
 //!   tuple elements, enum payloads or task results.
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
-use crate::hir::ownership::{drop_method, has_dtor, is_interior_addr, param_facts, walk_function, ParamFacts, Pos};
+use crate::hir::ownership::{drop_method, has_dtor, is_interior_addr, moved_return, param_facts, walk_function, ParamFacts, Pos};
 use crate::hir::*;
 use crate::span::Span;
 use crate::types::{Type, TypeId};
@@ -39,6 +39,67 @@ struct Checker<'a, 'd> {
     scope: usize,
 }
 
+/// The `return x` operands of `stmts` that move a local (see
+/// [`moved_return`]).
+fn moved_returns(p: &Program, f: &Function, stmts: &[Stmt], out: &mut HashSet<*const Expr>) {
+    for s in stmts {
+        match &s.kind {
+            StmtKind::Return(ReturnValue::Value(e)) if moved_return(p, f, e).is_some() => {
+                out.insert(e as *const Expr);
+            }
+            StmtKind::If { then, else_, .. } => {
+                moved_returns(p, f, &then.stmts, out);
+                if let Some(b) = else_ {
+                    moved_returns(p, f, &b.stmts, out);
+                }
+            }
+            StmtKind::Loop { body, .. }
+            | StmtKind::ForRange { body, .. }
+            | StmtKind::ForSlice { body, .. }
+            | StmtKind::ForString { body, .. }
+            | StmtKind::ForMap { body, .. }
+            | StmtKind::Block(body) => moved_returns(p, f, &body.stmts, out),
+            StmtKind::TryBlock { body, handler, .. } => {
+                moved_returns(p, f, &body.stmts, out);
+                moved_returns(p, f, &handler.stmts, out);
+            }
+            StmtKind::Switch(sw) => {
+                for c in &sw.cases {
+                    moved_returns(p, f, &c.body.stmts, out);
+                }
+                if let Some(d) = &sw.default {
+                    moved_returns(p, f, &d.stmts, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// [`crate::hir::dump::DeclNames`] relative to namespace `ns`.
+struct InNs<'a> {
+    p: &'a Program,
+    ns: Option<NamespaceId>,
+}
+
+impl InNs<'_> {
+    fn pick(&self, ns: NamespaceId, name: &str, full: &str) -> String {
+        if self.ns == Some(ns) && !full.starts_with("std.") { name.to_string() } else { full.to_string() }
+    }
+}
+
+impl crate::hir::dump::DeclNames for InNs<'_> {
+    fn struct_name(&self, id: u32) -> String {
+        self.p.structs.get(id as usize).map(|s| self.pick(s.namespace, &s.name, &s.full_name)).unwrap_or_default()
+    }
+    fn interface_name(&self, id: u32) -> String {
+        self.p.interfaces.get(id as usize).map(|s| self.pick(s.namespace, &s.name, &s.full_name)).unwrap_or_default()
+    }
+    fn enum_name(&self, id: u32) -> String {
+        self.p.enums.get(id as usize).map(|s| self.pick(s.namespace, &s.name, &s.full_name)).unwrap_or_default()
+    }
+}
+
 impl Checker<'_, '_> {
     fn err(&mut self, msg: String, span: Span, note: Option<String>) {
         if !self.seen.insert((self.file, span.start, span.end)) {
@@ -51,8 +112,11 @@ impl Checker<'_, '_> {
         self.diags.push(d);
     }
 
+    /// Type names as sema prints them: short for types of the current
+    /// function's namespace, full paths otherwise.
     fn tn(&self, t: TypeId) -> String {
-        self.p.type_name(t)
+        let ns = self.p.funcs.get(self.scope).map(|f| f.namespace);
+        crate::hir::dump::type_name(&self.p.types, t, &InNs { p: self.p, ns })
     }
 
     /// A type that may not hold a value with a destructor in this position,
@@ -158,6 +222,9 @@ impl Checker<'_, '_> {
         let _ = fid;
         let mut found: Vec<(String, Span, Option<String>)> = Vec::new();
         let facts = self.facts;
+        let names = InNs { p, ns: Some(f.namespace) };
+        let mut moved: HashSet<*const Expr> = HashSet::new();
+        moved_returns(p, f, &f.body.stmts, &mut moved);
         walk_function(p, f, &mut |e, pos| {
             // Interior pointers and slices without an owner.
             let interior = is_interior_addr(e) || unowned_array_slice(p, e);
@@ -191,8 +258,8 @@ impl Checker<'_, '_> {
                 }
             }
             // Copies of move-only values.
-            if matches!(pos, Pos::Store | Pos::Arg(..)) && is_place_like(&e.kind) && has_dtor(p, e.ty) {
-                let t = p.type_name(e.ty);
+            if matches!(pos, Pos::Store | Pos::Arg(..)) && is_place_like(&e.kind) && has_dtor(p, e.ty) && !moved.contains(&(e as *const Expr)) {
+                let t = crate::hir::dump::type_name(&p.types, e.ty, &names);
                 found.push((
                     format!("cannot copy a value of type {t}: it has a destructor (Drop), so it is move-only"),
                     e.span,

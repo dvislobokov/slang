@@ -1,0 +1,24 @@
+// error: ambiguous default method Describe
+// status: passing
+namespace spec.diagnostics.default_method_ambiguous
+
+import std.io
+
+interface Named {
+    func Name() string
+    func Describe() string { return "named " + this.Name() }
+}
+
+interface Labeled {
+    func Name() string
+    func Describe() string { return "labeled " + this.Name() }
+}
+
+struct Item {
+    func Name() string { return "item" }
+}
+
+func main() {
+    var i = Item{}
+    println(i.Describe())
+}

@@ -29,6 +29,65 @@ Delve интерпретирует: условные точки останова
   переменные, watch, REPL-выражения в синтаксисе lldb.
 - Паника останавливает отладчик в месте паники (точка на `slang_panic`).
 
+### Статус этапа 1 (сделано)
+
+- **DWARF** (`compiler/src/codegen/debug.rs`): DWARF 5, `DW_LANG_C11`,
+  compile unit на исходный файл; `DISubprogram` на функцию с полным
+  именем (`app.Max<int>`, `app.Point.Length`, `app.main$lambda1`);
+  параметры и локальные переменные через `llvm.dbg.declare` на alloca
+  (ячейки захваченных переменных — `DW_OP_deref, +16`), лексические блоки,
+  результат функции как переменная `~r0` (как у Delve), глобальные
+  переменные; локация на каждом операторе, вызове и `await`; пролог без
+  локации, поэтому точка на функции встаёт после записи параметров.
+  Типы: примитивы (typedef `int` → `int64_t` и т. п.), структуры, `*T`,
+  `weak *T`, `[]T` (struct `[]T {data, len, cap, backing}`), `[N]T`;
+  `string`, `error`, `map[K]V` (таблица map.c с типизированными слотами),
+  `Task<T>`, `weak *T` — 8-байтные «ручки» `{T *ptr}`; кортежи
+  `(A, B) {_0, _1}`, простые enum (enumeration), enum с данными
+  (`{tag, union payload}`), интерфейсы и `any`, `T!` (`{value, err}`),
+  `func(..)` (`{fn, env}`).
+- **Корутины**: CoroSplit переносит `dbg.declare` во фрейм; в
+  неоптимизированной сборке выход async-функции читает (volatile) все
+  описанные локальные переменные, чтобы они жили во фрейме и были видны
+  после любого `await`; дубликаты `dbg.declare`, которые LLVM 18 вешает на
+  слоты пролитых SSA-копий, удаляются после оптимизации
+  (`codegen::dedup_declares`).
+- Флаги: debug-сборка — с DWARF; `--release` — без (код идентичен: тест
+  сравнивает дизассемблер `--release` и `--release -g`); `--release -g` —
+  с DWARF и без `-s`; `--strip` — без DWARF и с `-s`.
+- **Форматтеры**: `tools/lldb/slang_formatters.py` (summary + synthetic
+  children: string, срезы, map, error, `T!`, enum с данными, интерфейсы/
+  `any` с динамическим типом по `vtable[0]`, замыкания по имени функции,
+  `Task<T>` через `slang_debug_task_layout` (ABI.md §20), `weak`, `char`;
+  точка останова `SlangPanic` на `slang_panic*`; команда `slang-next`)
+  и `tools/gdb/slang_printers.py`. `slang debug --lldb|--gdb file.sl`
+  собирает и запускает отладчик с форматтерами (`--source f --batch` для
+  скриптов); `slang debug --formatters lldb` печатает путь к скрипту.
+- **DAP**: `editors/vscode` — тип `slang` (`launch`: `program`/`source`/
+  `args`/`env`/`cwd`/`stopOnEntry`; `attach`: `pid`), адаптер — `lldb-dap`
+  с `initCommands: command script import ...`, задача `slang: build` для
+  `preLaunchTask`.
+- **Тесты** `compiler/tests/debug.rs`: скрипты `lldb --batch` на фикстурах
+  `tests/fixtures/debug/*.sl` и на examples, `llvm-dwarfdump --verify` на
+  каждом примере, gdb-принтеры, сессия DAP через `lldb-dap`; отсутствующие
+  инструменты — тест пропускается.
+
+Ограничения этапа 1:
+
+- `next` в lldb через `await`, который приостанавливает корутину, идёт по
+  нативному стеку и останавливается в вызывающей функции. Обходной путь —
+  `slang-next`: точка на следующей строке корутины и `continue` (поток
+  возобновления — любой worker). Полноценный `await`-aware шаг — дело
+  собственного отладчика.
+- Выражения `p`/`expr` — в синтаксисе C (lldb/clang): `v nums[1]`
+  работает через synthetic children, `p nums[1]` — нет; ключи map в путях
+  `frame variable` не поддерживаются (раскрывайте map целиком).
+- Типизированные ошибки показываются как тип + поля, не через `Message()`
+  (форматтеры не вызывают код в процессе).
+- Имена типов — полные (`app.Point`), как в `type_info`.
+- В оптимизированном коде (`--release -g`) часть переменных
+  «optimized out».
+
 ## Этап 2: `slang debug` — отладочный агент внутри процесса (без ptrace)
 
 Основной отладчик — не внешний процесс, а **агент внутри отлаживаемой

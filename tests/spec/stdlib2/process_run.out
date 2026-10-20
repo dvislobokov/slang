@@ -1,0 +1,12 @@
+3 false out err
+hello|/|
+[]
+a b c
+output error: sh: boom
+start error: true
+apple fig pear  0 0 true
+bytes: 300000 0
+killed: 137
+timeout: 137
+true /bin/sh
+exec: "no-such-tool-xyz": executable file not found in $PATH

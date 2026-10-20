@@ -1,5 +1,5 @@
 // test: a type switch over a sealed interface that names every implementation needs no default and terminates the function
-// status: pending
+// status: passing
 namespace spec.interfaces2.sealed_exhaustive_switch
 
 import std.io

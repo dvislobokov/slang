@@ -1,0 +1,12 @@
+// error: invalid regex pattern: missing closing ) at offset 4
+// status: passing
+namespace spec.stdlib3.regex_pattern_invalid
+
+import std
+import std.io
+
+// regex.Pattern checks a string-literal pattern at compile time.
+func main() {
+    var r = regex.Pattern(`\d+-(\w+`)
+    println(r.Match("1-a"))
+}

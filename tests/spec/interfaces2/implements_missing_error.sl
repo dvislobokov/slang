@@ -1,5 +1,5 @@
 // error: Square does not implement Shape: missing method Perimeter
-// status: pending
+// status: passing
 namespace spec.interfaces2.implements_missing_error
 
 import std.io

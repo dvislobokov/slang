@@ -1,5 +1,5 @@
 // error: not exhaustive
-// status: pending
+// status: passing
 namespace spec.interfaces2.sealed_not_exhaustive_error
 
 import std.io

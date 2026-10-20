@@ -1,5 +1,5 @@
 // test: an excluded declaration may use names that only exist on its platform; it is not type-checked on linux
-// status: pending
+// status: passing
 namespace spec.platform.cfg_excluded_not_checked
 
 import std.io

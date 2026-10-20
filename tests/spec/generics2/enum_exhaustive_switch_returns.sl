@@ -1,5 +1,5 @@
 // test: a switch naming every variant of an enum (no default) terminates the function, as in the Eval example of docs/PATTERNS.md
-// status: pending
+// status: passing
 namespace spec.generics2.enum_exhaustive_switch_returns
 
 import std.io

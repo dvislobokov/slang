@@ -3,8 +3,8 @@ namespace std.net.http
 // The Slang-source std.net.http v1 (see sema/stdsrc.rs for the rules):
 // HTTP/1.1 over plain TCP (std.net). Requests and responses are parsed
 // here, in Slang, on top of a small buffered reader. Bodies are strings
-// (byte strings: any bytes are allowed). No TLS yet: https URLs fail with
-// a clear error.
+// (byte strings: any bytes are allowed). https URLs and Server.TLS use
+// std.net.tls; both sides talk to a `stream` (std.net.Conn or tls.Conn).
 
 // ---- shared helpers ---------------------------------------------------
 
@@ -139,9 +139,19 @@ func ParseQuery(q string) map[string]string {
     return m
 }
 
+// A byte stream: a std.net.Conn or a std.net.tls.Conn.
+interface stream {
+    func Read(n int) Task<[]byte!>
+    func WriteString(text string) Task<int!>
+    func SetTimeout(ms int)
+    func Close()
+    func IsClosed() bool
+    func RemoteAddr() string
+}
+
 // A buffered reader over a connection.
 struct reader {
-    c std.net.Conn
+    c stream
     buf string
     eof bool
 
@@ -451,13 +461,16 @@ struct Client {
     MaxRedirects int
     // Extra headers sent with every request.
     Headers map[string]string
+    // TLS settings for https URLs (nil: system roots, SNI and host name
+    // from the URL, ALPN http/1.1).
+    TLS *std.net.tls.Config
 
     func Get(url string) Task<Response!> {
-        return doRequest(this.Timeout, this.MaxRedirects, this.Headers, "GET", url, "", "")
+        return doRequest(this.TLS, this.Timeout, this.MaxRedirects, this.Headers, "GET", url, "", "")
     }
 
     func Post(url string, body string, contentType string) Task<Response!> {
-        return doRequest(this.Timeout, this.MaxRedirects, this.Headers, "POST", url, body, contentType)
+        return doRequest(this.TLS, this.Timeout, this.MaxRedirects, this.Headers, "POST", url, body, contentType)
     }
 
     // Any method; headers may be nil.
@@ -469,21 +482,21 @@ struct Client {
         for k, v in headers {
             h[k] = v
         }
-        return doRequest(this.Timeout, this.MaxRedirects, h, method, url, body, "")
+        return doRequest(this.TLS, this.Timeout, this.MaxRedirects, h, method, url, body, "")
     }
 }
 
 // Get fetches url with a default client (30 s timeout, 10 redirects).
 func Get(url string) Task<Response!> {
-    return doRequest(30000, 0, nil, "GET", url, "", "")
+    return doRequest(nil, 30000, 0, nil, "GET", url, "", "")
 }
 
 // Post sends body with the given Content-Type.
 func Post(url string, body string, contentType string) Task<Response!> {
-    return doRequest(30000, 0, nil, "POST", url, body, contentType)
+    return doRequest(nil, 30000, 0, nil, "POST", url, body, contentType)
 }
 
-async func doRequest(timeout int, maxRedirects int, headers map[string]string, method string, url string, body string, contentType string) Response! {
+async func doRequest(tc *std.net.tls.Config, timeout int, maxRedirects int, headers map[string]string, method string, url string, body string, contentType string) Response! {
     var limit = maxRedirects
     if limit == 0 {
         limit = 10
@@ -495,7 +508,7 @@ async func doRequest(timeout int, maxRedirects int, headers map[string]string, m
     var redirects = 0
     for {
         var u = ParseURL(target)?
-        var res = await roundTrip(timeout, headers, m, u, payload, ctype)?
+        var res = await roundTrip(tc, timeout, headers, m, u, payload, ctype)?
         var loc = res.Header("Location")
         var st = res.Status
         var isRedirect = st == 301 || st == 302 || st == 303 || st == 307 || st == 308
@@ -515,14 +528,34 @@ async func doRequest(timeout int, maxRedirects int, headers map[string]string, m
     }
 }
 
-async func roundTrip(timeout int, headers map[string]string, method string, u URL, body string, contentType string) Response! {
+// Connects to the host of u: plain TCP for http, TLS for https.
+async func dialStream(tc *std.net.tls.Config, u URL, timeout int) stream! {
+    var addr = std.net.JoinHostPort(u.Hostname, u.Port)
     if u.Scheme == "https" {
-        return error(method + " " + u.String() + ": https is not supported yet (std.net.http v1 has no TLS)")
+        var cfg = std.net.tls.Config{}
+        if tc != nil {
+            cfg = *tc
+        }
+        if cfg.ServerName == "" {
+            cfg.ServerName = u.Hostname
+        }
+        if len(cfg.ALPN) == 0 {
+            cfg.ALPN = ["http/1.1"]
+        }
+        var tlsConn = await std.net.tls.DialTimeout(addr, cfg, timeout)?
+        return tlsConn
     }
-    if u.Scheme != "http" {
+    var c = await std.net.DialTimeout(addr, timeout)?
+    return c
+}
+
+async func roundTrip(tc *std.net.tls.Config, timeout int, headers map[string]string, method string, u URL, body string, contentType string) Response! {
+    if u.Scheme != "http" && u.Scheme != "https" {
         return error(method + " " + u.String() + ": unsupported URL scheme \"" + u.Scheme + "\"")
     }
-    var c = await std.net.DialTimeout(std.net.JoinHostPort(u.Hostname, u.Port), timeout)?
+    var c = try await dialStream(tc, u, timeout) catch err {
+        return std.errors.Wrap(err, method + " " + u.String())
+    }
     c.SetTimeout(timeout)
     var req = method + " " + u.RequestURI() + " HTTP/1.1\r\nHost: " + u.Host + "\r\n"
     var sentUA = false
@@ -544,6 +577,11 @@ async func roundTrip(timeout int, headers map[string]string, method string, u UR
     }
     if !sentAccept {
         req += "Accept: */*\r\n"
+    }
+    // std.diag: W3C trace context of the current span.
+    var traceparent = std.diag.Traceparent()
+    if traceparent != "" && headers["traceparent"] == "" && headers["Traceparent"] == "" {
+        req += "traceparent: " + traceparent + "\r\n"
     }
     if contentType != "" {
         req += "Content-Type: " + contentType + "\r\n"
@@ -728,6 +766,9 @@ struct Server {
     Addr string
     Handler Handler
     IdleTimeout int
+    // Serves HTTPS with this configuration when set (ALPN defaults to
+    // http/1.1).
+    TLS *std.net.tls.ServerConfig
     st *serverState
 
     // Binds the listening socket (Serve does it if needed).
@@ -740,7 +781,19 @@ struct Server {
         if idle == 0 {
             idle = 5000
         }
-        this.st = new serverState{l: l, handler: this.Handler, idle: idle}
+        var st = new serverState{l: l, handler: this.Handler, idle: idle}
+        if this.TLS != nil {
+            var cfg = *this.TLS
+            if len(cfg.ALPN) == 0 {
+                cfg.ALPN = ["http/1.1"]
+            }
+            st.tlsL = try std.net.tls.Server(l, cfg) catch err {
+                l.Close()
+                return err
+            }
+            st.useTLS = true
+        }
+        this.st = st
     }
 
     // The bound port (after Listen).
@@ -774,12 +827,14 @@ async func failed(err error) void! {
 }
 
 struct connEntry {
-    c std.net.Conn
+    c stream
     idle bool
 }
 
 struct serverState {
     l std.net.Listener
+    useTLS bool
+    tlsL std.net.tls.Listener
     handler Handler
     idle int
     guard int
@@ -788,9 +843,20 @@ struct serverState {
     wg std.task.WaitGroup
 }
 
+// The next connection, wrapped in TLS for an HTTPS server (its handshake
+// runs in the connection task, on the first read).
+async func acceptStream(st *serverState) stream! {
+    if st.useTLS {
+        var tc = await st.tlsL.Accept()?
+        return tc
+    }
+    var c = await st.l.Accept()?
+    return c
+}
+
 async func acceptLoop(st *serverState) void! {
     for {
-        var c = try await st.l.Accept() catch err {
+        var c = try await acceptStream(st) catch err {
             if st.closing {
                 return
             }
@@ -854,9 +920,12 @@ async func serveConn(st *serverState, e *connEntry) {
         e.idle = false
         req.RemoteAddr = e.c.RemoteAddr()
         var res = new Response{Status: 200}
+        // std.diag: a traceparent header makes the caller's span the parent.
+        var remote = std.diag.enterRemote(req.Header("traceparent"))
         try await st.handler.Serve(req, res) catch err {
             res = errorResponse(500, err.Message())
         }
+        std.diag.leaveRemote(remote)
         var keep = req.Proto == "HTTP/1.1" && !headerHas(req.Headers, "Connection", "close") && !st.closing
         if req.Proto == "HTTP/1.0" && headerHas(req.Headers, "Connection", "keep-alive") && !st.closing {
             keep = true
@@ -909,7 +978,7 @@ async func readRequest(r *reader) *Request! {
     return req
 }
 
-async func writeResponse(c std.net.Conn, proto string, keep bool, res *Response, headOnly bool) bool! {
+async func writeResponse(c stream, proto string, keep bool, res *Response, headOnly bool) bool! {
     var status = res.Status
     if status == 0 {
         status = 200

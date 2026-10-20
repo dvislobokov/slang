@@ -1,0 +1,15 @@
+-ff -9223372036854775808 3w5e11264sgsf 0 101
+3.14 1.235e+03 1.2e-05 1e+06
+0.1 123456789 2.5E+00 100 -0
++Inf NaN 0.3333333333333333
+1500 -0.25 +Inf -1
+strconv.ParseFloat: parsing "1e400": value out of range true
+true false false true
+"hi \"there\"\n\ttab é 😀" "\u00e9\U0001f600" '\'' 'x'
+"h\xff\x01"
+a	bAé😀AH raw\n x
+bad1 bad2 bad3
+line
+next \ "q"
+42 255 2.5 true text é -1 1
+42 2.5 true s 7 z -3

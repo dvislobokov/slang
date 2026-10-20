@@ -1,0 +1,20 @@
+-42
+127
+31
+5
+15
+15
+1000
+9223372036854775807
+-9223372036854775808
+err: strconv.ParseInt: parsing "9223372036854775808": value out of range false true
+err: strconv.ParseInt: parsing "12a": invalid syntax true false
+err: strconv.ParseInt: parsing "": invalid syntax true false
+err: strconv.ParseInt: parsing "1_0": invalid syntax true false
+35
+127 -128 0
+18446744073709551615
+1
+123 -1
+strconv.Atoi: parsing "x": invalid syntax
+strconv.ParseInt: parsing "300": value out of range

@@ -17,7 +17,7 @@ async func main() void! {
     println(strings.FromBytes(q.Data))
     b.SetTimeout(20)
     try await b.RecvFrom(10) catch err {
-        println(err)
+        println(net.IsTimeout(err), strings.HasPrefix(err.Message(), "read udp 127.0.0.1:"), strings.HasSuffix(err.Message(), ": i/o timeout"))
     }
     a.Close()
     b.Close()

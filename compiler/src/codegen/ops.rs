@@ -427,6 +427,25 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             Builtin::ErrorsAs => self.errors_as(&args[0], &args[1]),
             Builtin::TaskAny => unsupported("task.Any whose result is not awaited directly"),
+            Builtin::ArenaNew => {
+                let Type::Pointer(t) = self.ty(ty).clone() else { return unsupported("arena New of a non-pointer") };
+                let h = self.expr(&args[0])?.get();
+                let ti = self.type_info(t);
+                let size = self.i64_ty().const_int(16 + self.size_of(t), false);
+                let obj = self.call_rt_v("slang_arena_object", &[h.into(), ti.into(), size.into()]).into_pointer_value();
+                // Arena objects ignore retain/release: owned or not is the same.
+                Ok(Val::owned(self.payload(obj).into()))
+            }
+            Builtin::ArenaSlice => {
+                let et = self.elem_of(ty).unwrap();
+                let h = self.expr(&args[0])?.get();
+                let n = self.expr(&args[1])?.get();
+                let out = self.entry_alloca(self.slice_ty().into(), "aslice", false);
+                let size = self.i64_ty().const_int(self.size_of(et), false);
+                let ops = self.value_ops(et);
+                self.call_rt("slang_arena_slice", &[out.into(), h.into(), size.into(), n.into(), ops.into()]);
+                Ok(Val::owned(self.b.build_load(self.slice_ty(), out, "").unwrap()))
+            }
         }
     }
 }

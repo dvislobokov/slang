@@ -1,0 +1,592 @@
+// test: std.encoding.csv reader and writer semantics checked against Go encoding/csv (36 reader cases: quotes, CRLF, lazy quotes, comments, custom delimiters, leading-space trimming, field counts, errors with line/column; writer quoting with and without CRLF)
+// status: passing
+namespace spec.stdlib3.csv_corpus
+
+import std
+import std.io
+
+func quoted(recs [][]string) string {
+    var parts []string = []
+    for r in recs {
+        var fs []string = []
+        for x in r {
+            fs = append(fs, encoding.json.Quote(x))
+        }
+        parts = append(parts, "[" + strings.Join(fs, " ") + "]")
+    }
+    return "[" + strings.Join(parts, " ") + "]"
+}
+
+func case0() {
+    var r = encoding.csv.NewReader("a,b,c\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(0, "error", err.Message())
+        return
+    }
+    println(0, quoted(recs))
+
+}
+
+func case1() {
+    var r = encoding.csv.NewReader("a,b,c\r\nd,e,f\r\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(1, "error", err.Message())
+        return
+    }
+    println(1, quoted(recs))
+
+}
+
+func case2() {
+    var r = encoding.csv.NewReader("a,b\nc,d")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(2, "error", err.Message())
+        return
+    }
+    println(2, quoted(recs))
+
+}
+
+func case3() {
+    var r = encoding.csv.NewReader("\"a\",\"b\"\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(3, "error", err.Message())
+        return
+    }
+    println(3, quoted(recs))
+
+}
+
+func case4() {
+    var r = encoding.csv.NewReader("\"a\nb\",c\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(4, "error", err.Message())
+        return
+    }
+    println(4, quoted(recs))
+
+}
+
+func case5() {
+    var r = encoding.csv.NewReader("\"a\r\nb\",c\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(5, "error", err.Message())
+        return
+    }
+    println(5, quoted(recs))
+
+}
+
+func case6() {
+    var r = encoding.csv.NewReader("\"a\"\"b\",c\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(6, "error", err.Message())
+        return
+    }
+    println(6, quoted(recs))
+
+}
+
+func case7() {
+    var r = encoding.csv.NewReader("a,\"b\"c\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(7, "error", err.Message())
+        return
+    }
+    println(7, quoted(recs))
+
+}
+
+func case8() {
+    var r = encoding.csv.NewReader("a,\"b\"c\n")
+    r.Comma = ','
+    r.LazyQuotes = true
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(8, "error", err.Message())
+        return
+    }
+    println(8, quoted(recs))
+
+}
+
+func case9() {
+    var r = encoding.csv.NewReader("a,b\"c\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(9, "error", err.Message())
+        return
+    }
+    println(9, quoted(recs))
+
+}
+
+func case10() {
+    var r = encoding.csv.NewReader("a,b\"c\n")
+    r.Comma = ','
+    r.LazyQuotes = true
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(10, "error", err.Message())
+        return
+    }
+    println(10, quoted(recs))
+
+}
+
+func case11() {
+    var r = encoding.csv.NewReader("a,\"bc\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(11, "error", err.Message())
+        return
+    }
+    println(11, quoted(recs))
+
+}
+
+func case12() {
+    var r = encoding.csv.NewReader("a,\"bc\n")
+    r.Comma = ','
+    r.LazyQuotes = true
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(12, "error", err.Message())
+        return
+    }
+    println(12, quoted(recs))
+
+}
+
+func case13() {
+    var r = encoding.csv.NewReader("a;b;c\n")
+    r.Comma = ';'
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(13, "error", err.Message())
+        return
+    }
+    println(13, quoted(recs))
+
+}
+
+func case14() {
+    var r = encoding.csv.NewReader("a\tb\n")
+    r.Comma = '\t'
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(14, "error", err.Message())
+        return
+    }
+    println(14, quoted(recs))
+
+}
+
+func case15() {
+    var r = encoding.csv.NewReader("#comment\na,b\n#x\nc,d\n")
+    r.Comma = ','
+    r.Comment = '#'
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(15, "error", err.Message())
+        return
+    }
+    println(15, quoted(recs))
+
+}
+
+func case16() {
+    var r = encoding.csv.NewReader("a,b\n\n\nc,d\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(16, "error", err.Message())
+        return
+    }
+    println(16, quoted(recs))
+
+}
+
+func case17() {
+    var r = encoding.csv.NewReader("  a,  b\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = true
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(17, "error", err.Message())
+        return
+    }
+    println(17, quoted(recs))
+
+}
+
+func case18() {
+    var r = encoding.csv.NewReader("  a,  b\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(18, "error", err.Message())
+        return
+    }
+    println(18, quoted(recs))
+
+}
+
+func case19() {
+    var r = encoding.csv.NewReader("a,b\nc\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(19, "error", err.Message())
+        return
+    }
+    println(19, quoted(recs))
+
+}
+
+func case20() {
+    var r = encoding.csv.NewReader("a,b\nc\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = -1
+    var recs = try r.ReadAll() catch err {
+        println(20, "error", err.Message())
+        return
+    }
+    println(20, quoted(recs))
+
+}
+
+func case21() {
+    var r = encoding.csv.NewReader("a,b\nc,d\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 2
+    var recs = try r.ReadAll() catch err {
+        println(21, "error", err.Message())
+        return
+    }
+    println(21, quoted(recs))
+
+}
+
+func case22() {
+    var r = encoding.csv.NewReader("a,b,c\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 2
+    var recs = try r.ReadAll() catch err {
+        println(22, "error", err.Message())
+        return
+    }
+    println(22, quoted(recs))
+
+}
+
+func case23() {
+    var r = encoding.csv.NewReader(",,\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(23, "error", err.Message())
+        return
+    }
+    println(23, quoted(recs))
+
+}
+
+func case24() {
+    var r = encoding.csv.NewReader("\"\"\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(24, "error", err.Message())
+        return
+    }
+    println(24, quoted(recs))
+
+}
+
+func case25() {
+    var r = encoding.csv.NewReader("a,\"\"\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(25, "error", err.Message())
+        return
+    }
+    println(25, quoted(recs))
+
+}
+
+func case26() {
+    var r = encoding.csv.NewReader("x\r\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(26, "error", err.Message())
+        return
+    }
+    println(26, quoted(recs))
+
+}
+
+func case27() {
+    var r = encoding.csv.NewReader("x\r")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(27, "error", err.Message())
+        return
+    }
+    println(27, quoted(recs))
+
+}
+
+func case28() {
+    var r = encoding.csv.NewReader("a,b\r")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(28, "error", err.Message())
+        return
+    }
+    println(28, quoted(recs))
+
+}
+
+func case29() {
+    var r = encoding.csv.NewReader("\"a\"b,c\n")
+    r.Comma = ','
+    r.LazyQuotes = true
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(29, "error", err.Message())
+        return
+    }
+    println(29, quoted(recs))
+
+}
+
+func case30() {
+    var r = encoding.csv.NewReader("é,ü\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(30, "error", err.Message())
+        return
+    }
+    println(30, quoted(recs))
+
+}
+
+func case31() {
+    var r = encoding.csv.NewReader("a|b\n")
+    r.Comma = '|'
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(31, "error", err.Message())
+        return
+    }
+    println(31, quoted(recs))
+
+}
+
+func case32() {
+    var r = encoding.csv.NewReader("1,\"two\nlines\",3\n4,5,6\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(32, "error", err.Message())
+        return
+    }
+    println(32, quoted(recs))
+
+}
+
+func case33() {
+    var r = encoding.csv.NewReader("a,b\n  \"c\",d\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = true
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(33, "error", err.Message())
+        return
+    }
+    println(33, quoted(recs))
+
+}
+
+func case34() {
+    var r = encoding.csv.NewReader("\n")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(34, "error", err.Message())
+        return
+    }
+    println(34, quoted(recs))
+
+}
+
+func case35() {
+    var r = encoding.csv.NewReader("")
+    r.Comma = ','
+    r.LazyQuotes = false
+    r.TrimLeadingSpace = false
+    r.FieldsPerRecord = 0
+    var recs = try r.ReadAll() catch err {
+        println(35, "error", err.Message())
+        return
+    }
+    println(35, quoted(recs))
+
+}
+
+func case36() {
+    var w = encoding.csv.NewWriter()
+    w.UseCRLF = false
+    w.Write(["a", "b"])
+    w.Write(["with,comma", "with\"quote"])
+    w.Write(["", " lead", "trail "])
+    w.Write(["new\nline", "cr\rx"])
+    w.Write(["\\.", "tab\tin"])
+    w.Write(["\tlead", "x"])
+    w.Write(["é", "日本"])
+    println(encoding.json.Quote(w.String()))
+
+}
+
+func case37() {
+    var w = encoding.csv.NewWriter()
+    w.UseCRLF = true
+    w.Write(["a", "b"])
+    w.Write(["with,comma", "with\"quote"])
+    w.Write(["", " lead", "trail "])
+    w.Write(["new\nline", "cr\rx"])
+    w.Write(["\\.", "tab\tin"])
+    w.Write(["\tlead", "x"])
+    w.Write(["é", "日本"])
+    println(encoding.json.Quote(w.String()))
+
+}
+
+func main() {
+    case0()
+    case1()
+    case2()
+    case3()
+    case4()
+    case5()
+    case6()
+    case7()
+    case8()
+    case9()
+    case10()
+    case11()
+    case12()
+    case13()
+    case14()
+    case15()
+    case16()
+    case17()
+    case18()
+    case19()
+    case20()
+    case21()
+    case22()
+    case23()
+    case24()
+    case25()
+    case26()
+    case27()
+    case28()
+    case29()
+    case30()
+    case31()
+    case32()
+    case33()
+    case34()
+    case35()
+    case36()
+    case37()
+}

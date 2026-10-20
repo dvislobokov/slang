@@ -1,5 +1,5 @@
 // test: a default method of an embedded interface is available through the embedding interface
-// status: pending
+// status: passing
 namespace spec.interfaces2.embedding_default_inherited
 
 import std.io

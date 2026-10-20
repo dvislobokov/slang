@@ -8,6 +8,7 @@
 #include <string.h>
 
 static int64_t g_live_objects;
+static int64_t g_total_objects; /* objects ever allocated (std.diag) */
 
 /* ---- leak tracking ----
  * Mode 0: off. Mode 1: count live objects and report the count at shutdown.
@@ -283,6 +284,7 @@ static inline slang_object *object_alloc(const slang_type_info *type, int64_t si
     o->refcount = 1;
     o->type = type;
     __atomic_add_fetch(&g_live_objects, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_total_objects, 1, __ATOMIC_RELAXED);
     return o;
 }
 
@@ -383,6 +385,30 @@ int64_t slang_live_objects(void) {
     return __atomic_load_n(&g_live_objects, __ATOMIC_RELAXED);
 }
 
+int64_t slang__total_objects(void) {
+    return __atomic_load_n(&g_total_objects, __ATOMIC_RELAXED);
+}
+
+bool slang__heap_each(void (*cb)(const char *type, int64_t bytes, void *arg), void *arg) {
+    if (!g_track) return false;
+    pthread_mutex_lock(&g_track_mu);
+    for (track *t = g_track_head.next; t != &g_track_head; t = t->next) {
+        slang_object *o = (slang_object *)(t + 1);
+        const char *name = (o->type && o->type->name) ? o->type->name : "<untyped>";
+        int64_t bytes = (int64_t)malloc_usable_size(t) - (int64_t)sizeof(track);
+        cb(name, bytes, arg);
+    }
+    pthread_mutex_unlock(&g_track_mu);
+    return true;
+}
+
+void slang__live_each(void (*cb)(slang_object *obj, void *arg), void *arg) {
+    if (!g_track) return;
+    pthread_mutex_lock(&g_track_mu);
+    for (track *t = g_track_head.next; t != &g_track_head; t = t->next) cb((slang_object *)(t + 1), arg);
+    pthread_mutex_unlock(&g_track_mu);
+}
+
 /* ---- pointers to payloads (`*T` values) ---- */
 
 void slang_ptr_retain(void *payload) {
@@ -438,6 +464,7 @@ void slang__leak_report(void) {
                 fprintf(stderr, "  %lld x %s\n", (long long)counts[i].n, counts[i].name);
             free(counts);
         }
+        slang__leak_cycles();
     }
     fflush(stderr);
     _Exit(SLANG_LEAK_EXIT_CODE);

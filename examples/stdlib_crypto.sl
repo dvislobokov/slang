@@ -2,19 +2,21 @@ namespace examples.stdlib_crypto
 
 import std
 import std.crypto
+import std.crypto.hash as chash
 import std.encoding
 import std.io
 
 func main() {
-    // std.crypto.hash: `import std.crypto` gives hash.X, `import std` gives crypto.hash.X.
-    println("sha256:", hash.Sha256Hex("abc"))
-    println("sha1:", hash.Sha1Hex("abc"))
+    // std.crypto.hash: `import std` and `import std.crypto` would both give `hash`
+    // (std.hash vs std.crypto.hash: ambiguous), so alias it or use crypto.hash.X.
+    println("sha256:", chash.Sha256Hex("abc"))
+    println("sha1:", chash.Sha1Hex("abc"))
     println("md5:", crypto.hash.Md5Hex("The quick brown fox jumps over the lazy dog"))
-    println("sha512:", hash.Sha512Hex("abc"))
-    println("crc32:", hash.Crc32("123456789"))
-    var digest = hash.Sha256("hello")
+    println("sha512:", chash.Sha512Hex("abc"))
+    println("crc32:", chash.Crc32("123456789"))
+    var digest = chash.Sha256("hello")
     println("digest:", len(digest), "bytes, first", digest[0], "last", digest[len(digest) - 1])
-    println("hex matches:", hex.Encode(digest) == hash.Sha256Hex("hello"))
+    println("hex matches:", hex.Encode(digest) == chash.Sha256Hex("hello"))
 
     // std.crypto.hmac
     println("hmac:", hmac.Sha256Hex("key", "The quick brown fox jumps over the lazy dog"))

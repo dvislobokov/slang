@@ -1,5 +1,5 @@
 // test: os.Name and os.Arch are compile-time constants usable in const declarations
-// status: pending
+// status: passing
 namespace spec.platform.os_name_const
 
 import std.io

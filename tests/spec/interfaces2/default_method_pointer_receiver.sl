@@ -1,5 +1,5 @@
 // test: a default method called on an interface holding *T sees the current state of the object
-// status: pending
+// status: passing
 namespace spec.interfaces2.default_method_pointer_receiver
 
 import std.io

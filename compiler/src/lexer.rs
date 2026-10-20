@@ -126,6 +126,8 @@ impl Lexer<'_, '_> {
                 self.number()
             } else if c == '"' {
                 self.string()
+            } else if c == '`' {
+                self.raw_string()
             } else if c == '\'' {
                 self.char_lit()
             } else {
@@ -370,6 +372,33 @@ impl Lexer<'_, '_> {
         while self.peek().is_some_and(|c| c.is_ascii_digit() || c == '_') {
             self.bump();
         }
+    }
+
+    /// `` `...` ``: no escapes, may span lines; carriage returns are
+    /// dropped (as in Go) so a file's line endings do not change the value.
+    fn raw_string(&mut self) -> TokenKind {
+        let start = self.pos;
+        self.bump(); // opening backtick
+        let mut value = String::new();
+        loop {
+            match self.peek() {
+                None => {
+                    self.error("unterminated raw string literal", start, self.pos);
+                    break;
+                }
+                Some('`') => {
+                    self.bump();
+                    break;
+                }
+                Some(c) => {
+                    self.bump();
+                    if c != '\r' {
+                        value.push(c);
+                    }
+                }
+            }
+        }
+        TokenKind::Str(value)
     }
 
     fn string(&mut self) -> TokenKind {
@@ -678,6 +707,13 @@ mod tests {
             vec![Str("a\nb\t\\\"\r\0A\u{1F600}".into()), Semi, Eof]
         );
         assert_eq!(kinds("\"привет\""), vec![Str("привет".into()), Semi, Eof]);
+    }
+
+    #[test]
+    fn raw_strings() {
+        assert_eq!(kinds(r"`C:\dir\n`"), vec![Str(r"C:\dir\n".into()), Semi, Eof]);
+        assert_eq!(kinds("`a\r\n\"b\"`"), vec![Str("a\n\"b\"".into()), Semi, Eof]);
+        assert_eq!(kinds("x = `\n`\ny"), vec![ident("x"), Assign, Str("\n".into()), Semi, ident("y"), Semi, Eof]);
     }
 
     #[test]

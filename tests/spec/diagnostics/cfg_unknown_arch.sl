@@ -1,0 +1,12 @@
+// error: unknown architecture "x86" in @cfg
+// status: passing
+namespace spec.diagnostics.cfg_unknown_arch
+
+import std.io
+
+@cfg(arch: "x86")
+func F() string { return "f" }
+
+func main() {
+    println("main")
+}

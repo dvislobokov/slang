@@ -1,0 +1,79 @@
+serve port 9000 verbose true origins [a b] max 100 ratio 1.25 quiet true args [www] path [tool serve]
+ctx: 9000 true true 100
+> serve -p 9000 --verbose --origin a --origin=b -q www --ratio=1.25 => 0
+serve port 1 verbose false origins [] max 16 ratio 0.5 quiet false args [--not-a-flag] path [tool serve]
+ctx: 1 true false 16
+> s --port=1 --max-conns 0x10 -- --not-a-flag => 0
+> serve --prot 1 => 2
+> serv => 2
+> serve --port => 2
+> serve --port abc => 2
+> serve --verbose=maybe => 2
+> fail => 1
+migrate dry: true
+> db migrate --dry-run => 0
+database tools
+
+Usage:
+  tool db [flags] <command>
+
+Commands:
+  migrate  run migrations
+  help     Show help for a command
+
+Flags:
+  -q, --quiet    no output
+  -h, --help     Show help
+> db => 2
+tool 1.2.0
+> --version => 0
+start the server
+
+Usage:
+  tool serve [flags] [dir]
+
+Flags:
+  -q, --quiet           no output
+  -p, --port int        listen port (default 8080, env $SLANG_CLI_TEST_PORT)
+      --verbose         log every request
+      --origin strings  allowed origin (repeatable)
+      --max-conns int   (default 100)
+      --ratio float     (default 0.5)
+  -h, --help            Show help
+> serve --help => 0
+tool does things
+
+Usage:
+  tool [flags] <command>
+
+Commands:
+  serve  start the server
+  fail   always fails
+  db     database tools
+  help   Show help for a command
+
+Flags:
+  -q, --quiet    no output
+  -h, --help     Show help
+      --version  Print the version
+>  => 2
+database tools
+
+Usage:
+  tool db [flags] <command>
+
+Commands:
+  migrate  run migrations
+  help     Show help for a command
+
+Flags:
+  -q, --quiet    no output
+  -h, --help     Show help
+> help db => 0
+serve port 7777 verbose false origins [] max 100 ratio 0.5 quiet false args [] path [tool serve]
+ctx: 7777 true false 100
+> serve => 0
+true true true
+true true
+cli: unsupported shell "tcsh" (bash, zsh or fish)
+true

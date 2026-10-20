@@ -1,0 +1,68 @@
+namespace std.hash.adler32
+
+// std.hash.adler32: Adler-32 (RFC 1950, Go's hash/adler32).
+
+// The Adler-32 checksum of data.
+func Checksum(data []byte) uint32 {
+    var d = New()
+    _ = d.Write(data)
+    return d.Sum32()
+}
+
+// A streaming Adler-32 (std.hash.Hash32).
+struct Digest {
+    a uint32
+    b uint32
+
+    func Write(p []byte) int! {
+        var a = this.a
+        var b = this.b
+        var i = 0
+        for i < len(p) {
+            // 5552 is the largest n with 255n(n+1)/2 + (n+1)(65520) < 2^32.
+            var end = i + 5552
+            if end > len(p) {
+                end = len(p)
+            }
+            for j in i..end {
+                a += uint32(p[j])
+                b += a
+            }
+            a = a % 65521
+            b = b % 65521
+            i = end
+        }
+        this.a = a
+        this.b = b
+        return len(p)
+    }
+
+    func WriteString(s string) int! {
+        return this.Write(std.strings.Bytes(s))?
+    }
+
+    func Sum32() uint32 {
+        return (this.b << 16) | this.a
+    }
+
+    func Sum() []byte {
+        return std.hash.Bytes32(this.Sum32())
+    }
+
+    func Reset() {
+        this.a = 1
+        this.b = 0
+    }
+
+    func Size() int {
+        return 4
+    }
+
+    func BlockSize() int {
+        return 4
+    }
+}
+
+func New() Digest {
+    return Digest{a: 1, b: 0}
+}

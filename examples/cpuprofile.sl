@@ -1,0 +1,35 @@
+namespace examples.cpuprofile
+
+import std.io
+import std
+
+// std.diag CPU profile: a SIGPROF sampler walks frame pointers and
+// StopCPUProfile writes a pprof profile.proto (`slang tool pprof -top
+// cpu.pb`, or `go tool pprof`).
+
+func fib(n int) int {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+func busy(ms int) int {
+    var start = time.Now()
+    var acc = 0
+    for time.Since(start) < ms {
+        acc += fib(18)
+    }
+    return acc
+}
+
+func main() void! {
+    var path = fs.Join(fs.TempDir(), "slang-example-cpu.pb")
+    diag.StartCPUProfile(path)?
+    var work = busy(300)
+    var samples = diag.StopCPUProfile()?
+    println("ok")
+    println("samples > 0:", samples > 0, "work > 0:", work > 0)
+    println("profile written:", (try fs.Size(path) else 0) > 0)
+    _ = fs.Remove(path)
+}

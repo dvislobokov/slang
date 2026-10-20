@@ -20,7 +20,7 @@ impl<'a> Sema<'a> {
     pub(crate) fn iface_methods(&self, t: TypeId) -> Vec<MethodSig> {
         match self.tt.get(t) {
             Type::Interface(d) => self.interfaces[d.0 as usize].methods.clone(),
-            Type::Error => vec![MethodSig { name: "Message".into(), params: Vec::new(), ret: self.tt.string }],
+            Type::Error => vec![MethodSig { name: "Message".into(), params: Vec::new(), ret: self.tt.string, default: None }],
             _ => Vec::new(),
         }
     }
@@ -37,15 +37,27 @@ impl<'a> Sema<'a> {
         }
     }
 
+    /// Types whose methods can implement interfaces: `S`, `*S` and enums.
+    pub(crate) fn has_methods(&self, t: TypeId) -> bool {
+        self.struct_of(t).is_some() || matches!(self.tt.get(t), Type::Enum(_))
+    }
+
     /// Checks that `src` (a struct or pointer to struct) has every method of
     /// interface `iface`; returns the problems found.
     pub(crate) fn missing_methods(&self, src: TypeId, iface: TypeId) -> Vec<String> {
+        if let Type::Enum(e) = *self.tt.get(src) {
+            return self.enum_missing_methods(e.0, iface);
+        }
         let Some(sid) = self.struct_of(src) else {
             return vec!["(not a struct)".into()];
         };
         let mut problems = Vec::new();
+        if let Some(p) = self.sealed_problem(self.structs[sid as usize].namespace, &self.structs[sid as usize].full_name, iface) {
+            problems.push(p);
+        }
         for m in self.iface_methods(iface) {
             match self.find_method(sid, &m.name) {
+                None if m.default.is_some() => {}
                 None => problems.push(format!("missing method {}", m.name)),
                 Some((f, _)) => {
                     let sig = &self.sigs[f.0 as usize];
@@ -58,6 +70,49 @@ impl<'a> Sema<'a> {
             }
         }
         problems
+    }
+
+    /// [`missing_methods`](Self::missing_methods) for enum `eid` (its
+    /// methods take the enum value as `this`).
+    fn enum_missing_methods(&self, eid: u32, iface: TypeId) -> Vec<String> {
+        let mut problems = Vec::new();
+        if let Some(p) = self.sealed_problem(self.enums[eid as usize].namespace, &self.enums[eid as usize].full_name, iface) {
+            problems.push(p);
+        }
+        for m in self.iface_methods(iface) {
+            match self.enum_methods.get(&(eid, m.name.clone())) {
+                None if m.default.is_some() => {}
+                None => problems.push(format!("missing method {}", m.name)),
+                Some(f) => {
+                    let sig = &self.sigs[f.0 as usize];
+                    if sig.params != m.params || sig.ret != m.ret || sig.is_async {
+                        let have = self.sig_string(&sig.params, sig.ret);
+                        let want = self.sig_string(&m.params, m.ret);
+                        problems.push(format!("method {} has type {have}, want {want}", m.name));
+                    }
+                }
+            }
+        }
+        problems
+    }
+
+    /// For a sealed interface `iface` and a type `full_name` declared in
+    /// namespace `ns`: the reason it cannot implement it, if `ns` is another
+    /// namespace. (Stdlib types share HIR namespace id 0 with a user
+    /// namespace, hence the name check.)
+    pub(crate) fn sealed_problem(&self, ns: hir::NamespaceId, full_name: &str, iface: TypeId) -> Option<String> {
+        let Type::Interface(d) = self.tt.get(iface) else { return None };
+        let it = &self.interfaces[d.0 as usize];
+        if !it.sealed || (it.namespace == ns && full_name.starts_with("std.") == it.full_name.starts_with("std.")) {
+            return None;
+        }
+        let path = self.nss[self.ns_of_hir(it.namespace)].path.clone();
+        Some(format!("sealed interface {} can only be implemented in namespace {path}", self.tn(iface)))
+    }
+
+    /// Interface `iface` is sealed.
+    pub(crate) fn is_sealed(&self, iface: TypeId) -> bool {
+        matches!(self.tt.get(iface), Type::Interface(d) if self.interfaces[d.0 as usize].sealed)
     }
 
     /// `func(a, b) r` spelling of a signature.
@@ -75,7 +130,7 @@ impl<'a> Sema<'a> {
         if matches!(self.tt.get(target), Type::Any) {
             return true;
         }
-        (self.struct_of(src).is_some() && self.missing_methods(src, target).is_empty()) || self.param_implements(src, target) || self.iface_subset(src, target)
+        (self.has_methods(src) && self.missing_methods(src, target).is_empty()) || self.param_implements(src, target) || self.iface_subset(src, target)
     }
 
     /// Interface `src` has every method of interface `target` (same
@@ -84,8 +139,19 @@ impl<'a> Sema<'a> {
         if src == target || !matches!(self.tt.get(src), Type::Interface(_)) || !matches!(self.tt.get(target), Type::Interface(_)) {
             return false;
         }
+        // Values of a sealed interface come only from its namespace: only a
+        // sealed interface of the same namespace converts to it statically.
+        if self.is_sealed(target) {
+            let (Type::Interface(a), Type::Interface(b)) = (self.tt.get(src), self.tt.get(target)) else { return false };
+            let (a, b) = (&self.interfaces[a.0 as usize], &self.interfaces[b.0 as usize]);
+            if !a.sealed || a.namespace != b.namespace {
+                return false;
+            }
+        }
         let have = self.iface_methods(src);
-        self.iface_methods(target).iter().all(|m| have.iter().any(|h| h.name == m.name && h.params == m.params && h.ret == m.ret))
+        self.iface_methods(target)
+            .iter()
+            .all(|m| have.iter().any(|h| h.name == m.name && h.params == m.params && h.ret == m.ret) || (m.default.is_some() && !have.iter().any(|h| h.name == m.name)))
     }
 
     /// Converts `e` to `target` if assignable (identity, typed `nil`,
@@ -111,7 +177,7 @@ impl<'a> Sema<'a> {
         }
         if self.tt.is_interface(target) {
             let any = matches!(self.tt.get(target), Type::Any);
-            if any || (self.struct_of(src).is_some() && self.missing_methods(src, target).is_empty()) || self.param_implements(src, target) || self.iface_subset(src, target) {
+            if any || (self.has_methods(src) && self.missing_methods(src, target).is_empty()) || self.param_implements(src, target) || self.iface_subset(src, target) {
                 if self.tt.is_fallible(src) || matches!(self.tt.get(src), Type::Void) {
                     self.mismatch(src, target, &ctx, e.span);
                     return e;
@@ -119,7 +185,7 @@ impl<'a> Sema<'a> {
                 let span = e.span;
                 return mk(ExprKind::ToInterface { value: Box::new(e) }, target, span);
             }
-            if self.struct_of(src).is_some() {
+            if self.has_methods(src) {
                 let problems = self.missing_methods(src, target);
                 let (s, t) = (self.tn(src), self.tn(target));
                 self.err(format!("{s} does not implement {t}: {}", problems.join(", ")), e.span);

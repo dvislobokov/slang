@@ -1,0 +1,35 @@
+// test: a default method is callable on a struct value that implements the interface, and through any after `case I x:`, also for a stored *T
+// status: passing
+// run-flags: --leak-check
+namespace spec.interfaces2.default_method_on_value
+
+import std.io
+
+interface Named {
+    func Name() string
+    func Shout() string { return this.Name() + "!" }
+}
+
+struct Dog {
+    N string
+    func Name() string { return this.N }
+    func Rename(s string) { this.N = s }
+}
+
+func Try(x any) {
+    switch x {
+        case Named n: println(n.Shout())
+        default: println("nameless")
+    }
+}
+
+func main() {
+    var d = new Dog{N: "rex"}
+    Try(d)
+    d.Rename("max")
+    Try(d)
+    Try(Dog{N: "val"})
+    Try(5)
+    var plain = Dog{N: "plain"}
+    println(plain.Shout(), d.Shout())
+}

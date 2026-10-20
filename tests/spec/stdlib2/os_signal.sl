@@ -1,0 +1,44 @@
+// test: std.os.signal Wait, WaitAny, Notify channel, pending deliveries, Ignore and Reset with self-raised signals
+// status: passing
+namespace spec.stdlib2.os_signal
+
+import std
+import std.io
+import std.os
+
+async func main() {
+    var w = signal.Wait(signal.SIGUSR1)
+    signal.Raise(signal.SIGUSR1)
+    await w
+    println("got", signal.Name(signal.SIGUSR1))
+
+    // delivered while nobody waits: remembered once caught
+    signal.Catch([signal.SIGUSR2])
+    signal.Raise(signal.SIGUSR2)
+    var spins = 0
+    for signal.Pending(signal.SIGUSR2) == 0 && spins < 1000 {
+        await task.Delay(1)
+        spins += 1
+    }
+    println("pending:", signal.Pending(signal.SIGUSR2))
+    await signal.Wait(signal.SIGUSR2)
+    println("pending after wait:", signal.Pending(signal.SIGUSR2))
+
+    var anyT = signal.WaitAny([signal.SIGHUP, signal.SIGTERM])
+    await task.Delay(5)
+    signal.Raise(signal.SIGTERM)
+    println("any:", signal.Name(await anyT))
+
+    var ch = signal.Notify([signal.SIGINT])
+    for i in 0..3 {
+        signal.Raise(signal.SIGINT)
+        var s = try await ch.Recv() else -1
+        println("notify", i, signal.Name(s))
+    }
+    signal.Ignore([signal.SIGUSR1])
+    signal.Raise(signal.SIGUSR1)
+    await task.Delay(5)
+    println("ignored, still running", signal.Name(99))
+    signal.Reset([signal.SIGUSR1])
+    os.Exit(0)
+}

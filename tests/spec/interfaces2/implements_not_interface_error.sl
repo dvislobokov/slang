@@ -1,5 +1,5 @@
 // error: is not an interface
-// status: pending
+// status: passing
 namespace spec.interfaces2.implements_not_interface_error
 
 import std.io

@@ -1,5 +1,5 @@
 // test: one arena per request: objects allocated in it are valid until Free, then the next request starts a new arena
-// status: pending
+// status: passing
 namespace spec.memory2.arena_scoped_parse
 
 import std.io

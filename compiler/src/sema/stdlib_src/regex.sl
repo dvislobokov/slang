@@ -1,0 +1,765 @@
+namespace std.regex
+
+// std.regex: regular expressions with RE2 syntax and a linear-time
+// guarantee (no backtracking, no backreferences, no lookaround).
+//
+// Engine (all Slang; the C half in runtime/src/std_regex.c only provides
+// Unicode tables, case folding, a memmem search and a try-lock):
+//
+// * regex_syntax.sl parses the pattern into a syntax tree whose character
+//   tests are rune classes;
+// * regex_vm.sl compiles the tree twice to byte-level programs (forward
+//   with captures, and reversed without), classes becoming alternations
+//   of UTF-8 byte-range sequences;
+// * a search runs the forward lazy DFA (unanchored, leftmost-first) to
+//   find where the leftmost match ends, then the reverse DFA (anchored at
+//   that end, longest) to find where it starts; captures, when asked for,
+//   come from the Pike VM run anchored at the start. DFA states are built
+//   on first use and cached (4000 states at most, then the cache starts
+//   over), so the cost per byte is bounded by the program size;
+// * a literal prefix lets the DFA skip with memmem while it is in a start
+//   state; a pattern that is one literal is searched with memmem only;
+// * the DFA cache is shared by copies of a Regex; a search that finds it
+//   in use by another thread runs the Pike VM instead.
+
+// A compiled regular expression. Copies share the program and its cache;
+// a Regex is safe to use from several tasks.
+struct Regex {
+    p *re
+
+    // The source text of the pattern.
+    func String() string {
+        if this.p == nil {
+            return ""
+        }
+        return this.p.pattern
+    }
+
+    // Number of capture groups (not counting group 0, the whole match).
+    func NumGroups() int {
+        return len(this.p.names) - 1
+    }
+
+    // Names of the groups by index ("" for group 0 and unnamed groups).
+    func GroupNames() []string {
+        var out []string = []
+        for n in this.p.names {
+            out = append(out, n)
+        }
+        return out
+    }
+
+    // The index of the named group, or -1.
+    func GroupIndex(name string) int {
+        for i, n in this.p.names {
+            if n == name && name != "" {
+                return i
+            }
+        }
+        return -1
+    }
+
+    // Reports whether s contains a match.
+    func Match(s string) bool {
+        return this.p.matches(s)
+    }
+
+    // Match on bytes.
+    func MatchBytes(b []byte) bool {
+        return this.p.matches(std.strings.FromBytes(b))
+    }
+
+    // The leftmost match, or nil.
+    func Find(s string) *Match {
+        var m = this.p.find(s, 0)
+        if m[0] < 0 {
+            return nil
+        }
+        return &Match{Start: m[0], End: m[1], Text: s[m[0]..m[1]]}
+    }
+
+    // [start, end] of the leftmost match, or nil.
+    func FindIndex(s string) []int {
+        var m = this.p.find(s, 0)
+        if m[0] < 0 {
+            return nil
+        }
+        return m
+    }
+
+    // All successive non-overlapping matches (Go semantics for empty
+    // matches: none directly after a previous match).
+    func FindAll(s string) []Match {
+        return this.FindAllN(s, -1)
+    }
+
+    // At most n matches (n < 0: all).
+    func FindAllN(s string, n int) []Match {
+        var out []Match = []
+        var it = this.Iter(s)
+        for n < 0 || len(out) < n {
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            out = append(out, *m)
+        }
+        return out
+    }
+
+    // The texts of all matches.
+    func FindAllText(s string) []string {
+        var out []string = []
+        var it = this.Iter(s)
+        for {
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            out = append(out, m.Text)
+        }
+        return out
+    }
+
+    // An iterator over the matches of s.
+    func Iter(s string) *Iter {
+        return &Iter{r: *this, s: s, pos: 0, prev: -1}
+    }
+
+    // The groups of the leftmost match, or nil.
+    func Groups(s string) *Groups {
+        var m = this.p.find(s, 0)
+        if m[0] < 0 {
+            return nil
+        }
+        var caps = this.p.captures(s, m[0])
+        return &Groups{s: s, caps: caps, names: this.p.names}
+    }
+
+    // The groups of every match.
+    func GroupsAll(s string) []Groups {
+        var out []Groups = []
+        var it = this.Iter(s)
+        for {
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            var caps = this.p.captures(s, m.Start)
+            out = append(out, Groups{s: s, caps: caps, names: this.p.names})
+        }
+        return out
+    }
+
+    // Replaces every match with repl, in which $1, ${1}, $name and
+    // ${name} stand for the groups and $$ for a dollar sign (as Go's
+    // Expand: $name takes the longest name; an unknown group is empty).
+    func Replace(s string, repl string) string {
+        var needGroups = std.strings.Contains(repl, "$")
+        var b = std.strings.Builder{}
+        var last = 0
+        var any = false
+        var it = this.Iter(s)
+        for {
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            any = true
+            b.Write(s[last..m.Start])
+            if needGroups {
+                var caps = this.p.captures(s, m.Start)
+                expand(&b, repl, s, caps, this.p.names)
+            } else {
+                b.Write(repl)
+            }
+            last = m.End
+        }
+        if !any {
+            return s
+        }
+        b.Write(s[last..])
+        return b.String()
+    }
+
+    // Replaces every match with repl taken literally (no $ expansion).
+    func ReplaceLiteral(s string, repl string) string {
+        var b = std.strings.Builder{}
+        var last = 0
+        var any = false
+        var it = this.Iter(s)
+        for {
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            any = true
+            b.Write(s[last..m.Start])
+            b.Write(repl)
+            last = m.End
+        }
+        if !any {
+            return s
+        }
+        b.Write(s[last..])
+        return b.String()
+    }
+
+    // Replaces every match with f(match text).
+    func ReplaceFunc(s string, f func(string) string) string {
+        var b = std.strings.Builder{}
+        var last = 0
+        var any = false
+        var it = this.Iter(s)
+        for {
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            any = true
+            b.Write(s[last..m.Start])
+            b.Write(f(m.Text))
+            last = m.End
+        }
+        if !any {
+            return s
+        }
+        b.Write(s[last..])
+        return b.String()
+    }
+
+    // Replaces every match with f(groups of the match).
+    func ReplaceGroupsFunc(s string, f func(*Groups) string) string {
+        var b = std.strings.Builder{}
+        var last = 0
+        var any = false
+        var it = this.Iter(s)
+        for {
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            any = true
+            b.Write(s[last..m.Start])
+            var g = &Groups{s: s, caps: this.p.captures(s, m.Start), names: this.p.names}
+            b.Write(f(g))
+            last = m.End
+        }
+        if !any {
+            return s
+        }
+        b.Write(s[last..])
+        return b.String()
+    }
+
+    // Splits s around the matches (Go's Split with n = -1).
+    func Split(s string) []string {
+        return this.SplitN(s, -1)
+    }
+
+    // Splits s around the matches into at most n pieces (n < 0: all; n == 0: none).
+    func SplitN(s string, n int) []string {
+        var out []string = []
+        if n == 0 {
+            return out
+        }
+        if len(this.p.pattern) > 0 && len(s) == 0 {
+            return [""]
+        }
+        var beg = 0
+        var end = 0
+        var it = this.Iter(s)
+        for {
+            if n > 0 && len(out) == n - 1 {
+                break
+            }
+            var m = it.Next()
+            if m == nil {
+                break
+            }
+            end = m.Start
+            if m.End != 0 {
+                out = append(out, s[beg..end])
+            }
+            beg = m.End
+        }
+        if end != len(s) {
+            out = append(out, s[beg..])
+        }
+        return out
+    }
+}
+
+// A match: byte offsets [Start, End) and the matched text.
+struct Match {
+    Start int
+    End int
+    Text string
+}
+
+// The capture groups of one match. Group 0 is the whole match.
+struct Groups {
+    s string
+    caps []int
+    names []string
+
+    // Number of groups, group 0 included.
+    func Len() int {
+        return len(this.caps) / 2
+    }
+
+    // The text of group i ("" if it did not take part or is out of range).
+    func At(i int) string {
+        if i < 0 || i * 2 + 1 >= len(this.caps) || this.caps[i * 2] < 0 {
+            return ""
+        }
+        return this.s[this.caps[i * 2]..this.caps[i * 2 + 1]]
+    }
+
+    // The text of the named group ("" if unknown or not matched).
+    func Get(name string) string {
+        return this.At(this.index(name))
+    }
+
+    // Group i as a Match, or nil if it did not take part.
+    func Span(i int) *Match {
+        if i < 0 || i * 2 + 1 >= len(this.caps) || this.caps[i * 2] < 0 {
+            return nil
+        }
+        var a = this.caps[i * 2]
+        var b = this.caps[i * 2 + 1]
+        return &Match{Start: a, End: b, Text: this.s[a..b]}
+    }
+
+    // The named group as a Match, or nil.
+    func Named(name string) *Match {
+        return this.Span(this.index(name))
+    }
+
+    // Reports whether group i took part in the match.
+    func Matched(i int) bool {
+        return i >= 0 && i * 2 + 1 < len(this.caps) && this.caps[i * 2] >= 0
+    }
+
+    // The names of the named groups, in order.
+    func Names() []string {
+        var out []string = []
+        for n in this.names {
+            if n != "" {
+                out = append(out, n)
+            }
+        }
+        return out
+    }
+
+    // The whole match.
+    func Match() Match {
+        return Match{Start: this.caps[0], End: this.caps[1], Text: this.s[this.caps[0]..this.caps[1]]}
+    }
+
+    func index(name string) int {
+        if name == "" {
+            return -1
+        }
+        for i, n in this.names {
+            if n == name {
+                return i
+            }
+        }
+        return -1
+    }
+}
+
+// An iterator over successive matches: Next() returns nil at the end.
+struct Iter {
+    r Regex
+    s string
+    pos int
+    prev int
+    done bool
+
+    func Next() *Match {
+        var n = len(this.s)
+        for !this.done && this.pos <= n {
+            var m = this.r.p.find(this.s, this.pos)
+            if m[0] < 0 {
+                this.done = true
+                return nil
+            }
+            var accept = true
+            if m[1] == m[0] {
+                // an empty match: never right after the previous match
+                if m[0] == this.prev {
+                    accept = false
+                }
+                if m[1] < n {
+                    this.pos = m[1] + runeWidth(this.s, m[1])
+                } else {
+                    this.pos = n + 1
+                }
+            } else {
+                this.pos = m[1]
+            }
+            this.prev = m[1]
+            if accept {
+                return &Match{Start: m[0], End: m[1], Text: this.s[m[0]..m[1]]}
+            }
+        }
+        this.done = true
+        return nil
+    }
+}
+
+// Compiles a pattern (RE2 syntax).
+func Compile(pattern string) Regex! {
+    var r = build(pattern)?
+    return Regex{p: r}
+}
+
+// Compiles a pattern that is known to be valid; the compiler checks
+// string-literal arguments when it compiles the program (a bad literal
+// is a compile error). A bad dynamic pattern panics.
+func Pattern(pattern string) Regex {
+    var r = try build(pattern) catch err {
+        panic(err.Message())
+    }
+    return Regex{p: r}
+}
+
+// Matches reports whether s contains a match of pattern.
+func MatchString(pattern string, s string) bool! {
+    var r = Compile(pattern)?
+    return r.Match(s)
+}
+
+// Escape quotes the metacharacters of s: the result matches s literally.
+func Escape(s string) string {
+    var b = std.strings.Builder{}
+    var start = 0
+    var changed = false
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if c == 92 || c == 46 || c == 43 || c == 42 || c == 63 || c == 40 || c == 41 || c == 124 || c == 91 || c == 93 || c == 123 || c == 125 || c == 94 || c == 36 {
+            b.Write(s[start..i])
+            b.Write("\\")
+            start = i
+            changed = true
+        }
+    }
+    if !changed {
+        return s
+    }
+    b.Write(s[start..])
+    return b.String()
+}
+
+// -- internals ----------------------------------------------------------------
+
+// The shared compiled form of a Regex.
+struct re {
+    pattern string
+    names []string
+    ncap int
+    fwd *prog
+    revp *prog
+    literal bool
+    lit string
+    prefix string
+    anchored bool
+    lock int
+    fdfa *dfa
+    rdfa *dfa
+    vm *pike
+
+    // [start, end] of the leftmost match at or after pos, or [-1, -1].
+    func find(s string, pos int) []int {
+        if pos > len(s) {
+            return [-1, -1]
+        }
+        if this.literal {
+            var j = rtIndex(s, this.lit, pos)
+            if j < 0 {
+                return [-1, -1]
+            }
+            return [j, j + len(this.lit)]
+        }
+        if this.anchored && pos > 0 {
+            return [-1, -1]
+        }
+        if rtTryLock(&this.lock) {
+            var e = this.fdfa.forward(s, pos, false, this.prefix)
+            if e < 0 {
+                rtUnlock(&this.lock)
+                return [-1, -1]
+            }
+            var st = this.rdfa.backward(s, e, pos)
+            rtUnlock(&this.lock)
+            if st < 0 {
+                st = e
+            }
+            return [st, e]
+        }
+        var vm = &pike{}
+        vm.init(this.fwd, 2)
+        var caps = vm.run(s, pos, this.anchored)
+        if len(caps) == 0 {
+            return [-1, -1]
+        }
+        return [caps[0], caps[1]]
+    }
+
+    func matches(s string) bool {
+        if this.literal {
+            return rtIndex(s, this.lit, 0) >= 0
+        }
+        if rtTryLock(&this.lock) {
+            var e = this.fdfa.forward(s, 0, true, this.prefix)
+            rtUnlock(&this.lock)
+            return e >= 0
+        }
+        var vm = &pike{}
+        vm.init(this.fwd, 2)
+        return len(vm.run(s, 0, this.anchored)) > 0
+    }
+
+    // The capture slots of the match starting at start.
+    func captures(s string, start int) []int {
+        if this.ncap == 2 && this.literal {
+            return [start, start + len(this.lit)]
+        }
+        var vm = &pike{}
+        vm.init(this.fwd, this.ncap)
+        var caps = vm.run(s, start, true)
+        if len(caps) == 0 {
+            var none = rtInts(this.ncap)
+            for k in 0..this.ncap {
+                none[k] = -1
+            }
+            return none
+        }
+        return caps
+    }
+}
+
+func build(pattern string) *re! {
+    var ps = parser{}
+    var root = parse(pattern, &ps)?
+    var r = &re{}
+    r.pattern = pattern
+    r.names = ps.names
+    r.ncap = (ps.ncap + 1) * 2
+    // forward program with captures: save 0, tree, save 1, match
+    var fp = &prog{}
+    fp.setKeys = map[string]int{}
+    var fc = compiler{p: fp, nodes: ps.nodes, rev: false}
+    var s0 = fc.one(3, 0)
+    var body = fc.comp(root)
+    var s1 = fc.one(3, 1)
+    var m = fp.emit(5, 0)
+    fc.patch(s0.holes, body.start)
+    fc.patch(body.holes, s1.start)
+    fc.patch(s1.holes, m)
+    fp.start = s0.start
+    // reverse program (no captures)
+    var rp = &prog{}
+    rp.setKeys = map[string]int{}
+    var rc = compiler{p: rp, nodes: ps.nodes, rev: true}
+    var rbody = rc.comp(root)
+    var rm = rp.emit(5, 0)
+    rc.patch(rbody.holes, rm)
+    rp.start = rbody.start
+    r.fwd = fp
+    r.revp = rp
+    // literal analysis
+    var info = literalInfo(ps.nodes, root)
+    r.prefix = info.prefix
+    r.literal = info.complete && info.prefix != ""
+    r.lit = info.prefix
+    r.anchored = startsAnchored(ps.nodes, root)
+    var fcls = byteClasses(fp)
+    r.fdfa = &dfa{}
+    r.fdfa.init(fp, false, false, !r.anchored, fcls[..256], fcls[256])
+    var rcls = byteClasses(rp)
+    r.rdfa = &dfa{}
+    r.rdfa.init(rp, true, true, false, rcls[..256], rcls[256])
+    return r
+}
+
+struct litInfo {
+    prefix string
+    complete bool
+}
+
+// The literal bytes every match starts with, and whether the pattern is
+// exactly that literal.
+func literalInfo(nodes []node, root int) litInfo {
+    var b []byte = []
+    var complete = litWalk(nodes, root, &b)
+    return litInfo{prefix: std.strings.FromBytes(b), complete: complete}
+}
+
+// Appends the literal prefix of node n; true if n is entirely literal.
+func litWalk(nodes []node, n int, b *[]byte) bool {
+    var nd = nodes[n]
+    if nd.op == 0 {
+        return true
+    }
+    if nd.op == 1 {
+        if len(nd.r) == 2 && nd.r[0] == nd.r[1] {
+            for x in utf8Bytes(nd.r[0]) {
+                *b = append(*b, byte(x))
+            }
+            return true
+        }
+        return false
+    }
+    if nd.op == 3 {
+        return litWalk(nodes, nd.subs[0], b)
+    }
+    if nd.op == 4 {
+        for x in nd.subs {
+            if !litWalk(nodes, x, b) {
+                return false
+            }
+        }
+        return true
+    }
+    if nd.op == 6 && nd.min >= 1 {
+        // x+ / x{n,}: x is a prefix, but not all of it
+        var full = litWalk(nodes, nd.subs[0], b)
+        if !full {
+            return false
+        }
+        if nd.min == 1 && nd.max == 1 {
+            return true
+        }
+        return false
+    }
+    return false
+}
+
+// True if every match must start at the beginning of the text (\A).
+func startsAnchored(nodes []node, n int) bool {
+    var nd = nodes[n]
+    if nd.op == 2 {
+        return nd.min == 4
+    }
+    if nd.op == 3 {
+        return startsAnchored(nodes, nd.subs[0])
+    }
+    if nd.op == 4 && len(nd.subs) > 0 {
+        return startsAnchored(nodes, nd.subs[0])
+    }
+    if nd.op == 5 {
+        for x in nd.subs {
+            if !startsAnchored(nodes, x) {
+                return false
+            }
+        }
+        return true
+    }
+    return false
+}
+
+// Byte width of the UTF-8 sequence at i (1 for an invalid byte).
+func runeWidth(s string, i int) int {
+    var c = int(s[i])
+    var w = 1
+    if c >= 240 && c < 248 {
+        w = 4
+    } else if c >= 224 {
+        w = 3
+    } else if c >= 192 {
+        w = 2
+    }
+    if c >= 248 || i + w > len(s) {
+        return 1
+    }
+    for k in 1..w {
+        if (int(s[i + k]) & 192) != 128 {
+            return 1
+        }
+    }
+    return w
+}
+
+// Writes the expansion of template for one match (see Regex.Replace).
+func expand(b *std.strings.Builder, template string, s string, caps []int, names []string) {
+    var i = 0
+    var start = 0
+    var n = len(template)
+    for i < n {
+        if int(template[i]) != 36 {
+            i += 1
+            continue
+        }
+        b.Write(template[start..i])
+        i += 1
+        if i < n && int(template[i]) == 36 {
+            b.Write("$")
+            i += 1
+            start = i
+            continue
+        }
+        var name = ""
+        var braced = i < n && int(template[i]) == 123
+        if braced {
+            var j = i + 1
+            for j < n && int(template[j]) != 125 {
+                j += 1
+            }
+            if j >= n {
+                // no closing brace: keep the text
+                b.Write("$")
+                start = i
+                continue
+            }
+            name = template[i + 1..j]
+            i = j + 1
+        } else {
+            var j = i
+            for j < n && isNameByte(int(template[j])) {
+                j += 1
+            }
+            name = template[i..j]
+            i = j
+        }
+        if name == "" {
+            b.Write("$")
+            if braced {
+                b.Write("{}")
+            }
+            start = i
+            continue
+        }
+        var g = -1
+        var num = try std.strings.ToInt(name) else -1
+        if num >= 0 && validNumber(name) {
+            g = num
+        } else {
+            for k, nm in names {
+                if nm == name && g < 0 {
+                    g = k
+                }
+            }
+        }
+        if g >= 0 && g * 2 + 1 < len(caps) && caps[g * 2] >= 0 {
+            b.Write(s[caps[g * 2]..caps[g * 2 + 1]])
+        }
+        start = i
+    }
+    b.Write(template[start..])
+}
+
+func isNameByte(c int) bool {
+    return c == 95 || (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+}
+
+func validNumber(s string) bool {
+    for i in 0..len(s) {
+        if int(s[i]) < 48 || int(s[i]) > 57 {
+            return false
+        }
+    }
+    return true
+}

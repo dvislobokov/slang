@@ -281,7 +281,10 @@ pub struct Interface {
     pub name: String,
     pub full_name: String,
     pub namespace: NamespaceId,
+    /// All methods, embedded ones included; vtable slot `i` is method `i`.
     pub methods: Vec<MethodSig>,
+    /// `sealed interface`: only types of its namespace implement it.
+    pub sealed: bool,
     pub attrs: Vec<Attr>,
     pub exported: bool,
     pub file: FileId,
@@ -294,6 +297,10 @@ pub struct MethodSig {
     pub name: String,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
+    /// Default method: a free function whose first parameter `this` is a
+    /// value of the declaring interface. Used by vtables of types that do
+    /// not declare the method themselves.
+    pub default: Option<FuncId>,
 }
 
 /// An enum. Values are `{ tag: variant index, payload }`; plain enums (no
@@ -306,6 +313,9 @@ pub struct Enum {
     pub variants: Vec<Variant>,
     /// True if no variant has fields.
     pub is_plain: bool,
+    /// Methods declared after the variants: free functions whose first
+    /// parameter `this` is the enum value.
+    pub methods: Vec<(String, FuncId)>,
     pub attrs: Vec<Attr>,
     pub exported: bool,
     pub file: FileId,
@@ -801,6 +811,12 @@ pub enum Builtin {
     /// `Task<T>` yielding the result of the first task to complete (the
     /// others keep running). Only valid as the operand of `await`.
     TaskAny,
+    /// `args = [arena handle]`: a zeroed `T` allocated in the arena; the
+    /// expression's type is `*T` (runtime `slang_arena_object`).
+    ArenaNew,
+    /// `args = [arena handle, n]`: `n` zeroed `T` in the arena; the type is
+    /// `[]T` (runtime `slang_arena_slice`).
+    ArenaSlice,
 }
 
 /// One primitive print operation of a lowered `println`.

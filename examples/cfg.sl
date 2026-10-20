@@ -1,0 +1,51 @@
+namespace examples.cfg
+
+import std
+import std.io
+
+// Conditional compilation (DESIGN.md "Платформы"): exactly one variant of
+// each declaration is compiled for the target; the others are not even
+// type-checked, so they may use names that exist only on their platform.
+
+@cfg(os: "windows")
+func ConfigDir() string {
+    return winapi.KnownFolder("ProgramData")
+}
+
+@cfg(not(os: "windows"))
+func ConfigDir() string {
+    return "/etc"
+}
+
+struct Handle {
+    @cfg(os: "windows")
+    Raw int
+    @cfg(not(os: "windows"))
+    Fd int
+
+    @cfg(not(os: "windows"))
+    func Describe() string { return fmt.Format("fd {0}", this.Fd) }
+    @cfg(os: "windows")
+    func Describe() string { return fmt.Format("HANDLE {0}", this.Raw) }
+}
+
+@cfg(any(arch: "amd64", arch: "arm64"))
+const WordBits = 64
+
+@cfg(all(not(arch: "amd64"), not(arch: "arm64")))
+const WordBits = 32
+
+// Compile-time string constants of the target.
+const Exe = os.Name == "windows"
+
+func main() {
+    var h Handle
+    println(ConfigDir(), WordBits, Exe)
+    println(len(os.PathSeparator), len(os.LineSeparator) >= 1, len(os.Arch) > 0)
+    switch os.Name {
+        case "linux", "macos", "freebsd": println("unix", h.Describe())
+        case "windows": println("windows", h.Describe())
+        default:
+            println("other")
+    }
+}

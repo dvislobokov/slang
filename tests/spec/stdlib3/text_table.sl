@@ -1,0 +1,28 @@
+// test: std.text.table: Plain/ASCII/Unicode/Markdown styles, right/center alignment, display width of CJK and combining marks, multi-line cells, ragged rows, headerless tables, Format
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib3.text_table
+
+import std
+
+func main() {
+    var t = text.table.New(["Name", "Qty", "Price"])
+    t.AddRow(["apple", "3", "1.25"])
+    t.AddRow(["日本茶", "12", "10.00"])
+    t.AddRow(["café", "100", "0.5"])
+    t.SetAlign(1, text.table.Right)
+    t.SetAlign(2, text.table.Right)
+    for st in [text.table.Plain, text.table.ASCII, text.table.Unicode, text.table.Markdown] {
+        t.Style = st
+        io.print(t.String())
+        io.println("--")
+    }
+    var m = text.table.New([])
+    m.Style = text.table.ASCII
+    m.AddRow(["multi\nline", "x"])
+    m.AddRow(["a", "b", "extra"])
+    m.SetAlign(0, text.table.Center)
+    io.print(m.String())
+    io.print(text.table.Format([["k", "v"], ["a", "1"]], text.table.Markdown))
+    io.println(text.table.Width("héllo日本\u{301}"), text.table.New([]).String() == "")
+}

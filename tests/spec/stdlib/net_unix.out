@@ -1,0 +1,7 @@
+echo: over a unix socket
+file removed by Close: true
+file while listening: true
+file removed by Drop: true
+in use: true
+missing: true
+echo: over a unix socket

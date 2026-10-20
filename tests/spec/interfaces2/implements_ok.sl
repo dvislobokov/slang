@@ -1,5 +1,5 @@
 // test: `implements` checks at the declaration; the struct is used through the interface as usual
-// status: pending
+// status: passing
 namespace spec.interfaces2.implements_ok
 
 import std.io

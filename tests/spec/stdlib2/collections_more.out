@@ -1,0 +1,17 @@
+[a x b c] 4 b a c
+x a c [b] 1
+empty 0
+0
+20 -9 9 -9 9 -8 8
+[100 -7 -6 -5 -4 -3 -2 -1 0 0 1 2 3 4 5 6 7 8]
+false false false true true [3 4 5] 3 3 true 3 4
+[1 2 3 5 8 9] apple 3 -1
+high mid1 mid2 low 
+[apple fig pear] [10 2 3] 2 0 true 3
+true false [apple pear] apple pear
+pear apple none [apple]
+1 true true [c a] false 2 1
+0 false 1 true true [c]
+30
+[1 64 130] 3 131 true false [1 2 64 130] [1] [64 130]
+[1 3 130] true false

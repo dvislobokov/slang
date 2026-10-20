@@ -1,5 +1,5 @@
 // test: println evaluates all its arguments before writing anything (Go's fmt.Println), so output from an argument comes first
-// status: pending
+// status: passing
 namespace spec.strings2.println_evaluates_args_first
 
 import std.io

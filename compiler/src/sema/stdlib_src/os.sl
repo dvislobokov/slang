@@ -1,0 +1,200 @@
+namespace std.os
+
+// std.os files (Go's os.File): Open/Create/OpenFile return a File that
+// implements std.io.Reader, Writer, Closer, Seeker (and ReadWriteCloser);
+// Stat/Lstat give FileInfo; ReadDir gives DirEntry values. The older
+// std.os functions (Args, Getenv, Exit, ...) are runtime externs.
+//
+// Flag bits for OpenFile (combine with |): RDONLY, WRONLY, RDWR, APPEND,
+// CREATE, EXCL, SYNC, TRUNC (the constants std.os.O_RDONLY ...).
+
+// The descriptor; closed when the last File copy is gone (or by Close).
+struct fileState {
+    fd int
+    name string
+    keep bool
+
+    func Drop() {
+        if this.fd >= 0 && !this.keep {
+            try {
+                rtClose(this.fd)?
+            } catch err {
+            }
+        }
+    }
+}
+
+struct File {
+    st *fileState
+
+    // The path the file was opened with.
+    func Name() string {
+        return this.st.name
+    }
+
+    // The descriptor (-1 once closed).
+    func Fd() int {
+        return this.st.fd
+    }
+
+    func fd() int! {
+        if this.st == nil || this.st.fd < 0 {
+            return error("file already closed")
+        }
+        return this.st.fd
+    }
+
+    // Reads up to len(buf) bytes; 0 at the end of the file.
+    func Read(buf []byte) int! {
+        var fd = this.fd()?
+        return rtRead(fd, buf)?("read " + this.st.name)
+    }
+
+    // Reads at an absolute offset without moving the file position.
+    func ReadAt(buf []byte, off int) int! {
+        var fd = this.fd()?
+        return rtPread(fd, buf, off)?("read " + this.st.name)
+    }
+
+    // Writes all of buf.
+    func Write(buf []byte) int! {
+        var fd = this.fd()?
+        return rtWrite(fd, buf)?("write " + this.st.name)
+    }
+
+    func WriteString(s string) int! {
+        var fd = this.fd()?
+        return rtWriteStr(fd, s)?("write " + this.st.name)
+    }
+
+    // whence: 0 start, 1 current, 2 end (std.io.SeekStart ...).
+    func Seek(offset int, whence int) int! {
+        var fd = this.fd()?
+        return rtSeek(fd, offset, whence)?("seek " + this.st.name)
+    }
+
+    func Close() void! {
+        var fd = this.fd()?
+        this.st.fd = -1
+        rtClose(fd)?("close " + this.st.name)
+    }
+
+    // Flushes the file to stable storage (fsync).
+    func Sync() void! {
+        var fd = this.fd()?
+        rtSync(fd)?("sync " + this.st.name)
+    }
+
+    // Changes the size of the file.
+    func Truncate(size int) void! {
+        var fd = this.fd()?
+        rtTruncate(fd, size)?("truncate " + this.st.name)
+    }
+
+    func Stat() FileInfo! {
+        var fd = this.fd()?
+        var v = rtFstat(fd)?("stat " + this.st.name)
+        return info(std.fs.Base(this.st.name), v)
+    }
+
+    // The whole remaining content.
+    func ReadAll() []byte! {
+        return std.io.ReadAllFrom(*this)?
+    }
+}
+
+// File metadata.
+struct FileInfo {
+    Name string
+    Size int
+    // Permission bits (0o644).
+    Mode int
+    IsDir bool
+    IsSymlink bool
+    // Modification time, nanoseconds since the Unix epoch.
+    ModTimeNanos int
+
+    kind int
+
+    func IsRegular() bool {
+        return this.kind == 0
+    }
+
+    func ModTime() std.time.Time {
+        return std.time.Unix(0, this.ModTimeNanos)
+    }
+}
+
+func info(name string, v []int) FileInfo {
+    return FileInfo{Name: name, Size: v[0], Mode: v[1], IsDir: v[2] == 1, IsSymlink: v[2] == 2, ModTimeNanos: v[3] * 1000000000 + v[4], kind: v[2]}
+}
+
+// One directory entry (ReadDir).
+struct DirEntry {
+    Name string
+    IsDir bool
+    IsSymlink bool
+    // Full path of the entry (dir + "/" + Name).
+    Path string
+
+    func Info() FileInfo! {
+        return Lstat(this.Path)?
+    }
+}
+
+// Opens a file for reading.
+func Open(path string) File! {
+    return OpenFile(path, 0, 0)?
+}
+
+// Creates or truncates a file for reading and writing (mode 0o666 before umask).
+func Create(path string) File! {
+    return OpenFile(path, 2 | 64 | 512, 438)?
+}
+
+// Opens with flag bits (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREATE,
+// O_EXCL, O_SYNC, O_TRUNC) and permission bits for a created file.
+func OpenFile(path string, flags int, perm int) File! {
+    var fd = rtOpen(path, flags, perm)?
+    return File{st: new fileState{fd: fd, name: path}}
+}
+
+// Metadata of path (following symlinks).
+func Stat(path string) FileInfo! {
+    var v = rtStat(path, true)?
+    return info(std.fs.Base(path), v)
+}
+
+// Metadata of path itself (a symlink is not followed).
+func Lstat(path string) FileInfo! {
+    var v = rtStat(path, false)?
+    return info(std.fs.Base(path), v)
+}
+
+// The entries of dir, sorted by name (without "." and "..").
+func ReadDir(dir string) []DirEntry! {
+    var out []DirEntry = []
+    for e in rtReadDir(dir)? {
+        var name = e[1..]
+        out = append(out, DirEntry{Name: name, IsDir: e[0] == 100, IsSymlink: e[0] == 108, Path: std.fs.Join(dir, name)})
+    }
+    return out
+}
+
+// Changes permission bits.
+func Chmod(path string, mode int) void! {
+    rtChmod(path, mode)?
+}
+
+// The standard streams as Files (never closed by dropping them).
+func Stdin() File {
+    return File{st: new fileState{fd: 0, name: "/dev/stdin", keep: true}}
+}
+
+func Stdout() File {
+    return File{st: new fileState{fd: 1, name: "/dev/stdout", keep: true}}
+}
+
+func Stderr() File {
+    return File{st: new fileState{fd: 2, name: "/dev/stderr", keep: true}}
+}

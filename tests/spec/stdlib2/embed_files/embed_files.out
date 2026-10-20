@@ -1,0 +1,7 @@
+Hello, embedded world!
+second line
+35 [0 1 255] 35 true
+[assets/a.txt assets/b.md assets/sub/c.txt] 3 [assets/a.txt]
+gamma alpha true false
+[assets/sub/c.txt]
+embed: open nope: No such file or directory true

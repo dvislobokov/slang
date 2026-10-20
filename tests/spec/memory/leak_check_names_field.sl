@@ -1,5 +1,5 @@
 // test: the leak report names the field that closes the cycle (Type.Field), as a candidate for weak
-// status: pending
+// status: passing
 // run-flags: --leak-check
 // exit: 66
 // stderr: Node.Other

@@ -1,0 +1,53 @@
+// test: std.regex corpus (296 cases checked against Go regexp): submatch indices of the first match, all matches, Match; invalid patterns fail
+// status: passing
+namespace spec.stdlib3.regex_corpus
+
+import std
+import std.io
+
+func show(x []int) string {
+    if x == nil {
+        return "nil"
+    }
+    return fmt.Format("{0}", x)
+}
+
+func main() {
+    var ps = ["abc", "abc", "abc", "abc", "abc", "abc", "ab*c", "ab*bc", "ab*bc", "ab*bc", "ab+bc", "ab+bc", "ab+bc", "ab+bc", "ab?bc", "ab?bc", "ab?bc", "ab?c", "^abc$", "^abc$", "^abc", "^abc$", "abc$", "^", "$", "a.c", "a.c", "a.*c", "a.*c", "a[bc]d", "a[bc]d", "a[b-d]e", "a[b-d]e", "a[b-d]", "a[-b]", "a[b-]", "a]", "a[]]b", "a[^bc]d", "a[^bc]d", "a[^-b]c", "a[^-b]c", "a[^]b]c", "a[^]b]c", "ab|cd", "ab|cd", "()ef", "$b", "a\\(b", "a\\(*b", "a\\(*b", "a\\\\b", "((a))", "(a)b(c)", "a+b+c", "a{1,}b{1,}c", "a.+?c", "(a+|b)*", "(a+|b){0,}", "(a+|b)+", "(a+|b){1,}", "(a+|b)?", "(a+|b){0,1}", "[^ab]*", "abc", "a*", "([abc])*d", "([abc])*bcd", "a|b|c|d|e", "(a|b|c|d|e)f", "abcd*efg", "ab*", "ab*", "(ab|cd)e", "[abhgefdc]ij", "(abc|)ef", "(a|b)c*d", "(ab|ab*)bc", "a([bc]*)c*", "a([bc]*)(c*d)", "a([bc]+)(c*d)", "a([bc]*)(c+d)", "a[bcd]*dcdcde", "a[bcd]+dcdcde", "(ab|a)b*c", "((a)(b)c)(d)", "[a-zA-Z_][a-zA-Z0-9_]*", "^a(bc+|b[eh])g|.h$", "(bc+d$|ef*g.|h?i(j|k))", "(bc+d$|ef*g.|h?i(j|k))", "(bc+d$|ef*g.|h?i(j|k))", "(bc+d$|ef*g.|h?i(j|k))", "(bc+d$|ef*g.|h?i(j|k))", "((((((((((a))))))))))", "(((((((((a)))))))))", "multiple words of text", "multiple words", "(.*)c(.*)", "\\((.*), ", "[k]", "abcd", "a(bc)d", "a[-]?c", "(....).*\\1", "(?i)abc", "(?i)abc", "(?i)abc", "(?i)abc", "(?i)abc", "(?i)ab*c", "(?i)ab*bc", "(?i)^abc$", "(?i)a.c", "(?i)a[b-d]e", "(?i)a[^bc]d", "(?i)k", "(?i)k", "(?i)k", "(?i)s", "(?i)Σ", "(?i)ς", "(?i)[k-m]+", "x(?i)ab", "x(?i)ab", "(?i:ab)c", "(?i:ab)c", "a(?:b|c|d)*e", "a(?:b|c|d)+?(.)", "a(?:b|c|d){2}(.)", "a(?:b|c|d){4,5}(.)", "a(?:b|c|d){4,5}?(.)", "((foo)|(bar))+", "(a*)*", "(a*)+", "(a|)*", "(a*|b)*", "(a+|b)*", "(a*)*(x)", "(a*)+(x)", "(a*){2}(x)", "(a*){2}(x)", "(?U)a+", "(?U)a+?", "a+?", "a*?", "a??", "a{2}", "a{2,}", "a{2,3}", "a{2,3}?", "a{0}b", "a{,2}", "a{1", "x{}", "\\d+", "\\D+", "\\w+", "\\W+", "\\s+", "\\S+", "[\\d]+", "[^\\d]+", "[\\w\\s]+", "[[:alpha:]]+", "[[:digit:]]+", "[[:^alpha:]]+", "[[:space:]]+", "[[:upper:][:digit:]]+", "\\bfoo\\b", "\\bfoo\\b", "\\Bfoo\\B", "\\b", "\\B", "^$", "^$", "(?m)^b", "(?m)a$", "(?m)^\\w+$", "^\\w+$", "(?s)a.b", "a.b", "\\Aab", "\\Aab", "ab\\z", "ab\\z", "(?m)\\Aab", "\\x41\\x{42}", "\\x{263a}", "[\\x{100}-\\x{200}]+", "\\p{L}+", "\\p{Lu}+", "\\p{Ll}+", "\\pL+", "\\PL+", "\\p{^L}+", "\\p{Greek}+", "\\P{Greek}+", "\\p{Han}+", "\\p{Cyrillic}+", "\\p{N}+", "\\p{Nd}+", "[\\p{L}\\d]+", "[^\\p{L}]+", "\\p{Any}+", ".", "..", "...", "[日本]+", "[^a]", "[^a]+", ".+", "\\Qa.b\\E+", "\\Qa.b", "x*", "x*", "()", "(|a)*", "(a|)*", "(|a)+", "(a|)+", "(a|b)*?c", "(?P<year>\\d{4})-(?P<month>\\d{2})", "(?<y>\\d+)x(?<z>\\d+)", "(?P<first>\\w+) (?P<last>\\w+)", "a(?P<x>b)?c", "(a)|(b)", "(a)|b", "(a)?(b)?", "([a-c]*)\\1", "caf\\x{e9}", "(?i)CAFÉ", "(?i)straße", "\\.", "[.]", "[a.]+", "a|b", "(?:a|b)+", ".*", ".*?", "(.*?)(b)", "(a.*z|b.*y)", "(a.*z|b.*y)*", "(abc|abcd)", "(abcd|abc)", "(a|ab)(c|bcd)(d*)", "(a+)(b+)?", "^(?:(a)|(b))+$", "[a-c]+|[x-z]+", "x+$", "^x+", "\\$", "[$]", "\\^", "[\\^]", "[]a]", "[a-]+", "[\\-]", "[\\]]", "[\\\\]", "\\[\\]", "\\t", "[\\t\\n]+", "\\n", "\\r?\\n", "[\\x00-\\x7f]+", "[\\x{80}-\\x{10FFFF}]+", "[^\\x00-\\x7f]+", "(\\w+)@(\\w+)\\.com", "[a-z]+@[a-z]+\\.[a-z]{2,}", "\\d{3}-\\d{4}", "(\\d+)\\.(\\d+)\\.(\\d+)", "^\\s*$", "^\\s*#", "(?i)hello", "(?i)[a-c]+", "(?-i:a)b", "(?i)(?-i:a)b", "(?i)(?-i:a)b", "(?s:.)", "(?ms)^a.b$", "a+(?:b|c)", "(?:ab)*", "(?:ab){2,}", "(?:a{2}){2}", "(a){0}", "(a){0,0}b", "z*$", "z*\\z", "\\b\\w", "\\w\\b", "^", "(?m)^", "(?m)$", "(?m)^$", ".*$", "(?m).*$"]
+    var ss = ["abc", "xbc", "axc", "abx", "xabcy", "ababc", "abc", "abc", "abbc", "abbbbc", "abbc", "abc", "abq", "abbbbc", "abbc", "abc", "abbbbc", "abc", "abc", "abcc", "abcc", "aabc", "aabc", "abc", "abc", "abc", "axc", "axyzc", "axyzd", "abc", "abd", "abd", "ace", "aac", "a-", "a-", "a]", "a]b", "aed", "abd", "adc", "a-c", "a]c", "adc", "abc", "abcd", "def", "b", "a(b", "ab", "a((b", "a\\b", "abc", "abc", "aabbabc", "aabbabc", "abcabc", "ab", "ab", "ab", "ab", "ab", "ab", "cde", "", "", "abbbcd", "abcd", "e", "ef", "abcdefg", "xabyabbbz", "xayabbbz", "abcde", "hij", "abcdef", "abcd", "abc", "abc", "abcd", "abcd", "abcd", "adcdcde", "adcdcde", "abc", "abcd", "alpha", "abh", "effgz", "ij", "effg", "bcdd", "reffgz", "a", "a", "uh-uh", "multiple words, yeah", "abcde", "(a, b)", "ab", "abcd", "abcd", "ac", "beriberi", "ABC", "XBC", "AXC", "ABX", "XABCY", "ABC", "ABBBBC", "ABC", "AXC", "ACE", "AED", "K", "k", "K", "ſ", "σ", "Σ", "LkM", "XAB", "xAB", "ABc", "ABC", "abcbde", "acdbcdbe", "acdbcdbe", "acdbcdbe", "acdbcdbe", "foobar", "-", "-", "-", "-", "ab", "x", "ax", "x", "ax", "aaa", "aaa", "aaa", "aaa", "a", "aaa", "aaaaa", "aaaaa", "aaaaa", "ab", "a{,2}", "a{1", "x{}", "abc 123 def", "123abc456", "  hello_world42!", "ab, cd", "a  \t b", "  ab  ", "a12b", "12ab34", "ab c!", "12abc34", "ab123", "ab12", "a  b", "abCD12ef", "a foo b", "afoob", "afoob", "hello world", "ab", "", "a", "a\nb", "a\nb", "one\ntwo\nthree", "one\ntwo", "a\nb", "a\nb", "ab", "cab", "cab", "abc", "x\nab", "AB", "☺", "aĀŐb", "123héllo456", "abcDEFghi", "ABCdefGHI", "--ab--", "ab--cd", "ab12cd", "abc αβγ def", "αβabcγ", "hello 世界 bye", "мир!", "a١٢٣b", "x42y", "--a1é2--", "ab12cd", "xyz", "é", "éa", "日本語", "日本語", "é", "béa", "héllo\nworld", "a.bbb", "a.b", "xxxa", "axxx", "abc", "aa", "aa", "aa", "aa", "abac", "on 2024-05-17", "1x2", "John Smith", "ac", "b", "b", "b", "abcabc", "café", "café", "STRASSE", "a.b", "a.b", "b.a.", "cab", "cab", "abc", "abc", "aab", "azbazby", "azbazbyc", "abcd", "abcd", "abcd", "aaa", "aab", "xyzabc", "xxaxx", "xxaxx", "price $5", "$", "^", "a^", "]", "a-a-", "-", "]", "\\", "[]", "a\tb", "a\t\nb", "a\nb", "a\\r\nb", "abcé", "abcéü", "abcéü", "mail bob@example.com now", "x foo@bar.org y", "call 555-1234 now", "v1.22.333", "   ", "  # comment", "say HeLLo", "xAbCz", "ab", "aB", "AB", "\n", "x\na\nb\ny", "aaac", "ababab", "abababab", "aaaaa", "b", "b", "abc", "abc", "ab cd", "ab cd", "\n", "a\nb", "a\nb", "a\n\nb", "ab\ncd", "ab\ncd"]
+    for i in 0..len(ps) {
+        var re = try regex.Compile(ps[i]) catch err {
+            println(i, "error")
+            continue
+        }
+        var all = re.FindAll(ss[i])
+        var flat []int = nil
+        for m in all {
+            flat = append(flat, m.Start)
+            flat = append(flat, m.End)
+        }
+        var g = re.Groups(ss[i])
+        var first []int = nil
+        if g != nil {
+            for k in 0..g.Len() {
+                var sp = g.Span(k)
+                if sp == nil {
+                    first = append(first, -1)
+                    first = append(first, -1)
+                } else {
+                    first = append(first, sp.Start)
+                    first = append(first, sp.End)
+                }
+            }
+        }
+        println(i, show(first), len(all), show(flat), re.Match(ss[i]))
+    }
+    var es = ["(", "(abc", ")", "a)", "[a", "[a-", "*a", "a**", "a++", "a*+", "x{1001}", "x{2,1}", "\\1", "(a)\\1", "(?=a)", "(?!a)", "(?<=a)", "(?<!a)", "(?P=n)", "\\q", "a\\\\", "a\\", "[z-a]", "\\p{Foo}", "[[:foo:]]", "(?P<n>a)(?P<n>b)", "(?P<>a)", "(?P<a-b>x)", "(?x)a", "(?i", "\\x{110000}", "\\xZZ", "|*", "(*)", "(?:*)", "a|*", "x{1,1001}", "\\8", "[\\b]", "\\C"]
+    for i, e in es {
+        var bad = false
+        try regex.Compile(e) catch err {
+            bad = true
+        }
+        println("e", i, bad)
+    }
+}

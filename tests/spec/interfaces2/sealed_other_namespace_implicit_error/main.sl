@@ -1,5 +1,5 @@
 // error: can only be implemented in namespace
-// status: pending
+// status: passing
 namespace spec.interfaces2.sealed_other_namespace_implicit_error
 
 import std.io

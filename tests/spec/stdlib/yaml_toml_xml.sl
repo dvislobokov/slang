@@ -1,5 +1,5 @@
 // test: yaml, toml and xml decode into the same struct through the shared Parse<T> model
-// status: pending
+// status: passing
 namespace spec.stdlib.yaml_toml_xml
 
 import std.encoding

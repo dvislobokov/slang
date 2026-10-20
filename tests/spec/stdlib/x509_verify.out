@@ -1,0 +1,29 @@
+subject: CN=www.example.com issuer: O=Slang,CN=Slang Test Intermediate
+version: 3 sig: SHA256-RSA key: ECDSA P-256 65
+san: [www.example.com *.api.example.com] [127.0.0.1] eku: [serverAuth] ku: 1 ca: false
+inter: RSA 2048 bits, ca: true pathlen: 0 permitted: [example.com localhost]
+root: Slang Test Root CA ca: true self-signed: true
+not before: 2026-10-20 not after: 2126-09-26
+aki = parent ski: true
+der round trip: true 64
+pem round trip: true
+www.example.com: ok www.example.com <- Slang Test Intermediate <- Slang Test Root CA
+case and trailing dot: ok www.example.com <- Slang Test Intermediate <- Slang Test Root CA
+wildcard: ok www.example.com <- Slang Test Intermediate <- Slang Test Root CA
+wildcard two labels: x509: certificate is valid for www.example.com, *.api.example.com, not a.b.api.example.com
+wildcard apex: x509: certificate is valid for www.example.com, *.api.example.com, not api.example.com
+ip: ok www.example.com <- Slang Test Intermediate <- Slang Test Root CA
+other ip: x509: certificate is not valid for IP address 10.0.0.1
+client auth: x509: certificate is not valid for clientAuth (extended key usage: serverAuth)
+missing intermediate: x509: certificate signed by unknown authority (issuer "O=Slang,CN=Slang Test Intermediate")
+in 2200: x509: certificate "CN=www.example.com" has expired (valid until 2126-09-26T18:45:22Z)
+in 2001: x509: certificate "CN=www.example.com" is not valid yet (valid from 2026-10-20T18:45:22Z)
+empty pool: x509: certificate signed by unknown authority (issuer "O=Slang,CN=Slang Test Root CA")
+root itself: ok Slang Test Root CA
+intermediate as leaf: ok Slang Test Intermediate <- Slang Test Root CA
+name constraints: x509: name "evil.org" is not permitted by the constraints of "O=Slang,CN=Slang Test Intermediate"
+leaf signed by root: x509: signature algorithm SHA256-RSA does not match the ECDSA key
+intermediate signed by root: ok
+key: ECDSA 32 matches leaf: true matches inter: false
+garbage: x509: no CERTIFICATE block found
+blocks: 2 CERTIFICATE EC PRIVATE KEY

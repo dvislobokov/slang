@@ -25,23 +25,23 @@
 |---|---|---|---|
 | `builtin` (len, append, panic…) | встроенные | ✅ есть | `?`, `try`, generics |
 | `errors` | `std.errors` | ✅ есть | `Trace`/`Frames`, типизированные ошибки, `As<T>` |
-| `cmp` | `Ordered`/`Comparable` constraints, `cmp.Compare/Min/Max` | 🟡 частично (constraints есть) | встроенные ограничения |
+| `cmp` | `Ordered`/`Comparable` constraints, `std.cmp` | ✅ есть (`Compare`, `Less`, `Min`, `Max`, `Clamp`, `Or`; NaN как в Go) | встроенные ограничения |
 | `math` | `std.math` | ✅ есть | int-варианты (`IMin`), константы `MaxInt` |
-| `math/bits` | `std.math.bits` | ❌ нет | — |
-| `math/cmplx` | `std.math.complex` | ❌ нет | тип `complex128` с операторами |
-| `math/big` | `std.math.big` | ❌ нет | `Int`, `Rat`, `Float`, `Decimal` с операторами через интерфейсы |
-| `unicode`, `unicode/utf8`, `unicode/utf16` | `std.unicode`, `std.unicode.utf8/utf16` | 🟡 частично (классификация в strings) | полные таблицы категорий, нормализация NFC/NFD |
+| `math/bits` | `std.math.bits` | ✅ есть (`LeadingZeros/TrailingZeros/OnesCount/Len/RotateLeft/Reverse/ReverseBytes` (+`32`), `Add64/Sub64/Mul64/Div64` кортежами, `Add32/Mul32`; C-builtins) | кортежи вместо пар результатов |
+| `math/cmplx` | `std.math.complex` | ✅ есть (`Complex{Re, Im}`: `Add/Sub/Mul/Div/Neg/Conj/Abs/Phase/Scale/String`; `Exp/Log/Sqrt/Pow/Sin/Cos/Polar/Rect/IsNaN/IsInf`) | методы с именами интерфейсов операторов (операторы — когда появятся) |
+| `math/big` | `std.math.big` | ✅ есть (`Int`: арифметика, `Quo/Rem/Div/Mod`, `Exp`, `ModInverse`, `GCD`, `Sqrt`, `Lsh/Rsh`, `ProbablyPrime`, `Text/ParseInt` 2..36, `Bytes/FromBytes`; `Rat`; `Decimal` с 7 режимами округления; лимбы на C: Karatsuba, Knuth D); нет `Float` | неизменяемые значения, `Decimal` в stdlib, методы с именами интерфейсов операторов |
+| `unicode`, `unicode/utf8`, `unicode/utf16` | `std.unicode`, `std.unicode.utf8/utf16` | ✅ есть (полные таблицы Unicode 15 из Go: `Is*`, `ToUpper/ToLower/ToTitle`, `SimpleFold`; utf8 `RuneLen/EncodeRune/AppendRune/DecodeRune*/Valid*/RuneCount*/FullRune`; utf16 `Encode/Decode/EncodeRune/DecodeRune`); нет нормализации NFC/NFD | генератор таблиц `scripts/gen-unicode-tables.py` |
 | `strings` | `std.strings` | ✅ есть | `Builder`, `Runes`, `Reverse`, `Pad*`, `Title` |
-| `bytes` | `std.bytes` | ❌ нет | те же функции над `[]byte`, `bytes.Buffer` |
-| `strconv` | `std.strconv` | 🟡 частично (ToInt/ToFloat, в fmt) | `Parse<T>`/`Format<T>` generic, ошибки с позицией |
-| `slices` | `std.slices` | ❌ нет | `Map`, `Filter`, `Reduce`, `Sort`, `Chunk`, `Window`, `Unique`, `Zip` generic |
-| `maps` | `std.maps` | ❌ нет | `Keys`, `Values`, `Sorted`, `Merge`, `Invert` |
-| `sort` | `std.slices.Sort*` | ❌ нет | generic, стабильная сортировка по умолчанию, `SortBy(key)` |
-| `container/list`, `ring`, `heap` | `std.collections` (`List`, `Map`, `Set`, `Queue`, `Stack`) + `LinkedList`, `Ring`, `Heap<T>`, `PriorityQueue<T>`, `Deque<T>`, `OrderedMap`, `LRU` | 🟡 частично | generic, без `any` |
+| `bytes` | `std.bytes` | ✅ есть (`Buffer` + функции `strings` над `[]byte`) | `Buffer` реализует `io.Reader/Writer` |
+| `strconv` | `std.strconv` | ✅ есть (`ParseInt/ParseUint` с базами и `_`, `*Bits`, `ParseFloat`, `ParseBool`, `Format*`, `Itoa/Atoi`, `Quote/QuoteToASCII/QuoteRune/Unquote`, `Parse<T>`/`Format<T>`) | generic `Parse<T>`/`Format<T>`, `errors.Is(err, strconv.ErrSyntax)` |
+| `slices` | `std.slices` | ✅ есть (`Sort/SortBy/SortFunc` стабильные, `BinarySearch*`, `Index*/Contains*`, `Map/Filter/Reduce`, `Unique/Compact`, `Chunk/Window/Zip/Flatten/GroupBy`, `Min/Max/Sum`, `Equal/Compare`, `Insert/Delete`, `Fill/Repeat/Shuffle`) | `Map`, `Filter`, `Reduce`, `Chunk`, `Window`, `Unique`, `Zip` generic |
+| `maps` | `std.maps` | ✅ есть (`Keys`, `Values`, `SortedKeys/Values`, `Merge`, `Copy`, `Invert/InvertAll`, `Filter`, `DeleteFunc`, `MapValues`, `Equal*`, `Clone`) | `SortedKeys`, `Invert` |
+| `sort` | `std.slices.Sort*` | ✅ есть | generic, стабильная сортировка по умолчанию, `SortBy(key)` |
+| `container/list`, `ring`, `heap` | `std.collections` (`List`, `Map`, `Set`, `Queue`, `Stack`) + `LinkedList`, `Ring`, `Heap<T>`, `PriorityQueue<T>`, `Deque<T>`, `OrderedMap`, `LRU`, `BitSet` | ✅ есть (новые типы обходятся через `Items()`/`Keys()`) | generic, без `any` |
 | `iter` | `for x in` + `iter.Seq<T>` интерфейс | ❌ нет | ленивые генераторы через async? — нет; итератор-интерфейс |
-| `hash`, `hash/fnv`, `crc32`, `crc64`, `adler32`, `maphash` | `std.hash` | 🟡 частично (crc32) | generic `Hasher<T>` |
-| `encoding/binary` | `std.encoding.binary` | ❌ нет | `Read<T>`/`Write<T>` структур через compile-time рефлексию, `@binary(endian)` |
-| `time` (типы) | `std.time` | 🟡 частично (функции над int ms) | типы `Time`, `Duration` с операторами, `Instant` монотонный, часовые пояса (tzdata встроен) |
+| `hash`, `hash/fnv`, `crc32`, `crc64`, `adler32`, `maphash` | `std.hash` (+ `.fnv`, `.crc32`, `.crc64`, `.adler32`, `.maphash`) | ✅ есть (интерфейсы `Hasher/Hash32/Hash64`, `hash.Combine`; maphash — SipHash-1-3 на C) | — |
+| `encoding/binary` | `std.encoding.binary` | ✅ есть (`BigEndian/LittleEndian.*`, varint, `Encode/Decode/Read/Write<T>` через compile-time рефлексию, `@binary(endian:)`) | `Read<T>`/`Write<T>` структур через compile-time рефлексию, `@binary(endian)` |
+| `time` (типы) | `std.time` | ✅ есть (`Duration`, `Time` с раскладками Go и strftime, `ParseTime`, `Location` из tzdata + POSIX-правила, `Instant`, `Ticker/Timer` async); имена `Now/Since/Sleep/Parse` заняты старыми int-функциями: `Time.Now()`, `Elapsed`, `SleepFor`, `ParseTime` | типы `Time`, `Duration`, `Instant` монотонный |
 | `unsafe` | `std.unsafe` (только FFI) | ❌ нет | минимальный, помечает capability |
 | `weak`, `unique` | `weak *T` в языке; `std.intern` | ✅ есть (weak) / нет | язык |
 
@@ -49,23 +49,23 @@
 
 | Go | Slang | Статус | Лучше чем в Go |
 |---|---|---|---|
-| `io` | `std.io` (`Reader`, `Writer`, `Closer`, `Seeker`, `Copy`, `ReadAll`, `LimitReader`, `MultiWriter`, `Pipe`, `TeeReader`) | 🟡 частично (println, файлы) | интерфейсы async-совместимые (`AsyncReader`), `Copy` с `SendFile` |
-| `bufio` | `std.io.Buffered*`, `Scanner` | ❌ нет | `Lines()`/`Words()` итераторы |
+| `io` | `std.io` (`Reader`, `Writer`, `Closer`, `Seeker`, `Copy`, `ReadAllFrom`, `LimitReader`, `MultiWriter`, `Pipe`, `TeeReader`) | ✅ есть (+ `AsyncReader/AsyncWriter`, их реализует `net.Conn`; `os.File`) | интерфейсы async-совместимые (`AsyncReader`); нет `SendFile` в `Copy` |
+| `bufio` | `std.io.Buffered*`, `Scanner` | ✅ есть (`ReadLine/ReadString/ReadBytes/Peek/ReadRune`, `Flush`, `Scanner` с `ScanLines/Words/Runes/Bytes`, `io.Lines`/`Words`) | `Lines()`/`Words()` (срезами, итераторов нет) |
 | `fmt` | `std.fmt` | ✅ есть (Format, Sprintf) | `{0}`-шаблоны проверяются при компиляции, `Stringer` интерфейс |
 | `os` | `std.os` | ✅ есть (args, env, exit, cwd, hostname…) | константы платформы, `OnInterrupt` |
-| `os/signal` | `std.os.signal` | ❌ нет | async `await signal.Wait(SIGTERM)` |
-| `os/exec` | `std.process` | ❌ нет | async `Run`, пайпы как `Reader/Writer`, таймауты через контекст |
-| `os/user` | `std.os.user` | ❌ нет | — |
+| `os/signal` | `std.os.signal` | ✅ есть (`Wait`, `WaitAny`, `Notify` → `Channel<int>`, `Catch`, `Ignore`, `Reset`, `Raise`; self-pipe + поток) | async `await signal.Wait(SIGTERM)` |
+| `os/exec` | `std.process` | ✅ есть (`Run/RunWith/Output`, `Start` с пайпами `AsyncReader/AsyncWriter`, `Wait/Kill/Signal`, env/dir, `Timeout` и отмена задачи, `LookPath`; pidfd) | async `Run`, пайпы как `Reader/Writer`, таймауты через контекст |
+| `os/user` | `std.os.user` | ✅ есть (`Current`, `Lookup`, `LookupId`, `LookupGroup(Id)`) | — |
 | `io/fs`, `path`, `path/filepath` | `std.fs` (+ `fs.Path` функции) | ✅ есть | `Walk` async, glob, `Watch` (inotify/FSEvents) |
-| `embed` | `@embed("file")` атрибут | ❌ нет | проверяется при компиляции, `embed.FS` |
-| `flag` | `std.cli` | ❌ нет | подкоманды, help из атрибутов `@arg`, env fallback |
-| `sync`, `sync/atomic` | `std.task` (`Mutex`, `WaitGroup`) + `std.sync` (`RwMutex`, `Once`, `Atomic<T>`, `Pool<T>`) | 🟡 частично | async-aware мьютексы, generic атомики |
+| `embed` | `@embed("file")` атрибут | ✅ есть (`string`, `[]byte`, `const`, `embed.FS` из каталога или `dir/*.ext`) | проверяется при компиляции, `embed.FS` |
+| `flag` | `std.cli` | ✅ есть (подкоманды, флаги из полей структуры `@cli.flag(...)`, env fallback, help, «did you mean», completion bash/zsh/fish) | подкоманды, help из атрибутов, env fallback |
+| `sync`, `sync/atomic` | `std.task` (`Mutex`, `WaitGroup`) + `std.sync` (`RwMutex`, `Semaphore`, `Barrier`, `Once`, `AtomicInt/AtomicBool`, `Atomic<T>`, `Pool<T>`) | ✅ есть | async-aware мьютексы, generic атомики |
 | `context` | контекст задачи в `std.task` | ✅ есть | неявная передача, типизированные ключи, отмена дерева |
 | `math/rand`, `crypto/rand` | `std.random`, `std.crypto.rand` | ✅ есть | — |
 | `crypto/*` примитивы | `std.crypto.{hash,hmac,aes,chacha,x25519,ecdsa,ed25519,rsa,hkdf,kdf,password}` | 🟡 есть hash, hmac, aes-gcm, chacha, x25519, p256, ed25519, rsa, hkdf; нет kdf (argon2/pbkdf2), password | `password.Hash/Verify` на Argon2 из коробки |
-| `encoding/base64`, `base32`, `hex`, `ascii85`, `pem`, `asn1` | `std.encoding.*` | 🟡 есть base64, hex, pem, asn1 (DER); нет base32, ascii85 | — |
+| `encoding/base64`, `base32`, `hex`, `ascii85`, `pem`, `asn1` | `std.encoding.*` | 🟡 есть base64, hex, base32, pem (с заголовками), asn1 (DER reader/Builder поверх ридера x509); нет ascii85 | — |
 | `runtime` | `std.runtime` (`NumCPU`, `Version`, `GC` → нет) | 🟡 частично (`diag.Runtime()`) | — |
-| `testing` | `std.testing` + `slang test` | ❌ нет | `@test`, `@bench`, табличные тесты, `assert`, snapshot |
+| `testing` | `std.testing` + `slang test` | ✅ есть (`@test` с `*testing.T`/без параметров, бенчмарки `@test func B(b *testing.B)`, `t.Run`, `Fatal/Error/Skip/Log`, assert-функции, `--filter/--json/--bench/-v/--parallel`, тест в отдельном процессе) | `@test`, табличные тесты, assert; нет snapshot |
 | `log` | `std.log` | ✅ есть | уровень Serilog: шаблоны при компиляции, sinks, enrichers |
 | `log/slog` | то же | ✅ есть | — |
 | `log/syslog` | `log.WriteTo.Syslog` | ❌ нет | — |
@@ -77,21 +77,21 @@
 | Go | Slang | Статус | Лучше чем в Go |
 |---|---|---|---|
 | `encoding/json` | `std.encoding.json` | ✅ есть (Parse<T>/Format/Value) | compile-time, пути в ошибках, атрибуты |
-| `encoding/xml` | `std.encoding.xml` | ❌ нет | та же модель, pull-reader |
-| — (yaml, toml в Go нет) | `std.encoding.yaml`, `toml` | ❌ нет | в стандартной библиотеке, round-trip с комментариями |
-| `encoding/csv` | `std.encoding.csv` | ❌ нет | `Read<T>`/`Write<T>` в структуры |
+| `encoding/xml` | `std.encoding.xml` | ✅ есть (pull-`Reader` с пространствами имён, дерево `Value`, `Writer`, `Parse<T>/Decode<T>/Format<T>` с `@xml(name, attr, text, ns, omitEmpty, skip)`; C-токенизатор; DTD не раскрывается) | та же модель, pull-reader, атрибуты вместо тегов |
+| — (yaml, toml в Go нет) | `std.encoding.yaml`, `toml` | ✅ есть: yaml (YAML 1.2 core: блоки, flow, якоря/алиасы с лимитом, merge `<<`, теги, многодокументность; `Value`, `Parse<T>/Format<T>` с `@yaml`; сверено с PyYAML), toml (TOML 1.0 полностью, даты, `Parse<T>/Format<T>` с `@toml`; `Document` правит текст с сохранением комментариев и порядка; сверено с tomllib) | в стандартной библиотеке, round-trip с комментариями (toml `Document`; в yaml комментарии не сохраняются) |
+| `encoding/csv` | `std.encoding.csv` | ✅ есть (`Reader`/`Writer` как в Go, `LazyQuotes`, `FieldsPerRecord`, `Read<T>/ReadNoHeader<T>/Write<T>` с `@csv(name, index, skip, omitEmpty)`; сверено с Go) | `Read<T>`/`Write<T>` в структуры |
 | `encoding/gob` | `std.encoding.binary` схема-типизированный | ❌ нет | — |
-| `regexp`, `regexp/syntax` | `std.regex` | ❌ нет | литералы проверяются при компиляции, именованные группы, `Iter` |
-| `text/template`, `html/template` | `std.text.template`, `std.html.template` | ❌ нет | типизированные шаблоны (проверка полей при компиляции), автоэкранирование |
-| `text/scanner`, `text/tabwriter` | `std.text.scanner`, `std.text.table` | ❌ нет | — |
-| `html` | `std.html` (escape/unescape) | ❌ нет | — |
-| `mime`, `mime/multipart`, `mime/quotedprintable` | `std.mime` | ❌ нет | — |
-| `compress/gzip`, `zlib`, `flate`, `bzip2`, `lzw` + zstd, brotli | `std.compress.{gzip,zlib,deflate,zstd,brotli}` | ❌ нет | zstd и brotli из коробки, async потоки |
-| `archive/zip`, `archive/tar` | `std.archive.{zip,tar}` | ❌ нет | — |
+| `regexp`, `regexp/syntax` | `std.regex` | ✅ есть (синтаксис RE2, Unicode-классы и скрипты, ленивый DFA + Pike VM, линейное время, без ReDoS; `Find/FindAll/Iter/Groups/Replace/ReplaceFunc/Split`; `regex.Pattern("...")` проверяется при компиляции; сверено с Go на 336 случаях) | литералы проверяются при компиляции, именованные группы, `Iter`; в 7 раз быстрее Go на `FindAll` |
+| `text/template`, `html/template` | `std.text.template`, `std.html.template` | ✅ есть (`Parse<T>("литерал")` — поля, функции и `{{end}}` проверяются при компиляции; pipelines, `range/with/if/define/template/block`, встроенные функции Go; html — контекстное автоэкранирование HTML/атрибутов/URL/JS/CSS, `HTML/URL/JS` безопасные типы; сверено с Go) | типизированные шаблоны (проверка полей при компиляции), автоэкранирование |
+| `text/scanner`, `text/tabwriter` | `std.text.scanner`, `std.text.table` | ✅ есть (scanner — токены и сообщения об ошибках как в Go, сверено с Go; table — стили Plain/ASCII/Unicode/Markdown, выравнивание, ширина CJK/комбинирующих символов, многострочные ячейки) | таблицы с рамками и Markdown вместо `tabwriter` |
+| `html` | `std.html` (escape/unescape) | ✅ есть (`EscapeString/UnescapeString`, все 2231 сущности HTML5; сверено с Go) | — |
+| `mime`, `mime/multipart`, `mime/quotedprintable` | `std.mime` | ✅ есть (`TypeByExtension/ExtensionsByType`, `ParseMediaType` с RFC 2231, `EncodeWord/DecodeHeader`; `std.mime.multipart` — `Reader/Writer`, `ReadForm`; `std.mime.quotedprintable`; сверено с Go) | — |
+| `compress/gzip`, `zlib`, `flate`, `bzip2`, `lzw` + zstd, brotli | `std.compress.{gzip,zlib,deflate,zstd,brotli}` | 🟡 есть deflate/zlib/gzip (кодер и декодер на C, уровни 0–9, потоковые `Writer/Reader` по кускам `[]byte` и адаптеры `std.io`: `gzip.NewStreamReader/NewStreamWriter`), декодер zstd (RFC 8878, XXH64); нет кодера zstd, brotli, bzip2, lzw | zstd из коробки; gzip быстрее Go в 1.4 раза (сжатие) и в 3 раза (распаковка) |
+| `archive/zip`, `archive/tar` | `std.archive.{zip,tar}` | ✅ есть (zip: чтение/запись, Zip64, deflate/store, расширенные метки времени, `ExtractTo` с защитой от zip-slip, `FromDir`; tar: ustar/pax/GNU, длинные имена, base-256, ссылки; совместимо с zip(1)/unzip/tar) | защита от zip-slip по умолчанию |
 | `net` (TCP/UDP/Unix/DNS/IP) | `std.net` | ✅ есть; в работе (закрытие пробелов) | async без потока на соединение, типизированные ошибки, Happy Eyeballs |
 | `net/netip` | `net.IP`, `net.Addr` | 🔧 в работе | — |
-| `net/url` | `std.net.url` | 🟡 частично (ParseURL в http) | — |
-| `net/textproto` | `std.net.textproto` | ❌ нет | — |
+| `net/url` | `std.net.url` | ✅ есть (`Parse/ParseRequestURI`, `URL` со всеми полями Go, `ResolveReference`, `JoinPath`, `Values`, `ParseQuery`, `QueryEscape/PathEscape`, IPv6 и зоны; сверено с Go). `http.ParseURL` пока отдельный | — |
+| `net/textproto` | `std.net.textproto` | ✅ есть (`Header` с каноническими ключами, `ReadHeader` с продолжениями строк, `DotEncode/DotDecode`, `ReadResponse` многострочных ответов; на строках, без `Reader`) | — |
 | `image`, `image/png`, `jpeg`, `gif`, `color`, `draw` | `std.image` | ❌ нет | + webp, avif декодеры позже |
 | `index/suffixarray` | `std.text.suffixarray` | ⛔ не нужно (пакет) | — |
 | `database/sql`, `sql/driver` | `std.database.sql` | ❌ нет | async, `Query<T>` в структуры, пул |
@@ -113,7 +113,7 @@
 | `net/rpc`, `rpc/jsonrpc` | `slang.grpc`, `std.net.jsonrpc` | ❌ нет | gRPC вместо net/rpc |
 | `testing/fstest`, `iotest`, `quick` | `std.testing.*` | ❌ нет | property-based `quick` с generics |
 | `syscall` | `std.sys` (слой платформы) | 🟡 частично (внутри рантайма) | единый API на всех ОС |
-| `time` (таймеры, тикеры) | `task.Delay`, `task.Ticker` | 🟡 частично | async |
+| `time` (таймеры, тикеры) | `task.Delay`, `time.NewTicker/NewTimer/After` | ✅ есть | async (`await t.Tick()`) |
 
 ## Уровень 4 — фреймворк (`docs/FRAMEWORK.md`)
 

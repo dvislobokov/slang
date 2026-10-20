@@ -238,6 +238,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Emits expression `e`.
     pub(crate) fn expr(&mut self, e: &Expr) -> R<Val<'ctx>> {
+        if matches!(e.kind, ExprKind::Call { .. } | ExprKind::Await(_) | ExprKind::Print(_)) {
+            self.dbg_span(e.span);
+        }
         match &e.kind {
             ExprKind::Const(c) => self.constant(c, e.ty),
             ExprKind::Nil | ExprKind::Zero => {

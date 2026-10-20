@@ -8,11 +8,15 @@ use crate::{ast, lexer, parser, sema};
 use std::path::{Path, PathBuf};
 
 /// The `.sl` files of `path`: the file itself, or every `.sl` file under a
-/// directory (recursively), sorted by path for deterministic output.
+/// directory (recursively), sorted by path for deterministic output. Files
+/// of a directory whose name suffix excludes them on the current target
+/// (`x_windows.sl` on Linux, see [`crate::target::Target::excludes_file`])
+/// are left out; a file named explicitly is always taken.
 pub fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
     }
+    let target = crate::target::current();
     let mut out = Vec::new();
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -20,7 +24,7 @@ pub fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
             let p = entry?.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "sl") {
+            } else if p.extension().is_some_and(|e| e == "sl") && !target.excludes_file(&p.to_string_lossy()) {
                 out.push(p);
             }
         }
@@ -58,10 +62,23 @@ pub fn parse_all(files: &[SourceFile], diags: &mut Diagnostics) -> Option<Vec<as
     ok.then_some(asts)
 }
 
-/// Parses and analyses a project.
+/// Applies conditional compilation ([`crate::cfg`]) to parsed files;
+/// false if a `@cfg` predicate was invalid.
+pub fn apply_cfg(asts: &mut [ast::File], files: &[SourceFile], env: &crate::cfg::CfgEnv, diags: &mut Diagnostics) -> bool {
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    let before = diags.has_errors();
+    crate::cfg::apply(asts, &paths, env, diags);
+    before || !diags.has_errors()
+}
+
+/// Parses and analyses a project (for the current target, no features).
 pub fn check(files: &[SourceFile], diags: &mut Diagnostics) -> Option<Program> {
-    let asts = parse_all(files, diags)?;
-    sema::analyze(&asts, diags).map(|p| with_sources(p, files))
+    let mut asts = parse_all(files, diags)?;
+    if !apply_cfg(&mut asts, files, &crate::cfg::CfgEnv::current(), diags) {
+        return None;
+    }
+    let paths = files.iter().map(|f| f.path.clone()).collect();
+    sema::stdlib::with_source_paths(paths, || sema::analyze(&asts, diags)).map(|p| with_sources(p, files))
 }
 
 /// Records the source paths and line tables (error-trace sites).
@@ -72,17 +89,23 @@ fn with_sources(mut p: Program, files: &[SourceFile]) -> Program {
 
 /// Like [`check`] for a package graph: `prepare` sees the parsed files
 /// first (package rules such as namespace roots) and may report errors;
-/// `policy` limits which namespaces each file may use.
+/// `policy` limits which namespaces each file may use; `env` gives the
+/// features of each file's package for `@cfg(feature: ...)`.
 pub fn check_with_policy(
     files: &[SourceFile],
     diags: &mut Diagnostics,
     policy: &sema::ImportPolicy,
+    env: &crate::cfg::CfgEnv,
     prepare: impl FnOnce(&[ast::File], &mut Diagnostics),
 ) -> Option<Program> {
-    let asts = parse_all(files, diags)?;
+    let mut asts = parse_all(files, diags)?;
     prepare(&asts, diags);
+    if !apply_cfg(&mut asts, files, env, diags) {
+        return None;
+    }
     if diags.has_errors() {
         return None;
     }
-    sema::analyze_with_policy(&asts, diags, Some(policy)).map(|p| with_sources(p, files))
+    let paths = files.iter().map(|f| f.path.clone()).collect();
+    sema::stdlib::with_source_paths(paths, || sema::analyze_with_policy(&asts, diags, Some(policy))).map(|p| with_sources(p, files))
 }

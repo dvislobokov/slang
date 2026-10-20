@@ -1,0 +1,16 @@
+1h2m3.5s 3723500000000 3723500 3723.5 62.05833333333333 1.0343055555555556
+0s 1ns 1.5ms 300ms 1m30s -26h0m0s 1.25s 1.001µs 
+300ms = 300ms 300000000
+-1.5h = -1h30m0s -5400000000000
+2h45m = 2h45m0s 9900000000000
+1h2m3.5s = 1h2m3.5s 3723500000000
+10us = 10µs 10000
+7µs = 7µs 7000
+0 = 0s 0
++5s = 5s 5000000000
+time: missing unit in duration "1.5"
+time: unknown unit "x" in duration "3x"
+time: invalid duration ""
+1s 2s -2s 1.75s
+3.5s 250ms 250ms 1 true
+true true

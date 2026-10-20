@@ -1,5 +1,5 @@
 // error: method Area has type func() int, want func() float
-// status: pending
+// status: passing
 namespace spec.interfaces2.implements_wrong_signature_error
 
 import std.io

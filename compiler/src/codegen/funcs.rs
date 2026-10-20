@@ -42,6 +42,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let p = self.entry_alloca(t, "ret", true);
             self.fs_mut().ret_slot = Some((p, f.ret));
         }
+        self.dbg_params(f);
         let exit = self.block("exit");
         self.fs_mut().exit = Some(exit);
         for (k, p) in f.params.iter().enumerate() {
@@ -61,6 +62,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.block_stmts(&f.body)?;
         self.br(exit);
         self.b.position_at_end(exit);
+        // The epilogue (defers, releases) belongs to the closing brace.
+        self.dbg_loc(f.span.end.saturating_sub(1));
+        self.dbg_keep_coro_locals();
         self.emit_exit()?;
         self.end_fn(saved, None);
         Ok(())
@@ -247,6 +251,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn assign_local(&mut self, l: LocalId, v: Val<'ctx>, fresh: bool) -> R<()> {
         let (info, slot) = self.local_info(l);
         if fresh {
+            self.dbg_declare(l);
             let owned = self.to_owned(info.ty, v);
             self.release_local(l, false);
             if slot.cell {

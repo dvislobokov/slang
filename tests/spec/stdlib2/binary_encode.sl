@@ -1,0 +1,65 @@
+// test: std.encoding.binary byte orders, varints and struct Encode/Decode via compile-time reflection with @binary
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.binary_encode
+
+import std
+import std.io
+import std.encoding.binary
+
+@binary(endian: "big")
+struct Header {
+    Magic [4]byte
+    Version uint16
+    @binary(endian: "little") Flags uint32
+    Length int32
+    Ratio float32
+    Ok bool
+}
+
+func main() {
+    var b = [byte(0), 0, 0, 0, 0, 0, 0, 0]
+    BigEndian.PutUint32(b, 0x01020304)
+    LittleEndian.PutUint16(b[4..], 0x0506)
+    println(b, BigEndian.Uint32(b), LittleEndian.Uint32(b), BigEndian.Uint16(b[4..]), LittleEndian.Uint64(b))
+    BigEndian.PutUint64(b, 0x1122334455667788)
+    println(b, BigEndian.Uint64(b))
+    var x []byte = []
+    x = LittleEndian.AppendUint32(x, 1)
+    x = BigEndian.AppendUint16(x, 2)
+    x = BigEndian.AppendUint64(x, 3)
+    println(x, LittleEndian.Uint32(x))
+
+    var vs []byte = []
+    for v in [uint(0), 1, 127, 128, 300, 18446744073709551615] {
+        vs = AppendUvarint(vs, v)
+    }
+    println(vs)
+    var (u, n) = Uvarint([byte(0xAC), 0x02])
+    var (u2, n2) = Uvarint([byte(0x80)])
+    println(u, n, u2, n2)
+    for v in [0, -1, 1, -64, 63, -9223372036854775808] {
+        var enc []byte = []
+        enc = AppendVarint(enc, v)
+        var (d, dn) = Varint(enc)
+        print(enc, d, dn, ";")
+    }
+    println()
+    var buf = [byte(0), 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    var k = PutUvarint(buf, 1000000)
+    var k2 = PutVarint(buf[k..], -3)
+    println(buf, k, k2, MaxVarintLen64)
+
+    var h = Header{Version: 2, Flags: 0xA0B0C0D0, Length: -2, Ratio: 1.5, Ok: true}
+    h.Magic[0] = 83
+    h.Magic[1] = 76
+    var enc = Encode(h, ByteOrder.LittleEndian)
+    println(len(enc), Size<Header>(), enc)
+    var back = try Decode<Header>(enc, ByteOrder.LittleEndian) else Header{}
+    println(back.Magic, back.Version, back.Flags, back.Length, back.Ratio, back.Ok)
+    var short = try Decode<Header>(enc[..5], ByteOrder.BigEndian) catch err {
+        println(err)
+        return
+    }
+    println(short.Version)
+}

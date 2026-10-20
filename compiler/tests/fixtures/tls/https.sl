@@ -1,0 +1,50 @@
+namespace tlstest.https
+
+import std.io
+import std
+import std.net
+import std.crypto
+
+// HTTPS fixture for compiler/tests/tls.rs.
+//   https serve port cert.pem key.pem readyFile requests
+//       serves GET /hello over std.net.http + TLS, stops after `requests`
+//   https get url roots.pem
+//       fetches url with http.Client{TLS} and prints the status and body size
+async func run() void! {
+    var a = os.Args()
+    if a[1] == "serve" {
+        var cert = tls.LoadKeyPairFiles(a[3], a[4])?
+        var want = strings.ToInt(a[6])?
+        var done = task.Channel<int>(want)
+        var r = http.NewRouter()
+        r.Get("/hello", async func(req *http.Request, res *http.Response) void! {
+            res.Text(200, "hello over https from slang\n")
+            await done.Send(1)
+        })
+        var scfg = tls.ServerConfig{Certificates: [cert]}
+        var srv = http.Server{Addr: "127.0.0.1:" + a[2], Handler: r, TLS: &scfg}
+        srv.Listen()?
+        var serving = srv.Serve()
+        io.WriteFile(a[5], "ready")?
+        for i in 0..want {
+            _ = i
+            _ = await done.Recv()?
+        }
+        await srv.Shutdown()
+        await serving?
+        println("served", want)
+        return
+    }
+    var pool = x509.NewCertPool()
+    pool.AppendPEM(io.ReadFile(a[3])?)
+    var cfg = tls.Config{RootCAs: pool}
+    var client = http.Client{TLS: &cfg, Timeout: 10000}
+    var res = await client.Get(a[2])?
+    println("status", res.Status, "body", len(res.Body), strings.Contains(res.Body, "Cipher") || strings.Contains(res.Body, "hello"))
+}
+
+async func main() {
+    try await run() catch err {
+        println("error:", err)
+    }
+}

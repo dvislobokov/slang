@@ -44,6 +44,9 @@ extern "C" {
 /* Refcount value marking a static/immortal object (literals, sentinels).
  * retain/release are no-ops on such objects. */
 #define SLANG_RC_IMMORTAL ((int64_t)-1)
+/* Refcount value of an object allocated in an arena (std.arena, ABI.md
+ * 3.6): retain/release are no-ops, the arena frees it. */
+#define SLANG_RC_ARENA ((int64_t)-2)
 /* Bit 62 of a (non-immortal) refcount word: the object has a weak box.
  * The count itself is refcount & SLANG_RC_COUNT_MASK. */
 #define SLANG_RC_WEAK_FLAG ((int64_t)1 << 62)
@@ -86,6 +89,26 @@ void  slang_retain(void *obj);                /* NULL / immortal: no-op */
 void  slang_release(void *obj);               /* NULL / immortal: no-op; at 0: drop + free */
 int64_t slang_refcount(const void *obj);      /* debugging / tests; 0 for NULL */
 int64_t slang_live_objects(void);             /* number of live slang_object_new objects */
+
+/* Leak check (ABI.md 3.5): pointer fields of a struct type, so the report can
+ * name the fields that close a cycle. `fields` ends with offset -1. */
+typedef struct slang_leak_field {
+    int64_t offset;            /* +0 byte offset of a `*T` field in the payload */
+    const char *name;          /* +8 "Type.Field" */
+} slang_leak_field;
+void slang_leak_fields(const slang_type_info *type, const slang_leak_field *fields);
+
+/* Arenas (std.arena, ABI.md 3.6). Handles are raw pointers passed as int64. */
+int64_t slang_arena_create(void);
+void slang_arena_destroy(int64_t arena);       /* frees everything and the arena */
+void slang_arena_free(int64_t arena);          /* frees everything; the arena stays usable */
+void *slang_arena_object(int64_t arena, const slang_type_info *type, int64_t size); /* zeroed, rc SLANG_RC_ARENA */
+struct slang_slice;
+struct slang_string;
+void slang_arena_slice(struct slang_slice *out, int64_t arena, int64_t elem_size, int64_t n,
+                       const slang_value_ops *ops);
+struct slang_string *slang_arena_string(int64_t arena, const struct slang_string *s); /* borrowed in, arena-owned out */
+int64_t slang_arena_objects(int64_t arena);    /* objects currently allocated in the arena */
 void  slang_ptr_retain(void *payload);        /* retain the object whose payload (obj+16) is given; NULL ok */
 void  slang_ptr_release(void *payload);       /* release likewise; NULL ok */
 /* Leak check (`slang run --leak-check`): call before anything else. Mode 1
@@ -423,6 +446,7 @@ slang_task *slang_task_yield(void);              /* completes from a fresh job, 
 slang_task *slang_io_wait_readable(int64_t fd, int64_t timeout_ms);  /* +1; timeout < 0 = none */
 slang_task *slang_io_wait_writable(int64_t fd, int64_t timeout_ms);
 void slang_io_forget(int64_t fd);   /* call before close(fd): wakes waiters with 2 */
+void slang_io_register(int64_t fd); /* optional: assigns fd to a poller shard now (sockets do at creation) */
 
 /* ======================================================================
  * Entry / process
@@ -634,30 +658,73 @@ slang_string *slang_uuid_new(void);                  /* random v4, lowercase */
 bool          slang_uuid_is_valid(const slang_string *s);
 
 /* std.net internals (std_net.c, ABI.md 16): used by the Slang-source std.net.
- * Non-blocking sockets; -1 / empty + slang_net_rt_again() mean "would block". */
-int64_t slang_net_rt_connect(const slang_string *ip, int64_t port, slang_error **err);
-void    slang_net_rt_connect_result(int64_t fd, slang_error **err);
-int64_t slang_net_rt_listen(const slang_string *ip, int64_t port, slang_error **err);
-int64_t slang_net_rt_accept(int64_t fd, slang_error **err);
-void    slang_net_rt_read(int64_t fd, int64_t n, slang_slice *out, slang_error **err);
+ * Sockets are handles (int64_t, never 0 or -1) that own the descriptor;
+ * -1 / empty + slang_net_rt_again() mean "would block". Errors are the
+ * causes (std.net sentinels or the system text); net.sl adds the context. */
+slang_error *slang_net_err_closed(void);       /* std.net.ErrClosed etc.: immortal sentinels */
+slang_error *slang_net_err_timeout(void);
+slang_error *slang_net_err_refused(void);
+slang_error *slang_net_err_reset(void);
+slang_error *slang_net_err_unreachable(void);
+slang_error *slang_net_err_addr_in_use(void);
+slang_error *slang_net_err_not_found(void);
+slang_error *slang_net_err_eof(void);          /* = slang_err_eof */
+slang_error *slang_net_rt_op_error(const slang_error *boxed, const slang_string *prefix, const slang_error *inner);
+int64_t slang_net_rt_dial(const slang_string *ip, int64_t port, const slang_string *lip, int64_t lport, slang_error **err);
+int64_t slang_net_rt_dial_unix(const slang_string *path, slang_error **err);
+void    slang_net_rt_connect_result(int64_t h, slang_error **err);
+int64_t slang_net_rt_listen(const slang_string *ip, int64_t port, int64_t backlog, int64_t flags, slang_error **err);
+int64_t slang_net_rt_listen_unix(const slang_string *path, int64_t backlog, slang_error **err);
+int64_t slang_net_rt_accept(int64_t h, slang_error **err);
+void    slang_net_rt_read(int64_t h, int64_t n, slang_slice *out, slang_error **err);
+int64_t slang_net_rt_read_into(int64_t h, const slang_slice *buf, int64_t off, slang_error **err);
 bool    slang_net_rt_again(void);
-int64_t slang_net_rt_write(int64_t fd, const slang_slice *data, int64_t off, slang_error **err);
-int64_t slang_net_rt_write_str(int64_t fd, const slang_string *s, int64_t off, slang_error **err);
-void    slang_net_rt_close(int64_t fd);
-slang_task *slang_net_rt_wait_readable(int64_t fd, int64_t ms);
-slang_task *slang_net_rt_wait_writable(int64_t fd, int64_t ms);
-slang_string *slang_net_rt_local_addr(int64_t fd);
-slang_string *slang_net_rt_remote_addr(int64_t fd);
-int64_t slang_net_rt_port(int64_t fd);
+int64_t slang_net_rt_write(int64_t h, const slang_slice *data, int64_t off, slang_error **err);
+int64_t slang_net_rt_write_str(int64_t h, const slang_string *s, int64_t off, slang_error **err);
+int64_t slang_net_rt_write_v(int64_t h, const slang_slice *bufs, int64_t off, slang_error **err);
+void    slang_net_rt_shutdown(int64_t h, int64_t how, slang_error **err);
+void    slang_net_rt_close(int64_t h);
+void    slang_net_rt_free(int64_t h);
+bool    slang_net_rt_is_closed(int64_t h);
+int64_t slang_net_rt_fd(int64_t h);
+slang_task *slang_net_rt_wait_readable(int64_t h, int64_t ms);
+slang_task *slang_net_rt_wait_writable(int64_t h, int64_t ms);
+slang_string *slang_net_rt_local_addr(int64_t h);
+slang_string *slang_net_rt_remote_addr(int64_t h);
+int64_t slang_net_rt_port(int64_t h);
+void    slang_net_rt_set_opt(int64_t h, int64_t opt, int64_t value, slang_error **err);
+int64_t slang_net_rt_get_opt(int64_t h, int64_t opt, slang_error **err);
+void    slang_net_rt_mcast(int64_t h, bool join, const slang_string *group, const slang_string *ifname, slang_error **err);
+int64_t slang_net_rt_open_file(const slang_string *path, slang_error **err);
+int64_t slang_net_rt_file_size(int64_t fd);
+void    slang_net_rt_close_file(int64_t fd);
+int64_t slang_net_rt_send_file(int64_t h, int64_t ffd, int64_t off, int64_t n, slang_error **err);
+void    slang_net_rt_parse_ip(const slang_string *s, slang_slice *out);
+slang_string *slang_net_rt_format_ip(const slang_slice *b);
 bool    slang_net_rt_is_ip(const slang_string *s);
-slang_task *slang_net_rt_resolve(const slang_string *host);   /* result: handle */
+int64_t slang_net_rt_if_index(const slang_string *name);
+slang_string *slang_net_rt_if_name(int64_t index);
+void    slang_net_rt_interfaces(slang_slice *out, slang_error **err);
+int64_t slang_net_rt_lookup_port(const slang_string *network, const slang_string *service);
+slang_task *slang_net_rt_resolve(const slang_string *host, int64_t flags);   /* result: handle */
+slang_task *slang_net_rt_reverse(const slang_string *ip);
 void    slang_net_rt_resolve_take(int64_t handle, slang_slice *out, slang_error **err);
-int64_t slang_net_rt_udp_bind(const slang_string *ip, int64_t port, slang_error **err);
-void    slang_net_rt_recv_from(int64_t fd, int64_t n, slang_slice *out, slang_error **err);
+void    slang_net_rt_resolve_sync(const slang_string *host, int64_t flags, slang_slice *out, slang_error **err);
+int64_t slang_net_rt_udp(const slang_string *ip, int64_t port, int64_t flags, slang_error **err);
+int64_t slang_net_rt_udp_dial(const slang_string *ip, int64_t port, const slang_string *lip, int64_t lport, slang_error **err);
+void    slang_net_rt_recv_from(int64_t h, int64_t n, slang_slice *out, slang_error **err);
+int64_t slang_net_rt_read_from(int64_t h, const slang_slice *buf, slang_error **err);
 slang_string *slang_net_rt_last_from(void);
 int64_t slang_net_rt_last_from_port(void);
-int64_t slang_net_rt_send_to(int64_t fd, const slang_slice *data, const slang_string *ip, int64_t port,
+bool    slang_net_rt_last_trunc(void);
+int64_t slang_net_rt_send_to(int64_t h, const slang_slice *data, const slang_string *ip, int64_t port,
                              slang_error **err);
+slang_task *slang_net_rt_wait_any_writable(const slang_slice *hs, int64_t ms);
+int64_t slang_net_rt_connect_check(int64_t h, slang_error **err);
+void    slang_net_rt_bytes(int64_t n, slang_slice *out);
+int64_t slang_net_rt_copy_bytes(const slang_slice *dst, int64_t doff, const slang_slice *src, int64_t soff, int64_t n);
+int64_t slang_net_rt_index_byte(const slang_slice *b, int64_t from, int64_t c);
+void    slang_net_rt_join(const slang_slice *a, const slang_slice *b, int64_t bn, slang_slice *out);
 
 /* ---- reflection tables (ABI.md section 17, std_reflect.c) ----------------
  * Only programs that use std.reflect have them; then every slang_type_info
@@ -741,6 +808,26 @@ const slang_reflect_type *slang_reflect_canon(const slang_reflect_type *t);
  * a quoted JSON string literal. */
 void          slang_encoding_json_scan(const slang_string *text, slang_slice *out, slang_error **err);
 slang_string *slang_encoding_json_quote(const slang_string *s);
+
+/* std.diag / std.log runtime halves (diag.c, profile.c; ABI.md section 18). */
+slang_object *slang_diag_rt_slots(void);                  /* map[string]any, +1 or NULL */
+void          slang_diag_rt_set_slots(slang_object *m);
+void          slang_diag_rt_lock(void);
+void          slang_diag_rt_unlock(void);
+int64_t       slang_diag_rt_live_objects(void);
+int64_t       slang_diag_rt_allocations(void);
+int64_t       slang_diag_rt_live_tasks(void);
+int64_t       slang_diag_rt_queue_len(void);
+int64_t       slang_diag_rt_workers(void);
+int64_t       slang_diag_rt_mono_nanos(void);
+void          slang_diag_rt_start_cpu_profile(const slang_string *path, int64_t hz, slang_error **err);
+int64_t       slang_diag_rt_stop_cpu_profile(slang_error **err);
+slang_string *slang_diag_rt_heap_text(void);
+void          slang_diag_rt_write_heap_profile(const slang_string *path, slang_error **err);
+int64_t       slang_log_rt_open(const slang_string *path, slang_error **err);
+void          slang_log_rt_write(int64_t fd, const slang_string *s, slang_error **err);
+void          slang_log_rt_close(int64_t fd);
+bool          slang_log_rt_isatty(int64_t fd);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,7 @@
+server got: request body
+client got: response
+write after CloseWrite fails: true
+0123 4567
+short read: true
+after EOF Read: 0 0
+after CloseRead: 0

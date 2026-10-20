@@ -2,6 +2,14 @@
 address nohost: missing port
 address a:99999: invalid port 99999
 [10.1.2.3] [127.0.0.1]
-accept: listener closed
-refused: true
-listen needs an IP: true
+accept: true true
+as OpError: true accept tcp true true
+refused: true true
+not a timeout: false false
+in use: true true
+listen localhost: true
+listen unknown host: true
+dial unknown host: true true
+resolve unknown host: true
+listen tcp 127.0.0.1:http-nope: address 127.0.0.1:http-nope: invalid port http-nope
+address [fe80::1]x: too many colons (write IPv6 addresses as [ip]:port)

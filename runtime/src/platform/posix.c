@@ -1,5 +1,6 @@
 /* posix.c - POSIX implementation of the platform layer (Linux, macOS, BSD):
- * threads, CPU count, monotonic clock, entropy and backtraces. The
+ * threads, CPU count, monotonic clock, entropy, backtraces and the CPU
+ * profiler's SIGPROF sampler and symbolizer. The
  * readiness poller is in poll_epoll.c / poll_kqueue.c. */
 #include "platform.h"
 
@@ -94,6 +95,290 @@ void slang__plat_backtrace(int fd, int skip) {
     void *frames[64];
     int n = backtrace(frames, 64);
     if (n > skip) backtrace_symbols_fd(frames + skip, n - skip, fd);
+}
+
+/* ---- CPU profiling: SIGPROF sampler, frame-pointer walk, symbols ------- */
+
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/time.h>
+#include <dlfcn.h>
+#if defined(__linux__)
+#include <elf.h>
+#include <link.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <ucontext.h>
+#elif defined(__APPLE__)
+#include <sys/ucontext.h>
+#endif
+
+#define PROF_MAX_FRAMES 64
+
+static _Thread_local uintptr_t t_stack_lo, t_stack_hi;
+static slang__plat_prof_fn g_prof_fn;
+static struct sigaction g_prof_old;
+static int g_prof_on;
+
+void slang__plat_thread_stack_init(void) {
+    if (t_stack_hi) return;
+#if defined(__linux__)
+    pthread_attr_t a;
+    if (pthread_getattr_np(pthread_self(), &a) != 0) return;
+    void *addr = NULL;
+    size_t size = 0;
+    if (pthread_attr_getstack(&a, &addr, &size) == 0 && addr) {
+        t_stack_lo = (uintptr_t)addr;
+        t_stack_hi = (uintptr_t)addr + size;
+    }
+    pthread_attr_destroy(&a);
+#elif defined(__APPLE__)
+    pthread_t self = pthread_self();
+    uintptr_t hi = (uintptr_t)pthread_get_stackaddr_np(self);
+    t_stack_hi = hi;
+    t_stack_lo = hi - pthread_get_stacksize_np(self);
+#endif
+}
+
+/* PC, frame pointer and stack pointer of an interrupted context. */
+static bool ctx_regs(void *uc_, uintptr_t *pc, uintptr_t *fp, uintptr_t *sp) {
+#if defined(__linux__) && defined(__x86_64__)
+    ucontext_t *uc = uc_;
+    *pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+    *fp = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
+    *sp = (uintptr_t)uc->uc_mcontext.gregs[REG_RSP];
+    return true;
+#elif defined(__linux__) && defined(__aarch64__)
+    ucontext_t *uc = uc_;
+    *pc = (uintptr_t)uc->uc_mcontext.pc;
+    *fp = (uintptr_t)uc->uc_mcontext.regs[29];
+    *sp = (uintptr_t)uc->uc_mcontext.sp;
+    return true;
+#elif defined(__APPLE__) && defined(__x86_64__)
+    ucontext_t *uc = uc_;
+    *pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
+    *fp = (uintptr_t)uc->uc_mcontext->__ss.__rbp;
+    *sp = (uintptr_t)uc->uc_mcontext->__ss.__rsp;
+    return true;
+#elif defined(__APPLE__) && defined(__aarch64__)
+    ucontext_t *uc = uc_;
+    *pc = (uintptr_t)uc->uc_mcontext->__ss.__pc;
+    *fp = (uintptr_t)uc->uc_mcontext->__ss.__fp;
+    *sp = (uintptr_t)uc->uc_mcontext->__ss.__sp;
+    return true;
+#else
+    (void)uc_; (void)pc; (void)fp; (void)sp;
+    return false;
+#endif
+}
+
+static void prof_handler(int sig, siginfo_t *info, void *uc) {
+    (void)sig;
+    (void)info;
+    int saved = errno;
+    uintptr_t pcs[PROF_MAX_FRAMES];
+    int n = 0;
+    uintptr_t pc, fp, sp;
+    if (ctx_regs(uc, &pc, &fp, &sp)) {
+        pcs[n++] = pc;
+        uintptr_t lo = t_stack_lo, hi = t_stack_hi;
+        /* Walk {saved fp, return address} pairs while they stay inside this
+         * thread's stack, above the interrupted SP and strictly increasing. */
+        if (hi && sp >= lo && sp < hi) {
+            uintptr_t prev = sp;
+            while (n < PROF_MAX_FRAMES && fp >= prev && fp + 2 * sizeof(uintptr_t) <= hi &&
+                   (fp & (sizeof(uintptr_t) - 1)) == 0) {
+                const uintptr_t *f = (const uintptr_t *)fp;
+                uintptr_t ret = f[1];
+                if (ret < 4096) break;
+                pcs[n++] = ret;
+                prev = fp + 1;
+                fp = f[0];
+            }
+        }
+    }
+    slang__plat_prof_fn fn = __atomic_load_n(&g_prof_fn, __ATOMIC_ACQUIRE);
+    if (fn && n > 0) fn(pcs, n);
+    errno = saved;
+}
+
+bool slang__plat_prof_start(int hz, slang__plat_prof_fn fn) {
+    if (g_prof_on || hz <= 0) return false;
+    slang__plat_thread_stack_init();
+    __atomic_store_n(&g_prof_fn, fn, __ATOMIC_RELEASE);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = prof_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGPROF, &sa, &g_prof_old) != 0) return false;
+    struct itimerval it;
+    memset(&it, 0, sizeof it);
+    long us = 1000000L / hz;
+    if (us < 1) us = 1;
+    it.it_interval.tv_sec = us / 1000000L;
+    it.it_interval.tv_usec = us % 1000000L;
+    it.it_value = it.it_interval;
+    if (setitimer(ITIMER_PROF, &it, NULL) != 0) {
+        sigaction(SIGPROF, &g_prof_old, NULL);
+        return false;
+    }
+    g_prof_on = 1;
+    return true;
+}
+
+void slang__plat_prof_stop(void) {
+    if (!g_prof_on) return;
+    struct itimerval it;
+    memset(&it, 0, sizeof it);
+    setitimer(ITIMER_PROF, &it, NULL);
+    /* A signal already in flight still finds a handler; it sees fn == NULL
+     * once the store below is visible. Keep our handler installed (ignoring
+     * SIGPROF afterwards would be equivalent). */
+    __atomic_store_n(&g_prof_fn, (slang__plat_prof_fn)NULL, __ATOMIC_RELEASE);
+    g_prof_on = 0;
+}
+
+/* -- symbols of the main executable (ELF .symtab on Linux) -- */
+
+typedef struct { uintptr_t addr, size; const char *name; } sym_ent;
+static sym_ent *g_syms;
+static size_t g_nsyms;
+static char *g_symstr;        /* copy of the string table */
+static int g_syms_loaded;
+static uintptr_t g_exe_lo, g_exe_hi, g_exe_bias;
+static char g_exe_path[512];
+
+#if defined(__linux__)
+static int phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size;
+    (void)data;
+    /* The first object is the main program. */
+    g_exe_bias = (uintptr_t)info->dlpi_addr;
+    for (int i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+        if (ph->p_type == PT_LOAD && (ph->p_flags & PF_X)) {
+            uintptr_t lo = g_exe_bias + ph->p_vaddr, hi = lo + ph->p_memsz;
+            if (!g_exe_lo || lo < g_exe_lo) g_exe_lo = lo;
+            if (hi > g_exe_hi) g_exe_hi = hi;
+        }
+    }
+    return 1;
+}
+
+static int sym_cmp(const void *a, const void *b) {
+    const sym_ent *x = a, *y = b;
+    return x->addr < y->addr ? -1 : x->addr > y->addr;
+}
+
+static void load_syms(void) {
+    g_syms_loaded = 1;
+    dl_iterate_phdr(phdr_cb, NULL);
+    ssize_t pl = readlink("/proc/self/exe", g_exe_path, sizeof g_exe_path - 1);
+    if (pl <= 0) return;
+    g_exe_path[pl] = 0;
+    int fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(ElfW(Ehdr))) {
+        close(fd);
+        return;
+    }
+    size_t len = (size_t)st.st_size;
+    unsigned char *m = mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return;
+    const ElfW(Ehdr) *eh = (const ElfW(Ehdr) *)m;
+    if (memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 || eh->e_shoff == 0 ||
+        eh->e_shoff + (size_t)eh->e_shnum * sizeof(ElfW(Shdr)) > len) {
+        munmap(m, len);
+        return;
+    }
+    const ElfW(Shdr) *sh = (const ElfW(Shdr) *)(m + eh->e_shoff);
+    int pick = -1;
+    for (int pass = 0; pass < 2 && pick < 0; pass++)
+        for (int i = 0; i < eh->e_shnum; i++)
+            if (sh[i].sh_type == (pass == 0 ? SHT_SYMTAB : SHT_DYNSYM)) { pick = i; break; }
+    if (pick < 0 || sh[pick].sh_link >= eh->e_shnum) {
+        munmap(m, len);
+        return;
+    }
+    const ElfW(Shdr) *ss = &sh[pick], *sstr = &sh[ss->sh_link];
+    if (ss->sh_offset + ss->sh_size > len || sstr->sh_offset + sstr->sh_size > len || ss->sh_entsize == 0) {
+        munmap(m, len);
+        return;
+    }
+    size_t n = ss->sh_size / ss->sh_entsize;
+    g_symstr = malloc(sstr->sh_size + 1);
+    g_syms = malloc((n ? n : 1) * sizeof *g_syms);
+    if (!g_symstr || !g_syms) {
+        free(g_symstr);
+        free(g_syms);
+        g_symstr = NULL;
+        g_syms = NULL;
+        munmap(m, len);
+        return;
+    }
+    memcpy(g_symstr, m + sstr->sh_offset, sstr->sh_size);
+    g_symstr[sstr->sh_size] = 0;
+    for (size_t i = 0; i < n; i++) {
+        const ElfW(Sym) *s = (const ElfW(Sym) *)(m + ss->sh_offset + i * ss->sh_entsize);
+        if (ELF64_ST_TYPE(s->st_info) != STT_FUNC || s->st_value == 0 || s->st_name >= sstr->sh_size) continue;
+        g_syms[g_nsyms].addr = g_exe_bias + s->st_value;
+        g_syms[g_nsyms].size = s->st_size;
+        g_syms[g_nsyms].name = g_symstr + s->st_name;
+        g_nsyms++;
+    }
+    munmap(m, len);
+    qsort(g_syms, g_nsyms, sizeof *g_syms, sym_cmp);
+}
+#else
+static void load_syms(void) { g_syms_loaded = 1; }
+#endif
+
+bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap) {
+    if (!g_syms_loaded) load_syms();
+    if (!g_exe_hi) return false;
+    *lo = g_exe_lo;
+    *hi = g_exe_hi;
+    if (cap) snprintf(path, cap, "%s", g_exe_path);
+    return true;
+}
+
+bool slang__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) {
+    if (!g_syms_loaded) load_syms();
+    if (g_nsyms && pc >= g_syms[0].addr) {
+        size_t lo = 0, hi = g_nsyms;
+        while (hi - lo > 1) {
+            size_t mid = (lo + hi) / 2;
+            if (g_syms[mid].addr <= pc) lo = mid;
+            else hi = mid;
+        }
+        const sym_ent *e = &g_syms[lo];
+        if (pc < e->addr + (e->size ? e->size : 1 << 20)) {
+            snprintf(buf, cap, "%s", e->name);
+            *start = e->addr;
+            return true;
+        }
+    }
+    Dl_info di;
+    if (dladdr((void *)pc, &di) && di.dli_sname) {
+        snprintf(buf, cap, "%s", di.dli_sname);
+        *start = (uintptr_t)di.dli_saddr;
+        return true;
+    }
+    return false;
+}
+
+void slang__plat_symbolize_done(void) {
+    free(g_syms);
+    free(g_symstr);
+    g_syms = NULL;
+    g_symstr = NULL;
+    g_nsyms = 0;
+    g_syms_loaded = 0;
+    g_exe_lo = g_exe_hi = 0;
 }
 
 #else

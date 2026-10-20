@@ -25,6 +25,15 @@ SLANG_HIDDEN void slang__sched_stop(void);
 SLANG_HIDDEN void slang__io_stop(void);
 /* Runs fn(w) when the current task is cancelled (task.c, ABI.md 10.11). */
 SLANG_HIDDEN void slang__cancel_hook(void (*fn)(slang_task *), slang_task *w);
+/* The same with a word of data passed to fn (task_io.c: the fd of the wait). */
+SLANG_HIDDEN void slang__cancel_hook_data(void (*fn)(slang_task *, uintptr_t), slang_task *w, uintptr_t data);
+/* Stops the resolver pool (std_net.c); called by slang__io_stop. Queued
+ * lookups are dropped without completing, like pending I/O waits. */
+SLANG_HIDDEN void slang__net_stop(void);
+/* task_io.c introspection (tests, std.diag): the shard owning fd (-1 if
+ * none) and the number of poller shards running (0 before the first wait). */
+SLANG_HIDDEN int64_t slang__io_shard_of(int64_t fd);
+SLANG_HIDDEN int64_t slang__io_shards(void);
 
 /* Arguments registry (main.c). */
 SLANG_HIDDEN void slang__io_flush_all(void);
@@ -43,6 +52,21 @@ SLANG_HIDDEN slang_string *slang__string_alloc_uninit(int64_t len);
 SLANG_HIDDEN const char *slang__memmem(const char *hay, int64_t n, const char *needle, int64_t m);
 SLANG_HIDDEN void slang__weak_clear(slang_object *o);
 SLANG_HIDDEN void slang__leak_report(void);
+/* Leak check mode 2: calls cb on every live object (mem.c), and names the
+ * pointer fields that close reference cycles among them (leak.c). */
+SLANG_HIDDEN void slang__live_each(void (*cb)(slang_object *obj, void *arg), void *arg);
+SLANG_HIDDEN void slang__leak_cycles(void);
+/* std.diag (mem.c): objects allocated so far, and a walk over the live
+ * objects (type name, allocation size) while leak tracking with type names
+ * is on (`--leak-check` mode 2; false otherwise). `cb` must not allocate
+ * Slang objects. */
+SLANG_HIDDEN int64_t slang__total_objects(void);
+SLANG_HIDDEN bool slang__heap_each(void (*cb)(const char *type, int64_t bytes, void *arg), void *arg);
+/* std.diag (task.c): live task objects and jobs waiting in the run queue. */
+SLANG_HIDDEN int64_t slang__live_tasks(void);
+SLANG_HIDDEN int64_t slang__sched_queue_len(void);
+/* std.diag (diag.c): releases the process-wide slots before the leak report. */
+SLANG_HIDDEN void slang__diag_shutdown(void);
 
 #define SLANG_ROUND8(n) (((n) + 7) & ~(int64_t)7)
 

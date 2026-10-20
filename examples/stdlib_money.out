@@ -1,0 +1,8 @@
+Widget     3 x   19.99 =    59.97
+Gadget     1 x  249.50 =   249.50
+Cable     12 x    0.35 =     4.20
+subtotal 313.67 vat 59.60 total 373.27
+split in 3: 124.42 remainder: 0.01
+issued 2024-03-28T09:30:00Z due Sat Apr 27, 2024 in 720h0m0s
+paid late: true by 110.5 hours
+rejected: quantity: strconv.Atoi: parsing "two": invalid syntax

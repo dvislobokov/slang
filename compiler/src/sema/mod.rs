@@ -25,6 +25,7 @@
 //! Untyped numeric constants are folded by [`consts`] and materialised with
 //! the type the context expects, as in Go.
 
+mod arena;
 mod attrs;
 mod call;
 mod coerce;
@@ -32,8 +33,11 @@ mod collections;
 mod consts;
 mod expr;
 mod generics;
+mod ifaces;
 pub mod index;
 mod infer;
+mod litcheck;
+mod logtmpl;
 mod ownership;
 mod reflect;
 mod resolve;
@@ -282,6 +286,14 @@ pub(crate) struct Sema<'a> {
     pub enum_methods: HashMap<(u32, String), FuncId>,
     /// The enum owning each enum method (by function id).
     pub enum_method_owner: HashMap<u32, u32>,
+    /// Default methods of interfaces by (interface id, name): free
+    /// functions whose first parameter `this` is the interface value.
+    pub iface_defaults: HashMap<(u32, String), FuncId>,
+    /// The interface owning each default method (by function id).
+    pub iface_default_owner: HashMap<u32, u32>,
+    /// [`Sema::check_attributes`] ran: later struct instances evaluate
+    /// their attributes themselves.
+    pub attrs_done: bool,
     /// Package isolation hook (see [`ImportPolicy`]); `None` = no limits.
     pub policy: Option<&'a ImportPolicy>,
     /// IDE symbol recording (see [`index`]); `None` = off.
@@ -325,6 +337,9 @@ impl<'a> Sema<'a> {
             lambda_count: 0,
             enum_methods: HashMap::new(),
             enum_method_owner: HashMap::new(),
+            iface_defaults: HashMap::new(),
+            iface_default_owner: HashMap::new(),
+            attrs_done: false,
             policy: None,
             ide: None,
             gen: generics::GenState::default(),
@@ -341,6 +356,7 @@ impl<'a> Sema<'a> {
         self.resolve_imports();
         self.resolve_template_bounds();
         self.resolve_signatures();
+        self.check_implements();
         self.run_deferred_bounds();
         self.check_attributes();
         for g in 0..self.globals.len() {
@@ -480,9 +496,27 @@ impl<'a> Sema<'a> {
         self.diags.push(d);
     }
 
-    /// Spelling of a type for messages.
+    /// Spelling of a type for messages: declared types of the current
+    /// namespace by their short name (`Point`), others by their full path
+    /// (`app.models.User`).
     pub fn tn(&self, t: TypeId) -> String {
         hir::dump::type_name(&self.tt, t, self)
+    }
+
+    /// Spelling of a type with full paths for every declared type (names
+    /// of generic instances, independent of the current namespace).
+    pub fn tn_full(&self, t: TypeId) -> String {
+        hir::dump::type_name(&self.tt, t, &FullNames(self))
+    }
+
+    /// Short or full name of a declared type of HIR namespace `ns`.
+    fn decl_display(&self, ns: hir::NamespaceId, name: &str, full: &str) -> String {
+        let here = self.nss.get(self.cur_ns).and_then(|n| n.hir_id);
+        if here == Some(ns) && !full.starts_with("std.") {
+            name.to_string()
+        } else {
+            full.to_string()
+        }
     }
 
     // -- function contexts ---------------------------------------------------
@@ -773,16 +807,34 @@ impl<'a> Sema<'a> {
 
 impl hir::dump::DeclNames for Sema<'_> {
     fn struct_name(&self, id: u32) -> String {
-        self.structs.get(id as usize).map(|s| s.full_name.clone()).unwrap_or_default()
+        self.structs.get(id as usize).map(|s| self.decl_display(s.namespace, &s.name, &s.full_name)).unwrap_or_default()
     }
     fn interface_name(&self, id: u32) -> String {
-        self.interfaces.get(id as usize).map(|s| s.full_name.clone()).unwrap_or_default()
+        self.interfaces.get(id as usize).map(|s| self.decl_display(s.namespace, &s.name, &s.full_name)).unwrap_or_default()
     }
     fn enum_name(&self, id: u32) -> String {
-        self.enums.get(id as usize).map(|s| s.full_name.clone()).unwrap_or_default()
+        self.enums.get(id as usize).map(|s| self.decl_display(s.namespace, &s.name, &s.full_name)).unwrap_or_default()
     }
     fn param_name(&self, id: u32) -> String {
         self.gen.tparams.get(id as usize).map(|p| p.name.clone()).unwrap_or_default()
+    }
+}
+
+/// Full paths for every declared type (see [`Sema::tn_full`]).
+struct FullNames<'s, 'a>(&'s Sema<'a>);
+
+impl hir::dump::DeclNames for FullNames<'_, '_> {
+    fn struct_name(&self, id: u32) -> String {
+        self.0.structs.get(id as usize).map(|s| s.full_name.clone()).unwrap_or_default()
+    }
+    fn interface_name(&self, id: u32) -> String {
+        self.0.interfaces.get(id as usize).map(|s| s.full_name.clone()).unwrap_or_default()
+    }
+    fn enum_name(&self, id: u32) -> String {
+        self.0.enums.get(id as usize).map(|s| s.full_name.clone()).unwrap_or_default()
+    }
+    fn param_name(&self, id: u32) -> String {
+        self.0.gen.tparams.get(id as usize).map(|p| p.name.clone()).unwrap_or_default()
     }
 }
 

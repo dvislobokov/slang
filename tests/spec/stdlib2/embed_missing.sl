@@ -1,0 +1,12 @@
+// error: @embed: cannot read
+// status: passing
+namespace spec.stdlib2.embed_missing
+
+import std.io
+
+@embed("no_such_file.txt")
+var Data string
+
+func main() {
+    println(Data)
+}

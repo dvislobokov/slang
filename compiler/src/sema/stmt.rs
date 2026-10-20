@@ -348,7 +348,10 @@ impl<'a> Sema<'a> {
             self.pop_scope();
             cases.push(hir::Case { patterns, body, span: c.span });
         }
-        let default = sw.default.as_ref().map(|d| self.case_body(d, sw.span));
+        let mut default = sw.default.as_ref().map(|d| self.case_body(d, sw.span));
+        if let (None, Some((_, v))) = (&default, &subject) {
+            default = self.exhaustive_default(v.ty, &cases, sw.span);
+        }
         self.pop_label();
         hir::Switch { label, subject, cases, default, span: sw.span }
     }

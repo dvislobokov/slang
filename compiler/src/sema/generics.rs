@@ -356,10 +356,10 @@ impl<'a> Sema<'a> {
             Some(have) => self
                 .iface_methods(iface)
                 .into_iter()
-                .filter(|m| !have.iter().any(|h| h.name == m.name && h.params == m.params && h.ret == m.ret))
+                .filter(|m| !have.iter().any(|h| h.name == m.name && h.params == m.params && h.ret == m.ret) && !(m.default.is_some() && !have.iter().any(|h| h.name == m.name)))
                 .map(|m| format!("missing method {}", m.name))
                 .collect(),
-            None if self.struct_of(ty).is_some() && !matches!(self.tt.get(ty), Type::Pointer(_)) => self.missing_methods(ty, iface),
+            None if self.has_methods(ty) && !matches!(self.tt.get(ty), Type::Pointer(_)) => self.missing_methods(ty, iface),
             None => self.iface_methods(iface).into_iter().map(|m| format!("missing method {}", m.name)).collect(),
         }
     }
@@ -579,7 +579,7 @@ impl<'a> Sema<'a> {
         if !self.depth_ok(&name, span) {
             return None;
         }
-        let full_args: Vec<String> = args.iter().map(|a| self.tn(*a)).collect();
+        let full_args: Vec<String> = args.iter().map(|a| self.tn_full(*a)).collect();
         let full_name = format!("{}.{tname}<{}>", self.nss[ns].path, full_args.join(", "));
         let env = self.env_of(t, &args);
         let note = self.note_for(&name, &args);
@@ -603,6 +603,9 @@ impl<'a> Sema<'a> {
         self.gen.inst_structs.insert(sid, (t, args));
         self.resolve_struct_fields(sid as usize);
         self.check_recursive_struct(sid as usize);
+        if self.attrs_done {
+            self.struct_attrs(sid as usize);
+        }
         for m in &decl.methods {
             let dup = self.structs[sid as usize].methods.iter().any(|(n, _)| *n == m.name.name) || self.gen.methods.contains_key(&(sid, m.name.name.clone()));
             if dup {
@@ -630,6 +633,9 @@ impl<'a> Sema<'a> {
             self.gen.insts.insert(fid.0, InstFunc { env: env.clone(), file: self.cur_file, ns: self.cur_ns, root, note: note.clone(), depth: self.gen.depth });
             self.resolve_func_sig(fid.0 as usize);
         }
+        if self.gen.sigs_ready && !decl.implements.is_empty() {
+            self.check_struct_implements(sid);
+        }
         self.std_instance_hook(sid);
         self.leave(saved);
         Some(sid)
@@ -648,7 +654,7 @@ impl<'a> Sema<'a> {
         if !self.depth_ok(&name, span) {
             return None;
         }
-        let full_args: Vec<String> = args.iter().map(|a| self.tn(*a)).collect();
+        let full_args: Vec<String> = args.iter().map(|a| self.tn_full(*a)).collect();
         let full_name = format!("{}.{tname}<{}>", self.nss[ns].path, full_args.join(", "));
         let env = self.env_of(t, &args);
         let note = self.note_for(&name, &args);
@@ -661,6 +667,7 @@ impl<'a> Sema<'a> {
             namespace: hns,
             variants: Vec::new(),
             is_plain: decl.variants.iter().all(|v| v.fields.is_empty()),
+            methods: Vec::new(),
             attrs: Vec::new(),
             exported: is_exported(&tname),
             file: self.cur_file,

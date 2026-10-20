@@ -1,0 +1,79 @@
+// test: std.text.template and std.html.template render like Go text/template and html/template on 48 text templates (fields, pipelines, printf verbs, range with break/continue/else, if/else if, with, variables, comparison and logic functions, index/slice/len, define/template/block, trim markers, comments), 15 error cases (parse and check errors fail in Parse; unlike Go, a field that does not exist in the type is an error even in a branch the data never takes: e9) and 18 HTML contexts (text, quoted and unquoted attributes, URLs with scheme filtering, scripts, JS strings, event handlers, CSS, comments, RCDATA)
+// status: passing
+namespace spec.stdlib3.template_corpus
+
+import std
+import std.io
+
+struct Item {
+    Name string
+    Price float
+    Tags []string
+    Qty int
+}
+
+struct Data {
+    Title string
+    Items []Item
+    Count int
+    Flag bool
+    Meta map[string]string
+    Nums []int
+    User *Item
+    Empty []string
+    HTML string
+    URL string
+    Ratio float
+}
+
+func runText(i int, src string, d Data) {
+    var t = try text.template.Parse<Data>(src) catch err {
+        println(i, "parse error")
+        return
+    }
+    var out = try t.Execute(d) catch err {
+        println(i, "exec error")
+        return
+    }
+    println(i, encoding.json.Quote(out))
+}
+
+func runErr(i int, src string, d Data) {
+    var t = try text.template.Parse<Data>(src) catch err {
+        println(fmt.Format("e{0}", i), "error")
+        return
+    }
+    var out = try t.Execute(d) catch err {
+        println(fmt.Format("e{0}", i), "error")
+        return
+    }
+    println(fmt.Format("e{0}", i), "ok", encoding.json.Quote(out))
+}
+
+func runHTML(i int, src string, d Data) {
+    var t = try html.template.Parse<Data>(src) catch err {
+        println(fmt.Format("h{0}", i), "parse error")
+        return
+    }
+    var out = try t.Execute(d) catch err {
+        println(fmt.Format("h{0}", i), "exec error", err.Message())
+        return
+    }
+    println(fmt.Format("h{0}", i), encoding.json.Quote(out))
+}
+
+func main() {
+    var d = Data{Title: "Shop", Items: [Item{Name: "pen", Price: 1.5, Tags: ["a", "b"], Qty: 2}, Item{Name: "ink", Price: 3, Tags: [], Qty: 0}], Count: 2, Flag: true, Meta: map[string]string{"k": "v", "u": "javascript:alert(1)", "u2": "https://example.com/a b?c=d&e=f"}, Nums: [1, 2, 3, 4], User: nil, Empty: [], HTML: "<b>\"Fish & Chips\" it's</b>", URL: "http://x.org/?a=1&b=2", Ratio: 0.25}
+    var ts = ["{{.Title}}", "{{.Title | printf \"%q\"}}", "{{.Count}} {{.Ratio}} {{.Flag}}", "{{.Items}}", "{{.Meta}}", "{{.Nums}}", "{{.User}}", "{{.Meta.k}}|{{.Meta.missing}}|", "{{range .Items}}[{{.Name}}]{{end}}", "{{range $i, $e := .Nums}}{{$i}}={{$e}};{{end}}", "{{range .Empty}}x{{else}}empty{{end}}", "{{range $k, $v := .Meta}}{{$k}}:{{$v}},{{end}}", "{{range .Nums}}{{if eq . 3}}{{break}}{{end}}{{.}}{{end}}", "{{range .Nums}}{{if eq . 2}}{{continue}}{{end}}{{.}}{{end}}", "{{range 3}}{{.}}{{end}}", "{{if .Flag}}yes{{else}}no{{end}}", "{{if gt .Count 10}}big{{else if gt .Count 1}}some{{else}}few{{end}}", "{{if and .Flag .Count}}both{{end}}{{if or .Empty .Title}}either{{end}}{{if not .Empty}}none{{end}}", "{{with .User}}{{.Name}}{{else}}nouser{{end}}", "{{with .Title}}[{{.}}]{{end}}", "{{with $x := .Count}}{{$x}}{{end}}", "{{$t := .Title}}{{$t}}{{$t = \"changed\"}} {{$t}}", "{{$.Title}}", "{{range .Items}}{{$.Title}}-{{.Name}} {{end}}", "{{len .Items}} {{len .Title}} {{len .Meta}}", "{{index .Nums 1}} {{index .Meta \"k\"}} {{index .Items 0}}", "{{slice .Title 1 3}} {{slice .Nums 1}}", "{{print \"a\" 1 2 \"b\" \"c\" 3.5}}", "{{println \"x\" 1}}", "{{printf \"%d|%5d|%-5d|%05d|%x|%X|%o|%b|%c\" 42 42 42 42 255 255 8 5 65}}", "{{printf \"%.2f|%8.3f|%e|%g|%v|%s|%q|%t\" 3.14159 2.5 1234.5678 0.000012 .Count .Title .Title true}}", "{{printf \"%v %v\" .Count}}", "{{printf \"%d\" \"str\"}}", "{{eq .Count 2}} {{ne .Title \"x\"}} {{lt 1 2}} {{le 2 2}} {{gt \"b\" \"a\"}} {{ge 1.5 2}} {{eq .Count 1 2 3}}", "{{html \"<a href='x'>&</a>\"}} {{js \"it's \\\"q\\\" <tag>\"}} {{urlquery \"a b&c=d/é\"}}", "{{.Title | html}} {{.Title | len}}", "{{define \"item\"}}<{{.Name}}>{{end}}{{range .Items}}{{template \"item\" .}}{{end}}", "{{block \"b\" .Title}}[{{.}}]{{end}}", "{{template \"x\" .}}{{define \"x\"}}X={{.Count}}{{end}}", "a  {{- .Title -}}  b", "x {{/* comment */}} y", "x {{- /* trimmed */ -}} y", "{{\"literal\"}} {{`raw`}} {{1}} {{-3}} {{1.5}} {{true}}", "{{(len .Items) | printf \"%03d\"}}", "{{(index .Items 1).Name}}", "{{.Ratio | printf \"%.1f\"}}", "{{range .Items}}{{range .Tags}}{{.}}/{{end}};{{end}}", "{{if .User}}u{{else}}nou{{end}}{{if .Meta}}m{{end}}"]
+    for i, src in ts {
+        runText(i, src, d)
+    }
+    var es = ["{{.Nope}}", "{{.Title.Sub}}", "{{range .Title}}{{end}}", "{{if .Flag}}", "{{end}}", "{{nosuchfunc 1}}", "{{$undefined}}", "{{.Items.Name}}", "{{range .Items}}{{.Nope}}{{end}}", "{{with .User}}{{.Missing}}{{end}}", "{{index .Nums 10}}", "{{.Title", "{{template \"nodef\"}}", "{{break}}", "{{len 3}}"]
+    for i, src in es {
+        runErr(i, src, d)
+    }
+    var hs = ["<p>{{.HTML}}</p>", "<a title=\"{{.HTML}}\">x</a>", "<a title={{.HTML}}>x</a>", "<a href=\"{{.URL}}\">l</a>", "<a href=\"/p?q={{.HTML}}\">l</a>", "<a href=\"{{.Title}}\">l</a>", "<script>var x = {{.HTML}}; var n = {{.Count}}; var a = {{.Nums}};</script>", "<script>var s = '{{.HTML}}';</script>", "<button onclick=\"f({{.HTML}})\">b</button>", "<style>p { color: {{.Title}} }</style>", "<div style=\"color: {{.HTML}}\">d</div>", "<!-- {{.HTML}} --><b>{{.Title}}</b>", "<textarea>{{.HTML}}</textarea>", "<title>{{.HTML}}</title>", "{{range .Items}}<li data-x=\"{{.Name}}\">{{.Name}}</li>{{end}}", "<a href=\"{{.Meta.u}}\">u</a>", "<img src=\"{{.Meta.u2}}\">", "<p class=\"{{if .Flag}}on{{else}}off{{end}}\">"]
+    for i, src in hs {
+        runHTML(i, src, d)
+    }
+}

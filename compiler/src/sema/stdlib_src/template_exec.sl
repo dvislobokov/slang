@@ -1,0 +1,1012 @@
+namespace std.text.template
+
+// Execution of parsed templates over dynamic Values (see template.sl).
+
+struct executor {
+    t *tmpl
+    out *std.strings.Builder
+    names []string
+    vals []Value
+    depth int
+
+    func fail(line int, msg string) error {
+        return this.t.fail(line, msg)
+    }
+
+    // Runs the nodes; 1 = {{break}}, 2 = {{continue}} reached.
+    func run(list []int, dot Value, flow int) int! {
+        for idx in list {
+            var n = this.t.nodes[idx]
+            if n.kind == 1 {
+                this.out.Write(n.text)
+            } else if n.kind == 2 {
+                var p = this.t.pipes[n.pipe]
+                var v = this.pipe(n.pipe, dot)?
+                if len(p.vars) == 0 {
+                    this.emit(n, v)?
+                }
+            } else if n.kind == 3 || n.kind == 5 {
+                var mark = len(this.names)
+                var v = this.pipe(n.pipe, dot)?
+                var r = 0
+                if truth(v) {
+                    var d = dot
+                    if n.kind == 5 {
+                        d = v
+                    }
+                    r = this.run(n.list, d, flow)?
+                } else if n.hasElse {
+                    r = this.run(n.elseList, dot, flow)?
+                }
+                this.names = this.names[..mark]
+                this.vals = this.vals[..mark]
+                if r != 0 {
+                    return r
+                }
+            } else if n.kind == 4 {
+                var r = this.rangeNode(n, dot)?
+                _ = r
+            } else if n.kind == 6 {
+                var target = this.t.defs[n.name]
+                if target == 0 {
+                    return this.fail(n.line, "no such template " + std.encoding.json.Quote(n.name))
+                }
+                if this.depth > 100 {
+                    return this.fail(n.line, "exceeded maximum template depth (100)")
+                }
+                var d = Value{}
+                if n.pipe >= 0 {
+                    d = this.pipe(n.pipe, dot)?
+                }
+                var saveN = this.names
+                var saveV = this.vals
+                this.names = ["$"]
+                this.vals = [d]
+                this.depth += 1
+                _ = this.run(this.t.nodes[target - 1].list, d, 0)?
+                this.depth -= 1
+                this.names = saveN
+                this.vals = saveV
+            } else if n.kind == 8 {
+                return 1
+            } else if n.kind == 9 {
+                return 2
+            }
+        }
+        return 0
+    }
+
+    func rangeNode(n tnode, dot Value) int! {
+        var p = this.t.pipes[n.pipe]
+        var mark = len(this.names)
+        // evaluate without binding; range binds per element
+        var v = this.cmds(p, dot)?
+        var count = 0
+        if v.kind == 5 || v.kind == 6 || v.kind == 7 || v.kind == 2 {
+            var n2 = len(v.items)
+            if v.kind == 2 {
+                n2 = v.i
+            }
+            for i in 0..n2 {
+                var elem = Value{}
+                var key = Value{kind: 2, i: i}
+                if v.kind == 2 {
+                    elem = Value{kind: 2, i: i}
+                } else {
+                    elem = v.items[i]
+                    if v.kind == 6 || v.kind == 7 {
+                        key = Value{kind: 4, s: v.keys[i]}
+                    }
+                }
+                if len(p.vars) == 1 {
+                    this.bind(p.vars[0], elem)
+                } else if len(p.vars) == 2 {
+                    this.bind(p.vars[0], key)
+                    this.bind(p.vars[1], elem)
+                }
+                count += 1
+                var r = this.run(n.list, elem, 1)?
+                this.names = this.names[..mark]
+                this.vals = this.vals[..mark]
+                if r == 1 {
+                    break
+                }
+            }
+        } else if v.kind != 0 {
+            return this.fail(n.line, "range can't iterate over " + show(v))
+        }
+        if count == 0 && n.hasElse {
+            _ = this.run(n.elseList, dot, 0)?
+        }
+        this.names = this.names[..mark]
+        this.vals = this.vals[..mark]
+        return 0
+    }
+
+    func bind(name string, v Value) {
+        this.names = append(this.names, name)
+        this.vals = append(this.vals, v)
+    }
+
+    func emit(n tnode, v Value) void! {
+        if this.t.html {
+            this.out.Write(escapeFor(n.esc, v))
+            return
+        }
+        this.out.Write(show(v))
+    }
+
+    // A pipeline; declarations and assignments bind its value.
+    func pipe(pi int, dot Value) Value! {
+        var p = this.t.pipes[pi]
+        var v = this.cmds(p, dot)?
+        if len(p.vars) > 0 {
+            if p.assign {
+                var k = len(this.names) - 1
+                for k >= 0 {
+                    if this.names[k] == p.vars[0] {
+                        this.vals[k] = v
+                        break
+                    }
+                    k -= 1
+                }
+            } else {
+                this.bind(p.vars[0], v)
+            }
+        }
+        return v
+    }
+
+    func cmds(p tpipe, dot Value) Value! {
+        var last = Value{}
+        var have = false
+        for c in p.cmds {
+            last = this.command(c, dot, last, have, p.line)?
+            have = true
+        }
+        return last
+    }
+
+    func command(c tcmd, dot Value, prev Value, hasPrev bool, line int) Value! {
+        var first = c.args[0]
+        if first.kind == 4 {
+            var name = first.name
+            // and / or evaluate lazily
+            if name == "and" || name == "or" {
+                var res = Value{}
+                var n = len(c.args) - 1
+                if hasPrev {
+                    n += 1
+                }
+                if n < 1 {
+                    return this.fail(line, "wrong number of args for " + name + ": want at least 1 got 0")
+                }
+                for k in 1..len(c.args) {
+                    res = this.arg(c.args[k], dot, line)?
+                    if (name == "and" && !truth(res)) || (name == "or" && truth(res)) {
+                        return res
+                    }
+                }
+                if hasPrev {
+                    res = prev
+                }
+                return res
+            }
+            var args []Value = []
+            for k in 1..len(c.args) {
+                args = append(args, this.arg(c.args[k], dot, line)?)
+            }
+            if hasPrev {
+                args = append(args, prev)
+            }
+            if this.t.fnames[name] {
+                var f = this.t.funcs[name]
+                return try f(args) catch err {
+                    return this.fail(line, "error calling " + name + ": " + err.Message())
+                }
+            }
+            return try builtin(name, args) catch err {
+                return this.fail(line, "error calling " + name + ": " + err.Message())
+            }
+        }
+        if len(c.args) > 1 || hasPrev {
+            return this.fail(line, "can't give argument to non-function " + argText(first))
+        }
+        return this.arg(first, dot, line)?
+    }
+
+    func arg(a targ, dot Value, line int) Value! {
+        var base = Value{}
+        if a.kind == 1 {
+            base = dot
+        } else if a.kind == 2 {
+            var found = false
+            var k = len(this.names) - 1
+            for k >= 0 {
+                if this.names[k] == a.name {
+                    base = this.vals[k]
+                    found = true
+                    break
+                }
+                k -= 1
+            }
+            if !found {
+                return this.fail(line, "undefined variable " + a.name)
+            }
+        } else if a.kind == 3 {
+            return dot
+        } else if a.kind == 4 {
+            return this.command(tcmd{args: [a]}, dot, Value{}, false, line)?
+        } else if a.kind == 5 {
+            return Value{kind: 4, s: a.s}
+        } else if a.kind == 6 {
+            return Value{kind: 2, i: a.i}
+        } else if a.kind == 7 {
+            return Value{kind: 3, f: a.f}
+        } else if a.kind == 8 {
+            return Value{kind: 1, b: a.b}
+        } else if a.kind == 9 {
+            return Value{}
+        } else if a.kind == 10 {
+            base = this.pipe(a.pipe, dot)?
+        }
+        var v = base
+        for f in a.fields {
+            v = this.field(v, f, line)?
+        }
+        return v
+    }
+
+    func field(v Value, name string, line int) Value! {
+        if v.kind == 7 {
+            for i, k in v.keys {
+                if k == name {
+                    return v.items[i]
+                }
+            }
+            return this.fail(line, "can't evaluate field " + name + " in type " + v.typeName)
+        }
+        if v.kind == 6 {
+            for i, k in v.keys {
+                if k == name {
+                    return v.items[i]
+                }
+            }
+            return Value{}
+        }
+        if v.kind == 0 {
+            return this.fail(line, "nil value evaluating ." + name)
+        }
+        return this.fail(line, "can't evaluate field " + name + " in a " + kindName(v.kind))
+    }
+}
+
+func argText(a targ) string {
+    if a.kind == 1 {
+        return "." + std.strings.Join(a.fields, ".")
+    }
+    if a.kind == 2 {
+        return a.name
+    }
+    if a.kind == 5 {
+        return std.encoding.json.Quote(a.s)
+    }
+    if a.kind == 6 {
+        return std.fmt.Format("{0}", a.i)
+    }
+    return "."
+}
+
+// Go's truth: false, 0, nil and empty strings/lists/maps are false.
+func truth(v Value) bool {
+    if v.kind == 0 {
+        return false
+    }
+    if v.kind == 1 {
+        return v.b
+    }
+    if v.kind == 2 {
+        return v.i != 0
+    }
+    if v.kind == 3 {
+        return v.f != 0.0
+    }
+    if v.kind == 4 || v.kind >= 8 {
+        return v.s != ""
+    }
+    if v.kind == 5 || v.kind == 6 {
+        return len(v.items) > 0
+    }
+    return true
+}
+
+// How {{.}} prints a value (Go fmt %v style).
+func show(v Value) string {
+    if v.kind == 0 {
+        if v.s != "" {
+            return v.s
+        }
+        return "<no value>"
+    }
+    if v.kind == 1 {
+        if v.b {
+            return "true"
+        }
+        return "false"
+    }
+    if v.kind == 2 {
+        return std.fmt.Format("{0}", v.i)
+    }
+    if v.kind == 3 {
+        return std.fmt.Format("{0}", v.f)
+    }
+    if v.kind == 4 || v.kind >= 8 {
+        return v.s
+    }
+    var parts []string = []
+    if v.kind == 5 {
+        for x in v.items {
+            parts = append(parts, show(x))
+        }
+        return "[" + std.strings.Join(parts, " ") + "]"
+    }
+    if v.kind == 6 {
+        for i, k in v.keys {
+            parts = append(parts, k + ":" + show(v.items[i]))
+        }
+        return "map[" + std.strings.Join(parts, " ") + "]"
+    }
+    for x in v.items {
+        parts = append(parts, show(x))
+    }
+    return "{" + std.strings.Join(parts, " ") + "}"
+}
+
+func isNum(v Value) bool {
+    return v.kind == 2 || v.kind == 3
+}
+
+func num(v Value) float {
+    if v.kind == 2 {
+        return float(v.i)
+    }
+    return v.f
+}
+
+func strOf(v Value) string {
+    if v.kind == 4 || v.kind >= 8 {
+        return v.s
+    }
+    return show(v)
+}
+
+// -1, 0, 1, or an error for incomparable values.
+func compare(a Value, b Value) int! {
+    if isNum(a) && isNum(b) {
+        if a.kind != b.kind {
+            return error("incompatible types for comparison")
+        }
+        if a.kind == 2 && b.kind == 2 {
+            if a.i < b.i {
+                return -1
+            }
+            if a.i > b.i {
+                return 1
+            }
+            return 0
+        }
+        var x = num(a)
+        var y = num(b)
+        if x < y {
+            return -1
+        }
+        if x > y {
+            return 1
+        }
+        return 0
+    }
+    if (a.kind == 4 || a.kind >= 8) && (b.kind == 4 || b.kind >= 8) {
+        return std.strings.Compare(a.s, b.s)
+    }
+    if a.kind == 1 && b.kind == 1 {
+        if a.b == b.b {
+            return 0
+        }
+        return 2
+    }
+    if a.kind == 0 || b.kind == 0 {
+        if a.kind == b.kind {
+            return 0
+        }
+        return 2
+    }
+    return error("incompatible types for comparison: " + kindName(a.kind) + " and " + kindName(b.kind))
+}
+
+func need(name string, args []Value, n int) void! {
+    if len(args) != n {
+        return error(std.fmt.Format("wrong number of args for {0}: want {1} got {2}", name, n, len(args)))
+    }
+}
+
+func builtin(name string, args []Value) Value! {
+    if name == "not" {
+        need(name, args, 1)?
+        return Value{kind: 1, b: !truth(args[0])}
+    }
+    if name == "len" {
+        need(name, args, 1)?
+        var a = args[0]
+        if a.kind == 4 || a.kind >= 8 {
+            return Value{kind: 2, i: len(a.s)}
+        }
+        if a.kind == 5 || a.kind == 6 {
+            return Value{kind: 2, i: len(a.items)}
+        }
+        return error("len of " + kindName(a.kind))
+    }
+    if name == "index" {
+        if len(args) < 1 {
+            return error("wrong number of args for index: want at least 1 got 0")
+        }
+        var v = args[0]
+        for k in 1..len(args) {
+            var ix = args[k]
+            if v.kind == 5 || v.kind == 4 {
+                if ix.kind != 2 {
+                    return error("cannot index a list with a " + kindName(ix.kind))
+                }
+                var n = len(v.items)
+                if v.kind == 4 {
+                    n = len(v.s)
+                }
+                if ix.i < 0 || ix.i >= n {
+                    return error(std.fmt.Format("index out of range: {0}", ix.i))
+                }
+                if v.kind == 4 {
+                    v = Value{kind: 2, i: int(v.s[ix.i])}
+                } else {
+                    v = v.items[ix.i]
+                }
+            } else if v.kind == 6 || v.kind == 7 {
+                var key = strOf(ix)
+                var found = Value{}
+                if len(v.zero) > 0 {
+                    found = v.zero[0]
+                }
+                for j, kk in v.keys {
+                    if kk == key {
+                        found = v.items[j]
+                    }
+                }
+                v = found
+            } else {
+                return error("can't index item of type " + kindName(v.kind))
+            }
+        }
+        return v
+    }
+    if name == "slice" {
+        if len(args) < 1 || len(args) > 3 {
+            return error("wrong number of args for slice")
+        }
+        var v = args[0]
+        var n = len(v.items)
+        if v.kind == 4 {
+            n = len(v.s)
+        }
+        var lo = 0
+        var hi = n
+        if len(args) > 1 {
+            lo = args[1].i
+        }
+        if len(args) > 2 {
+            hi = args[2].i
+        }
+        if lo < 0 || hi > n || lo > hi {
+            return error(std.fmt.Format("slice index out of range [{0}:{1}] with length {2}", lo, hi, n))
+        }
+        if v.kind == 4 {
+            return Value{kind: 4, s: v.s[lo..hi]}
+        }
+        if v.kind == 5 {
+            var items []Value = []
+            for k in lo..hi {
+                items = append(items, v.items[k])
+            }
+            return Value{kind: 5, items: items}
+        }
+        return error("can't slice item of type " + kindName(v.kind))
+    }
+    if name == "print" || name == "println" {
+        var b = std.strings.Builder{}
+        for k, a in args {
+            if k > 0 {
+                var sep = name == "println" || !((args[k - 1].kind == 4) || (a.kind == 4))
+                if sep {
+                    b.Write(" ")
+                }
+            }
+            b.Write(show(a))
+        }
+        if name == "println" {
+            b.Write("\n")
+        }
+        return Value{kind: 4, s: b.String()}
+    }
+    if name == "printf" {
+        if len(args) < 1 || (args[0].kind != 4 && args[0].kind < 8) {
+            return error("printf needs a format string")
+        }
+        var rest []Value = []
+        for k in 1..len(args) {
+            rest = append(rest, args[k])
+        }
+        return Value{kind: 4, s: sprintf(args[0].s, rest)}
+    }
+    if name == "eq" {
+        if len(args) < 2 {
+            return error("missing argument for comparison")
+        }
+        for k in 1..len(args) {
+            if compare(args[0], args[k])? == 0 {
+                return Value{kind: 1, b: true}
+            }
+        }
+        return Value{kind: 1, b: false}
+    }
+    if name == "ne" || name == "lt" || name == "le" || name == "gt" || name == "ge" {
+        need(name, args, 2)?
+        var c = compare(args[0], args[1])?
+        if c == 2 && name != "ne" {
+            return error("incomparable values for " + name)
+        }
+        var r = false
+        if name == "ne" {
+            r = c != 0
+        } else if name == "lt" {
+            r = c < 0
+        } else if name == "le" {
+            r = c <= 0
+        } else if name == "gt" {
+            r = c == 1
+        } else {
+            r = c == 0 || c == 1
+        }
+        return Value{kind: 1, b: r}
+    }
+    if name == "html" {
+        return Value{kind: 4, s: std.html.Escape(joinArgs(args))}
+    }
+    if name == "js" {
+        return Value{kind: 4, s: jsEscape(joinArgs(args))}
+    }
+    if name == "urlquery" {
+        return Value{kind: 4, s: queryEscape(joinArgs(args))}
+    }
+    if name == "upper" {
+        need(name, args, 1)?
+        return Value{kind: 4, s: std.strings.ToUpper(strOf(args[0]))}
+    }
+    if name == "lower" {
+        need(name, args, 1)?
+        return Value{kind: 4, s: std.strings.ToLower(strOf(args[0]))}
+    }
+    if name == "title" {
+        need(name, args, 1)?
+        return Value{kind: 4, s: std.strings.Title(strOf(args[0]))}
+    }
+    if name == "trim" {
+        need(name, args, 1)?
+        return Value{kind: 4, s: std.strings.Trim(strOf(args[0]))}
+    }
+    if name == "join" {
+        need(name, args, 2)?
+        if args[0].kind != 5 {
+            return error("join needs a list first")
+        }
+        var parts []string = []
+        for x in args[0].items {
+            parts = append(parts, strOf(x))
+        }
+        return Value{kind: 4, s: std.strings.Join(parts, strOf(args[1]))}
+    }
+    if name == "split" {
+        need(name, args, 2)?
+        var items []Value = []
+        for p in std.strings.Split(strOf(args[0]), strOf(args[1])) {
+            items = append(items, Value{kind: 4, s: p})
+        }
+        return Value{kind: 5, items: items}
+    }
+    if name == "contains" {
+        need(name, args, 2)?
+        return Value{kind: 1, b: std.strings.Contains(strOf(args[0]), strOf(args[1]))}
+    }
+    if name == "hasPrefix" {
+        need(name, args, 2)?
+        return Value{kind: 1, b: std.strings.HasPrefix(strOf(args[0]), strOf(args[1]))}
+    }
+    if name == "hasSuffix" {
+        need(name, args, 2)?
+        return Value{kind: 1, b: std.strings.HasSuffix(strOf(args[0]), strOf(args[1]))}
+    }
+    if name == "replace" {
+        need(name, args, 3)?
+        return Value{kind: 4, s: std.strings.Replace(strOf(args[0]), strOf(args[1]), strOf(args[2]))}
+    }
+    if name == "repeat" {
+        need(name, args, 2)?
+        if args[1].kind != 2 || args[1].i < 0 || args[1].i > 10000 {
+            return error("repeat count must be an int in 0..10000")
+        }
+        return Value{kind: 4, s: std.strings.Repeat(strOf(args[0]), args[1].i)}
+    }
+    if name == "default" {
+        need(name, args, 2)?
+        if truth(args[1]) {
+            return args[1]
+        }
+        return args[0]
+    }
+    return error("function " + std.encoding.json.Quote(name) + " not defined")
+}
+
+func joinArgs(args []Value) string {
+    var b = std.strings.Builder{}
+    for k, a in args {
+        if k > 0 && args[k - 1].kind != 4 && a.kind != 4 {
+            b.Write(" ")
+        }
+        b.Write(show(a))
+    }
+    return b.String()
+}
+
+// -- printf -------------------------------------------------------------------------
+
+// Go-style formatting: %v %s %d %f %e %g %q %x %X %o %b %c %t %% with
+// flags - + 0 space, width and precision.
+func sprintf(format string, args []Value) string {
+    var b = std.strings.Builder{}
+    var ai = 0
+    var i = 0
+    var n = len(format)
+    var start = 0
+    for i < n {
+        if int(format[i]) != 37 {
+            i += 1
+            continue
+        }
+        b.Write(format[start..i])
+        i += 1
+        if i >= n {
+            b.Write("%!(NOVERB)")
+            start = i
+            break
+        }
+        var minus = false
+        var plus = false
+        var zero = false
+        var space = false
+        for i < n {
+            var c = int(format[i])
+            if c == 45 {
+                minus = true
+            } else if c == 43 {
+                plus = true
+            } else if c == 48 {
+                zero = true
+            } else if c == 32 {
+                space = true
+            } else if c != 35 {
+                break
+            }
+            i += 1
+        }
+        var width = -1
+        for i < n && int(format[i]) >= 48 && int(format[i]) <= 57 {
+            if width < 0 {
+                width = 0
+            }
+            width = width * 10 + int(format[i]) - 48
+            i += 1
+        }
+        var prec = -1
+        if i < n && int(format[i]) == 46 {
+            i += 1
+            prec = 0
+            for i < n && int(format[i]) >= 48 && int(format[i]) <= 57 {
+                prec = prec * 10 + int(format[i]) - 48
+                i += 1
+            }
+        }
+        if i >= n {
+            b.Write("%!(NOVERB)")
+            start = i
+            break
+        }
+        var verb = int(format[i])
+        i += 1
+        start = i
+        if verb == 37 {
+            b.Write("%")
+            continue
+        }
+        if ai >= len(args) {
+            b.Write("%!" + string(char(verb)) + "(MISSING)")
+            continue
+        }
+        var a = args[ai]
+        ai += 1
+        var s = ""
+        if verb == 118 || verb == 115 {
+            s = show(a)
+            if prec >= 0 && verb == 115 && len(s) > prec {
+                s = s[..prec]
+            }
+        } else if verb == 100 {
+            if a.kind == 2 {
+                s = std.fmt.Format("{0}", a.i)
+            } else if a.kind == 3 && a.f == std.math.Trunc(a.f) {
+                s = std.fmt.Format("{0}", int(a.f))
+            } else {
+                s = "%!d(" + goType(a) + "=" + show(a) + ")"
+            }
+            if plus && !std.strings.HasPrefix(s, "-") {
+                s = "+" + s
+            } else if space && !std.strings.HasPrefix(s, "-") {
+                s = " " + s
+            }
+        } else if verb == 102 || verb == 70 || verb == 101 || verb == 103 {
+            if !isNum(a) {
+                s = "%!" + string(char(verb)) + "(" + goType(a) + "=" + show(a) + ")"
+            } else if verb == 103 {
+                s = std.fmt.Format("{0}", num(a))
+            } else if verb == 101 {
+                s = expText(num(a), prec)
+            } else {
+                var p = prec
+                if p < 0 {
+                    p = 6
+                }
+                s = fixed(num(a), p)
+            }
+            if plus && !std.strings.HasPrefix(s, "-") {
+                s = "+" + s
+            }
+        } else if verb == 113 {
+            s = std.encoding.json.Quote(strOf(a))
+        } else if verb == 120 || verb == 88 || verb == 111 || verb == 98 {
+            var base = 16
+            if verb == 111 {
+                base = 8
+            } else if verb == 98 {
+                base = 2
+            }
+            if a.kind == 2 {
+                s = intBase(a.i, base)
+            } else {
+                // hex of the bytes of a string
+                var hb = std.strings.Builder{}
+                for k in 0..len(strOf(a)) {
+                    var c = int(strOf(a)[k])
+                    hb.Write(intBase(c >> 4, 16) + intBase(c & 15, 16))
+                }
+                s = hb.String()
+            }
+            if verb == 88 {
+                s = std.strings.ToUpper(s)
+            }
+        } else if verb == 99 {
+            s = string(char(a.i))
+        } else if verb == 116 {
+            s = show(a)
+        } else {
+            s = "%!" + string(char(verb)) + "(" + goType(a) + "=" + show(a) + ")"
+        }
+        if width > len(s) {
+            var padn = width - len(s)
+            if minus {
+                s = s + std.strings.Repeat(" ", padn)
+            } else if zero && (verb == 100 || verb == 102 || verb == 120 || verb == 88) {
+                if std.strings.HasPrefix(s, "-") || std.strings.HasPrefix(s, "+") {
+                    s = s[..1] + std.strings.Repeat("0", padn) + s[1..]
+                } else {
+                    s = std.strings.Repeat("0", padn) + s
+                }
+            } else {
+                s = std.strings.Repeat(" ", padn) + s
+            }
+        }
+        b.Write(s)
+    }
+    b.Write(format[start..])
+    if ai < len(args) {
+        b.Write("%!(EXTRA ")
+        var extra []string = []
+        for k in ai..len(args) {
+            extra = append(extra, show(args[k]))
+        }
+        b.Write(std.strings.Join(extra, ", "))
+        b.Write(")")
+    }
+    return b.String()
+}
+
+// Go's type name of a value in %!verb(type=value).
+func goType(v Value) string {
+    if v.kind == 1 {
+        return "bool"
+    }
+    if v.kind == 2 {
+        return "int"
+    }
+    if v.kind == 3 {
+        return "float64"
+    }
+    if v.kind == 4 || v.kind >= 8 {
+        return "string"
+    }
+    if v.kind == 0 {
+        return "<nil>"
+    }
+    if v.kind == 7 {
+        return v.typeName
+    }
+    return kindName(v.kind)
+}
+
+func intBase(v0 int, base int) string {
+    if v0 == 0 {
+        return "0"
+    }
+    var neg = v0 < 0
+    var v = v0
+    if neg {
+        v = -v
+    }
+    var digits = "0123456789abcdef"
+    var out = ""
+    for v > 0 {
+        out = digits[v % base..v % base + 1] + out
+        v = v / base
+    }
+    if neg {
+        return "-" + out
+    }
+    return out
+}
+
+// f with p decimals (rounded half away from zero).
+func fixed(f float, p int) string {
+    if std.math.IsNaN(f) {
+        return "NaN"
+    }
+    if std.math.IsInf(f, 1) {
+        return "+Inf"
+    }
+    if std.math.IsInf(f, -1) {
+        return "-Inf"
+    }
+    var neg = f < 0
+    var x = std.math.Abs(f)
+    var scale = std.math.Pow(10.0, float(p))
+    var scaled = x * scale
+    var r = std.math.Round(scaled)
+    var fl = std.math.Floor(scaled)
+    if scaled - fl == 0.5 {
+        // an exact tie rounds to even (as strconv)
+        r = fl
+        if std.math.Mod(fl, 2.0) != 0.0 {
+            r = fl + 1.0
+        }
+    }
+    if r >= 9.0e18 {
+        return std.fmt.Format("{0}", f)
+    }
+    var digits = std.fmt.Format("{0}", int(r))
+    for len(digits) <= p {
+        digits = "0" + digits
+    }
+    var out = digits
+    if p > 0 {
+        out = digits[..len(digits) - p] + "." + digits[len(digits) - p..]
+    }
+    if neg && r != 0.0 {
+        return "-" + out
+    }
+    return out
+}
+
+func expText(f float, prec int) string {
+    var p = prec
+    if p < 0 {
+        p = 6
+    }
+    if f == 0.0 {
+        return fixed(0.0, p) + "e+00"
+    }
+    var x = std.math.Abs(f)
+    var e = int(std.math.Floor(std.math.Log10(x)))
+    var m = x / std.math.Pow(10.0, float(e))
+    if std.math.Round(m * std.math.Pow(10.0, float(p))) >= 10.0 * std.math.Pow(10.0, float(p)) {
+        m = m / 10.0
+        e += 1
+    }
+    var es = std.fmt.Format("{0}", std.math.IAbs(e))
+    if len(es) < 2 {
+        es = "0" + es
+    }
+    var sign = "+"
+    if e < 0 {
+        sign = "-"
+    }
+    var mant = fixed(m, p)
+    if f < 0 {
+        mant = "-" + mant
+    }
+    return mant + "e" + sign + es
+}
+
+// -- escaping helpers --------------------------------------------------------------
+
+func jsEscape(s string) string {
+    var b = std.strings.Builder{}
+    var start = 0
+    for i in 0..len(s) {
+        var c = int(s[i])
+        var e = ""
+        if c == 92 {
+            e = "\\\\"
+        } else if c == 39 {
+            e = "\\'"
+        } else if c == 34 {
+            e = "\\\""
+        } else if c == 60 {
+            e = "\\u003C"
+        } else if c == 62 {
+            e = "\\u003E"
+        } else if c == 38 {
+            e = "\\u0026"
+        } else if c == 61 {
+            e = "\\u003D"
+        } else if c == 10 {
+            e = "\\n"
+        } else if c == 13 {
+            e = "\\r"
+        } else if c == 9 {
+            e = "\\t"
+        } else if c < 32 {
+            e = "\\u00" + hex2(c)
+        } else {
+            continue
+        }
+        b.Write(s[start..i])
+        b.Write(e)
+        start = i + 1
+    }
+    b.Write(s[start..])
+    return b.String()
+}
+
+func hex2(c int) string {
+    var d = "0123456789ABCDEF"
+    return d[c >> 4..(c >> 4) + 1] + d[c & 15..(c & 15) + 1]
+}
+
+// Percent-encoding for a query component (space as +).
+func queryEscape(s string) string {
+    var b = std.strings.Builder{}
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 {
+            b.Write(s[i..i + 1])
+        } else if c == 32 {
+            b.Write("+")
+        } else {
+            b.Write("%" + hex2(c))
+        }
+    }
+    return b.String()
+}

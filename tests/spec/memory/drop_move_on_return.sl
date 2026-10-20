@@ -1,5 +1,5 @@
 // test: returning a Drop value moves it to the caller; it is dropped once, by the caller
-// status: pending
+// status: passing
 namespace spec.memory.drop_move_on_return
 
 import std.io

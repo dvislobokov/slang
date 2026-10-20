@@ -1,0 +1,38 @@
+127.0.0.1 -> 127.0.0.1 v4 true v6 false lo true priv false mc false ll false unspec false
+10.1.2.3 -> 10.1.2.3 v4 true v6 false lo false priv true mc false ll false unspec false
+172.16.0.1 -> 172.16.0.1 v4 true v6 false lo false priv true mc false ll false unspec false
+172.32.0.1 -> 172.32.0.1 v4 true v6 false lo false priv false mc false ll false unspec false
+192.168.0.7 -> 192.168.0.7 v4 true v6 false lo false priv true mc false ll false unspec false
+8.8.8.8 -> 8.8.8.8 v4 true v6 false lo false priv false mc false ll false unspec false
+224.0.0.251 -> 224.0.0.251 v4 true v6 false lo false priv false mc true ll false unspec false
+169.254.1.1 -> 169.254.1.1 v4 true v6 false lo false priv false mc false ll true unspec false
+0.0.0.0 -> 0.0.0.0 v4 true v6 false lo false priv false mc false ll false unspec true
+::1 -> ::1 v4 false v6 true lo true priv false mc false ll false unspec false
+:: -> :: v4 false v6 true lo false priv false mc false ll false unspec true
+fd00::1 -> fd00::1 v4 false v6 true lo false priv true mc false ll false unspec false
+fe80::1 -> fe80::1 v4 false v6 true lo false priv false mc false ll true unspec false
+ff02::1 -> ff02::1 v4 false v6 true lo false priv false mc true ll false unspec false
+2001:db8::1 -> 2001:db8::1 v4 false v6 true lo false priv false mc false ll false unspec false
+::ffff:10.0.0.1 -> ::ffff:10.0.0.1 v4 true v6 false lo false priv true mc false ll false unspec false
+invalid IP address 1.2.3
+invalid IP address 256.1.1.1
+invalid IP address ::g
+invalid IP address 
+invalid IP address 1.2.3.4%eth0
+invalid IP address [::1]
+192.168.1.1 16 4 true
+1.2.3.4 ::1 0.0.0.0 ::
+false invalid IP false
+192.0.2.1:80 192.0.2.1 80 true
+[2001:db8::2]:443 443
+1 8080 true
+bad: 192.0.2.1
+bad: host:80
+bad: 1.2.3.4%1:80
+bad: :-1
+127.0.0.1:0 true
+0.0.0.0:9
+8080
+1 127.0.0.1
+localhost resolves to a loopback address: true
+loopback interface 127.0.0.1/8 up: true

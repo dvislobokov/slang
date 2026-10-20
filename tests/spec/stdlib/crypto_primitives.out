@@ -1,0 +1,25 @@
+gcm: 0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf
+gcm tag: 5bc94fbc3221a5db94fae95ae7121a47
+gcm open: 60
+tampered: aes-gcm: message authentication failed
+bad key: aes: invalid key size (want 16, 24 or 32 bytes)
+block: 69c4e0d86a7b0430d8cdb78070b4c55a
+chacha tag: 1ae10b594f09e26a7e902ecbd0600691
+chacha open: Ladies a
+x25519: 4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742
+low order: x25519: low-order public key (all-zero shared secret)
+p256 ecdh: 46fc62106420ff012e54a434fbdd2d25ccc5852060561e68040dd7778997bd7b
+p256 pub: 0460fed4ba255a9d31c9
+ecdsa: true true true
+ecdsa wrong digest: false
+ed25519 pub: d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+ed25519 sig: e5564300c360ac729086e2cc806e828a
+ed25519 verify: true false
+rsa: RSA 128 true
+rsa verify: true true
+rsa wrong hash: false false
+hkdf prk: 077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5
+hkdf okm: 3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865
+sha384: cb00753f45a35e8bb5a03d699ac65007
+hmac-sha512: 87aa7cdea5ef619d4ff0b4241a1d6cb0
+unknown hash: crypto: unknown hash "md4" (want sha256, sha384, sha512 or sha1)

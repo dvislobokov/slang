@@ -1,0 +1,11 @@
+the    4
+dog    2
+fox    2
+and    1
+distinct: 11 longest: quick
+lengths: [16 16 14 13]
+fox at 4 true | clamp: 100 -1
+top-3 counts (heap order): [2 4 2]
+a=and b=barks,brown d=dog f=fox j=jumps l=lazy o=over q=quick r=runs t=the
+fox:30 dog:30 fox:30 cat:30 dog:30 misses: 4 order: [dog cat]
+reversed: [jumps fox brown quick the] back: the

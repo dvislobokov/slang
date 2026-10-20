@@ -1,0 +1,19 @@
+(?P<year>\d{4})-(?P<month>\d{2})-(?<day>\d{2})(T(\d\d):(\d\d))?
+6 [ year month day   ] 3 -1
+7 2024-05-17 2024 05 17
+false true true [year month day]
+9 19 2024-05-17
+9 13 2024 true true
+2024-05-17 false  
+2025-01-02T10:30 true 10 30
+on 17/05/2024.
+0 3 one
+4 7 two
+9 14 three
+true
+[2 4] true true
+2 b
+[x y z]
+true false
+true 0
+true \w+

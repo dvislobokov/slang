@@ -1,0 +1,67 @@
+// test: net.Dialer (Timeout, LocalAddr, KeepAlive, NoDelay, Happy Eyeballs over several addresses) and net.ListenConfig (ReusePort, ReuseAddr, Backlog); Conn/Listener addresses and Fd
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.net_dialer
+
+import std.io
+import std
+
+async func main() void! {
+    var lc = net.ListenConfig{Backlog: 16}
+    var l = lc.Listen("127.0.0.1:0")?
+
+    // LocalAddr binds the client side before connecting
+    var probe = net.Listen("127.0.0.1:0")?
+    var localPort = probe.Port()
+    probe.Close()
+    var d = net.Dialer{Timeout: 2000, KeepAlive: 15, LocalAddr: fmt.Format("127.0.0.1:{0}", localPort), NoDelay: false}
+    var c = await d.Dial(l.Addr())?
+    var s = await l.Accept()?
+    println("local port used:", c.Local().Port == localPort, s.Remote().Port == localPort)
+    println("addresses:", c.Remote().String() == l.Addr(), c.LocalAddr() == s.RemoteAddr(), c.Fd() >= 0, l.Fd() >= 0)
+    c.Close()
+    println("fd after close:", c.Fd(), c.IsClosed(), !s.IsClosed())
+    s.Close()
+
+    // the zero Dialer: Happy Eyeballs over "localhost" (127.0.0.1, maybe ::1)
+    var z net.Dialer
+    println("defaults:", z.DualStack, z.FallbackDelay, z.NoDelay, z.Timeout)
+    var c2 = await z.Dial(fmt.Format("localhost:{0}", l.Port()))?
+    var s2 = await l.Accept()?
+    println("dialed localhost:", c2.Remote().IP.IsLoopback())
+    c2.Close()
+    s2.Close()
+
+    // a bad local address
+    var bad = net.Dialer{LocalAddr: "[::1]:0"}
+    try await bad.Dial(l.Addr()) catch err {
+        println("family mismatch:", strings.HasPrefix(err.Message(), "dial tcp 127.0.0.1:"))
+    }
+
+    // timeouts: a non-routable address does not answer (or fails at once
+    // without a route); either way the dial ends within the timeout
+    var t0 = time.Now()
+    var quick = net.Dialer{Timeout: 100}
+    try await quick.Dial("10.255.255.1:9") catch err {
+        println("dial timeout or unreachable:", time.Now() - t0 < 2000)
+    }
+
+    // ReusePort: two listeners share a port
+    var rp = net.ListenConfig{ReusePort: true}
+    var a = rp.Listen("127.0.0.1:0")?
+    var b = rp.Listen(a.Addr())?
+    println("shared port:", a.Port() == b.Port())
+    a.Close()
+    b.Close()
+    // ReuseAddr off still listens
+    var noReuse = net.ListenConfig{ReuseAddr: false}
+    var nr = noReuse.Listen("127.0.0.1:0")?
+    println("no reuseaddr:", nr.Port() > 0)
+    nr.Close()
+    var u = rp.ListenUDP("127.0.0.1:0")?
+    var u2 = rp.ListenUDP(u.Addr())?
+    println("shared udp port:", u.Port() == u2.Port())
+    u.Close()
+    u2.Close()
+    l.Close()
+}

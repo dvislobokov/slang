@@ -191,7 +191,18 @@ struct User {
 - Атрибут — это обычная структура, помеченная `@attribute`; её поля —
   параметры атрибута. Аргументы — константы времени компиляции.
 - Встроенные: `@reflect` (принудительно сохранить метаданные типа, в
-  том числе методы), `@deprecated`, `@inline`, `@test`, `@attribute`.
+  том числе методы), `@deprecated`, `@inline`, `@test`, `@attribute`,
+  `@embed("путь")`.
+- `@embed("путь")` на глобальной `var`/`const` вшивает файл при
+  компиляции (путь относительно исходного файла; отсутствующий файл —
+  ошибка компиляции): `var X string` (текст UTF-8), `var X []byte`,
+  `const X = ""` (значение-заглушка заменяется текстом файла), `var X
+  embed.FS` — каталог (все файлы рекурсивно) или шаблон `dir/*.ext`;
+  `embed.FS` даёт `ReadFile`/`ReadString`/`Has`/`Names`/`List` по путям
+  `dir/имя`. У `var` с `@embed` нет инициализатора.
+- Атрибут-структуры могут объявляться и в stdlib на Slang
+  (`@binary(endian: "big")` из `std.encoding.binary`, `@cli.flag(...)` из
+  `std.cli`): они пишутся через пространство имён, как обычные.
 - Каждый применённый атрибут — константное значение своей структуры
   (аргументы и значения полей по умолчанию), вшитое в таблицы рефлексии;
   у встроенных это структуры `std.reflect` (`json`, `deprecated`, ...).
@@ -247,8 +258,9 @@ struct User {
 
 ## Интерфейсы
 
-Структурная типизация, как в Go: структура реализует интерфейс, если имеет
-все его методы. Явного `implements` нет.
+Структурная типизация, как в Go: структура (или enum с методами) реализует
+интерфейс, если имеет все его методы. `implements` — необязательная проверка
+на месте объявления (см. ниже).
 
 ```slang
 interface Shape {
@@ -267,20 +279,60 @@ func Describe(s Shape) {
 
 ### Методы по умолчанию, встраивание и `sealed`
 
-- Интерфейс может содержать методы с телом, выраженные через остальные его
-  методы; реализация обязана дать только методы без тела. Состояния у
-  интерфейса нет, `this` в таком теле — значение интерфейса.
+- Интерфейс может содержать методы с телом (методы по умолчанию),
+  выраженные через остальные его методы; реализация обязана дать только
+  методы без тела. Состояния у интерфейса нет, `this` в таком теле —
+  значение интерфейса: его можно передать дальше как интерфейс, вызовы
+  через него диспетчеризуются динамически. Метод типа с тем же именем
+  переопределяет метод по умолчанию (и при вызове через интерфейс).
+  Методы по умолчанию не бывают `static`, `async` или обобщёнными.
+
+  ```slang
+  interface Logger {
+      func Log(level int, msg string)
+      func Info(msg string) { this.Log(1, msg) }   // по умолчанию
+  }
+  ```
+
+  Метод по умолчанию вызывается и на значении типа, реализующего интерфейс
+  (`console.Info("x")`, в том числе в обобщённом теле через ограничение
+  `T: Logger`): значение приводится к интерфейсу. Если такой метод дают два
+  разных интерфейса, которые тип реализует, вызов — ошибка `ambiguous
+  default method` (приведите значение к нужному интерфейсу явно).
+  Реализация: метод по умолчанию компилируется один раз как функция от
+  значения интерфейса; слот vtable типа, у которого нет своего метода,
+  указывает на переходник, собирающий `{data, vtable}` (ABI в
+  `compiler/src/codegen/mod.rs`).
 - `interface ReadWriter { Reader; Writer }` встраивает интерфейсы: имя
-  интерфейса на отдельной строке тела добавляет его методы (одноимённые
-  методы должны совпадать по сигнатуре).
+  интерфейса на отдельной строке тела добавляет его методы, в том числе
+  методы по умолчанию (одноимённые методы должны совпадать по сигнатуре;
+  собственный метод встраивающего интерфейса имеет приоритет). Цикл
+  встраивания (`A { B }`, `B { A }`) — ошибка `embeds itself`.
 - Значение интерфейса неявно приводится к интерфейсу с подмножеством его
-  методов (`var n Named = shape`); `case Mover m:` в `switch` по
-  интерфейсу проверяет, реализует ли динамический тип другой интерфейс.
+  методов (`var n Named = shape`; отсутствующие методы по умолчанию не
+  мешают); `case Mover m:` в `switch` по интерфейсу или `any` проверяет,
+  реализует ли динамический тип другой интерфейс.
 - `println` значения `any` печатает его динамическое значение.
-- `sealed interface Shape { ... }` — реализации только в том же пространстве
-  имён; `switch` по типу такого интерфейса проверяется на полноту.
-- `struct Circle implements Shape { ... }` — опциональная проверка на месте
-  объявления; семантика интерфейсов остаётся структурной.
+- `struct Circle implements Shape, fmt.Stringer { ... }` (и `enum E
+  implements I { ... }`) — проверка на месте объявления с той же
+  формулировкой, что при приведении (`Square does not implement Shape:
+  missing method Perimeter`); методы по умолчанию не требуются, не
+  интерфейс после `implements` — ошибка `is not an interface`. Семантика
+  остаётся структурной: тип без `implements` с теми же методами тоже
+  реализует интерфейс.
+- `sealed interface Shape { ... }` — реализации только в том же
+  пространстве имён (в любом его файле). Реализации — все структуры и enum
+  этого пространства имён, имеющие методы интерфейса (`implements` не
+  обязателен); тип другого пространства имён не приводится к нему ни явно
+  через `implements`, ни неявно: `sealed interface Shape can only be
+  implemented in namespace app.shapes`. Статически к `sealed`-интерфейсу
+  приводится только `sealed`-интерфейс того же пространства имён.
+  `switch` по типу без `default` над таким интерфейсом проверяется на
+  полноту (`switch on sealed interface Shape is not exhaustive: missing
+  Triangle`); `case T x` и `case *T x` оба покрывают `T`. Полный `switch`
+  (как и `switch` по enum, перечисляющий все варианты) — завершающий
+  оператор: `return` после него не нужен; если во время выполнения не
+  совпал ни один `case` (например, nil-интерфейс), программа паникует.
 
 Наследования классов нет; встраивание структур — композиция без
 виртуальной диспетчеризации. Как выражать паттерны: `docs/PATTERNS.md`.
@@ -771,6 +823,11 @@ switch res {
 }
 ```
 
+- `switch` по enum без `default`, перечисляющий все варианты, и полный
+  `switch` по типу над `sealed`-интерфейсом — завершающие операторы
+  (`return` после них не нужен), как в `Eval` из `docs/PATTERNS.md`.
+  Неполный `switch` по enum допустим (ничего не делает для остальных
+  вариантов); неполный по `sealed`-интерфейсу без `default` — ошибка.
 - `break`, `continue`, `return`. Меток нет. `break` внутри `case`
   выходит из `switch` (как в Go), `continue` продолжает объемлющий цикл;
   поэтому из `case` нельзя выйти из цикла иначе, чем через `return`
@@ -1002,6 +1059,15 @@ func ToJson<T>(value T) string {
   Токенизатор — C (`runtime/src/std_json.c`). Нет `Reader`/`Writer`,
   `Options{Indent}`, `Schema<T>`, конвертеров.
 - `std.strings.Builder` (`Write`, `String`, `Len`, `Reset`).
+- Те же `Fields<T>()`-обходы дают `Parse<T>`/`Format<T>` для
+  `std.encoding.csv` (`@csv(name:, index:, skip:, omitEmpty:)`),
+  `xml` (`@xml(name:, attr:, text:, ns:, omitEmpty:, skip:)`), `yaml`
+  (`@yaml(name:, omitEmpty:, skip:, flow:)`) и `toml` (`@toml(name:,
+  omitEmpty:, skip:, inline:)`); `@serde(name:, omitEmpty:, skip:)` —
+  общий атрибут, который читают все форматы. Типизированные шаблоны
+  `std.text.template.Parse<T>` проверяют поля `T` через `reflect.TypeInfo`
+  во время выполнения, а для строкового литерала — ещё и при компиляции
+  (`sema/litcheck.rs`, вместе с `regex.Pattern("...")`).
 - Библиотеки на Slang загружаются при первом обращении к их именам,
   поэтому программы без рефлексии не платят ничего.
 
@@ -1211,8 +1277,32 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 ### Арены
 
 Для серверов, парсеров и других задач с чётким жизненным циклом есть
-библиотечные арены: `var a = arena.New()`, `a.New<T>()`, освобождение всей
-арены разом. Это дополнение к ARC, а не замена.
+библиотечные арены (`std.arena`) — дополнение к ARC, а не замена:
+
+```slang
+func Handle(words []string) int {
+    var a = arena.New()
+    defer a.Free()                  // идиома: одна арена на запрос
+    var t = a.New<Token>()          // *Token в арене, обнулённый
+    var buf = a.Alloc<int>(64)      // []int из 64 нулей в арене
+    t.Text = a.String(words[0])     // копия строки в арене
+    ...
+}
+```
+
+- `a.New<T>() *T`, `a.Alloc<T>(n) []T`, `a.String(s) string` размещают
+  значения в арене; `a.Free()` освобождает всё разом (арена остаётся
+  пригодной), `a.Len()` — число объектов в ней. Когда исчезает последняя
+  копия значения `Arena`, всё освобождается и без `Free`.
+- У объектов арены нет подсчёта ссылок: retain/release для них — пустые
+  операции (счётчик `-2`, `runtime/ABI.md` 3.6). При `Free` выполняются
+  их деструкторы, так что строки, срезы и указатели на обычную кучу,
+  хранящиеся в полях, освобождаются.
+- Строки и срезы, созданные обычным кодом «внутри» арены, в арену не
+  попадают — только через `a.String`/`a.Alloc`; `append` сверх ёмкости
+  среза арены копирует его в обычную кучу.
+- Указатели в арену после `Free` недействительны; в v1 это не проверяется.
+  Арена не потокобезопасна.
 
 ### Гарантии
 
@@ -1244,49 +1334,125 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 
 | Пространство | Содержимое | Реализовано |
 |--------------|------------|-------------|
-| `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; нет `Reader`/`Writer` |
+| `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; интерфейсы `Reader`/`Writer`/`Closer`/`Seeker`/`ReadWriter`/… (`Read(buf) int!`, 0 — конец), `AsyncReader`/`AsyncWriter` (их реализует `net.Conn`), `Copy`/`CopyN`/`ReadFull`/`ReadN`/`ReadAllFrom`, `StringReader`/`BytesReader`/`BytesWriter`, `LimitReader`/`MultiReader`/`MultiWriter`/`TeeReader`/`Pipe`/`Discard`, `BufferedReader`/`BufferedWriter`, `Scanner`, `Lines`/`Words`, `io.EOF` |
 | `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`, `Sprintf` (глаголы Go: `%v %d %s %f %.2f %5d %-4d %03d %x %q %c %t %e %%`); даты — `time.Format` |
 | `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё (`Builder{}` с `Write`, `String`, `Len`, `Reset`), плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
 | `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
-| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓ |
+| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓, плюс `LinkedList<T>`, `Deque<T>`, `Ring<T>(cap)`, `Heap<T: Ordered>`, `PriorityQueue<T>(less)` (FIFO при равенстве), `OrderedMap<K: Ordered, V>` (`Min/Max/Floor/Ceiling/Range`), `LRU<K, V>(cap)`, `BitSet` (`stdlib_src/collections2.sl`; `for` по ним — через `Items()`/`Keys()`) |
 | `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, `Go(f func() Task<void>)`; значения контекста `Key<T>()`, `Get(key) *T`, `With(key, value, f)`, `CurrentContext() Context`, `RunWith(ctx, f)`, `SpawnWith(ctx, f)`; отмена `NewCancel() CancelHandle` (`Context`, `Cancel()`, `IsCancelled()`), `WithTimeout(ms, f)`, `CheckCancelled() void!`, `IsCancelled()`, `ErrCancelled`; `Any` отменяет проигравших. Нет: `Scope`, `WithDeadline`, `OnCancel`, отмены остальных в `All` |
-| `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; нет процессов и сигналов |
+| `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; файлы `Open`/`Create`/`OpenFile(path, O_* флаги, perm)` → `File` (`Read`/`ReadAt`/`Write`/`Seek`/`Close`/`Sync`/`Truncate`/`Stat`, реализует интерфейсы `std.io`), `Stat`/`Lstat` → `FileInfo`, `ReadDir` → `[]DirEntry`, `Chmod`, `Stdin/Stdout/Stderr()`; `std.os.signal` (`Wait`, `WaitAny`, `Notify`, `Catch`, `Ignore`, `Reset`, `Raise`); `std.os.user`; процессы — `std.process` |
 | `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir`; `fs.ErrNotFound` — ошибка-константа, которую оборачивают все ошибки «файл не найден» (`errors.Is(err, fs.ErrNotFound)`) |
-| `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; нет `Duration`/`Timer` (нужны типы в stdlib) |
+| `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; типы (`stdlib_src/time.sl`): `Duration` (нс; `Seconds()`, `String()` как в Go `1h2m3.5s`, `ParseDuration`, конструкторы `time.Seconds(n)`… вместо констант), `Time` (`Time.Now()`/`Current()`, `Unix`, `Date`, `Add`/`Sub`/`AddDate`, `Before`/`After`/`Equal`, `Format` по эталону Go и `Strftime`, `ParseTime`/`ParseInLocation`, `Truncate`/`Round`, `In`/`UTC`/`Local`, `Zone`, `ISOWeek`), `Location` (`UTC()`, `Local()`, `LoadLocation` из `/usr/share/zoneinfo` с POSIX-правилами после последнего перехода, `FixedZone`), раскладки `RFC3339`…, `Instant` (монотонные часы), async `NewTicker`/`NewTimer`/`After`. Имена Go, занятые int-функциями: `Since` → `Elapsed`, `Sleep` → `SleepFor`, `Parse` → `ParseTime`, `t.Month()` — `int` |
 | `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New` | ✓ всё |
+
+Уровень 2 (`docs/STDLIB.md`; Slang в `compiler/src/sema/stdlib_src/`, C —
+`runtime/ABI.md` §21): `std.regex` (синтаксис RE2, ленивый DFA + Pike VM,
+линейное время; `regex.Pattern("литерал")` проверяется при компиляции),
+`std.compress.{deflate,zlib,gzip}` (кодер и декодер, потоковые `Writer`/
+`Reader`, адаптеры `std.io` для gzip) и `std.compress.zstd` (декодер),
+`std.archive.{zip,tar}`, `std.encoding.{csv,xml,yaml,toml}` (toml
+`Document` правит текст с сохранением комментариев),
+`std.text.template`/`std.html.template` (контекстное экранирование),
+`std.html`, `std.mime` (+ `multipart`, `quotedprintable`), `std.net.url`,
+`std.net.textproto`, `std.text.scanner`, `std.text.table`. Тесты —
+`tests/spec/stdlib3/` (сверка с Go, PyYAML и tomllib). Нет: кодера zstd,
+brotli, bzip2, lzw.
 
 ### Сеть и протоколы
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.net` | TCP/UDP сокеты, `Dial`, `Listen`, DNS, IP-адреса; всё асинхронное |
+| `std.net` | TCP/UDP/Unix-сокеты, `Dial`/`Dialer` (Happy Eyeballs), `Listen`/`ListenConfig` (dual-stack), DNS через пул резолверов, `IP`/`Addr`, опции сокетов, half-close, дедлайны, `SendFile`, буферизованный ввод-вывод, типизированные ошибки; всё асинхронное |
 | `std.net.http` | клиент: `Get`, `Post`, `Request`, `Client` с таймаутами и заголовками; сервер: `Server`, `Router`, `Handler`, middleware; HTTP/1.1 и HTTP/2 |
 
 Реализовано (Slang-код в `compiler/src/sema/stdlib_src/`, рантайм —
 `runtime/ABI.md` §10.9, §16):
 
-- `std.net`: `Dial(addr) Task<Conn!>`, `DialTimeout(addr, ms)`,
-  `Listen(addr) Listener!`, `ResolveIP(host) Task<[]string!>` (IPv4 первыми),
-  `SplitHostPort(addr) HostPort!` / `JoinHostPort(host, port)`,
-  `ListenUDP(addr) UDPConn!`. `Conn`: `Read(n) Task<[]byte!>` (пустой срез —
-  конец потока), `ReadString(n)`, `Write(b []byte) Task<int!>` (пишет всё),
-  `WriteString(s)`, `SetTimeout(ms)` (таймаут каждой операции, ошибка
-  `i/o timeout`), `Close()`, `IsClosed()`, `LocalAddr()`, `RemoteAddr()`.
-  `Listener`: `Accept() Task<Conn!>`, `Close()`, `Addr()`, `Port()`.
-  `UDPConn`: `RecvFrom(n) Task<Packet!>` (`Packet{Data, Addr}`),
-  `SendTo(b, addr) Task<int!>`, `SetTimeout`, `Close`, `Addr`, `Port`.
-  Сокеты неблокирующие, ожидание — через поллер рантайма (epoll), поток
-  воркера никогда не блокируется. `Conn`/`Listener` — копируемые ручки на
-  объект сокета, `Drop` которого закрывает дескриптор. `Listen` принимает
-  только IP или `localhost`.
-- `std.net.http` (HTTP/1.1 без TLS; `https` — ошибка `https is not supported
-  yet`): `Get(url) Task<Response!>`, `Post(url, body, contentType)`,
-  `Client{Timeout, MaxRedirects, Headers}` с `Get`/`Post`/`Do(method, url,
+- `std.net` (рантайм — `runtime/ABI.md` §10.9, §16):
+  - **Адреса**: `IP` (4 или 16 байт; `ParseIP`, `IPv4(a, b, c, d)`,
+    `IPv4Zero`, `IPv6Zero`, `IPv6Loopback`; `String`, `Is4`/`Is6`, `To4`,
+    `Bytes`, `Equal`, `IsLoopback`, `IsPrivate` (RFC 1918, fc00::/7),
+    `IsMulticast`, `IsLinkLocal`, `IsUnspecified`, `IsValid`);
+    `Addr{IP, Port, Zone, Path}` (`Path` — Unix-сокет) со `String()`
+    (`[fe80::1%eth0]:80`); `ParseAddr("[::1]:80") Addr!` (только числовые),
+    `SplitHostPort(addr) HostPort!` (порт может быть именем сервиса) /
+    `JoinHostPort(host, port)`; `Interfaces() []Interface!`
+    (`Interface{Name, Index, Up, Loopback, Multicast, Broadcast,
+    PointToPoint, Addrs []IPNet{IP, Bits}}`).
+  - **DNS** (getaddrinfo на пуле потоков-резолверов, воркер не
+    блокируется): `ResolveIP(host) Task<[]string!>` (IPv4 первыми,
+    `localhost` → `127.0.0.1`), `Resolve(host) Task<[]IP!>` и
+    `LookupHost(host) Task<[]string!>` (порядок RFC 6724),
+    `LookupAddr(ip)` (обратный), `LookupPort(network, service) int!`,
+    `ResolveAddr("host:port") Task<Addr!>`. Несуществующее имя —
+    ошибка, оборачивающая `ErrNotFound`. Своего DNS-клиента (TXT/MX) нет.
+  - **TCP**: `Dial(addr) Task<Conn!>`, `DialTimeout(addr, ms)`,
+    `Dialer{Timeout (мс на весь dial), KeepAlive (с), LocalAddr, DualStack
+    = true, FallbackDelay = 300, NoDelay = true}.Dial(addr)` — имена
+    резолвятся, адреса обоих семейств перемежаются и пробуются по Happy
+    Eyeballs (RFC 8305: следующая попытка через `FallbackDelay` мс,
+    побеждает первая установленная). `Listen(addr) Listener!` и
+    `ListenConfig{ReuseAddr = true, ReusePort, Backlog, V6Only,
+    FastOpen}.Listen/ListenUDP/ListenUnix`: пустой хост — все интерфейсы,
+    dual-stack (`::` с выключенным `IPV6_V6ONLY`, без IPv6 — `0.0.0.0`),
+    порт 0 — свободный, имя хоста резолвится (синхронно, первый адрес).
+  - **`Conn`** (TCP или Unix; копии делят сокет): чтение — `Read(n)
+    Task<[]byte!>` (новый срез; пустой — конец потока), `ReadString(n)`,
+    `ReadInto(buf []byte) Task<int!>` (в буфер вызывающего, без
+    аллокации; 0 — конец потока, никогда не ошибка), `ReadExact(n)`
+    (ошибка с `ErrEOF`, если поток кончился раньше), `ReadAll()`,
+    `ReadLine()` (без `\n`/`\r\n`; `ErrEOF` в конце; прочитанное сверх
+    строки остаётся для следующих чтений); запись — `Write(b)`,
+    `WriteString(s)`, `WriteV(bufs [][]byte)` (пишут всё, повторяя короткие
+    записи, или падают), `SendFile(path, off, n)` (sendfile(2); `n < 0` —
+    до конца); `CloseWrite()`/`CloseRead()` (half-close), `Close()`
+    (повторный — no-op; ждущие операции просыпаются с `ErrClosed`),
+    `IsClosed()`; таймауты — `SetTimeout(ms)` (на каждое ожидание),
+    `SetDeadline/SetReadDeadline/SetWriteDeadline(t)` (абсолютные, в
+    миллисекундах `time.Now()`, 0 — нет); опции — `SetNoDelay`, `SetCork`,
+    `SetKeepAlive(idle, interval, count)`, `SetReadBuffer`,
+    `SetWriteBuffer`, `SetLinger(sec)` (0 — RST при закрытии); `LocalAddr()`/
+    `RemoteAddr()` (строки), `Local()`/`Remote()` (`Addr`), `Fd()`.
+    `Listener`: `Accept()`, `Close()`, `IsClosed()`, `Addr()`, `Local()`,
+    `Port()`, `Fd()`, `SetTimeout(ms)`.
+  - **Unix-сокеты**: `ListenUnix(path)`, `DialUnix(path)`; `@имя` —
+    абстрактное пространство имён Linux; файл сокета удаляется при
+    закрытии слушателя (`Close` или `Drop`), существующий файл —
+    `ErrAddrInUse`.
+  - **UDP**: `ListenUDP(addr) UDPConn!`, `DialUDP(addr) Task<UDPConn!>`
+    (связанный сокет: `Read(n)`, `ReadInto(buf)`, `Write(b)`, `Remote()`);
+    `RecvFrom(n) Task<Packet!>` (`Packet{Data, Addr}`), `SendTo(b, addr)`,
+    `ReadFrom(buf) Task<Datagram!>` (`Datagram{N, From Addr, Truncated}`:
+    длинная датаграмма обрезается и это видно), `WriteTo(b, Addr)`;
+    `SetBroadcast`, `JoinGroup/LeaveGroup(group, ifname)`,
+    `SetMulticastInterface`, `SetMulticastLoopback`, `SetMulticastTTL`,
+    буферы, таймауты и дедлайны как у `Conn`.
+  - **Буферизация**: `NewBufferedReader(c, size) BufferedReader`
+    (`ReadByte`, `ReadLine`, `ReadUntil(delim)`, `ReadInto`, `ReadExact`,
+    `Buffered`), `NewBufferedWriter(c, size) BufferedWriter` (`Write`,
+    `WriteString`, `Flush`, `Buffered`); `MakeBuffer(n) []byte` — нулевой
+    буфер для `ReadInto`.
+  - **Ошибки**: каждая ошибка операции — `OpError{Op, Net, Addr, Err}`
+    с текстом как в Go (`dial tcp 10.0.0.1:80: connection refused`,
+    `read tcp 127.0.0.1:5000: i/o timeout`), `errors.As` его находит, а
+    `errors.Is` видит причину-сентинел сквозь обёртку: `ErrClosed`,
+    `ErrTimeout`, `ErrRefused`, `ErrReset` (в том числе EPIPE),
+    `ErrUnreachable`, `ErrAddrInUse`, `ErrNotFound`, `ErrEOF`;
+    `IsTimeout(err)`, `OpError.Timeout()`. Отмена задачи будит ожидание
+    сокета с `task.ErrCancelled`.
+  - Сокеты неблокирующие; ожидание — через шардированные поллеры рантайма
+    (epoll/kqueue, по шарду на пару воркеров), поток воркера никогда не
+    блокируется. `Conn`/`Listener`/`UDPConn` — копируемые ручки на объект
+    сокета; его `Drop` закрывает дескриптор, закрытие без гонок с
+    переиспользованием номера дескриптора. SIGPIPE игнорируется.
+- `std.net.http` (HTTP/1.1; `https://` и `Server{TLS}` — через
+  `std.net.tls`): `Get(url) Task<Response!>`, `Post(url, body, contentType)`,
+  `Client{Timeout, MaxRedirects, Headers, TLS *tls.Config}` с `Get`/`Post`/`Do(method, url,
   body, headers)`; `Response{Status int, Headers map[string]string, Body
   string}` с `Header(name)`, `SetHeader`, `Write`, `Text(status, body)`,
   `Json(status, body)`; chunked-тела, редиректы (до 10), заголовки в
   каноническом виде (`Content-Type`). Сервер: `Server{Addr, Handler,
-  IdleTimeout}` с `Listen() void!`, `Port()`, `Serve() Task<void!>`,
+  IdleTimeout, TLS *tls.ServerConfig}` (с `TLS` — HTTPS, ALPN `http/1.1`) с `Listen() void!`, `Port()`, `Serve() Task<void!>`,
   `Shutdown() Task<void>` (перестаёт принимать, закрывает простаивающие
   соединения, ждёт текущие запросы); задача на соединение, keep-alive.
   `interface Handler { func Serve(req *Request, res *Response) Task<void!> }`
@@ -1295,11 +1461,64 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   пути `{id}` (`req.Param("id")`) и `*` в конце; `Request{Method, Path, Query,
   Proto, Headers, Body, Params, RemoteAddr}` с `Header`, `Param`,
   `QueryValue`; `ParseURL`, `ParseQuery`, `StatusText`, `CanonicalHeader`.
-  Нет: TLS, HTTP/2, пула соединений клиента, middleware.
-| `std.net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Slang; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `slang.web` |
+  Нет: HTTP/2, пула соединений клиента, middleware.
+| `std.net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Slang; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `slang.web`. ✓ реализовано (см. ниже), кроме OCSP, ACME и горячей перезагрузки сертификатов |
 | `std.net.ws` | WebSocket клиент и сервер |
 | `std.net.url` | разбор и сборка URL, query-параметры |
 | `std.net.mail` | отправка писем по SMTP |
+
+Реализовано (`std.net.tls`, Slang-код `compiler/src/sema/stdlib_src/tls*.sl`
+поверх `std.net` и примитивов `std.crypto.*`; рантайм — `runtime/ABI.md` §19):
+
+- Версии: TLS 1.3 (RFC 8446) и TLS 1.2 только с ECDHE + AEAD (RFC 5246,
+  5288, 7905): наборы `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384`,
+  `TLS_CHACHA20_POLY1305_SHA256`; `ECDHE_ECDSA/ECDHE_RSA_WITH_AES_128/256_GCM`,
+  `..._CHACHA20_POLY1305_SHA256`; группы X25519 и P-256; подписи
+  ECDSA P-256/SHA-256, Ed25519, RSA-PSS (SHA-256/384/512), RSA PKCS#1 v1.5
+  (только TLS 1.2 и сертификаты). Без RSA-обмена ключами, CBC, сжатия,
+  renegotiation (HelloRequest получает предупреждение `no_renegotiation`),
+  SSLv3/TLS 1.0/1.1, 0-RTT. Порядок наборов — сначала AES-GCM при AES-NI,
+  иначе ChaCha20.
+- Клиент и сервер: SNI, ALPN (общего протокола нет — `no_application_protocol`),
+  HelloRetryRequest (клиент шлёт долю X25519; сервер просит другую группу,
+  если доли нет), сертификаты клиента (`ServerConfig.ClientAuth` —
+  `tls.NoClientCert`, `RequestClientCert`, `RequireAnyClientCert`,
+  `VerifyClientCertIfGiven`, `RequireAndVerifyClientCert`), KeyUpdate
+  (`Conn.KeyUpdate()` и ответ на запрос пира), middlebox-совместимость
+  (`legacy_session_id`, фиктивный `change_cipher_spec`), возобновление:
+  TLS 1.3 PSK из NewSessionTicket (только `psk_dhe_ke`, проверка binder) и
+  TLS 1.2 session tickets (RFC 5077); билеты сервера — AES-256-GCM на
+  ключе `ServerConfig.TicketKey` (или случайном на `Server`), живут сутки.
+  TLS 1.2 требует `extended_master_secret` (RFC 7627) с обеих сторон;
+  `encrypt_then_mac` (RFC 7366) клиент предлагает, но с AEAD он неприменим
+  и не согласуется. Защита от отката: сервер с TLS 1.3, согласовавший 1.2,
+  ставит `DOWNGRD\x01` в конец `ServerHello.random`, клиент, предлагавший
+  1.3, такой ответ отвергает. `MinVersion` по умолчанию `tls.V12`,
+  `MaxVersion` — `tls.V13`.
+- API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert,
+  InsecureSkipVerify, MinVersion, MaxVersion, Sessions}) Task<Conn!>`,
+  `DialTimeout(addr, cfg, ms)`, `Client(netConn, cfg)`;
+  `tls.Server(listener, ServerConfig{Certificates, ClientAuth, ClientCAs,
+  MinVersion, MaxVersion, ALPN, DisableSessionTickets, TicketKey})
+  Listener!`, `tls.Listen(addr, cfg)`, `ServerConn(netConn, cfg)`;
+  `Listener.Accept() Task<Conn!>` (рукопожатие — при первом чтении/записи
+  или `Handshake()`); `Conn`: `Read`, `ReadString`, `Write`, `WriteString`,
+  `Close()` (шлёт `close_notify`), `IsClosed`, `SetTimeout`, `LocalAddr`,
+  `RemoteAddr`, `Handshake()`, `KeyUpdate()`, `ConnectionState()` —
+  `{Version, CipherSuite, CipherSuiteName, ALPN, ServerName,
+  PeerCertificates, VerifiedChain, Resumed, HandshakeComplete}`;
+  `tls.LoadKeyPair(certPem, keyPem) Certificate!` (`{Chain, Key}`),
+  `LoadKeyPairFiles`, `NewSessionCache()`, константы `tls.V12`, `tls.V13`;
+  низкоуровневые `ExpandLabel`, `DeriveSecret`, `SealRecord`, `OpenRecord`
+  (расписание ключей и записи TLS 1.3, для тестов по RFC 8448),
+  `CipherSuiteName(id)`.
+- Проверка сервера: цепочка `x509.Verify` к `RootCAs` (по умолчанию —
+  системные корни), имя `ServerName` (по умолчанию — хост из адреса);
+  `InsecureSkipVerify` отключает только проверку цепочки и имени, подпись
+  CertificateVerify проверяется всегда.
+- Нет: OCSP stapling, `signature_algorithms_cert`, экспорт ключей,
+  post-handshake auth, 0-RTT, P-384/P-521, RSA-PSS-ключи (`rsassa-pss` OID),
+  горячей перезагрузки сертификатов.
 
 ### Криптография
 
@@ -1307,13 +1526,13 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 |--------------|------------|
 | `std.crypto.hash` | `Sha256`, `Sha512`, `Sha3`, `Blake2`, `Md5` (только для совместимости), потоковый интерфейс `Hasher` |
 | `std.crypto.hmac` | HMAC поверх любого хэша |
-| `std.crypto.aes` | AES-GCM, AES-CBC; `ChaCha20-Poly1305` |
-| `std.crypto.rsa` | генерация ключей, подпись, шифрование, PKCS#1/OAEP |
-| `std.crypto.ecdsa`, `std.crypto.ed25519` | ключи на эллиптических кривых, подпись и проверка |
-| `std.crypto.ecdh`, `std.crypto.x25519` | обмен ключами |
-| `std.crypto.kdf` | `Pbkdf2`, `Argon2`, `Scrypt`, `Hkdf` |
+| `std.crypto.aes` | AES-GCM, AES-CBC; `ChaCha20-Poly1305` — ✓ AES-GCM (`std.crypto.aes`), ChaCha20-Poly1305 (`std.crypto.chacha`); нет AES-CBC |
+| `std.crypto.rsa` | генерация ключей, подпись, шифрование, PKCS#1/OAEP — ✓ подпись и проверка PKCS#1 v1.5 и PSS; нет генерации ключей и шифрования |
+| `std.crypto.ecdsa`, `std.crypto.ed25519` | ключи на эллиптических кривых, подпись и проверка — ✓ P-256 и Ed25519 |
+| `std.crypto.ecdh`, `std.crypto.x25519` | обмен ключами — ✓ P-256 и X25519 |
+| `std.crypto.kdf` | `Pbkdf2`, `Argon2`, `Scrypt`, `Hkdf` — ✓ HKDF (`std.crypto.hkdf`) |
 | `std.crypto.rand` | криптографически стойкие случайные числа и байты |
-| `std.crypto.x509` | разбор и проверка сертификатов, PEM/DER |
+| `std.crypto.x509` | разбор и проверка сертификатов, PEM/DER — ✓ |
 | `std.crypto.password` | `Hash`/`Verify` на базе Argon2 для паролей |
 
 Реализация: примитивы — на C в рантайме, по проверенным реализациям с
@@ -1326,7 +1545,63 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 `Equal`; `std.crypto.rand` — `Bytes`, `Int`, `Hex` (`getrandom(2)`). Хэши и
 HMAC — собственная реализация на C по FIPS 180-4 / RFC 1321 / RFC 2104
 (проверена тестовыми векторами), без внешних библиотек; `Sha3`, `Blake2`,
-`Hasher` и остальные пространства — пока нет.
+`Hasher` — пока нет.
+
+Реализовано (примитивы — `runtime/src/crypto/`, C, `runtime/ABI.md` §19;
+ключи и подписи — `[]byte`; ошибки — `T!`):
+
+- `std.crypto.hash` дополнительно: `Sha384`, `Sha384Hex`, `Sum(alg, data
+  []byte) []byte!` (`alg` — `"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`);
+  `std.crypto.hmac.Sum(alg, key, data)`.
+- `std.crypto.aes`: `GcmSeal(key, nonce, plaintext, aad) []byte!`
+  (шифртекст + 16-байтовый тег), `GcmOpen(key, nonce, ciphertext, aad)
+  []byte!` (`aes-gcm: message authentication failed`), `EncryptBlock`,
+  `HasHardware()`. Ключи 16/24/32 байта, nonce 12 байт. Без AES-NI —
+  bitsliced AES (64-битный, 4 блока за проход) и GHASH на умножениях «с
+  дырками», без таблиц по секретам; с AES-NI+PCLMULQDQ — intrinsics
+  (выбор по cpuid, `SLANG_NO_AESNI=1` отключает).
+- `std.crypto.chacha`: `Seal`, `Open` — ChaCha20-Poly1305 (RFC 8439).
+- `std.crypto.x25519`: `GenerateKey()`, `PublicKey(priv)`,
+  `SharedSecret(priv, peer)` (нулевой секрет малого порядка — ошибка).
+- `std.crypto.ecdh` (P-256): `GenerateKey()`, `PublicKey(priv)` (65 байт,
+  несжатая точка), `SharedSecret(priv, peer)` (точка вне кривой — ошибка).
+- `std.crypto.ecdsa` (P-256): `GenerateKey`, `PublicKey`, `Sign(priv,
+  digest) []byte!` (DER; nonce по RFC 6979 с добавкой случайности),
+  `Verify(pub, digest, sig) bool` (строгий DER). Арифметика — Монтгомери
+  на 4×64 битах, полные формулы сложения Renes–Costello–Batina, окно 4 бита
+  с выбором из таблицы без ветвлений.
+- `std.crypto.ed25519`: `GenerateKey()` (32-байтовый seed), `PublicKey(seed)`,
+  `Sign(seed, msg)`, `Verify(pub, msg, sig) bool` (RFC 8032; `S < L` и
+  каноничные точки обязательны).
+- `std.crypto.rsa`: `VerifyPKCS1v15(n, e, hash, digest, sig) bool`,
+  `VerifyPSS(...)`, `SignPKCS1v15(keyDER, hash, digest) []byte!`,
+  `SignPSS(...)` (ключ — PKCS#1 `RSAPrivateKey` DER, как в
+  `x509.PrivateKey.Bytes`; CRT с ослеплением экспоненты, постоянное время
+  возведения в степень, проверка результата открытым ключом).
+- `std.crypto.hkdf`: `Extract(hash, salt, ikm)`, `Expand(hash, prk, info, n)`
+  (RFC 5869).
+- `std.crypto.x509` (Slang, `sema/stdlib_src/x509.sl`): `ParseDER(der)
+  *Certificate!`, `ParsePEM(text) []*Certificate!`, `DecodePEM`/`EncodePEM`,
+  `Certificate{Raw, RawTBSCertificate, Version, SerialNumber, Subject,
+  Issuer, NotBefore, NotAfter (Unix ms), PublicKeyAlgorithm, PublicKey,
+  RSAExponent, Curve, SignatureAlgorithm, Signature, BasicConstraintsValid,
+  IsCA, MaxPathLen, KeyUsage, ExtKeyUsage, DNSNames, EmailAddresses,
+  IPAddresses, PermittedDNSDomains, ExcludedDNSDomains, SubjectKeyId,
+  AuthorityKeyId, UnhandledCriticalExtensions}` с `VerifyHostname`,
+  `CheckSignatureFrom`, `CheckSignature`, `Equal`, `Fingerprint`;
+  `Name{CommonName, Organization, ..., Names, Raw}` с `String()`;
+  `Verify(cert, VerifyOptions{DNSName, Roots, Intermediates, CurrentTime,
+  KeyUsage}) []*Certificate!` — построение цепочки (поиск по subject и
+  key id), подписи, сроки, CA/pathlen, keyUsage, extKeyUsage, ограничения
+  имён dNSName, имя хоста (SAN dNSName с `*.` в крайней левой метке, IP);
+  CN без SAN не используется; SHA-1-подписи отвергаются.
+  `CertPool` (`NewCertPool`, `AddCert`, `AppendPEM`, `Len`, `Contains`,
+  `Certificates`), `SystemRoots()` / `SystemRootsPath()` (бандл PEM —
+  `$SSL_CERT_FILE` или путь дистрибутива из слоя платформы;
+  на macOS/Windows пока только `$SSL_CERT_FILE`).
+  `ParsePrivateKey(der)` / `ParsePrivateKeyPEM(text)` — PKCS#8, PKCS#1, SEC 1
+  → `PrivateKey{Algorithm, Bytes, Public, RSAExponent}` с `Matches(cert)`.
+- Внешнего аудита не было: см. `docs/SECURITY.md`.
 
 ### Данные и форматы
 
@@ -1338,7 +1613,7 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 | `std.encoding.csv` | чтение и запись CSV |
 | `std.compress` | gzip, zlib, zstd |
 | `std.regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Slang |
-| `std.unicode` | классификация символов, нормализация |
+| `std.unicode` | классификация символов, нормализация (✓ классы и регистр по таблицам Unicode 15, `utf8`, `utf16`; нет нормализации) |
 | `std.database.sql` | единый интерфейс к SQL, драйверы PostgreSQL/SQLite/MySQL отдельными пакетами |
 
 Реализовано: `std.encoding.base64` — `Encode`, `EncodeString`, `Decode`,
@@ -1370,11 +1645,11 @@ accessibility из коробки, hot reload, `ui.TestHost` для CI. Подр
 |--------------|------------|
 | `std.log` | логгер уровня Serilog (docs/FRAMEWORK.md, раздел 4); пока нет реестра пакетов, живёт в `std.log` вместо `slang.log` |
 | `std.diag` | метрики (Prometheus), трассировка (OpenTelemetry, W3C traceparent), профили CPU/heap в формате pprof (docs/FRAMEWORK.md, раздел 5); вместо `slang.diag` |
-| `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты |
+| `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты (✓ `@test` + `slang test`, каждый тест в отдельном процессе; см. «Компилятор и инструменты») |
 | `std.random` | ГПСЧ для не-криптографических задач |
-| `std.sync` | атомики, `Once`, `RwMutex` |
+| `std.sync` | атомики, `Once`, `RwMutex` (✓ `RwMutex`, `Semaphore`, `Barrier` — async; `Once`, `AtomicInt`/`AtomicBool`, `Atomic<T: Comparable>`, `Pool<T>`) |
 | `std.reflect` | `TypeOf<T>`, `ValueOf`, `TypeInfo`/`FieldInfo`/`MethodInfo`, атрибуты, compile-time `Fields<T>()` (см. раздел «Рефлексия») |
-| `std.process` | запуск внешних процессов, пайпы |
+| `std.process` | запуск внешних процессов, пайпы (✓ async `Run`/`Output`, `Start` с пайпами `AsyncReader`/`AsyncWriter`, `Timeout`, `Kill`, `LookPath`) |
 | `std.uuid` | генерация и разбор UUID |
 
 Реализовано: `std.random` — `Seed`, `Int`, `IntN`, `Float`, `Bytes`,
@@ -1390,16 +1665,45 @@ Sink/Async`, `Filter.*`), интерфейсы `Logger`/`Sink`/`Enricher`, `Even
 (`StartSpan`, `End`, атрибуты, статус), `ConsoleExporter`, `OtlpExporter`
 (OTLP/HTTP JSON), `traceparent` в `http.Client`/`http.Server`,
 `StartCPUProfile`/`StopCPUProfile`, `WriteHeapProfile`/`HeapProfile`
-(подробности и пробелы — docs/FRAMEWORK.md, «Статус»). Остальное — пока
+(подробности и пробелы — docs/FRAMEWORK.md, «Статус»). Уровни 0–1 по
+docs/STDLIB.md (`std.slices`, `maps`, `cmp`, `bytes`, `strconv`, `math.bits/
+big/complex`, `unicode`, `hash`, `encoding.binary/base32/pem/asn1`, `io`,
+`os`, `process`, `cli`, `sync`, `testing`, `embed`) — исходники
+`compiler/src/sema/stdlib_src/*.sl`, C-части `runtime/src/std_*.c`;
+статусы и пробелы — таблица docs/STDLIB.md. Операторы над `Decimal`,
+`Duration`, `Complex`, `big.Int` пока — методы с именами интерфейсов
+(`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Compare`, `Equals`). Остальное — пока
 нет.
 
 ## Платформы
 
 Linux, macOS и Windows на amd64 и arm64 — tier 1 с CI и релизными
 бинарниками; кросс-компиляция `slang build --target windows-amd64` с
-любой машины через LLVM и вшитый `lld`; условная компиляция `@cfg(os: ...)`
-и суффиксы файлов `_windows.sl`. Платформозависимый код рантайма изолирован
-в `runtime/src/platform/`. Подробно: `docs/PLATFORMS.md`.
+любой машины через LLVM и вшитый `lld`. Платформозависимый код рантайма
+изолирован в `runtime/src/platform/`. Подробно: `docs/PLATFORMS.md`.
+
+Условная компиляция:
+
+- `@cfg(условие)` на любом объявлении (функция, структура, поле, метод,
+  интерфейс, enum, вариант, `var`, `const`) и перед `namespace` (весь
+  файл). Условия: `os: "linux"` (`linux`, `macos`, `windows`, `freebsd`,
+  `android`, `ios`, `wasi`), `arch: "amd64"` (`amd64`, `arm64`, `wasm32`),
+  `feature: "tls"` (features пакета из манифеста, `docs/PACKAGES.md`),
+  `not(у)`, `any(у, ...)`, `all(у, ...)`; несколько аргументов одного
+  `@cfg` должны выполняться все. Неизвестный ключ, ОС или архитектура —
+  ошибка компиляции.
+- Исключённое объявление не проверяется типами, его имени нет
+  (использование — `unknown identifier`), поэтому два варианта одной
+  функции или структуры под разные платформы сосуществуют.
+- Суффиксы файлов, как в Go: `x_linux.sl`, `x_windows.sl`, `x_macos.sl`,
+  `x_amd64.sl`, `x_arm64.sl`, `x_linux_arm64.sl` — файл каталога или пакета
+  компилируется только для этой цели (файл, указанный явно, берётся
+  всегда).
+- Константы `os.Name`, `os.Arch`, `os.PathSeparator`, `os.LineSeparator` —
+  строки времени компиляции (годятся в `const`).
+- Цель — хост или `--target <triple|alias>` (`linux-amd64`,
+  `aarch64-apple-darwin`); пока генерация кода только для хоста, а
+  `slang check --target windows-amd64` проверяет код под другую цель.
 
 ## Компилятор и инструменты
 
@@ -1419,10 +1723,22 @@ Linux, macOS и Windows на amd64 и arm64 — tier 1 с CI и релизным
 slang build ./src -o app      # собрать
 slang run main.sl             # собрать и запустить
 slang fmt ./src               # форматировать
-slang test ./src              # тесты (func Test*)
+slang test ./src              # тесты (@test func TestX(t *testing.T)): --filter, --json, --bench, -v
 ```
 
+- `slang test [path]` находит функции `@test` (`func TestX(t *testing.T)`,
+  `func X()` без параметров, бенчмарки `func BenchX(b *testing.B)` — с
+  `--bench`), генерирует драйвер, вызывающий `std.testing.Main`, и
+  запускает его; собственные `main` переименовываются в памяти. Каждый
+  тест выполняется в отдельном процессе (тестовый бинарник перезапускает
+  себя с `--run-one`), поэтому `t.Fatal`, `t.Skip` и паника завершают только
+  его; `t.Run` — подтесты в процессе родителя. Вывод как у `go test`
+  (`--- FAIL: Name (0.00s)`, `PASS`/`FAIL`, итог `ok`), `--json` — события
+  `{"Action": ...}`, `--filter` — подстроки через `|` с якорями `^`/`$`,
+  `--parallel N`; код выхода 1 при падении.
 - Расширение файлов: `.sl`.
+- В сообщениях об ошибках типы текущего пространства имён пишутся коротко
+  (`Point`), остальные — полным путём (`app.models.User`, `std.task.Mutex`).
 - Компилятор — библиотека; LSP-сервер, форматтер, отладчик и IDE-плагины
   строятся на ней. Подробно: `docs/TOOLING.md`. Каноническая грамматика
   для IDE: `grammar/slang.bnf`; подсветка VS Code: `editors/vscode/`.
@@ -1478,16 +1794,19 @@ async func main() {
 ## Грамматика (упрощённо, EBNF)
 
 ```
-file        = "namespace" path { import } { decl } ;
+file        = { attribute } "namespace" path { import } { decl } ;   (* @cfg(...) here excludes the file *)
 import      = "import" path [ "as" ident ] ;
 decl        = { attribute } ( struct | interface | enum | func | var | const ) ;
 attribute   = "@" path [ "(" [ attrarg { "," attrarg } ] ")" ] ;
-attrarg     = [ ident ":" ] expr ;
+attrarg     = [ ident ":" ] expr ;           (* in attribute arguments a call takes attrargs: @cfg(not(os: "windows")) *)
+cfg         = "@cfg" "(" cond { "," cond } ")" ;
+cond        = ( "os" | "arch" | "feature" ) ":" string | ( "not" | "any" | "all" ) "(" cond { "," cond } ")" ;
 struct      = "struct" ident [ generics ] [ "implements" type { "," type } ] "{" { field | method } "}" ;
 generics    = "<" tparam { "," tparam } ">" ;
 tparam      = ident [ ":" type ] ;            (* type: interface, Ordered, Comparable *)
-interface   = [ "sealed" ] "interface" ident "{" { type | func } "}" ;   (* type: embedded interface *)
-enum        = "enum" ident [ generics ] "{" variant { ( "," | newline ) variant } { method } "}" ;
+interface   = [ "sealed" ] "interface" ident "{" { type | ifacemethod } "}" ;   (* type: embedded interface *)
+ifacemethod = { attribute } [ "async" ] "func" ident "(" [ params ] ")" [ type ] [ block ] ;  (* block: default method *)
+enum        = "enum" ident [ generics ] [ "implements" type { "," type } ] "{" variant { ( "," | newline ) variant } { method } "}" ;
 variant     = { attribute } ident [ "(" params ")" ] ;
 field       = { attribute } ident type [ "=" expr ] ;
 method      = [ "static" ] func ;

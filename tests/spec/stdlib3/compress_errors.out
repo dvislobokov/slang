@@ -1,0 +1,21 @@
+ok 300
+error: gzip: invalid header
+error: gzip: checksum mismatch
+error: gzip: size mismatch
+error: gzip: unexpected end of compressed data
+error: gzip: unexpected end of compressed data
+error: zlib: invalid header
+error: zlib: checksum mismatch
+error: zlib: unexpected end of compressed data
+error: deflate: invalid block type
+error: deflate: unexpected end of compressed data
+error: deflate: invalid stored block length
+error: deflate: distance too far back
+error: deflate: data after the end of the compressed stream
+error: zstd: invalid magic number
+ok 10
+error: zstd: unexpected end of data
+error: zstd: dictionaries are not supported
+error: zstd: checksum mismatch
+close: gzip: unexpected end of compressed data
+false 0

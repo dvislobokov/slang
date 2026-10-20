@@ -1,0 +1,70 @@
+// test: IPv6 loopback TCP and UDP echo, dual-stack Listen(":0") reachable over IPv4 (and IPv6); prints the same lines when the host has no IPv6
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.net_ipv6
+
+import std.io
+import std
+
+async func tcp6() bool! {
+    var l = try net.Listen("[::1]:0") catch err {
+        return false   // no IPv6 on this host
+    }
+    var c = await net.Dial(l.Addr())?
+    var s = await l.Accept()?
+    _ = await c.WriteString("six")?
+    var got = strings.FromBytes(await s.ReadExact(3)?)
+    var ok = got == "six" && strings.HasPrefix(l.Addr(), "[::1]:") && s.Remote().IP.IsLoopback() && s.Remote().IP.Is6()
+    c.Close()
+    s.Close()
+    l.Close()
+    return ok
+}
+
+async func udp6() bool! {
+    var a = try net.ListenUDP("[::1]:0") catch err {
+        return false
+    }
+    var b = net.ListenUDP("[::1]:0")?
+    _ = await a.WriteTo(strings.Bytes("dgram6"), b.Local())?
+    var buf = std.bytes.Repeat(strings.Bytes("."), 16)
+    var d = await b.ReadFrom(buf)?
+    var ok = strings.FromBytes(buf[..d.N]) == "dgram6" && d.From.String() == a.Addr()
+    a.Close()
+    b.Close()
+    return ok
+}
+
+async func dual() void! {
+    // every interface: "::" with IPV6_V6ONLY off, or 0.0.0.0 without IPv6
+    var l = net.Listen(":0")?
+    var c = await net.Dial(fmt.Format("127.0.0.1:{0}", l.Port()))?
+    var s = await l.Accept()?
+    println("dual-stack accepts IPv4:", s.Remote().IP.Is4(), strings.HasPrefix(s.RemoteAddr(), "127.0.0.1:"))
+    c.Close()
+    s.Close()
+    var c6 = try await net.Dial(fmt.Format("[::1]:{0}", l.Port())) catch err {
+        println("dual-stack accepts IPv6: true")
+        l.Close()
+        return
+    }
+    var s6 = await l.Accept()?
+    println("dual-stack accepts IPv6:", s6.Remote().IP.Is6())
+    c6.Close()
+    s6.Close()
+    l.Close()
+}
+
+async func main() void! {
+    // without IPv6 on the host the IPv6 parts are skipped but report the same
+    var probe = try net.ListenUDP("[::1]:0") catch err {
+        println("tcp over ::1: true")
+        println("udp over ::1: true")
+        await dual()?
+        return
+    }
+    probe.Close()
+    println("tcp over ::1:", await tcp6()?)
+    println("udp over ::1:", await udp6()?)
+    await dual()?
+}

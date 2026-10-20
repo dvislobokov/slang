@@ -1,0 +1,14 @@
+131 30818002010002017f020200800202ff7f020d018ee90ff6 true
+0 127 128 -129
+123456789012345678901234567890 -128 1.2.840.113549.1.1.11 true
+héllo Printable [1 2 3]
+3 1 0 1 5
+2024-02-29T13:04:05Z 2024-02-29T13:04:05.25Z
+in a set false
+true false
+42 false false
+48 0 true true true
+asn1: non-minimal INTEGER
+x509: DER element overruns its container
+asn1: INTEGER: want tag 0x2, found 0x4
+asn1: invalid OID "3.1"

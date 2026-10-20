@@ -1,0 +1,35 @@
+<book xmlns="urn:books" isbn="978-0" tags="sci fi"><Title>Dune &amp; Co</Title><Authors id="1">Frank</Authors><Authors id="2">Brian</Authors><price>9.5</price><InPrint>true</InPrint><Status>Published</Status><Chapters>One</Chapters><Chapters>Two &lt;2&gt;</Chapters></book>
+978-0 [sci fi] Dune & Co 2 2 Brian 9.5 true Published true [One Two <2>] 0
+<?xml version="1.0" encoding="UTF-8"?>
+<book xmlns="urn:books" isbn="978-0" tags="sci fi">
+  <Title>Dune &amp; Co</Title>
+  <Authors id="1">Frank</Authors>
+  <Authors id="2">Brian</Authors>
+  <price>9.5</price>
+  <InPrint>true</InPrint>
+  <Status>Published</Status>
+  <editor id="9">Ed</editor>
+  <Note>signed</Note>
+  <Chapters>One</Chapters>
+  <Chapters>Two &lt;2&gt;</Chapters>
+</book>
+xml: book.price: invalid number "not-a-number"
+xml: expected element <book>, found <magazine>
+xml: book.Authors[0]@id: invalid integer "x"
+xml: book.Status: unknown Status value "Lost"
+cfg 2 false 2 3
+  a false
+  b true
+Main bold text true
+<cfg version="2"><server host="a" port="80"></server><server host="b"></server><name>Main <b>bold</b> text</name></cfg>
+<list n="2">
+	<i>a&amp;b</i>
+	<i></i>
+</list>
+5 Zed
+<?xml version="1.0" encoding="UTF-8"?>
+<doc q="&quot;quoted&quot;">
+  <!--generated - - by slang-->
+  <t>1 &lt; 2</t>
+  <raw><![CDATA[x ]]]]><![CDATA[> y]]></raw>
+</doc>
