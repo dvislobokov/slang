@@ -326,6 +326,62 @@ void slang_runtime_shutdown(void);
 void slang_os_args(slang_slice *out);   /* owned []string */
 SLANG_NORETURN void slang_exit(int32_t code);
 
+/* ======================================================================
+ * Standard library (std.*) - symbols named by compiler/src/sema/stdlib.rs.
+ * Mapping: string -> slang_string* (NULL == ""), int -> int64_t,
+ * float -> double, bool -> bool, []T param -> const slang_slice*,
+ * []T result -> trailing slang_slice *out (owned), T! -> T returned plus a
+ * trailing slang_error **err (NULL on success, owned error on failure),
+ * void! -> void with a trailing slang_error **err. Arguments are borrowed,
+ * returned objects are owned (+1). See ABI.md section 14.
+ * ====================================================================== */
+
+/* std.strings ([]string: elem_size 8, ops &slang_ops_ref) */
+void          slang_strings_split(const slang_string *s, const slang_string *sep, slang_slice *out);
+slang_string *slang_strings_join(const slang_slice *parts, const slang_string *sep);
+slang_string *slang_strings_trim(const slang_string *s);   /* Go strings.TrimSpace */
+bool          slang_strings_contains(const slang_string *s, const slang_string *substr);
+slang_string *slang_strings_replace(const slang_string *s, const slang_string *old,
+                                    const slang_string *new_);  /* all occurrences */
+slang_string *slang_strings_to_upper(const slang_string *s);
+slang_string *slang_strings_to_lower(const slang_string *s);
+bool          slang_strings_has_prefix(const slang_string *s, const slang_string *prefix);
+bool          slang_strings_has_suffix(const slang_string *s, const slang_string *suffix);
+int64_t       slang_strings_index(const slang_string *s, const slang_string *substr);
+slang_string *slang_strings_repeat(const slang_string *s, int64_t count); /* count < 0 panics */
+int64_t       slang_strings_to_int(const slang_string *s, slang_error **err);
+double        slang_strings_to_float(const slang_string *s, slang_error **err);
+
+/* std.math */
+double slang_math_sqrt(double x);
+double slang_math_abs(double x);
+double slang_math_pow(double x, double y);
+double slang_math_floor(double x);
+double slang_math_ceil(double x);
+double slang_math_min(double x, double y);
+double slang_math_max(double x, double y);
+double slang_math_sin(double x);
+double slang_math_cos(double x);
+double slang_math_tan(double x);
+double slang_math_log(double x);
+double slang_math_exp(double x);
+
+/* std.fmt: args are the already-formatted []string */
+slang_string *slang_fmt_format(const slang_string *tmpl, const slang_slice *args);
+
+/* std.io */
+slang_string *slang_io_read_file(const slang_string *path, slang_error **err);
+void          slang_io_write_file(const slang_string *path, const slang_string *data,
+                                  slang_error **err);
+slang_string *slang_io_read_line(slang_error **err);  /* EOF: NULL + slang_err_eof */
+
+/* std.errors (New -> slang_error_new, As -> slang_error_as) */
+slang_error *slang_errors_wrap(const slang_error *err, const slang_string *msg); /* NULL err -> NULL */
+slang_error *slang_errors_unwrap(const slang_error *err);  /* owned cause or NULL */
+bool         slang_errors_is(const slang_error *err, const slang_error *target);
+
+/* std.task.Delay is slang_task_delay (declared above). */
+
 #ifdef __cplusplus
 }
 #endif

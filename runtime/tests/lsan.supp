@@ -1,0 +1,5 @@
+# LeakSanitizer suppressions for `make asan`. Immortal objects (string literals
+# and sentinel errors created at run time) are never freed by design (ABI.md 4.1,
+# 7.1); everything else must be leak-free.
+leak:slang_error_sentinel
+leak:slang_string_literal

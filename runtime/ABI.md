@@ -23,6 +23,7 @@ Contents
 11. [Program entry](#11-program-entry)
 12. [Environment variables](#12-environment-variables)
 13. [Known limits in v0.1](#13-known-limits-in-v01)
+14. [Standard library](#14-standard-library)
 
 ---
 
@@ -32,15 +33,23 @@ Contents
 make            # -> runtime/libslang_rt.a (also runtime/build/libslang_rt.a)
 make test       # C unit tests + a real llvm.coro example (tests/coro_lowering.ll)
 make clean
+make asan       # clean rebuild + all tests under AddressSanitizer/LeakSanitizer
 ```
+
+`CFLAGS_EXTRA=...` is appended to the compile flags (and to the link of the
+tests), e.g. `make clean && make CFLAGS_EXTRA=-fsanitize=address test`. Prefer
+`make asan`: it also installs `tests/lsan.supp` (immortal literals and sentinels
+are never freed by design) and works around a fork-under-ASan deadlock in
+`test_task`.
 
 Link a Slang program with:
 
 ```
-clang prog.o runtime/libslang_rt.a -lpthread -rdynamic -o prog
+clang prog.o runtime/libslang_rt.a -lpthread -lm -rdynamic -o prog
 ```
 
 `-rdynamic` is optional. It only makes function names appear in panic backtraces.
+`-lm` is required since the `std.math` functions (section 14) call libm.
 
 Target: x86-64 / AArch64 Linux, LP64, glibc (the panic backtrace uses
 `<execinfo.h>`). The library is built with `-fPIC`, so you can also link it into
@@ -273,7 +282,7 @@ and may be NULL.
 | `slang_string_from_float(double)` | shortest decimal that round-trips, `%g` style: `0.5`, `3`, `0.1`, `1e+21`, `NaN`, `+Inf`, `-Inf`. Note that `3.0` prints as `3`, as in Go |
 | `slang_string_from_bool(bool)` | `"true"` or `"false"` |
 | `slang_string_from_rune(int32_t)` | UTF-8 encoding. An invalid code point gives U+FFFD |
-| `int64_t slang_string_to_int(s, slang_error **err)` | base-10 with an optional sign. No surrounding whitespace is allowed. On success `*err = NULL`. On failure it returns 0 and sets `*err` to an owned error (`invalid integer: "..."` or `integer out of range: "..."`). `err` may be NULL |
+| `int64_t slang_string_to_int(s, slang_error **err)` | base-10 with an optional sign (`+` or `-`). No surrounding whitespace (any `isspace` byte) is allowed. On success `*err = NULL`. On failure it returns 0 and sets `*err` to an owned error (`invalid integer: "..."` or `integer out of range: "..."`). `err` may be NULL |
 | `double slang_string_to_float(s, slang_error **err)` | `strtod` syntax (it also accepts `inf`, `nan` and hex floats). The error convention is the same |
 
 Conversions between strings and `[]byte` are in section 5.
@@ -785,3 +794,60 @@ output still sitting in buffers may be lost if workers are still printing.
 - Strings are byte strings: indexing, slicing and `len` work on bytes. Rune helpers
   are `slang_string_rune_count`, `slang_string_decode_rune` and
   `slang_string_from_rune`.
+
+---
+
+## 14. Standard library
+
+The `std.*` functions that `compiler/src/sema/stdlib.rs` lowers to externs.
+Every symbol is `slang_<ns>_<snake_name>`. Implemented in `src/std_*.c`,
+declared in the "Standard library" section of `slang_rt.h`.
+
+### 14.1 Calling convention
+
+| Slang type | C parameter | C result |
+|---|---|---|
+| `string` | `const slang_string *` (borrowed, NULL = `""`) | `slang_string *`, owned (+1), never NULL |
+| `int` / `float` / `bool` | `int64_t` / `double` / `bool` | same |
+| `[]T` | `const slang_slice *` (borrowed, may be NULL = empty) | **trailing** out-param `slang_slice *out`, function returns `void`. `*out` is overwritten without being released and receives an owned slice |
+| `error` | `const slang_error *` (borrowed, NULL = nil) | `slang_error *`, owned (+1) or NULL |
+| `T!` | | `T` is returned, plus a **trailing** `slang_error **err`: `*err = NULL` on success; on failure `*err` is an owned error and the returned value is the zero value (0 / NULL). `err` may be NULL to discard the error |
+| `void!` | | `void` return plus the same trailing `slang_error **err` |
+| `Task<void>` | | `slang_task *`, owned (+1) |
+
+`[]string` slices produced or consumed here use `elem_size` 8 and ops
+`&slang_ops_ref`; elements are `slang_string *` slots, NULL elements mean `""`.
+A string result that equals an argument may be **the argument object itself**,
+retained (strings are immutable); the caller just releases it as usual.
+
+### 14.2 Signatures
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `strings.Split(s, sep)` | `void slang_strings_split(const slang_string *s, const slang_string *sep, slang_slice *out)` | Go `strings.Split`: n+1 pieces for n non-overlapping matches; `Split("", ",")` = `[""]`; empty `sep` splits after each UTF-8 sequence (an invalid byte is its own 1-byte piece) and `Split("", "")` = `[]` |
+| `strings.Join(parts, sep)` | `slang_string *slang_strings_join(const slang_slice *parts, const slang_string *sep)` | empty/NULL `parts` gives `""` |
+| `strings.Trim(s)` | `slang_string *slang_strings_trim(const slang_string *s)` | Go `strings.TrimSpace`: strips leading/trailing Unicode white space (`\t \n \v \f \r` space, U+0085, U+00A0, U+1680, U+2000..U+200A, U+2028, U+2029, U+202F, U+205F, U+3000). No cutset |
+| `strings.Contains(s, sub)` | `bool slang_strings_contains(const slang_string *s, const slang_string *substr)` | `Contains(s, "")` is true |
+| `strings.Replace(s, old, new)` | `slang_string *slang_strings_replace(const slang_string *s, const slang_string *old, const slang_string *new_)` | replaces **all** non-overlapping occurrences, left to right (Go `ReplaceAll`). Empty `old` inserts `new` at the start and after each UTF-8 sequence (`Replace("ab", "", "-")` = `-a-b-`) |
+| `strings.ToUpper(s)` / `ToLower(s)` | `slang_string *slang_strings_to_upper(const slang_string *s)` / `slang_strings_to_lower` | simple 1:1 case mapping for ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic (U+0400..U+04BF); other code points (e.g. `ß`) and invalid bytes are copied unchanged (Go would also map other scripts, and turns invalid bytes into U+FFFD) |
+| `strings.HasPrefix(s, p)` / `HasSuffix(s, p)` | `bool slang_strings_has_prefix(const slang_string *s, const slang_string *prefix)` / `bool slang_strings_has_suffix(const slang_string *s, const slang_string *suffix)` | |
+| `strings.Index(s, sub)` | `int64_t slang_strings_index(const slang_string *s, const slang_string *substr)` | **byte** offset of the first match, -1 if none, 0 for empty `sub` |
+| `strings.Repeat(s, n)` | `slang_string *slang_strings_repeat(const slang_string *s, int64_t count)` | panics `strings: negative Repeat count` if `count < 0` and `strings: Repeat output length overflow` if the result would not fit |
+| `strings.ToInt(s)` | `int64_t slang_strings_to_int(const slang_string *s, slang_error **err)` | same as `slang_string_to_int` (4.2): base 10, optional `+`/`-`, no whitespace; errors `invalid integer: "..."` / `integer out of range: "..."` |
+| `strings.ToFloat(s)` | `double slang_strings_to_float(const slang_string *s, slang_error **err)` | same as `slang_string_to_float`; `1e400` is an error (`float out of range`) |
+| `math.Sqrt/Abs/Floor/Ceil/Sin/Cos/Tan/Log/Exp(x)` | `double slang_math_sqrt(double x)` (and `_abs`, `_floor`, `_ceil`, `_sin`, `_cos`, `_tan`, `_log`, `_exp`) | C libm; IEEE results (`Sqrt(-1)` NaN, `Log(0)` -Inf) |
+| `math.Pow(x, y)` | `double slang_math_pow(double x, double y)` | C `pow` |
+| `math.Min(x, y)` / `Max(x, y)` | `double slang_math_min(double x, double y)` / `double slang_math_max(double x, double y)` | Go semantics, not C `fmin`: `Min(x, -Inf)` = -Inf and `Max(x, +Inf)` = +Inf even with NaN, otherwise any NaN gives NaN; `Min(-0, +0)` = -0, `Max(-0, +0)` = +0 |
+| `fmt.Format(tmpl, args...)` | `slang_string *slang_fmt_format(const slang_string *tmpl, const slang_slice *args)` | `args` is a `[]string` of the arguments already formatted as `println` would (the compiler does the conversion). Each `{N}` (N = ASCII digits, leading zeros allowed) with `N < len(args)` is replaced by `args[N]`; a placeholder whose index is out of range is **kept verbatim** (`{2}`); extra arguments are ignored; any other text, including `{`, `}`, `{}`, `{x}`, `$`, is copied verbatim (no `{{` escaping). `args` may be NULL |
+| `io.ReadFile(path)` | `slang_string *slang_io_read_file(const slang_string *path, slang_error **err)` | = `slang_read_file` (9) |
+| `io.WriteFile(path, data)` | `void slang_io_write_file(const slang_string *path, const slang_string *data, slang_error **err)` | `slang_write_file` with the error moved to `*err` (`void!` convention); with `err == NULL` the error is released |
+| `io.ReadLine()` | `slang_string *slang_io_read_line(slang_error **err)` | = `slang_read_line`: at EOF returns NULL and `*err = slang_err_eof` (immortal; releasing it is harmless) |
+| `errors.Wrap(err, msg)` | `slang_error *slang_errors_wrap(const slang_error *err, const slang_string *msg)` | = `slang_error_wrap`: new error, `Message()` = `msg + ": " + err.Message()`, cause `err` retained. **`err == NULL` returns NULL** (wrapping nil is nil) |
+| `errors.Unwrap(err)` | `slang_error *slang_errors_unwrap(const slang_error *err)` | = `slang_error_unwrap`: the cause, owned (+1), or NULL if `err` is not a wrapper (or is NULL) |
+| `errors.Is(err, target)` | `bool slang_errors_is(const slang_error *err, const slang_error *target)` | = `slang_error_is`: identity along the chain (7.2) |
+| `task.Delay(ms)` | `slang_task *slang_task_delay(int64_t ms)` | the existing function (10.2); no alias needed |
+
+Not externs (lowered by the compiler, see `stdlib.rs` specials): `errors.New`
+-> `slang_error_new`, `errors.As` -> `slang_error_as`, `task.All` ->
+`slang_task_all`, `println`/`print` -> `slang_print_*`. `math.Pi` and `math.E`
+are inlined constants.

@@ -1,6 +1,7 @@
 /* string.c - immutable UTF-8 strings. NULL is the empty string. */
 #include "rt_internal.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <math.h>
@@ -221,7 +222,7 @@ int64_t slang_string_to_int(const slang_string *s, slang_error **err) {
     int64_t n = slen(s);
     if (n == 0) { set_err(err, "invalid integer: \"%s\"", s); return 0; }
     /* reject leading whitespace / embedded NULs that strtoll would accept */
-    if ((int64_t)strlen(p) != n || p[0] == ' ' || p[0] == '\t' || p[0] == '\n') {
+    if ((int64_t)strlen(p) != n || isspace((unsigned char)p[0])) {
         set_err(err, "invalid integer: \"%s\"", s); return 0;
     }
     errno = 0;
@@ -236,7 +237,7 @@ double slang_string_to_float(const slang_string *s, slang_error **err) {
     if (err) *err = NULL;
     const char *p = sdata(s);
     int64_t n = slen(s);
-    if (n == 0 || (int64_t)strlen(p) != n || p[0] == ' ' || p[0] == '\t' || p[0] == '\n') {
+    if (n == 0 || (int64_t)strlen(p) != n || isspace((unsigned char)p[0])) {
         set_err(err, "invalid float: \"%s\"", s); return 0;
     }
     errno = 0;
