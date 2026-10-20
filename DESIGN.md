@@ -761,18 +761,21 @@ source generators в C#), без генерации исходников и бе
 
 ### Ядро
 
-| Пространство | Содержимое |
-|--------------|------------|
-| `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` |
-| `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат |
-| `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` |
-| `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы |
-| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (после generics) |
-| `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Timeout` |
-| `std.os` | аргументы, переменные окружения, `Exit`, `Hostname`, `Pid`, `Cwd`, сигналы (`OnInterrupt`), константы `Name`/`Arch`/`PathSeparator`; единое поведение на Linux, macOS, Windows (`docs/PLATFORMS.md`) |
-| `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути |
-| `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат |
-| `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New`, `Trace`, `Frames` |
+Колонка «Реализовано» — то, что уже есть в компиляторе и рантайме
+(`compiler/src/sema/stdlib.rs`, сигнатуры и семантика — `runtime/ABI.md`, раздел 14).
+
+| Пространство | Содержимое | Реализовано |
+|--------------|------------|-------------|
+| `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; нет `Reader`/`Writer` |
+| `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`; даты — `time.Format` |
+| `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё, кроме `Builder`, плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
+| `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; констант `MaxInt`/`MinInt` пока нет |
+| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (после generics) | — |
+| `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Timeout` | ✓ `All`, `Delay` |
+| `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; нет процессов и сигналов |
+| `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir` |
+| `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; нет `Duration`/`Timer` (нужны типы в stdlib) |
+| `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New` | ✓ всё |
 
 ### Сеть и протоколы
 
@@ -804,6 +807,13 @@ source generators в C#), без генерации исходников и бе
 или libsodium), чтобы не писать криптографию самостоятельно. Интерфейс
 стабилен, бэкенд можно заменить.
 
+Реализовано: `std.crypto.hash` — `Sha256`, `Sha512`, `Sha1`, `Md5` (`[]byte`)
+и их `...Hex` (строка), `Crc32`; `std.crypto.hmac` — `Sha256`, `Sha256Hex`,
+`Equal`; `std.crypto.rand` — `Bytes`, `Int`, `Hex` (`getrandom(2)`). Хэши и
+HMAC — собственная реализация на C по FIPS 180-4 / RFC 1321 / RFC 2104
+(проверена тестовыми векторами), без внешних библиотек; `Sha3`, `Blake2`,
+`Hasher` и остальные пространства — пока нет.
+
 ### Данные и форматы
 
 | Пространство | Содержимое |
@@ -817,6 +827,10 @@ source generators в C#), без генерации исходников и бе
 | `std.unicode` | классификация символов, нормализация |
 | `std.database.sql` | единый интерфейс к SQL, драйверы PostgreSQL/SQLite/MySQL отдельными пакетами |
 
+Реализовано: `std.encoding.base64` — `Encode`, `EncodeString`, `Decode`,
+`DecodeString`, URL-safe `EncodeURL`/`DecodeURL`; `std.encoding.hex` —
+`Encode`, `EncodeString`, `Decode`, `DecodeString`. Остальное — пока нет.
+
 ### Фреймворк
 
 Поверх стандартной библиотеки строится фреймворк уровня ASP.NET Core:
@@ -825,6 +839,14 @@ source generators в C#), без генерации исходников и бе
 миграциями), `slang.log` (структурированный логгер уровня Serilog с sinks и
 enrichers), `slang.diag` (профилировщик CPU/памяти/задач в формате pprof,
 метрики, OpenTelemetry, `slang tool pprof`). Подробно: `docs/FRAMEWORK.md`.
+
+### GUI
+
+Кроссплатформенный GUI `slang.ui` (Windows, macOS, Linux, iOS, Android):
+декларативные View на самом Slang, `@observable`-состояние через
+compile-time рефлексию, собственный GPU-рендерер (Vulkan/Metal/D3D12),
+accessibility из коробки, hot reload, `ui.TestHost` для CI. Подробно:
+`docs/GUI.md`.
 
 ### Прочее
 
@@ -837,6 +859,11 @@ enrichers), `slang.diag` (профилировщик CPU/памяти/задач
 | `std.reflect` | `TypeOf<T>`, `ValueOf`, `TypeInfo`/`FieldInfo`/`MethodInfo`, атрибуты, compile-time `Fields<T>()` (см. раздел «Рефлексия») |
 | `std.process` | запуск внешних процессов, пайпы |
 | `std.uuid` | генерация и разбор UUID |
+
+Реализовано: `std.random` — `Seed`, `Int`, `IntN`, `Float`, `Bytes`,
+`Shuffle` (только `[]int` до generics; xoshiro256**, общий для процесса
+генератор под мьютексом); `std.uuid` — `New` (v4), `IsValid`. Остальное —
+пока нет.
 
 ## Платформы
 
