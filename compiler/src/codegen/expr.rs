@@ -1,0 +1,724 @@
+//! Expressions: places, loads, literals, calls, indexing and maps.
+
+use super::{unsupported, CodeGen, Val, R};
+use crate::hir::{Callee, ConstValue, Expr, ExprKind, ExternId};
+use crate::types::{Type, TypeId};
+use inkwell::module::Linkage;
+use inkwell::types::{BasicMetadataTypeEnum, BasicType};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::IntPredicate;
+
+/// How a map's keys are passed to the runtime.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyKind {
+    Str,
+    Int,
+    Generic,
+}
+
+impl<'a, 'ctx> CodeGen<'a, 'ctx> {
+    /// Evaluates `e` and returns an owned (+1) value.
+    pub(crate) fn expr_owned(&mut self, e: &Expr) -> R<BasicValueEnum<'ctx>> {
+        let v = self.expr(e)?;
+        if v.v.is_none() {
+            return unsupported("void value used");
+        }
+        Ok(self.to_owned(e.ty, v))
+    }
+
+    /// Evaluates `e` for its effects and releases the result.
+    pub(crate) fn expr_discard(&mut self, e: &Expr) -> R<()> {
+        let v = self.expr(e)?;
+        self.drop_val(e.ty, v);
+        Ok(())
+    }
+
+    /// Whether `e` denotes an addressable location.
+    pub(crate) fn is_place(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Local(_) | ExprKind::Upvalue(_) | ExprKind::Global(_) | ExprKind::Deref(_) => true,
+            ExprKind::Field { base, .. } => self.is_place(base),
+            ExprKind::Index { base, .. } => match self.ty(base.ty) {
+                Type::Slice(_) => true,
+                Type::Array(..) => self.is_place(base),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// Address of place expression `e`.
+    pub(crate) fn place(&mut self, e: &Expr) -> R<PointerValue<'ctx>> {
+        match &e.kind {
+            ExprKind::Local(l) => Ok(self.local_addr(*l)),
+            ExprKind::Upvalue(i) => Ok(self.upvalue_addr(*i)),
+            ExprKind::Global(g) => Ok(self.globals[g.0 as usize].as_pointer_value()),
+            ExprKind::Deref(p) => {
+                let pv = self.expr(p)?.get().into_pointer_value();
+                self.nil_check(pv);
+                Ok(pv)
+            }
+            ExprKind::Field { base, index } => {
+                let bp = if self.is_place(base) {
+                    self.place(base)?
+                } else {
+                    let v = self.expr_owned(base)?;
+                    self.spill(v)
+                };
+                let st = self.llty(base.ty).into_struct_type();
+                Ok(self.b.build_struct_gep(st, bp, *index, "").unwrap())
+            }
+            ExprKind::Index { base, index } => match self.ty(base.ty) {
+                Type::Slice(et) => {
+                    let et = *et;
+                    let s = self.expr(base)?;
+                    let i = self.expr(index)?.get().into_int_value();
+                    Ok(self.slice_elem_ptr(et, s.get(), i, index.ty))
+                }
+                Type::Array(et, n) => {
+                    let (et, n) = (*et, *n);
+                    let bp = if self.is_place(base) {
+                        self.place(base)?
+                    } else {
+                        let v = self.expr_owned(base)?;
+                        self.spill(v)
+                    };
+                    let i = self.expr(index)?.get().into_int_value();
+                    let i = self.index_i64(i, index.ty);
+                    self.bounds_check(i, self.i64_ty().const_int(n, false));
+                    let at = self.llty(base.ty);
+                    let _ = et;
+                    Ok(unsafe { self.b.build_in_bounds_gep(at, bp, &[self.i64_ty().const_zero(), i], "") }.unwrap())
+                }
+                _ => unsupported("assignment to a string index"),
+            },
+            _ => {
+                // Not a place: materialise a temporary (only read through).
+                let v = self.expr_owned(e)?;
+                Ok(self.spill(v))
+            }
+        }
+    }
+
+    /// Integer index converted to `i64`.
+    pub(crate) fn index_i64(&mut self, i: IntValue<'ctx>, ty: TypeId) -> IntValue<'ctx> {
+        let bits = i.get_type().get_bit_width();
+        if bits == 64 {
+            i
+        } else if self.is_signed(ty) {
+            self.b.build_int_s_extend(i, self.i64_ty(), "").unwrap()
+        } else {
+            self.b.build_int_z_extend(i, self.i64_ty(), "").unwrap()
+        }
+    }
+
+    /// Panics with `index out of range` unless `0 <= i < len`.
+    pub(crate) fn bounds_check(&mut self, i: IntValue<'ctx>, len: IntValue<'ctx>) {
+        let ok = self.b.build_int_compare(IntPredicate::ULT, i, len, "inb").unwrap();
+        let good = self.block("inbounds");
+        let bad = self.block("oob");
+        self.b.build_conditional_branch(ok, good, bad).unwrap();
+        self.b.position_at_end(bad);
+        self.call_rt("slang_panic_bounds", &[i.into(), len.into()]);
+        self.b.build_unreachable().unwrap();
+        self.b.position_at_end(good);
+    }
+
+    /// Bounds-checked address of element `i` of slice value `s`.
+    pub(crate) fn slice_elem_ptr(&mut self, et: TypeId, s: BasicValueEnum<'ctx>, i: IntValue<'ctx>, ity: TypeId) -> PointerValue<'ctx> {
+        let sv = s.into_struct_value();
+        let data = self.b.build_extract_value(sv, 0, "data").unwrap().into_pointer_value();
+        let len = self.b.build_extract_value(sv, 1, "len").unwrap().into_int_value();
+        let i = self.index_i64(i, ity);
+        self.bounds_check(i, len);
+        let elt = self.llty(et);
+        unsafe { self.b.build_in_bounds_gep(elt, data, &[i], "elem") }.unwrap()
+    }
+
+    /// Loads the value at place `e` (borrowed).
+    fn load_place(&mut self, e: &Expr) -> R<Val<'ctx>> {
+        let p = self.place(e)?;
+        let t = self.llty(e.ty);
+        Ok(Val::borrowed(self.b.build_load(t, p, "").unwrap()))
+    }
+
+    /// Emits expression `e`.
+    pub(crate) fn expr(&mut self, e: &Expr) -> R<Val<'ctx>> {
+        match &e.kind {
+            ExprKind::Const(c) => self.constant(c, e.ty),
+            ExprKind::Nil | ExprKind::Zero => {
+                if self.llty_opt(e.ty).is_none() {
+                    return Ok(Val::void());
+                }
+                Ok(Val::borrowed(self.zero(e.ty)))
+            }
+            ExprKind::Local(_) | ExprKind::Upvalue(_) | ExprKind::Global(_) => self.load_place(e),
+            ExprKind::FuncRef(f) => self.func_ref(*f, e.ty),
+            ExprKind::Field { base, index } => {
+                if self.is_place(base) {
+                    return self.load_place(e);
+                }
+                let bv = self.expr(base)?;
+                let fv = self.b.build_extract_value(bv.get().into_struct_value(), *index, "").unwrap();
+                if bv.owned && self.needs_rc(base.ty) {
+                    self.retain_val(e.ty, fv);
+                    self.release_val(base.ty, bv.get());
+                    return Ok(Val::owned(fv));
+                }
+                Ok(Val::borrowed(fv))
+            }
+            ExprKind::Deref(_) => self.load_place(e),
+            ExprKind::AddrOf(inner) => {
+                if self.is_place(inner) {
+                    let p = self.place(inner)?;
+                    return Ok(Val::borrowed(p.into()));
+                }
+                let v = self.expr_owned(inner)?;
+                let obj = self.new_box(inner.ty, v);
+                Ok(Val::borrowed(self.payload(obj).into()))
+            }
+            ExprKind::New(inner) => {
+                let v = self.expr_owned(inner)?;
+                let obj = self.new_box(inner.ty, v);
+                Ok(Val::borrowed(self.payload(obj).into()))
+            }
+            ExprKind::Index { base, index } => self.index(e, base, index),
+            ExprKind::MapGet { map, key } => self.map_get(e.ty, map, key),
+            ExprKind::SubSlice { base, lo, hi } => self.sub_slice(e, base, lo.as_deref(), hi.as_deref()),
+            ExprKind::Unary { op, operand } => self.unary(*op, operand),
+            ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs),
+            ExprKind::IsNil { value, negated } => self.is_nil(value, *negated),
+            ExprKind::Convert { kind, value } => self.convert(*kind, value, e.ty),
+            ExprKind::Call { callee, args } => self.call(e, callee, args),
+            ExprKind::StructLit { struct_id, fields } => {
+                let st = self.struct_llty(*struct_id);
+                let mut agg: BasicValueEnum = st.const_zero().into();
+                for (idx, fe) in fields {
+                    let v = self.expr_owned(fe)?;
+                    agg = self.b.build_insert_value(agg.into_struct_value(), v, *idx, "").unwrap().into_struct_value().into();
+                }
+                Ok(Val::owned(agg))
+            }
+            ExprKind::SliceLit(elems) => self.slice_lit(e.ty, elems),
+            ExprKind::MapLit(pairs) => {
+                let m = self.new_map(e.ty)?;
+                let (kt, vt) = self.map_kv(e.ty);
+                for (k, v) in pairs {
+                    let kv = self.expr(k)?;
+                    let vv = self.expr(v)?;
+                    self.map_set(kt, vt, m, kv.get(), vv.get())?;
+                    self.drop_val(k.ty, kv);
+                    self.drop_val(v.ty, vv);
+                }
+                Ok(Val::owned(m.into()))
+            }
+            ExprKind::Tuple(es) => {
+                let tt = self.llty(e.ty).into_struct_type();
+                let mut agg: BasicValueEnum = tt.get_undef().into();
+                for (i, x) in es.iter().enumerate() {
+                    let v = self.expr_owned(x)?;
+                    agg = self.b.build_insert_value(agg.into_struct_value(), v, i as u32, "").unwrap().into_struct_value().into();
+                }
+                Ok(Val::owned(agg))
+            }
+            ExprKind::EnumLit { enum_id, variant, args } => {
+                let en = &self.prog.enums[*enum_id as usize];
+                if en.is_plain {
+                    return Ok(Val::borrowed(self.ctx.i32_type().const_int(*variant as u64, false).into()));
+                }
+                let et = self.enum_llty(*enum_id);
+                let p = self.entry_alloca(et.into(), "enum", false);
+                self.b.build_store(p, et.const_zero()).unwrap();
+                let tp = self.b.build_struct_gep(et, p, 0, "").unwrap();
+                self.b.build_store(tp, self.ctx.i32_type().const_int(*variant as u64, false)).unwrap();
+                let pp = self.b.build_struct_gep(et, p, 1, "").unwrap();
+                let vt = self.variant_llty(*enum_id, *variant);
+                for (i, a) in args.iter().enumerate() {
+                    let v = self.expr_owned(a)?;
+                    let fp = self.b.build_struct_gep(vt, pp, i as u32, "").unwrap();
+                    self.b.build_store(fp, v).unwrap();
+                }
+                Ok(Val::owned(self.b.build_load(et, p, "").unwrap()))
+            }
+            ExprKind::ToInterface { value } => self.to_interface(value, e.ty),
+            ExprKind::Closure { func, captures } => self.emit_closure(*func, captures),
+            ExprKind::Propagate { value, context } => self.propagate(value, context.as_deref()),
+            ExprKind::TryCatch { value, err, handler, result_used } => self.try_catch(e.ty, value, *err, handler, *result_used),
+            ExprKind::TryElse { value, fallback } => self.try_else(e.ty, value, fallback),
+            ExprKind::Await(t) => self.await_expr(e.ty, t),
+            ExprKind::TaskAll(_) => unsupported("task.All whose result is not awaited directly"),
+            ExprKind::Builtin { op, args } => self.builtin(e.ty, *op, args),
+            ExprKind::ToString(v) => self.to_string(v),
+            ExprKind::Print(items) => {
+                self.print(items)?;
+                Ok(Val::void())
+            }
+        }
+    }
+
+    fn constant(&mut self, c: &ConstValue, ty: TypeId) -> R<Val<'ctx>> {
+        let v: BasicValueEnum = match c {
+            ConstValue::Int(i) => match self.ty(ty) {
+                Type::Float32 => self.ctx.f32_type().const_float(*i as f64).into(),
+                Type::Float64 => self.ctx.f64_type().const_float(*i as f64).into(),
+                _ => {
+                    let t = self.llty(ty).into_int_type();
+                    t.const_int(*i as u64, false).into()
+                }
+            },
+            ConstValue::Float(f) => match self.ty(ty) {
+                Type::Float32 => self.ctx.f32_type().const_float(*f).into(),
+                _ => self.ctx.f64_type().const_float(*f).into(),
+            },
+            ConstValue::Bool(b) => self.ctx.bool_type().const_int(*b as u64, false).into(),
+            ConstValue::Char(ch) => self.ctx.i32_type().const_int(*ch as u64, false).into(),
+            ConstValue::Str(s) => self.str_lit(s).into(),
+            ConstValue::Enum(eid, v) => {
+                if self.prog.enums[*eid as usize].is_plain {
+                    self.ctx.i32_type().const_int(*v as u64, false).into()
+                } else {
+                    let et = self.enum_llty(*eid);
+                    let z = et.get_field_type_at_index(1).unwrap().const_zero();
+                    et.const_named_struct(&[self.ctx.i32_type().const_int(*v as u64, false).into(), z]).into()
+                }
+            }
+            ConstValue::List(_) | ConstValue::Name(_) => return unsupported("list/name constants outside attributes"),
+        };
+        Ok(Val::borrowed(v))
+    }
+
+    fn index(&mut self, e: &Expr, base: &Expr, index: &Expr) -> R<Val<'ctx>> {
+        match self.ty(base.ty) {
+            Type::Slice(et) => {
+                let et = *et;
+                let bv = self.expr(base)?;
+                let i = self.expr(index)?.get().into_int_value();
+                let p = self.slice_elem_ptr(et, bv.get(), i, index.ty);
+                let t = self.llty(et);
+                let v = self.b.build_load(t, p, "").unwrap();
+                if bv.owned {
+                    self.retain_val(et, v);
+                    self.release_val(base.ty, bv.get());
+                    return Ok(Val::owned(v));
+                }
+                Ok(Val::borrowed(v))
+            }
+            Type::Array(..) => {
+                if self.is_place(base) {
+                    return self.load_place(e);
+                }
+                let bv = self.expr(base)?;
+                let p = self.spill(bv.get());
+                let i = self.expr(index)?.get().into_int_value();
+                let i = self.index_i64(i, index.ty);
+                let Type::Array(et, n) = self.ty(base.ty).clone() else { unreachable!() };
+                self.bounds_check(i, self.i64_ty().const_int(n, false));
+                let at = self.llty(base.ty);
+                let ep = unsafe { self.b.build_in_bounds_gep(at, p, &[self.i64_ty().const_zero(), i], "") }.unwrap();
+                let t = self.llty(et);
+                let v = self.b.build_load(t, ep, "").unwrap();
+                if bv.owned {
+                    self.retain_val(et, v);
+                    self.release_val(base.ty, bv.get());
+                    return Ok(Val::owned(v));
+                }
+                Ok(Val::borrowed(v))
+            }
+            Type::String => {
+                let s = self.expr(base)?;
+                let i = self.expr(index)?.get().into_int_value();
+                let i = self.index_i64(i, index.ty);
+                let f = self.byte_at_fn();
+                let r = self.call_c(f, &[s.get().into(), i.into()]).unwrap();
+                self.drop_val(base.ty, s);
+                Ok(Val::borrowed(r))
+            }
+            _ => unsupported(format!("indexing a value of type {}", self.type_name(base.ty))),
+        }
+    }
+
+    fn byte_at_fn(&mut self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("slang_string_byte_at") {
+            return f;
+        }
+        let fty = self.ctx.i8_type().fn_type(&[self.ptr_ty().into(), self.i64_ty().into()], false);
+        self.module.add_function("slang_string_byte_at", fty, Some(Linkage::External))
+    }
+
+    fn sub_slice(&mut self, e: &Expr, base: &Expr, lo: Option<&Expr>, hi: Option<&Expr>) -> R<Val<'ctx>> {
+        let bound = |cg: &mut Self, x: Option<&Expr>| -> R<Option<IntValue<'ctx>>> {
+            match x {
+                None => Ok(None),
+                Some(x) => {
+                    let v = cg.expr(x)?.get().into_int_value();
+                    Ok(Some(cg.index_i64(v, x.ty)))
+                }
+            }
+        };
+        match self.ty(base.ty).clone() {
+            Type::String => {
+                let s = self.expr(base)?;
+                let lo = bound(self, lo)?.unwrap_or(self.i64_ty().const_zero());
+                let hi = match bound(self, hi)? {
+                    Some(h) => h,
+                    None => self.call_rt_v("slang_string_len", &[s.get().into()]).into_int_value(),
+                };
+                let r = self.call_rt_v("slang_string_slice", &[s.get().into(), lo.into(), hi.into()]);
+                self.drop_val(base.ty, s);
+                Ok(Val::owned(r))
+            }
+            Type::Slice(et) => {
+                let s = self.expr(base)?;
+                let sp = self.spill(s.get());
+                let lo = bound(self, lo)?.unwrap_or(self.i64_ty().const_zero());
+                let hi = match bound(self, hi)? {
+                    Some(h) => h,
+                    None => self.b.build_extract_value(s.get().into_struct_value(), 1, "").unwrap().into_int_value(),
+                };
+                let out = self.entry_alloca(self.slice_ty().into(), "sub", false);
+                let size = self.i64_ty().const_int(self.size_of(et), false);
+                self.call_rt("slang_slice_sub", &[out.into(), sp.into(), lo.into(), hi.into(), size.into()]);
+                self.drop_val(base.ty, s);
+                Ok(Val::owned(self.b.build_load(self.slice_ty(), out, "").unwrap()))
+            }
+            Type::Array(et, n) => {
+                let bp = self.place(base)?;
+                let lo = bound(self, lo)?.unwrap_or(self.i64_ty().const_zero());
+                let nv = self.i64_ty().const_int(n, false);
+                let hi = bound(self, hi)?.unwrap_or(nv);
+                let c1 = self.b.build_int_compare(IntPredicate::ULE, lo, hi, "").unwrap();
+                let c2 = self.b.build_int_compare(IntPredicate::ULE, hi, nv, "").unwrap();
+                let ok = self.b.build_and(c1, c2, "").unwrap();
+                let good = self.block("sl.ok");
+                let bad = self.block("sl.bad");
+                self.b.build_conditional_branch(ok, good, bad).unwrap();
+                self.b.position_at_end(bad);
+                self.call_rt("slang_panic_bounds", &[hi.into(), nv.into()]);
+                self.b.build_unreachable().unwrap();
+                self.b.position_at_end(good);
+                let elt = self.llty(et);
+                let data = unsafe { self.b.build_in_bounds_gep(elt, bp, &[lo], "") }.unwrap();
+                let len = self.b.build_int_sub(hi, lo, "").unwrap();
+                let cap = self.b.build_int_sub(nv, lo, "").unwrap();
+                let st = self.slice_ty();
+                let mut v = self.b.build_insert_value(st.const_zero(), data, 0, "").unwrap();
+                v = self.b.build_insert_value(v, len, 1, "").unwrap();
+                v = self.b.build_insert_value(v, cap, 2, "").unwrap();
+                let _ = e;
+                Ok(Val::borrowed(v.into_struct_value().into()))
+            }
+            _ => unsupported("sub-slicing this type"),
+        }
+    }
+
+    fn slice_lit(&mut self, ty: TypeId, elems: &[Expr]) -> R<Val<'ctx>> {
+        if elems.is_empty() {
+            return Ok(Val::borrowed(self.zero(ty)));
+        }
+        let et = self.elem_of(ty).unwrap();
+        let out = self.entry_alloca(self.slice_ty().into(), "lit", false);
+        let size = self.i64_ty().const_int(self.size_of(et), false);
+        let n = self.i64_ty().const_int(elems.len() as u64, false);
+        let ops = self.value_ops(et);
+        self.call_rt("slang_slice_new_ops", &[out.into(), size.into(), n.into(), n.into(), ops.into()]);
+        let elt = self.llty(et);
+        for (i, x) in elems.iter().enumerate() {
+            let v = self.expr_owned(x)?;
+            let data = self.b.build_load(self.ptr_ty(), out, "data").unwrap().into_pointer_value();
+            let p = unsafe { self.b.build_in_bounds_gep(elt, data, &[self.i64_ty().const_int(i as u64, false)], "") }.unwrap();
+            self.b.build_store(p, v).unwrap();
+        }
+        Ok(Val::owned(self.b.build_load(self.slice_ty(), out, "").unwrap()))
+    }
+
+    // ------------------------------------------------------------------
+    // Calls
+    // ------------------------------------------------------------------
+
+    fn call(&mut self, e: &Expr, callee: &Callee, args: &[Expr]) -> R<Val<'ctx>> {
+        match callee {
+            Callee::Func(fid) => {
+                let mut vals = Vec::new();
+                for a in args {
+                    vals.push(self.expr(a)?);
+                }
+                let fv = self.funcs[fid.0 as usize];
+                let ma: Vec<BasicMetadataValueEnum> = vals.iter().map(|v| v.get().into()).collect();
+                let r = self.b.build_call(fv, &ma, "").unwrap().try_as_basic_value().left();
+                for (a, v) in args.iter().zip(vals) {
+                    self.drop_val(a.ty, v);
+                }
+                Ok(Val { v: r, owned: true })
+            }
+            Callee::Extern(x) => self.extern_call(*x, args),
+            Callee::Interface { recv, method } => self.iface_call(e.ty, recv, *method, args),
+            Callee::Value(c) => {
+                let cv = self.expr(c)?;
+                let mut vals = Vec::new();
+                for a in args {
+                    vals.push(self.expr(a)?);
+                }
+                let raw: Vec<BasicValueEnum> = vals.iter().map(|v| v.get()).collect();
+                let r = self.call_closure(c.ty, cv.get(), &raw)?;
+                for (a, v) in args.iter().zip(vals) {
+                    self.drop_val(a.ty, v);
+                }
+                self.drop_val(c.ty, cv);
+                Ok(Val { v: r, owned: true })
+            }
+        }
+    }
+
+    /// Declaration of a stdlib extern per `slang_rt.h` §14.
+    fn extern_decl(&mut self, x: ExternId) -> FunctionValue<'ctx> {
+        let ex = &self.prog.externs[x.0 as usize];
+        if let Some(f) = self.module.get_function(&ex.symbol) {
+            return f;
+        }
+        let mut ps: Vec<BasicMetadataTypeEnum> = Vec::new();
+        for p in &ex.params {
+            let t = match self.ty(*p) {
+                Type::Slice(_) => self.ptr_ty().into(),
+                _ => self.llty(*p),
+            };
+            ps.push(t.into());
+        }
+        let (ret_inner, fallible) = match self.ty(ex.ret) {
+            Type::Fallible(t) => (*t, true),
+            _ => (ex.ret, false),
+        };
+        let ret_ll = match self.ty(ret_inner) {
+            Type::Slice(_) => {
+                ps.push(self.ptr_ty().into());
+                None
+            }
+            _ => self.llty_opt(ret_inner),
+        };
+        if fallible {
+            ps.push(self.ptr_ty().into());
+        }
+        let fty = match ret_ll {
+            Some(t) => t.fn_type(&ps, false),
+            None => self.ctx.void_type().fn_type(&ps, false),
+        };
+        let f = self.module.add_function(&ex.symbol, fty, Some(Linkage::External));
+        let zext = self.attr("zeroext");
+        for (i, p) in ex.params.iter().enumerate() {
+            if *self.ty(*p) == Type::Bool {
+                f.add_attribute(inkwell::attributes::AttributeLoc::Param(i as u32), zext);
+            }
+        }
+        if *self.ty(ret_inner) == Type::Bool {
+            f.add_attribute(inkwell::attributes::AttributeLoc::Return, zext);
+        }
+        f
+    }
+
+    fn extern_call(&mut self, x: ExternId, args: &[Expr]) -> R<Val<'ctx>> {
+        let f = self.extern_decl(x);
+        let ex = &self.prog.externs[x.0 as usize];
+        let mut vals = Vec::new();
+        let mut ma: Vec<BasicMetadataValueEnum> = Vec::new();
+        for a in args {
+            let v = self.expr(a)?;
+            let pass: BasicValueEnum = match self.ty(a.ty) {
+                Type::Slice(_) => self.spill(v.get()).into(),
+                _ => v.get(),
+            };
+            ma.push(pass.into());
+            vals.push(v);
+        }
+        let (ret_inner, fallible) = match self.ty(ex.ret) {
+            Type::Fallible(t) => (*t, true),
+            _ => (ex.ret, false),
+        };
+        let out = if matches!(self.ty(ret_inner), Type::Slice(_)) {
+            let o = self.entry_alloca(self.slice_ty().into(), "out", false);
+            ma.push(o.into());
+            Some(o)
+        } else {
+            None
+        };
+        let errp = if fallible {
+            let p = self.entry_alloca(self.ptr_ty().into(), "err", false);
+            self.b.build_store(p, self.ptr_ty().const_null()).unwrap();
+            ma.push(p.into());
+            Some(p)
+        } else {
+            None
+        };
+        let mut r = self.call_c(f, &ma);
+        for (a, v) in args.iter().zip(vals) {
+            self.drop_val(a.ty, v);
+        }
+        if let Some(o) = out {
+            r = Some(self.b.build_load(self.slice_ty(), o, "").unwrap());
+        }
+        if let Some(ep) = errp {
+            let err = self.b.build_load(self.ptr_ty(), ep, "err").unwrap();
+            let v = match r {
+                None => err,
+                Some(val) => {
+                    let ft = self.llty(ex.ret).into_struct_type();
+                    let s = self.b.build_insert_value(ft.get_undef(), val, 0, "").unwrap();
+                    self.b.build_insert_value(s, err, 1, "").unwrap().into_struct_value().into()
+                }
+            };
+            return Ok(Val::owned(v));
+        }
+        Ok(Val { v: r, owned: true })
+    }
+
+    // ------------------------------------------------------------------
+    // Maps
+    // ------------------------------------------------------------------
+
+    pub(crate) fn map_kv(&self, mt: TypeId) -> (TypeId, TypeId) {
+        match self.ty(mt) {
+            Type::Map(k, v) => (*k, *v),
+            _ => panic!("codegen: not a map type"),
+        }
+    }
+
+    pub(crate) fn key_kind(&self, kt: TypeId) -> KeyKind {
+        match self.ty(kt) {
+            Type::String => KeyKind::Str,
+            Type::Int(k) if k.bits() == 64 => KeyKind::Int,
+            _ => KeyKind::Generic,
+        }
+    }
+
+    /// A new empty map of type `mt` (+1).
+    pub(crate) fn new_map(&mut self, mt: TypeId) -> R<PointerValue<'ctx>> {
+        let (kt, vt) = self.map_kv(mt);
+        let vs = self.i64_ty().const_int(self.size_of(vt), false);
+        let vops = self.value_ops(vt);
+        Ok(match self.key_kind(kt) {
+            KeyKind::Str => self.call_rt_v("slang_map_new_str", &[vs.into(), vops.into()]),
+            KeyKind::Int => self.call_rt_v("slang_map_new_int", &[vs.into(), vops.into()]),
+            KeyKind::Generic => {
+                let d = self.map_desc(kt, vt)?;
+                self.call_rt_v("slang_map_new", &[d.into(), self.i64_ty().const_zero().into()])
+            }
+        }
+        .into_pointer_value())
+    }
+
+    /// Constant `slang_map_desc` for scalar keys hashed bytewise.
+    fn map_desc(&mut self, kt: TypeId, vt: TypeId) -> R<PointerValue<'ctx>> {
+        let mt = self.prog.types.get(kt).clone();
+        if !matches!(mt, Type::Int(_) | Type::Bool | Type::Char | Type::Enum(_) | Type::Pointer(_)) || self.needs_rc(kt) {
+            return unsupported(format!("maps with key type {}", self.type_name(kt)));
+        }
+        let cache_key = self.prog.types.len() as u64 * kt.0 as u64 + vt.0 as u64;
+        if let Some(p) = self.map_descs.get(&cache_key) {
+            return Ok(*p);
+        }
+        let ks = self.size_of(kt);
+        let n = self.fresh();
+        let lk = self.llty(kt);
+        // hash(ptr) -> i64
+        let hty = self.i64_ty().fn_type(&[self.ptr_ty().into()], false);
+        let hash = self.module.add_function(&format!("map.hash.{n}"), hty, Some(Linkage::Internal));
+        self.with_helper(hash, |cg| {
+            let p = hash.get_nth_param(0).unwrap();
+            let h = cg.call_rt_v("slang_hash_bytes", &[p.into(), cg.i64_ty().const_int(ks, false).into()]);
+            cg.b.build_return(Some(&h)).unwrap();
+            Ok(())
+        })?;
+        let ety = self.ctx.bool_type().fn_type(&[self.ptr_ty().into(), self.ptr_ty().into()], false);
+        let eq = self.module.add_function(&format!("map.eq.{n}"), ety, Some(Linkage::Internal));
+        eq.add_attribute(inkwell::attributes::AttributeLoc::Return, self.attr("zeroext"));
+        self.with_helper(eq, |cg| {
+            let a = cg.b.build_load(lk, eq.get_nth_param(0).unwrap().into_pointer_value(), "").unwrap();
+            let b = cg.b.build_load(lk, eq.get_nth_param(1).unwrap().into_pointer_value(), "").unwrap();
+            let (a, b) = if a.is_pointer_value() {
+                (
+                    cg.b.build_ptr_to_int(a.into_pointer_value(), cg.i64_ty(), "").unwrap(),
+                    cg.b.build_ptr_to_int(b.into_pointer_value(), cg.i64_ty(), "").unwrap(),
+                )
+            } else {
+                (a.into_int_value(), b.into_int_value())
+            };
+            let r = cg.b.build_int_compare(IntPredicate::EQ, a, b, "").unwrap();
+            cg.b.build_return(Some(&r)).unwrap();
+            Ok(())
+        })?;
+        let p = self.ptr_ty();
+        let dt = self.ctx.struct_type(&[self.i64_ty().into(), self.i64_ty().into(), p.into(), p.into(), p.into(), p.into()], false);
+        let vops = self.value_ops(vt);
+        let vs = self.size_of(vt);
+        let g = self.module.add_global(dt, None, &format!("map.desc.{n}"));
+        g.set_linkage(Linkage::Internal);
+        g.set_constant(true);
+        g.set_initializer(&dt.const_named_struct(&[
+            self.i64_ty().const_int(ks, false).into(),
+            self.i64_ty().const_int(vs, false).into(),
+            hash.as_global_value().as_pointer_value().into(),
+            eq.as_global_value().as_pointer_value().into(),
+            p.const_null().into(),
+            vops.into(),
+        ]));
+        self.map_descs.insert(cache_key, g.as_pointer_value());
+        Ok(g.as_pointer_value())
+    }
+
+    /// Borrowed value slot for `key`, or NULL.
+    pub(crate) fn map_slot(&mut self, kt: TypeId, m: BasicValueEnum<'ctx>, key: BasicValueEnum<'ctx>, insert: bool) -> PointerValue<'ctx> {
+        let r = match (self.key_kind(kt), insert) {
+            (KeyKind::Str, false) => self.call_rt_v("slang_map_get_str", &[m.into(), key.into()]),
+            (KeyKind::Int, false) => self.call_rt_v("slang_map_get_int", &[m.into(), key.into()]),
+            (_, false) => {
+                let kp = self.spill(key);
+                self.call_rt_v("slang_map_get", &[m.into(), kp.into()])
+            }
+            (_, true) => {
+                let kp = self.spill(key);
+                self.call_rt_v("slang_map_get_or_insert", &[m.into(), kp.into()])
+            }
+        };
+        r.into_pointer_value()
+    }
+
+    /// `m[k] = v` (the map retains key and value).
+    pub(crate) fn map_set(&mut self, kt: TypeId, vt: TypeId, m: PointerValue<'ctx>, key: BasicValueEnum<'ctx>, v: BasicValueEnum<'ctx>) -> R<()> {
+        let vp = self.spill(v);
+        let _ = vt;
+        match self.key_kind(kt) {
+            KeyKind::Str => self.call_rt("slang_map_set_str", &[m.into(), key.into(), vp.into()]),
+            KeyKind::Int => self.call_rt("slang_map_set_int", &[m.into(), key.into(), vp.into()]),
+            KeyKind::Generic => {
+                let kp = self.spill(key);
+                self.call_rt("slang_map_set", &[m.into(), kp.into(), vp.into()])
+            }
+        };
+        Ok(())
+    }
+
+    fn map_get(&mut self, vt: TypeId, map: &Expr, key: &Expr) -> R<Val<'ctx>> {
+        let (kt, _) = self.map_kv(map.ty);
+        let mv = self.expr(map)?;
+        let kv = self.expr(key)?;
+        let slot = self.map_slot(kt, mv.get(), kv.get(), false);
+        let lt = self.llty(vt);
+        let res = self.entry_alloca(lt, "mapv", false);
+        self.b.build_store(res, lt.const_zero()).unwrap();
+        let found = self.block("map.found");
+        let join = self.block("map.join");
+        let isnull = self.b.build_is_null(slot, "").unwrap();
+        self.b.build_conditional_branch(isnull, join, found).unwrap();
+        self.b.position_at_end(found);
+        let v = self.b.build_load(lt, slot, "").unwrap();
+        self.b.build_store(res, v).unwrap();
+        self.b.build_unconditional_branch(join).unwrap();
+        self.b.position_at_end(join);
+        let v = self.b.build_load(lt, res, "").unwrap();
+        self.drop_val(key.ty, kv);
+        if mv.owned {
+            self.retain_val(vt, v);
+            self.drop_val(map.ty, mv);
+            return Ok(Val::owned(v));
+        }
+        Ok(Val::borrowed(v))
+    }
+}

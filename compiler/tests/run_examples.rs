@@ -1,0 +1,162 @@
+//! End-to-end tests: build every runnable example with `slang build`, run
+//! it and compare stdout byte for byte with its `.out` file.
+//!
+//! Needs `clang` and `runtime/libslang_rt.a` (built with `make -C runtime`;
+//! the tests run `make` themselves if the archive is missing).
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Examples that are known not to work yet, with the reason. Each entry is
+/// skipped (and reported) instead of failing the test.
+///
+/// Currently empty: all of hello, arith, control, functions, structs,
+/// switch, enums, slices_maps, strings, interfaces, errors, defer, bank,
+/// async and multi/ pass byte-exact.
+const SKIP: &[(&str, &str)] = &[];
+
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+}
+
+fn slang() -> &'static str {
+    env!("CARGO_BIN_EXE_slang")
+}
+
+fn ensure_runtime() {
+    let lib = repo().join("runtime/libslang_rt.a");
+    if !lib.is_file() {
+        let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
+        assert!(st.success(), "make -C runtime failed");
+    }
+}
+
+fn tmpdir(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("slang-test-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// (name, source path, expected output path) of every runnable example.
+fn examples() -> Vec<(String, PathBuf, PathBuf)> {
+    let dir = repo().join("examples");
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(&dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.extension().is_some_and(|x| x == "sl") {
+            let o = p.with_extension("out");
+            if o.is_file() {
+                out.push((p.file_stem().unwrap().to_string_lossy().to_string(), p.clone(), o));
+            }
+        } else if p.is_dir() {
+            // A directory with a `.out` file is one multi-file program.
+            let outs: Vec<PathBuf> = std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()).filter(|f| f.extension().is_some_and(|x| x == "out")).collect();
+            if let [o] = outs.as_slice() {
+                out.push((p.file_name().unwrap().to_string_lossy().to_string(), p.clone(), o.clone()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn build_and_run(name: &str, src: &Path, extra: &[&str]) -> Result<String, String> {
+    let dir = tmpdir(&format!("{name}{}", extra.join("")));
+    let exe = dir.join(name);
+    let b = Command::new(slang()).arg("build").arg(src).arg("-o").arg(&exe).args(extra).output().unwrap();
+    if !b.status.success() {
+        return Err(format!("build failed:\n{}", String::from_utf8_lossy(&b.stderr)));
+    }
+    let r = Command::new(&exe).env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    if !r.status.success() {
+        return Err(format!("exit status {:?}, stderr:\n{}", r.status.code(), String::from_utf8_lossy(&r.stderr)));
+    }
+    if !r.stderr.is_empty() {
+        return Err(format!("unexpected stderr:\n{}", String::from_utf8_lossy(&r.stderr)));
+    }
+    Ok(String::from_utf8_lossy(&r.stdout).to_string())
+}
+
+fn check_all(extra: &[&str]) {
+    ensure_runtime();
+    let mut failures = Vec::new();
+    let all = examples();
+    assert!(all.len() >= 15, "example corpus not found");
+    for (name, src, out) in all {
+        if let Some((_, why)) = SKIP.iter().find(|(n, _)| *n == name) {
+            eprintln!("skipping {name}: {why}");
+            continue;
+        }
+        let expected = std::fs::read_to_string(&out).unwrap();
+        match build_and_run(&name, &src, extra) {
+            Ok(got) if got == expected => {}
+            Ok(got) => failures.push(format!("{name}: output differs\n--- expected\n{expected}--- got\n{got}")),
+            Err(e) => failures.push(format!("{name}: {e}")),
+        }
+    }
+    assert!(failures.is_empty(), "{} example(s) failed ({extra:?}):\n{}", failures.len(), failures.join("\n"));
+}
+
+#[test]
+fn examples_debug() {
+    check_all(&[]);
+}
+
+#[test]
+fn examples_release() {
+    check_all(&["--release"]);
+}
+
+#[test]
+fn compile_errors_fail_to_build() {
+    let dir = repo().join("examples/errors_compile");
+    let tmp = tmpdir("errors");
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        let r = Command::new(slang()).arg("build").arg(&p).arg("-o").arg(tmp.join("x")).output().unwrap();
+        assert!(!r.status.success(), "{} should not compile", p.display());
+        assert!(String::from_utf8_lossy(&r.stderr).contains("error"), "{}: no error diagnostic", p.display());
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn emit_llvm_ir_is_valid() {
+    let tmp = tmpdir("ir");
+    let ll = tmp.join("hello.ll");
+    let r = Command::new(slang()).arg("build").arg(repo().join("examples/hello.sl")).arg("--emit=llvm-ir").arg("-o").arg(&ll).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let text = std::fs::read_to_string(&ll).unwrap();
+    assert!(text.contains("define i32 @main(i32"), "no C main in:\n{text}");
+    // Re-parse and verify the module, with llvm-as if present, else with
+    // inkwell's own parser + verifier.
+    let tool = ["llvm-as-18", "llvm-as"].into_iter().find(|t| Command::new(t).arg("--version").output().is_ok_and(|o| o.status.success()));
+    match tool {
+        Some(t) => {
+            let st = Command::new(t).arg(&ll).arg("-o").arg(tmp.join("hello.bc")).status().unwrap();
+            assert!(st.success(), "{t} rejected the emitted IR");
+        }
+        None => {
+            let ctx = inkwell::context::Context::create();
+            let buf = inkwell::memory_buffer::MemoryBuffer::create_from_file(&ll).unwrap();
+            let m = ctx.create_module_from_ir(buf).expect("IR does not parse");
+            m.verify().expect("IR does not verify");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn emit_obj_and_run_with_args() {
+    ensure_runtime();
+    let tmp = tmpdir("obj");
+    let o = tmp.join("hello.o");
+    let r = Command::new(slang()).arg("build").arg(repo().join("examples/hello.sl")).arg("--emit=obj").arg("-o").arg(&o).output().unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    assert!(std::fs::metadata(&o).unwrap().len() > 0);
+    let r = Command::new(slang()).arg("run").arg(repo().join("examples/hello.sl")).arg("-O2").arg("--").arg("x").output().unwrap();
+    assert!(r.status.success());
+    assert_eq!(String::from_utf8_lossy(&r.stdout), "Hello, Slang!\n");
+    let _ = std::fs::remove_dir_all(&tmp);
+}

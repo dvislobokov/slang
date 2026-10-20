@@ -50,7 +50,7 @@ The `.out` files depend on these rules; the runtime must follow them.
   (`strconv.FormatFloat(f, 'g', -1, 64)` with Go's `%v` exponent
   thresholds): `0.5` -> `0.5`, `2.0` -> `2`, `1.5e3` -> `1500`,
   `0.1 + 0.2` -> `0.30000000000000004`, `-0.5` -> `-0.5`. Exponent form
-  (`1e+21`, `1e-05`) only for exponent < -4 or >= 21, as in Go; the
+  (`1e+21`, `1e-05`) only for exponent < -4 or >= 6, as in Go; the
   examples never hit it.
 - `bool`: `true` / `false`. `nil` (pointer or error): `nil`.
 - `string`: raw contents, no quotes. `char`: the character itself

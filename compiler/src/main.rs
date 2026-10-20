@@ -5,7 +5,7 @@ use std::process::exit;
 use slang::diagnostics::Diagnostics;
 use slang::driver;
 
-const USAGE: &str = "usage: slang parse <file.sl>\n       slang check [--dump-hir] <file.sl | dir>";
+const USAGE: &str = "usage: slang parse <file.sl>\n       slang check [--dump-hir] <file.sl | dir>\n       slang build <file.sl | dir> [-o out] [--emit=llvm-ir|obj] [--release] [-O0..3]\n       slang run <file.sl | dir> [build options] [-- args]";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -23,6 +23,31 @@ fn main() {
             };
             check(path, dump);
         }
+        "build" => match slang::build::parse_args(&args[2..]) {
+            Ok((opts, _)) => {
+                if let Err(e) = slang::build::build(&opts) {
+                    eprintln!("error: {e}");
+                    exit(1);
+                }
+            }
+            Err(e) => {
+                eprintln!("error: {e}\n{USAGE}");
+                exit(2);
+            }
+        },
+        "run" => match slang::build::parse_args(&args[2..]) {
+            Ok((opts, rest)) => match slang::build::run(opts, &rest) {
+                Ok(code) => exit(code),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("error: {e}\n{USAGE}");
+                exit(2);
+            }
+        },
         cmd => {
             eprintln!("error: command `{cmd}` is not implemented yet");
             exit(2);

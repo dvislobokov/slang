@@ -1,0 +1,421 @@
+//! Reference counting: which types are managed, retain/release of values
+//! and slots, per-type helpers, `slang_value_ops`, type infos and boxes.
+
+use super::{CodeGen, Val};
+use crate::types::{Type, TypeId};
+use inkwell::module::Linkage;
+use inkwell::types::StructType;
+use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
+use inkwell::IntPredicate;
+
+/// How a value of some type holds references.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RcKind {
+    /// Plain data.
+    None,
+    /// One heap-object pointer (string, error, map, task).
+    Ref,
+    /// A slice value: the backing (field 3) is the reference.
+    Slice,
+    /// A closure: the env (field 1) is the reference.
+    Func,
+    /// An interface value; the box is referenced when `vtable.boxed`.
+    Iface,
+    /// An `any` value; always boxed.
+    Any,
+    /// An aggregate containing references (struct, tuple, array, `T!`,
+    /// data enum).
+    Agg,
+}
+
+impl<'a, 'ctx> CodeGen<'a, 'ctx> {
+    pub(crate) fn rc_kind(&self, t: TypeId) -> RcKind {
+        match self.ty(t) {
+            Type::String | Type::Error | Type::Map(..) | Type::Task(_) => RcKind::Ref,
+            Type::Slice(_) => RcKind::Slice,
+            Type::Func(_) => RcKind::Func,
+            Type::Interface(_) => RcKind::Iface,
+            Type::Any => RcKind::Any,
+            Type::Fallible(inner) => {
+                if *self.ty(*inner) == Type::Void {
+                    RcKind::Ref
+                } else {
+                    RcKind::Agg
+                }
+            }
+            Type::Array(e, n) => {
+                if *n > 0 && self.needs_rc(*e) {
+                    RcKind::Agg
+                } else {
+                    RcKind::None
+                }
+            }
+            Type::Tuple(ts) => {
+                if ts.iter().any(|t| self.needs_rc(*t)) {
+                    RcKind::Agg
+                } else {
+                    RcKind::None
+                }
+            }
+            Type::Struct(d) => {
+                if self.prog.structs[d.0 as usize].fields.iter().any(|f| self.needs_rc(f.ty)) {
+                    RcKind::Agg
+                } else {
+                    RcKind::None
+                }
+            }
+            Type::Enum(d) => {
+                let e = &self.prog.enums[d.0 as usize];
+                if !e.is_plain && e.variants.iter().any(|v| v.fields.iter().any(|f| self.needs_rc(f.1))) {
+                    RcKind::Agg
+                } else {
+                    RcKind::None
+                }
+            }
+            _ => RcKind::None,
+        }
+    }
+
+    pub(crate) fn needs_rc(&self, t: TypeId) -> bool {
+        self.rc_kind(t) != RcKind::None
+    }
+
+    /// Makes `v` owned: retains it if borrowed.
+    pub(crate) fn to_owned(&mut self, t: TypeId, v: Val<'ctx>) -> BasicValueEnum<'ctx> {
+        let x = v.get();
+        if !v.owned {
+            self.retain_val(t, x);
+        }
+        x
+    }
+
+    /// Releases `v` if it is an owned temporary.
+    pub(crate) fn drop_val(&mut self, t: TypeId, v: Val<'ctx>) {
+        if v.owned {
+            if let Some(x) = v.v {
+                self.release_val(t, x);
+            }
+        }
+    }
+
+    /// `loc = v` for an initialised location: retain new, store, release old.
+    pub(crate) fn store_assign(&mut self, p: PointerValue<'ctx>, t: TypeId, v: Val<'ctx>) {
+        let x = self.to_owned(t, v);
+        if self.needs_rc(t) {
+            let old = self.b.build_load(x.get_type(), p, "old").unwrap();
+            self.b.build_store(p, x).unwrap();
+            self.release_val(t, old);
+        } else {
+            self.b.build_store(p, x).unwrap();
+        }
+    }
+
+    pub(crate) fn retain_val(&mut self, t: TypeId, v: BasicValueEnum<'ctx>) {
+        self.rc_val(t, v, true)
+    }
+
+    pub(crate) fn release_val(&mut self, t: TypeId, v: BasicValueEnum<'ctx>) {
+        self.rc_val(t, v, false)
+    }
+
+    fn rc_name(retain: bool) -> &'static str {
+        if retain {
+            "slang_retain"
+        } else {
+            "slang_release"
+        }
+    }
+
+    fn rc_val(&mut self, t: TypeId, v: BasicValueEnum<'ctx>, retain: bool) {
+        match self.rc_kind(t) {
+            RcKind::None => {}
+            RcKind::Ref => {
+                self.call_rt(Self::rc_name(retain), &[v.into()]);
+            }
+            RcKind::Slice => {
+                let b = self.b.build_extract_value(v.into_struct_value(), 3, "backing").unwrap();
+                self.call_rt(Self::rc_name(retain), &[b.into()]);
+            }
+            RcKind::Func => {
+                let e = self.b.build_extract_value(v.into_struct_value(), 1, "env").unwrap();
+                self.call_rt(Self::rc_name(retain), &[e.into()]);
+            }
+            RcKind::Iface | RcKind::Any | RcKind::Agg => {
+                let p = self.spill(v);
+                let (r, rl) = self.rc_helpers(t);
+                let f = if retain { r } else { rl };
+                self.b.build_call(f, &[p.into()], "").unwrap();
+            }
+        }
+    }
+
+    /// Retains or releases the references held in slot `p` of type `t`.
+    pub(crate) fn rc_slot(&mut self, t: TypeId, p: PointerValue<'ctx>, retain: bool) {
+        match self.rc_kind(t) {
+            RcKind::None => {}
+            RcKind::Ref => {
+                let v = self.b.build_load(self.ptr_ty(), p, "").unwrap();
+                self.call_rt(Self::rc_name(retain), &[v.into()]);
+            }
+            RcKind::Slice => {
+                let bp = self.byte_gep(p, 24);
+                let v = self.b.build_load(self.ptr_ty(), bp, "").unwrap();
+                self.call_rt(Self::rc_name(retain), &[v.into()]);
+            }
+            RcKind::Func => {
+                let bp = self.byte_gep(p, 8);
+                let v = self.b.build_load(self.ptr_ty(), bp, "").unwrap();
+                self.call_rt(Self::rc_name(retain), &[v.into()]);
+            }
+            _ => {
+                let (r, rl) = self.rc_helpers(t);
+                let f = if retain { r } else { rl };
+                self.b.build_call(f, &[p.into()], "").unwrap();
+            }
+        }
+    }
+
+    /// `void retain(ptr slot)` / `void release(ptr slot)` for type `t`.
+    pub(crate) fn rc_helpers(&mut self, t: TypeId) -> (FunctionValue<'ctx>, FunctionValue<'ctx>) {
+        if let Some(h) = self.rc_helpers.get(&t) {
+            return *h;
+        }
+        let fty = self.ctx.void_type().fn_type(&[self.ptr_ty().into()], false);
+        let n = self.fresh();
+        let r = self.module.add_function(&format!("rc.retain.{n}"), fty, Some(Linkage::Internal));
+        let rl = self.module.add_function(&format!("rc.release.{n}"), fty, Some(Linkage::Internal));
+        self.rc_helpers.insert(t, (r, rl));
+        for (f, retain) in [(r, true), (rl, false)] {
+            let _ = self.with_helper(f, |cg| {
+                let p = f.get_nth_param(0).unwrap().into_pointer_value();
+                cg.rc_slot_body(t, p, retain);
+                cg.b.build_return(None).unwrap();
+                Ok(())
+            });
+        }
+        (r, rl)
+    }
+
+    /// Body of a slot helper: walks the components of `t`.
+    fn rc_slot_body(&mut self, t: TypeId, p: PointerValue<'ctx>, retain: bool) {
+        match self.ty(t).clone() {
+            Type::Interface(_) | Type::Any => {
+                let is_any = matches!(self.ty(t), Type::Any);
+                let data = self.b.build_load(self.ptr_ty(), p, "data").unwrap().into_pointer_value();
+                let vp = self.byte_gep(p, 8);
+                let vt = self.b.build_load(self.ptr_ty(), vp, "vt").unwrap().into_pointer_value();
+                let has = self.block("has");
+                let boxed = self.block("boxed");
+                let done = self.block("done");
+                let nn = self.b.build_is_not_null(vt, "").unwrap();
+                self.b.build_conditional_branch(nn, has, done).unwrap();
+                self.b.position_at_end(has);
+                if is_any {
+                    self.b.build_unconditional_branch(boxed).unwrap();
+                } else {
+                    let fp = self.byte_gep(vt, 8);
+                    let flag = self.b.build_load(self.i64_ty(), fp, "").unwrap().into_int_value();
+                    let isb = self.b.build_int_compare(IntPredicate::NE, flag, self.i64_ty().const_zero(), "").unwrap();
+                    self.b.build_conditional_branch(isb, boxed, done).unwrap();
+                }
+                self.b.position_at_end(boxed);
+                let obj = unsafe { self.b.build_in_bounds_gep(self.ctx.i8_type(), data, &[self.i64_ty().const_int((-16i64) as u64, true)], "") }.unwrap();
+                self.call_rt(Self::rc_name(retain), &[obj.into()]);
+                self.b.build_unconditional_branch(done).unwrap();
+                self.b.position_at_end(done);
+            }
+            Type::Fallible(inner) => {
+                let st = self.llty(t).into_struct_type();
+                if *self.ty(inner) != Type::Void {
+                    let fp = self.b.build_struct_gep(st, p, 0, "").unwrap();
+                    self.rc_slot(inner, fp, retain);
+                    let ep = self.b.build_struct_gep(st, p, 1, "").unwrap();
+                    self.rc_slot(self.prog.types.error, ep, retain);
+                } else {
+                    self.rc_slot(self.prog.types.error, p, retain);
+                }
+            }
+            Type::Tuple(ts) => {
+                let st = self.llty(t).into_struct_type();
+                for (i, ft) in ts.iter().enumerate() {
+                    let fp = self.b.build_struct_gep(st, p, i as u32, "").unwrap();
+                    self.rc_slot(*ft, fp, retain);
+                }
+            }
+            Type::Struct(d) => {
+                let st = self.struct_llty(d.0);
+                let fts: Vec<TypeId> = self.prog.structs[d.0 as usize].fields.iter().map(|f| f.ty).collect();
+                for (i, ft) in fts.iter().enumerate() {
+                    if self.needs_rc(*ft) {
+                        let fp = self.b.build_struct_gep(st, p, i as u32, "").unwrap();
+                        self.rc_slot(*ft, fp, retain);
+                    }
+                }
+            }
+            Type::Array(e, n) => {
+                let at = self.llty(t);
+                let i = self.entry_alloca(self.i64_ty().into(), "i", true);
+                let head = self.block("head");
+                let body = self.block("body");
+                let done = self.block("done");
+                self.b.build_unconditional_branch(head).unwrap();
+                self.b.position_at_end(head);
+                let iv = self.b.build_load(self.i64_ty(), i, "").unwrap().into_int_value();
+                let c = self.b.build_int_compare(IntPredicate::ULT, iv, self.i64_ty().const_int(n, false), "").unwrap();
+                self.b.build_conditional_branch(c, body, done).unwrap();
+                self.b.position_at_end(body);
+                let ep = unsafe { self.b.build_in_bounds_gep(at, p, &[self.i64_ty().const_zero(), iv], "") }.unwrap();
+                self.rc_slot(e, ep, retain);
+                let i1 = self.b.build_int_add(iv, self.i64_ty().const_int(1, false), "").unwrap();
+                self.b.build_store(i, i1).unwrap();
+                self.b.build_unconditional_branch(head).unwrap();
+                self.b.position_at_end(done);
+            }
+            Type::Enum(d) => {
+                let et = self.enum_llty(d.0);
+                let tag = self.b.build_load(self.ctx.i32_type(), p, "tag").unwrap().into_int_value();
+                let done = self.block("done");
+                let nvar = self.prog.enums[d.0 as usize].variants.len();
+                let mut cases = Vec::new();
+                for v in 0..nvar {
+                    let fts: Vec<TypeId> = self.prog.enums[d.0 as usize].variants[v].fields.iter().map(|f| f.1).collect();
+                    if !fts.iter().any(|f| self.needs_rc(*f)) {
+                        continue;
+                    }
+                    let bb = self.block("variant");
+                    cases.push((self.ctx.i32_type().const_int(v as u64, false), bb));
+                    let cur = self.b.get_insert_block().unwrap();
+                    self.b.position_at_end(bb);
+                    let pp = self.b.build_struct_gep(et, p, 1, "").unwrap();
+                    let vt = self.variant_llty(d.0, v as u32);
+                    for (i, ft) in fts.iter().enumerate() {
+                        let fp = self.b.build_struct_gep(vt, pp, i as u32, "").unwrap();
+                        self.rc_slot(*ft, fp, retain);
+                    }
+                    self.b.build_unconditional_branch(done).unwrap();
+                    self.b.position_at_end(cur);
+                }
+                self.b.build_switch(tag, done, &cases).unwrap();
+                self.b.position_at_end(done);
+            }
+            _ => self.rc_slot(t, p, retain),
+        }
+    }
+
+    /// `slang_value_ops*` for elements of type `t` (NULL for plain data).
+    pub(crate) fn value_ops(&mut self, t: TypeId) -> PointerValue<'ctx> {
+        match self.rc_kind(t) {
+            RcKind::None => return self.ptr_ty().const_null(),
+            RcKind::Ref => return self.rt_global("slang_ops_ref"),
+            RcKind::Slice => return self.rt_global("slang_ops_slice"),
+            _ => {}
+        }
+        if let Some(p) = self.value_ops.get(&t) {
+            return *p;
+        }
+        let (r, rl) = self.rc_helpers(t);
+        let st = self.ctx.struct_type(&[self.ptr_ty().into(), self.ptr_ty().into()], false);
+        let n = self.fresh();
+        let g = self.module.add_global(st, None, &format!("ops.{n}"));
+        g.set_linkage(Linkage::Internal);
+        g.set_constant(true);
+        g.set_initializer(&st.const_named_struct(&[r.as_global_value().as_pointer_value().into(), rl.as_global_value().as_pointer_value().into()]));
+        self.value_ops.insert(t, g.as_pointer_value());
+        g.as_pointer_value()
+    }
+
+    /// `%slang_type_info = { ptr name, i64 size, ptr drop }`.
+    pub(crate) fn type_info_ty(&self) -> StructType<'ctx> {
+        self.ctx.struct_type(&[self.ptr_ty().into(), self.i64_ty().into(), self.ptr_ty().into()], false)
+    }
+
+    /// The type info of a box (heap object) holding a `t`; also the run-time
+    /// type id of `t`.
+    pub(crate) fn type_info(&mut self, t: TypeId) -> PointerValue<'ctx> {
+        if let Some(g) = self.type_infos.get(&t) {
+            return g.as_pointer_value();
+        }
+        let tity = self.type_info_ty();
+        let n = self.fresh();
+        let g = self.module.add_global(tity, None, &format!("ti.{n}"));
+        g.set_linkage(Linkage::Internal);
+        g.set_constant(true);
+        self.type_infos.insert(t, g);
+        let drop = if self.needs_rc(t) {
+            let fty = self.ctx.void_type().fn_type(&[self.ptr_ty().into()], false);
+            let f = self.module.add_function(&format!("drop.{n}"), fty, Some(Linkage::Internal));
+            let _ = self.with_helper(f, |cg| {
+                let obj = f.get_nth_param(0).unwrap().into_pointer_value();
+                let p = cg.payload(obj);
+                cg.rc_slot(t, p, false);
+                cg.b.build_return(None).unwrap();
+                Ok(())
+            });
+            f.as_global_value().as_pointer_value()
+        } else {
+            self.ptr_ty().const_null()
+        };
+        let name = self.type_name(t);
+        let np = self.cstr(&name);
+        let size = 16 + self.size_of(t);
+        g.set_initializer(&tity.const_named_struct(&[np.into(), self.i64_ty().const_int(size, false).into(), drop.into()]));
+        g.as_pointer_value()
+    }
+
+    /// Allocates a heap object holding `v` (owned, moved in); returns the
+    /// object pointer (+1).
+    pub(crate) fn new_box(&mut self, t: TypeId, v: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        let ti = self.type_info(t);
+        let size = self.i64_ty().const_int(16 + self.size_of(t), false);
+        let obj = self.call_rt_v("slang_object_new", &[ti.into(), size.into()]).into_pointer_value();
+        let p = self.payload(obj);
+        self.b.build_store(p, v).unwrap();
+        obj
+    }
+
+    /// A private NUL-terminated C string constant.
+    pub(crate) fn cstr(&mut self, s: &str) -> PointerValue<'ctx> {
+        if let Some(p) = self.cstrings.get(s) {
+            return *p;
+        }
+        let bytes = self.ctx.const_string(s.as_bytes(), true);
+        let n = self.fresh();
+        let g = self.module.add_global(bytes.get_type(), None, &format!(".cstr.{n}"));
+        g.set_linkage(Linkage::Private);
+        g.set_constant(true);
+        g.set_unnamed_addr(true);
+        g.set_initializer(&bytes);
+        self.cstrings.insert(s.to_string(), g.as_pointer_value());
+        g.as_pointer_value()
+    }
+
+    /// An immortal string literal (ABI.md §4.1); borrowed.
+    pub(crate) fn str_lit(&mut self, s: &str) -> PointerValue<'ctx> {
+        if let Some(p) = self.strings.get(s) {
+            return *p;
+        }
+        let bytes = self.ctx.const_string(s.as_bytes(), true);
+        let st = self.ctx.struct_type(&[self.i64_ty().into(), self.ptr_ty().into(), self.i64_ty().into(), bytes.get_type().into()], false);
+        let tis = self.rt_global("slang_type_string");
+        let init = st.const_named_struct(&[
+            self.i64_ty().const_int(u64::MAX, true).into(),
+            tis.into(),
+            self.i64_ty().const_int(s.len() as u64, false).into(),
+            bytes.into(),
+        ]);
+        let n = self.fresh();
+        let g = self.module.add_global(st, None, &format!(".str.{n}"));
+        g.set_linkage(Linkage::Private);
+        g.set_constant(true);
+        g.set_unnamed_addr(true);
+        g.set_alignment(8);
+        g.set_initializer(&init);
+        self.strings.insert(s.to_string(), g.as_pointer_value());
+        g.as_pointer_value()
+    }
+
+    /// Zero value of `t`.
+    pub(crate) fn zero(&mut self, t: TypeId) -> BasicValueEnum<'ctx> {
+        self.llty(t).const_zero()
+    }
+}

@@ -2,6 +2,8 @@
 //! lexer -> parser (AST) -> sema (names, types) -> codegen (LLVM IR).
 
 pub mod ast;
+pub mod build;
+pub mod codegen;
 pub mod diagnostics;
 pub mod driver;
 pub mod hir;
