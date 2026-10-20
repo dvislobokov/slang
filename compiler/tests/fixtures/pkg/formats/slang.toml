@@ -1,0 +1,19 @@
+# Every manifest field, for the TOML -> JSON -> YAML -> TOML round trip.
+[package]
+name = "shop"
+version = "0.3.1"
+namespace = "shop"
+entry = "src/main.sl"
+license = "MIT"
+description = "Example service"
+
+[dependencies]
+lib-a = { path = "../workspace/lib-a", features = ["fast"] }
+
+[dev-dependencies]
+lib-b = { path = "../workspace/lib-b" }
+
+[features]
+default = ["tls"]
+tls = ["lib-a/tls"]
+metrics = []

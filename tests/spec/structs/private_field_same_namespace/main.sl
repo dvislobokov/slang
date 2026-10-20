@@ -1,0 +1,11 @@
+// test: lowercase fields are accessible anywhere inside their own namespace, even across files
+// status: passing
+namespace spec.structs.privok
+
+import std.io
+
+func main() {
+    var a = Account{balance: 5}
+    a.balance += 1
+    println(a.balance, Peek(a))
+}

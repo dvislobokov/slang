@@ -1,0 +1,21 @@
+// test: try f() catch as a statement discards the value and continues after the block
+// status: passing
+namespace spec.errors.try_catch_statement
+
+import std.io
+
+func Save(name string) void! {
+    if name == "bad" {
+        return error("cannot save " + name)
+    }
+    println("saved", name)
+}
+
+func main() {
+    for n in ["a", "bad", "c"] {
+        try Save(n) catch err {
+            println("error:", err)
+        }
+    }
+    println("end")
+}

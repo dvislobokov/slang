@@ -133,6 +133,7 @@ fn named(t: &TypeExpr) -> String {
         }
         TypeKind::Fallible(t) => format!("{}!", named(t)),
         TypeKind::Pointer(t) => format!("*{}", named(t)),
+        TypeKind::Weak(t) => format!("weak *{}", named(t)),
         TypeKind::Slice(t) => format!("[]{}", named(t)),
         TypeKind::Array(t, n) => format!("[{n}]{}", named(t)),
         TypeKind::Map(k, v) => format!("map[{}]{}", named(k), named(v)),
@@ -154,6 +155,7 @@ fn design_snippets() -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut section = String::new();
     let mut current: Option<String> = None;
+    let mut skipping = false;
     for line in DESIGN.lines() {
         if let Some(code) = current.as_mut() {
             if line.starts_with("```") {
@@ -163,7 +165,18 @@ fn design_snippets() -> Vec<(String, String)> {
                 code.push('\n');
             }
         } else if line.starts_with("```slang") {
-            current = Some(String::new());
+            // "```slang pending" marks syntax described in the design but
+            // not implemented yet; those blocks are skipped.
+            if !line.contains("pending") {
+                current = Some(String::new());
+            } else {
+                current = None;
+                skipping = true;
+            }
+        } else if skipping {
+            if line.starts_with("```") {
+                skipping = false;
+            }
         } else if line.starts_with('#') {
             section = line.trim_start_matches('#').trim().to_string();
         }
@@ -490,6 +503,9 @@ fn type_syntax() {
     assert_eq!(named(&ty("int!")), "int!");
     assert_eq!(named(&ty("void!")), "void!");
     assert_eq!(named(&ty("*Point")), "*Point");
+    assert_eq!(named(&ty("weak *Node")), "weak *Node");
+    assert_eq!(named(&ty("[]weak *Node")), "[]weak *Node");
+    assert_eq!(named(&ty("weak")), "weak", "`weak` is contextual: a plain type name elsewhere");
     assert_eq!(named(&ty("[]User!")), "[]User!");
     assert!(matches!(ty("[]User!").kind, TypeKind::Fallible(_)), "`!` applies to the whole slice");
     assert_eq!(named(&ty("[4]byte")), "[4]byte");

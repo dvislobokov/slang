@@ -1,0 +1,25 @@
+// test: pointers to pointers dereference explicitly and can retarget
+// status: passing
+namespace spec.structs.pointer_to_pointer
+
+import std.io
+
+struct Node {
+    V int
+}
+
+func Retarget(pp **Node, n *Node) {
+    *pp = n
+}
+
+func main() {
+    var a = Node{V: 1}
+    var b = Node{V: 2}
+    var p = &a
+    var pp = &p
+    println((*pp).V, (**pp).V)
+    Retarget(pp, &b)
+    println(p.V)
+    (**pp).V = 20
+    println(b.V, a.V)
+}

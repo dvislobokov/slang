@@ -1,0 +1,39 @@
+// test: attributes on fields, methods, params, enum variants, interfaces and enums
+// status: passing
+namespace spec.attributes.everywhere
+
+import std.io
+
+@attribute
+struct note {
+    text string
+}
+
+@note("iface")
+interface Named {
+    @note("method sig")
+    func Name() string
+}
+
+@note("enum")
+enum Color {
+    @note("variant") Red
+    Green
+}
+
+struct Thing {
+    @note("field") Id int
+
+    @note("method")
+    func Name() string {
+        return "thing"
+    }
+}
+
+func Show(@note("param") n Named, @note("second") c Color) {
+    println(n.Name(), c)
+}
+
+func main() {
+    Show(Thing{Id: 1}, Color.Green)
+}

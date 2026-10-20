@@ -1,0 +1,4 @@
+inner catch: inner
+outer continues
+outer catch: outer
+done

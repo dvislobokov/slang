@@ -1,6 +1,9 @@
 //! End-to-end tests: build every runnable example with `slang build`, run
 //! it and compare stdout byte for byte with its `.out` file.
 //!
+//! Every example is built with `--leak-check`, so it must also release every
+//! heap object before exiting.
+//!
 //! Needs `clang` and `runtime/libslang_rt.a` (built with `make -C runtime`;
 //! the tests run `make` themselves if the archive is missing).
 
@@ -98,14 +101,18 @@ fn check_all(extra: &[&str]) {
     assert!(failures.is_empty(), "{} example(s) failed ({extra:?}):\n{}", failures.len(), failures.join("\n"));
 }
 
+// Every example must also free every object it allocated: `--leak-check`
+// makes the program exit non-zero (with "leak: N objects" on stderr) if any
+// object is still alive at exit.
+
 #[test]
 fn examples_debug() {
-    check_all(&[]);
+    check_all(&["--leak-check"]);
 }
 
 #[test]
 fn examples_release() {
-    check_all(&["--release"]);
+    check_all(&["--release", "--leak-check"]);
 }
 
 #[test]
@@ -158,5 +165,33 @@ fn emit_obj_and_run_with_args() {
     let r = Command::new(slang()).arg("run").arg(repo().join("examples/hello.sl")).arg("-O2").arg("--").arg("x").output().unwrap();
     assert!(r.status.success());
     assert_eq!(String::from_utf8_lossy(&r.stdout), "Hello, Slang!\n");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn leak_check_reports_live_objects() {
+    ensure_runtime();
+    let tmp = tmpdir("leak");
+    let src = tmp.join("cycle.sl");
+    // A strong cycle: never freed (a `weak` back pointer would fix it).
+    std::fs::write(&src, "namespace app\n\nstruct Node {\n    next *Node\n}\n\nfunc main() {\n    var a = new Node{}\n    var b = new Node{next: a}\n    a.next = b\n}\n").unwrap();
+    let cases: [(&[&str], Option<&str>); 3] = [(&["--leak-check"], Some("  2 x app.Node\n")), (&["--leak-check", "--release"], None), (&[], None)];
+    for (flags, names) in cases {
+        let exe = tmp.join("cycle");
+        let b = Command::new(slang()).arg("build").arg(&src).arg("-o").arg(&exe).args(flags).output().unwrap();
+        assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+        let r = Command::new(&exe).output().unwrap();
+        let stderr = String::from_utf8_lossy(&r.stderr);
+        if flags.is_empty() {
+            assert!(r.status.success() && stderr.is_empty(), "{stderr}");
+            continue;
+        }
+        assert_eq!(r.status.code(), Some(66), "{flags:?}: {stderr}");
+        assert!(stderr.starts_with("leak: 2 objects\n"), "{flags:?}: {stderr}");
+        match names {
+            Some(n) => assert!(stderr.contains(n), "{stderr}"),
+            None => assert!(!stderr.contains(" x "), "{stderr}"),
+        }
+    }
     let _ = std::fs::remove_dir_all(&tmp);
 }

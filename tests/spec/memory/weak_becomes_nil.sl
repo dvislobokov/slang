@@ -1,0 +1,23 @@
+// test: a weak *T does not keep its target alive and reads as nil once it is freed
+// status: passing
+namespace spec.memory.weak_becomes_nil
+
+import std.io
+
+struct Obj {
+    V int
+    func Drop() {
+        println("freed", this.V)
+    }
+}
+
+func main() {
+    var strong = new Obj{V: 1}
+    var w weak *Obj = strong
+    println("alive:", w != nil)
+    var tmp *Obj = w
+    println("read through upgrade:", tmp.V)
+    tmp = nil
+    strong = nil
+    println("alive:", w != nil)
+}

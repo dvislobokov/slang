@@ -1,0 +1,24 @@
+// test: nested struct literals, omitted fields are zero, nested field assignment
+// status: passing
+namespace spec.structs.nested_literals
+
+import std.io
+
+struct Inner {
+    A int
+    B string
+}
+
+struct Outer {
+    In Inner
+    List []Inner
+    Ptr *Inner
+}
+
+func main() {
+    var o = Outer{In: Inner{A: 1}, List: [Inner{B: "x"}, Inner{A: 2, B: "y"}], Ptr: new Inner{B: "heap"}}
+    o.In.B = "set"
+    o.List[0].A = 5
+    o.Ptr.A = 9
+    println(o.In.A, o.In.B, o.List[0].A, o.List[0].B, o.List[1].B, o.Ptr.A, o.Ptr.B)
+}

@@ -19,7 +19,13 @@ const RUNTIME: &[(&str, &str, bool)] = &[
     ("slang_object_new", "p:pl", false),
     ("slang_retain", "v:p", false),
     ("slang_release", "v:p", false),
+    ("slang_ptr_retain", "v:p", false),
+    ("slang_ptr_release", "v:p", false),
+    ("slang_weak_new", "p:p", false),
+    ("slang_weak_get", "p:p", false),
+    ("slang_leak_check_enable", "v:i", false),
     ("slang_string_concat", "p:pp", false),
+    ("slang_string_append", "p:pp", false),
     ("slang_string_compare", "i:pp", false),
     ("slang_string_eq", "b:pp", false),
     ("slang_string_len", "l:p", false),
@@ -77,6 +83,7 @@ const RUNTIME: &[(&str, &str, bool)] = &[
     ("slang_task_await", "p:p", false),
     ("slang_runtime_init", "v:ip", false),
     ("slang_runtime_shutdown", "v:", false),
+    ("slang_runtime_drain", "v:", false),
 ];
 
 impl<'a, 'ctx> CodeGen<'a, 'ctx> {

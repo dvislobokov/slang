@@ -1,0 +1,26 @@
+// test: break and continue affect only the innermost loop (no labels)
+// status: passing
+namespace spec.control.nested_break_continue
+
+import std.io
+
+func main() {
+    for i in 0..4 {
+        if i == 1 {
+            continue
+        }
+        for j in 0..4 {
+            if j == 2 {
+                break
+            }
+            if i == 3 && j == 0 {
+                continue
+            }
+            println(i, j)
+        }
+        if i == 3 {
+            break
+        }
+    }
+    println("done")
+}

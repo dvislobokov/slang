@@ -1,0 +1,17 @@
+// error: ? outside of fallible function
+// status: passing
+namespace spec.errors.question_outside_fallible_error
+
+import std.io
+
+func F() int! {
+    return 1
+}
+
+func G() int {
+    return F()?
+}
+
+func main() {
+    println(G())
+}

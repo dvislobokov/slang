@@ -1,11 +1,14 @@
 {
   "name": "slang-lang",
   "displayName": "Slang",
-  "description": "Syntax highlighting for the Slang programming language",
-  "version": "0.1.0",
+  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics, navigation, hover, rename, completion, semantic highlighting)",
+  "version": "0.2.0",
   "publisher": "slang",
-  "engines": { "vscode": "^1.80.0" },
+  "license": "MIT",
+  "engines": { "vscode": "^1.82.0" },
   "categories": ["Programming Languages"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onLanguage:slang", "workspaceContains:**/slang.{toml,json,yaml,yml}"],
   "contributes": {
     "languages": [{
       "id": "slang",
@@ -17,6 +20,49 @@
       "language": "slang",
       "scopeName": "source.slang",
       "path": "./syntaxes/slang.tmLanguage.json"
-    }]
+    }],
+    "commands": [{
+      "command": "slang.restartServer",
+      "title": "Restart server",
+      "category": "Slang"
+    }],
+    "configuration": {
+      "title": "Slang",
+      "properties": {
+        "slang.serverPath": {
+          "type": "string",
+          "default": "slang-lsp",
+          "markdownDescription": "Path to the language server executable. The default `slang-lsp` is looked up on `PATH`; if it is not found, `slang lsp` is used instead. A path to the `slang` CLI also works (it is started as `slang lsp`)."
+        },
+        "slang.serverArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra arguments passed to the language server."
+        },
+        "slang.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the Slang language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node18 --external:vscode --sourcemap --outfile=out/extension.js",
+    "build": "npm run typecheck && npm run bundle",
+    "watch": "npm run bundle -- --watch",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "1.82.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
   }
 }

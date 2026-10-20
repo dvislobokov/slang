@@ -1,0 +1,22 @@
+free root
+free src
+docs parent alive: false
+path: docs
+-- a whole tree
+path: top/mid/leaf
+  notify top first
+  notify leaf first
+  delivered to 2 of 2
+-- drop the root
+free top
+free mid
+leaf parent alive: false
+path: leaf
+  notify leaf second
+  delivered to 1 of 2
+-- drop the leaf
+free leaf
+  delivered to 0 of 2
+-- end of main
+free docs
+free readme

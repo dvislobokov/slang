@@ -1,0 +1,30 @@
+// test: builtin attributes @deprecated, @inline, @reflect, @test are accepted and do not change behaviour
+// status: passing
+namespace spec.attributes.builtin_attrs
+
+import std.io
+
+@reflect
+struct User {
+    Name string
+
+    @deprecated("use Display")
+    func Show() string {
+        return "user " + this.Name
+    }
+}
+
+@inline
+func Twice(n int) int {
+    return n * 2
+}
+
+@test
+func TestTwice() {
+    println("test body", Twice(1))
+}
+
+func main() {
+    var u = User{Name: "ann"}
+    println(u.Show(), Twice(21))
+}

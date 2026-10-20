@@ -93,6 +93,12 @@ impl<'a> Sema<'a> {
             self.err(format!("cannot use nil as {t}: {t} is not nilable (only pointers, slices, maps, functions and interfaces can be nil)"), e.span);
             return mk(ExprKind::Nil, self.tt.invalid, e.span);
         }
+        if let (Type::Pointer(a), Type::Weak(b)) = (self.tt.get(src).clone(), self.tt.get(target).clone()) {
+            if a == b {
+                let span = e.span;
+                return mk(ExprKind::Convert { kind: crate::hir::ConvKind::PtrToWeak, value: Box::new(e) }, target, span);
+            }
+        }
         if self.tt.is_interface(target) {
             let any = matches!(self.tt.get(target), Type::Any);
             if any || (self.struct_of(src).is_some() && self.missing_methods(src, target).is_empty()) {

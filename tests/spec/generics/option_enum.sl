@@ -1,0 +1,38 @@
+// test: generic enum Option<T> constructed with explicit type args and destructured in a switch
+// status: pending
+namespace spec.generics.option_enum
+
+import std.io
+
+enum Option<T> {
+    Some(value T)
+    None
+}
+
+func Find(xs []string, want string) Option<int> {
+    for i, x in xs {
+        if x == want {
+            return Option<int>.Some(i)
+        }
+    }
+    return Option<int>.None
+}
+
+func Show(o Option<int>) string {
+    switch o {
+        case Option.Some(v):
+            return "found at " + string(char(48 + v))
+        default:
+            return "absent"
+    }
+}
+
+func main() {
+    var xs = ["a", "b", "c"]
+    println(Show(Find(xs, "c")), Show(Find(xs, "z")))
+    var name = Option<string>.Some("ann")
+    switch name {
+        case Option.Some(n):
+            println("name", n)
+    }
+}

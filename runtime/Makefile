@@ -9,7 +9,7 @@
 CC      ?= cc
 AR      ?= ar
 CFLAGS  ?= -O2
-CFLAGS  += -std=c11 -Wall -Wextra -Werror -fPIC -D_GNU_SOURCE -Iinclude -g $(CFLAGS_EXTRA)
+CFLAGS  += -std=c11 -Wall -Wextra -Werror -fPIC -ffunction-sections -fdata-sections -D_GNU_SOURCE -Iinclude -g $(CFLAGS_EXTRA)
 LDLIBS  = -lpthread -lm
 
 BUILD   := build

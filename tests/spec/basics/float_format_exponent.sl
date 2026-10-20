@@ -1,0 +1,11 @@
+// test: exponent form is used only when the exponent is < -4 or >= 6 (Go %v)
+// status: passing
+namespace spec.basics.float_format_exponent
+
+import std.io
+
+func main() {
+    println(1e6, 1e-5, 1234567.0, 0.00001234)
+    println(1e20, 1e21, 1e100, -2.5e-10)
+    println(999999.0, 100000.0)
+}

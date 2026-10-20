@@ -151,9 +151,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// the tuple (or `(..)!`, failing with the first error in order).
     fn await_all(&mut self, ty: TypeId, tasks: &[Expr]) -> R<Val<'ctx>> {
         let mut tvs = Vec::new();
+        let d = self.depth();
         for t in tasks {
-            tvs.push(self.expr(t)?);
+            let v = self.expr(t)?;
+            self.hold(t.ty, v);
+            tvs.push(v);
         }
+        self.forget_from(d);
         let mut results = Vec::new();
         for (t, tv) in tasks.iter().zip(&tvs) {
             let Type::Task(rt) = self.ty(t.ty).clone() else { return unsupported("task.All over a non-task") };

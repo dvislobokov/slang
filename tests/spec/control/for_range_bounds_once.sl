@@ -1,0 +1,24 @@
+// test: range bounds are evaluated once, before the first iteration
+// status: passing
+namespace spec.control.for_range_bounds_once
+
+import std.io
+
+func Limit() int {
+    println("Limit called")
+    return 3
+}
+
+func main() {
+    var n = 3
+    var count = 0
+    for _ in 0..n {
+        n += 1
+        count += 1
+    }
+    println(count, n)
+    for i in 0..Limit() {
+        print(i)
+    }
+    println()
+}

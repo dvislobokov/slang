@@ -9,5 +9,17 @@ path = "src/main.rs"
 
 [dependencies]
 inkwell = { version = "0.5", features = ["llvm18-0"] }
+# Raw LLVM C API for what inkwell does not expose (dropping a global's
+# initializer when splitting the module per package). Same version inkwell uses.
+llvm-sys = "180"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
+toml = { version = "0.8", features = ["preserve_order"] }
+toml_edit = "0.22"
+schemars = { version = "0.8", features = ["preserve_order", "indexmap2"] }
+indexmap = { version = "2", features = ["serde"] }
+sha2 = "0.10"
+glob = "0.3"
 
 [dev-dependencies]

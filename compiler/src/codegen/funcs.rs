@@ -23,15 +23,20 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if f.is_async {
             self.coro_prologue(f)?;
         }
-        // Local slots (zeroed at entry).
+        // Local slots (zeroed at entry). Stack values with a destructor get
+        // a drop flag.
         let mut slots = Vec::with_capacity(f.locals.len());
+        let mut flags = Vec::with_capacity(f.locals.len());
         for l in &f.locals {
             let cell = l.captured || l.address_taken;
             let ty = if cell { self.ptr_ty().into() } else { self.llty(l.ty) };
             let p = self.entry_alloca(ty, &l.name, true);
             slots.push(Some(LocalSlot { ptr: p, cell }));
+            flags.push(if !cell && self.has_dtor(l.ty) { Some(self.entry_alloca(self.ctx.bool_type().into(), "dflag", true)) } else { None });
         }
         self.fs_mut().locals = slots;
+        self.fs_mut().flags = flags;
+        self.fs_mut().borrowed = vec![false; f.locals.len()];
         if f.ret != self.prog.types.void {
             let t = self.llty(f.ret);
             let p = self.entry_alloca(t, "ret", true);
@@ -41,7 +46,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.fs_mut().exit = Some(exit);
         for (k, p) in f.params.iter().enumerate() {
             let v = fv.get_nth_param((k + off) as u32).unwrap();
-            self.assign_local(*p, Val::borrowed(v), true)?;
+            if self.facts.moved(fid, k) {
+                // Values with a destructor are moved in.
+                self.assign_local(*p, Val::owned(v), true)?;
+            } else if self.facts.owned(fid, k) || self.fs().locals[p.0 as usize].unwrap().cell || !self.needs_rc(f.locals[p.0 as usize].ty) {
+                self.assign_local(*p, Val::borrowed(v), true)?;
+            } else {
+                // Borrowed: the caller keeps the value alive for the call.
+                let slot = self.fs().locals[p.0 as usize].unwrap();
+                self.b.build_store(slot.ptr, v).unwrap();
+                self.fs_mut().borrowed[p.0 as usize] = true;
+            }
         }
         self.block_stmts(&f.body)?;
         self.br(exit);
@@ -71,29 +86,52 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         Ok(())
     }
 
-    /// Releases every local slot and scoped temporary of the function.
+    /// Releases every local slot (last declared first) and scoped temporary
+    /// of the function.
     pub(crate) fn release_locals(&mut self) {
         let Some(f) = self.fs().hir else { return };
-        let slots = self.fs().locals.clone();
-        for (i, slot) in slots.iter().enumerate() {
-            let Some(slot) = slot else { continue };
-            let l = &f.locals[i];
-            if slot.cell {
-                if !l.address_taken {
-                    let c = self.b.build_load(self.ptr_ty(), slot.ptr, "cell").unwrap();
-                    self.call_rt("slang_release", &[c.into()]);
-                }
-            } else if self.needs_rc(l.ty) {
-                let ty = self.llty(l.ty);
-                let v = self.b.build_load(ty, slot.ptr, "").unwrap();
-                self.release_val(l.ty, v);
-            }
+        for i in (0..f.locals.len()).rev() {
+            self.release_local(LocalId(i as u32), false);
         }
         let scoped = self.fs().scoped.clone();
         for (p, t) in scoped {
             let ty = self.llty(t);
             let v = self.b.build_load(ty, p, "").unwrap();
             self.release_val(t, v);
+        }
+    }
+
+    /// Releases the value of local `l` (no-op for zeroed slots, cleared
+    /// drop flags and borrowed parameters); with `zero` the slot is reset
+    /// so that a later release is a no-op.
+    pub(crate) fn release_local(&mut self, l: LocalId, zero: bool) {
+        let (info, slot) = self.local_info(l);
+        if self.fs().borrowed.get(l.0 as usize).copied().unwrap_or(false) {
+            return;
+        }
+        if slot.cell {
+            let c = self.b.build_load(self.ptr_ty(), slot.ptr, "cell").unwrap();
+            self.call_rt("slang_release", &[c.into()]);
+            if zero {
+                self.b.build_store(slot.ptr, self.ptr_ty().const_null()).unwrap();
+            }
+        } else if let Some(flag) = self.fs().flags.get(l.0 as usize).copied().flatten() {
+            let live = self.b.build_load(self.ctx.bool_type(), flag, "live").unwrap().into_int_value();
+            let rel = self.block("drop.local");
+            let done = self.block("drop.done");
+            self.b.build_conditional_branch(live, rel, done).unwrap();
+            self.b.position_at_end(rel);
+            self.b.build_store(flag, self.ctx.bool_type().const_zero()).unwrap();
+            self.rc_slot(info.ty, slot.ptr, false);
+            self.b.build_unconditional_branch(done).unwrap();
+            self.b.position_at_end(done);
+        } else if self.needs_rc(info.ty) {
+            let ty = self.llty(info.ty);
+            let v = self.b.build_load(ty, slot.ptr, "").unwrap();
+            self.release_val(info.ty, v);
+            if zero {
+                self.b.build_store(slot.ptr, ty.const_zero()).unwrap();
+            }
         }
     }
 
@@ -184,6 +222,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.payload(cell)
     }
 
+    pub(crate) fn upvalue_cell_ptr(&mut self, i: u32) -> PointerValue<'ctx> {
+        self.upvalue_cell(i)
+    }
+
     fn upvalue_cell(&mut self, i: u32) -> PointerValue<'ctx> {
         let env = self.fs().env.expect("codegen: upvalue outside a lambda");
         let p = self.byte_gep(env, 24 + 8 * i as u64);
@@ -200,17 +242,22 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     }
 
     /// Stores `v` into local `l`. With `fresh` (declaration, loop variable,
-    /// binding, parameter) a captured local gets a new cell.
+    /// binding, parameter) the previous value of the slot (from an earlier
+    /// execution) is released and a captured local gets a new cell.
     pub(crate) fn assign_local(&mut self, l: LocalId, v: Val<'ctx>, fresh: bool) -> R<()> {
         let (info, slot) = self.local_info(l);
-        if slot.cell && fresh {
+        if fresh {
             let owned = self.to_owned(info.ty, v);
-            let cell = self.new_box(info.ty, owned);
-            let old = self.b.build_load(self.ptr_ty(), slot.ptr, "").unwrap();
-            if !info.address_taken {
-                self.call_rt("slang_release", &[old.into()]);
+            self.release_local(l, false);
+            if slot.cell {
+                let cell = self.new_box(info.ty, owned);
+                self.b.build_store(slot.ptr, cell).unwrap();
+            } else {
+                self.b.build_store(slot.ptr, owned).unwrap();
+                if let Some(flag) = self.fs().flags.get(l.0 as usize).copied().flatten() {
+                    self.b.build_store(flag, self.ctx.bool_type().const_int(1, false)).unwrap();
+                }
             }
-            self.b.build_store(slot.ptr, cell).unwrap();
         } else {
             let p = self.local_addr(l);
             self.store_assign(p, info.ty, v);

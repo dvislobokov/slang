@@ -44,6 +44,12 @@ extern "C" {
 /* Refcount value marking a static/immortal object (literals, sentinels).
  * retain/release are no-ops on such objects. */
 #define SLANG_RC_IMMORTAL ((int64_t)-1)
+/* Bit 62 of a (non-immortal) refcount word: the object has a weak box.
+ * The count itself is refcount & SLANG_RC_COUNT_MASK. */
+#define SLANG_RC_WEAK_FLAG ((int64_t)1 << 62)
+#define SLANG_RC_COUNT_MASK (SLANG_RC_WEAK_FLAG - 1)
+/* Exit status of a program whose leak check found live objects. */
+#define SLANG_LEAK_EXIT_CODE 66
 
 typedef struct slang_type_info {
     const char *name;          /* +0  human-readable type name (may be NULL) */
@@ -66,6 +72,8 @@ typedef struct slang_value_ops {
 
 /* Slot holds exactly one heap-object pointer (string, *T, map, error, task...). */
 extern const slang_value_ops slang_ops_ref;
+/* Slot holds one `*T` pointer to an object payload (object + 16), or NULL. */
+extern const slang_value_ops slang_ops_ptr;
 /* Slot holds a slang_slice (32 bytes). */
 extern const slang_value_ops slang_ops_slice;
 
@@ -78,6 +86,17 @@ void  slang_retain(void *obj);                /* NULL / immortal: no-op */
 void  slang_release(void *obj);               /* NULL / immortal: no-op; at 0: drop + free */
 int64_t slang_refcount(const void *obj);      /* debugging / tests; 0 for NULL */
 int64_t slang_live_objects(void);             /* number of live slang_object_new objects */
+void  slang_ptr_retain(void *payload);        /* retain the object whose payload (obj+16) is given; NULL ok */
+void  slang_ptr_release(void *payload);       /* release likewise; NULL ok */
+/* Leak check (`slang run --leak-check`): call before anything else. Mode 1
+ * counts, mode 2 also records type names. slang_runtime_shutdown then prints
+ * "leak: N objects" (+ "  K x Type" lines) to stderr and exits with
+ * SLANG_LEAK_EXIT_CODE if objects are still alive. */
+void  slang_leak_check_enable(int32_t mode);
+
+/* Weak references: a weak box shared by all weak refs to one object. */
+void *slang_weak_new(void *payload);          /* +1 weak box for the object of `payload`; NULL -> NULL */
+void *slang_weak_get(void *box);              /* +1 payload pointer, or NULL if freed (or box NULL) */
 
 /* ======================================================================
  * Strings: pointer to immutable heap object; NULL == ""
@@ -105,6 +124,9 @@ const char   *slang_string_data(const slang_string *s);  /* [borrowed] NUL-termi
 int64_t slang_string_len(const slang_string *s);         /* bytes */
 int64_t slang_string_rune_count(const slang_string *s);  /* code points; invalid byte = 1 rune */
 slang_string *slang_string_concat(const slang_string *a, const slang_string *b);
+/* a + b, CONSUMING the caller's reference to `a` (result +1): when `a` is
+ * uniquely referenced it is extended in place (amortised O(len(b))). */
+slang_string *slang_string_append(slang_string *a, const slang_string *b);
 int32_t slang_string_compare(const slang_string *a, const slang_string *b); /* -1, 0, 1 bytewise */
 bool    slang_string_eq(const slang_string *a, const slang_string *b);
 uint64_t slang_string_hash(const slang_string *s);        /* FNV-1a 64 of the bytes */
@@ -323,6 +345,10 @@ int64_t slang_chan_len(const slang_chan *ch);
 
 void slang_runtime_init(int argc, char **argv);
 void slang_runtime_shutdown(void);
+/* Waits for all queued and running jobs and stops the scheduler (it restarts
+ * lazily if used again); slang_runtime_shutdown does the same first. The
+ * compiler calls it before releasing the program's globals. */
+void slang_runtime_drain(void);
 void slang_os_args(slang_slice *out);   /* owned []string */
 SLANG_NORETURN void slang_exit(int32_t code);
 
@@ -381,6 +407,144 @@ slang_error *slang_errors_unwrap(const slang_error *err);  /* owned cause or NUL
 bool         slang_errors_is(const slang_error *err, const slang_error *target);
 
 /* std.task.Delay is slang_task_delay (declared above). */
+
+/* std.strings (more; std_strings_ext.c). []char: elem_size 4 (int32_t code
+ * points), []byte: elem_size 1, both with NULL ops. */
+void          slang_strings_fields(const slang_string *s, slang_slice *out);
+int64_t       slang_strings_count(const slang_string *s, const slang_string *substr);
+int64_t       slang_strings_last_index(const slang_string *s, const slang_string *substr);
+slang_string *slang_strings_trim_prefix(const slang_string *s, const slang_string *prefix);
+slang_string *slang_strings_trim_suffix(const slang_string *s, const slang_string *suffix);
+slang_string *slang_strings_trim_left(const slang_string *s, const slang_string *cutset);
+slang_string *slang_strings_trim_right(const slang_string *s, const slang_string *cutset);
+void          slang_strings_split_n(const slang_string *s, const slang_string *sep, int64_t n,
+                                    slang_slice *out);
+bool          slang_strings_equal_fold(const slang_string *a, const slang_string *b);
+slang_string *slang_strings_reverse(const slang_string *s);   /* by code point */
+slang_string *slang_strings_pad_left(const slang_string *s, int64_t width, const slang_string *pad);
+slang_string *slang_strings_pad_right(const slang_string *s, int64_t width, const slang_string *pad);
+void          slang_strings_runes(const slang_string *s, slang_slice *out);
+slang_string *slang_strings_from_runes(const slang_slice *runes);
+void          slang_strings_bytes(const slang_string *s, slang_slice *out);
+slang_string *slang_strings_from_bytes(const slang_slice *bytes);
+int64_t       slang_strings_compare(const slang_string *a, const slang_string *b);
+slang_string *slang_strings_title(const slang_string *s);
+
+/* std.math (more; std_math_ext.c) */
+double  slang_math_round(double x);
+double  slang_math_trunc(double x);
+double  slang_math_mod(double x, double y);
+double  slang_math_hypot(double x, double y);
+double  slang_math_atan2(double y, double x);
+double  slang_math_log2(double x);
+double  slang_math_log10(double x);
+bool    slang_math_is_nan(double x);
+bool    slang_math_is_inf(double x, int64_t sign);
+double  slang_math_inf(int64_t sign);
+double  slang_math_nan(void);
+int64_t slang_math_imin(int64_t a, int64_t b);
+int64_t slang_math_imax(int64_t a, int64_t b);
+int64_t slang_math_iabs(int64_t a);
+
+/* std.io (more; std_io_ext.c) */
+slang_string *slang_io_read_all(slang_error **err);    /* stdin to EOF */
+void          slang_io_read_lines(const slang_string *path, slang_slice *out, slang_error **err);
+void          slang_io_write_lines(const slang_string *path, const slang_slice *lines,
+                                   slang_error **err);
+void          slang_io_eprint(const slang_string *s);
+void          slang_io_eprintln(const slang_string *s);
+
+/* std.time (std_time.c): times are int64 Unix milliseconds, calendar in UTC */
+int64_t       slang_time_now(void);
+int64_t       slang_time_now_nanos(void);
+void          slang_time_sleep(int64_t ms);
+int64_t       slang_time_since(int64_t start_ms);
+slang_string *slang_time_format(int64_t ms, const slang_string *layout);  /* strftime + %L */
+int64_t       slang_time_parse(const slang_string *s, const slang_string *layout,
+                               slang_error **err);                       /* strptime */
+int64_t       slang_time_year(int64_t ms);
+int64_t       slang_time_month(int64_t ms);    /* 1..12 */
+int64_t       slang_time_day(int64_t ms);      /* 1..31 */
+int64_t       slang_time_hour(int64_t ms);
+int64_t       slang_time_minute(int64_t ms);
+int64_t       slang_time_second(int64_t ms);
+int64_t       slang_time_weekday(int64_t ms);  /* 0 = Sunday */
+
+/* std.os (std_os.c; Args is slang_os_args above) */
+slang_string *slang_os_getenv(const slang_string *name);   /* "" if unset */
+void          slang_os_setenv(const slang_string *name, const slang_string *value,
+                              slang_error **err);
+SLANG_NORETURN void slang_os_exit(int64_t code);
+slang_string *slang_os_hostname(slang_error **err);
+int64_t       slang_os_pid(void);
+slang_string *slang_os_cwd(slang_error **err);
+void          slang_os_chdir(const slang_string *path, slang_error **err);
+
+/* std.fs (std_fs.c) */
+bool          slang_fs_exists(const slang_string *path);
+bool          slang_fs_is_dir(const slang_string *path);
+void          slang_fs_read_dir(const slang_string *path, slang_slice *out, slang_error **err);
+void          slang_fs_mkdir(const slang_string *path, slang_error **err);
+void          slang_fs_mkdir_all(const slang_string *path, slang_error **err);
+void          slang_fs_remove(const slang_string *path, slang_error **err);
+void          slang_fs_remove_all(const slang_string *path, slang_error **err);
+void          slang_fs_rename(const slang_string *from, const slang_string *to, slang_error **err);
+int64_t       slang_fs_size(const slang_string *path, slang_error **err);
+int64_t       slang_fs_mod_time(const slang_string *path, slang_error **err);
+void          slang_fs_copy(const slang_string *from, const slang_string *to, slang_error **err);
+slang_string *slang_fs_join(const slang_string *a, const slang_string *b);
+slang_string *slang_fs_base(const slang_string *path);
+slang_string *slang_fs_dir(const slang_string *path);
+slang_string *slang_fs_ext(const slang_string *path);
+slang_string *slang_fs_abs(const slang_string *path, slang_error **err);
+slang_string *slang_fs_temp_dir(void);
+void          slang_fs_append_file(const slang_string *path, const slang_string *data,
+                                   slang_error **err);
+
+/* std.random (std_random.c): xoshiro256**, process-wide state with a mutex */
+void    slang_random_seed(int64_t seed);
+int64_t slang_random_int(void);              /* [0, 2^63) */
+int64_t slang_random_int_n(int64_t n);       /* [0, n); n <= 0 panics */
+double  slang_random_float(void);            /* [0, 1) */
+void    slang_random_bytes(int64_t n, slang_slice *out);  /* n < 0 panics */
+void    slang_random_shuffle(const slang_slice *s);       /* []int, in place */
+
+/* std.crypto.hash / std.crypto.hmac / std.crypto.rand (std_crypto.c).
+ * []byte results: elem_size 1, NULL ops. Hex output is lowercase. */
+void          slang_crypto_hash_sha256(const slang_string *data, slang_slice *out);
+slang_string *slang_crypto_hash_sha256_hex(const slang_string *data);
+void          slang_crypto_hash_sha512(const slang_string *data, slang_slice *out);
+slang_string *slang_crypto_hash_sha512_hex(const slang_string *data);
+void          slang_crypto_hash_sha1(const slang_string *data, slang_slice *out);
+slang_string *slang_crypto_hash_sha1_hex(const slang_string *data);
+void          slang_crypto_hash_md5(const slang_string *data, slang_slice *out);
+slang_string *slang_crypto_hash_md5_hex(const slang_string *data);
+int64_t       slang_crypto_hash_crc32(const slang_string *data);   /* IEEE, 0..2^32-1 */
+void          slang_crypto_hmac_sha256(const slang_string *key, const slang_string *data,
+                                       slang_slice *out);
+slang_string *slang_crypto_hmac_sha256_hex(const slang_string *key, const slang_string *data);
+bool          slang_crypto_hmac_equal(const slang_slice *a, const slang_slice *b); /* constant time */
+void          slang_crypto_rand_bytes(int64_t n, slang_slice *out, slang_error **err);
+int64_t       slang_crypto_rand_int(slang_error **err);             /* [0, 2^63) */
+slang_string *slang_crypto_rand_hex(int64_t n, slang_error **err);  /* n bytes -> 2n chars */
+
+/* std.encoding.base64 / std.encoding.hex (std_encoding.c) */
+slang_string *slang_encoding_base64_encode(const slang_slice *data);       /* padded */
+slang_string *slang_encoding_base64_encode_string(const slang_string *s);
+void          slang_encoding_base64_decode(const slang_string *s, slang_slice *out,
+                                           slang_error **err);
+slang_string *slang_encoding_base64_decode_string(const slang_string *s, slang_error **err);
+slang_string *slang_encoding_base64_encode_url(const slang_slice *data);   /* unpadded */
+void          slang_encoding_base64_decode_url(const slang_string *s, slang_slice *out,
+                                               slang_error **err);
+slang_string *slang_encoding_hex_encode(const slang_slice *data);
+slang_string *slang_encoding_hex_encode_string(const slang_string *s);
+void          slang_encoding_hex_decode(const slang_string *s, slang_slice *out, slang_error **err);
+slang_string *slang_encoding_hex_decode_string(const slang_string *s, slang_error **err);
+
+/* std.uuid (std_uuid.c) */
+slang_string *slang_uuid_new(void);                  /* random v4, lowercase */
+bool          slang_uuid_is_valid(const slang_string *s);
 
 #ifdef __cplusplus
 }

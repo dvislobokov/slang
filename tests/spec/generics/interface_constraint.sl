@@ -1,0 +1,33 @@
+// test: an interface used as a constraint; methods of T are callable
+// status: pending
+namespace spec.generics.interface_constraint
+
+import std.io
+
+interface Shape {
+    func Area() float
+}
+
+struct Sq {
+    S float
+    func Area() float { return this.S * this.S }
+}
+
+struct Rect {
+    W float
+    H float
+    func Area() float { return this.W * this.H }
+}
+
+func Total<T: Shape>(xs []T) float {
+    var t = 0.0
+    for x in xs {
+        t += x.Area()
+    }
+    return t
+}
+
+func main() {
+    println(Total([Sq{S: 1}, Sq{S: 2}]))
+    println(Total([Rect{W: 2, H: 3}]))
+}

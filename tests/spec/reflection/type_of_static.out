@@ -1,0 +1,4 @@
+User spec.reflection.type_of_static.User Struct
+true
+Color spec.reflection.type_of_static.Color Enum
+int Int

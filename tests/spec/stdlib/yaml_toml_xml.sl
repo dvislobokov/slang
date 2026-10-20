@@ -1,0 +1,24 @@
+// test: yaml, toml and xml decode into the same struct through the shared Parse<T> model
+// status: pending
+namespace spec.stdlib.yaml_toml_xml
+
+import std.io
+import std.encoding
+
+struct Config {
+    Name string
+    Port int
+}
+
+func Run() void! {
+    var y = yaml.Parse<Config>("Name: web\nPort: 8080\n")?
+    var t = toml.Parse<Config>("Name = \"db\"\nPort = 5432\n")?
+    var x = xml.Parse<Config>("<Config><Name>cache</Name><Port>6379</Port></Config>")?
+    println(y.Name, y.Port, t.Name, t.Port, x.Name, x.Port)
+}
+
+func main() {
+    try Run() catch err {
+        println("error:", err)
+    }
+}

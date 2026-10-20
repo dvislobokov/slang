@@ -14,9 +14,16 @@ use crate::token::{Token, TokenKind};
 /// Tokenizes `src`. Lexical errors are reported to `diags` and lexing
 /// continues; the result always ends with an `Eof` token.
 pub fn lex(src: &str, diags: &mut Diagnostics) -> Vec<Token> {
-    let mut lexer = Lexer { src, pos: 0, tokens: Vec::new(), delims: Vec::new(), diags };
+    lex_with_comments(src, diags).0
+}
+
+/// Like [`lex`], but also returns the spans of all comments (`// ...` up to
+/// the end of the line, and `/* ... */`), in source order. The token stream
+/// is identical to [`lex`]'s.
+pub fn lex_with_comments(src: &str, diags: &mut Diagnostics) -> (Vec<Token>, Vec<Span>) {
+    let mut lexer = Lexer { src, pos: 0, tokens: Vec::new(), delims: Vec::new(), diags, comments: Vec::new() };
     lexer.run();
-    lexer.tokens
+    (lexer.tokens, lexer.comments)
 }
 
 struct Lexer<'a, 'd> {
@@ -27,6 +34,8 @@ struct Lexer<'a, 'd> {
     /// Stack of currently open `(`, `[` and `{`.
     delims: Vec<TokenKind>,
     diags: &'d mut Diagnostics,
+    /// Spans of the comments skipped as trivia.
+    comments: Vec<Span>,
 }
 
 impl Lexer<'_, '_> {
@@ -131,12 +140,14 @@ impl Lexer<'_, '_> {
                     self.bump();
                 }
                 '/' if self.peek_at(1) == Some('/') => {
+                    let start = self.pos;
                     while let Some(c) = self.peek() {
                         if c == '\n' {
                             break;
                         }
                         self.bump();
                     }
+                    self.comments.push(Span::new(start as u32, self.pos as u32));
                 }
                 '/' if self.peek_at(1) == Some('*') => self.block_comment(),
                 _ => break,
@@ -162,6 +173,7 @@ impl Lexer<'_, '_> {
                 Some(_) => {}
             }
         }
+        self.comments.push(Span::new(start as u32, self.pos as u32));
         if saw_newline {
             self.insert_semi();
         }

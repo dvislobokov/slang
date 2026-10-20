@@ -1,0 +1,16 @@
+// test: a namespace that is not imported is reachable by its full path (functions, types, consts)
+// status: passing
+namespace spec.ns.fullpath.geo
+
+import std
+
+const Unit = "m"
+
+struct Point {
+    X float
+    Y float
+}
+
+func Dist(p Point) float {
+    return math.Sqrt(p.X * p.X + p.Y * p.Y)
+}

@@ -1,0 +1,28 @@
+// test: ? returns the error from the enclosing T! function; success yields the value
+// status: passing
+namespace spec.errors.question_propagates
+
+import std.io
+
+func Half(n int) int! {
+    if n % 2 != 0 {
+        return error("odd")
+    }
+    return n / 2
+}
+
+func Eighth(n int) int! {
+    var a = Half(n)?
+    var b = Half(a)?
+    return Half(b)?
+}
+
+func main() {
+    for n in [16, 12, 6] {
+        var r = try Eighth(n) catch err {
+            println(n, "->", err)
+            continue
+        }
+        println(n, "->", r)
+    }
+}

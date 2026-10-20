@@ -1,0 +1,33 @@
+// test: nested instantiations List<List<int>> (the >> closes two lists)
+// status: pending
+namespace spec.generics.nested_generics
+
+import std.io
+
+struct List<T> {
+    Items []T
+
+    func Add(x T) {
+        this.Items = append(this.Items, x)
+    }
+
+    func Len() int {
+        return len(this.Items)
+    }
+}
+
+func main() {
+    var grid = List<List<int>>{}
+    for r in 0..3 {
+        var row = List<int>{}
+        for c in 0..r + 1 {
+            row.Add(r * 10 + c)
+        }
+        grid.Add(row)
+    }
+    var total = 0
+    for row in grid.Items {
+        total += row.Len()
+    }
+    println(grid.Len(), total, grid.Items[2].Items)
+}

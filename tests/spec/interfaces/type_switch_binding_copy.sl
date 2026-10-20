@@ -1,0 +1,34 @@
+// test: a type switch on an interface binds a copy for value cases
+// status: passing
+namespace spec.interfaces.type_switch_binding_copy
+
+import std.io
+
+interface Shape {
+    func Area() float
+}
+
+struct Sq {
+    S float
+    func Area() float { return this.S * this.S }
+}
+
+struct Ci {
+    R float
+    func Area() float { return 3 * this.R * this.R }
+}
+
+func main() {
+    var shapes []Shape = [Sq{S: 2}, Ci{R: 1}, &Sq{S: 3}]
+    for s in shapes {
+        switch s {
+            case Sq q:
+                q.S = 100
+                println("square", q.S, s.Area())
+            case Ci c:
+                println("circle", c.R)
+            default:
+                println("other", s.Area())
+        }
+    }
+}

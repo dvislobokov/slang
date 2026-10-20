@@ -1,0 +1,5 @@
+package:
+  name: shop
+  version: 0.1.0
+  namespace: shop
+  entry: src/main.sl

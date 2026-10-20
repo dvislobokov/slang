@@ -96,6 +96,22 @@ static void grow(slang_slice *s, int64_t elem_size, const slang_value_ops *ops, 
         if (ncap > INT64_MAX / 2) { ncap = need; break; }
         ncap = ncap < 1024 ? ncap * 2 : ncap + ncap / 2;
     }
+    slang_backing *ob = (slang_backing *)s->backing;
+    if (ob && s->data == (void *)ob->data && ob->elem_size == elem_size && ob->ops == ops &&
+        __atomic_load_n(&ob->hdr.refcount, __ATOMIC_ACQUIRE) == 1) {
+        /* Only this slice references the backing: grow it in place; the
+         * elements keep their references (no retain/release per element). */
+        check_size(elem_size, ncap);
+        int64_t old_cap = ob->cap;
+        slang_backing *nb = (slang_backing *)slang__object_resize(
+            &ob->hdr, (int64_t)sizeof(slang_backing) + elem_size * ncap);
+        memset(nb->data + old_cap * elem_size, 0, (size_t)((ncap - old_cap) * elem_size));
+        nb->cap = ncap;
+        s->data = nb->data;
+        s->cap = ncap;
+        s->backing = &nb->hdr;
+        return;
+    }
     slang_backing *b = backing_new(elem_size, ncap, ops);
     if (s->len > 0) {
         memcpy(b->data, s->data, (size_t)(s->len * elem_size));

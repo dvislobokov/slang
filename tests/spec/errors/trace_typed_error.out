@@ -1,0 +1,4 @@
+timeout after 50ms
+  created at   tests/spec/errors/trace_typed_error.sl:15  Dial
+  returned via tests/spec/errors/trace_typed_error.sl:21  Connect
+  returned via tests/spec/errors/trace_typed_error.sl:26  main

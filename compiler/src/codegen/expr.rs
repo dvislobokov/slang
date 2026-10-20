@@ -47,22 +47,34 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
     }
 
-    /// Address of place expression `e`.
+    /// Address of place expression `e`. Owned intermediate values (a
+    /// pointer or slice returned by a call, a struct temporary) are held
+    /// until the end of the statement.
     pub(crate) fn place(&mut self, e: &Expr) -> R<PointerValue<'ctx>> {
+        self.place_ex(e, false)
+    }
+
+    /// [`place`](Self::place); with `pin` the owners of the storage (the
+    /// pointer of a `Deref`, the slice of an `Index`) are also kept alive
+    /// until the end of the statement or call, for `&` of an interior place.
+    pub(crate) fn place_ex(&mut self, e: &Expr, pin: bool) -> R<PointerValue<'ctx>> {
         match &e.kind {
             ExprKind::Local(l) => Ok(self.local_addr(*l)),
             ExprKind::Upvalue(i) => Ok(self.upvalue_addr(*i)),
             ExprKind::Global(g) => Ok(self.globals[g.0 as usize].as_pointer_value()),
             ExprKind::Deref(p) => {
-                let pv = self.expr(p)?.get().into_pointer_value();
+                let pv = self.expr(p)?;
+                self.keep(p, pv, pin);
+                let pv = pv.get().into_pointer_value();
                 self.nil_check(pv);
                 Ok(pv)
             }
             ExprKind::Field { base, index } => {
                 let bp = if self.is_place(base) {
-                    self.place(base)?
+                    self.place_ex(base, pin)?
                 } else {
                     let v = self.expr_owned(base)?;
+                    self.hold_raw(base.ty, v);
                     self.spill(v)
                 };
                 let st = self.llty(base.ty).into_struct_type();
@@ -72,15 +84,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 Type::Slice(et) => {
                     let et = *et;
                     let s = self.expr(base)?;
+                    self.keep(base, s, pin);
                     let i = self.expr(index)?.get().into_int_value();
                     Ok(self.slice_elem_ptr(et, s.get(), i, index.ty))
                 }
                 Type::Array(et, n) => {
                     let (et, n) = (*et, *n);
                     let bp = if self.is_place(base) {
-                        self.place(base)?
+                        self.place_ex(base, pin)?
                     } else {
                         let v = self.expr_owned(base)?;
+                        self.hold_raw(base.ty, v);
                         self.spill(v)
                     };
                     let i = self.expr(index)?.get().into_int_value();
@@ -95,9 +109,89 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             _ => {
                 // Not a place: materialise a temporary (only read through).
                 let v = self.expr_owned(e)?;
+                self.hold_raw(e.ty, v);
                 Ok(self.spill(v))
             }
         }
+    }
+
+    /// Keeps the owner value `v` of expression `e` alive until the end of
+    /// the statement: owned values are held; with `pin`, borrowed values
+    /// that could be released meanwhile are retained and held.
+    fn keep(&mut self, e: &Expr, v: Val<'ctx>, pin: bool) {
+        if v.owned {
+            self.hold(e.ty, v);
+        } else if pin && self.needs_rc(e.ty) && !self.is_stable(e) {
+            self.retain_val(e.ty, v.get());
+            self.hold_raw(e.ty, v.get());
+        }
+    }
+
+    /// True if the value of `e` cannot be released while the current
+    /// statement runs: constants, non-cell locals (only this function
+    /// writes them), the cells of `&x`, and interior pointers (whose owner
+    /// is pinned).
+    pub(crate) fn is_stable(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Const(_) | ExprKind::Nil | ExprKind::Zero | ExprKind::FuncRef(_) => true,
+            ExprKind::Local(l) => self.fs().locals.get(l.0 as usize).copied().flatten().is_some_and(|s| !s.cell),
+            ExprKind::AddrOf(x) => match &x.kind {
+                ExprKind::Local(_) | ExprKind::Upvalue(_) => true,
+                ExprKind::Deref(y) => self.is_stable(y),
+                _ => crate::hir::ownership::is_interior_addr(e),
+            },
+            _ => false,
+        }
+    }
+
+    /// True if evaluating `e` may run user code (a call, `await`, a
+    /// `catch` block, a `Message()` through formatting), which could
+    /// release a value borrowed from a non-local place.
+    pub(crate) fn may_run_code(&self, e: &Expr) -> bool {
+        let mut found = false;
+        crate::hir::ownership::walk_expr(self.prog, e, crate::hir::ownership::Pos::Read, &mut |x, _| {
+            if matches!(
+                &x.kind,
+                ExprKind::Call { callee: Callee::Func(_) | Callee::Interface { .. } | Callee::Value(_), .. }
+                    | ExprKind::Await(_)
+                    | ExprKind::TaskAll(_)
+                    | ExprKind::TryCatch { .. }
+                    | ExprKind::ToString(_)
+                    | ExprKind::Print(_)
+            ) {
+                found = true;
+            }
+        });
+        found
+    }
+
+    /// Evaluates `e`; if the value is borrowed from a place that code run
+    /// by a later operand could overwrite (`later` is true), it is retained.
+    pub(crate) fn operand(&mut self, e: &Expr, later: bool) -> R<Val<'ctx>> {
+        let v = self.expr(e)?;
+        if later && !v.owned && v.v.is_some() && self.needs_rc(e.ty) && !self.is_stable(e) {
+            return Ok(Val::owned(self.to_owned(e.ty, v)));
+        }
+        Ok(v)
+    }
+
+    /// Evaluates a call argument for a parameter of type `t`: `moved`
+    /// parameters (destructors) take an owned value; for a `borrowed`
+    /// parameter (or an unknown callee) a value that could be released
+    /// during the call is retained (pinned); owned values are held.
+    pub(crate) fn arg(&mut self, a: &Expr, moved: bool, borrowed: bool, later: bool) -> R<(Val<'ctx>, super::cleanup::Hold)> {
+        let v = self.expr(a)?;
+        let v = if v.v.is_none() {
+            v
+        } else if moved {
+            Val::owned(self.to_owned(a.ty, v))
+        } else if (borrowed || later) && !v.owned && self.needs_rc(a.ty) && !self.is_stable(a) {
+            Val::owned(self.to_owned(a.ty, v))
+        } else {
+            v
+        };
+        let h = self.hold(a.ty, v);
+        Ok((v, h))
     }
 
     /// Integer index converted to `i64`.
@@ -169,18 +263,26 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             ExprKind::Deref(_) => self.load_place(e),
             ExprKind::AddrOf(inner) => {
+                if let ExprKind::Deref(p) = &inner.kind {
+                    // `&*p` is `p` (with its ownership).
+                    let pv = self.expr(p)?;
+                    self.nil_check(pv.get().into_pointer_value());
+                    return Ok(pv);
+                }
                 if self.is_place(inner) {
-                    let p = self.place(inner)?;
+                    // `&x` of a variable (a cell) or an interior pointer
+                    // (whose owners are pinned): borrowed.
+                    let p = self.place_ex(inner, true)?;
                     return Ok(Val::borrowed(p.into()));
                 }
                 let v = self.expr_owned(inner)?;
                 let obj = self.new_box(inner.ty, v);
-                Ok(Val::borrowed(self.payload(obj).into()))
+                Ok(Val::owned(self.payload(obj).into()))
             }
             ExprKind::New(inner) => {
                 let v = self.expr_owned(inner)?;
                 let obj = self.new_box(inner.ty, v);
-                Ok(Val::borrowed(self.payload(obj).into()))
+                Ok(Val::owned(self.payload(obj).into()))
             }
             ExprKind::Index { base, index } => self.index(e, base, index),
             ExprKind::MapGet { map, key } => self.map_get(e.ty, map, key),
@@ -193,32 +295,43 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             ExprKind::StructLit { struct_id, fields } => {
                 let st = self.struct_llty(*struct_id);
                 let mut agg: BasicValueEnum = st.const_zero().into();
+                let d = self.depth();
                 for (idx, fe) in fields {
                     let v = self.expr_owned(fe)?;
+                    self.hold_raw(fe.ty, v);
                     agg = self.b.build_insert_value(agg.into_struct_value(), v, *idx, "").unwrap().into_struct_value().into();
                 }
+                self.forget_from(d);
                 Ok(Val::owned(agg))
             }
             ExprKind::SliceLit(elems) => self.slice_lit(e.ty, elems),
             ExprKind::MapLit(pairs) => {
                 let m = self.new_map(e.ty)?;
                 let (kt, vt) = self.map_kv(e.ty);
+                let d = self.depth();
+                self.hold_raw(e.ty, m.into());
                 for (k, v) in pairs {
+                    let d2 = self.depth();
                     let kv = self.expr(k)?;
+                    self.hold(k.ty, kv);
                     let vv = self.expr(v)?;
+                    self.hold(v.ty, vv);
                     self.map_set(kt, vt, m, kv.get(), vv.get())?;
-                    self.drop_val(k.ty, kv);
-                    self.drop_val(v.ty, vv);
+                    self.release_temps_from(d2);
                 }
+                self.forget_from(d);
                 Ok(Val::owned(m.into()))
             }
             ExprKind::Tuple(es) => {
                 let tt = self.llty(e.ty).into_struct_type();
                 let mut agg: BasicValueEnum = tt.get_undef().into();
+                let d = self.depth();
                 for (i, x) in es.iter().enumerate() {
                     let v = self.expr_owned(x)?;
+                    self.hold_raw(x.ty, v);
                     agg = self.b.build_insert_value(agg.into_struct_value(), v, i as u32, "").unwrap().into_struct_value().into();
                 }
+                self.forget_from(d);
                 Ok(Val::owned(agg))
             }
             ExprKind::EnumLit { enum_id, variant, args } => {
@@ -233,11 +346,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.b.build_store(tp, self.ctx.i32_type().const_int(*variant as u64, false)).unwrap();
                 let pp = self.b.build_struct_gep(et, p, 1, "").unwrap();
                 let vt = self.variant_llty(*enum_id, *variant);
+                let d = self.depth();
                 for (i, a) in args.iter().enumerate() {
                     let v = self.expr_owned(a)?;
+                    self.hold_raw(a.ty, v);
                     let fp = self.b.build_struct_gep(vt, pp, i as u32, "").unwrap();
                     self.b.build_store(fp, v).unwrap();
                 }
+                self.forget_from(d);
                 Ok(Val::owned(self.b.build_load(et, p, "").unwrap()))
             }
             ExprKind::ToInterface { value } => self.to_interface(value, e.ty),
@@ -291,8 +407,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match self.ty(base.ty) {
             Type::Slice(et) => {
                 let et = *et;
-                let bv = self.expr(base)?;
+                let later = self.may_run_code(index);
+                let bv = self.operand(base, later)?;
+                let h = self.hold(base.ty, bv);
                 let i = self.expr(index)?.get().into_int_value();
+                self.unhold(h);
                 let p = self.slice_elem_ptr(et, bv.get(), i, index.ty);
                 let t = self.llty(et);
                 let v = self.b.build_load(t, p, "").unwrap();
@@ -309,7 +428,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 }
                 let bv = self.expr(base)?;
                 let p = self.spill(bv.get());
+                let h = self.hold(base.ty, bv);
                 let i = self.expr(index)?.get().into_int_value();
+                self.unhold(h);
                 let i = self.index_i64(i, index.ty);
                 let Type::Array(et, n) = self.ty(base.ty).clone() else { unreachable!() };
                 self.bounds_check(i, self.i64_ty().const_int(n, false));
@@ -325,8 +446,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 Ok(Val::borrowed(v))
             }
             Type::String => {
-                let s = self.expr(base)?;
+                let later = self.may_run_code(index);
+                let s = self.operand(base, later)?;
+                let h = self.hold(base.ty, s);
                 let i = self.expr(index)?.get().into_int_value();
+                self.unhold(h);
                 let i = self.index_i64(i, index.ty);
                 let f = self.byte_at_fn();
                 let r = self.call_c(f, &[s.get().into(), i.into()]).unwrap();
@@ -358,11 +482,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match self.ty(base.ty).clone() {
             Type::String => {
                 let s = self.expr(base)?;
+                let h = self.hold(base.ty, s);
                 let lo = bound(self, lo)?.unwrap_or(self.i64_ty().const_zero());
                 let hi = match bound(self, hi)? {
                     Some(h) => h,
                     None => self.call_rt_v("slang_string_len", &[s.get().into()]).into_int_value(),
                 };
+                self.unhold(h);
                 let r = self.call_rt_v("slang_string_slice", &[s.get().into(), lo.into(), hi.into()]);
                 self.drop_val(base.ty, s);
                 Ok(Val::owned(r))
@@ -370,11 +496,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             Type::Slice(et) => {
                 let s = self.expr(base)?;
                 let sp = self.spill(s.get());
+                let h = self.hold(base.ty, s);
                 let lo = bound(self, lo)?.unwrap_or(self.i64_ty().const_zero());
                 let hi = match bound(self, hi)? {
                     Some(h) => h,
                     None => self.b.build_extract_value(s.get().into_struct_value(), 1, "").unwrap().into_int_value(),
                 };
+                self.unhold(h);
                 let out = self.entry_alloca(self.slice_ty().into(), "sub", false);
                 let size = self.i64_ty().const_int(self.size_of(et), false);
                 self.call_rt("slang_slice_sub", &[out.into(), sp.into(), lo.into(), hi.into(), size.into()]);
@@ -405,6 +533,32 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 v = self.b.build_insert_value(v, len, 1, "").unwrap();
                 v = self.b.build_insert_value(v, cap, 2, "").unwrap();
                 let _ = e;
+                // A local array lives in a heap cell (it is address-taken):
+                // the slice owns a reference to the cell. Arrays elsewhere
+                // (globals: static; others: borrowed-only, see sema) have no
+                // backing object.
+                // The root variable of `v.f.arr[i..j]` / `arr[i..j]`.
+                let mut root: &Expr = base;
+                loop {
+                    match &root.kind {
+                        ExprKind::Field { base: b, .. } => root = b,
+                        ExprKind::Index { base: b, .. } if matches!(self.ty(b.ty), Type::Array(..)) => root = b,
+                        _ => break,
+                    }
+                }
+                let cell = match &root.kind {
+                    ExprKind::Local(l) => {
+                        let slot = self.fs().locals[l.0 as usize].unwrap();
+                        slot.cell.then(|| self.b.build_load(self.ptr_ty(), slot.ptr, "cell").unwrap().into_pointer_value())
+                    }
+                    ExprKind::Upvalue(i) => Some(self.upvalue_cell_ptr(*i)),
+                    _ => None,
+                };
+                if let Some(c) = cell {
+                    self.call_rt("slang_retain", &[c.into()]);
+                    v = self.b.build_insert_value(v, c, 3, "").unwrap();
+                    return Ok(Val::owned(v.into_struct_value().into()));
+                }
                 Ok(Val::borrowed(v.into_struct_value().into()))
             }
             _ => unsupported("sub-slicing this type"),
@@ -422,12 +576,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let ops = self.value_ops(et);
         self.call_rt("slang_slice_new_ops", &[out.into(), size.into(), n.into(), n.into(), ops.into()]);
         let elt = self.llty(et);
+        let d = self.depth();
+        let whole = self.b.build_load(self.slice_ty(), out, "").unwrap();
+        self.hold_raw(ty, whole);
         for (i, x) in elems.iter().enumerate() {
             let v = self.expr_owned(x)?;
             let data = self.b.build_load(self.ptr_ty(), out, "data").unwrap().into_pointer_value();
             let p = unsafe { self.b.build_in_bounds_gep(elt, data, &[self.i64_ty().const_int(i as u64, false)], "") }.unwrap();
             self.b.build_store(p, v).unwrap();
         }
+        self.forget_from(d);
         Ok(Val::owned(self.b.build_load(self.slice_ty(), out, "").unwrap()))
     }
 
@@ -438,32 +596,50 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn call(&mut self, e: &Expr, callee: &Callee, args: &[Expr]) -> R<Val<'ctx>> {
         match callee {
             Callee::Func(fid) => {
+                let d = self.depth();
                 let mut vals = Vec::new();
-                for a in args {
-                    vals.push(self.expr(a)?);
+                let mut moved_holds = Vec::new();
+                for (k, a) in args.iter().enumerate() {
+                    let moved = self.facts.moved(*fid, k);
+                    let borrowed = !self.facts.owned(*fid, k);
+                    let later = args[k + 1..].iter().any(|x| self.may_run_code(x));
+                    let (v, h) = self.arg(a, moved, borrowed, later)?;
+                    if moved {
+                        moved_holds.push(h);
+                    }
+                    vals.push(v);
                 }
                 let fv = self.funcs[fid.0 as usize];
                 let ma: Vec<BasicMetadataValueEnum> = vals.iter().map(|v| v.get().into()).collect();
                 let r = self.b.build_call(fv, &ma, "").unwrap().try_as_basic_value().left();
-                for (a, v) in args.iter().zip(vals) {
-                    self.drop_val(a.ty, v);
+                for h in moved_holds {
+                    self.unhold(h);
                 }
+                self.release_temps_from(d);
                 Ok(Val { v: r, owned: true })
             }
             Callee::Extern(x) => self.extern_call(*x, args),
             Callee::Interface { recv, method } => self.iface_call(e.ty, recv, *method, args),
             Callee::Value(c) => {
-                let cv = self.expr(c)?;
+                let d = self.depth();
+                let (cv, _) = self.arg(c, false, true, false)?;
+                let Type::Func(sig) = self.ty(c.ty).clone() else { return unsupported("call of a non-function value") };
                 let mut vals = Vec::new();
-                for a in args {
-                    vals.push(self.expr(a)?);
+                let mut moved_holds = Vec::new();
+                for (k, a) in args.iter().enumerate() {
+                    let moved = sig.params.get(k).is_some_and(|t| self.has_dtor(*t));
+                    let (v, h) = self.arg(a, moved, true, false)?;
+                    if moved {
+                        moved_holds.push(h);
+                    }
+                    vals.push(v);
                 }
                 let raw: Vec<BasicValueEnum> = vals.iter().map(|v| v.get()).collect();
                 let r = self.call_closure(c.ty, cv.get(), &raw)?;
-                for (a, v) in args.iter().zip(vals) {
-                    self.drop_val(a.ty, v);
+                for h in moved_holds {
+                    self.unhold(h);
                 }
-                self.drop_val(c.ty, cv);
+                self.release_temps_from(d);
                 Ok(Val { v: r, owned: true })
             }
         }
@@ -517,16 +693,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn extern_call(&mut self, x: ExternId, args: &[Expr]) -> R<Val<'ctx>> {
         let f = self.extern_decl(x);
         let ex = &self.prog.externs[x.0 as usize];
-        let mut vals = Vec::new();
+        let d = self.depth();
         let mut ma: Vec<BasicMetadataValueEnum> = Vec::new();
-        for a in args {
-            let v = self.expr(a)?;
+        for (k, a) in args.iter().enumerate() {
+            let later = args[k + 1..].iter().any(|x| self.may_run_code(x));
+            let v = self.operand(a, later)?;
+            self.hold(a.ty, v);
             let pass: BasicValueEnum = match self.ty(a.ty) {
                 Type::Slice(_) => self.spill(v.get()).into(),
                 _ => v.get(),
             };
             ma.push(pass.into());
-            vals.push(v);
         }
         let (ret_inner, fallible) = match self.ty(ex.ret) {
             Type::Fallible(t) => (*t, true),
@@ -548,9 +725,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             None
         };
         let mut r = self.call_c(f, &ma);
-        for (a, v) in args.iter().zip(vals) {
-            self.drop_val(a.ty, v);
-        }
+        self.release_temps_from(d);
         if let Some(o) = out {
             r = Some(self.b.build_load(self.slice_ty(), o, "").unwrap());
         }
@@ -697,8 +872,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     fn map_get(&mut self, vt: TypeId, map: &Expr, key: &Expr) -> R<Val<'ctx>> {
         let (kt, _) = self.map_kv(map.ty);
-        let mv = self.expr(map)?;
+        let later = self.may_run_code(key);
+        let mv = self.operand(map, later)?;
+        let h = self.hold(map.ty, mv);
         let kv = self.expr(key)?;
+        self.unhold(h);
         let slot = self.map_slot(kt, mv.get(), kv.get(), false);
         let lt = self.llty(vt);
         let res = self.entry_alloca(lt, "mapv", false);

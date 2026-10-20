@@ -1,0 +1,22 @@
+// test: std.random is deterministic after Seed and IntN stays in range
+// status: passing
+namespace spec.stdlib.random_seeded
+
+import std.io
+import std
+
+func main() {
+    random.Seed(42)
+    var a = random.Int()
+    var f = random.Float()
+    random.Seed(42)
+    println(a == random.Int(), f == random.Float())
+    var ok = true
+    for _ in 0..1000 {
+        var n = random.IntN(10)
+        if n < 0 || n >= 10 {
+            ok = false
+        }
+    }
+    println(ok, len(random.Bytes(4)))
+}

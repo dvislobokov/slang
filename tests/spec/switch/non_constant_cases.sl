@@ -1,0 +1,22 @@
+// test: case values may be arbitrary expressions of the subject type
+// status: passing
+namespace spec.switch.non_constant_cases
+
+import std.io
+
+func Rel(x, y int) string {
+    switch x {
+        case y:
+            return "equal"
+        case y + 1:
+            return "one more"
+        case y * 2, y * 3:
+            return "multiple"
+        default:
+            return "unrelated"
+    }
+}
+
+func main() {
+    println(Rel(4, 4), Rel(5, 4), Rel(8, 4), Rel(12, 4), Rel(1, 4))
+}

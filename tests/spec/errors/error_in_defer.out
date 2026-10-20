@@ -1,0 +1,6 @@
+closed a
+result 1
+in defer: close b failed
+result 1
+closed c
+Use: use failed

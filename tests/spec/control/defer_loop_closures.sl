@@ -1,0 +1,20 @@
+// test: defers in a loop run LIFO; each deferred closure sees its own iteration variable
+// status: passing
+namespace spec.control.defer_loop_closures
+
+import std.io
+
+func Run() {
+    for i in 0..3 {
+        defer func() {
+            println("closure", i)
+        }()
+        defer println("arg", i * 10)
+    }
+    println("body done")
+}
+
+func main() {
+    Run()
+    println("after Run")
+}

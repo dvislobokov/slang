@@ -1,0 +1,24 @@
+// test: a closure capturing a pointer keeps the object alive until the closure is released
+// status: passing
+namespace spec.memory.closure_keeps_alive
+
+import std.io
+
+struct Conn {
+    Id int
+    func Drop() {
+        println("drop conn", this.Id)
+    }
+}
+
+func MakeGetter() func() int {
+    var c = new Conn{Id: 9}
+    return () => c.Id
+}
+
+func main() {
+    var get = MakeGetter()
+    println("got", get())
+    get = nil
+    println("released")
+}

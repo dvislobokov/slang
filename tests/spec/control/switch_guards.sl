@@ -1,0 +1,28 @@
+// test: boolean case expressions act as guards; first matching case wins
+// status: passing
+namespace spec.control.switch_guards
+
+import std.io
+
+func Bucket(n int) string {
+    switch n {
+        case 0:
+            return "zero"
+        case n < 0:
+            return "negative"
+        case n % 15 == 0:
+            return "fizzbuzz"
+        case n % 3 == 0:
+            return "fizz"
+        case 1..5:
+            return "small"
+        default:
+            return "other"
+    }
+}
+
+func main() {
+    for n in [0, -3, 30, 9, 4, 7] {
+        println(n, Bucket(n))
+    }
+}

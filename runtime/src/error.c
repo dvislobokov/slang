@@ -39,8 +39,13 @@ slang_error *slang_error_new_cstr(const char *msg) {
 }
 
 slang_error *slang_error_sentinel(const slang_string *msg) {
-    slang_error *e = slang_error_new(msg);
-    e->hdr.refcount = SLANG_RC_IMMORTAL;
+    /* The sentinel and its message (an immortal copy) are never freed and
+     * do not count as live objects. */
+    slang_string *m = (msg && msg->hdr.refcount >= 0)
+                          ? slang_string_literal(slang_string_data(msg), slang_string_len(msg))
+                          : (slang_string *)msg;
+    slang_error *e = slang_error_new(m);
+    slang__object_immortalize(&e->hdr);
     return e;
 }
 

@@ -1,0 +1,22 @@
+// test: return exits all enclosing loops at once
+// status: passing
+namespace spec.control.return_from_nested_loops
+
+import std.io
+import std
+
+func Find(grid [][]int, want int) string {
+    for r, row in grid {
+        for c, v in row {
+            if v == want {
+                return fmt.Format("{0},{1}", r, c)
+            }
+        }
+    }
+    return "none"
+}
+
+func main() {
+    var g = [[1, 2], [3, 4], [5, 6]]
+    println(Find(g, 4), Find(g, 5), Find(g, 9))
+}

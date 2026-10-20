@@ -19,11 +19,16 @@ void slang_runtime_init(int argc, char **argv) {
     slang__sched_start();
 }
 
+void slang_runtime_drain(void) {
+    slang__sched_stop();
+}
+
 void slang_runtime_shutdown(void) {
     slang__sched_stop();
     slang__io_flush_all();
     slang_slice_release(&g_args);
     g_initialized = 0;
+    slang__leak_report();
 }
 
 void slang_os_args(slang_slice *out) {

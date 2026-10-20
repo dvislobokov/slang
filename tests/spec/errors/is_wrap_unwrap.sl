@@ -1,0 +1,19 @@
+// test: errors.Wrap/Unwrap/Is/New over a chain of wrappers
+// status: passing
+namespace spec.errors.is_wrap_unwrap
+
+import std.io
+import std
+
+const ErrA = error("a")
+const ErrB = errors.New("b")
+
+func main() {
+    var w1 = errors.Wrap(ErrA, "level1")
+    var w2 = errors.Wrap(w1, "level2")
+    println(w2)
+    println(errors.Is(w2, ErrA), errors.Is(w2, w1), errors.Is(w2, ErrB), errors.Is(ErrA, ErrA))
+    println(errors.Unwrap(w2), errors.Unwrap(errors.Unwrap(w2)), errors.Unwrap(ErrA))
+    var plain = error("a")
+    println(errors.Is(plain, ErrA), plain)
+}

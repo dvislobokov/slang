@@ -1,0 +1,28 @@
+// test: the outer value's Drop runs first, then its fields' Drops in declaration order
+// status: passing
+namespace spec.memory.drop_nested_fields
+
+import std.io
+
+struct Part {
+    Name string
+    func Drop() {
+        println("drop part", this.Name)
+    }
+}
+
+struct Machine {
+    Engine Part
+    Wheel Part
+    func Drop() {
+        println("drop machine")
+    }
+}
+
+func main() {
+    {
+        var m = Machine{Engine: Part{Name: "engine"}, Wheel: Part{Name: "wheel"}}
+        println("built", m.Engine.Name)
+    }
+    println("end")
+}

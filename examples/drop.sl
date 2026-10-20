@@ -1,0 +1,138 @@
+namespace examples.drop
+
+import std.io
+
+// A struct with a `func Drop()` method has a destructor. It runs exactly
+// once, as soon as the value is gone: at the end of the variable's block
+// for a value on the stack, when the last reference goes away for a value
+// on the heap.
+struct File {
+    name string
+
+    func Write(s string) {
+        println("write", this.name + ":", s)
+    }
+
+    func Drop() {
+        println("close", this.name)
+    }
+}
+
+// A struct holding a File by value has a destructor too: when it goes
+// away, its own Drop (if any) runs first, then its fields are dropped in
+// declaration order.
+struct Logger {
+    prefix string
+    out File
+
+    func Drop() {
+        println("logger", this.prefix, "done")
+    }
+}
+
+// Values with a destructor are move-only: they are created in place (a
+// literal, a function result) and shared through pointers.
+func Open(name string) File {
+    println("open", name)
+    return File{name: name}
+}
+
+func OpenChecked(name string) File! {
+    if name == "" {
+        return error("empty file name")
+    }
+    return Open(name)
+}
+
+// A by-value parameter takes ownership: the file is closed when the
+// callee returns.
+func Consume(f File) {
+    f.Write("consumed")
+}
+
+// A pointer parameter only borrows.
+func Touch(f *File) {
+    f.Write("touched")
+}
+
+func Scopes() {
+    var a = Open("a")
+    {
+        var b = Open("b")
+        var c = Open("c")
+        Touch(&b)
+        c.Write("inner")
+    }
+    a.Write("outer")
+}
+
+func Loop() {
+    for i in 0..3 {
+        var f = Open("loop")
+        if i == 1 {
+            break
+        }
+        f.Write("iteration")
+    }
+}
+
+// Early returns (here through `?`) drop what was created so far.
+func Copy(from string, to string) void! {
+    var src = OpenChecked(from)?
+    var dst = OpenChecked(to)?
+    src.Write("read")
+    dst.Write("write")
+}
+
+func Shared() {
+    var p = new File{name: "shared"}
+    var q = p
+    p = nil
+    println("p cleared")
+    q.Write("still open")
+    q = nil
+    println("q cleared")
+}
+
+func Nested() {
+    var l = new Logger{prefix: "app", out: Open("app.log")}
+    l.out.Write("hello")
+}
+
+interface Writer {
+    func Write(s string)
+}
+
+// Interfaces and closures hold references like any other value.
+func Boxed() {
+    var w Writer = Open("boxed")
+    w.Write("through an interface")
+    var later = func() {
+        w.Write("from a closure")
+    }
+    later()
+    later = nil
+    println("closure released")
+}
+
+// Globals are dropped after main returns, in reverse initialisation order.
+var audit = Open("audit.log")
+
+func main() {
+    defer println("main: deferred call")
+    audit.Write("start")
+    var log = Open("main.log")
+    Scopes()
+    Loop()
+    Consume(Open("arg"))
+    try Copy("in", "out") catch err {
+        println("error:", err)
+    }
+    try Copy("in", "") catch err {
+        println("error:", err)
+    }
+    Shared()
+    Nested()
+    Boxed()
+    log.Write("bye")
+}

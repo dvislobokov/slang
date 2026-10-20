@@ -13,8 +13,10 @@ use inkwell::IntPredicate;
 pub(crate) enum RcKind {
     /// Plain data.
     None,
-    /// One heap-object pointer (string, error, map, task).
+    /// One heap-object pointer (string, error, map, task, weak box).
     Ref,
+    /// A `*T`: pointer to an object payload (header at -16), or NULL.
+    Ptr,
     /// A slice value: the backing (field 3) is the reference.
     Slice,
     /// A closure: the env (field 1) is the reference.
@@ -30,8 +32,18 @@ pub(crate) enum RcKind {
 
 impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn rc_kind(&self, t: TypeId) -> RcKind {
+        if let Some(k) = self.rc_cache.borrow().get(&t) {
+            return *k;
+        }
+        let k = self.rc_kind_uncached(t);
+        self.rc_cache.borrow_mut().insert(t, k);
+        k
+    }
+
+    fn rc_kind_uncached(&self, t: TypeId) -> RcKind {
         match self.ty(t) {
-            Type::String | Type::Error | Type::Map(..) | Type::Task(_) => RcKind::Ref,
+            Type::String | Type::Error | Type::Map(..) | Type::Task(_) | Type::Weak(_) => RcKind::Ref,
+            Type::Pointer(_) => RcKind::Ptr,
             Type::Slice(_) => RcKind::Slice,
             Type::Func(_) => RcKind::Func,
             Type::Interface(_) => RcKind::Iface,
@@ -58,7 +70,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 }
             }
             Type::Struct(d) => {
-                if self.prog.structs[d.0 as usize].fields.iter().any(|f| self.needs_rc(f.ty)) {
+                if self.drop_fn(d.0).is_some() || self.prog.structs[d.0 as usize].fields.iter().any(|f| self.needs_rc(f.ty)) {
                     RcKind::Agg
                 } else {
                     RcKind::None
@@ -78,6 +90,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     pub(crate) fn needs_rc(&self, t: TypeId) -> bool {
         self.rc_kind(t) != RcKind::None
+    }
+
+    /// The `Drop` method of struct `sid`, if any.
+    pub(crate) fn drop_fn(&self, sid: u32) -> Option<crate::hir::FuncId> {
+        crate::hir::ownership::drop_method(self.prog, sid)
+    }
+
+    /// True if values of `t` contain a struct with a destructor.
+    pub(crate) fn has_dtor(&self, t: TypeId) -> bool {
+        crate::hir::ownership::has_dtor(self.prog, t)
     }
 
     /// Makes `v` owned: retains it if borrowed.
@@ -126,11 +148,22 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
     }
 
+    fn ptr_rc_name(retain: bool) -> &'static str {
+        if retain {
+            "slang_ptr_retain"
+        } else {
+            "slang_ptr_release"
+        }
+    }
+
     fn rc_val(&mut self, t: TypeId, v: BasicValueEnum<'ctx>, retain: bool) {
         match self.rc_kind(t) {
             RcKind::None => {}
             RcKind::Ref => {
                 self.call_rt(Self::rc_name(retain), &[v.into()]);
+            }
+            RcKind::Ptr => {
+                self.call_rt(Self::ptr_rc_name(retain), &[v.into()]);
             }
             RcKind::Slice => {
                 let b = self.b.build_extract_value(v.into_struct_value(), 3, "backing").unwrap();
@@ -156,6 +189,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             RcKind::Ref => {
                 let v = self.b.build_load(self.ptr_ty(), p, "").unwrap();
                 self.call_rt(Self::rc_name(retain), &[v.into()]);
+            }
+            RcKind::Ptr => {
+                let v = self.b.build_load(self.ptr_ty(), p, "").unwrap();
+                self.call_rt(Self::ptr_rc_name(retain), &[v.into()]);
             }
             RcKind::Slice => {
                 let bp = self.byte_gep(p, 24);
@@ -200,27 +237,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn rc_slot_body(&mut self, t: TypeId, p: PointerValue<'ctx>, retain: bool) {
         match self.ty(t).clone() {
             Type::Interface(_) | Type::Any => {
-                let is_any = matches!(self.ty(t), Type::Any);
+                // A non-nil interface value always owns its data: a box
+                // payload (struct values, `any`) or a `*S` payload.
                 let data = self.b.build_load(self.ptr_ty(), p, "data").unwrap().into_pointer_value();
                 let vp = self.byte_gep(p, 8);
                 let vt = self.b.build_load(self.ptr_ty(), vp, "vt").unwrap().into_pointer_value();
                 let has = self.block("has");
-                let boxed = self.block("boxed");
                 let done = self.block("done");
                 let nn = self.b.build_is_not_null(vt, "").unwrap();
                 self.b.build_conditional_branch(nn, has, done).unwrap();
                 self.b.position_at_end(has);
-                if is_any {
-                    self.b.build_unconditional_branch(boxed).unwrap();
-                } else {
-                    let fp = self.byte_gep(vt, 8);
-                    let flag = self.b.build_load(self.i64_ty(), fp, "").unwrap().into_int_value();
-                    let isb = self.b.build_int_compare(IntPredicate::NE, flag, self.i64_ty().const_zero(), "").unwrap();
-                    self.b.build_conditional_branch(isb, boxed, done).unwrap();
-                }
-                self.b.position_at_end(boxed);
-                let obj = unsafe { self.b.build_in_bounds_gep(self.ctx.i8_type(), data, &[self.i64_ty().const_int((-16i64) as u64, true)], "") }.unwrap();
-                self.call_rt(Self::rc_name(retain), &[obj.into()]);
+                self.call_rt(Self::ptr_rc_name(retain), &[data.into()]);
                 self.b.build_unconditional_branch(done).unwrap();
                 self.b.position_at_end(done);
             }
@@ -228,8 +255,22 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let st = self.llty(t).into_struct_type();
                 if *self.ty(inner) != Type::Void {
                     let fp = self.b.build_struct_gep(st, p, 0, "").unwrap();
-                    self.rc_slot(inner, fp, retain);
                     let ep = self.b.build_struct_gep(st, p, 1, "").unwrap();
+                    if !retain && self.has_dtor(inner) {
+                        // A failed result holds no value: do not run the
+                        // destructor on the zero placeholder.
+                        let e = self.b.build_load(self.ptr_ty(), ep, "err").unwrap().into_pointer_value();
+                        let okb = self.block("res.ok");
+                        let done = self.block("res.done");
+                        let isnull = self.b.build_is_null(e, "").unwrap();
+                        self.b.build_conditional_branch(isnull, okb, done).unwrap();
+                        self.b.position_at_end(okb);
+                        self.rc_slot(inner, fp, retain);
+                        self.b.build_unconditional_branch(done).unwrap();
+                        self.b.position_at_end(done);
+                    } else {
+                        self.rc_slot(inner, fp, retain);
+                    }
                     self.rc_slot(self.prog.types.error, ep, retain);
                 } else {
                     self.rc_slot(self.prog.types.error, p, retain);
@@ -244,6 +285,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             Type::Struct(d) => {
                 let st = self.struct_llty(d.0);
+                if !retain {
+                    // The destructor runs first, while the fields are intact.
+                    if let Some(df) = self.drop_fn(d.0) {
+                        let f = self.funcs[df.0 as usize];
+                        self.b.build_call(f, &[p.into()], "").unwrap();
+                    }
+                }
                 let fts: Vec<TypeId> = self.prog.structs[d.0 as usize].fields.iter().map(|f| f.ty).collect();
                 for (i, ft) in fts.iter().enumerate() {
                     if self.needs_rc(*ft) {
@@ -307,6 +355,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match self.rc_kind(t) {
             RcKind::None => return self.ptr_ty().const_null(),
             RcKind::Ref => return self.rt_global("slang_ops_ref"),
+            RcKind::Ptr => return self.rt_global("slang_ops_ptr"),
             RcKind::Slice => return self.rt_global("slang_ops_slice"),
             _ => {}
         }

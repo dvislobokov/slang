@@ -141,6 +141,8 @@ fn multi_file_example_checks_cleanly() {
 const ERROR_KEYWORDS: &[(&str, &str)] = &[
     ("await_outside_async.sl", "await outside async"),
     ("catch_falls_through.sl", "catch block must return"),
+    ("copy_drop_value.sl", "cannot copy a value of type app.File"),
+    ("interior_pointer_escape.sl", "cannot keep an interior pointer"),
     ("missing_return.sl", "missing return"),
     ("question_outside_fallible.sl", "? outside of fallible function"),
     ("type_mismatch.sl", "cannot assign string to int"),
@@ -148,6 +150,7 @@ const ERROR_KEYWORDS: &[(&str, &str)] = &[
     ("unhandled_void_result.sl", "result of type void! must be handled"),
     ("unknown_ident.sl", "unknown identifier undefinedName"),
     ("unused_var.sl", "unused variable x"),
+    ("weak_to_interior.sl", "cannot keep an interior pointer"),
 ];
 
 #[test]
@@ -527,4 +530,81 @@ fn hir_dump_is_readable() {
     let d = p.dump();
     assert!(d.contains("func #0 t.main"), "{d}");
     assert!(d.contains("print[Str \"hi\":string; Newline]"), "{d}");
+}
+
+// ---------------------------------------------------------------------------
+// Memory: interior pointers, destructors, weak references
+// ---------------------------------------------------------------------------
+
+const MEM_DECLS: &str = "
+struct P { x int\n y int }
+struct L { a P\n b P\n ps []P\n arr [3]int }
+var g P
+func look(p *P) int { return p.x }
+func keep(p *P) *P { return p }
+func setp(l *L, p *P) { l.a = *p }
+";
+
+#[test]
+fn interior_pointers_are_borrowed_only() {
+    // Read through, compared and passed to non-escaping parameters: fine.
+    ok(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n println(look(&l.a), look(&g), (&l.b).y)\n setp(l, &l.b)\n l.ps = append(l.ps, P{{}})\n println(look(&l.ps[0]))\n var s = l.arr\n println(s)\n}}")));
+    // Kept in a variable, returned through an escaping parameter, stored.
+    err(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n var p = &l.a\n println(p.x)\n}}")), "cannot keep an interior pointer");
+    err(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n println(keep(&l.a).x)\n}}")), "to parameter `p` of t.keep: the parameter escapes");
+    err(&prog(&format!("{MEM_DECLS}\nfunc f() *P {{ return &g }}\nfunc main() {{ println(f().x) }}")), "cannot keep an interior pointer");
+    err(&prog(&format!("{MEM_DECLS}\nstruct H {{ p *P }}\nfunc main() {{\n var l = new L{{}}\n var h = H{{p: &l.ps[0]}}\n println(h.p.x)\n}}")), "cannot keep an interior pointer");
+    // A slice of an array reached through a pointer has no owner.
+    err(&prog(&format!("{MEM_DECLS}\nfunc f(l *L) []int {{ return l.arr[0..2] }}\nfunc main() {{ println(f(new L{{}})) }}")), "a slice of an array that is not a variable");
+}
+
+#[test]
+fn methods_storing_this_need_a_whole_receiver() {
+    let decls = "
+struct N { v int\n next *N\n func Link(o *N) { o.next = this } }
+struct W { n N }
+interface Linker { func Link(o *N) }
+struct E { N }
+";
+    ok(&prog(&format!("{decls}\nfunc main() {{\n var a = new N{{}}\n var b = N{{}}\n b.Link(a)\n a.Link(a)\n println(a.next.v)\n}}")));
+    err(&prog(&format!("{decls}\nfunc main() {{\n var w = new W{{}}\n var a = new N{{}}\n w.n.Link(a)\n}}")), "to parameter `this` of t.N.Link: the parameter escapes");
+    err(&prog(&format!("{decls}\nfunc main() {{\n var e = E{{}}\n var l Linker = e\n l.Link(new N{{}})\n}}")), "promoted method t.N.Link lets `this` escape");
+}
+
+#[test]
+fn destructors_are_checked() {
+    let res = "struct R { name string\n func Drop() { println(this.name) } }\n";
+    ok(&prog(&format!("{res}\nstruct H {{ r R }}\nfunc mk() R {{ return R{{name: \"x\"}} }}\nfunc take(r R) {{ println(r.name) }}\nfunc main() {{\n var a = R{{name: \"a\"}}\n take(mk())\n var h = new H{{r: mk()}}\n println(h.r.name)\n a = mk()\n var ps []*R\n ps = append(ps, new R{{}})\n println(len(ps))\n}}")));
+    err(&prog(&format!("{res}\nfunc main() {{\n var a = R{{}}\n var b = a\n println(b.name)\n}}")), "cannot copy a value of type t.R");
+    err(&prog(&format!("{res}\nfunc take(r R) {{}}\nfunc main() {{\n var a = R{{}}\n take(a)\n}}")), "cannot copy a value of type t.R");
+    err(&prog(&format!("{res}\nfunc main() {{\n var rs = [R{{}}]\n println(len(rs))\n}}")), "cannot be stored as a slice of t.R");
+    err(&prog(&format!("{res}\nfunc main() {{\n var a = R{{}}\n a.Drop()\n}}")), "Drop cannot be called directly");
+    err(&prog("struct R { func Drop(x int) {} }\nfunc main() {}"), "must be declared as `func Drop()`");
+    err(&prog("var keep []*R\nstruct R { func Drop() { keep = append(keep, this) } }\nfunc main() {}"), "must not let `this` escape");
+    // A variable with a destructor counts as used.
+    ok(&prog(&format!("{res}\nfunc main() {{\n var guard = R{{name: \"g\"}}\n}}")));
+}
+
+#[test]
+fn weak_pointers_convert_both_ways() {
+    let p = ok(&prog("struct N { name string\n parent weak *N }\nfunc main() {\n var a = new N{name: \"a\"}\n var b = new N{parent: a}\n var w weak *N = a\n w = nil\n b.parent = a\n var q = b.parent\n println(q == nil, b.parent.name, w == nil)\n}"));
+    let m = func(&p, "main");
+    let q = m.locals.iter().find(|l| l.name == "q").unwrap();
+    assert!(matches!(p.types.get(q.ty), Type::Pointer(_)), "reading a weak pointer yields *T");
+    let w = m.locals.iter().find(|l| l.name == "w").unwrap();
+    assert!(matches!(p.types.get(w.ty), Type::Weak(_)));
+    assert_eq!(p.type_name(w.ty), "weak *t.N");
+    err(&prog("struct N { x int }\nfunc main() {\n var w weak *N = N{}\n}"), "cannot assign");
+}
+
+#[test]
+fn parameter_modes() {
+    use slang::hir::ownership::param_facts;
+    let p = ok(&prog("struct N { next *N\n s string }\nfunc read(n *N, s string) int { return len(s) + len(n.s) }\nfunc store(a *N, b *N) { a.next = b }\nfunc walk(n *N) int {\n var c = 0\n for n != nil { c += 1\n n = n.next }\n return c\n}\nasync func later(n *N) int { return len(n.s) }\nfunc main() {\n var a = new N{}\n store(a, new N{})\n println(read(a, \"x\"), walk(a))\n var t = later(a)\n _ = t\n}"));
+    let facts = param_facts(&p);
+    let id = |name: &str| FuncId(p.funcs.iter().position(|f| f.name == name).unwrap() as u32);
+    assert!(!facts.escapes(id("read"), 0) && !facts.owned(id("read"), 0) && !facts.owned(id("read"), 1));
+    assert!(!facts.escapes(id("store"), 0) && facts.escapes(id("store"), 1));
+    assert!(facts.owned(id("walk"), 0) && facts.escapes(id("walk"), 0), "a reassigned parameter is owned");
+    assert!(facts.owned(id("later"), 0) && facts.escapes(id("later"), 0), "async parameters are owned");
 }

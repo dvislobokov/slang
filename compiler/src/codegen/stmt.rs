@@ -16,6 +16,23 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         Ok(())
     }
 
+    /// A nested block: its `Let` locals are released at its end.
+    pub(crate) fn scoped_block(&mut self, b: &Block) -> R<()> {
+        let d = self.depth();
+        self.push_scope();
+        let r = self.block_stmts(b);
+        self.pop_scope(d);
+        r
+    }
+
+    /// A condition: temporaries are released before branching on it.
+    pub(crate) fn cond_expr(&mut self, e: &Expr) -> R<IntValue<'ctx>> {
+        let d = self.depth();
+        let c = self.expr(e)?.get().into_int_value();
+        self.release_temps_from(d);
+        Ok(c)
+    }
+
     fn terminated(&self) -> bool {
         self.b.get_insert_block().and_then(|b| b.get_terminator()).is_some()
     }
@@ -30,21 +47,35 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if self.terminated() {
             self.dead_block();
         }
+        let d = self.depth();
+        let r = self.stmt_inner(s);
+        self.release_temps_from(d);
+        r
+    }
+
+    fn stmt_inner(&mut self, s: &Stmt) -> R<()> {
         match &s.kind {
-            StmtKind::Let { local, init } => match init {
-                Some(e) => {
-                    let v = self.expr(e)?;
-                    self.assign_local(*local, v, true)
+            StmtKind::Let { local, init } => {
+                match init {
+                    Some(e) => {
+                        let v = self.expr(e)?;
+                        self.assign_local(*local, v, true)?;
+                    }
+                    None => self.zero_local(*local)?,
                 }
-                None => self.zero_local(*local),
-            },
+                self.scope_local(*local);
+                Ok(())
+            }
             StmtKind::LetTuple { locals, init } => {
                 let tv = self.expr_owned(init)?;
                 let Type::Tuple(ts) = self.ty(init.ty).clone() else { return unsupported("tuple destructuring of a non-tuple") };
                 for (i, l) in locals.iter().enumerate() {
                     let c = self.b.build_extract_value(tv.into_struct_value(), i as u32, "").unwrap();
                     match l {
-                        Some(l) => self.assign_local(*l, Val::owned(c), true)?,
+                        Some(l) => {
+                            self.assign_local(*l, Val::owned(c), true)?;
+                            self.scope_local(*l);
+                        }
                         None => self.release_val(ts[i], c),
                     }
                 }
@@ -53,38 +84,34 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             StmtKind::Assign { target, value } => self.assign(target, value),
             StmtKind::CompoundAssign { target, op, value } => {
                 let rv = self.expr(value)?;
+                let h = self.hold(value.ty, rv);
                 let p = if let ExprKind::MapGet { map, key } = &target.kind {
                     let (kt, _) = self.map_kv(map.ty);
                     let mv = self.expr(map)?;
+                    self.hold(map.ty, mv);
                     let kv = self.expr(key)?;
-                    let slot = self.map_slot(kt, mv.get(), kv.get(), true);
-                    self.drop_val(key.ty, kv);
-                    // The map stays alive through its variable (a temporary
-                    // map would be a no-op target anyway).
-                    if mv.owned {
-                        let r = self.compound_at(slot, target.ty, *op, rv, value.ty);
-                        self.drop_val(map.ty, mv);
-                        return r;
-                    }
-                    slot
+                    self.hold(key.ty, kv);
+                    // The map stays alive (held) until the end of the statement.
+                    self.map_slot(kt, mv.get(), kv.get(), true)
                 } else {
                     self.place(target)?
                 };
+                self.unhold(h);
                 self.compound_at(p, target.ty, *op, rv, value.ty)
             }
             StmtKind::Expr(e) | StmtKind::Discard(e) => self.expr_discard(e),
             StmtKind::If { cond, then, else_ } => {
-                let c = self.expr(cond)?.get().into_int_value();
+                let c = self.cond_expr(cond)?;
                 let tb = self.block("then");
                 let eb = self.block("else");
                 let end = self.block("endif");
                 self.b.build_conditional_branch(c, tb, eb).unwrap();
                 self.b.position_at_end(tb);
-                self.block_stmts(then)?;
+                self.scoped_block(then)?;
                 self.br(end);
                 self.b.position_at_end(eb);
                 if let Some(e) = else_ {
-                    self.block_stmts(e)?;
+                    self.scoped_block(e)?;
                 }
                 self.br(end);
                 self.b.position_at_end(end);
@@ -98,7 +125,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.b.position_at_end(head);
                 match cond {
                     Some(c) => {
-                        let cv = self.expr(c)?.get().into_int_value();
+                        let cv = self.cond_expr(c)?;
                         self.b.build_conditional_branch(cv, bb, end).unwrap();
                     }
                     None => {
@@ -106,7 +133,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     }
                 }
                 self.b.position_at_end(bb);
-                self.loop_body(*label, end, head, body)?;
+                self.loop_body(*label, end, head, body, &[])?;
                 self.b.position_at_end(end);
                 Ok(())
             }
@@ -129,7 +156,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 if let Some(v) = var {
                     self.assign_local(*v, Val::borrowed(iv.into()), true)?;
                 }
-                self.loop_body(*label, done, cont, body)?;
+                self.loop_body(*label, done, cont, body, &[*var])?;
                 self.b.position_at_end(cont);
                 let iv = self.b.build_load(sv.get_type(), ctr, "").unwrap().into_int_value();
                 let n = self.b.build_int_add(iv, sv.get_type().const_int(1, false), "").unwrap();
@@ -145,17 +172,19 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             StmtKind::Return(rv) => self.emit_return(rv),
             StmtKind::Break(l) => {
                 let t = self.target(*l)?;
+                self.exit_cleanups(t.depth, true);
                 self.jump(t.brk);
                 Ok(())
             }
             StmtKind::Continue(l) => {
                 let t = self.target(*l)?;
                 let Some(c) = t.cont else { return unsupported("continue to a switch") };
+                self.exit_cleanups(t.depth, true);
                 self.jump(c);
                 Ok(())
             }
             StmtKind::Defer(e) => self.emit_defer(e),
-            StmtKind::Block(b) => self.block_stmts(b),
+            StmtKind::Block(b) => self.scoped_block(b),
         }
     }
 
@@ -168,9 +197,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Emits a loop body with its break/continue targets, then branches to
     /// `cont`.
-    fn loop_body(&mut self, label: Label, brk: BasicBlock<'ctx>, cont: BasicBlock<'ctx>, body: &Block) -> R<()> {
-        self.fs_mut().loops.push(LoopTarget { label, brk, cont: Some(cont) });
+    fn loop_body(&mut self, label: Label, brk: BasicBlock<'ctx>, cont: BasicBlock<'ctx>, body: &Block, vars: &[Option<LocalId>]) -> R<()> {
+        let depth = self.depth();
+        self.fs_mut().loops.push(LoopTarget { label, brk, cont: Some(cont), depth });
+        // The loop variables belong to the body's scope: released at the
+        // end of each iteration.
+        self.push_scope();
+        for v in vars.iter().flatten() {
+            self.scope_local(*v);
+        }
         let r = self.block_stmts(body);
+        self.pop_scope(depth);
         self.fs_mut().loops.pop();
         r?;
         self.br(cont);
@@ -180,20 +217,45 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn assign(&mut self, target: &Expr, value: &Expr) -> R<()> {
         if let ExprKind::MapGet { map, key } = &target.kind {
             let (kt, vt) = self.map_kv(map.ty);
-            let mv = self.expr(map)?;
-            let kv = self.expr(key)?;
+            let d = self.depth();
+            let later = self.may_run_code(key) || self.may_run_code(value);
+            let mv = self.operand(map, later)?;
+            self.hold(map.ty, mv);
+            let later = self.may_run_code(value);
+            let kv = self.operand(key, later)?;
+            self.hold(key.ty, kv);
             let vv = self.expr(value)?;
+            self.hold(value.ty, vv);
             self.map_set(kt, vt, mv.get().into_pointer_value(), kv.get(), vv.get())?;
-            self.drop_val(value.ty, vv);
-            self.drop_val(key.ty, kv);
-            self.drop_val(map.ty, mv);
+            self.release_temps_from(d);
             return Ok(());
+        }
+        if let ExprKind::Local(l) = &target.kind {
+            if self.is_stable(target) {
+                // `s = s + x` and `xs = append(xs, x)` move the old value
+                // into the operation (in place when uniquely referenced).
+                let same = |e: &Expr| matches!(e.kind, ExprKind::Local(m) if m == *l);
+                match &value.kind {
+                    ExprKind::Binary { op: crate::hir::BinOp::StrConcat, lhs, rhs } if same(lhs) => {
+                        let rv = self.expr(rhs)?;
+                        let p = self.local_addr(*l);
+                        return self.compound_at(p, target.ty, crate::hir::BinOp::StrConcat, rv, rhs.ty);
+                    }
+                    ExprKind::Builtin { op: crate::hir::Builtin::Append, args } if same(&args[0]) => {
+                        let p = self.local_addr(*l);
+                        return self.append_in_place(p, target.ty, &args[1]);
+                    }
+                    _ => {}
+                }
+            }
         }
         let vv = self.expr(value)?;
         if let ExprKind::Local(l) = &target.kind {
             return self.assign_local(*l, vv, false);
         }
+        let h = self.hold(value.ty, vv);
         let p = self.place(target)?;
+        self.unhold(h);
         self.store_assign(p, target.ty, vv);
         Ok(())
     }
@@ -202,11 +264,33 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn compound_at(&mut self, p: PointerValue<'ctx>, ty: TypeId, op: crate::hir::BinOp, rv: Val<'ctx>, rty: TypeId) -> R<()> {
         let lt = self.llty(ty);
         let old = self.b.build_load(lt, p, "").unwrap();
+        if op == crate::hir::BinOp::StrConcat {
+            // The place's reference moves into the concatenation, which
+            // extends the string in place when nobody else holds it.
+            let nv = self.call_rt_v("slang_string_append", &[old.into(), rv.get().into()]);
+            self.b.build_store(p, nv).unwrap();
+            self.drop_val(rty, rv);
+            return Ok(());
+        }
         let nv = self.binop_vals(op, ty, old, rv.get(), rty)?;
         let nv_owned = self.to_owned(ty, nv);
         self.b.build_store(p, nv_owned).unwrap();
         self.release_val(ty, old);
         self.drop_val(rty, rv);
+        Ok(())
+    }
+
+    /// `xs = append(xs, x)` for a local `xs` at `p`: the variable's
+    /// reference moves into the append (which grows a uniquely referenced
+    /// backing in place) and the result is stored back.
+    fn append_in_place(&mut self, p: PointerValue<'ctx>, ty: TypeId, x: &Expr) -> R<()> {
+        let et = self.elem_of(ty).unwrap();
+        let xv = self.expr(x)?;
+        let xp = self.spill(xv.get());
+        let size = self.i64_ty().const_int(self.size_of(et), false);
+        let ops = self.value_ops(et);
+        self.call_rt("slang_slice_append", &[p.into(), size.into(), ops.into(), xp.into()]);
+        self.drop_val(et, xv);
         Ok(())
     }
 
@@ -258,7 +342,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let v = self.b.build_load(elt, ep, "").unwrap();
             self.assign_local(l, Val::borrowed(v), true)?;
         }
-        self.loop_body(label, done, cont, body)?;
+        self.loop_body(label, done, cont, body, &[index, elem])?;
         self.b.position_at_end(cont);
         let iv = self.b.build_load(self.i64_ty(), ctr, "").unwrap().into_int_value();
         let n = self.b.build_int_add(iv, self.i64_ty().const_int(1, false), "").unwrap();
@@ -293,7 +377,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if let Some(l) = ch {
             self.assign_local(l, Val::borrowed(r), true)?;
         }
-        self.loop_body(label, done, cont, body)?;
+        self.loop_body(label, done, cont, body, &[index, ch])?;
         self.b.position_at_end(cont);
         let iv = self.b.build_load(self.i64_ty(), ctr, "").unwrap().into_int_value();
         let w = self.b.build_load(self.i64_ty(), width, "").unwrap().into_int_value();
@@ -333,7 +417,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let v = self.b.build_load(lt, p, "").unwrap();
             self.assign_local(l, Val::borrowed(v), true)?;
         }
-        self.loop_body(label, done, head, body)?;
+        self.loop_body(label, done, head, body, &[key, value])?;
         self.b.position_at_end(done);
         Ok(())
     }
@@ -348,7 +432,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             None => None,
         };
         let end = self.block("sw.end");
-        self.fs_mut().loops.push(LoopTarget { label: sw.label, brk: end, cont: None });
+        let depth = self.depth();
+        self.fs_mut().loops.push(LoopTarget { label: sw.label, brk: end, cont: None, depth });
         let r = (|| -> R<()> {
             for case in &sw.cases {
                 let body = self.block("case.body");
@@ -360,12 +445,26 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 // No pattern matched: `next` continues with the following case.
                 let after = self.b.get_insert_block().unwrap();
                 self.b.position_at_end(body);
+                let cd = self.depth();
+                self.push_scope();
+                for p in &case.patterns {
+                    match p {
+                        Pattern::Variant { bindings, .. } => {
+                            for b in bindings.iter().flatten() {
+                                self.scope_local(*b);
+                            }
+                        }
+                        Pattern::Type { binding: Some(b), .. } => self.scope_local(*b),
+                        _ => {}
+                    }
+                }
                 self.block_stmts(&case.body)?;
+                self.pop_scope(cd);
                 self.br(end);
                 self.b.position_at_end(after);
             }
             if let Some(d) = &sw.default {
-                self.block_stmts(d)?;
+                self.scoped_block(d)?;
             }
             self.br(end);
             Ok(())
@@ -381,7 +480,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn pattern(&mut self, p: &Pattern, subj: Option<(LocalId, TypeId)>, body: BasicBlock<'ctx>, next: BasicBlock<'ctx>) -> R<()> {
         match p {
             Pattern::Cond(e) => {
-                let c = self.expr(e)?.get().into_int_value();
+                let c = self.cond_expr(e)?;
                 self.b.build_conditional_branch(c, body, next).unwrap();
             }
             Pattern::Variant { variant, bindings } => {
@@ -453,6 +552,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let s = self.b.build_insert_value(st.const_zero(), err, 1, "").unwrap();
             self.b.build_store(p, s).unwrap();
         }
+        self.exit_cleanups(0, false);
         let exit = self.fs().exit.unwrap();
         self.jump(exit);
         Ok(())
@@ -487,6 +587,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 return self.return_error(v);
             }
         }
+        self.exit_cleanups(0, false);
         self.jump(exit);
         Ok(())
     }
@@ -512,6 +613,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.build_conditional_branch(isnull, ok, fail).unwrap();
         self.b.position_at_end(fail);
         let mut e: BasicValueEnum = err.into();
+        let d = self.depth();
         if let Some(c) = ctx {
             let cv = self.expr(c)?;
             let w = self.call_rt_v("slang_error_wrap", &[e.into(), cv.get().into()]);
@@ -520,6 +622,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             e = w;
         }
         self.return_error(e)?;
+        // Temporaries of the failure path were released by the return.
+        self.forget_from(d);
         self.b.position_at_end(ok);
         Ok(match v {
             Some(v) => Val::owned(v),
@@ -544,13 +648,19 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let isnull = self.b.build_is_null(e, "").unwrap();
         self.b.build_conditional_branch(isnull, ok, fail).unwrap();
         self.b.position_at_end(fail);
+        let hd = self.depth();
+        self.push_scope();
         match err {
-            Some(l) => self.assign_local(l, Val::owned(e.into()), true)?,
+            Some(l) => {
+                self.assign_local(l, Val::owned(e.into()), true)?;
+                self.scope_local(l);
+            }
             None => {
                 self.call_rt("slang_release", &[e.into()]);
             }
         }
         self.block_stmts(handler)?;
+        self.pop_scope(hd);
         self.br(cont);
         self.b.position_at_end(ok);
         let inner = match self.ty(value.ty) {
@@ -588,8 +698,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.build_conditional_branch(isnull, ok, fail).unwrap();
         self.b.position_at_end(fail);
         self.call_rt("slang_release", &[e.into()]);
+        let fd = self.depth();
         match fallback {
             TryFallback::Value(x) => {
+                let d = self.depth();
                 let xv = self.expr(x)?;
                 match (res, xv.v) {
                     (Some(p), Some(_)) => {
@@ -598,19 +710,24 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     }
                     _ => self.drop_val(x.ty, xv),
                 }
+                self.release_temps_from(d);
                 self.br(cont);
             }
             TryFallback::Break(l) => {
                 let t = self.target(*l)?;
+                self.exit_cleanups(t.depth, true);
                 self.jump(t.brk);
             }
             TryFallback::Continue(l) => {
                 let t = self.target(*l)?;
                 let Some(c) = t.cont else { return unsupported("continue to a switch") };
+                self.exit_cleanups(t.depth, true);
                 self.jump(c);
             }
             TryFallback::Return(rv) => self.emit_return(rv)?,
         }
+        // The fallback's temporaries were released on its own path.
+        self.forget_from(fd);
         self.b.position_at_end(ok);
         if let (Some(p), Some(v)) = (res, v) {
             self.b.build_store(p, v).unwrap();

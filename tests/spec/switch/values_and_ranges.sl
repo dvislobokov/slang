@@ -1,0 +1,28 @@
+// test: value lists and half-open ranges, including negative bounds; first match wins
+// status: passing
+namespace spec.switch.values_and_ranges
+
+import std.io
+
+func Size(n int) string {
+    switch n {
+        case 0:
+            return "zero"
+        case 1, 2:
+            return "small"
+        case 3..10:
+            return "medium"
+        case -10..0:
+            return "slightly negative"
+        case 10, 11:
+            return "ten-ish"
+        default:
+            return "other"
+    }
+}
+
+func main() {
+    for n in [0, 2, 3, 9, 10, -1, -10, -11, 100] {
+        println(n, Size(n))
+    }
+}

@@ -1,0 +1,20 @@
+// test: a switch with default whose cases all return terminates the function (no missing return)
+// status: passing
+namespace spec.switch.terminating_switch
+
+import std.io
+
+func Sign(n int) int {
+    switch {
+        case n < 0:
+            return -1
+        case n == 0:
+            return 0
+        default:
+            return 1
+    }
+}
+
+func main() {
+    println(Sign(-5), Sign(0), Sign(7))
+}

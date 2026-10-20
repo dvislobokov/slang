@@ -1,0 +1,18 @@
+// test: the zero value of a plain enum is its first variant
+// status: passing
+namespace spec.enums.zero_value
+
+import std.io
+
+enum State { Idle, Running, Done }
+
+struct Job {
+    Name string
+    S State
+}
+
+func main() {
+    var s State
+    var j = Job{Name: "j"}
+    println(s, j.S, s == State.Idle)
+}

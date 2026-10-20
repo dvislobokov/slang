@@ -11,7 +11,8 @@
 //! | `bool` | `i1` | `zeroext` at every C call boundary; 1 byte in memory |
 //! | `char` | `i32` | code point |
 //! | `string` | `ptr` | runtime `slang_string*`, NULL is `""`; literals are immortal constant globals |
-//! | `*T` | `ptr` | address of the `T` itself (the **payload**, i.e. heap object + 16 for `new`) |
+//! | `*T` | `ptr` | address of the `T` itself: the **payload** of a heap object (object + 16), owning one reference; see "Pointers" |
+//! | `weak *T` | `ptr` | runtime weak box (ABI.md §3.4), NULL = nil |
 //! | struct | named LLVM struct by value | fields in HIR order |
 //! | `[N]T` | `[N x T]` | by value |
 //! | `[]T` | `{ptr data, i64 len, i64 cap, ptr backing}` | ABI.md §5, the slice value owns one reference to `backing` |
@@ -34,9 +35,10 @@
 //! the run-time type id used by type switches and `errors.As`; the type id of
 //! a stored `*S` is `ti.<*S>`.
 //!
-//! **Interfaces.** Storing a struct value boxes a copy (`boxed = 1`, the box
-//! is refcounted through the interface value); storing a `*S` stores the
-//! pointer (`boxed = 0`). Method `m` is `vtable[2 + m](data, args...)`;
+//! **Interfaces.** Storing a struct value boxes a copy (`boxed = 1`);
+//! storing a `*S` stores the pointer (`boxed = 0`). Either way a non-nil
+//! interface value owns one reference to the object whose payload `data`
+//! is (released with `slang_ptr_release(data)`). Method `m` is `vtable[2 + m](data, args...)`;
 //! methods promoted from embedded structs get an adjusting thunk. Storing a
 //! struct in an `error` boxes it and calls `slang_error_new_typed` with a
 //! `Message()` thunk; `error` method 0 is `slang_error_message`.
@@ -51,7 +53,7 @@
 //! env pointer as an extra first parameter.
 //!
 //! **Address-taken locals** (`Local::address_taken`) also live in cells
-//! (no escape analysis yet); such cells are never released (see below).
+//! (no escape analysis yet), so `&x` is a whole-object pointer.
 //!
 //! **Fallible results** travel as first-class aggregates between Slang
 //! functions. Stdlib externs follow `slang_rt.h`: `[]T` params as
@@ -69,33 +71,64 @@
 //! O0 via the CoroConditionalWrapper), so coroutines are lowered at every
 //! optimisation level.
 //!
-//! # Reference counting (v0.1)
+//! # Reference counting
 //!
-//! Managed: `string`, `[]T`, `map`, `error`, `Task`, closures (their env),
-//! interface/`any` boxes, and aggregates (structs, tuples, arrays, `T!`,
-//! data enums) containing those, via generated per-type retain/release
-//! helpers (also used as `slang_value_ops` for containers).
+//! Managed: `string`, `[]T`, `map`, `error`, `Task`, `*T`, `weak *T`,
+//! closures (their env), interface/`any` values, and aggregates (structs,
+//! tuples, arrays, `T!`, data enums) containing those or a struct with a
+//! destructor, via generated per-type retain/release helpers (also used as
+//! `slang_value_ops` for containers). `*T` uses `slang_ptr_retain/release`
+//! (header = payload - 16) and `slang_ops_ptr`.
 //!
-//! * Expression results are *owned* (+1: calls, constructors, concatenation)
-//!   or *borrowed* (loads from places, literals). Storing a borrowed value
-//!   into a location retains it; owned temporaries are released right
-//!   after their use.
+//! * Expression results are *owned* (+1: calls, constructors, `new`,
+//!   concatenation) or *borrowed* (loads from places, literals). Storing a
+//!   borrowed value into a location retains it; owned temporaries are
+//!   released after their use.
 //! * Stores release the previous value (after retaining the new one).
-//! * Parameters are retained on entry (callee owns its copy); every local
-//!   (and every loop-sequence temporary) is released once, at function exit
-//!   (its slot is zeroed at entry, so paths that never initialised it are
-//!   fine). Re-executing a `Let` (loops) releases the old value.
+//! * **Parameters** (see `hir::ownership`): *borrowed* by default (no
+//!   retain on entry, no release at exit, the slot is marked in
+//!   `FnState::borrowed`); *owned* (retained on entry) when the function is
+//!   `async` or reassigns the parameter; *moved* (owned, not retained) for
+//!   types with a destructor. Callers (`CodeGen::arg` in `expr.rs`) pass owned
+//!   temporaries and stable values (non-cell locals, constants) as they
+//!   are and retain ("pin") any other borrowed value for the call; unknown
+//!   callees (closures, interface methods) are treated as borrowing.
+//! * **Locals** are released at function exit (last declared first, after
+//!   the deferred calls); `Let` locals of nested blocks are also released
+//!   (and zeroed) at the end of their block and by `break`/`continue` out
+//!   of it, see [`cleanup`]. Re-executing a `Let` releases the old value.
+//!   Stack values with a destructor have a drop flag (`FnState::flags`).
+//! * **Temporaries** held while later operands are evaluated live on the
+//!   cleanup stack ([`cleanup`]) and are released on early exits (`?`,
+//!   `try ... else return/break/continue`, `return`, `break`, `continue`
+//!   inside `catch` blocks).
 //! * Results are returned +1; runtime borrowed results are retained.
+//! * `s += x`, `s = s + x` (`slang_string_append`) and `xs = append(xs,
+//!   x)` on a local move the old value into the runtime call, which grows
+//!   uniquely referenced strings/backings in place.
+//! * **Destructors**: the release helper of a struct with `func Drop()`
+//!   calls it first, then releases the fields.
 //!
-//! Not released (leaks, by design for v0.1): `*T` pointers are *unmanaged*
-//! (a pointer may point into the middle of an object), so objects from `new`
-//! and cells of address-taken locals are never freed; owned temporaries
-//! that are live when an expression exits abnormally (`?`, `try ... else
-//! return`, `break` from inside an expression) leak; values in the 64-slot
-//! defer array beyond a panic. No double frees: every release pairs with an
-//! owned reference.
+//! # Pointers
+//!
+//! A stored `*T` always points at a whole object (`new`, a variable's cell,
+//! a box). Interior pointers (`&s.f`, `&a[i]`, `&slice[i]`, `&global`) are
+//! borrowed-only: sema (`sema::ownership`) only lets them be read through
+//! or passed to non-escaping parameters, and `CodeGen::place_ex`
+//! pins their owners (the dereferenced pointer, the slice) for the call.
+//! Sub-slices of a local array own the array's cell.
+//!
+//! Not released (by design): values reachable from a panicking task (a
+//! panic does not unwind), strong reference cycles (use `weak`; detected by
+//! `--leak-check`), values in the 64-slot defer array beyond a panic.
+//!
+//! **Leak check.** With [`Options::leak_check`] the C `main` calls
+//! `slang_leak_check_enable` first; after the entry point returns, the
+//! globals are released (reverse initialisation order) before
+//! `slang_runtime_shutdown`, which reports live objects.
 
 mod async_;
+mod cleanup;
 mod expr;
 mod funcs;
 mod iface;
@@ -165,6 +198,30 @@ pub(crate) struct LoopTarget<'ctx> {
     pub label: hir::Label,
     pub brk: BasicBlock<'ctx>,
     pub cont: Option<BasicBlock<'ctx>>,
+    /// Cleanup-stack depth at the loop (or switch) entry.
+    pub depth: usize,
+}
+
+/// An entry of the per-function cleanup stack (see [`cleanup`]).
+#[derive(Clone, Debug)]
+pub(crate) enum Cleanup<'ctx> {
+    /// An owned temporary that is still to be consumed; released when an
+    /// early exit (`?`, `try ... else return/break/continue`, `return`,
+    /// `break`, `continue`) leaves the expression.
+    Temp(TypeId, BasicValueEnum<'ctx>),
+    /// A block scope with the locals its `Let`s declared so far; released
+    /// at the end of the block and by `break`/`continue` out of it.
+    Scope(Vec<hir::LocalId>),
+    /// A consumed entry.
+    Done,
+}
+
+/// Code generation options.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Options {
+    /// 0: off; 1: report the number of live objects at exit; 2: also their
+    /// type names (`slang_leak_check_enable`).
+    pub leak_check: i32,
 }
 
 /// Coroutine state of an `async` function being emitted.
@@ -195,6 +252,13 @@ pub(crate) struct FnState<'a, 'ctx> {
     /// Zero-initialised slots released at exit (loop sequences).
     pub scoped: Vec<(PointerValue<'ctx>, TypeId)>,
     pub coro: Option<Coro<'ctx>>,
+    /// Owned temporaries and block scopes, innermost last.
+    pub cleanups: Vec<Cleanup<'ctx>>,
+    /// Per local: the slot holds a borrowed parameter (never released).
+    pub borrowed: Vec<bool>,
+    /// Per local: drop flag of a stack value with a destructor (`i1`, set
+    /// while the slot holds a live value).
+    pub flags: Vec<Option<PointerValue<'ctx>>>,
 }
 
 /// The code generator.
@@ -225,6 +289,11 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) env_ti: Option<GlobalValue<'ctx>>,
     pub(crate) f: Option<FnState<'a, 'ctx>>,
     pub(crate) counter: u32,
+    pub(crate) opts: Options,
+    /// Parameter modes (owned / borrowed / moved) and escapes.
+    pub(crate) facts: hir::ownership::ParamFacts,
+    /// Memoised [`rc::RcKind`] per type.
+    pub(crate) rc_cache: std::cell::RefCell<HashMap<TypeId, rc::RcKind>>,
 }
 
 /// Creates a target machine for the host.
@@ -242,6 +311,11 @@ pub fn host_machine(opt: OptimizationLevel) -> Result<TargetMachine, String> {
 /// Lowers `program` into a new LLVM module named `module_name` for the host
 /// target. Returns the diagnostics of unsupported constructs on failure.
 pub fn emit<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str) -> Result<Module<'ctx>, Vec<String>> {
+    emit_with(program, ctx, module_name, Options::default())
+}
+
+/// [`emit`] with options.
+pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str, opts: Options) -> Result<Module<'ctx>, Vec<String>> {
     let machine = host_machine(OptimizationLevel::None).map_err(|e| vec![e])?;
     let module = ctx.create_module(module_name);
     module.set_triple(&machine.get_triple());
@@ -276,6 +350,9 @@ pub fn emit<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str) -> R
         env_ti: None,
         f: None,
         counter: 0,
+        opts,
+        facts: hir::ownership::param_facts(program),
+        rc_cache: Default::default(),
     };
     let mut errors = Vec::new();
     if let Err(e) = cg.declare_all() {
@@ -365,6 +442,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             defers: None,
             scoped: Vec::new(),
             coro: None,
+            cleanups: Vec::new(),
+            borrowed: Vec::new(),
+            flags: Vec::new(),
         };
         let saved = self.f.replace(st);
         self.b.position_at_end(body);
@@ -441,6 +521,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let saved = self.begin_fn(main, None);
         let argc = main.get_nth_param(0).unwrap();
         let argv = main.get_nth_param(1).unwrap();
+        if self.opts.leak_check != 0 {
+            let m = self.ctx.i32_type().const_int(self.opts.leak_check as u64, false);
+            self.call_rt("slang_leak_check_enable", &[m.into()]);
+        }
         self.call_rt("slang_runtime_init", &[argc.into(), argv.into()]);
         for gid in &self.prog.global_init_order {
             let g = &self.prog.globals[gid.0 as usize];
@@ -454,6 +538,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 (None, None) => continue,
             };
             self.b.build_store(gv, val).unwrap();
+            self.release_temps_from(0);
         }
         let entry = self.prog.entry.unwrap();
         let ef = self.funcs[entry.0 as usize];
@@ -462,6 +547,18 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let t = r.unwrap();
             self.call_rt("slang_task_await", &[t.into()]);
             self.call_rt("slang_release", &[t.into()]);
+        }
+        // Globals are released in reverse initialisation order once no task
+        // runs any more (their destructors run before the final shutdown).
+        if self.prog.globals.iter().any(|g| self.needs_rc(g.ty)) {
+            self.call_rt("slang_runtime_drain", &[]);
+        }
+        for gid in self.prog.global_init_order.iter().rev() {
+            let g = &self.prog.globals[gid.0 as usize];
+            if self.needs_rc(g.ty) {
+                let gv = self.globals[gid.0 as usize].as_pointer_value();
+                self.rc_slot(g.ty, gv, false);
+            }
         }
         self.call_rt("slang_runtime_shutdown", &[]);
         self.b.build_return(Some(&i32t.const_zero())).unwrap();

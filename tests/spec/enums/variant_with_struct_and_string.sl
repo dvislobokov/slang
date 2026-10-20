@@ -1,0 +1,33 @@
+// test: variant fields may be strings, structs and slices
+// status: passing
+namespace spec.enums.variant_with_struct_and_string
+
+import std.io
+
+struct Point {
+    X int
+    Y int
+}
+
+enum Event {
+    Click(at Point, button string)
+    Keys(pressed []string)
+    Quit
+}
+
+func Show(e Event) string {
+    switch e {
+        case Event.Click(p, b):
+            return b + " click at " + string(char(48 + p.X)) + "," + string(char(48 + p.Y))
+        case Event.Keys(ks):
+            return "keys " + string(char(48 + len(ks)))
+        default:
+            return "quit"
+    }
+}
+
+func main() {
+    println(Show(Event.Click(Point{X: 1, Y: 2}, "left")))
+    println(Show(Event.Keys(["a", "b", "c"])))
+    println(Show(Event.Quit))
+}

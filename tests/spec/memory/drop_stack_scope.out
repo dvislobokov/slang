@@ -1,0 +1,6 @@
+in block inner
+drop inner
+after block a b
+drop b
+drop a
+after Work

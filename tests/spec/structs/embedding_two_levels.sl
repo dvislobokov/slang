@@ -1,0 +1,28 @@
+// test: promotion works through two levels of embedding
+// status: passing
+namespace spec.structs.embedding_two_levels
+
+import std.io
+
+struct A {
+    Level int
+
+    func Hello() string {
+        return "hello from A"
+    }
+}
+
+struct B {
+    A
+    Extra string
+}
+
+struct C {
+    B
+}
+
+func main() {
+    var c = C{B: B{A: A{Level: 1}, Extra: "x"}}
+    c.Level += 1
+    println(c.Level, c.Extra, c.Hello(), c.B.A.Level)
+}

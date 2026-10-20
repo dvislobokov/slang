@@ -1,0 +1,26 @@
+// test: pointers to ints and strings; mutation through * and swap via pointer params
+// status: passing
+namespace spec.pointers.pointer_to_primitives
+
+import std.io
+
+func Swap(a, b *int) {
+    var t = *a
+    *a = *b
+    *b = t
+}
+
+func Append(s *string, suffix string) {
+    *s += suffix
+}
+
+func main() {
+    var x = 1
+    var y = 2
+    Swap(&x, &y)
+    var p = &x
+    *p *= 10
+    var s = "go"
+    Append(&s, "!")
+    println(x, y, s)
+}

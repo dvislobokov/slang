@@ -35,7 +35,7 @@ slang_string *slang_string_from_cstr(const char *cstr) {
 
 slang_string *slang_string_literal(const char *bytes, int64_t len) {
     slang_string *s = slang_string_new(bytes, len);
-    s->hdr.refcount = SLANG_RC_IMMORTAL;
+    slang__object_immortalize(&s->hdr);
     return s;
 }
 
@@ -104,6 +104,29 @@ slang_string *slang_string_concat(const slang_string *a, const slang_string *b) 
     if (la) memcpy(s->data, a->data, (size_t)la);
     if (lb) memcpy(s->data + la, b->data, (size_t)lb);
     return s;
+}
+
+slang_string *slang_string_append(slang_string *a, const slang_string *b) {
+    int64_t la = slen(a), lb = slen(b);
+    if (lb == 0) return a;
+    if (!a || __atomic_load_n(&a->hdr.refcount, __ATOMIC_ACQUIRE) != 1) {
+        /* Shared, immortal or empty: copy. */
+        slang_string *s = slang_string_concat(a, b);
+        slang_release(a);
+        return s;
+    }
+    /* `a` is uniquely referenced by the caller: extend it in place, with
+     * geometric growth so that a loop of `s += x` is linear. */
+    int64_t need = (int64_t)sizeof(slang_string) + la + lb + 1;
+    int self = (b == a);
+    if (slang__object_capacity(&a->hdr) < need) {
+        int64_t cap = need + need / 2 + 16;
+        a = (slang_string *)slang__object_resize(&a->hdr, cap);
+    }
+    memcpy(a->data + la, self ? a->data : b->data, (size_t)lb);
+    a->len = la + lb;
+    a->data[a->len] = 0;
+    return a;
 }
 
 int32_t slang_string_compare(const slang_string *a, const slang_string *b) {

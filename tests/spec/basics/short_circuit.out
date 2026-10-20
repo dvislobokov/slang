@@ -1,0 +1,6 @@
+eval a
+false
+eval c
+true
+true
+true

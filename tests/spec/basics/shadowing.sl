@@ -1,0 +1,23 @@
+// test: an inner block may shadow an outer variable; the outer one is unchanged
+// status: passing
+namespace spec.basics.shadowing
+
+import std.io
+
+var level = "global"
+
+func main() {
+    println(level)
+    var level = "main"
+    var x = 1
+    if true {
+        var x = 2
+        x += 10
+        println("inner", x, level)
+    }
+    for i in 0..2 {
+        var x = i * 100
+        println("loop", x)
+    }
+    println("outer", x, level)
+}

@@ -1,0 +1,6 @@
+5
+A int8 0
+B int64 8
+C int32 16
+D bool 20
+E string 24

@@ -203,6 +203,8 @@ pub enum TypeKind {
     Fallible(Box<TypeExpr>),
     /// `*T`
     Pointer(Box<TypeExpr>),
+    /// `weak *T` (the box holds the pointee `T`)
+    Weak(Box<TypeExpr>),
     /// `[]T`
     Slice(Box<TypeExpr>),
     /// `[N]T`

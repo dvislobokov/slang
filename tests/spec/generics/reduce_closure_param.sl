@@ -1,0 +1,24 @@
+// test: generic functions taking and returning func(T) U values
+// status: pending
+namespace spec.generics.reduce_closure_param
+
+import std.io
+
+func Reduce<T, A>(xs []T, init A, f func(A, T) A) A {
+    var acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    return acc
+}
+
+func Compose<A, B, C>(f func(A) B, g func(B) C) func(A) C {
+    return (x A) => g(f(x))
+}
+
+func main() {
+    println(Reduce([1, 2, 3, 4], 0, (a int, x int) => a + x))
+    println(Reduce(["a", "b", "c"], "", (a string, x string) => x + a))
+    var lenTimes2 = Compose((s string) => len(s), (n int) => n * 2)
+    println(lenTimes2("hello"))
+}

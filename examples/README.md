@@ -81,8 +81,13 @@ The `.out` files depend on these rules; the runtime must follow them.
 | `switch.sl` | value cases, value lists, half-open ranges incl. negative bounds, guards (`case n > 100:`), first-match ordering, string cases, no-subject `switch { case cond: }`, multi-statement bodies, no fallthrough, switch with no match and no default, FizzBuzz |
 | `defer.sl` | LIFO order, defer in a loop, arguments evaluated at `defer`, deferred closure `defer func() { ... }()` seeing later values, deferring a call of a lambda variable, defers on early `return error(...)`, defer in `main` |
 | `async.sl` | `async func`, `async func main`, `await`, `task.Delay`, concurrent tasks with `task.All` and tuple destructuring, `await f()?`, `try await ... catch`, `try await ... else`, `task.All` over fallible tasks with `try`, sequential awaits in a loop |
+| `drop.sl` | destructors `func Drop()`: deterministic order at block end (reverse declaration order), per loop iteration and on `break`, by-value parameter takes ownership, pointer parameter borrows, early return through `?`, last reference to a `new` object, struct holding a value with a destructor (outer `Drop` first, then fields), interface box and closure capture, deferred calls run before locals are dropped, globals dropped after `main` |
+| `weak.sl` | `weak *T` back pointers (parent/child): the cycle is freed (shown by `Drop` prints), reading a weak pointer yields `*T` or `nil` once the target is gone, `!= nil` checks, a slice of `weak *T` observers |
 | `multi/` | three files, three namespaces: `import app.models` short names, full path `app.models.User.New(...)` even though imported, `import std.fmt as f` alias, calling non-imported `app.report.Summary` by full path, a file with no imports using `std.io.println` and `app.models.User` as a parameter type, private field `id` set only inside its namespace, exported `const` |
 | `bank.sl` | larger program: `Account` with private fields, `void!` methods, `static func` returning `*Account`, enum `Tx` with fields and plain enum `EntryKind`, `Bank` with `map[string]*Account` and `[]string`, typed error `InsufficientFunds`, sentinel + `errors.Wrap`, `?` and `?("context")` on method calls through map elements, `errors.As` / `errors.Is` in a `catch`, switch over transactions and history, integer-cents money formatting, final report |
+| `stdlib_time_os_fs.sl` | `std.time` (`Format` with `%L`, `Parse` incl. `%z`, calendar accessors on a fixed instant, `Weekday`, pre-epoch time, `Now`/`Sleep`/`Since` only compared, never printed), `std.os` (`Args`, `Getenv`/`Setenv`, `Pid`, `Hostname`, `Cwd`/`Chdir`), `std.fs` path helpers (`Join/Base/Dir/Ext/Abs`) and file operations (`MkdirAll`, `AppendFile`, `Size`, `Copy`, `Rename`, sorted `ReadDir`, `Exists`/`IsDir`, `ModTime`, failing `Remove`/`Mkdir`, `RemoveAll` cleanup) in a temp dir under `fs.TempDir()`, `io.ReadLines/WriteLines`, `void!` helpers with `?` and `try ... catch` |
+| `stdlib_crypto.sl` | nested stdlib namespaces (`import std.crypto` -> `hash.X`, `import std` -> `crypto.hash.X`, `import std.encoding` -> `base64.X`), SHA-256/512/1, MD5, CRC-32 test vectors, `[]byte` results, HMAC-SHA256 and `hmac.Equal`, base64 std/URL and hex round trips and decode errors, `crypto.rand`/`uuid` (only lengths/validity printed), seeded `std.random` (`IntN`, `Shuffle`, `Float`, `Bytes`) |
+| `stdlib_strings2.sl` | `strings.Fields/Count/LastIndex/TrimPrefix/TrimSuffix/TrimLeft/TrimRight/SplitN/EqualFold/Reverse/PadLeft/PadRight/Compare/Title`, `Runes`/`FromRunes` (`[]char`), `Bytes`/`FromBytes` (`[]byte`), `math.Round/Trunc/Mod/Hypot/Log2/Log10/Atan2/IsNaN/IsInf/Inf/NaN` and the int helpers `IMin/IMax/IAbs` |
 | `errors_compile/unused_var.sl` | declared and never used local variable |
 | `errors_compile/unhandled_result.sl` | `int!` value used without `?`/`try` |
 | `errors_compile/unhandled_void_result.sl` | `void!` call used as a statement without `?`/`try`/`_ =` |
@@ -92,6 +97,9 @@ The `.out` files depend on these rules; the runtime must follow them.
 | `errors_compile/type_mismatch.sl` | assigning a `string` to an `int` variable |
 | `errors_compile/missing_return.sl` | `if`/`else if` without final `else` in a function returning `int` |
 | `errors_compile/catch_falls_through.sl` | `var n = try f() catch err { ... }` whose block neither returns nor jumps |
+| `errors_compile/interior_pointer_escape.sl` | storing `&l.From` (an interior pointer into a heap object) in a variable |
+| `errors_compile/copy_drop_value.sl` | copying a value whose type has a destructor (`var b = a`) |
+| `errors_compile/weak_to_interior.sl` | making a `weak *T` from an interior pointer |
 
 ## Standard library functions used by the examples
 
@@ -126,6 +134,86 @@ per [Output format](#output-format-normative-for-println-fmtformat).
 
 **std.math** — `Sqrt(x float) float`, `Pow(x, y float) float`,
 `Floor(x float) float`, `Abs(x float) float`.
+
+**std.strings** (used by `stdlib_strings2.sl`, Go semantics; offsets are bytes, widths are runes)
+
+| Function | Signature / behaviour |
+|----------|-----------------------|
+| `Fields` | `Fields(s string) []string` — split around runs of white space |
+| `Count` / `LastIndex` | `Count(s, sub string) int` (non-overlapping; `""` gives runes+1), `LastIndex(s, sub string) int` (-1 if absent) |
+| `TrimPrefix` / `TrimSuffix` | `(s, x string) string` — remove one leading/trailing `x` |
+| `TrimLeft` / `TrimRight` | `(s, cutset string) string` — strip runes contained in `cutset` |
+| `SplitN` | `SplitN(s, sep string, n int) []string` — at most `n` pieces; `n == 0` gives `[]`, `n < 0` all |
+| `EqualFold` | `EqualFold(a, b string) bool` — case-insensitive (simple folding) |
+| `Reverse` / `Title` | `(s string) string` — reverse code points / upper-case the first letter of each word |
+| `PadLeft` / `PadRight` | `(s string, width int, pad string) string` — pad to `width` runes by repeating `pad` |
+| `Compare` | `Compare(a, b string) int` — -1, 0, 1 |
+| `Runes` / `FromRunes` | `Runes(s string) []char`, `FromRunes(r []char) string` |
+| `Bytes` / `FromBytes` | `Bytes(s string) []byte`, `FromBytes(b []byte) string` |
+
+**std.math** (more, `stdlib_strings2.sl`) — `Round` (half away from zero), `Trunc`,
+`Log2`, `Log10` `(float) float`; `Mod`, `Hypot`, `Atan2(y, x)` `(float, float) float`;
+`IsNaN(x float) bool`, `IsInf(x float, sign int) bool`, `Inf(sign int) float`, `NaN() float`;
+int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
+
+**std.io** (more) — `ReadLines(path string) []string!` (no trailing empty line, `\r` dropped),
+`WriteLines(path string, lines []string) void!` (each line + `\n`), `WriteFile(path, data string) void!`.
+
+**std.time** (`stdlib_time_os_fs.sl`; instants are `int` Unix milliseconds, UTC)
+
+| Function | Signature / behaviour |
+|----------|-----------------------|
+| `Now` / `NowNanos` | `() int` — current time in ms / ns |
+| `Sleep` / `Since` | `Sleep(ms int)`, `Since(startMs int) int` (= `Now() - startMs`) |
+| `Format` | `Format(ms int, layout string) string` — `strftime` layout in UTC plus `%L` = milliseconds |
+| `Parse` | `Parse(s, layout string) int!` — `strptime` layout, UTC unless `%z`; the whole input must match |
+| `Year` ... `Second` | `Year/Month/Day/Hour/Minute/Second(ms int) int` — UTC calendar fields (month 1..12) |
+| `Weekday` | `Weekday(ms int) int` — 0 = Sunday |
+
+**std.os** — `Args() []string`, `Getenv(name string) string` (`""` if unset),
+`Setenv(name, value string) void!` (empty name fails), `Pid() int`, `Hostname() string!`,
+`Cwd() string!`, `Chdir(path string) void!`, `Exit(code int)`.
+
+**std.fs** (paths are `/`-separated, Go `path/filepath` semantics)
+
+| Function | Signature / behaviour |
+|----------|-----------------------|
+| `Join` / `Base` / `Dir` / `Ext` | `Join(a, b string) string` (cleaned), `Base/Dir/Ext(path string) string` (`Base("")` = `.`, `Dir("x")` = `.`, `Ext` includes the dot or is `""`) |
+| `Abs` / `TempDir` | `Abs(path string) string!`, `TempDir() string` (`$TMPDIR` or `/tmp`) |
+| `Exists` / `IsDir` | `(path string) bool` |
+| `ReadDir` | `ReadDir(path string) []string!` — entry names sorted byte-wise |
+| `Mkdir` / `MkdirAll` | `(path string) void!` — `Mkdir` fails if it exists (`mkdir data: File exists`); `MkdirAll` creates parents and accepts an existing dir |
+| `Remove` / `RemoveAll` | `(path string) void!` — `Remove` needs a file or empty dir; `RemoveAll` is recursive and ignores a missing path |
+| `Rename` / `Copy` | `(from, to string) void!` |
+| `Size` / `ModTime` | `(path string) int!` — bytes / Unix ms |
+| `AppendFile` | `AppendFile(path, data string) void!` — creates the file if needed |
+
+**std.crypto.hash / hmac / rand** (`stdlib_crypto.sl`; hex is lowercase)
+
+| Function | Signature / behaviour |
+|----------|-----------------------|
+| `hash.Sha256` / `Sha512` / `Sha1` / `Md5` | `(data string) []byte` — raw digest |
+| `hash.Sha256Hex` / `Sha512Hex` / `Sha1Hex` / `Md5Hex` | `(data string) string` — hex digest |
+| `hash.Crc32` | `Crc32(data string) int` — IEEE CRC-32 |
+| `hmac.Sha256` / `Sha256Hex` | `(key, data string) []byte` / `string` — HMAC-SHA256 |
+| `hmac.Equal` | `Equal(a, b []byte) bool` — constant-time comparison |
+| `rand.Bytes` / `Int` / `Hex` | `Bytes(n int) []byte!`, `Int() int!`, `Hex(n int) string!` (`2n` chars) — OS randomness |
+
+**std.encoding.base64 / hex**
+
+| Function | Signature / behaviour |
+|----------|-----------------------|
+| `base64.Encode` / `EncodeString` | `([]byte)` / `(string)` `-> string`, standard alphabet with `=` padding |
+| `base64.Decode` / `DecodeString` | `(s string) []byte!` / `string!` — padding required |
+| `base64.EncodeURL` / `DecodeURL` | `EncodeURL(b []byte) string` (URL alphabet, no padding), `DecodeURL(s string) []byte!` (padding optional) |
+| `hex.Encode` / `EncodeString` | `([]byte)` / `(string)` `-> string` |
+| `hex.Decode` / `DecodeString` | `(s string) []byte!` / `string!` — fails on odd length or a non-hex byte |
+
+**std.random** (non-cryptographic; fixed sequence after `Seed`) — `Seed(n int)`, `Int() int`,
+`IntN(n int) int` (`[0, n)`, panics if `n <= 0`), `Float() float` (`[0, 1)`), `Bytes(n int) []byte`,
+`Shuffle(s []int)` (in place).
+
+**std.uuid** — `New() string` (random v4, lowercase), `IsValid(s string) bool`.
 
 **std.errors**
 

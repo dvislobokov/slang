@@ -756,6 +756,12 @@ impl Parser<'_> {
         self.nested(|p| {
             let start = p.span();
             let kind = match p.peek() {
+                // `weak *T` (`weak` is contextual: only before `*` in a type).
+                TokenKind::Ident(w) if w == "weak" && *p.peek_n(1) == TokenKind::Star => {
+                    p.bump();
+                    p.bump();
+                    TypeKind::Weak(Box::new(p.type_base()?))
+                }
                 TokenKind::Ident(_) => {
                     let path = p.path()?;
                     let mut generics = Vec::new();

@@ -1,0 +1,16 @@
+// error: catch block must return
+// status: passing
+namespace spec.errors.catch_falls_through_error
+
+import std.io
+
+func F() int! {
+    return 1
+}
+
+func main() {
+    var n = try F() catch err {
+        println(err)
+    }
+    println(n)
+}

@@ -1,0 +1,38 @@
+// test: return err inside a catch block re-propagates from a T! function
+// status: passing
+namespace spec.errors.return_err_from_catch
+
+import std.io
+import std
+
+const ErrSoft = error("soft")
+
+func Step(n int) int! {
+    if n == 1 {
+        return ErrSoft
+    }
+    if n == 2 {
+        return error("hard")
+    }
+    return n
+}
+
+func Run(n int) int! {
+    var v = try Step(n) catch err {
+        if errors.Is(err, ErrSoft) {
+            return 0
+        }
+        return err
+    }
+    return v * 10
+}
+
+func main() {
+    for n in [3, 1, 2] {
+        var r = try Run(n) catch err {
+            println(n, "error", err)
+            continue
+        }
+        println(n, "ok", r)
+    }
+}

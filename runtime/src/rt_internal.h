@@ -25,6 +25,15 @@ SLANG_HIDDEN void slang__sched_stop(void);
 /* Arguments registry (main.c). */
 SLANG_HIDDEN void slang__io_flush_all(void);
 
+/* Object lifecycle helpers (mem.c, weak.c). */
+SLANG_HIDDEN void slang__object_immortalize(slang_object *o);
+/* Usable bytes of an object's allocation (header included), and resizing of
+ * a uniquely referenced object (it may move; new bytes are not zeroed). */
+SLANG_HIDDEN int64_t slang__object_capacity(slang_object *o);
+SLANG_HIDDEN slang_object *slang__object_resize(slang_object *o, int64_t size);
+SLANG_HIDDEN void slang__weak_clear(slang_object *o);
+SLANG_HIDDEN void slang__leak_report(void);
+
 #define SLANG_ROUND8(n) (((n) + 7) & ~(int64_t)7)
 
 #endif

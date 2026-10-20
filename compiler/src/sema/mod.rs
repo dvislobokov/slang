@@ -19,6 +19,8 @@ mod call;
 mod coerce;
 mod consts;
 mod expr;
+pub mod index;
+mod ownership;
 mod resolve;
 mod stmt;
 pub mod stdlib;
@@ -31,15 +33,28 @@ use crate::types::{Type, TypeId, TypeTable};
 use std::collections::HashMap;
 
 pub use consts::Folded;
+pub use resolve::{ImportPolicy, PackageScope};
 
 /// Analyses a whole program made of `files` (each with its namespace).
 /// Diagnostics carry the index of their file in `files`
 /// ([`Diagnostic::file`]). Returns `None` if any error was reported.
 pub fn analyze(files: &[ast::File], diags: &mut Diagnostics) -> Option<hir::Program> {
+    analyze_with_policy(files, diags, None)
+}
+
+/// [`analyze`] with an optional [`ImportPolicy`] restricting which root
+/// namespaces each file may reach (strict package isolation, used by
+/// package builds; see `crate::package`).
+pub fn analyze_with_policy(files: &[ast::File], diags: &mut Diagnostics, policy: Option<&ImportPolicy>) -> Option<hir::Program> {
     let mut s = Sema::new(files, diags);
+    s.policy = policy;
     s.run();
-    let had_errors = s.diags.has_errors();
+    let mut had_errors = s.diags.has_errors();
     let program = s.finish();
+    if !had_errors {
+        ownership::check(&program, diags);
+        had_errors = diags.has_errors();
+    }
     if had_errors {
         None
     } else {
@@ -233,6 +248,10 @@ pub(crate) struct Sema<'a> {
     /// Function contexts, innermost last.
     pub fns: Vec<FnCtx>,
     pub lambda_count: u32,
+    /// Package isolation hook (see [`ImportPolicy`]); `None` = no limits.
+    pub policy: Option<&'a ImportPolicy>,
+    /// IDE symbol recording (see [`index`]); `None` = off.
+    pub(crate) ide: Option<Box<index::Recorder>>,
 }
 
 impl<'a> Sema<'a> {
@@ -266,6 +285,8 @@ impl<'a> Sema<'a> {
             cur_ns: 0,
             fns: Vec::new(),
             lambda_count: 0,
+            policy: None,
+            ide: None,
         }
     }
 
@@ -367,6 +388,7 @@ impl<'a> Sema<'a> {
         f.used.push(!matches!(kind, LocalKind::Var | LocalKind::LoopVar));
         if kind != LocalKind::Temp && name != "_" {
             f.scopes.last_mut().unwrap().push((name.to_string(), ScopeEntry::Local(id)));
+            self.ide_def_local(name, id, span);
         }
         id
     }
@@ -386,7 +408,8 @@ impl<'a> Sema<'a> {
         for (name, e) in scope {
             if let ScopeEntry::Local(l) = e {
                 let f = self.fns.last().unwrap();
-                if !f.used[l.0 as usize] {
+                // A variable with a destructor is used by its destructor.
+                if !f.used[l.0 as usize] && !self.type_has_dtor(f.locals[l.0 as usize].ty) {
                     let span = f.locals[l.0 as usize].span;
                     self.err(format!("unused variable {name}: declared and never used"), span);
                 }

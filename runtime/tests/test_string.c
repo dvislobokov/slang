@@ -147,10 +147,32 @@ TEST(bounds_panic) {
     assert(strstr(buf, "panic: runtime error: slice bounds out of range [2:5] with capacity 3"));
 }
 
+TEST(append_in_place) {
+    slang_string *s = S("ab");
+    slang_string *x = S("cd");
+    s = slang_string_append(s, x);                 /* unique: extended */
+    assert(STR_IS(s, "abcd") && slang_refcount(s) == 1);
+    for (int i = 0; i < 1000; i++) s = slang_string_append(s, x);
+    assert(slang_string_len(s) == 2004);
+    s = slang_string_append(s, s);                 /* self-append */
+    assert(slang_string_len(s) == 4008 && memcmp(slang_string_data(s) + 2004, "abcd", 4) == 0);
+    slang_retain(s);                               /* shared: copied */
+    slang_string *t = slang_string_append(s, x);
+    assert(t != s && slang_refcount(s) == 1 && slang_string_len(t) == 4010);
+    assert(slang_string_append(t, NULL) == t);
+    slang_string *lit = slang_string_literal("lit", 3);
+    slang_string *u = slang_string_append(lit, x);  /* immortal: copied */
+    assert(STR_IS(u, "litcd") && STR_IS(lit, "lit"));
+    slang_string *e = slang_string_append(NULL, x);
+    assert(STR_IS(e, "cd"));
+    slang_release(s); slang_release(t); slang_release(u); slang_release(e); slang_release(x);
+}
+
 int main(void) {
     printf("test_string\n");
     int64_t live = slang_live_objects();
     RUN(literals);
+    RUN(append_in_place);
     RUN(null_is_empty);
     RUN(concat_compare);
     RUN(runes);
@@ -158,7 +180,7 @@ int main(void) {
     RUN(int_conv);
     RUN(float_conv);
     RUN(bounds_panic);
-    /* slang_string_literal leaks one immortal object by design */
-    assert(slang_live_objects() == live + 1);
+    /* slang_string_literal makes an immortal object, which does not count */
+    assert(slang_live_objects() == live);
     return 0;
 }

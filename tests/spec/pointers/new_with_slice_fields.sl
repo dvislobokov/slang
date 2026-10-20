@@ -1,0 +1,25 @@
+// test: new of a struct with slice and map fields; mutations through the pointer
+// status: passing
+namespace spec.pointers.new_with_slice_fields
+
+import std.io
+
+struct Bag {
+    Items []string
+    Counts map[string]int
+}
+
+func Add(b *Bag, s string) {
+    b.Items = append(b.Items, s)
+    b.Counts[s] += 1
+}
+
+func main() {
+    var b = new Bag{Counts: map[string]int{}}
+    Add(b, "x")
+    Add(b, "y")
+    Add(b, "x")
+    println(b.Items, len(b.Items), b.Counts["x"], b.Counts["y"], b.Counts["z"])
+    var empty = new Bag{}
+    println(len(empty.Items), empty.Items)
+}

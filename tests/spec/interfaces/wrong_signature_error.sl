@@ -1,0 +1,18 @@
+// error: does not implement
+// status: passing
+namespace spec.interfaces.wrong_signature_error
+
+import std.io
+
+interface Named {
+    func Name() string
+}
+
+struct Thing {
+    func Name() int { return 1 }
+}
+
+func main() {
+    var n Named = Thing{}
+    println(n.Name())
+}

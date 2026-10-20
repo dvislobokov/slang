@@ -41,7 +41,19 @@
 //! | `std.errors.Is` | `slang_errors_is` | `(error, error) bool` |
 //! | `std.task.Delay` | `slang_task_delay` | `(int) Task<void>` |
 //!
+//!
+//! The second batch (`std.time`, `std.os`, `std.fs`, `std.random`,
+//! `std.crypto.{hash,hmac,rand}`, `std.encoding.{base64,hex}`, `std.uuid`
+//! and the additions to `std.strings`/`std.math`/`std.io`) follows the same
+//! rule, with dots of nested namespaces turned into `_`
+//! (`std.crypto.hash.Sha256Hex` -> `slang_crypto_hash_sha256_hex`); the
+//! full list with C signatures is `runtime/ABI.md` section 14.3 and the
+//! [`FUNCS`] table below. Int versions of the float `math.Min/Max/Abs` are
+//! `IMin/IMax/IAbs` (no overloading).
+//!
 //! Constants: `std.math.Pi`, `std.math.E` (untyped float constants, inlined).
+//! There are no int constants yet (`math.MaxInt`/`MinInt` would need an int
+//! variant of [`CONSTS`]).
 //!
 //! Specials (no extern; see `hir`):
 //! `std.io.println` / `std.io.print` → [`crate::hir::ExprKind::Print`]
@@ -60,7 +72,31 @@
 use crate::types::{TypeId, TypeTable};
 
 /// Stdlib namespaces (all start with `std`).
-pub const NAMESPACES: &[&str] = &["std", "std.io", "std.fmt", "std.strings", "std.math", "std.errors", "std.task"];
+/// Nested namespaces (`std.crypto.hash`) need no extra support: the
+/// resolver creates every parent (`std.crypto`) as a namespace member of its
+/// own parent, so `import std.crypto` gives `hash.Sha256Hex` and
+/// `import std` gives `crypto.hash.Sha256Hex`.
+pub const NAMESPACES: &[&str] = &[
+    "std",
+    "std.io",
+    "std.fmt",
+    "std.strings",
+    "std.math",
+    "std.errors",
+    "std.task",
+    "std.time",
+    "std.os",
+    "std.fs",
+    "std.random",
+    "std.crypto",
+    "std.crypto.hash",
+    "std.crypto.hmac",
+    "std.crypto.rand",
+    "std.encoding",
+    "std.encoding.base64",
+    "std.encoding.hex",
+    "std.uuid",
+];
 
 /// An ordinary stdlib function implemented by the runtime.
 #[derive(Debug, Clone, Copy)]
@@ -150,6 +186,125 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.errors", "Unwrap", "error", "error", "slang_errors_unwrap"),
     f!("std.errors", "Is", "error, error", "bool", "slang_errors_is"),
     f!("std.task", "Delay", "int", "Task<void>", "slang_task_delay"),
+    // std.strings (more)
+    f!("std.strings", "Fields", "string", "[]string", "slang_strings_fields"),
+    f!("std.strings", "Count", "string, string", "int", "slang_strings_count"),
+    f!("std.strings", "LastIndex", "string, string", "int", "slang_strings_last_index"),
+    f!("std.strings", "TrimPrefix", "string, string", "string", "slang_strings_trim_prefix"),
+    f!("std.strings", "TrimSuffix", "string, string", "string", "slang_strings_trim_suffix"),
+    f!("std.strings", "TrimLeft", "string, string", "string", "slang_strings_trim_left"),
+    f!("std.strings", "TrimRight", "string, string", "string", "slang_strings_trim_right"),
+    f!("std.strings", "SplitN", "string, string, int", "[]string", "slang_strings_split_n"),
+    f!("std.strings", "EqualFold", "string, string", "bool", "slang_strings_equal_fold"),
+    f!("std.strings", "Reverse", "string", "string", "slang_strings_reverse"),
+    f!("std.strings", "PadLeft", "string, int, string", "string", "slang_strings_pad_left"),
+    f!("std.strings", "PadRight", "string, int, string", "string", "slang_strings_pad_right"),
+    f!("std.strings", "Runes", "string", "[]char", "slang_strings_runes"),
+    f!("std.strings", "FromRunes", "[]char", "string", "slang_strings_from_runes"),
+    f!("std.strings", "Bytes", "string", "[]byte", "slang_strings_bytes"),
+    f!("std.strings", "FromBytes", "[]byte", "string", "slang_strings_from_bytes"),
+    f!("std.strings", "Compare", "string, string", "int", "slang_strings_compare"),
+    f!("std.strings", "Title", "string", "string", "slang_strings_title"),
+    // std.math (more); int helpers are I-prefixed (no overloading)
+    f!("std.math", "Round", "float", "float", "slang_math_round"),
+    f!("std.math", "Trunc", "float", "float", "slang_math_trunc"),
+    f!("std.math", "Mod", "float, float", "float", "slang_math_mod"),
+    f!("std.math", "Hypot", "float, float", "float", "slang_math_hypot"),
+    f!("std.math", "Atan2", "float, float", "float", "slang_math_atan2"),
+    f!("std.math", "Log2", "float", "float", "slang_math_log2"),
+    f!("std.math", "Log10", "float", "float", "slang_math_log10"),
+    f!("std.math", "IsNaN", "float", "bool", "slang_math_is_nan"),
+    f!("std.math", "IsInf", "float, int", "bool", "slang_math_is_inf"),
+    f!("std.math", "Inf", "int", "float", "slang_math_inf"),
+    f!("std.math", "NaN", "", "float", "slang_math_nan"),
+    f!("std.math", "IMin", "int, int", "int", "slang_math_imin"),
+    f!("std.math", "IMax", "int, int", "int", "slang_math_imax"),
+    f!("std.math", "IAbs", "int", "int", "slang_math_iabs"),
+    // std.io (more)
+    f!("std.io", "ReadAll", "", "string!", "slang_io_read_all"),
+    f!("std.io", "ReadLines", "string", "[]string!", "slang_io_read_lines"),
+    f!("std.io", "WriteLines", "string, []string", "void!", "slang_io_write_lines"),
+    f!("std.io", "Eprint", "string", "void", "slang_io_eprint"),
+    f!("std.io", "Eprintln", "string", "void", "slang_io_eprintln"),
+    // std.time: int Unix milliseconds, UTC calendar
+    f!("std.time", "Now", "", "int", "slang_time_now"),
+    f!("std.time", "NowNanos", "", "int", "slang_time_now_nanos"),
+    f!("std.time", "Sleep", "int", "void", "slang_time_sleep"),
+    f!("std.time", "Since", "int", "int", "slang_time_since"),
+    f!("std.time", "Format", "int, string", "string", "slang_time_format"),
+    f!("std.time", "Parse", "string, string", "int!", "slang_time_parse"),
+    f!("std.time", "Year", "int", "int", "slang_time_year"),
+    f!("std.time", "Month", "int", "int", "slang_time_month"),
+    f!("std.time", "Day", "int", "int", "slang_time_day"),
+    f!("std.time", "Hour", "int", "int", "slang_time_hour"),
+    f!("std.time", "Minute", "int", "int", "slang_time_minute"),
+    f!("std.time", "Second", "int", "int", "slang_time_second"),
+    f!("std.time", "Weekday", "int", "int", "slang_time_weekday"),
+    // std.os
+    f!("std.os", "Args", "", "[]string", "slang_os_args"),
+    f!("std.os", "Getenv", "string", "string", "slang_os_getenv"),
+    f!("std.os", "Setenv", "string, string", "void!", "slang_os_setenv"),
+    f!("std.os", "Exit", "int", "void", "slang_os_exit"),
+    f!("std.os", "Hostname", "", "string!", "slang_os_hostname"),
+    f!("std.os", "Pid", "", "int", "slang_os_pid"),
+    f!("std.os", "Cwd", "", "string!", "slang_os_cwd"),
+    f!("std.os", "Chdir", "string", "void!", "slang_os_chdir"),
+    // std.fs
+    f!("std.fs", "Exists", "string", "bool", "slang_fs_exists"),
+    f!("std.fs", "IsDir", "string", "bool", "slang_fs_is_dir"),
+    f!("std.fs", "ReadDir", "string", "[]string!", "slang_fs_read_dir"),
+    f!("std.fs", "Mkdir", "string", "void!", "slang_fs_mkdir"),
+    f!("std.fs", "MkdirAll", "string", "void!", "slang_fs_mkdir_all"),
+    f!("std.fs", "Remove", "string", "void!", "slang_fs_remove"),
+    f!("std.fs", "RemoveAll", "string", "void!", "slang_fs_remove_all"),
+    f!("std.fs", "Rename", "string, string", "void!", "slang_fs_rename"),
+    f!("std.fs", "Size", "string", "int!", "slang_fs_size"),
+    f!("std.fs", "ModTime", "string", "int!", "slang_fs_mod_time"),
+    f!("std.fs", "Copy", "string, string", "void!", "slang_fs_copy"),
+    f!("std.fs", "Join", "string, string", "string", "slang_fs_join"),
+    f!("std.fs", "Base", "string", "string", "slang_fs_base"),
+    f!("std.fs", "Dir", "string", "string", "slang_fs_dir"),
+    f!("std.fs", "Ext", "string", "string", "slang_fs_ext"),
+    f!("std.fs", "Abs", "string", "string!", "slang_fs_abs"),
+    f!("std.fs", "TempDir", "", "string", "slang_fs_temp_dir"),
+    f!("std.fs", "AppendFile", "string, string", "void!", "slang_fs_append_file"),
+    // std.random (non-cryptographic)
+    f!("std.random", "Seed", "int", "void", "slang_random_seed"),
+    f!("std.random", "Int", "", "int", "slang_random_int"),
+    f!("std.random", "IntN", "int", "int", "slang_random_int_n"),
+    f!("std.random", "Float", "", "float", "slang_random_float"),
+    f!("std.random", "Bytes", "int", "[]byte", "slang_random_bytes"),
+    f!("std.random", "Shuffle", "[]int", "void", "slang_random_shuffle"),
+    // std.crypto.*
+    f!("std.crypto.hash", "Sha256", "string", "[]byte", "slang_crypto_hash_sha256"),
+    f!("std.crypto.hash", "Sha256Hex", "string", "string", "slang_crypto_hash_sha256_hex"),
+    f!("std.crypto.hash", "Sha512", "string", "[]byte", "slang_crypto_hash_sha512"),
+    f!("std.crypto.hash", "Sha512Hex", "string", "string", "slang_crypto_hash_sha512_hex"),
+    f!("std.crypto.hash", "Sha1", "string", "[]byte", "slang_crypto_hash_sha1"),
+    f!("std.crypto.hash", "Sha1Hex", "string", "string", "slang_crypto_hash_sha1_hex"),
+    f!("std.crypto.hash", "Md5", "string", "[]byte", "slang_crypto_hash_md5"),
+    f!("std.crypto.hash", "Md5Hex", "string", "string", "slang_crypto_hash_md5_hex"),
+    f!("std.crypto.hash", "Crc32", "string", "int", "slang_crypto_hash_crc32"),
+    f!("std.crypto.hmac", "Sha256", "string, string", "[]byte", "slang_crypto_hmac_sha256"),
+    f!("std.crypto.hmac", "Sha256Hex", "string, string", "string", "slang_crypto_hmac_sha256_hex"),
+    f!("std.crypto.hmac", "Equal", "[]byte, []byte", "bool", "slang_crypto_hmac_equal"),
+    f!("std.crypto.rand", "Bytes", "int", "[]byte!", "slang_crypto_rand_bytes"),
+    f!("std.crypto.rand", "Int", "", "int!", "slang_crypto_rand_int"),
+    f!("std.crypto.rand", "Hex", "int", "string!", "slang_crypto_rand_hex"),
+    // std.encoding.*
+    f!("std.encoding.base64", "Encode", "[]byte", "string", "slang_encoding_base64_encode"),
+    f!("std.encoding.base64", "EncodeString", "string", "string", "slang_encoding_base64_encode_string"),
+    f!("std.encoding.base64", "Decode", "string", "[]byte!", "slang_encoding_base64_decode"),
+    f!("std.encoding.base64", "DecodeString", "string", "string!", "slang_encoding_base64_decode_string"),
+    f!("std.encoding.base64", "EncodeURL", "[]byte", "string", "slang_encoding_base64_encode_url"),
+    f!("std.encoding.base64", "DecodeURL", "string", "[]byte!", "slang_encoding_base64_decode_url"),
+    f!("std.encoding.hex", "Encode", "[]byte", "string", "slang_encoding_hex_encode"),
+    f!("std.encoding.hex", "EncodeString", "string", "string", "slang_encoding_hex_encode_string"),
+    f!("std.encoding.hex", "Decode", "string", "[]byte!", "slang_encoding_hex_decode"),
+    f!("std.encoding.hex", "DecodeString", "string", "string!", "slang_encoding_hex_decode_string"),
+    // std.uuid
+    f!("std.uuid", "New", "", "string", "slang_uuid_new"),
+    f!("std.uuid", "IsValid", "string", "bool", "slang_uuid_is_valid"),
 ];
 
 /// Parses a type in the table's mini syntax: builtin names, `[]T`, `T!`,
@@ -197,8 +352,19 @@ mod tests {
         let mut tt = TypeTable::new();
         for f in FUNCS {
             f.signature(&mut tt);
-            let ns = f.ns.strip_prefix("std.").unwrap();
+            let ns = f.ns.strip_prefix("std.").unwrap().replace('.', "_");
             assert!(f.symbol.starts_with(&format!("slang_{ns}_")), "{}", f.symbol);
+            assert!(NAMESPACES.contains(&f.ns), "{} not in NAMESPACES", f.ns);
+        }
+    }
+
+    #[test]
+    fn no_duplicate_names_or_symbols() {
+        let mut seen = std::collections::HashSet::new();
+        let mut syms = std::collections::HashSet::new();
+        for f in FUNCS {
+            assert!(seen.insert(f.path()), "duplicate {}", f.path());
+            assert!(syms.insert(f.symbol), "duplicate symbol {}", f.symbol);
         }
     }
 }

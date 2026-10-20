@@ -1,0 +1,20 @@
+// test: every integer width holds its range and prints in decimal
+// status: passing
+namespace spec.basics.int_widths
+
+import std.io
+
+func main() {
+    var a int8 = -128
+    var b int16 = 32767
+    var c int32 = -2147483648
+    var d int64 = 9223372036854775807
+    var e uint8 = 255
+    var f uint16 = 65535
+    var g uint32 = 4294967295
+    var h uint64 = 18446744073709551615
+    var i byte = 200
+    var j uint = 18446744073709551615
+    println(a, b, c, d)
+    println(e, f, g, h, i, j)
+}

@@ -132,11 +132,36 @@ TEST(bounds_panics) {
     assert(strstr(buf, "slice bounds out of range [2:5] with capacity 4"));
 }
 
+TEST(append_unique_in_place) {
+    int64_t live = slang_live_objects();
+    slang_slice s = {0};
+    for (int i = 0; i < 100; i++) {
+        slang_string *v = S("x");
+        slang_slice_append(&s, 8, &slang_ops_ref, &v);
+        slang_release(v);
+    }
+    slang_string *first = *(slang_string **)slang_slice_index(&s, 0, 8);
+    assert(slang_refcount(first) == 1);  /* elements were moved, not retained */
+    slang_slice t = s;                   /* share: the next grow must copy */
+    slang_slice_retain(&t);
+    for (int i = 0; i < 100; i++) {
+        slang_string *v = S("y");
+        slang_slice_append(&s, 8, &slang_ops_ref, &v);
+        slang_release(v);
+    }
+    assert(t.len == 100 && s.len == 200 && s.backing != t.backing);
+    assert(slang_refcount(first) == 2);
+    slang_slice_release(&t);
+    slang_slice_release(&s);
+    assert(slang_live_objects() == live);
+}
+
 int main(void) {
     printf("test_slice\n");
     int64_t live = slang_live_objects();
     RUN(new_index);
     RUN(append_growth);
+    RUN(append_unique_in_place);
     RUN(shared_backing);
     RUN(copy);
     RUN(refcounted_elements);

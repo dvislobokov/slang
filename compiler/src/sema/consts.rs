@@ -66,7 +66,10 @@ impl<'a> Sema<'a> {
                 let segs = Self::flatten_path(e)?;
                 if !self.fns.is_empty() {
                     match self.lookup_local(&segs[0].name, false) {
-                        Some(Err(c)) if segs.len() == 1 => return Some(c),
+                        Some(Err(c)) if segs.len() == 1 => {
+                            self.ide_local_ref(segs[0]);
+                            return Some(c);
+                        }
                         Some(_) => return None,
                         None => {}
                     }

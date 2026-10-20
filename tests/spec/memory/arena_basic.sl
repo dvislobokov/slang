@@ -1,0 +1,25 @@
+// test: arena.New() allocates objects that are all released at once by Free
+// status: pending
+namespace spec.memory.arena_basic
+
+import std.io
+import std
+
+struct Point {
+    X int
+    Y int
+}
+
+func main() {
+    var a = arena.New()
+    var total = 0
+    for i in 0..100 {
+        var p = a.New<Point>()
+        p.X = i
+        p.Y = 1
+        total += p.X + p.Y
+    }
+    println("total", total)
+    a.Free()
+    println("arena freed")
+}

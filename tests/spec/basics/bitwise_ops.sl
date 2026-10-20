@@ -1,0 +1,12 @@
+// test: bitwise operators and shifts follow Go precedence
+// status: passing
+namespace spec.basics.bitwise_ops
+
+import std.io
+
+func main() {
+    println(6 & 3, 6 | 3, 6 ^ 3, 1 << 4, 256 >> 3)
+    println(1 + 2 << 3, 0xF0 & 0x3C | 1, -16 >> 2)
+    var u uint8 = 0b1000_0001
+    println(u >> 1, u << 1, u & 0x0F)
+}

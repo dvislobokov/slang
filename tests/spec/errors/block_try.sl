@@ -1,0 +1,26 @@
+// test: block try: ? inside the block jumps to its catch; execution continues after catch
+// status: pending
+namespace spec.errors.block_try
+
+import std.io
+import std
+
+func Run(a, b string) {
+    var total = 0
+    try {
+        var x = strings.ToInt(a)?
+        println("parsed a")
+        var y = strings.ToInt(b)?
+        println("parsed b")
+        total = x + y
+    } catch err {
+        println("bad input")
+    }
+    println("total", total)
+}
+
+func main() {
+    Run("1", "2")
+    Run("1", "z")
+    Run("z", "2")
+}

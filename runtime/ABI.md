@@ -170,9 +170,17 @@ typedef struct slang_object {         // 16 bytes: header of EVERY heap object
 %slang_object    = type { i64, ptr }
 ```
 
-A pointer to a heap object always points at its header (offset 0), never at the
-payload. So for `new Point{X: 1, Y: 2}`, `*Point` is a pointer to
-`{ %slang_object, double, double }`, and field `X` is at offset 16.
+Runtime functions always take and return pointers to the **header** (offset 0)
+of a heap object. Compiled code represents a Slang `*T` as a pointer to the
+**payload** (header + 16): for `new Point{X: 1, Y: 2}` the object is
+`{ %slang_object, double, double }` and the `*Point` points at field `X`.
+Use `slang_ptr_retain` / `slang_ptr_release` / `slang_ops_ptr` for such
+values; a non-nil `*T` always points at the payload of a whole object (the
+compiler never retains interior pointers, see DESIGN.md "Память").
+
+The refcount word holds the count in its low 62 bits
+(`SLANG_RC_COUNT_MASK`); bit 62 (`SLANG_RC_WEAK_FLAG`) marks an object that
+has a weak box (3.4). `-1` (`SLANG_RC_IMMORTAL`) is immortal.
 
 ### 3.2 Functions
 
@@ -184,8 +192,10 @@ payload. So for `new Point{X: 1, Y: 2}`, `*Point` is a pointer to
 | `void *slang_object_new(const slang_type_info *type, int64_t size)` | allocates a zeroed object of `size` bytes, **header included** (so `size >= 16`), sets `refcount = 1` and `type = type`. Returns it +1 |
 | `void slang_retain(void *obj)` | atomic `++refcount`. No-op for NULL and for immortal objects |
 | `void slang_release(void *obj)` | atomic `--refcount`. When it reaches 0: calls `type->drop(obj)` if both are non-NULL, then frees the memory. No-op for NULL and immortal objects |
-| `int64_t slang_refcount(const void *obj)` | current count (debugging and tests). 0 for NULL |
-| `int64_t slang_live_objects(void)` | number of objects allocated with `slang_object_new` and not yet freed (leak checks in tests) |
+| `int64_t slang_refcount(const void *obj)` | current count (debugging and tests), without the weak flag. 0 for NULL, -1 for immortal objects |
+| `int64_t slang_live_objects(void)` | number of objects allocated with `slang_object_new` and not yet freed (leak checks in tests). Objects made immortal (`slang_string_literal`, `slang_error_sentinel`) do not count |
+| `void slang_ptr_retain(void *payload)` / `void slang_ptr_release(void *payload)` | retain / release the object whose payload (object + 16) is given: the operations on a `*T`. No-op for NULL |
+| `void slang_leak_check_enable(int32_t mode)` | leak check (3.5); call it before anything else, even before `slang_runtime_init` |
 
 **The `drop` contract.** `drop(obj)` must release every reference the object holds:
 strings, pointers, slices (`slang_slice_release`) and so on. It must **not** free
@@ -197,7 +207,10 @@ are no such fields, `type` may point to a type info whose `drop` is NULL, or
 **Immortal objects** (`refcount == -1`, `SLANG_RC_IMMORTAL`) are never modified or
 freed. Use them for string literals and sentinel errors emitted as LLVM globals.
 
-There is no cycle collector. `weak *T` from DESIGN.md is not implemented in 0.1.
+When the count of an object with a weak box reaches zero, the weak box is
+cleared **before** `drop` runs, so weak references read as NULL from then on
+(including inside the destructor). There is no cycle collector: use weak
+references for back pointers.
 
 ### 3.3 Value ops (ownership of inline values in containers)
 
@@ -213,14 +226,48 @@ typedef struct slang_value_ops {   // 16 bytes
 ```
 
 - `NULL` ops means plain data (ints, floats, bools, structs with no references).
-- `&slang_ops_ref`: the slot is one 8-byte heap-object pointer (string, `*T`, map,
-  error, Task...).
+- `&slang_ops_ref`: the slot is one 8-byte heap-object pointer (string, map,
+  error, Task, weak box...).
+- `&slang_ops_ptr`: the slot is one `*T` (a payload pointer, object + 16).
 - `&slang_ops_slice`: the slot is one 32-byte `slang_slice`.
 - For struct values containing references, the compiler emits a constant
   `slang_value_ops` whose functions retain or release each field.
 
 `release` must handle an all-zero slot (all release functions treat NULL as a
 no-op), because containers zero-initialise their storage.
+
+### 3.4 Weak references
+
+A `weak *T` is a pointer to a **weak box**, a small refcounted object
+`{hdr, slang_object *target}` shared by all weak references to the same
+object, or NULL. Boxes are kept in a side table (object -> box) protected by a
+mutex; an object with a box has `SLANG_RC_WEAK_FLAG` set in its refcount word.
+
+| Function | Semantics |
+|---|---|
+| `void *slang_weak_new(void *payload)` | the weak box of the object whose payload is given, created on first use; returns it **+1** (the box, not the object, is retained). NULL gives NULL. Panics for immortal objects |
+| `void *slang_weak_get(void *box)` | the target's payload **+1** (retained), or NULL if the target was freed (or `box` is NULL). Never resurrects an object whose count already reached zero |
+
+Weak boxes are ordinary objects: retain and release them with
+`slang_retain`/`slang_release` (`slang_ops_ref` in containers). When the
+target dies the box's `target` becomes NULL; when the last weak reference
+goes away the box removes itself from the table and clears the flag.
+
+### 3.5 Leak check
+
+`slang_leak_check_enable(mode)`: mode 1 counts live objects; mode 2 also
+links every object into a list (a 16-byte prefix in front of the header, so
+it must be enabled before the first allocation). At the end of
+`slang_runtime_shutdown`, if `slang_live_objects() > 0`, the runtime prints
+
+```
+leak: N objects
+  K x TypeName        (mode 2 only, by count, then name)
+```
+
+to stderr and exits with status `SLANG_LEAK_EXIT_CODE` (66). The compiler
+enables it for `--leak-check` (mode 2 in debug builds, 1 with `--release`)
+and releases the program's globals before calling the shutdown.
 
 ---
 
@@ -270,6 +317,7 @@ and may be NULL.
 | `int64_t slang_string_len(s)` | length in bytes (`len(s)`) |
 | `int64_t slang_string_rune_count(s)` | number of code points. Each invalid byte counts as 1 |
 | `slang_string_concat(a, b)` | `a + b`. Always returns a new object |
+| `slang_string_append(a, b)` | `a + b`, **consuming** the caller's reference to `a`. If `a` is uniquely referenced it is extended in place (with spare capacity, so `s += x` in a loop is linear); otherwise like `concat` followed by `release(a)`. `b` may be `a` |
 | `int32_t slang_string_compare(a, b)` | bytewise comparison, returns -1, 0 or 1 (for `<`, `<=` and so on) |
 | `bool slang_string_eq(a, b)` | byte equality (`==`). `NULL == ""` |
 | `uint64_t slang_string_hash(s)` | 64-bit FNV-1a of the bytes. Stable within a process |
@@ -339,7 +387,7 @@ the new value, release the old one, write.
 | `slang_slice_release(slang_slice *s)` | -1 on `s->backing`, then `*s = {0}` |
 | `slang_slice_assign(dst, src)` | `dst = src` (retains src, releases the old dst, copies). `dst == src` is safe |
 | `void *slang_slice_index(s, i, elem_size)` | **[borrowed]** address of element `i`. Panics `index out of range [i] with length len` unless `0 <= i < len`. The compiler may instead inline `i <u len` and call `slang_panic_bounds` |
-| `slang_slice_append(slang_slice *s, elem_size, ops, const void *elem)` | `s = append(s, elem)` **in place**. The element is copied and retained. If `len < cap` it writes into the shared backing, like Go. Otherwise it allocates a new backing array (growth: at least 4, doubling below 1024 elements, then x1.5), copies and retains the elements, and releases the old backing. `elem` may point into `s` itself. For `t = append(s, x)` with `t != s`, first do `slang_slice_assign(&t, &s)`, then append to `t` |
+| `slang_slice_append(slang_slice *s, elem_size, ops, const void *elem)` | `s = append(s, elem)` **in place**. The element is copied and retained. If `len < cap` it writes into the shared backing, like Go. Otherwise it allocates a new backing array (growth: at least 4, doubling below 1024 elements, then x1.5), copies and retains the elements, and releases the old backing; if `s` is the only reference to its backing (and starts at its first element) the backing is instead resized in place and the elements keep their references. `elem` may point into `s` itself. For `t = append(s, x)` with `t != s`, first do `slang_slice_assign(&t, &s)`, then append to `t` |
 | `slang_slice_append_slice(s, elem_size, ops, const slang_slice *other)` | `s = append(s, other...)` in place. `other` may alias `s` (memmove semantics) |
 | `slang_slice_sub(out, s, lo, hi, elem_size)` | `s[lo:hi]`, with `cap = s.cap - lo`. Panics unless `0 <= lo <= hi <= cap`. Returns a +1 reference in `*out`. If `out == s` (`s = s[lo:hi]`), the old reference is released. Otherwise `*out` is overwritten without being released, so release it first if it held a slice |
 | `int64_t slang_slice_copy(dst, src, elem_size, ops)` | Go `copy(dst, src)`. Copies `min(len)` elements with memmove semantics (overlap is fine), retains the copied values and releases the overwritten ones. Returns the count |
@@ -760,6 +808,7 @@ define i32 @main(i32 %argc, ptr %argv) {
 |---|---|
 | `void slang_runtime_init(int argc, char **argv)` | stores the arguments and starts the worker pool and the timer thread. Idempotent. Call it first, on the main thread |
 | `void slang_runtime_shutdown(void)` | waits until the job queue is empty and no job is running, stops the workers and the timer thread (pending timers are dropped without firing), flushes stdio, and frees the argument slice. Call it from the main thread only (calling it from a worker deadlocks). After shutdown the scheduler restarts lazily if used again |
+| `void slang_runtime_drain(void)` | the first step of `slang_runtime_shutdown` alone: waits until no job is queued or running and stops the workers and the timer thread. The compiler calls it after `main` returns, then releases the program's globals (their destructors may print or even start tasks again), then calls `slang_runtime_shutdown` |
 | `void slang_os_args(slang_slice *out)` | `os.Args`: an owned `[]string` (`elem_size` 8, ops `slang_ops_ref`) that **shares** the runtime's backing array. Treat it as read-only |
 | `void slang_exit(int32_t code)` | flushes stdout and stderr, then calls `_Exit(code)` immediately (no defers, no shutdown wait). `noreturn` |
 
@@ -782,7 +831,8 @@ output still sitting in buffers may be lost if workers are still printing.
 - Value alignment is limited to 8 bytes (slice data is 16-aligned; map values and
   task results are only 8-aligned). Do not store `long double` or 16-byte SIMD
   types in containers.
-- There is no cycle collection and no `weak` pointers yet.
+- There is no cycle collection (use weak references, 3.4; `--leak-check`
+  reports what a cycle kept alive).
 - Map iteration order is deterministic but unspecified. Mutating a map during
   iteration is only partly supported (6.3).
 - `errors.Is` compares identity only (7.2).
@@ -851,3 +901,142 @@ Not externs (lowered by the compiler, see `stdlib.rs` specials): `errors.New`
 -> `slang_error_new`, `errors.As` -> `slang_error_as`, `task.All` ->
 `slang_task_all`, `println`/`print` -> `slang_print_*`. `math.Pi` and `math.E`
 are inlined constants.
+
+### 14.3 Second batch: time, os, fs, random, crypto, encoding, uuid
+
+Same conventions as 14.1. Additional slice element layouts: `[]byte` is
+`elem_size` 1 and `[]char` is `elem_size` 4 (`int32_t` code points), both with
+NULL ops; `[]int` is `elem_size` 8 with NULL ops. Errors from the OS have the
+message `"<op> <path>: <strerror(errno)>"` (e.g. `mkdir data: File exists`).
+Paths and other strings with an embedded NUL byte are rejected with `EINVAL`
+(or treated as non-existent by `Exists`/`IsDir`).
+
+**std.strings** (`src/std_strings_ext.c`; byte offsets, invalid UTF-8 bytes count as one rune = U+FFFD)
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `Fields(s) []string` | `void slang_strings_fields(const slang_string *s, slang_slice *out)` | Go `strings.Fields`: split around runs of Unicode white space (same set as `Trim`); `[]` for blank input |
+| `Count(s, sub) int` | `int64_t slang_strings_count(const slang_string *s, const slang_string *substr)` | non-overlapping count; empty `sub` gives rune count + 1 |
+| `LastIndex(s, sub) int` | `int64_t slang_strings_last_index(const slang_string *s, const slang_string *substr)` | byte offset of the last match, -1 if none, `len(s)` for empty `sub` |
+| `TrimPrefix(s, p)` / `TrimSuffix(s, p)` | `slang_string *slang_strings_trim_prefix(const slang_string *s, const slang_string *prefix)` / `_trim_suffix` | removes one occurrence if present |
+| `TrimLeft(s, cutset)` / `TrimRight(s, cutset)` | `slang_string *slang_strings_trim_left(const slang_string *s, const slang_string *cutset)` / `_trim_right` | Go semantics: strips leading/trailing runes contained in `cutset`; an invalid byte is stripped only if the same invalid byte is in `cutset` |
+| `SplitN(s, sep, n) []string` | `void slang_strings_split_n(const slang_string *s, const slang_string *sep, int64_t n, slang_slice *out)` | Go: `n > 0` at most `n` pieces (last is the rest), `n == 0` gives `[]`, `n < 0` = `Split` |
+| `EqualFold(a, b) bool` | `bool slang_strings_equal_fold(const slang_string *a, const slang_string *b)` | simple case folding over the `ToUpper`/`ToLower` ranges (`lower(upper(x))`, so `ς`/`σ`/`Σ` match) |
+| `Reverse(s)` | `slang_string *slang_strings_reverse(const slang_string *s)` | reverses code points (invalid bytes kept as single units) |
+| `PadLeft(s, width, pad)` / `PadRight` | `slang_string *slang_strings_pad_left(const slang_string *s, int64_t width, const slang_string *pad)` / `_pad_right` | pads to `width` **runes** by cycling the runes of `pad`; unchanged if already `>= width` or `pad == ""` |
+| `Runes(s) []char` | `void slang_strings_runes(const slang_string *s, slang_slice *out)` | decoded code points, U+FFFD for invalid bytes |
+| `FromRunes(r []char)` | `slang_string *slang_strings_from_runes(const slang_slice *runes)` | UTF-8 encoding; surrogates, negatives and > U+10FFFF become U+FFFD |
+| `Bytes(s) []byte` / `FromBytes(b)` | `void slang_strings_bytes(const slang_string *s, slang_slice *out)` / `slang_string *slang_strings_from_bytes(const slang_slice *bytes)` | = `slang_string_to_bytes` / `slang_string_from_bytes` (copies) |
+| `Compare(a, b) int` | `int64_t slang_strings_compare(const slang_string *a, const slang_string *b)` | -1 / 0 / 1, byte-wise |
+| `Title(s)` | `slang_string *slang_strings_title(const slang_string *s)` | upper-cases the first rune of each white-space separated word (Go's deprecated `strings.Title`, white space as the only separator) |
+
+**std.math** (`src/std_math_ext.c`). Slang has no overloading, so the int
+versions of `Min`/`Max`/`Abs` (which stay `float`) are `IMin`/`IMax`/`IAbs`.
+`MaxInt`/`MinInt` constants are not provided yet: the stdlib constant table
+only holds untyped floats (`Pi`, `E`), and `2^63-1` is not representable.
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `Round/Trunc/Log2/Log10(x float) float` | `double slang_math_round(double x)` (and `_trunc`, `_log2`, `_log10`) | libm; `Round` rounds half away from zero (Go) |
+| `Mod(x, y)` / `Hypot(x, y)` / `Atan2(y, x)` | `double slang_math_mod(double x, double y)` / `slang_math_hypot` / `double slang_math_atan2(double y, double x)` | `fmod` (sign of `x`), `hypot`, `atan2` |
+| `IsNaN(x) bool` | `bool slang_math_is_nan(double x)` | |
+| `IsInf(x, sign int) bool` | `bool slang_math_is_inf(double x, int64_t sign)` | Go: `sign > 0` +Inf only, `< 0` -Inf only, `0` either |
+| `Inf(sign int) float` / `NaN() float` | `double slang_math_inf(int64_t sign)` / `double slang_math_nan(void)` | `Inf(sign >= 0)` = +Inf |
+| `IMin(a, b)` / `IMax(a, b)` / `IAbs(a)` (int) | `int64_t slang_math_imin(int64_t a, int64_t b)` / `_imax` / `int64_t slang_math_iabs(int64_t a)` | `IAbs(MinInt)` wraps to `MinInt` |
+
+**std.io** (`src/std_io_ext.c`)
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `ReadAll() string!` | `slang_string *slang_io_read_all(slang_error **err)` | stdin (the same `FILE *` as `ReadLine`) to EOF; at EOF returns `""` (not an error) |
+| `ReadLines(path) []string!` | `void slang_io_read_lines(const slang_string *path, slang_slice *out, slang_error **err)` | lines without `\n`, a trailing `\r` is dropped, a final newline adds no empty line; errors as `ReadFile` |
+| `WriteLines(path, lines []string) void!` | `void slang_io_write_lines(const slang_string *path, const slang_slice *lines, slang_error **err)` | each line followed by `\n`; truncates/creates like `WriteFile` |
+| `Eprint(s)` / `Eprintln(s)` | `void slang_io_eprint(const slang_string *s)` / `slang_io_eprintln` | to stderr (stdout is flushed first); one `string` argument, not variadic |
+
+**std.time** (`src/std_time.c`): instants are `int` Unix **milliseconds**; calendar accessors are UTC.
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `Now() int` / `NowNanos() int` | `int64_t slang_time_now(void)` / `slang_time_now_nanos` | `CLOCK_REALTIME` |
+| `Sleep(ms int)` | `void slang_time_sleep(int64_t ms)` | blocks the calling thread (`nanosleep`, restarted on EINTR); `ms <= 0` returns at once. In async code prefer `await task.Delay(ms)` |
+| `Since(startMs int) int` | `int64_t slang_time_since(int64_t start_ms)` | `Now() - startMs` |
+| `Format(ms, layout) string` | `slang_string *slang_time_format(int64_t ms, const slang_string *layout)` | `strftime` in UTC, C locale, plus `%L` = 3-digit milliseconds; negative times floor to the previous second |
+| `Parse(s, layout) int!` | `int64_t slang_time_parse(const slang_string *s, const slang_string *layout, slang_error **err)` | `strptime`, UTC unless the layout has `%z` (offset applied); the whole input must match; fields not in the layout default to 1970-01-01 00:00:00; error `time: cannot parse "<s>" as "<layout>"` |
+| `Year/Month/Day/Hour/Minute/Second(ms) int` | `int64_t slang_time_year(int64_t ms)` (and `_month` 1..12, `_day` 1..31, `_hour`, `_minute`, `_second`) | UTC |
+| `Weekday(ms) int` | `int64_t slang_time_weekday(int64_t ms)` | 0 = Sunday ... 6 = Saturday |
+
+**std.os** (`src/std_os.c`)
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `Args() []string` | `void slang_os_args(slang_slice *out)` | existing function (11): program name first |
+| `Getenv(name) string` | `slang_string *slang_os_getenv(const slang_string *name)` | `""` if unset |
+| `Setenv(name, value) void!` | `void slang_os_setenv(const slang_string *name, const slang_string *value, slang_error **err)` | EINVAL for an empty name or one containing `=` |
+| `Exit(code int)` | `SLANG_NORETURN void slang_os_exit(int64_t code)` | = `slang_exit((int32_t)code)`: flushes stdout/stderr, no defers run |
+| `Hostname() string!` / `Cwd() string!` | `slang_string *slang_os_hostname(slang_error **err)` / `slang_os_cwd` | `gethostname` / `getcwd` |
+| `Pid() int` | `int64_t slang_os_pid(void)` | |
+| `Chdir(path) void!` | `void slang_os_chdir(const slang_string *path, slang_error **err)` | process-wide |
+
+**std.fs** (`src/std_fs.c`). Path functions are pure string operations on `/`-separated paths with Go `path/filepath` (Unix) semantics.
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `Exists(path) bool` / `IsDir(path) bool` | `bool slang_fs_exists(const slang_string *path)` / `slang_fs_is_dir` | `stat` (follows symlinks); false on any error |
+| `ReadDir(path) []string!` | `void slang_fs_read_dir(const slang_string *path, slang_slice *out, slang_error **err)` | entry names without `.`/`..`, sorted byte-wise |
+| `Mkdir(path) void!` / `MkdirAll(path) void!` | `void slang_fs_mkdir(const slang_string *path, slang_error **err)` / `_mkdir_all` | mode 0777 & umask; `MkdirAll` creates parents, succeeds if the directory exists, fails with ENOTDIR through a file |
+| `Remove(path) void!` | `void slang_fs_remove(const slang_string *path, slang_error **err)` | file or empty directory (`remove(3)`) |
+| `RemoveAll(path) void!` | `void slang_fs_remove_all(const slang_string *path, slang_error **err)` | recursive, does not follow symlinks; a missing path (or `""`) is success |
+| `Rename(from, to) void!` | `void slang_fs_rename(const slang_string *from, const slang_string *to, slang_error **err)` | `rename(2)` |
+| `Size(path) int!` / `ModTime(path) int!` | `int64_t slang_fs_size(const slang_string *path, slang_error **err)` / `_mod_time` | bytes / mtime in Unix ms |
+| `Copy(from, to) void!` | `void slang_fs_copy(const slang_string *from, const slang_string *to, slang_error **err)` | file contents only; `to` is created (0666 & umask) or truncated; a directory source is EISDIR |
+| `AppendFile(path, data) void!` | `void slang_fs_append_file(const slang_string *path, const slang_string *data, slang_error **err)` | `O_APPEND`, creates the file |
+| `Join(a, b)` | `slang_string *slang_fs_join(const slang_string *a, const slang_string *b)` | joins non-empty parts with `/` and cleans (`Join("a/b", "../c")` = `a/c`); `Join("", "")` = `""` |
+| `Base(p)` / `Dir(p)` / `Ext(p)` | `slang_string *slang_fs_base(const slang_string *path)` / `_dir` / `_ext` | Go: `Base("")` = `.`, `Base("a/b/")` = `b`; `Dir("a")` = `.`, cleaned; `Ext` from the last `.` of the last element, `""` if none |
+| `Abs(p) string!` | `slang_string *slang_fs_abs(const slang_string *path, slang_error **err)` | cleaned; relative paths are joined to the cwd |
+| `TempDir() string` | `slang_string *slang_fs_temp_dir(void)` | `$TMPDIR` or `/tmp` |
+
+**std.random** (`src/std_random.c`): xoshiro256** seeded through splitmix64,
+one process-wide state behind a mutex; seeded from `getrandom(2)` on first use
+unless `Seed` is called, after which the sequence is fixed. Not for secrets.
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `Seed(n int)` | `void slang_random_seed(int64_t seed)` | |
+| `Int() int` | `int64_t slang_random_int(void)` | uniform in `[0, 2^63)` |
+| `IntN(n int) int` | `int64_t slang_random_int_n(int64_t n)` | uniform in `[0, n)` (rejection sampling); panics `random: invalid argument to IntN` if `n <= 0` |
+| `Float() float` | `double slang_random_float(void)` | 53 random bits in `[0, 1)` |
+| `Bytes(n int) []byte` | `void slang_random_bytes(int64_t n, slang_slice *out)` | panics if `n < 0` |
+| `Shuffle(s []int)` | `void slang_random_shuffle(const slang_slice *s)` | in-place Fisher-Yates through the shared buffer; only `[]int` (no generics yet) |
+
+**std.crypto.hash / std.crypto.hmac / std.crypto.rand** (`src/std_crypto.c`):
+self-contained implementations of FIPS 180-4 (SHA-1/256/512), RFC 1321 (MD5),
+RFC 2104 (HMAC) and IEEE CRC-32. Inputs are the bytes of the string; hex is lowercase.
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `hash.Sha256(data) []byte` / `Sha256Hex(data) string` | `void slang_crypto_hash_sha256(const slang_string *data, slang_slice *out)` / `slang_string *slang_crypto_hash_sha256_hex(const slang_string *data)` | 32 bytes / 64 hex chars |
+| `hash.Sha512` / `Sha512Hex` | `slang_crypto_hash_sha512` / `_sha512_hex` (same shapes) | 64 bytes |
+| `hash.Sha1` / `Sha1Hex`, `hash.Md5` / `Md5Hex` | `slang_crypto_hash_sha1` / `_sha1_hex`, `slang_crypto_hash_md5` / `_md5_hex` | legacy, for compatibility only |
+| `hash.Crc32(data) int` | `int64_t slang_crypto_hash_crc32(const slang_string *data)` | IEEE (zlib, Go `crc32.ChecksumIEEE`), `0..2^32-1` |
+| `hmac.Sha256(key, data) []byte` / `Sha256Hex` | `void slang_crypto_hmac_sha256(const slang_string *key, const slang_string *data, slang_slice *out)` / `slang_string *slang_crypto_hmac_sha256_hex(...)` | HMAC-SHA256 (RFC 4231 vectors in tests) |
+| `hmac.Equal(a, b []byte) bool` | `bool slang_crypto_hmac_equal(const slang_slice *a, const slang_slice *b)` | time independent of the contents (lengths may leak) |
+| `rand.Bytes(n) []byte!` | `void slang_crypto_rand_bytes(int64_t n, slang_slice *out, slang_error **err)` | `getrandom(2)`, falling back to `/dev/urandom`; `n < 0` is an error |
+| `rand.Int() int!` | `int64_t slang_crypto_rand_int(slang_error **err)` | uniform in `[0, 2^63)` |
+| `rand.Hex(n) string!` | `slang_string *slang_crypto_rand_hex(int64_t n, slang_error **err)` | `n` random bytes as `2n` hex chars |
+
+**std.encoding.base64 / std.encoding.hex** (`src/std_encoding.c`, RFC 4648)
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `base64.Encode(b []byte)` / `EncodeString(s)` | `slang_string *slang_encoding_base64_encode(const slang_slice *data)` / `_encode_string(const slang_string *s)` | standard alphabet, `=` padding |
+| `base64.Decode(s) []byte!` / `DecodeString(s) string!` | `void slang_encoding_base64_decode(const slang_string *s, slang_slice *out, slang_error **err)` / `slang_string *slang_encoding_base64_decode_string(const slang_string *s, slang_error **err)` | padding required; `\r`/`\n` skipped; unused trailing bits ignored (Go non-strict); error `illegal base64 data at input byte N` |
+| `base64.EncodeURL(b)` / `DecodeURL(s) []byte!` | `slang_string *slang_encoding_base64_encode_url(const slang_slice *data)` / `void slang_encoding_base64_decode_url(const slang_string *s, slang_slice *out, slang_error **err)` | URL-safe alphabet (`-_`), **no padding** on output (Go `RawURLEncoding`); the decoder accepts padded or unpadded input |
+| `hex.Encode(b)` / `EncodeString(s)` | `slang_string *slang_encoding_hex_encode(const slang_slice *data)` / `_encode_string` | lowercase |
+| `hex.Decode(s) []byte!` / `DecodeString(s) string!` | `void slang_encoding_hex_decode(const slang_string *s, slang_slice *out, slang_error **err)` / `slang_string *slang_encoding_hex_decode_string(...)` | either case; errors `encoding/hex: invalid byte at offset N`, `encoding/hex: odd length hex string` |
+
+**std.uuid** (`src/std_uuid.c`)
+
+| Slang | C signature | Semantics / notes |
+|---|---|---|
+| `New() string` | `slang_string *slang_uuid_new(void)` | random version-4 UUID (RFC 9562) from `crypto.rand`, lowercase `8-4-4-4-12`; panics if no entropy source works |
+| `IsValid(s) bool` | `bool slang_uuid_is_valid(const slang_string *s)` | canonical 36-char form, hex digits of either case, any version |

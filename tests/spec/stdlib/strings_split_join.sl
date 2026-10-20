@@ -1,0 +1,17 @@
+// test: strings.Split / Join edge cases (empty fields, empty input, empty separator)
+// status: passing
+namespace spec.stdlib.strings_split_join
+
+import std.io
+import std
+
+func main() {
+    var a = strings.Split("a,b,,c", ",")
+    println(len(a), a)
+    var e = strings.Split("", ",")
+    println(len(e), "[" + e[0] + "]")
+    println(strings.Split("abc", ""), strings.Split("héj", ""))
+    println(strings.Split("no-sep", ","), len(strings.Split(",", ",")))
+    println(strings.Join(["x", "y", "z"], "-"), "[" + strings.Join([], "-") + "]", strings.Join(["solo"], ", "))
+    println(strings.Join(strings.Split("1 2 3", " "), "+"))
+}

@@ -26,11 +26,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             BinOp::And | BinOp::Or => return self.short_circuit(op, lhs, rhs),
             _ => {}
         }
-        let l = self.expr(lhs)?;
+        let d = self.depth();
+        let later = self.may_run_code(rhs);
+        let l = self.operand(lhs, later)?;
+        self.hold(lhs.ty, l);
         let r = self.expr(rhs)?;
+        self.hold(rhs.ty, r);
         let v = self.binop_vals(op, lhs.ty, l.get(), r.get(), rhs.ty)?;
-        self.drop_val(lhs.ty, l);
-        self.drop_val(rhs.ty, r);
+        self.release_temps_from(d);
         Ok(v)
     }
 
@@ -182,7 +185,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     fn short_circuit(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> R<Val<'ctx>> {
         let res = self.entry_alloca(self.ctx.bool_type().into(), "sc", false);
-        let l = self.expr(lhs)?.get().into_int_value();
+        let l = self.cond_expr(lhs)?;
         self.b.build_store(res, l).unwrap();
         let rhs_bb = self.block("sc.rhs");
         let done = self.block("sc.done");
@@ -192,7 +195,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             self.b.build_conditional_branch(l, done, rhs_bb).unwrap();
         }
         self.b.position_at_end(rhs_bb);
-        let r = self.expr(rhs)?.get().into_int_value();
+        let r = self.cond_expr(rhs)?;
         self.b.build_store(res, r).unwrap();
         self.br(done);
         self.b.position_at_end(done);
@@ -252,6 +255,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             ConvKind::FloatToFloat => self.b.build_float_cast(x.into_float_value(), tt.into_float_type(), "").unwrap().into(),
             ConvKind::CharToString => return Ok(Val::owned(self.call_rt_v("slang_string_from_rune", &[x.into()]))),
+            ConvKind::PtrToWeak | ConvKind::WeakToPtr => {
+                let f = if kind == ConvKind::PtrToWeak { "slang_weak_new" } else { "slang_weak_get" };
+                let r = self.call_rt_v(f, &[x.into()]);
+                self.drop_val(from, v);
+                return Ok(Val::owned(r));
+            }
         };
         Ok(Val::borrowed(r))
     }
@@ -290,7 +299,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let et = self.elem_of(ty).unwrap();
                 let s = self.expr_owned(&args[0])?;
                 let sp = self.spill(s);
+                let hs = self.hold_raw(args[0].ty, s);
                 let x = self.expr(&args[1])?;
+                self.unhold(hs);
                 let xp = self.spill(x.get());
                 let size = self.i64_ty().const_int(self.size_of(et), false);
                 let ops = self.value_ops(et);
@@ -301,7 +312,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             Builtin::Delete => {
                 let (kt, _) = self.map_kv(args[0].ty);
                 let m = self.expr(&args[0])?;
+                let hm = self.hold(args[0].ty, m);
                 let k = self.expr(&args[1])?;
+                self.unhold(hm);
                 match self.key_kind(kt) {
                     super::expr::KeyKind::Str => self.call_rt("slang_map_delete_str", &[m.get().into(), k.get().into()]),
                     super::expr::KeyKind::Int => self.call_rt("slang_map_delete_int", &[m.get().into(), k.get().into()]),

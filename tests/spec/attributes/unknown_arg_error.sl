@@ -1,0 +1,15 @@
+// error: unknown argument mx
+// status: passing
+namespace spec.attributes.unknown_arg_error
+
+import std.io
+
+@attribute
+struct limit {
+    max int
+}
+
+@limit(mx: 1)
+func main() {
+    println("x")
+}

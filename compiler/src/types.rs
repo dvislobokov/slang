@@ -47,6 +47,9 @@ pub enum Type {
     /// `nil` literal before it is unified with a pointer/slice/map/func type.
     Nil,
     Pointer(TypeId),
+    /// `weak *T`: a non-owning reference to the `T` of a `*T`; the payload
+    /// is the pointee `T`. Reading it yields a `*T` (or `nil` once freed).
+    Weak(TypeId),
     Slice(TypeId),
     Array(TypeId, u64),
     Map(TypeId, TypeId),
@@ -137,6 +140,7 @@ impl TypeTable {
     }
 
     pub fn pointer(&mut self, to: TypeId) -> TypeId { self.intern(Type::Pointer(to)) }
+    pub fn weak(&mut self, to: TypeId) -> TypeId { self.intern(Type::Weak(to)) }
     pub fn slice(&mut self, of: TypeId) -> TypeId { self.intern(Type::Slice(of)) }
     pub fn fallible(&mut self, of: TypeId) -> TypeId { self.intern(Type::Fallible(of)) }
     pub fn task(&mut self, of: TypeId) -> TypeId { self.intern(Type::Task(of)) }
@@ -191,7 +195,7 @@ impl TypeTable {
     pub fn is_numeric(&self, id: TypeId) -> bool { self.is_integer(id) || self.is_float(id) }
     /// Types that may hold `nil`.
     pub fn is_nilable(&self, id: TypeId) -> bool {
-        matches!(self.get(id), Type::Pointer(_) | Type::Slice(_) | Type::Map(..) | Type::Func(_) | Type::Interface(_) | Type::Error | Type::Any | Type::Nil)
+        matches!(self.get(id), Type::Pointer(_) | Type::Weak(_) | Type::Slice(_) | Type::Map(..) | Type::Func(_) | Type::Interface(_) | Type::Error | Type::Any | Type::Nil)
     }
 
     /// Readable form for diagnostics; `names` resolves declared types.
@@ -214,6 +218,7 @@ impl TypeTable {
             Invalid => "<invalid>".into(),
             Nil => "nil".into(),
             Pointer(t) => format!("*{}", self.display(*t, names)),
+            Weak(t) => format!("weak *{}", self.display(*t, names)),
             Slice(t) => format!("[]{}", self.display(*t, names)),
             Array(t, n) => format!("[{n}]{}", self.display(*t, names)),
             Map(k, v) => format!("map[{}]{}", self.display(*k, names), self.display(*v, names)),

@@ -1,0 +1,20 @@
+// error: cannot be applied to a struct
+// status: passing
+namespace spec.attributes.targets_violation_error
+
+import std.io
+import std
+
+@attribute(targets: [reflect.Target.Field])
+struct column {
+    name string
+}
+
+@column("users")
+struct User {
+    Id int
+}
+
+func main() {
+    println(User{Id: 1}.Id)
+}

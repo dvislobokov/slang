@@ -1,0 +1,17 @@
+// test: integer division by a zero variable panics with exit code 2
+// status: passing
+// exit: 2
+// stderr: divide by zero
+namespace spec.basics.division_by_zero_panics
+
+import std.io
+
+func Div(a, b int) int {
+    return a / b
+}
+
+func main() {
+    println("before")
+    println(Div(1, 0))
+    println("unreachable")
+}

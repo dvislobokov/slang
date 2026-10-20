@@ -138,12 +138,15 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             (Type::Error, Type::Pointer(inner)) => {
                 let Type::Struct(d) = self.ty(inner).clone() else { return unsupported("non-struct pointer as error") };
-                let p = self.expr(value)?.get().into_pointer_value();
+                let pv = self.expr(value)?;
+                let p = pv.get().into_pointer_value();
                 self.nil_check(p);
                 let lt = self.llty(inner);
                 let sv = self.b.build_load(lt, p, "").unwrap();
                 self.retain_val(inner, sv);
-                Ok(Val::owned(self.box_error(inner, d.0, sv)?))
+                let e = self.box_error(inner, d.0, sv)?;
+                self.drop_val(from, pv);
+                Ok(Val::owned(e))
             }
             (Type::Interface(_), Type::Struct(d)) => {
                 let v = self.expr_owned(value)?;
@@ -154,9 +157,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             (Type::Interface(_), Type::Pointer(inner)) => {
                 let Type::Struct(d) = self.ty(inner).clone() else { return unsupported("non-struct pointer in an interface") };
-                let p = self.expr(value)?.get().into_pointer_value();
+                let pv = self.expr(value)?;
+                let p = pv.get().into_pointer_value();
                 let vt = self.vtable(from, d.0, to)?;
-                Ok(Val::borrowed(self.make_pair(p, vt)))
+                // The interface value owns the pointer like a box.
+                Ok(Val { v: Some(self.make_pair(p, vt)), owned: pv.owned })
             }
             (Type::Interface(_), Type::Interface(_)) if from == to => self.expr(value),
             (Type::Any, Type::Any) => self.expr(value),
@@ -173,12 +178,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Dynamic call of interface method `method` on `recv`.
     pub(crate) fn iface_call(&mut self, ty: TypeId, recv: &Expr, method: u32, args: &[Expr]) -> R<Val<'ctx>> {
-        let rv = self.expr(recv)?;
         if *self.ty(recv.ty) == Type::Error {
+            let rv = self.expr(recv)?;
             let r = self.call_rt_v("slang_error_message", &[rv.get().into()]);
             self.drop_val(recv.ty, rv);
             return Ok(Val::owned(r));
         }
+        let dep = self.depth();
+        let (rv, _) = self.arg(recv, false, true, false)?;
         let Type::Interface(d) = self.ty(recv.ty).clone() else { return unsupported("method call on this type") };
         let sig = self.prog.interfaces[d.0 as usize].methods[method as usize].clone();
         let pair = rv.get().into_struct_value();
@@ -196,16 +203,22 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             None => self.ctx.void_type().fn_type(&ps, false),
         };
         let mut vals = Vec::new();
-        for a in args {
-            vals.push(self.expr(a)?);
+        let mut moved_holds = Vec::new();
+        for (k, a) in args.iter().enumerate() {
+            let moved = sig.params.get(k).is_some_and(|t| self.has_dtor(*t));
+            let (v, h) = self.arg(a, moved, true, false)?;
+            if moved {
+                moved_holds.push(h);
+            }
+            vals.push(v);
         }
         let mut ma: Vec<BasicMetadataValueEnum> = vec![data.into()];
         ma.extend(vals.iter().map(|v| BasicMetadataValueEnum::from(v.get())));
         let r = self.b.build_indirect_call(fty, fnp, &ma, "").unwrap().try_as_basic_value().left();
-        for (a, v) in args.iter().zip(vals) {
-            self.drop_val(a.ty, v);
+        for h in moved_holds {
+            self.unhold(h);
         }
-        self.drop_val(recv.ty, rv);
+        self.release_temps_from(dep);
         let _ = ty;
         Ok(Val { v: r, owned: true })
     }
@@ -252,8 +265,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 };
                 let eq = self.ptr_eq(tid, ti);
                 self.b.build_store(res, eq).unwrap();
-                if matches!(self.ty(pat), Type::Pointer(_)) {
-                    // The binding is the pointer itself: store its address.
+                if matches!(self.ty(pat), Type::Pointer(_)) && !matches!(self.ty(subj_ty), Type::Any) {
+                    // An interface stores a `*S` itself (an `any` boxes it):
+                    // the binding is the data pointer, so store its address.
                     let slot = self.entry_alloca(self.ptr_ty().into(), "tp", false);
                     self.b.build_store(slot, data).unwrap();
                     self.b.build_store(datap, slot).unwrap();
@@ -280,7 +294,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn errors_as(&mut self, err: &Expr, target: &Expr) -> R<Val<'ctx>> {
         let Type::Pointer(st) = self.ty(target.ty).clone() else { return unsupported("errors.As target") };
         let ev = self.expr(err)?;
+        let h = self.hold(err.ty, ev);
         let tp = self.expr(target)?.get().into_pointer_value();
+        self.unhold(h);
         let ti = self.type_info(st);
         let payload = self.call_rt_v("slang_error_as", &[ev.get().into(), ti.into()]).into_pointer_value();
         let found = self.b.build_is_not_null(payload, "").unwrap();

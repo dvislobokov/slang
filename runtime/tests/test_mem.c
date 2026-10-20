@@ -73,6 +73,121 @@ TEST(layout) {
     assert(offsetof(slang_error, message_fn) == 48);
 }
 
+TEST(payload_pointers) {
+    int64_t live = slang_live_objects();
+    slang_object *o = slang_object_new(&counted, 32);
+    void *payload = (char *)o + 16;
+    slang_ptr_retain(payload);
+    assert(slang_refcount(o) == 2);
+    void *slot = payload;
+    slang_ops_ptr.retain(&slot);
+    assert(slang_refcount(o) == 3);
+    slang_ops_ptr.release(&slot);
+    slang_ptr_release(payload);
+    slang_ptr_retain(NULL);
+    slang_ptr_release(NULL);
+    void *nil = NULL;
+    slang_ops_ptr.release(&nil);
+    int d = drops;
+    slang_ptr_release(payload);
+    assert(drops == d + 1);
+    assert(slang_live_objects() == live);
+}
+
+static void *weak_seen;
+static void weak_checking_drop(void *obj) {
+    (void)obj;
+    /* Weak refs are already cleared when the destructor runs. */
+    assert(slang_weak_get(weak_seen) == NULL);
+    drops++;
+}
+static const slang_type_info weak_counted = { "WeakCounted", 32, weak_checking_drop };
+
+TEST(weak_refs) {
+    int64_t live = slang_live_objects();
+    assert(slang_weak_new(NULL) == NULL);
+    assert(slang_weak_get(NULL) == NULL);
+    slang_object *o = slang_object_new(&weak_counted, 32);
+    void *payload = (char *)o + 16;
+    void *w1 = slang_weak_new(payload);
+    void *w2 = slang_weak_new(payload);
+    assert(w1 && w1 == w2);              /* one shared box per object */
+    assert(slang_refcount(o) == 1);      /* weak refs do not retain */
+    assert(slang_refcount(w1) == 2);
+    void *p = slang_weak_get(w1);
+    assert(p == payload && slang_refcount(o) == 2);
+    slang_ptr_release(p);
+    weak_seen = w1;
+    int d = drops;
+    slang_release(o);                    /* last strong ref: target freed */
+    assert(drops == d + 1);
+    assert(slang_weak_get(w1) == NULL);
+    slang_release(w1);
+    slang_release(w2);
+    /* Box freed first, object later: the flag is cleared again. */
+    o = slang_object_new(&counted, 32);
+    payload = (char *)o + 16;
+    void *w = slang_weak_new(payload);
+    slang_release(w);
+    slang_retain(o);
+    assert(slang_refcount(o) == 2);
+    slang_release(o);
+    slang_release(o);
+    assert(slang_live_objects() == live);
+}
+
+#include <pthread.h>
+static void *weak_box_shared;
+static void *weak_hammer(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 100000; i++) {
+        void *p = slang_weak_get(weak_box_shared);
+        if (!p) break;
+        slang_ptr_release(p);
+    }
+    return NULL;
+}
+
+TEST(weak_threads) {
+    int64_t live = slang_live_objects();
+    slang_object *o = slang_object_new(&counted, 32);
+    weak_box_shared = slang_weak_new((char *)o + 16);
+    pthread_t th[4];
+    for (int i = 0; i < 4; i++) pthread_create(&th[i], NULL, weak_hammer, NULL);
+    slang_release(o);
+    for (int i = 0; i < 4; i++) pthread_join(th[i], NULL);
+    assert(slang_weak_get(weak_box_shared) == NULL);
+    slang_release(weak_box_shared);
+    assert(slang_live_objects() == live);
+}
+
+static void leaky_child(void) {
+    slang_leak_check_enable(2);
+    slang_runtime_init(0, NULL);
+    slang_object_new(&counted, 24);
+    slang_object_new(&counted, 24);
+    slang_string_literal("immortal", 8); /* does not count */
+    slang_runtime_shutdown();            /* reports and exits */
+    _exit(0);
+}
+
+static void clean_child(void) {
+    slang_leak_check_enable(2);
+    slang_runtime_init(0, NULL);
+    slang_release(slang_object_new(&counted, 24));
+    slang_runtime_shutdown();
+}
+
+TEST(leak_report) {
+    char buf[4096];
+    int st = run_child_fd(leaky_child, 2, buf, sizeof buf);
+    assert(st == SLANG_LEAK_EXIT_CODE);
+    assert(strstr(buf, "leak: 2 objects\n"));
+    assert(strstr(buf, "  2 x Counted\n"));
+    st = run_child_fd(clean_child, 2, buf, sizeof buf);
+    assert(st == 0 && buf[0] == 0);
+}
+
 int main(void) {
     printf("test_mem\n");
     RUN(alloc_zeroed);
@@ -80,5 +195,9 @@ int main(void) {
     RUN(immortal);
     RUN(atomic_refcount);
     RUN(layout);
+    RUN(payload_pointers);
+    RUN(weak_refs);
+    RUN(weak_threads);
+    RUN(leak_report);
     return 0;
 }

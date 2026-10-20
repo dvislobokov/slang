@@ -63,3 +63,20 @@ pub fn check(files: &[SourceFile], diags: &mut Diagnostics) -> Option<Program> {
     let asts = parse_all(files, diags)?;
     sema::analyze(&asts, diags)
 }
+
+/// Like [`check`] for a package graph: `prepare` sees the parsed files
+/// first (package rules such as namespace roots) and may report errors;
+/// `policy` limits which namespaces each file may use.
+pub fn check_with_policy(
+    files: &[SourceFile],
+    diags: &mut Diagnostics,
+    policy: &sema::ImportPolicy,
+    prepare: impl FnOnce(&[ast::File], &mut Diagnostics),
+) -> Option<Program> {
+    let asts = parse_all(files, diags)?;
+    prepare(&asts, diags);
+    if diags.has_errors() {
+        return None;
+    }
+    sema::analyze_with_policy(&asts, diags, Some(policy))
+}

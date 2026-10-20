@@ -1,0 +1,15 @@
+// test: a constant expression may be used as an array length (like Go)
+// status: pending
+namespace spec.basics.const_array_length
+
+import std.io
+
+const N = 2
+const M = N * 2
+
+func main() {
+    var a [N]int
+    var b [M + 1]string
+    a[1] = 5
+    println(len(a), len(b), a)
+}

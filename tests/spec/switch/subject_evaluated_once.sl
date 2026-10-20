@@ -1,0 +1,26 @@
+// test: the switch subject is evaluated exactly once
+// status: passing
+namespace spec.switch.subject_evaluated_once
+
+import std.io
+
+var calls = 0
+
+func Next() int {
+    calls += 1
+    return calls * 10
+}
+
+func main() {
+    switch Next() {
+        case 1:
+            println("one")
+        case 2, 3:
+            println("two or three")
+        case 10:
+            println("ten")
+        default:
+            println("other")
+    }
+    println("calls", calls)
+}

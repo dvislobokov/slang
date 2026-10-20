@@ -1,0 +1,9 @@
+// test: importing a parent namespace gives child.Name access to nested namespaces
+// status: passing
+namespace spec.ns.parent.lib.text
+
+import std
+
+func Shout(s string) string {
+    return strings.ToUpper(s) + "!"
+}

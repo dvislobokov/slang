@@ -1,0 +1,26 @@
+// test: integer overflow wraps around (two's complement), like Go
+// status: passing
+namespace spec.basics.int_overflow_wraps
+
+import std.io
+
+func main() {
+    var a int8 = 127
+    a += 1
+    var b uint8 = 255
+    b += 1
+    var c uint8 = 0
+    c -= 1
+    var d int32 = 2147483647
+    d += 1
+    var e int = 9223372036854775807
+    e += 1
+    var f uint64 = 0
+    f -= 1
+    var g int16 = -32768
+    g -= 1
+    var m int8 = 100
+    m *= 3
+    println(a, b, c, d)
+    println(e, f, g, m)
+}

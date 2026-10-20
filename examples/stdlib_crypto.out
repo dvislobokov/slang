@@ -1,0 +1,23 @@
+sha256: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+sha1: a9993e364706816aba3e25717850c26c9cd0d89d
+md5: 9e107d9d372bb6826bd81d3542a419d6
+sha512: ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
+crc32: 3421780262
+digest: 32 bytes, first 44 last 36
+hex matches: true
+hmac: f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8
+verify: true false
+base64: U2xhbmcgKyBiYXNlNjQgPSBvaw==
+decoded: Slang + base64 = ok
+bad: invalid input
+raw: [251 255 16] std: +/8Q url: -_8Q
+url round trip: fbff10
+hex: 486921 Slang
+odd hex: encoding/hex: odd length hex string
+token length: 32
+key length: 32
+uuid: 36 true false true
+same sequence: true
+seeded: [18 93 41]
+shuffled: [5 8 7 1 3 2 6 4]
+float in [0, 1): true bytes: 5

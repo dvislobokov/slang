@@ -1,0 +1,28 @@
+// test: storing a value in an interface copies it; storing a pointer shares it
+// status: passing
+namespace spec.interfaces.value_vs_pointer
+
+import std.io
+
+interface Counter {
+    func Inc()
+    func Get() int
+}
+
+struct C {
+    N int
+    func Inc() { this.N += 1 }
+    func Get() int { return this.N }
+}
+
+func main() {
+    var c = C{}
+    var byValue Counter = c
+    var byPtr Counter = &c
+    byValue.Inc()
+    byPtr.Inc()
+    byPtr.Inc()
+    println(c.N, byValue.Get(), byPtr.Get())
+    c.N = 100
+    println(byValue.Get(), byPtr.Get())
+}

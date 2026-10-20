@@ -1,0 +1,29 @@
+// test: pointers share the pointee; &x, *p and auto-deref field access
+// status: passing
+namespace spec.structs.pointer_semantics
+
+import std.io
+
+struct P {
+    X int
+}
+
+func Bump(p *P) {
+    p.X += 100
+}
+
+func main() {
+    var a = P{X: 1}
+    var p = &a
+    var q = p
+    q.X = 5
+    Bump(p)
+    println(a.X, p.X, (*q).X)
+    var copy = *p
+    copy.X = 0
+    println(a.X, copy.X)
+    var h = new P{X: 3}
+    var h2 = h
+    h2.X += 1
+    println(h.X)
+}

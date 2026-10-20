@@ -1,0 +1,31 @@
+namespace liba
+
+import std
+import libb.math
+import libb.shapes
+
+var calls = 0
+
+func Describe(a, b int) string {
+    calls += 1
+    return fmt.Format("sum is {0}", Add(a, b))
+}
+
+func Twice(x int) int {
+    calls += 1
+    return Add(x, x)
+}
+
+func Calls() int {
+    return calls
+}
+
+// Builds shapes here and inspects them in lib-b.
+func Shapes() []string {
+    var shapes []Shape = [Square{Side: 3}, Rect{W: 2, H: 5}]
+    var out []string = []
+    for s in shapes {
+        out = append(out, Kind(s) + fmt.Format(" area {0}", s.Area()))
+    }
+    return out
+}

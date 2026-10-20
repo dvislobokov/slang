@@ -97,6 +97,7 @@ impl<'a> Sema<'a> {
             }
             self.cur_ns = ns;
             self.file_scopes.push(FileScope { ns, imports: Vec::new() });
+            self.ide_namespace_decl(file);
             let hns = self.cur_hir_ns();
             for d in &file.decls {
                 match d {
@@ -119,6 +120,8 @@ impl<'a> Sema<'a> {
                         });
                         self.struct_src.push(s);
                         self.register(ns, &s.name, Member::Struct(id));
+                        let c = self.ide_cur_ns();
+                        self.ide_def(index::SymKey::Struct(id), &s.name, s.span, c);
                         for m in &s.methods {
                             self.reject_generics(&m.generics);
                             if self.structs[id as usize].methods.iter().any(|(n, _)| *n == m.name.name) {
@@ -128,6 +131,7 @@ impl<'a> Sema<'a> {
                             let kind = FuncKind::Method { struct_id: id, is_static: m.is_static };
                             let fid = self.new_func(m, kind, FuncSrc::Method(m, id), &format!("{}.{}", s.name.name, m.name.name));
                             self.structs[id as usize].methods.push((m.name.name.clone(), fid));
+                            self.ide_def(index::SymKey::Func(fid.0), &m.name, m.span, Some(index::SymKey::Struct(id)));
                         }
                     }
                     ast::Decl::Interface(it) => {
@@ -145,6 +149,8 @@ impl<'a> Sema<'a> {
                         });
                         self.iface_src.push(it);
                         self.register(ns, &it.name, Member::Interface(id));
+                        let c = self.ide_cur_ns();
+                        self.ide_def(index::SymKey::Interface(id), &it.name, it.span, c);
                     }
                     ast::Decl::Enum(e) => {
                         let id = self.enums.len() as u32;
@@ -161,6 +167,8 @@ impl<'a> Sema<'a> {
                         });
                         self.enum_src.push(e);
                         self.register(ns, &e.name, Member::Enum(id));
+                        let c = self.ide_cur_ns();
+                        self.ide_def(index::SymKey::Enum(id), &e.name, e.span, c);
                     }
                     ast::Decl::Func(f) => {
                         self.reject_generics(&f.generics);
@@ -169,6 +177,8 @@ impl<'a> Sema<'a> {
                         }
                         let fid = self.new_func(f, FuncKind::Free, FuncSrc::Free(f), &f.name.name);
                         self.register(ns, &f.name, Member::Func(fid));
+                        let c = self.ide_cur_ns();
+                        self.ide_def(index::SymKey::Func(fid.0), &f.name, f.span, c);
                     }
                     ast::Decl::Var(v) => {
                         if v.names.len() != 1 {
@@ -177,10 +187,14 @@ impl<'a> Sema<'a> {
                         }
                         let gid = self.new_global(&v.names[0], false, GlobalSrc::Var(v), v.span);
                         self.register(ns, &v.names[0], Member::Global(gid));
+                        let c = self.ide_cur_ns();
+                        self.ide_def(index::SymKey::Global(gid.0), &v.names[0], v.span, c);
                     }
                     ast::Decl::Const(c) => {
                         let gid = self.new_global(&c.name, true, GlobalSrc::Const(c), c.span);
                         self.register(ns, &c.name, Member::Global(gid));
+                        let cn = self.ide_cur_ns();
+                        self.ide_def(index::SymKey::Global(gid.0), &c.name, c.span, cn);
                     }
                 }
             }
@@ -231,7 +245,12 @@ impl<'a> Sema<'a> {
             self.cur_ns = self.file_scopes[fi].ns;
             for imp in &file.imports {
                 let path = imp.path.to_string();
+                if let Err(msg) = self.policy.map_or(Ok(()), |p| p.check(fi, &path)) {
+                    self.err(msg, imp.path.span);
+                    continue;
+                }
                 let entry = if let Some(&ns) = self.ns_index.get(&path) {
+                    self.ide_import(&imp.path, None);
                     match &imp.alias {
                         Some(a) => ImportEntry::Named(a.name.clone(), Member::Ns(ns), ns),
                         None => ImportEntry::Glob(ns),
@@ -243,6 +262,7 @@ impl<'a> Sema<'a> {
                     let found = self.ns_index.get(&parent).copied().and_then(|ns| self.member_of(ns, last, true).map(|m| (m, ns)));
                     match found {
                         Some((m, ns)) => {
+                            self.ide_import(&imp.path, Some(m));
                             let name = imp.alias.as_ref().unwrap_or(last).name.clone();
                             ImportEntry::Named(name, m, ns)
                         }
@@ -323,6 +343,12 @@ impl<'a> Sema<'a> {
             return Some(PathRes::BuiltinType(t));
         }
         if let Some(&r) = self.roots.get(n) {
+            if let Err(msg) = self.policy.map_or(Ok(()), |p| p.check(self.cur_file, n)) {
+                if report {
+                    self.err(msg, name.span);
+                }
+                return None;
+            }
             return Some(PathRes::Member(Member::Ns(r)));
         }
         if let (Some(ns), true) = (private, report) {
@@ -337,6 +363,7 @@ impl<'a> Sema<'a> {
     /// the number of segments consumed. `None` if the head is unknown.
     pub(crate) fn resolve_segments(&mut self, segs: &[&ast::Ident], report: bool) -> Option<(PathRes, usize)> {
         let mut cur = self.lookup_global(segs[0], report)?;
+        self.ide_res(segs[0], cur);
         let mut i = 1;
         while i < segs.len() {
             let seg = segs[i];
@@ -380,6 +407,7 @@ impl<'a> Sema<'a> {
                 },
                 _ => break,
             };
+            self.ide_res(seg, next);
             cur = next;
             i += 1;
         }
@@ -416,6 +444,7 @@ impl<'a> Sema<'a> {
                 }
                 if path.segments.len() == 1 {
                     if let Some(b) = self.tt.builtin(&path.segments[0].name) {
+                        self.ide_ref(path.segments[0].span, index::SymKey::Builtin(path.segments[0].name.clone()));
                         return b;
                     }
                 }
@@ -450,6 +479,10 @@ impl<'a> Sema<'a> {
             K::Pointer(inner) => {
                 let i = self.resolve_type(inner);
                 self.tt.pointer(i)
+            }
+            K::Weak(inner) => {
+                let i = self.resolve_type(inner);
+                self.tt.weak(i)
             }
             K::Slice(inner) => {
                 let i = self.resolve_type(inner);
@@ -544,6 +577,7 @@ impl<'a> Sema<'a> {
                 if f.default.is_some() && !self.structs[sid].is_attribute {
                     self.err("field default values are only allowed in @attribute structs", f.span);
                 }
+                self.ide_def(index::SymKey::Field(sid as u32, fields.len() as u32), &f.name, f.span, Some(index::SymKey::Struct(sid as u32)));
                 fields.push(hir::StructField {
                     name: f.name.name.clone(),
                     ty,
@@ -574,6 +608,7 @@ impl<'a> Sema<'a> {
                     self.err(format!("duplicate variant {} in enum {}", v.name.name, src.name.name), v.name.span);
                     continue;
                 }
+                self.ide_def(index::SymKey::Variant(eid as u32, vs.len() as u32), &v.name, v.span, Some(index::SymKey::Enum(eid as u32)));
                 let fields = v.fields.iter().map(|f| (f.name.name.clone(), self.resolve_type(&f.ty))).collect();
                 vs.push(hir::Variant { name: v.name.name.clone(), fields, attrs: Vec::new(), span: v.span });
             }
@@ -590,6 +625,7 @@ impl<'a> Sema<'a> {
                     self.err(format!("duplicate method {} in interface {}", m.name.name, src.name.name), m.name.span);
                     continue;
                 }
+                self.ide_def(index::SymKey::IfaceMethod(iid as u32, ms.len() as u32), &m.name, m.span, Some(index::SymKey::Interface(iid as u32)));
                 let params = m.params.iter().map(|p| self.resolve_type(&p.ty)).collect();
                 let ret = m.ret.as_ref().map(|r| self.resolve_type(r)).unwrap_or(self.tt.void);
                 ms.push(hir::MethodSig { name: m.name.name.clone(), params, ret });
@@ -617,6 +653,9 @@ impl<'a> Sema<'a> {
                     self.err(format!("duplicate parameter {}", p.name.name), p.name.span);
                 }
                 params.push(ty);
+                if p.name.name != "_" {
+                    self.ide_def(index::SymKey::Local(fid as u32, locals.len() as u32), &p.name, p.span, Some(index::SymKey::Func(fid as u32)));
+                }
                 locals.push(hir::Local { name: p.name.name.clone(), ty, kind: LocalKind::Param, captured: false, address_taken: false, span: p.span });
             }
             let ret = decl.ret.as_ref().map(|r| self.resolve_type(r)).unwrap_or(self.tt.void);
@@ -718,5 +757,79 @@ impl<'a> Sema<'a> {
             }
         }
         best
+    }
+}
+
+// -- package isolation hook ---------------------------------------------------
+
+/// Strict dependency isolation for package builds (docs/PACKAGES.md,
+/// "строгая изоляция"): a file may reach, by `import` or by a fully
+/// qualified path, only `std`, the namespace root of its own package and
+/// the roots of the packages its manifest declares as dependencies.
+///
+/// Built by `crate::package` and passed to [`super::analyze_with_policy`].
+/// Without a policy (single-file and plain-directory builds) every
+/// namespace is visible. Package namespace roots are single identifiers
+/// owned by exactly one package, so checking the first path segment is
+/// enough.
+#[derive(Clone, Debug, Default)]
+pub struct ImportPolicy {
+    /// For each file (same index as the files given to sema): its package,
+    /// an index into `packages`.
+    pub file_package: Vec<usize>,
+    pub packages: Vec<PackageScope>,
+}
+
+/// One package of an [`ImportPolicy`].
+#[derive(Clone, Debug)]
+pub struct PackageScope {
+    /// Package name (for messages).
+    pub name: String,
+    /// Root namespace owned by the package.
+    pub namespace: String,
+    /// Declared (direct) dependencies, indices into `ImportPolicy::packages`.
+    pub deps: Vec<usize>,
+}
+
+impl ImportPolicy {
+    /// `Err(message)` if code in file `file` may not reference the
+    /// namespace `path` (or anything under its root).
+    pub fn check(&self, file: usize, path: &str) -> Result<(), String> {
+        let root = path.split('.').next().unwrap_or(path);
+        let Some(&me) = self.file_package.get(file) else { return Ok(()) };
+        if root == "std" {
+            return Ok(());
+        }
+        let Some(owner) = self.packages.iter().position(|p| p.namespace == root) else {
+            // Not owned by any package: sema reports unknown names itself.
+            return Ok(());
+        };
+        let pkg = &self.packages[me];
+        if owner == me || pkg.deps.contains(&owner) {
+            return Ok(());
+        }
+        let on = &self.packages[owner].name;
+        let via = self.transitive_via(me, owner).map(|v| format!(" (it is only a transitive dependency, through `{}`)", self.packages[v].name)).unwrap_or_default();
+        Err(format!(
+            "package `{}` cannot use namespace `{path}`: it belongs to package `{on}`, which is not a declared dependency of `{}`{via}; add `{on}` to [dependencies] in the manifest of `{}`",
+            pkg.name, pkg.name, pkg.name
+        ))
+    }
+
+    /// The direct dependency of `from` through which `to` is reachable.
+    fn transitive_via(&self, from: usize, to: usize) -> Option<usize> {
+        for &d in &self.packages[from].deps {
+            let mut seen = vec![false; self.packages.len()];
+            let mut stack = vec![d];
+            while let Some(p) = stack.pop() {
+                if p == to {
+                    return Some(d);
+                }
+                if !std::mem::replace(&mut seen[p], true) {
+                    stack.extend(self.packages[p].deps.iter().copied());
+                }
+            }
+        }
+        None
     }
 }

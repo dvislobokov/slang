@@ -1,0 +1,16 @@
+// test: a plain enum value prints as its variant name, also via fmt.Format
+// status: passing
+namespace spec.enums.printing
+
+import std.io
+import std
+
+enum Color { Red, Green, Blue }
+
+func main() {
+    var c = Color.Blue
+    println(c, Color.Red)
+    println(fmt.Format("color={0}", Color.Green))
+    var all = [Color.Red, Color.Green, Color.Blue]
+    println(all)
+}

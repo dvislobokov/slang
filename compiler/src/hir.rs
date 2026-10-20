@@ -487,10 +487,13 @@ pub enum ExprKind {
     Field { base: Box<Expr>, index: u32 },
     /// `*p` (panics on nil).
     Deref(Box<Expr>),
-    /// `&e`. If `e` is not a place, it is first copied into a fresh stack
-    /// temporary (used for method calls on rvalues).
+    /// `&e`. If `e` is not a place, it is first copied into a fresh heap
+    /// box (used for method calls on rvalues). `&x` of a variable points at
+    /// its heap cell; `&` of a field, element or global is an *interior
+    /// pointer*, which sema only allows in read-only positions and as an
+    /// argument for a non-escaping parameter (see [`ownership`]).
     AddrOf(Box<Expr>),
-    /// `new e`: heap-allocate a copy of `e`, result `*T`.
+    /// `new e`: heap-allocate a copy of `e`, result `*T` (owned).
     New(Box<Expr>),
     /// Element of a slice or array (bounds-checked).
     Index { base: Box<Expr>, index: Box<Expr> },
@@ -615,6 +618,10 @@ pub enum ConvKind {
     /// `char(i)`: integer code point to char (and `int(c)` the reverse).
     IntToChar,
     CharToInt,
+    /// `*T` to `weak *T` (implicit): a weak reference to the pointee.
+    PtrToWeak,
+    /// Reading a `weak *T`: the `*T` (retained) or `nil` once freed.
+    WeakToPtr,
 }
 
 /// Built-in operations ([`ExprKind::Builtin`]).
@@ -680,3 +687,4 @@ impl Expr {
 }
 
 pub mod dump;
+pub mod ownership;

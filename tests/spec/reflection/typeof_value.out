@@ -1,0 +1,4 @@
+User *User Pointer
+int string []int Slice
+User float map[string]int
+true

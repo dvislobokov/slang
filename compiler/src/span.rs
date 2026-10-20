@@ -62,6 +62,54 @@ impl SourceFile {
     pub fn slice(&self, span: Span) -> &str {
         &self.text[span.start as usize..span.end as usize]
     }
+
+    /// Number of lines (a trailing newline starts an empty last line).
+    pub fn line_count(&self) -> usize {
+        self.line_starts.len()
+    }
+
+    /// Byte offset of the start of 0-based `line` (clamped to the text end).
+    pub fn line_start(&self, line: usize) -> u32 {
+        self.line_starts.get(line).copied().unwrap_or(self.text.len() as u32)
+    }
+
+    /// 0-based (line, UTF-16 column) of a byte offset, as used by LSP.
+    /// Offsets past the end clamp to the end; offsets inside a multi-byte
+    /// character round down to its start.
+    pub fn utf16_position(&self, offset: u32) -> (u32, u32) {
+        let offset = (offset as usize).min(self.text.len());
+        let line = match self.line_starts.binary_search(&(offset as u32)) {
+            Ok(i) => i,
+            Err(i) => i - 1,
+        };
+        let start = self.line_starts[line] as usize;
+        let mut col = 0u32;
+        for (i, c) in self.text[start..].char_indices() {
+            if start + i >= offset {
+                break;
+            }
+            col += c.len_utf16() as u32;
+        }
+        (line as u32, col)
+    }
+
+    /// Byte offset of a 0-based (line, UTF-16 column) position. Columns past
+    /// the end of the line clamp to the line end (before its newline); lines
+    /// past the end clamp to the end of the text.
+    pub fn utf16_offset(&self, line: u32, col: u32) -> u32 {
+        let Some(&start) = self.line_starts.get(line as usize) else {
+            return self.text.len() as u32;
+        };
+        let start = start as usize;
+        let mut units = 0u32;
+        for (i, c) in self.text[start..].char_indices() {
+            if units >= col || c == '\n' {
+                return (start + i) as u32;
+            }
+            units += c.len_utf16() as u32;
+        }
+        self.text.len() as u32
+    }
 }
 
 impl fmt::Display for Span {

@@ -1,0 +1,4 @@
+page /missing: http 404
+code 404
+wrapped, not a direct HttpError
+body

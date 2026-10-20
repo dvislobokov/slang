@@ -1,0 +1,391 @@
+//! Specification corpus runner: `tests/spec/<area>/**`.
+//!
+//! Every test is a single `.sl` file (with a sibling `.out` unless it is a
+//! compile-fail test) or a directory holding several `.sl` files plus one
+//! `.out` file. Directives live in the leading `//` comment lines, before
+//! `namespace` (for a directory: in its first `.sl` file by name):
+//!
+//! | directive | meaning |
+//! |-----------|---------|
+//! | `// test: <text>` | one-line description (ignored by the runner) |
+//! | `// error: <keyword>` | compile-fail test: build must fail and stderr must contain `<keyword>` |
+//! | `// status: passing\|pending` | required; `pending` tests must currently FAIL |
+//! | `// exit: N` | expected exit code of the program (default 0) |
+//! | `// args: a b` | program arguments (split on whitespace) |
+//! | `// run-flags: --x` | use `slang run <src> <flags> -- <args>` instead of build + exec |
+//! | `// stderr: <text>` | stderr must contain `<text>` (stderr is otherwise not checked) |
+//!
+//! `SPEC_FILTER=<substring>` restricts the run to tests whose path (relative
+//! to the repository, e.g. `tests/spec/errors/trace_basic.sl`) contains it.
+//! `SPEC_VERBOSE=1` prints every test result.
+//!
+//! Needs `clang` and `runtime/libslang_rt.a` (built with `make -C runtime`
+//! when missing), like `run_examples.rs`.
+
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// Every directory directly under `tests/spec`. `areas_are_complete` fails
+/// when a directory is missing from this list.
+const AREAS: &[&str] = &[
+    "basics", "control", "structs", "interfaces", "enums", "errors", "generics", "memory", "async", "attributes", "reflection", "stdlib",
+    "namespaces", "switch", "closures", "pointers",
+];
+
+/// Per-process timeout for a built program (a pending feature may hang).
+const RUN_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+}
+
+fn slang() -> &'static str {
+    env!("CARGO_BIN_EXE_slang")
+}
+
+fn ensure_runtime() {
+    let lib = repo().join("runtime/libslang_rt.a");
+    if !lib.is_file() {
+        let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
+        assert!(st.success(), "make -C runtime failed");
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct Directives {
+    error: Option<String>,
+    pending: bool,
+    exit: i32,
+    args: Vec<String>,
+    run_flags: Vec<String>,
+    stderr: Option<String>,
+}
+
+#[derive(Debug)]
+struct Case {
+    /// Path relative to the repository root, with `/` separators.
+    rel: String,
+    /// `.sl` file or test directory.
+    src: PathBuf,
+    /// Expected stdout (`None` for compile-fail tests).
+    out: Option<PathBuf>,
+    dirs: Directives,
+}
+
+fn parse_directives(file: &Path) -> Result<Directives, String> {
+    let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    let mut d = Directives::default();
+    let mut status = None;
+    for line in text.lines() {
+        let Some(c) = line.trim().strip_prefix("//") else { break };
+        let c = c.trim();
+        let Some((key, val)) = c.split_once(':') else { continue };
+        let val = val.trim();
+        match key.trim() {
+            "error" => d.error = Some(val.to_string()),
+            "status" => status = Some(val.to_string()),
+            "exit" => d.exit = val.parse().map_err(|_| format!("{}: bad exit directive `{val}`", file.display()))?,
+            "args" => d.args = val.split_whitespace().map(String::from).collect(),
+            "run-flags" => d.run_flags = val.split_whitespace().map(String::from).collect(),
+            "stderr" => d.stderr = Some(val.to_string()),
+            _ => {}
+        }
+    }
+    match status.as_deref() {
+        Some("passing") => d.pending = false,
+        Some("pending") => d.pending = true,
+        Some(s) => return Err(format!("{}: bad status `{s}` (expected passing or pending)", file.display())),
+        None => return Err(format!("{}: missing `// status:` directive", file.display())),
+    }
+    Ok(d)
+}
+
+fn sorted_entries(dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).collect();
+    v.sort();
+    v
+}
+
+fn rel(p: &Path) -> String {
+    p.strip_prefix(repo()).unwrap_or(p).to_string_lossy().replace('\\', "/")
+}
+
+/// Collects the cases of one area: every `.sl` file is one test, and every
+/// subdirectory is one multi-file test (all its `.sl` files are compiled
+/// together; it holds exactly one `.out` file unless it is a compile-fail
+/// test, and its directives are read from its first `.sl` file by name).
+fn collect(dir: &Path, cases: &mut Vec<Case>, problems: &mut Vec<String>) {
+    for p in sorted_entries(dir) {
+        if p.is_dir() {
+            let entries = sorted_entries(&p);
+            let outs: Vec<&PathBuf> = entries.iter().filter(|f| f.extension().is_some_and(|x| x == "out")).collect();
+            let Some(first) = entries.iter().find(|f| f.extension().is_some_and(|x| x == "sl")) else {
+                problems.push(format!("{}: no .sl files", rel(&p)));
+                continue;
+            };
+            let d = match parse_directives(first) {
+                Ok(d) => d,
+                Err(e) => {
+                    problems.push(e);
+                    continue;
+                }
+            };
+            let out = match (d.error.is_some(), outs.as_slice()) {
+                (true, []) => None,
+                (true, _) => {
+                    problems.push(format!("{}: compile-fail test must not have a .out file", rel(&p)));
+                    continue;
+                }
+                (false, [o]) => Some((*o).clone()),
+                (false, _) => {
+                    problems.push(format!("{}: a multi-file test needs exactly one .out file", rel(&p)));
+                    continue;
+                }
+            };
+            cases.push(Case { rel: rel(&p), src: p.clone(), out, dirs: d });
+        } else if p.extension().is_some_and(|x| x == "sl") {
+            let d = match parse_directives(&p) {
+                Ok(d) => d,
+                Err(e) => {
+                    problems.push(e);
+                    continue;
+                }
+            };
+            let o = p.with_extension("out");
+            let out = if d.error.is_some() {
+                if o.exists() {
+                    problems.push(format!("{}: compile-fail test must not have a .out file", rel(&p)));
+                }
+                None
+            } else if o.is_file() {
+                Some(o)
+            } else {
+                problems.push(format!("{}: missing {}", rel(&p), rel(&o)));
+                continue;
+            };
+            cases.push(Case { rel: rel(&p), src: p.clone(), out, dirs: d });
+        } else if !p.extension().is_some_and(|x| x == "out") {
+            problems.push(format!("{}: unexpected file (only .sl, .out and test directories belong here)", rel(&p)));
+        }
+    }
+}
+
+struct Output {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+/// Runs `cmd` with a timeout, capturing stdout and stderr.
+fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output, String> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("cannot spawn: {e}"))?;
+    let mut so = child.stdout.take().unwrap();
+    let mut se = child.stderr.take().unwrap();
+    let to = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = so.read_to_end(&mut b);
+        b
+    });
+    let te = std::thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = se.read_to_end(&mut b);
+        b
+    });
+    let start = Instant::now();
+    let status = loop {
+        if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
+            break st;
+        }
+        if start.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("timed out after {}s", timeout.as_secs()));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let stdout = String::from_utf8_lossy(&to.join().unwrap()).to_string();
+    let stderr = String::from_utf8_lossy(&te.join().unwrap()).to_string();
+    Ok(Output { code: status.code(), stdout, stderr })
+}
+
+fn tmpdir(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("slang-spec-{}-{tag}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// Checks one case against its expectation. `Ok(())` means the
+/// expectation holds (the feature works), `Err(why)` that it does not.
+fn check(case: &Case) -> Result<(), String> {
+    let tmp = tmpdir(&case.rel.replace('/', "_"));
+    let exe = tmp.join("prog");
+    let rel_src = case.src.strip_prefix(repo()).unwrap_or(&case.src).to_path_buf();
+    let result = (|| {
+        if let Some(kw) = &case.dirs.error {
+            let mut c = Command::new(slang());
+            c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe);
+            let o = run_with_timeout(c, Duration::from_secs(60))?;
+            if o.code == Some(0) {
+                return Err(format!("expected a compile error containing `{kw}`, but the build succeeded"));
+            }
+            if !o.stderr.contains(kw.as_str()) {
+                return Err(format!("build failed, but stderr does not contain `{kw}`:\n{}", o.stderr.trim_end()));
+            }
+            return Ok(());
+        }
+        let out = if case.dirs.run_flags.is_empty() {
+            let mut c = Command::new(slang());
+            c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe);
+            let b = run_with_timeout(c, Duration::from_secs(60))?;
+            if b.code != Some(0) {
+                return Err(format!("build failed:\n{}", b.stderr.trim_end()));
+            }
+            let mut c = Command::new(&exe);
+            c.current_dir(repo()).env("SLANG_NO_BACKTRACE", "1").args(&case.dirs.args);
+            run_with_timeout(c, RUN_TIMEOUT)?
+        } else {
+            let mut c = Command::new(slang());
+            c.current_dir(repo()).env("SLANG_NO_BACKTRACE", "1").arg("run").arg(&rel_src).args(&case.dirs.run_flags).arg("--").args(&case.dirs.args);
+            run_with_timeout(c, RUN_TIMEOUT + Duration::from_secs(60))?
+        };
+        let expected = std::fs::read_to_string(case.out.as_ref().unwrap()).unwrap();
+        let mut why = Vec::new();
+        if out.code != Some(case.dirs.exit) {
+            why.push(format!("exit code {:?}, expected {}", out.code, case.dirs.exit));
+        }
+        if out.stdout != expected {
+            why.push(format!("stdout differs\n--- expected\n{expected}--- got\n{}", out.stdout));
+        }
+        if let Some(s) = &case.dirs.stderr {
+            if !out.stderr.contains(s.as_str()) {
+                why.push(format!("stderr does not contain `{s}`"));
+            }
+        }
+        if why.is_empty() {
+            Ok(())
+        } else {
+            if !out.stderr.is_empty() {
+                why.push(format!("stderr:\n{}", out.stderr.trim_end()));
+            }
+            Err(why.join("\n"))
+        }
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
+}
+
+fn run_area(area: &str) {
+    ensure_runtime();
+    let dir = repo().join("tests/spec").join(area);
+    assert!(dir.is_dir(), "{} not found", dir.display());
+    let mut cases = Vec::new();
+    let mut problems = Vec::new();
+    collect(&dir, &mut cases, &mut problems);
+    let filter = std::env::var("SPEC_FILTER").ok().filter(|f| !f.is_empty());
+    if let Some(f) = &filter {
+        cases.retain(|c| c.rel.contains(f.as_str()));
+    }
+    let verbose = std::env::var("SPEC_VERBOSE").is_ok_and(|v| v != "0" && !v.is_empty());
+
+    // A few workers per area; cargo already runs the areas in parallel.
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(1, 4);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<(usize, Result<(), String>)> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        if i >= cases.len() {
+                            break;
+                        }
+                        mine.push((i, check(&cases[i])));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        let mut all: Vec<_> = handles.into_iter().flat_map(|h| h.join().unwrap()).collect();
+        all.sort_by_key(|(i, _)| *i);
+        all
+    });
+
+    let (mut passing, mut pending, mut compile_fail) = (0, 0, 0);
+    let mut unexpected = problems.clone();
+    for (i, r) in results {
+        let c = &cases[i];
+        let kind = if c.dirs.error.is_some() { "compile-fail" } else { "run" };
+        if c.dirs.error.is_some() {
+            compile_fail += 1;
+        }
+        match (c.dirs.pending, r) {
+            (false, Ok(())) => {
+                passing += 1;
+                if verbose {
+                    eprintln!("ok       {} ({kind})", c.rel);
+                }
+            }
+            (false, Err(why)) => unexpected.push(format!("{} FAILED ({kind}):\n{why}", c.rel)),
+            (true, Ok(())) => unexpected.push(format!("{} now passes: change status to passing", c.rel)),
+            (true, Err(why)) => {
+                pending += 1;
+                if verbose {
+                    eprintln!("pending  {} ({kind}): {}", c.rel, why.lines().next().unwrap_or(""));
+                }
+            }
+        }
+    }
+    eprintln!(
+        "spec {area}: {} tests ({compile_fail} compile-fail): {passing} passing, {pending} pending, {} unexpected",
+        cases.len(),
+        unexpected.len()
+    );
+    assert!(unexpected.is_empty(), "spec {area}: {} unexpected result(s):\n\n{}", unexpected.len(), unexpected.join("\n\n"));
+}
+
+macro_rules! areas {
+    ($($name:ident = $area:literal),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                run_area($area);
+            }
+        )*
+    };
+}
+
+areas!(
+    spec_basics = "basics",
+    spec_control = "control",
+    spec_structs = "structs",
+    spec_interfaces = "interfaces",
+    spec_enums = "enums",
+    spec_errors = "errors",
+    spec_generics = "generics",
+    spec_memory = "memory",
+    spec_async = "async",
+    spec_attributes = "attributes",
+    spec_reflection = "reflection",
+    spec_stdlib = "stdlib",
+    spec_namespaces = "namespaces",
+    spec_switch = "switch",
+    spec_closures = "closures",
+    spec_pointers = "pointers",
+);
+
+#[test]
+fn areas_are_complete() {
+    let root = repo().join("tests/spec");
+    for p in sorted_entries(&root) {
+        if p.is_dir() {
+            let name = p.file_name().unwrap().to_string_lossy().to_string();
+            assert!(AREAS.contains(&name.as_str()), "tests/spec/{name} is not listed in AREAS in compiler/tests/spec.rs");
+        }
+    }
+    for a in AREAS {
+        assert!(root.join(a).is_dir(), "tests/spec/{a} missing");
+    }
+}

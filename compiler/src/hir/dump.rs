@@ -29,6 +29,7 @@ pub fn type_name(tt: &TypeTable, id: TypeId, names: &dyn DeclNames) -> String {
     let n = |t: TypeId| type_name(tt, t, names);
     match tt.get(id) {
         Type::Pointer(t) => format!("*{}", n(*t)),
+        Type::Weak(t) => format!("weak *{}", n(*t)),
         Type::Slice(t) => format!("[]{}", n(*t)),
         Type::Array(t, len) => format!("[{len}]{}", n(*t)),
         Type::Map(k, v) => format!("map[{}]{}", n(*k), n(*v)),

@@ -1,0 +1,29 @@
+// test: a heap object's Drop runs as soon as its last reference goes away
+// status: passing
+namespace spec.memory.drop_heap_refcount
+
+import std.io
+
+struct File {
+    Path string
+    func Drop() {
+        println("close", this.Path)
+    }
+}
+
+func Open(p string) *File {
+    return new File{Path: p}
+}
+
+func main() {
+    var a = Open("a.txt")
+    var b = a
+    println("two refs", b.Path)
+    a = nil
+    println("one ref left")
+    b = nil
+    println("no refs")
+    var c = Open("c.txt")
+    c = Open("d.txt")
+    println("reassigned", c.Path)
+}

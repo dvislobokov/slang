@@ -461,9 +461,9 @@ int main(void) {
     RUN(read_line);
     assert(slang_live_objects() == live);
     RUN(errors);
-    assert(slang_live_objects() == live + 1);  /* immortal sentinel (message is static) */
+    assert(slang_live_objects() == live);  /* immortal sentinels do not count */
     RUN(delay);
     slang_runtime_shutdown();
-    assert(slang_live_objects() == live + 1);
+    assert(slang_live_objects() == live);
     return 0;
 }

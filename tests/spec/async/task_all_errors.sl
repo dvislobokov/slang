@@ -1,0 +1,25 @@
+// test: task.All over fallible tasks fails with the error of the first failing task in argument order
+// status: passing
+namespace spec.async.task_all_errors
+
+import std.io
+import std
+
+async func Job(name string, ms int, fail bool) string! {
+    await task.Delay(ms)
+    if fail {
+        return error(name + " failed")
+    }
+    return name
+}
+
+async func main() {
+    try await task.All(Job("a", 30, true), Job("b", 1, true)) catch err {
+        println(err)
+    }
+    var (p, q) = try await task.All(Job("p", 1, false), Job("q", 2, false)) catch err {
+        println("unexpected", err)
+        return
+    }
+    println(p, q)
+}

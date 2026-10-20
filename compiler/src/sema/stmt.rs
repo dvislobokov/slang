@@ -155,7 +155,9 @@ impl<'a> Sema<'a> {
         if self.fns.last().unwrap().scopes.last().unwrap().iter().any(|(n, _)| *n == c.name.name) {
             self.err(format!("{} redeclared in this block", c.name.name), c.name.span);
         }
+        let ty = folded.ty;
         self.fcx().scopes.last_mut().unwrap().push((c.name.name.clone(), ScopeEntry::Const(folded)));
+        self.ide_def_local_const(c, ty);
     }
 
     fn cond(&mut self, e: &ast::Expr, what: &str) -> hir::Expr {
@@ -603,10 +605,13 @@ impl<'a> Sema<'a> {
         }
         let t = match &target.kind {
             ast::ExprKind::Ident(id) => match self.lookup_local(&id.name, false) {
-                Some(Ok(v)) => self.var_expr(v, target.span),
-                _ => self.value(target, None),
+                Some(Ok(v)) => {
+                    self.ide_local_ref(id);
+                    self.var_expr(v, target.span)
+                }
+                _ => self.place_target(target),
             },
-            _ => self.value(target, None),
+            _ => self.place_target(target),
         };
         if self.tt.is_invalid(t.ty) {
             self.expr(value, None);
@@ -640,6 +645,12 @@ impl<'a> Sema<'a> {
             Some((hop, _)) => StmtKind::CompoundAssign { target: t, op: hop, value: v },
             None => StmtKind::Block(hir::Block::default()),
         }
+    }
+
+    /// An assignment target (a `weak *T` place stays a place).
+    fn place_target(&mut self, target: &ast::Expr) -> hir::Expr {
+        let h = self.expr(target, None);
+        self.require_value_raw(h)
     }
 
     // -- defer --------------------------------------------------------------

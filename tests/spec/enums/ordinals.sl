@@ -1,0 +1,13 @@
+// test: int(variant) is the 0-based declaration ordinal; plain variants compare with ==
+// status: passing
+namespace spec.enums.ordinals
+
+import std.io
+
+enum Level { Debug, Info, Warn, Error }
+
+func main() {
+    println(int(Level.Debug), int(Level.Info), int(Level.Warn), int(Level.Error))
+    var l = Level.Warn
+    println(l == Level.Warn, l != Level.Info, int(l) > int(Level.Info))
+}

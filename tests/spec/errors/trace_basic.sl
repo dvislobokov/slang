@@ -1,0 +1,26 @@
+// test: errors.Trace shows where the error was created and each ? it passed, plus the catching try
+// status: pending
+namespace spec.errors.trace_basic
+
+import std.io
+import std
+
+func Open(name string) string! {
+    return error("not found: " + name)
+}
+
+func Load(name string) string! {
+    var text = Open(name)?("loading")
+    return text
+}
+
+func Run() string! {
+    return Load("app.toml")?
+}
+
+func main() {
+    try Run() catch err {
+        println(err)
+        println(errors.Trace(err))
+    }
+}

@@ -1,0 +1,18 @@
+// error: await outside async
+// status: passing
+namespace spec.async.await_outside_async_error
+
+import std.io
+import std
+
+async func F() int {
+    return 1
+}
+
+func G() int {
+    return await F()
+}
+
+func main() {
+    println(G())
+}

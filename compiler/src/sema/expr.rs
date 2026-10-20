@@ -87,6 +87,23 @@ impl<'a> Sema<'a> {
 
     /// Rejects unhandled fallible results and void values.
     pub(crate) fn require_value(&mut self, h: hir::Expr) -> hir::Expr {
+        let h = self.require_value_raw(h);
+        self.read_weak(h)
+    }
+
+    /// Reading a `weak *T` yields a `*T` (retained) or `nil` once freed.
+    pub(crate) fn read_weak(&mut self, h: hir::Expr) -> hir::Expr {
+        if let Type::Weak(t) = *self.tt.get(h.ty) {
+            let ty = self.tt.pointer(t);
+            let span = h.span;
+            return mk(ExprKind::Convert { kind: hir::ConvKind::WeakToPtr, value: Box::new(h) }, ty, span);
+        }
+        h
+    }
+
+    /// [`require_value`](Self::require_value) without reading `weak`
+    /// references (assignment targets).
+    pub(crate) fn require_value_raw(&mut self, h: hir::Expr) -> hir::Expr {
         if self.tt.is_fallible(h.ty) {
             self.err(format!("result of type {} must be handled (use ?, try ... catch, try ... else, or `_ =`)", self.tn(h.ty)), h.span);
             return mk(h.kind, self.tt.invalid, h.span);
@@ -126,8 +143,14 @@ impl<'a> Sema<'a> {
     /// `a`, `a.b.c`: locals, globals, namespaces, enum variants, fields.
     pub(crate) fn path_expr(&mut self, segs: &[&ast::Ident], span: Span, expected: Option<TypeId>) -> hir::Expr {
         let (mut base, consumed) = match self.lookup_local(&segs[0].name, true) {
-            Some(Ok(v)) => (self.var_expr(v, segs[0].span), 1),
-            Some(Err(c)) => (self.const_expr(c, expected, segs[0].span), 1),
+            Some(Ok(v)) => {
+                self.ide_local_ref(segs[0]);
+                (self.var_expr(v, segs[0].span), 1)
+            }
+            Some(Err(c)) => {
+                self.ide_local_ref(segs[0]);
+                (self.const_expr(c, expected, segs[0].span), 1)
+            }
             None => match self.resolve_segments(segs, true) {
                 Some((res, n)) => {
                     let sp = segs[0].span.to(segs[n - 1].span);
@@ -208,6 +231,7 @@ impl<'a> Sema<'a> {
                 for idx in path {
                     let b2 = self.auto_deref(b);
                     let Type::Struct(sd) = *self.tt.get(b2.ty) else { unreachable!() };
+                    self.ide_ref(name.span, index::SymKey::Field(sd.0, idx));
                     let field = &self.structs[sd.0 as usize].fields[idx as usize];
                     let fty = field.ty;
                     let fname = field.name.clone();
@@ -231,6 +255,7 @@ impl<'a> Sema<'a> {
 
     /// Inserts `Deref` for a pointer to a struct.
     pub(crate) fn auto_deref(&mut self, e: hir::Expr) -> hir::Expr {
+        let e = self.read_weak(e);
         if let Type::Pointer(inner) = *self.tt.get(e.ty) {
             if matches!(self.tt.get(inner), Type::Struct(_)) {
                 let span = e.span;
@@ -563,6 +588,7 @@ impl<'a> Sema<'a> {
                 self.err(format!("duplicate field {} in struct literal", f.name.name), f.name.span);
             }
             self.check_member_visibility(owner, &f.name.name, f.name.span, true);
+            self.ide_ref(f.name.span, index::SymKey::Field(sid, idx as u32));
             let fty = self.structs[sid as usize].fields[idx].ty;
             let v = self.expr_to(&f.value, fty, Ctx::Field(f.name.name.clone()));
             out.push((idx as u32, v));

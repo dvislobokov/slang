@@ -42,7 +42,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             Type::Float32 => self.ctx.f32_type().into(),
             Type::Float64 => self.ctx.f64_type().into(),
             Type::Char => self.ctx.i32_type().into(),
-            Type::String | Type::Error | Type::Nil | Type::Pointer(_) | Type::Map(..) | Type::Task(_) => ptr,
+            Type::String | Type::Error | Type::Nil | Type::Pointer(_) | Type::Weak(_) | Type::Map(..) | Type::Task(_) => ptr,
             Type::Any | Type::Interface(_) | Type::Func(_) => self.pair_ty().into(),
             Type::Slice(_) => self.slice_ty().into(),
             Type::Array(t, n) => {

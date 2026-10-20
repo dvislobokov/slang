@@ -1,0 +1,38 @@
+// test: enum destructuring with nested switches and conditions inside case bodies
+// status: passing
+namespace spec.switch.enum_destructure_nested
+
+import std.io
+
+enum Cmd {
+    Move(dx int, dy int)
+    Say(text string)
+    Stop
+}
+
+func Run(c Cmd) string {
+    switch c {
+        case Cmd.Move(dx, dy):
+            switch {
+                case dx == 0 && dy == 0:
+                    return "stay"
+                case dx > 0:
+                    return "right"
+            }
+            return "other move"
+        case Cmd.Say(t):
+            if t == "" {
+                return "silence"
+            }
+            return "say " + t
+        case Cmd.Stop:
+            return "stop"
+    }
+    return "?"
+}
+
+func main() {
+    for c in [Cmd.Move(0, 0), Cmd.Move(2, 1), Cmd.Move(-1, 0), Cmd.Say(""), Cmd.Say("hi"), Cmd.Stop] {
+        println(Run(c))
+    }
+}

@@ -1,0 +1,46 @@
+// test: an interface value converts implicitly to an interface with a subset of its methods, and a type switch can test for another interface
+// status: pending
+namespace spec.interfaces.interface_to_interface
+
+import std.io
+
+interface Named {
+    func Name() string
+}
+
+interface Shape {
+    func Name() string
+    func Area() float
+}
+
+interface Mover {
+    func Move()
+}
+
+struct Box {
+    X int
+    func Name() string { return "box" }
+    func Area() float { return 1 }
+    func Move() { this.X += 1 }
+}
+
+struct Rock {
+    func Name() string { return "rock" }
+    func Area() float { return 2 }
+}
+
+func Check(s Shape) {
+    var n Named = s
+    switch s {
+        case Mover m:
+            m.Move()
+            println(n.Name(), "can move")
+        default:
+            println(n.Name(), "cannot move")
+    }
+}
+
+func main() {
+    Check(&Box{})
+    Check(Rock{})
+}

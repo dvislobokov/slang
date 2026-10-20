@@ -1,0 +1,28 @@
+// test: _ discards loop variables, destructured values and results
+// status: passing
+namespace spec.basics.underscore_placeholders
+
+import std.io
+
+func Pair() (int, string) {
+    return 7, "seven"
+}
+
+func Noisy() int {
+    println("noisy called")
+    return 1
+}
+
+func main() {
+    var count = 0
+    for _ in 0..3 {
+        count += 1
+    }
+    for _, v in [10, 20] {
+        count += v
+    }
+    var (_, name) = Pair()
+    var (n, _) = Pair()
+    _ = Noisy()
+    println(count, name, n)
+}

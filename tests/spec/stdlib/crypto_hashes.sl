@@ -1,0 +1,15 @@
+// test: hash functions match the standard test vectors (FIPS 180, RFC 1321, CRC-32/IEEE)
+// status: passing
+namespace spec.stdlib.crypto_hashes
+
+import std.io
+import std.crypto
+
+func main() {
+    println(hash.Sha256Hex(""))
+    println(hash.Sha256Hex("abc"))
+    println(hash.Sha512Hex("abc"))
+    println(hash.Sha1Hex("abc"))
+    println(hash.Md5Hex(""), hash.Md5Hex("abc"))
+    println(hash.Crc32("123456789"), len(hash.Sha256("x")), len(hash.Sha512("x")))
+}

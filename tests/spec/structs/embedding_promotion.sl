@@ -1,0 +1,31 @@
+// test: embedded struct fields and methods are promoted to the outer struct
+// status: passing
+namespace spec.structs.embedding_promotion
+
+import std.io
+
+struct Base {
+    ID int
+
+    func Describe() string {
+        return "base #" + string(char(48 + this.ID))
+    }
+
+    func SetID(id int) {
+        this.ID = id
+    }
+}
+
+struct User {
+    Base
+    Name string
+}
+
+func main() {
+    var u = User{Base: Base{ID: 1}, Name: "ann"}
+    println(u.ID, u.Name, u.Describe())
+    u.SetID(7)
+    println(u.ID, u.Base.ID, u.Describe())
+    u.ID = 3
+    println(u.Base.Describe())
+}

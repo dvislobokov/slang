@@ -1,0 +1,10 @@
+// test: a namespace that is not imported is reachable by its full path (functions, types, consts)
+// status: passing
+namespace spec.ns.fullpath
+
+import std.io
+
+func main() {
+    var p = spec.ns.fullpath.geo.Point{X: 3, Y: 4}
+    println(spec.ns.fullpath.geo.Dist(p), spec.ns.fullpath.geo.Unit)
+}

@@ -1,0 +1,12 @@
+// test: dereferencing a nil *int panics with exit code 2
+// status: passing
+// exit: 2
+namespace spec.pointers.nil_deref_panic
+
+import std.io
+
+func main() {
+    var p *int
+    println("before")
+    println(*p)
+}

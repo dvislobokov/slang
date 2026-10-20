@@ -1,0 +1,14 @@
+// error: is not an attribute
+// status: passing
+namespace spec.attributes.not_an_attribute_error
+
+import std.io
+
+struct plain {
+    x int
+}
+
+@plain(x: 1)
+func main() {
+    println("x")
+}

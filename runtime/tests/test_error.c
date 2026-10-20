@@ -89,6 +89,6 @@ int main(void) {
     int64_t live2 = slang_live_objects();
     RUN(sentinel);
     assert(live2 == live);
-    assert(slang_live_objects() == live + 2);  /* immortal sentinel + its message */
+    assert(slang_live_objects() == live);  /* immortal sentinels and their messages do not count */
     return 0;
 }

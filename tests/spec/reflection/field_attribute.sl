@@ -1,0 +1,24 @@
+// test: f.Attribute<A>() returns the attribute value as *A, or nil when absent
+// status: pending
+namespace spec.reflection.field_attribute
+
+import std.io
+import std
+
+struct User {
+    @json(name: "id") Id int
+    @json(omitEmpty: true) Email string
+    @json(skip: true) cache string
+    Plain int
+}
+
+func main() {
+    for f in reflect.TypeOf<User>().Fields {
+        var tag = f.Attribute<json>()
+        if tag == nil {
+            println(f.Name, "no tag")
+            continue
+        }
+        println(f.Name, "name=[" + tag.name + "]", tag.omitEmpty, tag.skip)
+    }
+}

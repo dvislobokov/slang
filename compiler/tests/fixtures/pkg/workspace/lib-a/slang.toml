@@ -1,0 +1,11 @@
+[package]
+name = "lib-a"
+version = "0.2.0"
+namespace = "liba"
+
+[dependencies]
+lib-b = { path = "../lib-b" }
+
+[features]
+fast = []
+tls = []

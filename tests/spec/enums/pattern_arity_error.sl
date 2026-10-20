@@ -1,0 +1,17 @@
+// error: but the pattern binds 1
+// status: passing
+namespace spec.enums.pattern_arity_error
+
+import std.io
+
+enum Shape {
+    Rect(w float, h float)
+}
+
+func main() {
+    var s = Shape.Rect(1, 2)
+    switch s {
+        case Shape.Rect(w):
+            println(w)
+    }
+}

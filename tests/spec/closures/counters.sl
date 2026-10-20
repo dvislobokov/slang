@@ -1,0 +1,19 @@
+// test: each call of a closure factory gets independent captured state
+// status: passing
+namespace spec.closures.counters
+
+import std.io
+
+func Counter(start int) func() int {
+    var n = start
+    return func() int {
+        n += 1
+        return n
+    }
+}
+
+func main() {
+    var a = Counter(0)
+    var b = Counter(100)
+    println(a(), a(), b(), a(), b())
+}

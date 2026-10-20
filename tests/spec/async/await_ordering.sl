@@ -1,0 +1,19 @@
+// test: sequential awaits complete in program order regardless of delays
+// status: passing
+namespace spec.async.await_ordering
+
+import std.io
+import std
+
+async func Step(name string, ms int) string {
+    await task.Delay(ms)
+    return name
+}
+
+async func main() {
+    println(await Step("slow", 30))
+    println(await Step("fast", 0))
+    var a = Step("a", 20)
+    var b = Step("b", 1)
+    println(await a, await b)
+}

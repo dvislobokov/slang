@@ -1,0 +1,20 @@
+// test: cases never fall through; an empty case body does nothing
+// status: passing
+namespace spec.control.switch_no_fallthrough
+
+import std.io
+
+func main() {
+    for n in 0..4 {
+        switch n {
+            case 0:
+            case 1:
+                println(n, "one")
+                println(n, "still one")
+            case 2:
+                println(n, "two")
+            default:
+                println(n, "default")
+        }
+    }
+}

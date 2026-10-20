@@ -1,0 +1,32 @@
+// test: static funcs are called on the type name and may call each other
+// status: passing
+namespace spec.structs.static_funcs
+
+import std.io
+
+struct Temp {
+    Celsius float
+
+    static func FromF(f float) Temp {
+        return Temp{Celsius: (f - 32) * 5 / 9}
+    }
+
+    static func Boiling() Temp {
+        return Temp.FromF(212)
+    }
+
+    static func Count() int {
+        return 2
+    }
+
+    func F() float {
+        return this.Celsius * 9 / 5 + 32
+    }
+}
+
+func main() {
+    var t = Temp.Boiling()
+    println(t.Celsius, t.F(), Temp.FromF(32).Celsius, Temp.Count())
+    var mk = Temp.FromF
+    println(mk(50).Celsius)
+}

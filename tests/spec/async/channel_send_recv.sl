@@ -1,0 +1,26 @@
+// test: Channel<T>: buffered send/recv in FIFO order; Recv fails after Close once drained
+// status: pending
+namespace spec.async.channel_send_recv
+
+import std.io
+import std
+
+async func Produce(ch task.Channel<int>, n int) {
+    for i in 0..n {
+        await ch.Send(i * i)
+    }
+    ch.Close()
+}
+
+async func main() {
+    var ch = task.Channel<int>(2)
+    var p = Produce(ch, 4)
+    var sum = 0
+    for {
+        var v = try await ch.Recv() else break
+        println("got", v)
+        sum += v
+    }
+    await p
+    println("sum", sum)
+}

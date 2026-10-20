@@ -1,0 +1,25 @@
+// test: TypeInfo values are unique per type, so == compares types (as an any type switch does)
+// status: pending
+namespace spec.reflection.typeinfo_identity
+
+import std.io
+import std
+
+struct A {
+    X int
+}
+
+struct B {
+    X int
+}
+
+func Is<T>(x any) bool {
+    return typeof(x) == reflect.TypeOf<T>()
+}
+
+func main() {
+    var items []any = [A{X: 1}, B{X: 2}, 3]
+    for it in items {
+        println(Is<A>(it), Is<B>(it), Is<int>(it))
+    }
+}

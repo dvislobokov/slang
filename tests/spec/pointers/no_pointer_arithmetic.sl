@@ -1,0 +1,12 @@
+// error: for operator +
+// status: passing
+namespace spec.pointers.no_pointer_arithmetic
+
+import std.io
+
+func main() {
+    var x = 1
+    var p = &x
+    var q = p + 1
+    println(*q)
+}

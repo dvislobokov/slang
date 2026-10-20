@@ -1,0 +1,21 @@
+[package]
+name = "slang-lsp"
+version.workspace = true
+edition.workspace = true
+description = "Language server for Slang (LSP over stdio)"
+
+[lib]
+name = "slang_lsp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "slang-lsp"
+path = "src/main.rs"
+
+[dependencies]
+slang = { path = "../compiler" }
+lsp-server = "=0.7.8"
+lsp-types = "=0.95.1"
+serde_json = "1"
+crossbeam-channel = "0.5"
+serde = "1"

@@ -1,0 +1,46 @@
+open audit.log
+write audit.log: start
+open main.log
+open a
+open b
+open c
+write b: touched
+write c: inner
+close c
+close b
+write a: outer
+close a
+open loop
+write loop: iteration
+close loop
+open loop
+close loop
+open arg
+write arg: consumed
+close arg
+open in
+open out
+write in: read
+write out: write
+close out
+close in
+open in
+close in
+error: empty file name
+p cleared
+write shared: still open
+close shared
+q cleared
+open app.log
+write app.log: hello
+logger app done
+close app.log
+open boxed
+write boxed: through an interface
+write boxed: from a closure
+closure released
+close boxed
+write main.log: bye
+main: deferred call
+close main.log
+close audit.log

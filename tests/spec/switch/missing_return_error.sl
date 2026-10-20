@@ -1,0 +1,18 @@
+// error: missing return
+// status: passing
+namespace spec.switch.missing_return_error
+
+import std.io
+
+func Sign(n int) int {
+    switch {
+        case n < 0:
+            return -1
+        case n > 0:
+            return 1
+    }
+}
+
+func main() {
+    println(Sign(1))
+}

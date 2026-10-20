@@ -1,0 +1,22 @@
+// test: explicit type arguments Max<int>(1, 2); untyped constants convert to T
+// status: pending
+namespace spec.generics.explicit_type_args
+
+import std.io
+
+func Max<T: Ordered>(a, b T) T {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+func Zero<T>() T {
+    var z T
+    return z
+}
+
+func main() {
+    println(Max<int>(1, 2), Max<float>(1, 2) / 4)
+    println(Zero<int>(), "[" + Zero<string>() + "]", Zero<bool>())
+}

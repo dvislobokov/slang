@@ -1,0 +1,19 @@
+// test: as in Go, break inside a switch case leaves the switch; continue acts on the loop
+// status: passing
+namespace spec.control.break_inside_switch
+
+import std.io
+
+func main() {
+    for i in 0..10 {
+        switch i {
+            case 1:
+                continue
+            case 4:
+                break
+            default:
+                println("i =", i)
+        }
+    }
+    println("after loop")
+}

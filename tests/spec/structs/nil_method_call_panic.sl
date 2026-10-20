@@ -1,0 +1,20 @@
+// test: calling a method that reads a field through a nil receiver panics (exit code 2)
+// status: passing
+// exit: 2
+namespace spec.structs.nil_method_call_panic
+
+import std.io
+
+struct Box {
+    V int
+
+    func Get() int {
+        return this.V
+    }
+}
+
+func main() {
+    var b *Box
+    println("calling")
+    println(b.Get())
+}

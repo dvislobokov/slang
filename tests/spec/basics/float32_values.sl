@@ -1,0 +1,13 @@
+// test: float32 arithmetic and printing use float32 precision (shortest for float32)
+// status: pending
+namespace spec.basics.float32_values
+
+import std.io
+
+func main() {
+    var a float32 = 0.1
+    var b float32 = 0.2
+    println(a, b, a + b)
+    var c = float32(1) / 3
+    println(c, float(a) == 0.1)
+}

@@ -1,0 +1,19 @@
+// error: must be compile-time constants
+// status: passing
+namespace spec.attributes.non_constant_arg_error
+
+import std.io
+
+@attribute
+struct limit {
+    max int
+}
+
+func Compute() int {
+    return 3
+}
+
+@limit(max: Compute())
+func main() {
+    println("x")
+}

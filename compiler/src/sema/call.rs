@@ -143,6 +143,7 @@ impl<'a> Sema<'a> {
         }
         if let Some(sid) = self.struct_of(base.ty) {
             if let Some((fid, path)) = self.find_method(sid, &name.name) {
+                self.ide_ref(name.span, index::SymKey::Func(fid.0));
                 let owner = self.funcs[fid.0 as usize].namespace;
                 self.check_member_visibility(owner, &name.name, name.span, true);
                 let is_ptr = matches!(self.tt.get(base.ty), Type::Pointer(_));
@@ -186,6 +187,9 @@ impl<'a> Sema<'a> {
                 self.check_args_loose(args);
                 return self.invalid(span);
             };
+            if let Type::Interface(d) = *self.tt.get(base.ty) {
+                self.ide_ref(name.span, index::SymKey::IfaceMethod(d.0, idx as u32));
+            }
             let m = methods[idx].clone();
             let fname = format!("{}.{}", self.tn(base.ty), m.name);
             let args = self.check_args(&m.params, args, &fname, span);

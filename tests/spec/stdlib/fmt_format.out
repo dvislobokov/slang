@@ -1,0 +1,6 @@
+b a b
+int -3, float 2.5, bool true, char x
+slice [1 2], enum Green, err bad
+no placeholders, $1 and 100%
+777 big 1e+21 small 1e-07
+ten

@@ -1,0 +1,18 @@
+// test: type parameters are inferred from slice and function arguments
+// status: pending
+namespace spec.generics.inference_from_args
+
+import std.io
+
+func First<T>(xs []T) T {
+    return xs[0]
+}
+
+func Apply<T>(x T, f func(T) T) T {
+    return f(x)
+}
+
+func main() {
+    println(First([4, 5, 6]), First(["x", "y"]))
+    println(Apply(10, (n int) => n * 3), Apply("ab", (s string) => s + s))
+}

@@ -1,0 +1,82 @@
+namespace examples.weak
+
+import std.io
+
+// A tree whose children point back at their parent. With two strong
+// pointers the parent and its children would keep each other alive
+// forever; the back pointer is `weak`, so it does not count.
+struct Node {
+    name string
+    children []*Node
+    parent weak *Node
+
+    func Add(name string) *Node {
+        var c = new Node{name: name, parent: this}
+        this.children = append(this.children, c)
+        return c
+    }
+
+    // Reading a weak pointer gives a *Node, or nil once the target is gone.
+    func Path() string {
+        var p = this.parent
+        if p == nil {
+            return this.name
+        }
+        return p.Path() + "/" + this.name
+    }
+
+    func Drop() {
+        println("free", this.name)
+    }
+}
+
+// An observer list that does not keep its observers alive.
+struct Subject {
+    observers []weak *Node
+
+    func Notify(msg string) {
+        var alive = 0
+        for o in this.observers {
+            if o != nil {
+                println("  notify", o.name, msg)
+                alive += 1
+            }
+        }
+        println("  delivered to", alive, "of", len(this.observers))
+    }
+}
+
+func Build() *Node {
+    var root = new Node{name: "root"}
+    var docs = root.Add("docs")
+    docs.Add("readme")
+    root.Add("src")
+    return docs
+}
+
+func main() {
+    // Only `docs` is returned. Its weak parent pointer does not keep root
+    // alive, so root (and its other child, src) are freed when Build
+    // returns, and docs.parent reads as nil.
+    var docs = Build()
+    println("docs parent alive:", docs.parent != nil)
+    println("path:", docs.Path())
+
+    println("-- a whole tree")
+    var root = new Node{name: "top"}
+    var leaf = root.Add("mid").Add("leaf")
+    println("path:", leaf.Path())
+    var s = Subject{}
+    s.observers = append(s.observers, root)
+    s.observers = append(s.observers, leaf)
+    s.Notify("first")
+    println("-- drop the root")
+    root = nil
+    println("leaf parent alive:", leaf.parent != nil)
+    println("path:", leaf.Path())
+    s.Notify("second")
+    println("-- drop the leaf")
+    leaf = nil
+    s.Notify("third")
+    println("-- end of main")
+}

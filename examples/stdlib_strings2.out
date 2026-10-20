@@ -1,0 +1,20 @@
+fields: [the quick brown fox] 0
+count: 3 5
+last index: 3 -1
+trim: 1.2.3 main abc
+cutset: [hixx] [xxhi] [hola!!]
+splitn: [a b=c] 0 [a b c]
+fold: true true false
+reverse: 界世 ,olléh
+pad: [000042] [ab...] [toolong]
+compare: -1 1 0
+title: Hello Wide World
+runes: 3 [a ñ €]
+from runes: Añ€
+bytes: [72 105]
+from bytes: Hi!
+round: 3 -3 -3 1.5
+hypot: 5 log2: 10 log10: -3
+atan2: 3.141592653589793
+nan/inf: true true false false
+ints: -7 3 12

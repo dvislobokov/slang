@@ -1,0 +1,17 @@
+// test: &local returned from a function stays valid (escape to heap); each call gets its own object
+// status: passing
+namespace spec.pointers.escape_local
+
+import std.io
+
+func MakeInt(v int) *int {
+    var x = v
+    return &x
+}
+
+func main() {
+    var a = MakeInt(1)
+    var b = MakeInt(2)
+    *a += 10
+    println(*a, *b, a == b)
+}

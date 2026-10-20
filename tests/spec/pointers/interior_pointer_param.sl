@@ -1,0 +1,27 @@
+// test: &s[i] and &v.f may be passed to a pointer parameter; writes land in the slice / struct
+// status: passing
+namespace spec.pointers.interior_pointer_param
+
+import std.io
+
+struct P {
+    X int
+}
+
+struct Line {
+    A P
+    B P
+}
+
+func Bump(p *P) {
+    p.X += 1
+}
+
+func main() {
+    var ps = [P{X: 1}, P{X: 2}]
+    Bump(&ps[0])
+    var l = Line{}
+    Bump(&l.B)
+    Bump(&l.B)
+    println(ps[0].X, ps[1].X, l.A.X, l.B.X)
+}

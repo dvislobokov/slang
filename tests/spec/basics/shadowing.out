@@ -1,0 +1,5 @@
+global
+inner 12 main
+loop 0
+loop 100
+outer 1 main
