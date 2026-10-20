@@ -1,5 +1,5 @@
 // test: t.Attributes<A>() returns every instance of a repeatable attribute in source order
-// status: pending
+// status: passing
 namespace spec.reflection.attributes_repeatable
 
 import std.io

@@ -1,0 +1,20 @@
+// error: R: it has a destructor (Drop), so it is move-only
+// status: passing
+namespace spec.memory2.move_variable_copy_error
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop", this.Name) }
+}
+
+func Consume(r R) {
+    println("consume", r.Name)
+}
+
+func main() {
+    var r = R{Name: "x"}
+    Consume(r)
+    println(r.Name)
+}

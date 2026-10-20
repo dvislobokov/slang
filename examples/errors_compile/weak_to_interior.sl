@@ -7,7 +7,7 @@ struct Node {
 
 struct Pair {
     first Node
-    back weak *Node
+    back  weak *Node
 }
 
 func main() {

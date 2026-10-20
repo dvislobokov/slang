@@ -1,0 +1,45 @@
+> look
+You are in a dusty hall. Exits: north east
+> go down
+You can't go down from Hall.
+> dance
+I don't understand: dance
+> go north
+You enter the Library.
+> go down
+It is too dark to go down without a lamp.
+> go south
+You enter the Hall.
+> go east
+You enter the Garden.
+> take sword
+There is no sword here.
+> take lamp
+Taken: lamp
+> use lamp
+The lamp glows.
+> use key
+You don't have the key.
+> go gate
+The gate is locked.
+> go west
+You enter the Hall.
+> go north
+You enter the Library.
+> go down
+You enter the Vault.
+> look
+You are in a cold vault. Exits: up
+> take key
+Taken: key
+> use key
+Nothing to unlock here.
+> go up
+You enter the Library.
+> go south
+You enter the Hall.
+> go east
+You enter the Garden.
+> go gate
+You unlock the gate and escape!
+moves: 10 bag: [lamp key] final room: Outside

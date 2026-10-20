@@ -1,0 +1,10 @@
+// error: expression is evaluated but not used
+// status: passing
+namespace spec.diagnostics.unused_expression
+
+import std.io
+
+func main() {
+    var n = 1
+    n + 1
+}

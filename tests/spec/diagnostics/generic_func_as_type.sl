@@ -1,0 +1,12 @@
+// error: is a generic function, not a type
+// status: passing
+namespace spec.diagnostics.generic_func_as_type
+
+import std.io
+
+func Id<T>(x T) T { return x }
+
+func main() {
+    var x Id<int>
+    println(x)
+}

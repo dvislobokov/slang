@@ -1,0 +1,9 @@
+200 text/plain; charset=utf-8
+hello, world!
+201 4 {"got": "ping"}
+200 true
+404 true
+405 GET
+500 500 Internal Server Error: database is down
+error: GET https://example.com/: https is not supported yet (std.net.http v1 has no TLS)
+server stopped

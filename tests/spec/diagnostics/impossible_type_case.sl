@@ -1,0 +1,22 @@
+// error: impossible type switch case
+// status: passing
+namespace spec.diagnostics.impossible_type_case
+
+import std.io
+
+interface Shape {
+    func Area() float
+}
+
+struct Rock { W int }
+
+func Show(s Shape) {
+    switch s {
+        case Rock r: println(r.W)
+        default: println("other")
+    }
+}
+
+func main() {
+    println("x")
+}

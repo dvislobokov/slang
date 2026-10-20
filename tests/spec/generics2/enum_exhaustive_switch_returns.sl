@@ -1,0 +1,34 @@
+// test: a switch naming every variant of an enum (no default) terminates the function, as in the Eval example of docs/PATTERNS.md
+// status: pending
+namespace spec.generics2.enum_exhaustive_switch_returns
+
+import std.io
+
+enum Option<T> {
+    Some(value T)
+    None
+}
+
+func Lookup(id int) Option<string> {
+    if id == 1 {
+        return Option<string>.Some("alice")
+    }
+    return Option<string>.None
+}
+
+func Describe(o Option<int>) string {
+    switch o {
+        case Option.Some(id):
+            switch Lookup(id) {
+                case Option.Some(name): return "user " + name
+                case Option.None: return "unknown user"
+            }
+        case Option.None: return "no id"
+    }
+}
+
+func main() {
+    println(Describe(Option<int>.Some(1)))
+    println(Describe(Option<int>.Some(2)))
+    println(Describe(Option<int>.None))
+}

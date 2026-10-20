@@ -1,0 +1,19 @@
+// error: is not an @attribute struct
+// status: passing
+namespace spec.diagnostics.attribute_arg_non_attribute_struct
+
+import std.io
+
+struct P { X int }
+
+@attribute
+struct note {
+    p P
+}
+
+@note(p: P{X: 1})
+struct A { X int }
+
+func main() {
+    println(A{X: 1}.X)
+}

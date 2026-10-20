@@ -1,0 +1,11 @@
+drop a
+result 1
+drop c
+drop b
+drop a
+result 2
+drop c
+drop d
+drop b
+drop a
+result 3

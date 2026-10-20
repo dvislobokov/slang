@@ -3,6 +3,7 @@
 namespace spec.ns.typeimp
 
 import std.io
+
 import spec.ns.typeimp.models.User
 
 func main() {

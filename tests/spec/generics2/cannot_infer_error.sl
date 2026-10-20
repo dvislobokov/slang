@@ -1,0 +1,12 @@
+// error: cannot infer type parameter T
+// status: passing
+namespace spec.generics2.cannot_infer_error
+
+import std.io
+
+func Id<T>(x T) T { return x }
+
+func main() {
+    var p = Id(nil)
+    println(p == nil)
+}

@@ -9,6 +9,47 @@ pub enum Severity {
     Warning,
 }
 
+/// Stable diagnostic codes for the cases tools offer quick fixes for
+/// (docs/TOOLING.md, "structured diagnostics").
+pub mod codes {
+    /// A local variable is declared and never used.
+    pub const UNUSED_VARIABLE: &str = "E0001";
+    /// A fallible result (`T!`) is neither propagated nor handled.
+    pub const UNHANDLED_RESULT: &str = "E0002";
+    /// An import nothing is looked up through.
+    pub const UNUSED_IMPORT: &str = "E0003";
+    /// An identifier that does not resolve.
+    pub const UNKNOWN_IDENTIFIER: &str = "E0004";
+    /// A syntax error.
+    pub const SYNTAX: &str = "E0100";
+}
+
+/// A text replacement in the diagnostic's file: `span` (byte offsets in
+/// the current text) becomes `new_text`. An empty span inserts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextEdit {
+    pub span: Span,
+    pub new_text: String,
+}
+
+/// A quick fix: a titled set of non-overlapping edits applied together.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fix {
+    pub title: String,
+    pub edits: Vec<TextEdit>,
+}
+
+impl Fix {
+    pub fn new(title: impl Into<String>, edits: Vec<TextEdit>) -> Fix {
+        Fix { title: title.into(), edits }
+    }
+
+    /// A fix made of one edit.
+    pub fn edit(title: impl Into<String>, span: Span, new_text: impl Into<String>) -> Fix {
+        Fix { title: title.into(), edits: vec![TextEdit { span, new_text: new_text.into() }] }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -20,15 +61,31 @@ pub struct Diagnostic {
     /// compilations (the order of files passed to `sema::analyze`).
     /// Single-file phases leave it at 0.
     pub file: usize,
+    /// Stable code (see [`codes`]), when the diagnostic has one.
+    pub code: Option<&'static str>,
+    /// Quick fixes, alternatives in order of preference.
+    pub fixes: Vec<Fix>,
 }
 
 impl Diagnostic {
     pub fn error(message: impl Into<String>, span: Span) -> Diagnostic {
-        Diagnostic { severity: Severity::Error, message: message.into(), span, notes: vec![], file: 0 }
+        Diagnostic { severity: Severity::Error, message: message.into(), span, notes: vec![], file: 0, code: None, fixes: vec![] }
     }
 
     pub fn warning(message: impl Into<String>, span: Span) -> Diagnostic {
-        Diagnostic { severity: Severity::Warning, message: message.into(), span, notes: vec![], file: 0 }
+        Diagnostic { severity: Severity::Warning, message: message.into(), span, notes: vec![], file: 0, code: None, fixes: vec![] }
+    }
+
+    /// Sets the stable code (see [`codes`]).
+    pub fn with_code(mut self, code: &'static str) -> Diagnostic {
+        self.code = Some(code);
+        self
+    }
+
+    /// Adds a quick fix.
+    pub fn with_fix(mut self, fix: Fix) -> Diagnostic {
+        self.fixes.push(fix);
+        self
     }
 
     /// Sets the file index (see [`Diagnostic::file`]).

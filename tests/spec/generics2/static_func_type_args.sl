@@ -1,0 +1,27 @@
+// test: static functions of a generic struct are called with type arguments: Box<int>.Of(1)
+// status: passing
+namespace spec.generics2.static_func_type_args
+
+import std.io
+
+struct Box<T> {
+    V T
+
+    static func Of(v T) Box<T> {
+        return Box<T>{V: v}
+    }
+
+    static func Empty() Box<T> {
+        var b Box<T>
+        return b
+    }
+}
+
+func main() {
+    var a = Box<int>.Of(41)
+    var b = Box<string>.Of("s")
+    var e = Box<float>.Empty()
+    println(a.V + 1, b.V, e.V)
+    var f = Box<bool>.Of
+    println(f(true).V)
+}

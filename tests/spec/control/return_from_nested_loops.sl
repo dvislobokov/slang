@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.control.return_from_nested_loops
 
-import std.io
 import std
+import std.io
 
 func Find(grid [][]int, want int) string {
     for r, row in grid {

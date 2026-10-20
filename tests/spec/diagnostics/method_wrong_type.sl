@@ -1,0 +1,18 @@
+// error: method Area has type func() int, want func() float
+// status: passing
+namespace spec.diagnostics.method_wrong_type
+
+import std.io
+
+interface Shape {
+    func Area() float
+}
+
+struct Sq {
+    func Area() int { return 1 }
+}
+
+func main() {
+    var s Shape = Sq{}
+    println(s.Area())
+}

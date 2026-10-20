@@ -6,9 +6,9 @@ import std.io
 // pointers the parent and its children would keep each other alive
 // forever; the back pointer is `weak`, so it does not count.
 struct Node {
-    name string
+    name     string
     children []*Node
-    parent weak *Node
+    parent   weak *Node
 
     func Add(name string) *Node {
         var c = new Node{name: name, parent: this}

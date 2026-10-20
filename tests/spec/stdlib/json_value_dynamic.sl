@@ -1,5 +1,5 @@
 // test: json.ParseValue gives a dynamic json.Value navigable by key and index
-// status: pending
+// status: passing
 namespace spec.stdlib.json_value_dynamic
 
 import std.io

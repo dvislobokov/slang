@@ -1,0 +1,11 @@
+// error: range bounds must be integers
+// status: passing
+namespace spec.diagnostics.for_range_not_integers
+
+import std.io
+
+func main() {
+    for i in 0.5..2.5 {
+        println(i)
+    }
+}

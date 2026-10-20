@@ -1,0 +1,20 @@
+// error: has a destructor (Drop); use a pointer
+// status: passing
+namespace spec.memory2.drop_enum_payload_error
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop") }
+}
+
+enum Slot {
+    Empty
+    Full(r R)
+}
+
+func main() {
+    var s = Slot.Empty
+    println(s)
+}

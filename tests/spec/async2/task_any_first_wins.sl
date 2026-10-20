@@ -1,0 +1,31 @@
+// test: task.Any yields the first finished task's result; the others keep running to completion
+// status: passing
+namespace spec.async2.task_any_first_wins
+
+import std.io
+import std
+
+struct Log {
+    Mu task.Mutex
+    Done int
+}
+
+async func Job(name string, ms int, log *Log) string {
+    await task.Delay(ms)
+    await log.Mu.Lock()
+    log.Done += 1
+    log.Mu.Unlock()
+    return name
+}
+
+async func main() {
+    var log = new Log{}
+    var a = Job("a", 80, log)
+    var b = Job("b", 1, log)
+    var c = Job("c", 40, log)
+    var first = await task.Any(a, b, c)
+    println("first", first)
+    await a
+    await c
+    println("done", log.Done)
+}

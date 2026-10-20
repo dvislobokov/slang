@@ -1,0 +1,11 @@
+// error: append needs a slice and at least one value
+// status: passing
+namespace spec.diagnostics.append_no_value
+
+import std.io
+
+func main() {
+    var xs = [1]
+    xs = append(xs)
+    println(xs)
+}

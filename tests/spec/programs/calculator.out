@@ -1,0 +1,25 @@
+1 + 2 * 3
+  tree: (1 + (2 * 3))
+  value: 7
+(1 + 2) * 3
+  tree: ((1 + 2) * 3)
+  value: 9
+10 / (5 - 5)
+  tree: (10 / (5 - 5))
+  error: division by zero
+2 * -3 + 20 / 4
+  tree: ((2 * -3) + (20 / 4))
+  value: -1
+7 $ 3
+  error: tokenize: unexpected '$' at 2
+(4 + 4
+  error: parse: missing )
+8 - 3 - 2
+  tree: ((8 - 3) - 2)
+  value: 3
+1 2
+  error: trailing input
+100
+  tree: 100
+  value: 100
+5 of 9 evaluated

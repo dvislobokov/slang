@@ -1,5 +1,5 @@
 // test: builtin typeof(x) returns the static type of a value, or the dynamic type of an interface value
-// status: pending
+// status: passing
 namespace spec.reflection.typeof_value
 
 import std.io

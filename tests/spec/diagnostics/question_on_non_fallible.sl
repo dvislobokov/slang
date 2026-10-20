@@ -1,0 +1,15 @@
+// error: ? requires a fallible (T!) operand
+// status: passing
+namespace spec.diagnostics.question_on_non_fallible
+
+import std.io
+
+func F() int { return 1 }
+
+func G() int! {
+    return F()?
+}
+
+func main() {
+    println(try G() else 0)
+}

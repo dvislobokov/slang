@@ -2,12 +2,16 @@
 // status: passing
 namespace spec.stdlib.strings_case
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(strings.ToUpper("hello, World 42"), strings.ToLower("MiXeD"))
     println(strings.ToUpper("héllo привет"), strings.ToLower("ÀÉÎ"))
     println(strings.Title("hello big world"))
-    println(strings.EqualFold("Go", "GO"), strings.EqualFold("straße", "STRASSE"), strings.EqualFold("Привет", "пРИВЕТ"))
+    println(
+        strings.EqualFold("Go", "GO"),
+        strings.EqualFold("straße", "STRASSE"),
+        strings.EqualFold("Привет", "пРИВЕТ"),
+    )
 }

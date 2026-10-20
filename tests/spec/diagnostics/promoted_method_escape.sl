@@ -1,0 +1,28 @@
+// error: promoted method
+// status: passing
+namespace spec.diagnostics.promoted_method_escape
+
+import std.io
+
+var keep *Inner
+
+struct Inner {
+    V int
+    func Save() { keep = this }
+}
+
+struct Outer {
+    Inner
+    W int
+}
+
+interface Saver {
+    func Save()
+}
+
+func main() {
+    var o = new Outer{}
+    var s Saver = *o
+    s.Save()
+    println("x")
+}

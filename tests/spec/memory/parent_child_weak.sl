@@ -5,7 +5,7 @@ namespace spec.memory.parent_child_weak
 import std.io
 
 struct Child {
-    Name string
+    Name   string
     Parent weak *Parent
     func Drop() {
         println("free child", this.Name)

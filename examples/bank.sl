@@ -1,7 +1,7 @@
 namespace examples.bank
 
-import std.io
 import std
+import std.io
 
 const ErrUnknownAccount = error("unknown account")
 
@@ -16,17 +16,22 @@ enum Tx {
 enum EntryKind { Credit, Debit }
 
 struct Entry {
-    Kind EntryKind
+    Kind   EntryKind
     Amount int
 }
 
 struct InsufficientFunds {
     Account string
     Balance int
-    Needed int
+    Needed  int
 
     func Message() string {
-        return fmt.Format("insufficient funds in {0}: balance {1}, needed {2}", this.Account, Money(this.Balance), Money(this.Needed))
+        return fmt.Format(
+            "insufficient funds in {0}: balance {1}, needed {2}",
+            this.Account,
+            Money(this.Balance),
+            Money(this.Needed),
+        )
     }
 }
 
@@ -40,7 +45,7 @@ func Money(cents int) string {
 }
 
 struct Account {
-    Owner string
+    Owner   string
     balance int
     history []Entry
 
@@ -99,11 +104,11 @@ func Describe(tx Tx) string {
 }
 
 struct Bank {
-    Name string
-    accounts map[string]*Account
-    order []string
+    Name      string
+    accounts  map[string]*Account
+    order     []string
     processed int
-    failed int
+    failed    int
 
     static func New(name string) Bank {
         return Bank{Name: name, accounts: map[string]*Account{}}

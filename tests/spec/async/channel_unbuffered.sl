@@ -1,0 +1,27 @@
+// test: an unbuffered Channel<T> (capacity 0) hands each value to a receiver; strings are shared safely
+// status: passing
+// run-flags: --leak-check
+namespace spec.async.channel_unbuffered
+
+import std.io
+import std
+
+async func Send(ch task.Channel<string>, words []string) {
+    for w in words {
+        await ch.Send(w)
+    }
+    ch.Close()
+}
+
+async func main() {
+    var ch = task.Channel<string>(0)
+    var p = Send(ch, ["a", "bb", "ccc"])
+    var n = 0
+    for {
+        var w = try await ch.Recv() else break
+        println(w, len(w))
+        n += 1
+    }
+    await p
+    println("received", n, "len", ch.Len(), "cap", ch.Cap())
+}

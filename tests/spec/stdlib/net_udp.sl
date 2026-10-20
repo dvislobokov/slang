@@ -1,0 +1,24 @@
+// test: net.ListenUDP, SendTo and RecvFrom exchange datagrams and report the sender address
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.net_udp
+
+import std.io
+import std
+
+async func main() void! {
+    var a = net.ListenUDP("127.0.0.1:0")?
+    var b = net.ListenUDP("127.0.0.1:0")?
+    _ = await a.SendTo(strings.Bytes("ping"), b.Addr())?
+    var p = await b.RecvFrom(100)?
+    println(strings.FromBytes(p.Data), p.Addr == a.Addr())
+    _ = await b.SendTo(strings.Bytes("pong!"), p.Addr)?
+    var q = await a.RecvFrom(3)?
+    println(strings.FromBytes(q.Data))
+    b.SetTimeout(20)
+    try await b.RecvFrom(10) catch err {
+        println(err)
+    }
+    a.Close()
+    b.Close()
+}

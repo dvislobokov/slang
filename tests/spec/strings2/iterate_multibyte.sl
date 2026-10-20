@@ -1,0 +1,16 @@
+// test: for i, ch in s yields byte offsets and code points for 1- to 4-byte characters
+// status: passing
+namespace spec.strings2.iterate_multibyte
+
+import std.io
+
+func main() {
+    for i, ch in "aé日🙂z" {
+        println(i, ch, int(ch))
+    }
+    var n = 0
+    for _ in "ёлка" {
+        n += 1
+    }
+    println(n)
+}

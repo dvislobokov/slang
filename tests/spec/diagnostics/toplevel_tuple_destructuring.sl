@@ -1,0 +1,13 @@
+// error: tuple destructuring is not allowed at the top level
+// status: passing
+namespace spec.diagnostics.toplevel_tuple_destructuring
+
+import std.io
+
+func Two() (int, int) { return 1, 2 }
+
+var (a, b) = Two()
+
+func main() {
+    println(a, b)
+}

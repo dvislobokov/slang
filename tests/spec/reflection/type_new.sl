@@ -1,5 +1,5 @@
 // test: t.New() returns a fresh zero value on the heap as any holding *T
-// status: pending
+// status: passing
 namespace spec.reflection.type_new
 
 import std.io

@@ -1,0 +1,46 @@
+// test: interfaces embed interfaces transitively; a value converts to every interface along the chain
+// status: passing
+namespace spec.interfaces2.embedding_chain
+
+import std.io
+
+interface Sizer {
+    func Size() int
+}
+
+interface Reader {
+    Sizer
+    func Read() string
+}
+
+interface ReadWriter {
+    Reader
+    func Write(s string)
+}
+
+struct Buf {
+    data string
+    func Size() int { return len(this.data) }
+    func Read() string { return this.data }
+    func Write(s string) { this.data += s }
+}
+
+func Fill(rw ReadWriter) {
+    rw.Write("abc")
+    rw.Write("de")
+}
+
+func ShowSize(s Sizer) {
+    println("size", s.Size())
+}
+
+func main() {
+    var b = &Buf{}
+    Fill(b)
+    var rw ReadWriter = b
+    var r Reader = rw
+    var s Sizer = r
+    println(r.Read(), rw.Size())
+    ShowSize(s)
+    ShowSize(rw)
+}

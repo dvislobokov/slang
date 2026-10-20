@@ -1,0 +1,11 @@
+// error: lambdas are not allowed in global initializers
+// status: passing
+namespace spec.diagnostics.lambda_in_global
+
+import std.io
+
+var double = (x int) => x * 2
+
+func main() {
+    println(double(2))
+}

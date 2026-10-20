@@ -1,0 +1,26 @@
+// test: a constraint interface with a default method: the generic body may call the default
+// status: pending
+namespace spec.generics2.constraint_default_method
+
+import std.io
+import std
+
+interface Shape {
+    func Area() float
+    func Describe() string { return "area " + fmt.Format("{0}", this.Area()) }
+}
+
+struct Sq {
+    S float
+    func Area() float { return this.S * this.S }
+}
+
+func Report<T: Shape>(xs []T) {
+    for x in xs {
+        println(x.Describe())
+    }
+}
+
+func main() {
+    Report([Sq{S: 1}, Sq{S: 1.5}])
+}

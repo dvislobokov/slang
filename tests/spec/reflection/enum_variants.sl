@@ -1,5 +1,5 @@
 // test: Variants lists enum variants in order with their names and field counts
-// status: pending
+// status: passing
 namespace spec.reflection.enum_variants
 
 import std.io

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.task_any
 
-import std.io
 import std
+import std.io
 
 async func After(name string, ms int) string {
     await task.Delay(ms)

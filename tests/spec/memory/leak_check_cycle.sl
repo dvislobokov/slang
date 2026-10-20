@@ -8,7 +8,7 @@ namespace spec.memory.leak_check_cycle
 import std.io
 
 struct Node {
-    Name string
+    Name  string
     Other *Node
 }
 

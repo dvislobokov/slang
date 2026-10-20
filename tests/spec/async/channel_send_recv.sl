@@ -1,5 +1,5 @@
 // test: Channel<T>: buffered send/recv in FIFO order; Recv fails after Close once drained
-// status: pending
+// status: passing
 namespace spec.async.channel_send_recv
 
 import std.io

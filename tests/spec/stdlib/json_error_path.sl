@@ -1,0 +1,23 @@
+// test: json.Parse<T> errors name the path of the offending value
+// status: passing
+namespace spec.stdlib.json_error_path
+
+import std.io
+import std.encoding
+
+struct User {
+    @json(name: "id") Id int
+}
+
+struct Team {
+    Users []User
+}
+
+func main() {
+    try json.Parse<Team>("{\"Users\": [{\"id\": 1}, {\"id\": 2}, {\"id\": \"x\"}]}") catch err {
+        println(err)
+    }
+    try json.Parse<Team>("{\"Users\": 5}") catch err {
+        println(err)
+    }
+}

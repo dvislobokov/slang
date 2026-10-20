@@ -1,0 +1,14 @@
+// error: table is private to namespace
+// status: passing
+namespace spec.attributes2.other_namespace_private_error
+
+import std.io
+
+@meta.table("users")
+struct User {
+    Id int
+}
+
+func main() {
+    println(User{Id: 1}.Id)
+}

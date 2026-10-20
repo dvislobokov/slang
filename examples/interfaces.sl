@@ -1,7 +1,7 @@
 namespace examples.interfaces
 
-import std.io
 import std
+import std.io
 
 interface Shape {
     func Area() float

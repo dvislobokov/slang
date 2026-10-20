@@ -4,8 +4,8 @@
 // stderr: config missing
 namespace spec.async.main_error_exit
 
-import std.io
 import std
+import std.io
 
 func Load() string! {
     return error("config missing")

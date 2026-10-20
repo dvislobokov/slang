@@ -1,0 +1,96 @@
+namespace examples.channels
+
+import std.io
+import std
+
+// A producer/consumer pipeline over channels, a mutex-protected counter,
+// a WaitGroup, task.Spawn, task.Timeout and the task context.
+
+async func Produce(out task.Channel<int>, n int) {
+    for i in 1..n + 1 {
+        await out.Send(i)
+    }
+    out.Close()
+}
+
+// Squares every value of `src` into `out`; closes `out` when `src` is drained.
+async func Square(src task.Channel<int>, out task.Channel<int>) {
+    for {
+        var v = try await src.Recv() else break
+        await out.Send(v * v)
+    }
+    out.Close()
+}
+
+struct Counter {
+    Mu task.Mutex
+    N int
+}
+
+async func Work(c *Counter, wg *task.WaitGroup, times int) {
+    for _ in 0..times {
+        await c.Mu.Lock()
+        c.N += 1
+        c.Mu.Unlock()
+        await task.Yield()
+    }
+    wg.Done()
+}
+
+async func Slow(ms int) string {
+    await task.Delay(ms)
+    return "slow done"
+}
+
+var UserKey = task.Key<string>()
+
+async func ShowUser() string {
+    await task.Delay(1)
+    var user = task.Get(UserKey)
+    if user == nil {
+        return "user is nobody"
+    }
+    return "user is " + *user
+}
+
+async func main() {
+    // Pipeline: unbuffered source, buffered results.
+    var nums = task.Channel<int>(0)
+    var squares = task.Channel<int>(4)
+    var p = Produce(nums, 5)
+    var s = Square(nums, squares)
+    var total = 0
+    for {
+        var v = try await squares.Recv() else break
+        println("square", v)
+        total += v
+    }
+    await task.All(p, s)
+    println("total", total, "closed", squares.IsClosed())
+
+    // Many tasks share a counter behind a mutex.
+    var c = new Counter{}
+    var wg = new task.WaitGroup{}
+    wg.Add(4)
+    for _ in 0..4 {
+        _ = Work(c, wg, 50)
+    }
+    await wg.Wait()
+    println("counter", c.N)
+
+    // Spawn runs a function on a worker thread.
+    var answer = await task.Spawn(async func() int {
+        await task.Delay(1)
+        return 42
+    })
+    println("spawned", answer)
+
+    // Timeout: false when the task is not done in time.
+    var slow = Slow(200)
+    println("within 5ms:", await task.Timeout(slow, 5))
+    println("within 2s:", await task.Timeout(slow, 2000), await slow)
+
+    // The task context follows the task through awaits and calls.
+    println(await task.With(UserKey, "ann", ShowUser))
+    println(await ShowUser())
+}

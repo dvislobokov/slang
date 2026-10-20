@@ -1,0 +1,36 @@
+// test: generic functions returning generic struct instances, with inferred and nested type arguments
+// status: passing
+namespace spec.generics2.func_returns_generic_struct
+
+import std.io
+
+struct Pair<A, B> {
+    First A
+    Second B
+}
+
+func MakePair<A, B>(a A, b B) Pair<A, B> {
+    return Pair<A, B>{First: a, Second: b}
+}
+
+func Dup<T>(x T) Pair<T, T> {
+    return MakePair(x, x)
+}
+
+func Zip<A, B>(xs []A, ys []B) []Pair<A, B> {
+    var out []Pair<A, B> = []
+    for i, a in xs {
+        out = append(out, MakePair(a, ys[i]))
+    }
+    return out
+}
+
+func main() {
+    var p = MakePair("x", 1.5)
+    println(p.First, p.Second)
+    var d = Dup(Dup(3))
+    println(d.First.First, d.Second.Second)
+    for z in Zip([1, 2, 3], ["one", "two", "three"]) {
+        println(z.First, z.Second)
+    }
+}

@@ -1,7 +1,7 @@
 namespace examples.arith
 
-import std.io
 import std
+import std.io
 
 const Pi = 3.14159
 const Answer = 42

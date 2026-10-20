@@ -3,6 +3,7 @@
 namespace spec.ns.vis
 
 import std.io
+
 import spec.ns.vis.util
 
 func main() {

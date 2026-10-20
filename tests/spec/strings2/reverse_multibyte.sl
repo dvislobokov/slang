@@ -1,0 +1,18 @@
+// test: strings.Reverse reverses code points, not bytes; FromRunes rebuilds the string
+// status: passing
+namespace spec.strings2.reverse_multibyte
+
+import std.io
+import std
+
+func main() {
+    println(strings.Reverse("héllo"))
+    println(strings.Reverse("日本語"))
+    println(strings.Reverse("a🙂b"))
+    var rs = strings.Runes("абв")
+    var out []char = []
+    for i in 0..len(rs) {
+        out = append(out, rs[len(rs) - 1 - i])
+    }
+    println(strings.FromRunes(out), len(strings.FromRunes(out)))
+}

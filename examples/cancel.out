@@ -1,0 +1,7 @@
+consumer stopped after 3 values: task cancelled (cancelled: true)
+handle cancelled: true
+timeout: task cancelled true
+fast won
+slow: task cancelled
+parent saw child fail: task cancelled
+outside the scope: false

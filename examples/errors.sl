@@ -1,7 +1,7 @@
 namespace examples.errors
 
-import std.io
 import std
+import std.io
 
 // Sentinel errors: compared with errors.Is.
 const ErrNotFound = error("not found")
@@ -9,7 +9,7 @@ const ErrEmpty = error("empty input")
 
 // Typed errors: any struct with Message() string is an error.
 struct ValidationError {
-    Field string
+    Field  string
     Reason string
 
     func Message() string {

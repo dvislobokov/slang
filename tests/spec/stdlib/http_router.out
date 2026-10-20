@@ -1,0 +1,6 @@
+200 application/json {"id": 42, "tab": "a b"}
+200 text/plain; charset=utf-8 file a/b/c.txt
+404 text/plain; charset=utf-8 404 Not Found
+500 text/plain; charset=utf-8 500 Internal Server Error: boom
+200 application/json {"id": 9, "tab": "moved"}
+405 GET

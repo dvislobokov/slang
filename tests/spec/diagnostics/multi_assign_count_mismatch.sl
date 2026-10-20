@@ -1,0 +1,12 @@
+// error: assignment mismatch: 2 variables but 3 values
+// status: passing
+namespace spec.diagnostics.multi_assign_count_mismatch
+
+import std.io
+
+func main() {
+    var a = 1
+    var b = 2
+    a, b = 1, 2, 3
+    println(a, b)
+}

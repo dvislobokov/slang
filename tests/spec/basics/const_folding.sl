@@ -9,7 +9,6 @@ const Twice = K * 2 + 1
 const Greeting = "hello, " + "world"
 const Ratio = 1.0 / 4
 
-
 func main() {
     const Local = Twice - K
     var arr [3]int

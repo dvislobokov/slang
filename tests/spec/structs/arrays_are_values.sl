@@ -6,7 +6,7 @@ import std.io
 
 struct Grid {
     Cells [3]int
-    Tags []string
+    Tags  []string
 }
 
 func main() {

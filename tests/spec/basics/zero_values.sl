@@ -5,7 +5,7 @@ namespace spec.basics.zero_values
 import std.io
 
 struct P {
-    X int
+    X    int
     Name string
 }
 

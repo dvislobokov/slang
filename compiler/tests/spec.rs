@@ -31,7 +31,8 @@ use std::time::{Duration, Instant};
 /// when a directory is missing from this list.
 const AREAS: &[&str] = &[
     "basics", "control", "structs", "interfaces", "enums", "errors", "generics", "memory", "async", "attributes", "reflection", "stdlib",
-    "namespaces", "switch", "closures", "pointers",
+    "namespaces", "switch", "closures", "pointers", "interfaces2", "generics2", "memory2", "errors2", "async2", "strings2",
+    "diagnostics", "programs", "attributes2", "platform",
 ];
 
 /// Per-process timeout for a built program (a pending feature may hang).
@@ -374,6 +375,16 @@ areas!(
     spec_switch = "switch",
     spec_closures = "closures",
     spec_pointers = "pointers",
+    spec_interfaces2 = "interfaces2",
+    spec_generics2 = "generics2",
+    spec_memory2 = "memory2",
+    spec_errors2 = "errors2",
+    spec_async2 = "async2",
+    spec_strings2 = "strings2",
+    spec_diagnostics = "diagnostics",
+    spec_programs = "programs",
+    spec_attributes2 = "attributes2",
+    spec_platform = "platform",
 );
 
 #[test]

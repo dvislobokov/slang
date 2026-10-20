@@ -1,0 +1,4 @@
+unreachable: a
+  created at   tests/spec/errors2/trace_async.sl:10  Fetch
+  returned via tests/spec/errors2/trace_async.sl:14  Load
+  returned via tests/spec/errors2/trace_async.sl:19  main

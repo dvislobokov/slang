@@ -1,0 +1,34 @@
+// test: Map and Set iterate in insertion order; overwriting keeps the position, Remove then re-adding moves the key to the end
+// status: passing
+namespace spec.generics2.collections_iteration_order
+
+import std.io
+import std.collections
+
+func main() {
+    var m = Map<string, int>{}
+    m.Set("c", 1)
+    m.Set("a", 2)
+    m.Set("b", 3)
+    m.Set("a", 20)
+    for k, v in m {
+        println(k, v)
+    }
+    m.Remove("c")
+    m.Set("c", 30)
+    println(m.Keys(), m.Values())
+    var s = Set<int>{}
+    for x in [5, 3, 5, 1, 3] { s.Add(x) }
+    s.Remove(5)
+    s.Add(5)
+    for i, x in s.Items() {
+        println(i, x)
+    }
+    var l = List<string>{}
+    l.Add("x")
+    l.Add("y")
+    l.Insert(0, "w")
+    for i, x in l {
+        println(i, x)
+    }
+}

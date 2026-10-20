@@ -1,7 +1,9 @@
 // VS Code client for the Slang language server (slang-lsp).
 //
 // Launches `slang.serverPath` (default `slang-lsp` on PATH; falls back to
-// `slang lsp` when slang-lsp is not installed) over stdio.
+// `slang lsp` when slang-lsp is not installed) over stdio. The `slang.*`
+// settings are sent to the server (initialization options and
+// workspace/didChangeConfiguration), which reads `slang.inlayHints.*`.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -49,6 +51,17 @@ function serverExecutable(): Executable {
   return { command: configured, args: extraArgs };
 }
 
+/** The settings the server reads (`slang.inlayHints.*`). */
+function serverSettings(): object {
+  const config = vscode.workspace.getConfiguration("slang");
+  return {
+    inlayHints: {
+      types: { enabled: config.get<boolean>("inlayHints.types.enabled", true) },
+      parameterNames: { enabled: config.get<boolean>("inlayHints.parameterNames.enabled", true) },
+    },
+  };
+}
+
 function createClient(): LanguageClient {
   const exe = serverExecutable();
   output?.appendLine(`starting ${exe.command} ${(exe.args ?? []).join(" ")}`);
@@ -59,7 +72,9 @@ function createClient(): LanguageClient {
       { scheme: "untitled", language: "slang" },
     ],
     outputChannel: output,
+    initializationOptions: serverSettings(),
     synchronize: {
+      // Created/changed/deleted .sl files -> workspace/didChangeWatchedFiles.
       fileEvents: vscode.workspace.createFileSystemWatcher("**/*.sl"),
     },
   };
@@ -91,14 +106,27 @@ async function restartClient(): Promise<void> {
   await startClient();
 }
 
+/** `Slang: Format document`: formats the active .sl file through the server (`slang fmt` rules). */
+async function formatDocument(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== "slang") {
+    void vscode.window.showInformationMessage("Slang: open a .sl file to format it.");
+    return;
+  }
+  await vscode.commands.executeCommand("editor.action.formatDocument");
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel("Slang");
   context.subscriptions.push(output);
   context.subscriptions.push(vscode.commands.registerCommand("slang.restartServer", restartClient));
+  context.subscriptions.push(vscode.commands.registerCommand("slang.fmt", formatDocument));
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("slang.serverPath") || e.affectsConfiguration("slang.serverArgs")) {
         void restartClient();
+      } else if (e.affectsConfiguration("slang.inlayHints") && client) {
+        void client.sendNotification("workspace/didChangeConfiguration", { settings: { slang: serverSettings() } });
       }
     }),
   );

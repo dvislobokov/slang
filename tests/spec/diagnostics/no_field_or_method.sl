@@ -1,0 +1,14 @@
+// error: has no field or method Height
+// status: passing
+namespace spec.diagnostics.no_field_or_method
+
+import std.io
+
+struct S {
+    Width int
+}
+
+func main() {
+    var s = S{Width: 1}
+    println(s.Height)
+}

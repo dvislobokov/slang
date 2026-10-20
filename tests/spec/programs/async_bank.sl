@@ -1,0 +1,123 @@
+// test: bank with 100 concurrent async transfers: per-account mutexes locked in id order, conserved total, typed and wrapped errors
+// status: passing
+namespace spec.programs.async_bank
+
+import std.io
+import std
+
+const ErrNoAccount = error("no such account")
+
+struct Insufficient {
+    Id string
+    Need int
+    Have int
+    func Message() string {
+        return fmt.Format("{0} has {1}, needs {2}", this.Id, this.Have, this.Need)
+    }
+}
+
+struct Account {
+    Id string
+    Mu task.Mutex
+    Balance int
+}
+
+struct Bank {
+    accounts map[string]*Account
+    order []string
+    Mu task.Mutex
+    transfers int
+
+    func Open(id string, balance int) {
+        this.accounts[id] = new Account{Id: id, Balance: balance}
+        this.order = append(this.order, id)
+    }
+
+    async func Transfer(from string, to string, amount int) void! {
+        if from == to {
+            return error("same account " + from)
+        }
+        var a = this.accounts[from]
+        var c = this.accounts[to]
+        if a == nil || c == nil {
+            return errors.Wrap(ErrNoAccount, from + "->" + to)
+        }
+        var first = a
+        var second = c
+        if from > to {
+            first, second = c, a
+        }
+        await first.Mu.Lock()
+        await second.Mu.Lock()
+        if a.Balance < amount {
+            var have = a.Balance
+            second.Mu.Unlock()
+            first.Mu.Unlock()
+            return Insufficient{Id: from, Need: amount, Have: have}
+        }
+        a.Balance -= amount
+        await task.Delay(0)
+        c.Balance += amount
+        second.Mu.Unlock()
+        first.Mu.Unlock()
+        await this.Mu.Lock()
+        this.transfers += 1
+        this.Mu.Unlock()
+    }
+
+    func Report() {
+        var total = 0
+        for id in this.order {
+            var acc = this.accounts[id]
+            println(" ", id, acc.Balance)
+            total += acc.Balance
+        }
+        println("  total", total)
+    }
+}
+
+async func main() {
+    var b = new Bank{accounts: map[string]*Account{}}
+    b.Open("alice", 1000)
+    b.Open("bob", 500)
+    b.Open("carol", 100)
+    b.Report()
+
+    var ts []Task<void!> = []
+    for _ in 0..50 {
+        ts = append(ts, b.Transfer("alice", "bob", 10))
+    }
+    for _ in 0..30 {
+        ts = append(ts, b.Transfer("bob", "carol", 5))
+    }
+    for _ in 0..20 {
+        ts = append(ts, b.Transfer("carol", "alice", 1))
+    }
+    var failed = 0
+    for t in ts {
+        try await t catch err {
+            failed += 1
+        }
+    }
+    println("transfers", b.transfers, "failed", failed)
+    b.Report()
+
+    try await b.Transfer("bob", "alice", 10000) catch err {
+        println("error:", err)
+        var ins Insufficient
+        if errors.As(err, &ins) {
+            println("short by", ins.Need - ins.Have)
+        }
+    }
+    try await b.Transfer("alice", "dave", 1) catch err {
+        println("error:", err, errors.Is(err, ErrNoAccount))
+    }
+    try await b.Transfer("carol", "carol", 1) catch err {
+        println("error:", err)
+    }
+    try await task.All(b.Transfer("carol", "bob", 30), b.Transfer("bob", "carol", 30)) catch err {
+        println("swap failed:", err)
+    }
+    println("swap", b.transfers)
+    b.Report()
+}

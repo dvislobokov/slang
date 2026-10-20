@@ -1,9 +1,9 @@
 namespace examples.stdlib_crypto
 
-import std.io
 import std
 import std.crypto
 import std.encoding
+import std.io
 
 func main() {
     // std.crypto.hash: `import std.crypto` gives hash.X, `import std` gives crypto.hash.X.
@@ -19,7 +19,11 @@ func main() {
     // std.crypto.hmac
     println("hmac:", hmac.Sha256Hex("key", "The quick brown fox jumps over the lazy dog"))
     var mac = hmac.Sha256("secret", "message")
-    println("verify:", hmac.Equal(mac, hmac.Sha256("secret", "message")), hmac.Equal(mac, hmac.Sha256("secret", "Message")))
+    println(
+        "verify:",
+        hmac.Equal(mac, hmac.Sha256("secret", "message")),
+        hmac.Equal(mac, hmac.Sha256("secret", "Message")),
+    )
 
     // std.encoding.base64 / hex
     var enc = base64.EncodeString("Slang + base64 = ok")
@@ -51,7 +55,13 @@ func main() {
     }
     println("key length:", len(key))
     var id = uuid.New()
-    println("uuid:", len(id), uuid.IsValid(id), uuid.IsValid("not-a-uuid"), uuid.IsValid("123e4567-e89b-12d3-a456-426614174000"))
+    println(
+        "uuid:",
+        len(id),
+        uuid.IsValid(id),
+        uuid.IsValid("not-a-uuid"),
+        uuid.IsValid("123e4567-e89b-12d3-a456-426614174000"),
+    )
 
     // std.random: deterministic after Seed.
     random.Seed(2024)

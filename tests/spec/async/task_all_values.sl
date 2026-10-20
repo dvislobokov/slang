@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.task_all_values
 
-import std.io
 import std
+import std.io
 
 async func Num(n int, ms int) int {
     await task.Delay(ms)

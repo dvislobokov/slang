@@ -1,0 +1,12 @@
+early return
+defer 2 sees b
+defer 1
+drop b
+drop a
+--
+normal return
+defer 2 sees b
+defer 1
+drop c
+drop b
+drop a

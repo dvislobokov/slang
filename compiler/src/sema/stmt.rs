@@ -84,6 +84,8 @@ impl<'a> Sema<'a> {
                 self.pop_scope();
                 push(out, StmtKind::TryBlock { body, err, handler });
             }
+            // Already reported by the parser.
+            ast::StmtKind::Error => {}
         }
     }
 
@@ -184,7 +186,10 @@ impl<'a> Sema<'a> {
         c
     }
 
-    fn if_stmt(&mut self, i: &ast::IfStmt) -> StmtKind {
+    pub(crate) fn if_stmt(&mut self, i: &ast::IfStmt) -> StmtKind {
+        if let Some(k) = self.static_if(i) {
+            return k;
+        }
         let cond = self.cond(&i.cond, "if");
         let then = self.block(&i.then);
         let else_ = i.else_.as_ref().map(|e| match &**e {
@@ -225,6 +230,9 @@ impl<'a> Sema<'a> {
     }
 
     fn for_in(&mut self, vars: &[ast::Ident], iter: &ast::Expr, body: &ast::Block, span: Span) -> StmtKind {
+        if let Some(k) = self.fields_for(vars, iter, body, span) {
+            return k;
+        }
         if vars.len() > 2 || vars.is_empty() {
             self.err("for ... in takes one or two variables", span);
         }
@@ -609,8 +617,8 @@ impl<'a> Sema<'a> {
         }
         let h = self.expr(e, None);
         if self.tt.is_fallible(h.ty) {
-            self.err(format!("result of type {} must be handled (use ?, try ... catch, try ... else, or `_ =`)", self.tn(h.ty)), h.span);
-        } else if !matches!(inner.kind, ast::ExprKind::Call { .. } | ast::ExprKind::Await(_) | ast::ExprKind::Propagate { .. }) {
+            self.unhandled_result(h.ty, h.span);
+        } else if !matches!(inner.kind, ast::ExprKind::Call { .. } | ast::ExprKind::Await(_) | ast::ExprKind::Propagate { .. }) && !inner.is_recovered() {
             self.err("expression is evaluated but not used", e.span);
         }
         StmtKind::Expr(h)

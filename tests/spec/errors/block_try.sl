@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors.block_try
 
-import std.io
 import std
+import std.io
 
 func Run(a, b string) {
     var total = 0

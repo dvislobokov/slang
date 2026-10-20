@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.fmt_format
 
-import std.io
 import std
+import std.io
 
 enum Color { Red, Green }
 

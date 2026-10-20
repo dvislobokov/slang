@@ -1,0 +1,5 @@
+0 export: save file: write block: disk full
+1 save file: write block: disk full
+2 write block: disk full
+3 disk full
+true true false

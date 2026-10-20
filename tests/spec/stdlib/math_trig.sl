@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.math_trig
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(math.Sin(0), math.Cos(0), math.Tan(0))

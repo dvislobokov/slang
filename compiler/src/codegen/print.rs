@@ -156,7 +156,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// `println` cannot print.
     pub(crate) fn finish_any_tostr(&mut self) -> R<()> {
         let Some(f) = self.module.get_function("any.tostr") else { return Ok(()) };
-        let mut types: Vec<(TypeId, inkwell::values::GlobalValue<'ctx>)> = self.type_infos.iter().map(|(t, g)| (*t, *g)).collect();
+        let mut types: Vec<(TypeId, inkwell::values::PointerValue<'ctx>)> = self.type_infos.iter().map(|(t, g)| (*t, *g)).collect();
         types.sort_by_key(|(t, _)| *t);
         self.with_helper(f, |cg| {
             let data = f.get_nth_param(0).unwrap().into_pointer_value();
@@ -172,7 +172,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             for (t, g) in types {
                 let yes = cg.block("is");
                 let next = cg.block("next");
-                let eq = cg.ptr_eq(ti, g.as_pointer_value());
+                let eq = cg.ptr_eq(ti, g);
                 cg.b.build_conditional_branch(eq, yes, next).unwrap();
                 cg.b.position_at_end(yes);
                 let printable = matches!(cg.ty(t), Type::Int(_) | Type::Float32 | Type::Float64 | Type::Bool | Type::Char | Type::String | Type::Error | Type::Slice(_) | Type::Array(..))

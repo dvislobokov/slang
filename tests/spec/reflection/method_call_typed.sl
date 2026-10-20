@@ -1,5 +1,5 @@
 // test: the typed form m.Call<F>() returns a plain function value
-// status: pending
+// status: passing
 namespace spec.reflection.method_call_typed
 
 import std.io

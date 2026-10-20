@@ -21,6 +21,8 @@ commands:
   manifest convert <toml|json|yaml> [dir]
                                  rewrite the manifest in another format
   parse <file.sl>                print the AST
+  fmt [paths] [--check] [--diff] [--stdin]
+                                 format .sl files in place (canonical style)
   lsp                            run the language server on stdio (execs slang-lsp)
 
 build options:
@@ -75,6 +77,7 @@ fn main() {
         "init" => init(rest),
         "manifest" => manifest(rest),
         "lsp" => lsp(rest),
+        "fmt" => exit(slang::fmt::cli::run(rest)),
         cmd => {
             eprintln!("error: command `{cmd}` is not implemented yet\n{USAGE}");
             exit(2);

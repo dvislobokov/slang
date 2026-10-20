@@ -119,7 +119,7 @@ pub(crate) fn hover_markdown(a: &Analysis, id: SymbolId) -> String {
     out
 }
 
-fn lsp_symbol_kind(k: SymbolKind) -> lsp_types::SymbolKind {
+pub(crate) fn lsp_kind(k: SymbolKind) -> lsp_types::SymbolKind {
     use lsp_types::SymbolKind as L;
     match k {
         SymbolKind::Namespace => L::NAMESPACE,
@@ -142,7 +142,7 @@ pub(crate) fn doc_symbol(f: &SourceFile, s: &DocumentSymbol) -> lsp_types::Docum
     lsp_types::DocumentSymbol {
         name: s.name.clone(),
         detail: (!s.detail.is_empty()).then(|| s.detail.clone()),
-        kind: lsp_symbol_kind(s.kind),
+        kind: lsp_kind(s.kind),
         tags: None,
         deprecated: None,
         range: range(f, full),
@@ -218,7 +218,7 @@ pub(crate) fn semantic_tokens(a: &Analysis, file: usize) -> Vec<SemanticToken> {
         let class = match &t.kind {
             TokenKind::Ident(name) => names.get(&(t.span.start, t.span.end)).and_then(|(id, decl)| {
                 let s = a.index.symbol(*id);
-                // Stale files: only trust spans whose text still matches.
+                // Only trust spans whose text matches the symbol (namespaces aside).
                 (s.name == *name || matches!(s.key, SymKey::Ns(_))).then(|| token_class(s, *decl))
             }),
             TokenKind::Int(_) | TokenKind::Float(_) => Some((T_NUMBER, 0)),
@@ -477,6 +477,15 @@ fn visible_locals(a: &Analysis, file: usize, off: u32) -> Vec<(String, SymbolId)
 
 fn file_ns(a: &Analysis, file: usize) -> Option<&str> {
     a.index.files.get(file)?.as_ref().map(|f| f.namespace.as_str())
+}
+
+/// The symbol a name written at `off` refers to: a visible local, else a
+/// global name (own namespace, imports, root namespaces).
+pub(crate) fn resolve_name(a: &Analysis, file: usize, off: u32, name: &str) -> Option<SymbolId> {
+    if let Some((_, id)) = visible_locals(a, file, off).into_iter().find(|(n, _)| n == name) {
+        return Some(id);
+    }
+    global_name(a, file, name)
 }
 
 /// Resolves a non-local name like sema's global lookup: own namespace,

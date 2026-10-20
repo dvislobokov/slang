@@ -1,0 +1,11 @@
+// error: (constrain it: T: Comparable)
+// status: passing
+namespace spec.diagnostics.type_param_equality_hint
+
+import std.io
+
+func Eq<T>(a, b T) bool { return a == b }
+
+func main() {
+    println(Eq(1, 2))
+}

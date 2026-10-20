@@ -1,0 +1,81 @@
+// std.encoding.json: typed Parse/Format through compile-time reflection,
+// @json attributes, error paths, and the dynamic json.Value tree.
+namespace examples.json
+
+import std.io
+import std.encoding
+
+enum Role { Guest, Member, Admin }
+
+struct Address {
+    City string
+    Zip string
+}
+
+struct User {
+    @json(name: "id") Id int
+    Name string
+    @json(omitEmpty: true) Email string
+    Role Role
+    Score float
+    Tags []string
+    Home *Address
+    Limits map[string]int
+    @json(skip: true) password string
+}
+
+struct Team {
+    Name string
+    Users []User
+}
+
+func Run() void! {
+    var text = "{\"Name\": \"core\", \"Users\": [{\"id\": 1, \"Name\": \"ann\", \"Role\": \"Admin\", \"Score\": 9.5, \"Tags\": [\"a\", \"b\"], \"Home\": {\"City\": \"Oslo\", \"Zip\": \"0150\"}, \"Limits\": {\"cpu\": 4, \"ram\": 16}}, {\"id\": 2, \"Name\": \"bob \\u00e9\\n\", \"Role\": \"Guest\"}]}"
+    var team = json.Parse<Team>(text)?
+    println(team.Name, len(team.Users))
+    var ann = team.Users[0]
+    println(ann.Id, ann.Name, ann.Role, ann.Score, ann.Tags, ann.Home.City, ann.Limits["ram"])
+    println(team.Users[1].Home == nil, len(team.Users[1].Tags))
+    ann.password = "secret"
+    ann.Email = "ann@example.com"
+    println(json.Format(ann))
+    println(json.Format(team.Users[1]))
+    println(json.Format([1, 2, 3]), json.Format("q\"uote"), json.Format(2.5), json.Format(true))
+    var m = map[string]bool{}
+    m["z"] = true
+    m["a"] = false
+    println(json.Format(m))
+
+    // Errors carry the path of the bad value.
+    try json.Parse<Team>("{\"Users\": [{\"id\": 1}, {\"id\": \"two\"}]}") catch err {
+        println(err)
+    }
+    try json.Parse<Team>("{\"Users\": [{\"id\": 1.5}]}") catch err {
+        println(err)
+    }
+    try json.Parse<User>("{\"Role\": \"Root\"}") catch err {
+        println(err)
+    }
+    try json.Parse<User>("[1, 2") catch err {
+        println(err)
+    }
+    try json.Parse<User>("{\"id\": 1} x") catch err {
+        println(err)
+    }
+
+    // Dynamic values.
+    var v = json.ParseValue("{\"a\": [1, {\"b\": null}], \"s\": \"x\\ty\", \"n\": -1.25e2}")?
+    println(v.Type(), v.Len(), v.Keys(), v.Get("a").Index(1).Has("b"), v.Get("n").Float()?)
+    println(v.Format())
+    var n = v.Get("a").Index(0).Int()?
+    println(n, v.Get("missing").IsNull())
+    try v.Get("s").Int() catch err {
+        println(err)
+    }
+}
+
+func main() {
+    try Run() catch err {
+        println("error:", err)
+    }
+}

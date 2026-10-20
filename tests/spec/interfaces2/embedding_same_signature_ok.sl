@@ -1,0 +1,30 @@
+// test: two embedded interfaces may declare the same method with the same signature
+// status: passing
+namespace spec.interfaces2.embedding_same_signature_ok
+
+import std.io
+
+interface Closer {
+    func Close()
+}
+
+interface Reader {
+    func Read() string
+    func Close()
+}
+
+interface ReadCloser {
+    Reader
+    Closer
+}
+
+struct File {
+    func Read() string { return "data" }
+    func Close() { println("closed") }
+}
+
+func main() {
+    var rc ReadCloser = File{}
+    println(rc.Read())
+    rc.Close()
+}

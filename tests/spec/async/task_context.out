@@ -1,0 +1,4 @@
+outside: request -1 user ?
+request 7 user ann / request 7 user ann / request 7 user bob
+request -1 user cid
+request -1 user ?

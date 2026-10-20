@@ -1,5 +1,5 @@
 // test: json.Parse<T> and json.Format via compile-time reflection, honouring @json
-// status: pending
+// status: passing
 namespace spec.stdlib.json_parse_format
 
 import std.io

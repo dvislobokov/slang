@@ -1,0 +1,10 @@
+// error: cannot infer the type of an empty slice literal
+// status: passing
+namespace spec.diagnostics.empty_slice_needs_type
+
+import std.io
+
+func main() {
+    var xs = []
+    println(len(xs))
+}

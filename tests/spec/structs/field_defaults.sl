@@ -5,10 +5,10 @@ namespace spec.structs.field_defaults
 import std.io
 
 struct Config {
-    Name string = "app"
-    Port int = 8080
+    Name  string = "app"
+    Port  int = 8080
     Debug bool
-    Tags []string
+    Tags  []string
 }
 
 func main() {

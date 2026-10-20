@@ -3,6 +3,7 @@
 namespace spec.ns.typeonly
 
 import std.io
+
 import spec.ns.typeonly.models.User
 
 func main() {

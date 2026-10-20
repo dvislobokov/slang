@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors.try_else_forms
 
-import std.io
 import std
+import std.io
 
 func main() {
     var a = try strings.ToInt("12") else -1

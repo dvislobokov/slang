@@ -2,11 +2,15 @@
 // status: passing
 namespace spec.stdlib.strings_replace_repeat
 
-import std.io
 import std
+import std.io
 
 func main() {
-    println(strings.Replace("oink oink oink", "k", "ky"), strings.Replace("aaa", "a", ""), strings.Replace("abc", "x", "y"))
+    println(
+        strings.Replace("oink oink oink", "k", "ky"),
+        strings.Replace("aaa", "a", ""),
+        strings.Replace("abc", "x", "y"),
+    )
     println(strings.Replace("abab", "ab", "ba"))
     println(strings.Repeat("ab", 3), "[" + strings.Repeat("x", 0) + "]", strings.Repeat("é", 2))
 }

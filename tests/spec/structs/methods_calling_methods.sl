@@ -5,8 +5,8 @@ namespace spec.structs.methods_calling_methods
 import std.io
 
 struct Tree {
-    V int
-    Left *Tree
+    V     int
+    Left  *Tree
     Right *Tree
 
     func Sum() int {

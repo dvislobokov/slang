@@ -1,0 +1,29 @@
+// test: `?` leaving a function drops its live values, including a value received as a by-value parameter
+// status: passing
+namespace spec.memory2.drop_on_question
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop", this.Name) }
+}
+
+func Check(n int) int! {
+    if n < 0 {
+        return error("negative")
+    }
+    return n
+}
+
+func Step(owned R, n int) int! {
+    var local = R{Name: "local"}
+    var v = Check(n)?
+    var after = R{Name: "after"}
+    return v * 2
+}
+
+func main() {
+    println(try Step(R{Name: "p1"}, 4) else -1)
+    println(try Step(R{Name: "p2"}, -4) else -1)
+}

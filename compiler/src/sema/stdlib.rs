@@ -69,10 +69,18 @@
 //! `std.errors.New` → [`crate::hir::Builtin::ErrorNew`],
 //! `std.errors.As` → [`crate::hir::Builtin::ErrorsAs`].
 //!
+//! Slang-source stdlib (`std.task` types, `std.net`, `std.net.http`):
+//! [`super::stdsrc`]; their runtime primitives are the `rt*` externs below
+//! (internal; `runtime/ABI.md` 10.10, 10.11 and 16).
+//!
 //! Builtins always in scope (no import): `error`, `len`, `append`,
 //! `delete`, `panic`, conversions `int(x)`, `float(x)`, `string(c)` (and
-//! the other numeric type names), `typeof` (rejected for now: reflection is
-//! not implemented).
+//! the other numeric type names), `typeof(x)` (the `*reflect.TypeInfo` of
+//! `x`, see [`super::reflect`]).
+//!
+//! `std.reflect`, `std.encoding.json` (apart from the externs `Quote` and
+//! `scan` below) and `std.strings.Builder` are Slang sources loaded on first
+//! use ([`super::reflect`]).
 
 use crate::ast;
 use crate::span::Span;
@@ -171,7 +179,11 @@ pub const NAMESPACES: &[&str] = &[
     "std.encoding",
     "std.encoding.base64",
     "std.encoding.hex",
+    "std.encoding.json",
+    "std.reflect",
     "std.uuid",
+    "std.net",
+    "std.net.http",
 ];
 
 /// An ordinary stdlib function implemented by the runtime.
@@ -276,6 +288,7 @@ pub const CONSTS: &[(&str, &str, StdConst)] = &[
     ("std.math", "MaxUint32", StdConst::Int(u32::MAX as i128)),
     ("std.math", "MaxUint", StdConst::Int(u64::MAX as i128)),
     ("std.fs", "ErrNotFound", StdConst::Error("slang_fs_err_not_found")),
+    ("std.task", "ErrCancelled", StdConst::Error("slang_task_err_cancelled")),
 ];
 
 macro_rules! f {
@@ -319,6 +332,24 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.errors", "Is", "error, error", "bool", "slang_errors_is"),
     f!("std.errors", "Trace", "error", "string", "slang_errors_trace"),
     f!("std.task", "Delay", "int", "Task<void>", "slang_task_delay"),
+    f!("std.task", "Yield", "", "Task<void>", "slang_task_yield"),
+    // internal primitives of the Slang-source std.task (sema/stdlib_src/task.sl)
+    f!("std.task", "rtSignal", "", "Task<void>", "slang_task_rt_signal"),
+    f!("std.task", "rtWaker", "", "Task<void>", "slang_task_rt_waker"),
+    f!("std.task", "IsCancelled", "", "bool", "slang_task_cur_cancelled"),
+    f!("std.task", "rtCancel", "Task<void>", "void", "slang_task_cancel"),
+    f!("std.task", "rtScopeCancelled", "Task<void>", "bool", "slang_task_is_cancelled"),
+    f!("std.task", "rtSetDeadline", "Task<void>, int", "void", "slang_task_set_deadline"),
+    f!("std.task", "rtCurrent", "", "Task<void>", "slang_task_current"),
+    f!("std.task", "rtNewScope", "", "Task<void>", "slang_task_new_scope"),
+    f!("std.task", "rtEnterScope", "Task<void>", "Task<void>", "slang_task_enter_scope"),
+    f!("std.task", "rtLeaveScope", "Task<void>", "void", "slang_task_leave_scope"),
+    f!("std.task", "rtNextKey", "", "int", "slang_task_next_key"),
+    f!("std.task", "rtFire", "Task<void>", "void", "slang_task_rt_fire"),
+    f!("std.task", "rtLock", "*int", "void", "slang_task_spin_lock"),
+    f!("std.task", "rtUnlock", "*int", "void", "slang_task_spin_unlock"),
+    f!("std.task", "rtGetCtx", "", "map[string]any", "slang_task_get_ctx"),
+    f!("std.task", "rtSetCtx", "map[string]any", "void", "slang_task_set_ctx"),
     // std.strings (more)
     f!("std.strings", "Fields", "string", "[]string", "slang_strings_fields"),
     f!("std.strings", "Count", "string, string", "int", "slang_strings_count"),
@@ -435,13 +466,40 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.encoding.hex", "EncodeString", "string", "string", "slang_encoding_hex_encode_string"),
     f!("std.encoding.hex", "Decode", "string", "[]byte!", "slang_encoding_hex_decode"),
     f!("std.encoding.hex", "DecodeString", "string", "string!", "slang_encoding_hex_decode_string"),
+    // std.encoding.json: the C half (std_json.c); the rest is Slang (sema/reflect_src/json.sl)
+    f!("std.encoding.json", "Quote", "string", "string", "slang_encoding_json_quote"),
+    f!("std.encoding.json", "scan", "string", "[]string!", "slang_encoding_json_scan"),
+    // internal primitives of the Slang-source std.net (sema/stdlib_src/net.sl)
+    f!("std.net", "rtConnect", "string, int", "int!", "slang_net_rt_connect"),
+    f!("std.net", "rtConnectResult", "int", "void!", "slang_net_rt_connect_result"),
+    f!("std.net", "rtListen", "string, int", "int!", "slang_net_rt_listen"),
+    f!("std.net", "rtAccept", "int", "int!", "slang_net_rt_accept"),
+    f!("std.net", "rtRead", "int, int", "[]byte!", "slang_net_rt_read"),
+    f!("std.net", "rtAgain", "", "bool", "slang_net_rt_again"),
+    f!("std.net", "rtWrite", "int, []byte, int", "int!", "slang_net_rt_write"),
+    f!("std.net", "rtWriteStr", "int, string, int", "int!", "slang_net_rt_write_str"),
+    f!("std.net", "rtClose", "int", "void", "slang_net_rt_close"),
+    f!("std.net", "rtWaitReadable", "int, int", "Task<int>", "slang_net_rt_wait_readable"),
+    f!("std.net", "rtWaitWritable", "int, int", "Task<int>", "slang_net_rt_wait_writable"),
+    f!("std.net", "rtLocalAddr", "int", "string", "slang_net_rt_local_addr"),
+    f!("std.net", "rtRemoteAddr", "int", "string", "slang_net_rt_remote_addr"),
+    f!("std.net", "rtPort", "int", "int", "slang_net_rt_port"),
+    f!("std.net", "rtIsIP", "string", "bool", "slang_net_rt_is_ip"),
+    f!("std.net", "rtResolve", "string", "Task<int>", "slang_net_rt_resolve"),
+    f!("std.net", "rtResolveTake", "int", "[]string!", "slang_net_rt_resolve_take"),
+    f!("std.net", "rtUdpBind", "string, int", "int!", "slang_net_rt_udp_bind"),
+    f!("std.net", "rtRecvFrom", "int, int", "[]byte!", "slang_net_rt_recv_from"),
+    f!("std.net", "rtLastFrom", "", "string", "slang_net_rt_last_from"),
+    f!("std.net", "rtLastFromPort", "", "int", "slang_net_rt_last_from_port"),
+    f!("std.net", "rtSendTo", "int, []byte, string, int", "int!", "slang_net_rt_send_to"),
     // std.uuid
     f!("std.uuid", "New", "", "string", "slang_uuid_new"),
     f!("std.uuid", "IsValid", "string", "bool", "slang_uuid_is_valid"),
 ];
 
 /// Parses a type in the table's mini syntax: builtin names, `[]T`, `T!`,
-/// `Task<T>`.
+/// `Task<T>`, `*T` (passed as a plain pointer: only `&place` arguments of
+/// the internal `rt*` externs use it), `map[K]V`.
 pub fn parse_type(tt: &mut TypeTable, s: &str) -> TypeId {
     let s = s.trim();
     if let Some(inner) = s.strip_suffix('!') {
@@ -455,6 +513,14 @@ pub fn parse_type(tt: &mut TypeTable, s: &str) -> TypeId {
     if let Some(inner) = s.strip_prefix("Task<").and_then(|r| r.strip_suffix('>')) {
         let t = parse_type(tt, inner);
         return tt.task(t);
+    }
+    if let Some(inner) = s.strip_prefix('*') {
+        let t = parse_type(tt, inner);
+        return tt.pointer(t);
+    }
+    if let Some((k, v)) = s.strip_prefix("map[").and_then(|r| r.split_once(']')) {
+        let (k, v) = (parse_type(tt, k), parse_type(tt, v));
+        return tt.map(k, v);
     }
     tt.builtin(s).unwrap_or_else(|| panic!("stdlib table: unknown type `{s}`"))
 }

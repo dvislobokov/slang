@@ -2,8 +2,8 @@
 // status: pending
 namespace spec.stdlib.yaml_toml_xml
 
-import std.io
 import std.encoding
+import std.io
 
 struct Config {
     Name string

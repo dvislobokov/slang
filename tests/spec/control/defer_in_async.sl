@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.control.defer_in_async
 
-import std.io
 import std
+import std.io
 
 async func Job(name string) int {
     defer println("cleanup", name)

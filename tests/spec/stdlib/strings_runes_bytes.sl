@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.strings_runes_bytes
 
-import std.io
 import std
+import std.io
 
 func main() {
     var r = strings.Runes("hé!")

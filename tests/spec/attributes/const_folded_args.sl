@@ -9,8 +9,8 @@ const Name = "svc"
 
 @attribute
 struct limit {
-    min int
-    max int
+    min   int
+    max   int
     label string
     ratio float
 }

@@ -749,6 +749,7 @@ impl<'a> Sema<'a> {
 
     /// Drops every declaration created after `m`.
     fn rollback(&mut self, m: Mark) {
+        self.reflect_rollback(m.funcs);
         self.funcs.truncate(m.funcs);
         self.func_src.truncate(m.funcs);
         self.sigs.truncate(m.funcs);

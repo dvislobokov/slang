@@ -1,5 +1,5 @@
 // test: reflect.TypeOf<T>() gives Name, FullName and Kind without a value
-// status: pending
+// status: passing
 namespace spec.reflection.type_of_static
 
 import std.io

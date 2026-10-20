@@ -1,0 +1,14 @@
+// error: enum methods cannot be static or generic
+// status: passing
+namespace spec.diagnostics.enum_static_method
+
+import std.io
+
+enum Color {
+    Red
+    static func Default() Color { return Color.Red }
+}
+
+func main() {
+    println(Color.Red)
+}

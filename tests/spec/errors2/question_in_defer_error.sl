@@ -1,0 +1,20 @@
+// error: defer requires a function call
+// status: passing
+namespace spec.errors2.question_in_defer_error
+
+import std.io
+
+func Close() void! {
+    return error("close failed")
+}
+
+func Work() void! {
+    defer Close()?
+    println("work")
+}
+
+func main() {
+    try Work() catch err {
+        println(err)
+    }
+}

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors.frames_length
 
-import std.io
 import std
+import std.io
 
 func Inner() void! {
     return error("x")

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.await_outside_async_error
 
-import std.io
 import std
+import std.io
 
 async func F() int {
     return 1

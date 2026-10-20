@@ -1,0 +1,14 @@
+// error: Get is not a static method of Box<int>
+// status: passing
+namespace spec.diagnostics.generic_not_static_method
+
+import std.io
+
+struct Box<T> {
+    V T
+    func Get() T { return this.V }
+}
+
+func main() {
+    println(Box<int>.Get())
+}

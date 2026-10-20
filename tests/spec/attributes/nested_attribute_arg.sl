@@ -1,5 +1,5 @@
 // test: attribute parameters may be enums, slices and other attribute structs
-// status: pending
+// status: passing
 namespace spec.attributes.nested_attribute_arg
 
 import std.io

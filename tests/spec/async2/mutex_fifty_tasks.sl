@@ -1,0 +1,33 @@
+// test: a Mutex protects a read-modify-write across an await in 50 tasks: no update is lost
+// status: passing
+namespace spec.async2.mutex_fifty_tasks
+
+import std.io
+import std
+
+struct Counter {
+    Mu task.Mutex
+    N int
+}
+
+async func Add(c *Counter, times int) {
+    for _ in 0..times {
+        await c.Mu.Lock()
+        var v = c.N
+        await task.Delay(0)
+        c.N = v + 1
+        c.Mu.Unlock()
+    }
+}
+
+async func main() {
+    var c = new Counter{}
+    var ts []Task<void> = []
+    for _ in 0..50 {
+        ts = append(ts, Add(c, 20))
+    }
+    for t in ts {
+        await t
+    }
+    println(c.N)
+}

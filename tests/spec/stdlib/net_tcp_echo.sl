@@ -1,0 +1,45 @@
+// test: net.Listen / Accept / Dial / Read / Write over TCP; Read yields an empty slice at end of stream
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.net_tcp_echo
+
+import std.io
+import std
+
+async func Echo(c net.Conn) void! {
+    var total = 0
+    for {
+        var b = await c.Read(3)?
+        if len(b) == 0 {
+            break
+        }
+        total += await c.Write(b)?
+    }
+    println("server echoed", total, "bytes")
+    c.Close()
+}
+
+async func main() void! {
+    var l = net.Listen("127.0.0.1:0")?
+    println("listening", strings.HasPrefix(l.Addr(), "127.0.0.1:"), l.Port() > 0)
+    var addr = fmt.Format("127.0.0.1:{0}", l.Port())
+    var c = await net.Dial(addr)?
+    var s = await l.Accept()?
+    var srv = Echo(s)
+    println("remote is local", c.RemoteAddr() == addr)
+    _ = await c.WriteString("hello, tcp")?
+    var got = ""
+    for len(got) < 10 {
+        got += await c.ReadString(64)?
+    }
+    println(got)
+    c.Close()
+    await srv?
+    println("closed", c.IsClosed())
+    var e = try await c.Read(1) catch err {
+        println("read after close:", err)
+        l.Close()
+        return
+    }
+    println(len(e))
+}

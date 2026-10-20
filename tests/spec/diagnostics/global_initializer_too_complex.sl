@@ -1,0 +1,13 @@
+// error: too complex for a global
+// status: passing
+namespace spec.diagnostics.global_initializer_too_complex
+
+import std.io
+
+var total = try Compute() catch err { panic(err) }
+
+func Compute() int! { return 1 }
+
+func main() {
+    println(total)
+}

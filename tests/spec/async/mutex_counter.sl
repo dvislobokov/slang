@@ -1,5 +1,5 @@
 // test: Mutex serialises increments from concurrent tasks
-// status: pending
+// status: passing
 namespace spec.async.mutex_counter
 
 import std.io

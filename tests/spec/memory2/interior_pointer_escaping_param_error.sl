@@ -1,0 +1,25 @@
+// error: cannot pass an interior pointer
+// status: passing
+namespace spec.memory2.interior_pointer_escaping_param_error
+
+import std.io
+
+struct Stats {
+    Hits int
+}
+
+struct Server {
+    St Stats
+}
+
+var saved *Stats
+
+func Remember(s *Stats) {
+    saved = s
+}
+
+func main() {
+    var srv = new Server{}
+    Remember(&srv.St)
+    println(saved != nil)
+}

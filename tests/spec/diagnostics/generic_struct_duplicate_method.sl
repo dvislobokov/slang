@@ -1,0 +1,16 @@
+// error: duplicate method Get in struct Box
+// status: passing
+namespace spec.diagnostics.generic_struct_duplicate_method
+
+import std.io
+
+struct Box<T> {
+    V T
+    func Get() T { return this.V }
+    func Get() T { return this.V }
+}
+
+func main() {
+    var b = Box<int>{V: 1}
+    println(b.Get())
+}

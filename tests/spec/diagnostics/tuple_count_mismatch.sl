@@ -1,0 +1,12 @@
+// error: assignment mismatch: 3 variables but the expression returns 2 value(s)
+// status: passing
+namespace spec.diagnostics.tuple_count_mismatch
+
+import std.io
+
+func Two() (int, int) { return 1, 2 }
+
+func main() {
+    var (a, b, c) = Two()
+    println(a, b, c)
+}

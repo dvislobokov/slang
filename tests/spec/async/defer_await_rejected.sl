@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.defer_await_rejected
 
-import std.io
 import std
+import std.io
 
 async func Cleanup() int {
     return 1

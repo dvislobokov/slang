@@ -1,7 +1,8 @@
 namespace app
 
-import std.io
 import std.fmt as f
+import std.io
+
 import app.models
 
 func main() {

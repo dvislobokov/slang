@@ -25,6 +25,12 @@ impl<'a> Sema<'a> {
                     self.invalid(span)
                 }
             },
+            // `x.` being typed (recovered with an empty name): check the
+            // base for its references and types, report nothing more.
+            K::Field { base, name } if name.name.is_empty() => {
+                let _ = self.expr(base, None);
+                self.invalid(span)
+            }
             K::Ident(_) | K::Field { .. } => match Self::flatten_path(e) {
                 Some(segs) => self.path_expr(&segs, span, expected),
                 None => {
@@ -75,6 +81,8 @@ impl<'a> Sema<'a> {
             }
             K::Lambda { params, ret, body, is_async } => self.lambda(params, ret.as_deref(), body, *is_async, span),
             K::Paren(x) => self.expr(x, expected),
+            // Syntax error, already reported by the parser.
+            K::Error => self.invalid(span),
         }
     }
 
@@ -105,7 +113,7 @@ impl<'a> Sema<'a> {
     /// references (assignment targets).
     pub(crate) fn require_value_raw(&mut self, h: hir::Expr) -> hir::Expr {
         if self.tt.is_fallible(h.ty) {
-            self.err(format!("result of type {} must be handled (use ?, try ... catch, try ... else, or `_ =`)", self.tn(h.ty)), h.span);
+            self.unhandled_result(h.ty, h.span);
             return mk(h.kind, self.tt.invalid, h.span);
         }
         if matches!(self.tt.get(h.ty), Type::Void) {
@@ -158,7 +166,7 @@ impl<'a> Sema<'a> {
                 }
                 None => {
                     if self.lookup_global(segs[0], false).is_none() && !self.diags.has_errors_at(segs[0].span, self.cur_file) {
-                        self.err(format!("unknown identifier {}", segs[0].name), segs[0].span);
+                        self.unknown_ident(segs[0]);
                     }
                     return self.invalid(span);
                 }
@@ -218,7 +226,10 @@ impl<'a> Sema<'a> {
                 self.err(format!("{name} is a type, not a value"), span);
                 self.invalid(span)
             }
-            PathRes::Member(Member::Generic(_)) => {
+            PathRes::Member(Member::Generic(t)) => {
+                if let Some(f) = self.plain_std_func_value(t, span) {
+                    return f;
+                }
                 self.err(format!("generic {name} needs type arguments to be used as a value ({name}<...>)"), span);
                 self.invalid(span)
             }
@@ -248,7 +259,9 @@ impl<'a> Sema<'a> {
                     let fty = field.ty;
                     let fname = field.name.clone();
                     let owner = self.structs[sd.0 as usize].namespace;
-                    self.check_member_visibility(owner, &fname, name.span, true);
+                    if !self.is_attr_value_struct(sd.0) {
+                        self.check_member_visibility(owner, &fname, name.span, true);
+                    }
                     self.check_std_private(sd.0, &fname, name.span);
                     b = mk(ExprKind::Field { base: Box::new(b2), index: idx }, fty, span);
                 }
@@ -680,7 +693,9 @@ impl<'a> Sema<'a> {
         self.funcs.push(f);
         self.func_src.push(FuncSrc::Synthetic);
         self.sigs.push(Sig { params: ptys.clone(), ret: ret_ty.unwrap_or(self.tt.void), is_async });
+        let recovering = self.fns.last().is_some_and(|f| f.recovering);
         self.fns.push(FnCtx::new(Some(fid), ret_ty.unwrap_or(self.tt.void), is_async, "lambda".into()));
+        self.fcx().recovering = recovering;
         for (p, t) in params.iter().zip(&ptys) {
             self.declare_local(&p.name.name, *t, LocalKind::Param, p.span);
         }

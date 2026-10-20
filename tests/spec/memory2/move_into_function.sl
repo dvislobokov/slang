@@ -1,0 +1,27 @@
+// test: passing a freshly created Drop value by value moves it: the callee drops it when it returns
+// status: passing
+namespace spec.memory2.move_into_function
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop", this.Name) }
+}
+
+func Make(name string) R {
+    return R{Name: name}
+}
+
+func Consume(r R) {
+    println("consume", r.Name)
+}
+
+func main() {
+    Consume(R{Name: "literal"})
+    println("after literal")
+    Consume(Make("made"))
+    println("after made")
+    var kept = Make("kept")
+    println("end of main", kept.Name)
+}

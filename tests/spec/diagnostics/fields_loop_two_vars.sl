@@ -1,0 +1,18 @@
+// error: for ... in reflect.Fields<T>() takes one variable
+// status: passing
+namespace spec.diagnostics.fields_loop_two_vars
+
+import std.io
+import std
+
+struct P { X int }
+
+func Show<T>(x T) {
+    for i, f in reflect.Fields<T>() {
+        println(i, f.Name)
+    }
+}
+
+func main() {
+    Show(P{X: 1})
+}

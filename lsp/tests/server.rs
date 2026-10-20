@@ -541,3 +541,334 @@ fn every_example_survives_all_queries() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Stage 3-5 features
+// ---------------------------------------------------------------------------
+
+/// Byte offset of an LSP position (ASCII-only test texts).
+fn offset_of(text: &str, p: Position) -> usize {
+    let mut off = 0;
+    for (i, l) in text.split_inclusive('\n').enumerate() {
+        if i as u32 == p.line {
+            return off + (p.character as usize).min(l.trim_end_matches('\n').len());
+        }
+        off += l.len();
+    }
+    text.len()
+}
+
+fn apply_edits(text: &str, edits: &[TextEdit]) -> String {
+    let mut spans: Vec<(usize, usize, &str)> = edits.iter().map(|e| (offset_of(text, e.range.start), offset_of(text, e.range.end), e.new_text.as_str())).collect();
+    spans.sort_by_key(|s| std::cmp::Reverse(s.0));
+    let mut out = text.to_string();
+    for (s, e, t) in spans {
+        out.replace_range(s..e, t);
+    }
+    out
+}
+
+/// A project with one file `main.sl` holding `text`.
+fn project_with(name: &str, text: &str) -> (PathBuf, Url) {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!("slang-lsp-test2-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join(name);
+    std::fs::write(&p, text).unwrap();
+    (dir.clone(), Url::from_file_path(&p).unwrap())
+}
+
+fn code_actions(c: &mut Client, uri: &Url, range: Range) -> Vec<CodeAction> {
+    let r: Option<CodeActionResponse> = c.request::<request::CodeActionRequest>(CodeActionParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        range,
+        context: CodeActionContext { diagnostics: vec![], only: None, trigger_kind: None },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    });
+    r.unwrap_or_default()
+        .into_iter()
+        .filter_map(|a| match a {
+            CodeActionOrCommand::CodeAction(a) => Some(a),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Applies the code action titled `title` (prefix) and returns the new text.
+fn apply_action(c: &mut Client, uri: &Url, text: &str, at: Range, title: &str) -> String {
+    let actions = code_actions(c, uri, at);
+    let a = actions.iter().find(|a| a.title.starts_with(title)).unwrap_or_else(|| panic!("no action {title:?} in {:?}", actions.iter().map(|a| &a.title).collect::<Vec<_>>()));
+    assert_eq!(a.kind, Some(CodeActionKind::QUICKFIX));
+    let edits = &a.edit.as_ref().unwrap().changes.as_ref().unwrap()[uri];
+    apply_edits(text, edits)
+}
+
+#[test]
+fn signature_help_shows_parameters_and_doc() {
+    let (dir, files) = project(&["bank.sl"]);
+    let (uri, text) = &files[0];
+    let mut c = Client::start(&dir);
+    c.open(uri, text);
+    let help = |c: &mut Client, uri: &Url, pos| -> Option<SignatureHelp> {
+        c.request::<request::SignatureHelpRequest>(SignatureHelpParams { context: None, text_document_position_params: tdp(uri, pos), work_done_progress_params: Default::default() })
+    };
+    let h = help(&mut c, uri, pos_of(text, "Money(this.Balance)", 0, 6)).expect("signature help");
+    let sig = &h.signatures[0];
+    assert_eq!(sig.label, "func Money(cents int) string");
+    assert_eq!(h.active_parameter, Some(0));
+    match &sig.parameters.as_ref().unwrap()[0].label {
+        ParameterLabel::LabelOffsets([a, b]) => assert_eq!(&sig.label[*a as usize..*b as usize], "cents int"),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(&sig.documentation, Some(Documentation::MarkupContent(m)) if m.value.contains("integer cents")));
+    // After the comma of a two-parameter static method: the second one.
+    let h = help(&mut c, uri, pos_of(text, "Account.Open(owner, initial)", 0, 20)).unwrap();
+    assert!(h.signatures[0].label.contains("Open(owner string, initial int)"), "{:?}", h.signatures[0].label);
+    assert_eq!(h.active_parameter, Some(1));
+    // While typing an unfinished call (the file has a syntax error).
+    let edited = text.replacen("    bank.Report()\n", "    bank.Report()\n    bank.Open(\"x\", \n", 1);
+    c.change(uri, 2, &edited);
+    let h = help(&mut c, uri, pos_of(&edited, "bank.Open(\"x\", \n", 0, 15)).expect("help in a broken file");
+    assert!(h.signatures[0].label.contains("func Open(owner string, initial int)"), "{:?}", h.signatures[0].label);
+    assert_eq!(h.active_parameter, Some(1));
+    // Outside of any call: nothing.
+    assert!(help(&mut c, uri, pos_of(text, "func main() {", 0, 0)).is_none());
+}
+
+#[test]
+fn inlay_hints_types_and_parameter_names() {
+    let (dir, files) = project(&["bank.sl"]);
+    let (uri, text) = &files[0];
+    let mut c = Client::start(&dir);
+    c.open(uri, text);
+    let get = |c: &mut Client| -> Vec<(Position, String)> {
+        let r: Option<Vec<InlayHint>> = c.request::<request::InlayHintRequest>(InlayHintParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10000, character: 0 } },
+            work_done_progress_params: Default::default(),
+        });
+        r.unwrap()
+            .into_iter()
+            .map(|h| {
+                let label = match h.label {
+                    InlayHintLabel::String(s) => s,
+                    InlayHintLabel::LabelParts(p) => p.into_iter().map(|x| x.value).collect(),
+                };
+                (h.position, label)
+            })
+            .collect()
+    };
+    let hints = get(&mut c);
+    let has = |pos: Position, label: &str| hints.iter().any(|h| h.0 == pos && h.1 == label);
+    assert!(has(pos_of(text, "var frac", 0, 8), "int"), "{hints:?}");
+    assert!(has(pos_of(text, "var bank", 0, 8), "Bank"), "{hints:?}");
+    assert!(has(pos_of(text, "bank.Open(\"alice\"", 0, 10), "owner:"), "{hints:?}");
+    assert!(has(pos_of(text, "10000)", 0, 0), "initial:"), "{hints:?}");
+    // Declared types get no hint.
+    assert!(!hints.iter().any(|h| h.0 == pos_of(text, "var short InsufficientFunds", 0, 9)));
+    // Settings turn each kind off.
+    c.notify::<notification::DidChangeConfiguration>(DidChangeConfigurationParams {
+        settings: serde_json::json!({"slang": {"inlayHints": {"types": {"enabled": false}, "parameterNames": {"enabled": true}}}}),
+    });
+    let hints = get(&mut c);
+    assert!(!hints.is_empty() && hints.iter().all(|h| h.1.ends_with(':')), "{hints:?}");
+    c.notify::<notification::DidChangeConfiguration>(DidChangeConfigurationParams { settings: serde_json::json!({"slang": {"inlayHints": {"parameterNames": {"enabled": false}}}}) });
+    assert!(get(&mut c).is_empty());
+}
+
+const FIXES: &str = "namespace app
+
+import std.io
+import std.strings
+
+func Parse(s string) int! {
+    if s == \"\" {
+        return error(\"empty\")
+    }
+    return 1
+}
+
+func Twice(s string) int! {
+    var n = Parse(s)
+    return n * 2
+}
+
+func main() {
+    var unused = 1
+    println(Parse(\"2\"))
+}
+";
+
+#[test]
+fn code_actions_fix_structured_diagnostics() {
+    let (dir, uri) = project_with("main.sl", FIXES);
+    let mut c = Client::start(&dir);
+    c.open(&uri, FIXES);
+    let d = c.diagnostics(&uri);
+    let code = |d: &Diagnostic| match &d.code {
+        Some(NumberOrString::String(s)) => s.clone(),
+        _ => String::new(),
+    };
+    assert!(d.iter().any(|d| code(d) == "E0002"), "{d:?}");
+    // `var n = Parse(s)` in a fallible function: append `?`.
+    let at = |text: &str, needle: &str| Range { start: pos_of(text, needle, 0, 0), end: pos_of(text, needle, 0, needle.len()) };
+    let mut text = apply_action(&mut c, &uri, FIXES, at(FIXES, "Parse(s)"), "Propagate");
+    assert!(text.contains("var n = Parse(s)?\n"), "{text}");
+    // In main (not fallible) only the try ... catch wrap is offered.
+    c.change(&uri, 2, &text);
+    let actions = code_actions(&mut c, &uri, at(&text, "Parse(\"2\")"));
+    assert!(actions.iter().all(|a| !a.title.starts_with("Propagate")), "{:?}", actions.iter().map(|a| &a.title).collect::<Vec<_>>());
+    text = apply_action(&mut c, &uri, &text, at(&text, "Parse(\"2\")"), "Handle the error");
+    assert!(text.contains("println(try Parse(\"2\") catch err { panic(err.Message()) })"), "{text}");
+    // Unused variable: rename to `_` or remove.
+    c.change(&uri, 3, &text);
+    let removed = apply_action(&mut c, &uri, &text, at(&text, "unused"), "Remove unused variable");
+    assert!(!removed.contains("var unused"), "{removed}");
+    assert!(removed.contains("func main() {\n    println("), "{removed}");
+    text = apply_action(&mut c, &uri, &text, at(&text, "unused"), "Rename unused to _");
+    assert!(text.contains("var _ = 1"), "{text}");
+    // Unused import (reported once nothing else is wrong): remove the line.
+    c.change(&uri, 4, &text);
+    let d = c.diagnostics(&uri);
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(code(&d[0]), "E0003");
+    text = apply_action(&mut c, &uri, &text, d[0].range, "Remove import std.strings");
+    assert!(!text.contains("std.strings") && text.contains("import std.io\n\nfunc Parse"), "{text}");
+    c.change(&uri, 5, &text);
+    assert_eq!(c.diagnostics(&uri), vec![], "the fixed file compiles");
+    // Missing import of a std name: add it.
+    let no_io = text.replacen("import std.io\n", "", 1);
+    c.change(&uri, 6, &no_io);
+    let d = c.diagnostics(&uri);
+    let unknown = d.iter().find(|d| code(d) == "E0004").unwrap_or_else(|| panic!("{d:?}"));
+    text = apply_action(&mut c, &uri, &no_io, unknown.range, "Import std.io");
+    assert!(text.starts_with("namespace app\n\nimport std.io\n"), "{text}");
+    c.change(&uri, 7, &text);
+    assert_eq!(c.diagnostics(&uri), vec![], "{text}");
+}
+
+#[test]
+fn formatting_whole_document_and_range() {
+    let src = "namespace app\nimport std.io\nfunc main() {\n    var x=1\n    println(x+1)\n}\nfunc other() {\n    var y=2\n    println(y)\n}\n";
+    let (dir, uri) = project_with("main.sl", src);
+    let mut c = Client::start(&dir);
+    c.open(&uri, src);
+    let opts = FormattingOptions { tab_size: 4, insert_spaces: true, ..Default::default() };
+    let edits: Option<Vec<TextEdit>> = c.request::<request::Formatting>(DocumentFormattingParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        options: opts.clone(),
+        work_done_progress_params: Default::default(),
+    });
+    let formatted = apply_edits(src, &edits.unwrap());
+    assert_eq!(formatted, slang::fmt::format_source(src).unwrap());
+    assert!(formatted.contains("    var x = 1\n    println(x + 1)\n"), "{formatted}");
+    // Range formatting only touches the selected lines (`var y=2`).
+    let line = pos_of(src, "var y=2", 0, 0).line;
+    let edits: Option<Vec<TextEdit>> = c.request::<request::RangeFormatting>(DocumentRangeFormattingParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        range: Range { start: Position { line, character: 0 }, end: Position { line, character: 5 } },
+        options: opts.clone(),
+        work_done_progress_params: Default::default(),
+    });
+    let partial = apply_edits(src, &edits.unwrap());
+    assert!(partial.contains("    var y = 2\n") && partial.contains("    var x=1\n"), "{partial}");
+    // A file with syntax errors is left alone.
+    let broken = "namespace app\nfunc main( {\n";
+    c.change(&uri, 2, broken);
+    let edits: Option<Vec<TextEdit>> = c.request::<request::Formatting>(DocumentFormattingParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        options: opts,
+        work_done_progress_params: Default::default(),
+    });
+    assert!(edits.is_none());
+}
+
+#[test]
+fn workspace_symbols_and_highlights() {
+    let (dir, files) = project(MULTI);
+    let mut c = Client::start(&dir);
+    let (uri, text) = &files[0];
+    c.open(uri, text);
+    #[allow(deprecated)]
+    let r: Option<WorkspaceSymbolResponse> = c.request::<request::WorkspaceSymbolRequest>(WorkspaceSymbolParams { query: "user".into(), ..Default::default() });
+    let Some(WorkspaceSymbolResponse::Flat(syms)) = r else { panic!("{r:?}") };
+    let user = syms.iter().find(|s| s.name == "User").expect("User struct");
+    assert_eq!(user.kind, SymbolKind::STRUCT);
+    assert_eq!(&user.location.uri, uri);
+    assert_eq!(range_text(text, &user.location.range), "User");
+    assert_eq!(syms[0].name, "User", "exact matches first: {syms:?}");
+    // Methods are found by fuzzy query, with their container.
+    let r: Option<WorkspaceSymbolResponse> = c.request::<request::WorkspaceSymbolRequest>(WorkspaceSymbolParams { query: "rnm".into(), ..Default::default() });
+    let Some(WorkspaceSymbolResponse::Flat(syms)) = r else { panic!() };
+    assert!(syms.iter().any(|s| s.name == "Rename" && s.container_name.as_deref() == Some("app.models.User")), "{syms:?}");
+    // Highlights of `Name`: its declaration and uses in this file.
+    let h: Option<Vec<DocumentHighlight>> = c.request::<request::DocumentHighlightRequest>(DocumentHighlightParams {
+        text_document_position_params: tdp(uri, pos_of(text, "    Name ", 0, 5)),
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    });
+    let h = h.unwrap();
+    assert!(h.len() >= 3, "{h:?}");
+    assert_eq!(h.iter().filter(|x| x.kind == Some(DocumentHighlightKind::WRITE)).count(), 1);
+    assert!(h.iter().all(|x| range_text(text, &x.range) == "Name"));
+}
+
+#[test]
+fn queries_work_in_a_file_with_syntax_errors() {
+    let (dir, files) = project(&["bank.sl"]);
+    let (uri, text) = &files[0];
+    let mut c = Client::start(&dir);
+    c.open(uri, text);
+    // An unfinished statement in Money and an unclosed call in main.
+    let broken = text.replacen("    var frac = cents % 100\n", "    var frac = cents % 100\n    var oops = frac +\n", 1).replacen("    bank.Report()\n}", "    bank.Report(\n}", 1);
+    c.change(uri, 2, &broken);
+    let d = c.diagnostics(uri);
+    assert!(!d.is_empty() && d.len() <= 3, "{d:?}");
+    // Hover and definition use the current text.
+    let h: Option<Hover> = c.request::<request::HoverRequest>(HoverParams { text_document_position_params: tdp(uri, pos_of(&broken, "frac +", 0, 1)), work_done_progress_params: Default::default() });
+    match h.expect("hover in a broken file").contents {
+        HoverContents::Markup(m) => assert!(m.value.contains("var frac int"), "{}", m.value),
+        other => panic!("{other:?}"),
+    }
+    let def: Option<GotoDefinitionResponse> = c.request::<request::GotoDefinition>(GotoDefinitionParams {
+        text_document_position_params: tdp(uri, pos_of(&broken, "Money(this.Balance)", 0, 1)),
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    });
+    let Some(GotoDefinitionResponse::Scalar(loc)) = def else { panic!("no definition") };
+    assert_eq!(loc.range.start, pos_of(&broken, "func Money", 0, 5));
+    // Member completion right after `.` in the broken file.
+    let edited = broken.replacen("    var bank = Bank.New(\"Slang Savings\")\n", "    var bank = Bank.New(\"Slang Savings\")\n    bank.\n", 1);
+    c.change(uri, 3, &edited);
+    let r: Option<CompletionResponse> = c.request::<request::Completion>(CompletionParams {
+        text_document_position: tdp(uri, pos_of(&edited, "    bank.\n", 0, 9)),
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+        context: None,
+    });
+    let items = match r {
+        Some(CompletionResponse::Array(i)) => i,
+        Some(CompletionResponse::List(l)) => l.items,
+        None => Vec::new(),
+    };
+    assert!(items.iter().any(|i| i.label == "Process") && items.iter().any(|i| i.label == "Name"), "{:?}", items.iter().map(|i| &i.label).collect::<Vec<_>>());
+}
+
+#[test]
+fn watched_files_are_added_and_removed() {
+    let main = "namespace app\n\nimport std.io\n\nfunc main() {\n    println(Helper())\n}\n";
+    let (dir, uri) = project_with("main.sl", main);
+    let mut c = Client::start(&dir);
+    c.open(&uri, main);
+    assert!(c.diagnostics(&uri).iter().any(|d| d.message.contains("unknown identifier Helper")));
+    let helper = dir.join("helper.sl");
+    std::fs::write(&helper, "namespace app\n\nfunc Helper() int {\n    return 1\n}\n").unwrap();
+    let helper_uri = Url::from_file_path(&helper).unwrap();
+    c.notify::<notification::DidChangeWatchedFiles>(DidChangeWatchedFilesParams { changes: vec![FileEvent { uri: helper_uri.clone(), typ: FileChangeType::CREATED }] });
+    assert_eq!(c.diagnostics(&uri), vec![]);
+    std::fs::remove_file(&helper).unwrap();
+    c.notify::<notification::DidChangeWatchedFiles>(DidChangeWatchedFilesParams { changes: vec![FileEvent { uri: helper_uri, typ: FileChangeType::DELETED }] });
+    assert!(c.diagnostics(&uri).iter().any(|d| d.message.contains("unknown identifier Helper")));
+}

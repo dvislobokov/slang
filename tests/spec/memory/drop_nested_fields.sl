@@ -13,7 +13,7 @@ struct Part {
 
 struct Machine {
     Engine Part
-    Wheel Part
+    Wheel  Part
     func Drop() {
         println("drop machine")
     }

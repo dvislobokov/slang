@@ -1,0 +1,29 @@
+a 2x3
+  [1 2 3]
+  [4 5 6]
+t 3x2
+  [1 4]
+  [2 5]
+  [3 6]
+a*t 2x2
+  [14 32]
+  [32 77]
+max 77 min 14
+error: dimension mismatch: 2x3 vs 3x2
+error: cannot multiply 2x3 by 2x3
+a+a 2x3
+  [2 4 6]
+  [8 10 12]
+a*I == a true false
+a/2 2x3
+  [0.5 1 1.5]
+  [2 2.5 3]
+f^T 2x2
+  [0.5 -2]
+  [1.5 4.25]
+max 4.25 min -2
+s+s 2x2
+  [bb aa]
+  [dd cc]
+max d min a
+error: need 4 values, got 3

@@ -3,9 +3,9 @@ namespace app.models
 // Exported (capitalised) names are visible to other namespaces;
 // the lowercase field `id` is private to app.models.
 struct User {
-    Name string
+    Name  string
     Email string
-    id int
+    id    int
 
     func ID() int {
         return this.id

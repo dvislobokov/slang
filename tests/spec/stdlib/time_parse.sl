@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.time_parse
 
-import std.io
 import std
+import std.io
 
 func main() {
     var t = try time.Parse("2024-02-29 12:30:00", "%Y-%m-%d %H:%M:%S") else -1

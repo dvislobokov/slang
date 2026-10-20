@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.task_all_errors
 
-import std.io
 import std
+import std.io
 
 async func Job(name string, ms int, fail bool) string! {
     await task.Delay(ms)

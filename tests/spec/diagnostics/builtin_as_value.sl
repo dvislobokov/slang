@@ -1,0 +1,10 @@
+// error: must be called (it cannot be used as a value)
+// status: passing
+namespace spec.diagnostics.builtin_as_value
+
+import std.io
+
+func main() {
+    var f = len
+    println(f("abc"))
+}

@@ -7,14 +7,13 @@
 //! only use [`Session::update_file`] / [`Session::analyze`], so incremental
 //! analysis can be added later without changing them.
 //!
-//! Error resilience: when a file stops parsing, the session keeps its last
-//! successfully parsed AST, so the other files (and most of the symbol
-//! information of the broken file) stay available. The parse diagnostics
-//! are still reported; semantic diagnostics of such a *stale* file are
-//! dropped because their positions refer to the old text.
+//! Error resilience: the parser always produces an AST (with error nodes
+//! where the text is incomplete, see [`crate::parser`]), so every file
+//! takes part in semantic analysis with its *current* text and all
+//! positions (diagnostics, symbols, references) refer to it.
 
 use crate::ast;
-use crate::diagnostics::{Diagnostic, Diagnostics, Severity};
+use crate::diagnostics::{codes, Diagnostic, Diagnostics, Fix, Severity, TextEdit};
 use crate::hir::Program;
 use crate::sema::index::{self, Location, Reference, SymKey, SymbolId, SymbolIndex, SymbolKind};
 use crate::span::{SourceFile, Span};
@@ -24,10 +23,7 @@ use std::collections::BTreeMap;
 struct FileState {
     source: SourceFile,
     parse_diags: Vec<Diagnostic>,
-    /// Whether the current text parsed.
-    parsed: bool,
-    /// The last successfully parsed AST and the text it came from.
-    last_good: Option<(ast::File, String)>,
+    ast: ast::File,
 }
 
 /// In-memory project: path -> source text.
@@ -52,13 +48,8 @@ impl Session {
         }
         let mut diags = Diagnostics::new();
         let tokens = lexer::lex(&text, &mut diags);
-        let ast = if diags.has_errors() { None } else { parser::parse(tokens, &mut diags) };
-        let last_good = match ast {
-            Some(a) => Some((a, text.clone())),
-            None => self.files.remove(&path).and_then(|f| f.last_good),
-        };
-        let parsed = last_good.as_ref().is_some_and(|(_, t)| *t == text);
-        let state = FileState { source: SourceFile::new(path.clone(), text), parse_diags: diags.items, parsed, last_good };
+        let ast = parser::parse_file(tokens, &mut diags);
+        let state = FileState { source: SourceFile::new(path.clone(), text), parse_diags: diags.items, ast };
         self.files.insert(path, state);
     }
 
@@ -82,37 +73,103 @@ impl Session {
     /// Parses (cached) and analyses all files.
     pub fn analyze(&self) -> Analysis {
         let files: Vec<SourceFile> = self.files.values().map(|f| f.source.clone()).collect();
-        let n = files.len();
+        let asts: Vec<ast::File> = self.files.values().map(|f| f.ast.clone()).collect();
+        let texts: Vec<&str> = files.iter().map(|f| f.text.as_str()).collect();
         let mut diagnostics = Vec::new();
-        let mut stale = vec![false; n];
-        let mut asts = Vec::new();
-        let mut texts = Vec::new();
-        let mut sema_files = Vec::new();
         for (i, f) in self.files.values().enumerate() {
             diagnostics.extend(f.parse_diags.iter().cloned().map(|d| d.in_file(i)));
-            if let Some((ast, text)) = &f.last_good {
-                stale[i] = !f.parsed;
-                asts.push(ast.clone());
-                texts.push(text.as_str());
-                sema_files.push(i);
-            }
         }
         let mut diags = Diagnostics::new();
-        let (hir, mut index) = index::analyze_indexed(&asts, &texts, &mut diags);
+        let (hir, index) = index::analyze_indexed(&asts, &texts, &mut diags);
         let ok = !diags.has_errors() && !diagnostics.iter().any(|d: &Diagnostic| d.severity == Severity::Error);
-        for d in diags.items {
-            let file = sema_files.get(d.file).copied().unwrap_or(0);
-            if !stale[file] {
-                diagnostics.push(d.in_file(file));
+        diagnostics.extend(diags.items);
+        complete_fixes(&mut diagnostics, &files, &asts);
+        Analysis { files, asts, diagnostics, index, hir, ok }
+    }
+}
+
+/// Finishes the quick fixes of semantic diagnostics with what needs the
+/// source text and syntax: deletions that leave a line blank remove the
+/// whole line, and an unused `var x = ...` can also be removed.
+fn complete_fixes(diags: &mut [Diagnostic], files: &[SourceFile], asts: &[ast::File]) {
+    for d in diags.iter_mut() {
+        let Some(file) = files.get(d.file) else { continue };
+        if d.code == Some(codes::UNUSED_VARIABLE) {
+            if let Some(stmt) = asts.get(d.file).and_then(|a| var_stmt_declaring(a, d.span)) {
+                let name = file.text.get(d.span.start as usize..d.span.end as usize).unwrap_or("variable").to_string();
+                d.fixes.push(Fix::edit(format!("Remove unused variable {name}"), stmt, ""));
             }
         }
-        index.remap_files(&sema_files, n);
-        let mut analyzed = vec![false; n];
-        for &i in &sema_files {
-            analyzed[i] = true;
+        for fix in &mut d.fixes {
+            for e in &mut fix.edits {
+                if e.new_text.is_empty() {
+                    e.span = whole_lines(&file.text, e.span);
+                }
+            }
         }
-        Analysis { files, diagnostics, stale, analyzed, index, hir, sema_files, ok }
     }
+}
+
+/// `span` widened to whole lines (with the newline) when the rest of
+/// its first and last line is blank.
+fn whole_lines(text: &str, span: Span) -> Span {
+    let (s, e) = (span.start as usize, (span.end as usize).min(text.len()));
+    let ls = text[..s].rfind('\n').map_or(0, |i| i + 1);
+    let le = text[e..].find('\n').map_or(text.len(), |i| e + i + 1);
+    if text[ls..s].trim().is_empty() && text[e..le].trim().is_empty() {
+        Span::new(ls as u32, le as u32)
+    } else {
+        span
+    }
+}
+
+/// The span of the single-name `var` statement whose name is at `name`.
+fn var_stmt_declaring(file: &ast::File, name: Span) -> Option<Span> {
+    fn in_block(b: &ast::Block, name: Span) -> Option<Span> {
+        b.stmts.iter().find_map(|s| in_stmt(s, name))
+    }
+    fn in_stmt(s: &ast::Stmt, name: Span) -> Option<Span> {
+        use ast::StmtKind as K;
+        if s.span.start > name.start || s.span.end < name.end {
+            return None;
+        }
+        match &s.kind {
+            K::Var(v) if v.names.len() == 1 && v.names[0].span == name => Some(s.span),
+            K::Block(b) => in_block(b, name),
+            K::If(i) => in_if(i, name),
+            K::For(f) => in_block(&f.body, name),
+            K::Switch(sw) => sw.cases.iter().flat_map(|c| c.body.iter()).chain(sw.default.iter().flatten()).find_map(|s| in_stmt(s, name)),
+            K::TryBlock { body, handler, .. } => in_block(body, name).or_else(|| in_block(handler, name)),
+            _ => None,
+        }
+    }
+    fn in_if(i: &ast::IfStmt, name: Span) -> Option<Span> {
+        in_block(&i.then, name).or_else(|| match i.else_.as_deref() {
+            Some(ast::ElseBranch::If(e)) => in_if(e, name),
+            Some(ast::ElseBranch::Block(b)) => in_block(b, name),
+            None => None,
+        })
+    }
+    let funcs = file.decls.iter().flat_map(|d| -> Vec<&ast::FuncDecl> {
+        match d {
+            ast::Decl::Func(f) => vec![f],
+            ast::Decl::Struct(s) => s.methods.iter().collect(),
+            ast::Decl::Enum(e) => e.methods.iter().collect(),
+            _ => Vec::new(),
+        }
+    });
+    funcs.filter_map(|f| f.body.as_ref()).find_map(|b| in_block(b, name))
+}
+
+/// Applies non-overlapping `edits` to `text` (used by tests and tools).
+pub fn apply_edits(text: &str, edits: &[TextEdit]) -> String {
+    let mut edits: Vec<&TextEdit> = edits.iter().collect();
+    edits.sort_by_key(|e| std::cmp::Reverse((e.span.start, e.span.end)));
+    let mut out = text.to_string();
+    for e in edits {
+        out.replace_range(e.span.start as usize..e.span.end as usize, &e.new_text);
+    }
+    out
 }
 
 /// A node of the document outline.
@@ -132,18 +189,14 @@ pub struct Analysis {
     /// Current texts, in session order; indices are the `file` of
     /// diagnostics, locations and references.
     pub files: Vec<SourceFile>,
+    /// The (possibly partial) AST of each file, same order as `files`.
+    pub asts: Vec<ast::File>,
     /// Lexer, parser and semantic diagnostics, with their file index.
     pub diagnostics: Vec<Diagnostic>,
-    /// The file does not parse; its symbols come from its last good version.
-    pub stale: Vec<bool>,
-    /// The file took part in semantic analysis (it parsed now or earlier).
-    pub analyzed: Vec<bool>,
     pub index: SymbolIndex,
     /// The HIR program, possibly partial (with `Invalid` types) when there
-    /// were errors. Its `file` fields index [`Analysis::sema_files`].
+    /// were errors. Its `file` fields index `files`.
     pub hir: Program,
-    /// Session file index of each file given to sema.
-    pub sema_files: Vec<usize>,
     ok: bool,
 }
 
@@ -274,17 +327,69 @@ mod tests {
     }
 
     #[test]
-    fn keeps_last_good_ast_on_parse_error() {
+    fn analyzes_files_with_syntax_errors() {
         let mut s = session();
-        s.update_file("models.sl", MODELS.replace("Name string\n", "Name string\n    func (\n"));
+        // A broken member before the method: the struct and its method
+        // survive recovery, with current positions.
+        let broken = MODELS.replace("Name string\n", "Name string\n    func (\n");
+        s.update_file("models.sl", broken.clone());
         let a = s.analyze();
         let models = a.file_index("models.sl").unwrap();
-        assert!(a.stale[models]);
         assert!(a.diagnostics.iter().all(|d| d.file == models), "{:?}", a.diagnostics);
         assert!(!a.diagnostics.is_empty());
-        // main.sl still resolves against the last good models.sl.
+        // main.sl still resolves against models.sl, at its new position.
         let main = a.file_index("main.sl").unwrap();
-        assert!(a.definition_at(main, MAIN.find("Hello").unwrap() as u32).is_some());
+        let loc = a.definition_at(main, MAIN.find("Hello").unwrap() as u32).unwrap();
+        assert_eq!(loc.file, models);
+        assert_eq!(&broken[loc.name_span.start as usize..loc.name_span.end as usize], "Hello");
+        // An unfinished body in main.sl: `u` and its members still resolve.
+        let main_broken = MAIN.replace("    println(u.Hello())\n", "    println(u.Hello())\n    var z = u.\n");
+        s.update_file("main.sl", main_broken.clone());
+        let a = s.analyze();
+        let main = a.file_index("main.sl").unwrap();
+        let off = main_broken.find("u.\n").unwrap() as u32;
+        let id = a.symbol_at(main, off).expect("u resolves in the broken line");
+        assert_eq!(a.index.symbol(id).signature, "var u User");
+        let errs: Vec<&Diagnostic> = a.diagnostics_for(main).collect();
+        assert_eq!(errs.len(), 1, "only the syntax error: {errs:?}");
+    }
+
+    #[test]
+    fn analysis_survives_every_line_prefix() {
+        // Sema must tolerate whatever the recovering parser produces.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        for name in ["examples/bank.sl", "examples/structs.sl", "examples/async.sl", "examples/generics.sl"] {
+            let text = std::fs::read_to_string(root.join(name)).unwrap();
+            let mut cuts: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
+            cuts.extend(text.char_indices().map(|(i, _)| i).step_by(37));
+            cuts.sort();
+            for cut in cuts {
+                let mut s = Session::new();
+                s.update_file("f.sl", &text[..cut]);
+                let a = s.analyze();
+                for d in &a.diagnostics {
+                    assert!(d.span.end as usize <= cut, "{name}@{cut}: {d:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn diagnostics_carry_codes_and_fixes() {
+        let mut s = Session::new();
+        let src = "namespace app\n\nimport std.strings\n\nfunc main() {\n    var x = 1\n}\n";
+        s.update_file("a.sl", src);
+        let a = s.analyze();
+        let d = a.diagnostics.iter().find(|d| d.code == Some(codes::UNUSED_VARIABLE)).expect("unused variable");
+        let titles: Vec<&str> = d.fixes.iter().map(|f| f.title.as_str()).collect();
+        assert_eq!(titles, ["Rename x to _", "Remove unused variable x"]);
+        let removed = apply_edits(src, &d.fixes[1].edits);
+        assert_eq!(removed, "namespace app\n\nimport std.strings\n\nfunc main() {\n}\n");
+        // Fixing the variable makes the unused import reportable.
+        s.update_file("a.sl", apply_edits(src, &d.fixes[0].edits));
+        let a = s.analyze();
+        let d = a.diagnostics.iter().find(|d| d.code == Some(codes::UNUSED_IMPORT)).expect("unused import");
+        assert_eq!(apply_edits(&a.files[0].text, &d.fixes[0].edits), "namespace app\n\n\nfunc main() {\n    var _ = 1\n}\n");
     }
 
     #[test]

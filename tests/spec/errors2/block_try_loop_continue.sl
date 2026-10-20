@@ -1,0 +1,25 @@
+// test: a block try inside a loop: `continue` in its catch skips to the next iteration
+// status: passing
+namespace spec.errors2.block_try_loop_continue
+
+import std.io
+import std
+
+func Parse(s string) int! {
+    return strings.ToInt(s)?
+}
+
+func main() {
+    var total = 0
+    for s in ["1", "x", "3", "", "5"] {
+        try {
+            var n = Parse(s)?
+            total += n
+        } catch err {
+            println("skip", "[" + s + "]")
+            continue
+        }
+        println("added", s)
+    }
+    println("total", total)
+}

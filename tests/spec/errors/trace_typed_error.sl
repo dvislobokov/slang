@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors.trace_typed_error
 
-import std.io
 import std
+import std.io
 
 struct Timeout {
     Ms int

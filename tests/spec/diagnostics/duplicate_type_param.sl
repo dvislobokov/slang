@@ -1,0 +1,11 @@
+// error: duplicate type parameter T
+// status: passing
+namespace spec.diagnostics.duplicate_type_param
+
+import std.io
+
+func F<T, T>(x T) T { return x }
+
+func main() {
+    println(F(1))
+}

@@ -1,0 +1,11 @@
+// error: conflicting types for type parameter T
+// status: passing
+namespace spec.generics2.conflicting_types_error
+
+import std.io
+
+func Same<T>(a, b T) bool { return true }
+
+func main() {
+    println(Same(1, "one"))
+}

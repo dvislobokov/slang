@@ -1,7 +1,7 @@
 namespace examples.stdlib_time_os_fs
 
-import std.io
 import std
+import std.io
 
 // 2023-11-14 22:13:20.123 UTC (a Tuesday), as Unix milliseconds.
 const Launch = 1700000000123

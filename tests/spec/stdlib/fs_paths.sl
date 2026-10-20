@@ -2,11 +2,16 @@
 // status: passing
 namespace spec.stdlib.fs_paths
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(fs.Join("a/b", "c.txt"), fs.Join("a/b/", "../c"), fs.Join("/", "x"))
-    println(fs.Base("/srv/app/main.sl"), fs.Base("dir/"), fs.Dir("/srv/app/main.sl"), fs.Dir("main.sl"))
+    println(
+        fs.Base("/srv/app/main.sl"),
+        fs.Base("dir/"),
+        fs.Dir("/srv/app/main.sl"),
+        fs.Dir("main.sl"),
+    )
     println(fs.Ext("archive.tar.gz"), "[" + fs.Ext("Makefile") + "]", fs.Ext(".bashrc"))
 }

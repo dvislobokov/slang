@@ -1,0 +1,27 @@
+// test: of two concurrent delays the shorter one finishes first regardless of start order
+// status: passing
+namespace spec.async2.delay_ordering
+
+import std.io
+import std
+
+struct Log {
+    Mu task.Mutex
+    Order []string
+}
+
+async func Sleep(name string, ms int, log *Log) {
+    await task.Delay(ms)
+    await log.Mu.Lock()
+    log.Order = append(log.Order, name)
+    log.Mu.Unlock()
+}
+
+async func main() {
+    var log = new Log{}
+    var slow = Sleep("slow", 60, log)
+    var fast = Sleep("fast", 5, log)
+    await slow
+    await fast
+    println(log.Order)
+}

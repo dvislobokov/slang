@@ -1,0 +1,23 @@
+Product examples.reflection.Product Struct 32 4 2
+  Id int 0 column product_id true
+  Name string 8 column title false
+  Price float 16
+  Stock int32 24
+  method Total func(*Product, int) float
+  method Restock func(*Product, int) void!
+Total(4) = 78
+Restock failed: restock needs a positive amount
+stock 8
+desk lamp 8
+New: new 0
+variant Dot 0
+variant Circle 1
+variant Box 2
+typeof Product Struct
+typeof int Int
+typeof string String
+typeof []float Slice
+typeof Shape Enum
+Tag true #go
+Product product_id=7 title="desk lamp" Price=19.50 Stock=8
+Tag Text="x"

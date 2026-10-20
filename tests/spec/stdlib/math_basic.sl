@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.math_basic
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(math.Sqrt(16), math.Sqrt(2), math.Pow(2, 10), math.Pow(2, -1))

@@ -1,0 +1,161 @@
+//! Reflection: the HIR summary for code generation (`Program::reflect`),
+//! attribute values, compile-time `reflect.Fields<T>()` unrolling, static
+//! `if`, diagnostics, and end-to-end behaviour of the tables (type
+//! identity, `Value.Set` type checks, `--leak-check`). The acceptance tests
+//! are `tests/spec/reflection` and `tests/spec/stdlib/json_*`.
+
+use slang::diagnostics::{Diagnostics, Severity};
+use slang::driver;
+use slang::hir::*;
+use slang::span::SourceFile;
+use slang::types::Type;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn analyze(src: &str) -> (Option<Program>, Vec<String>) {
+    let files = vec![SourceFile::new("r.sl".to_string(), src.to_string())];
+    let mut diags = Diagnostics::new();
+    let p = driver::check(&files, &mut diags);
+    let errors = diags.items.iter().filter(|d| d.severity == Severity::Error).map(|d| d.message.clone()).collect();
+    (p, errors)
+}
+
+/// A program: namespace `t`, `import std.io` and `import std`, then `body`.
+fn prog(body: &str) -> String {
+    format!("namespace t\nimport std.io\nimport std\n{body}\n")
+}
+
+fn ok(body: &str) -> Program {
+    let (p, errors) = analyze(&prog(body));
+    assert!(errors.is_empty(), "unexpected errors: {errors:#?}");
+    p.expect("program")
+}
+
+fn err(body: &str, needle: &str) {
+    let (p, errors) = analyze(&prog(body));
+    assert!(p.is_none(), "expected failure");
+    assert!(errors.iter().any(|e| e.contains(needle)), "no error containing {needle:?} in {errors:#?}");
+}
+
+fn struct_ty(p: &Program, name: &str) -> slang::types::TypeId {
+    let sid = p.structs.iter().position(|s| s.name == name).expect("struct") as u32;
+    (0..p.types.len() as u32).map(slang::types::TypeId).find(|t| matches!(p.types.get(*t), Type::Struct(d) if d.0 == sid)).expect("struct type")
+}
+
+const USER: &str = "struct User {\n    @json(name: \"id\") Id int\n    Email string\n    @json(skip: true) cache string\n}\n";
+
+#[test]
+fn no_reflection_without_use() {
+    let p = ok("struct P {\n    X int\n}\nfunc main() {\n    var x any = P{X: 1}\n    println(x)\n}");
+    assert!(p.reflect.is_none(), "std.reflect must not be loaded");
+    assert!(!p.funcs.iter().any(|f| f.full_name.starts_with("std.reflect.")));
+}
+
+#[test]
+fn type_info_is_one_table_per_type() {
+    let p = ok(&format!(
+        "{USER}func Same<T>(x any) bool {{\n    return typeof(x) == reflect.TypeOf<T>()\n}}\nfunc main() {{\n    var u = User{{Id: 1}}\n    println(reflect.TypeOf<User>() == typeof(u), Same<User>(u), reflect.TypeOf<User>().Name)\n}}"
+    ));
+    let r = p.reflect.as_ref().expect("reflection on");
+    let user = struct_ty(&p, "User");
+    let n = r.intrinsics.iter().filter(|(_, k)| *k == Intrinsic::TypeOf(user)).count();
+    assert_eq!(n, 1, "TypeOf<User> must be one function (one table)");
+    assert!(r.full.contains(&user), "a type named in TypeOf keeps its methods");
+    // The pointer type used by TypeInfo.New is interned.
+    assert!(r.pointers.iter().any(|(t, _)| *t == user));
+}
+
+#[test]
+fn attribute_values_are_constants_with_defaults() {
+    let p = ok("@attribute(targets: [reflect.Target.Field])\nstruct column {\n    name string\n    primary bool = false\n    width int = 8\n}\nstruct Row {\n    @column(\"id\", primary: true) Id int\n    @column(\"n\") N int\n}\nfunc main() {\n    var f = reflect.TypeOf<Row>().Fields[1]\n    var c = f.Attribute<column>()\n    println(c.name, c.primary, c.width)\n}");
+    let row = p.structs.iter().find(|s| s.name == "Row").unwrap();
+    let a = &row.fields[0].attrs[0];
+    assert!(matches!(a.kind, AttrKind::User(_)));
+    assert_eq!(a.args, vec![("name".into(), ConstValue::Str("id".into())), ("primary".into(), ConstValue::Bool(true)), ("width".into(), ConstValue::Int(8))]);
+    let b = &row.fields[1].attrs[0];
+    assert_eq!(b.args[1], ("primary".into(), ConstValue::Bool(false)));
+    // The attribute struct's pointer type exists for the boxed values.
+    let column = struct_ty(&p, "column");
+    assert!(p.reflect.as_ref().unwrap().pointers.iter().any(|(t, _)| *t == column));
+}
+
+#[test]
+fn fields_loop_is_unrolled_once_per_field() {
+    let p = ok(&format!(
+        "{USER}func Names<T>(v T) int {{\n    var n = 0\n    for f in reflect.Fields<T>() {{\n        n += len(f.Name)\n        _ = f.Get(v)\n    }}\n    return n\n}}\nstruct Empty {{\n}}\nfunc main() {{\n    println(Names(User{{}}), Names(Empty{{}}))\n}}"
+    ));
+    let user = p.funcs.iter().find(|f| f.name == "Names<User>").expect("instance");
+    let copies = user.locals.iter().filter(|l| l.name == "f" && l.kind == LocalKind::LoopVar).count();
+    assert_eq!(copies, 3, "one binding of f per field of User");
+    // f.Get(v) is a direct field access of the field's static type.
+    let dump = p.dump();
+    assert!(dump.contains("%0:v:t.User.Email:string"), "{dump}");
+    // A struct without fields: the body is checked once but not emitted.
+    let empty = p.funcs.iter().find(|f| f.name == "Names<Empty>").expect("instance");
+    assert!(!slang::hir::dump::type_name(&p.types, empty.ret, &p).is_empty());
+}
+
+#[test]
+fn static_if_checks_only_the_taken_branch() {
+    // `x + 1` is only valid for ints, `x + "!"` only for strings.
+    let p = ok("func Bump<T>(x T) T {\n    if reflect.TypeOf<T>().Kind == reflect.Kind.Int {\n        return x + 1\n    } else if reflect.TypeOf<T>().Kind == reflect.Kind.String {\n        return x + \"!\"\n    }\n    return x\n}\nfunc main() {\n    println(Bump(1), Bump(\"a\"), Bump(true))\n}");
+    assert!(p.funcs.iter().any(|f| f.name == "Bump<bool>"));
+}
+
+#[test]
+fn compile_time_reflection_errors() {
+    err("struct P {\n    X int\n}\nfunc main() {\n    for f in reflect.Fields<P>() {\n        println(f.Name)\n    }\n}", "can only be used in a generic function");
+    err("func G<T>(v T) {\n    for f in reflect.Fields<T>() {\n        println(f.Name)\n    }\n}\nfunc main() {\n    G(1)\n}", "needs a struct type, int is not a struct");
+    err("struct P {\n    X int\n}\nfunc main() {\n    var fs = reflect.Fields<P>()\n    println(len(fs))\n}", "can only be the sequence of a for loop");
+    err("struct P {\n    X int\n}\nfunc G<T>(v T, w P) {\n    for f in reflect.Fields<T>() {\n        println(f.Get(w))\n    }\n}\nstruct Q {\n    Y int\n}\nfunc main() {\n    G(Q{}, P{})\n}", "f.Get needs a value of type");
+    err("func main() {\n    println(typeof(1, 2))\n}", "typeof");
+}
+
+#[test]
+fn private_table_fields_stay_private() {
+    err("func main() {\n    println(len(reflect.TypeOf<int>().attrs))\n}", "private");
+}
+
+// -- end to end ----------------------------------------------------------------
+
+fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+}
+
+fn ensure_runtime() {
+    let lib = repo().join("runtime/libslang_rt.a");
+    if !lib.is_file() {
+        let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
+        assert!(st.success(), "make -C runtime failed");
+    }
+}
+
+/// Runs `src` with `slang run --leak-check`: (exit code, stdout, stderr).
+fn run(name: &str, src: &str) -> (i32, String, String) {
+    ensure_runtime();
+    let dir = std::env::temp_dir().join(format!("slang-reflect-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("{name}.sl"));
+    std::fs::write(&file, src).unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("run").arg(&file).arg("--leak-check").env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    (r.status.code().unwrap_or(-1), String::from_utf8_lossy(&r.stdout).into_owned(), String::from_utf8_lossy(&r.stderr).into_owned())
+}
+
+#[test]
+fn set_with_wrong_type_panics_naming_the_field() {
+    let (code, out, errs) = run("set", &prog("struct U {\n    Age int\n}\nfunc main() {\n    var u = U{}\n    reflect.ValueOf(&u).Field(\"Age\").Set(41)\n    println(u.Age)\n    reflect.ValueOf(&u).Field(\"Age\").Set(\"x\")\n}"));
+    assert_eq!(out, "41\n");
+    assert_eq!(code, 2, "{errs}");
+    assert!(errs.contains("Age") && errs.contains("string"), "{errs}");
+}
+
+#[test]
+fn tables_are_shared_and_leak_free() {
+    let src = prog(&format!(
+        "{USER}@reflect\nstruct Box {{\n    Items []User\n    Index map[string]*User\n    func Count() int {{\n        return len(this.Items)\n    }}\n}}\nfunc main() {{\n    var b = Box{{Items: [User{{Id: 1}}, User{{Id: 2}}]}}\n    var x any = b\n    var t = typeof(x)\n    println(t.Name, len(t.Methods), t.Fields[0].Type.Name, t.Fields[0].Type.Elem == reflect.TypeOf<User>())\n    println(t.Fields[1].Type.Key.Name, t.Fields[1].Type.Elem.Elem.Name)\n    var r = try t.Method(\"Count\").Call(&b) else nil\n    println(r)\n    var fresh = t.New()\n    println(typeof(fresh).Name)\n}}"
+    ));
+    let (code, out, errs) = run("shared", &src);
+    assert_eq!(code, 0, "{errs}");
+    assert_eq!(out, "Box 1 []User true\nstring User\n2\n*Box\n");
+}

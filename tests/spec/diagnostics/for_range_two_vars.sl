@@ -1,0 +1,11 @@
+// error: a for over a range takes one variable
+// status: passing
+namespace spec.diagnostics.for_range_two_vars
+
+import std.io
+
+func main() {
+    for i, j in 0..3 {
+        println(i, j)
+    }
+}

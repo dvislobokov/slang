@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.basics.float_special_values
 
-import std.io
 import std
+import std.io
 
 func main() {
     var zero = 0.0

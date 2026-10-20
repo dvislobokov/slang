@@ -7,7 +7,7 @@ namespace spec.structs.nil_pointer_panic
 import std.io
 
 struct Node {
-    V int
+    V    int
     Next *Node
 }
 

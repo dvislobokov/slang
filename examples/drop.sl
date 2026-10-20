@@ -23,7 +23,7 @@ struct File {
 // declaration order.
 struct Logger {
     prefix string
-    out File
+    out    File
 
     func Drop() {
         println("logger", this.prefix, "done")

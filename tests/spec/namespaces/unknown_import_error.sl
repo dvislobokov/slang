@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.namespaces.unknown_import_error
 
-import std.io
 import std.doesnotexist
+import std.io
 
 func main() {
     println("x")

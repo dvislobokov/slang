@@ -10,13 +10,17 @@ struct Inner {
 }
 
 struct Outer {
-    In Inner
+    In   Inner
     List []Inner
-    Ptr *Inner
+    Ptr  *Inner
 }
 
 func main() {
-    var o = Outer{In: Inner{A: 1}, List: [Inner{B: "x"}, Inner{A: 2, B: "y"}], Ptr: new Inner{B: "heap"}}
+    var o = Outer{
+        In: Inner{A: 1},
+        List: [Inner{B: "x"}, Inner{A: 2, B: "y"}],
+        Ptr: new Inner{B: "heap"},
+    }
     o.In.B = "set"
     o.List[0].A = 5
     o.Ptr.A = 9

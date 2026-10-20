@@ -77,6 +77,9 @@ pub enum Decl {
     Func(FuncDecl),
     Var(VarDecl),
     Const(ConstDecl),
+    /// A declaration that failed to parse (error recovery); the span
+    /// covers the skipped tokens. Later phases ignore it.
+    Error(Span),
 }
 
 impl Decl {
@@ -88,6 +91,7 @@ impl Decl {
             Decl::Func(d) => d.span,
             Decl::Var(d) => d.span,
             Decl::Const(d) => d.span,
+            Decl::Error(s) => *s,
         }
     }
 }
@@ -223,6 +227,8 @@ pub enum TypeKind {
     Func { params: Vec<TypeExpr>, ret: Option<Box<TypeExpr>> },
     /// `(int, string)`
     Tuple(Vec<TypeExpr>),
+    /// A type that failed to parse (error recovery).
+    Error,
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +265,9 @@ pub enum StmtKind {
     /// jumps to `handler` (the nearest enclosing block `try`) instead of
     /// returning. `err` may be `_`.
     TryBlock { body: Block, err: Ident, handler: Block },
+    /// A statement that failed to parse (error recovery); the span covers
+    /// the skipped tokens.
+    Error,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -379,6 +388,66 @@ pub enum ExprKind {
     Lambda { params: Vec<Param>, ret: Option<Box<TypeExpr>>, body: Box<LambdaBody>, is_async: bool },
     /// `(expr)` kept for faithful formatting; semantics are those of `expr`.
     Paren(Box<Expr>),
+    /// An expression that failed to parse (error recovery), e.g. the
+    /// missing operand in `x + ` or an argument of an unfinished `f(`.
+    /// Sema gives it the `Invalid` type without further diagnostics.
+    Error,
+}
+
+impl Expr {
+    /// An error node at `span`.
+    pub fn error(span: Span) -> Expr {
+        Expr { kind: ExprKind::Error, span }
+    }
+
+    /// True for an error node, or a node produced by recovery around one:
+    /// a field access with an empty name (`x.` being typed) or a call with
+    /// an error argument (`f(` being typed).
+    pub fn is_recovered(&self) -> bool {
+        match &self.kind {
+            ExprKind::Error => true,
+            ExprKind::Field { name, .. } => name.name.is_empty(),
+            ExprKind::Call { args, .. } => args.iter().any(|a| a.is_recovered()),
+            ExprKind::Paren(e) => e.is_recovered(),
+            _ => false,
+        }
+    }
+}
+
+impl Block {
+    /// True if the block (or a nested block) contains a statement that
+    /// failed to parse: checks that depend on the whole body, like
+    /// "missing return" or "unused variable", are skipped for it.
+    pub fn has_errors(&self) -> bool {
+        self.stmts.iter().any(|s| s.has_errors())
+    }
+}
+
+impl Stmt {
+    /// See [`Block::has_errors`].
+    pub fn has_errors(&self) -> bool {
+        fn else_has(e: &ElseBranch) -> bool {
+            match e {
+                ElseBranch::If(i) => i.then.has_errors() || i.else_.as_deref().is_some_and(else_has),
+                ElseBranch::Block(b) => b.has_errors(),
+            }
+        }
+        match &self.kind {
+            StmtKind::Error => true,
+            StmtKind::Expr(e) => e.is_recovered(),
+            StmtKind::Block(b) => b.has_errors(),
+            StmtKind::If(i) => i.cond.is_recovered() || i.then.has_errors() || i.else_.as_deref().is_some_and(else_has),
+            StmtKind::For(f) => f.body.has_errors(),
+            StmtKind::Switch(s) => {
+                s.cases.iter().any(|c| c.body.iter().any(|s| s.has_errors())) || s.default.iter().flatten().any(|s| s.has_errors())
+            }
+            StmtKind::TryBlock { body, handler, .. } => body.has_errors() || handler.has_errors(),
+            StmtKind::Var(v) => v.init.as_ref().is_some_and(|e| e.is_recovered()),
+            StmtKind::Assign { target, value, .. } => target.is_recovered() || value.is_recovered(),
+            StmtKind::Return(es) => es.iter().any(|e| e.is_recovered()),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

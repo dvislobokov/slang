@@ -8,7 +8,13 @@ func main() {
     for round in 0..5 {
         var records []string = []
         for i in 0..100000 {
-            var rec = fmt.Format("{\"id\":{0},\"name\":\"user{1}\",\"score\":{2},\"active\":{3}}", i, (i + round) % 1000, float(i) * 0.5, i % 2 == 0)
+            var rec = fmt.Format(
+                "{\"id\":{0},\"name\":\"user{1}\",\"score\":{2},\"active\":{3}}",
+                i,
+                (i + round) % 1000,
+                float(i) * 0.5,
+                i % 2 == 0,
+            )
             records = append(records, rec)
         }
         var doc = "[" + strings.Join(records, ",") + "]"

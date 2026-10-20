@@ -5,7 +5,7 @@ namespace spec.generics.pair_two_params
 import std.io
 
 struct Pair<A, B> {
-    First A
+    First  A
     Second B
 
     func Swap() Pair<B, A> {

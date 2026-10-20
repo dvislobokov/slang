@@ -1,0 +1,20 @@
+stock value 97.50
+order 1 ok 27.50
+order 2 failed: order line C3: out of stock: C3 (want 4, have 3)
+  short by 1
+order 3 failed: order line Z9: Z9: unknown sku
+  unknown item
+A1 bolt 110 0.25
+B2 nut 45 0.10
+C3 gear 3 12.50
+low stock [nut gear]
+units 158
+log 7
+  0 add A1 x100
+  1 add B2 x50
+  2 add C3 x5
+  3 add A1 x20
+  4 take A1 x10
+  5 take C3 x2
+  6 take B2 x5
+stock value 69.50

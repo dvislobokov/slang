@@ -5,7 +5,7 @@ namespace spec.pointers.linked_list_reverse
 import std.io
 
 struct Node {
-    V int
+    V    int
     Next *Node
 }
 

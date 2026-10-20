@@ -3,6 +3,7 @@
 namespace spec.ns.parent
 
 import std.io
+
 import spec.ns.parent.lib
 
 func main() {

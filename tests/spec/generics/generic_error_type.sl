@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics.generic_error_type
 
-import std.io
 import std
+import std.io
 
 struct NotFound<K> {
     Key K

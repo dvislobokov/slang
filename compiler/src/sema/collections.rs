@@ -349,7 +349,7 @@ impl<'a> Sema<'a> {
     fn std_collection(&self, sid: u32) -> Option<(&str, &[TypeId])> {
         let (t, args) = self.gen.inst_structs.get(&sid)?;
         let tm = &self.gen.templates[*t as usize];
-        tm.is_std.then_some((tm.name.as_str(), args.as_slice()))
+        (tm.is_std && self.nss[tm.ns].path == "std.collections").then_some((tm.name.as_str(), args.as_slice()))
     }
 
     /// Called at the end of a struct instantiation: stdlib methods whose
@@ -384,10 +384,16 @@ impl<'a> Sema<'a> {
 
     /// Lowercase members of stdlib collections are private to the stdlib.
     pub(crate) fn check_std_private(&mut self, sid: u32, member: &str, span: Span) {
-        if is_exported(member) || self.nss[self.cur_ns].is_std || self.std_collection(sid).is_none() {
+        if is_exported(member) || self.nss[self.cur_ns].is_std {
             return;
         }
-        self.err(format!("{member} is private to namespace std.collections (only capitalised names are exported)"), span);
+        let Some((t, _)) = self.gen.inst_structs.get(&sid) else { return };
+        let tm = &self.gen.templates[*t as usize];
+        if !tm.is_std {
+            return;
+        }
+        let path = self.nss[tm.ns].path.clone();
+        self.err(format!("{member} is private to namespace {path} (only capitalised names are exported)"), span);
     }
 
     /// `for ... in c` over a collection: iterates the backing slices.

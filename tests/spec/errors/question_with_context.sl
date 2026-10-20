@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors.question_with_context
 
-import std.io
 import std
+import std.io
 
 const ErrMissing = error("missing")
 

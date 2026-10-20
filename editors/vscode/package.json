@@ -1,31 +1,54 @@
 {
   "name": "slang-lang",
   "displayName": "Slang",
-  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics, navigation, hover, rename, completion, semantic highlighting)",
-  "version": "0.2.0",
+  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics with quick fixes, navigation, hover, rename, completion, signature help, inlay hints, formatting, semantic highlighting)",
+  "version": "0.3.0",
   "publisher": "slang",
   "license": "MIT",
-  "engines": { "vscode": "^1.82.0" },
-  "categories": ["Programming Languages"],
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
   "main": "./out/extension.js",
-  "activationEvents": ["onLanguage:slang", "workspaceContains:**/slang.{toml,json,yaml,yml}"],
+  "activationEvents": [
+    "onLanguage:slang",
+    "workspaceContains:**/slang.{toml,json,yaml,yml}"
+  ],
   "contributes": {
-    "languages": [{
-      "id": "slang",
-      "aliases": ["Slang", "slang"],
-      "extensions": [".sl"],
-      "configuration": "./language-configuration.json"
-    }],
-    "grammars": [{
-      "language": "slang",
-      "scopeName": "source.slang",
-      "path": "./syntaxes/slang.tmLanguage.json"
-    }],
-    "commands": [{
-      "command": "slang.restartServer",
-      "title": "Restart server",
-      "category": "Slang"
-    }],
+    "languages": [
+      {
+        "id": "slang",
+        "aliases": [
+          "Slang",
+          "slang"
+        ],
+        "extensions": [
+          ".sl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "slang",
+        "scopeName": "source.slang",
+        "path": "./syntaxes/slang.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "slang.restartServer",
+        "title": "Restart server",
+        "category": "Slang"
+      },
+      {
+        "command": "slang.fmt",
+        "title": "Format document (slang fmt)",
+        "category": "Slang"
+      }
+    ],
     "configuration": {
       "title": "Slang",
       "properties": {
@@ -36,17 +59,47 @@
         },
         "slang.serverArgs": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Extra arguments passed to the language server."
         },
         "slang.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Trace the communication between VS Code and the Slang language server."
+        },
+        "slang.inlayHints.types.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the inferred type after names declared with `var x = ...` (and `for x in ...`)."
+        },
+        "slang.inlayHints.parameterNames.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show parameter names before literal arguments at call sites (`Open(owner: \"alice\", initial: 100)`)."
         }
       }
+    },
+    "configurationDefaults": {
+      "[slang]": {
+        "editor.defaultFormatter": "slang.slang-lang",
+        "editor.formatOnSave": true
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "slang.fmt",
+          "when": "editorLangId == slang"
+        }
+      ]
     }
   },
   "scripts": {

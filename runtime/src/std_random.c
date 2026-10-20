@@ -4,10 +4,10 @@
  * Seed() is called. The sequence after Seed(n) is fixed for a given n
  * (documented in ABI.md section 14 so programs/tests can rely on it). */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
 #include <pthread.h>
 #include <string.h>
-#include <sys/random.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -33,7 +33,7 @@ static inline uint64_t rotl(uint64_t x, int k) { return (x << k) | (x >> (64 - k
 static uint64_t next_locked(void) {
     if (!g_seeded) {
         uint64_t seed = 0;
-        if (getrandom(&seed, sizeof seed, GRND_NONBLOCK) != (ssize_t)sizeof seed) {
+        if (!slang__plat_random_bytes(&seed, sizeof seed)) {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             seed = (uint64_t)ts.tv_sec * 1000000007ULL ^ (uint64_t)ts.tv_nsec ^ ((uint64_t)getpid() << 32);

@@ -1,0 +1,26 @@
+// test: a default method of an embedded interface is available through the embedding interface
+// status: pending
+namespace spec.interfaces2.embedding_default_inherited
+
+import std.io
+import std
+
+interface Named {
+    func Name() string
+    func Upper() string { return strings.ToUpper(this.Name()) }
+}
+
+interface Tagged {
+    Named
+    func Tag() string
+}
+
+struct Item {
+    func Name() string { return "lamp" }
+    func Tag() string { return "#42" }
+}
+
+func main() {
+    var t Tagged = Item{}
+    println(t.Upper(), t.Tag())
+}

@@ -1,0 +1,26 @@
+// test: `await f()?` inside a block try in an async function jumps to the catch; the function then continues
+// status: passing
+namespace spec.async2.await_in_block_try
+
+import std.io
+import std
+
+async func Get(n int) int! {
+    await task.Delay(1)
+    if n > 2 {
+        return error(fmt.Format("too big: {0}", n))
+    }
+    return n * 10
+}
+
+async func main() {
+    var sum = 0
+    try {
+        for i in 0..5 {
+            sum += await Get(i)?
+        }
+    } catch err {
+        println("caught", err)
+    }
+    println("sum", sum)
+}

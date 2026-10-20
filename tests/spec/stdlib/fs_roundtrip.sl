@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.fs_roundtrip
 
-import std.io
 import std
+import std.io
 
 func Run(root string) void! {
     fs.MkdirAll(fs.Join(root, "sub"))?

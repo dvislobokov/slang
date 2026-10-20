@@ -1,0 +1,80 @@
+namespace examples.cancel
+
+import std.io
+import std
+
+// Cancellation through the task context: a cancel handle, timeouts,
+// task.Any cancelling the loser, and cancellation reaching child tasks.
+
+async func Consume(ch task.Channel<int>) string {
+    var n = 0
+    for {
+        var v = try await ch.Recv() catch err {
+            return fmt.Format("consumer stopped after {0} values: {1} (cancelled: {2})", n, err, errors.Is(err, task.ErrCancelled))
+        }
+        n += v
+    }
+}
+
+// Works in steps and checks for cancellation between them.
+async func Worker(name string) string! {
+    for _ in 0..1000 {
+        await task.Delay(5)
+        task.CheckCancelled()?
+    }
+    return name + " finished"
+}
+
+async func Fast() string! {
+    await task.Delay(1)
+    return "fast won"
+}
+
+async func Parent() string! {
+    var child = Worker("child")
+    var r = try await child catch err {
+        return "parent saw child fail: " + err.Message()
+    }
+    return r
+}
+
+async func main() void! {
+    // A cancel handle stops a consumer waiting on a channel.
+    var ch = task.Channel<int>(4)
+    var h = task.NewCancel()
+    var consumer = task.SpawnWith(h.Context, func() Task<string> {
+        return Consume(ch)
+    })
+    await ch.Send(1)
+    await ch.Send(2)
+    await task.Delay(20)
+    h.Cancel()
+    println(await consumer)
+    println("handle cancelled:", h.IsCancelled())
+
+    // A timeout cancels the scope: the long Delay wakes at once.
+    var start = time.Now()
+    try await task.WithTimeout(30, async func() string! {
+        await task.Delay(10000)
+        task.CheckCancelled()?
+        return "slept"
+    }) catch err {
+        println("timeout:", err, time.Since(start) < 5000)
+    }
+
+    // task.Any cancels the tasks that lost.
+    var slow = Worker("slow")
+    var first = try await task.Any(Fast(), slow) else "?"
+    println(first)
+    try await slow catch err {
+        println("slow:", err)
+    }
+
+    // Cancelling a scope reaches the tasks started inside it.
+    var p = task.NewCancel()
+    var parent = task.RunWith(p.Context, Parent)
+    await task.Delay(10)
+    p.Cancel()
+    println(await parent?)
+    println("outside the scope:", task.IsCancelled())
+}

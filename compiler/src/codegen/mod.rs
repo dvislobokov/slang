@@ -35,6 +35,17 @@
 //! the run-time type id used by type switches and `errors.As`; the type id of
 //! a stored `*S` is `ti.<*S>`.
 //!
+//! **Reflection** ([`reflect`], ABI.md §17). When the program uses
+//! `std.reflect` (`Program::reflect`), every type id is instead the payload
+//! of an immortal `std.reflect.TypeInfo` object whose first three words are
+//! the `slang_type_info` (`name`, `size`, `drop`), so the same pointer is
+//! the box type, `vtable[0]`, the `any` type word and a Slang
+//! `*reflect.TypeInfo`. Tables reference fields, methods (packed `invoke`
+//! thunks and closure thunks), variants and attribute values (constant
+//! structs) as immortal objects through NULL-backed slices. Functions
+//! listed in `Reflect::intrinsics` get their bodies from
+//! `CodeGen::emit_intrinsic` instead of their HIR.
+//!
 //! **Interfaces.** Storing a struct value boxes a copy (`boxed = 1`);
 //! storing a `*S` stores the pointer (`boxed = 0`). Either way a non-nil
 //! interface value owns one reference to the object whose payload `data`
@@ -138,6 +149,7 @@ mod iface;
 mod ops;
 mod print;
 mod rc;
+mod reflect;
 mod runtime;
 mod stmt;
 mod trace;
@@ -300,7 +312,10 @@ pub struct CodeGen<'a, 'ctx> {
     /// Interface-to-interface conversion functions by target interface
     /// (bodies emitted last, see `iface::finish_iface_convs`).
     pub(crate) iface_convs: Vec<(TypeId, FunctionValue<'ctx>)>,
-    pub(crate) type_infos: HashMap<TypeId, GlobalValue<'ctx>>,
+    /// Run-time type ids by type (with reflection: `TypeInfo` payloads).
+    pub(crate) type_infos: HashMap<TypeId, PointerValue<'ctx>>,
+    /// Reflection tables of builtin types under another spelling (`int64`).
+    pub(crate) reflect_aliases: HashMap<(TypeId, String), PointerValue<'ctx>>,
     pub(crate) rc_helpers: HashMap<TypeId, (FunctionValue<'ctx>, FunctionValue<'ctx>)>,
     pub(crate) value_ops: HashMap<TypeId, PointerValue<'ctx>>,
     pub(crate) vtables: HashMap<(TypeId, TypeId), GlobalValue<'ctx>>,
@@ -365,6 +380,7 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         error_sites: HashMap::new(),
         iface_convs: Vec::new(),
         type_infos: HashMap::new(),
+        reflect_aliases: HashMap::new(),
         rc_helpers: HashMap::new(),
         value_ops: HashMap::new(),
         vtables: HashMap::new(),
@@ -385,8 +401,14 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
     if let Err(e) = cg.declare_all() {
         return Err(vec![e]);
     }
+    let intrinsics = cg.intrinsics();
     for (i, f) in program.funcs.iter().enumerate() {
-        if let Err(e) = cg.emit_function(FuncId(i as u32)) {
+        let fid = FuncId(i as u32);
+        let r = match intrinsics.get(&fid) {
+            Some(k) => cg.emit_intrinsic(fid, *k),
+            None => cg.emit_function(fid),
+        };
+        if let Err(e) = r {
             errors.push(format!("{e} (in {})", f.full_name));
             // Leave a valid (trapping) body so the module stays well formed.
             cg.f = None;

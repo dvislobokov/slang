@@ -5,7 +5,7 @@ namespace spec.pointers.nil_checks
 import std.io
 
 struct Node {
-    V int
+    V    int
     Next *Node
 }
 

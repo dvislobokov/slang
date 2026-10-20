@@ -1,7 +1,7 @@
 namespace examples.strings
 
-import std.io
 import std
+import std.io
 
 func main() {
     var greeting = "Hello"

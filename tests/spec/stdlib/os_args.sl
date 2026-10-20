@@ -3,8 +3,8 @@
 // args: alpha beta "gamma"
 namespace spec.stdlib.os_args
 
-import std.io
 import std
+import std.io
 
 func main() {
     var args = os.Args()

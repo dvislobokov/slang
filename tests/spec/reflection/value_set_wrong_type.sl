@@ -1,5 +1,5 @@
 // test: Value.Set with a value of the wrong type panics at run time (exit code 2)
-// status: pending
+// status: passing
 // exit: 2
 // stderr: Email
 namespace spec.reflection.value_set_wrong_type

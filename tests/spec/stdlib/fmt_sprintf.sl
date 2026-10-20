@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.fmt_sprintf
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(fmt.Sprintf("%d|%5d|%-4d|%03d", 42, 7, 3, 9))

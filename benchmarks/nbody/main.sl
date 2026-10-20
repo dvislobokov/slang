@@ -4,12 +4,12 @@ import std
 import std.io
 
 struct Body {
-    X float
-    Y float
-    Z float
-    VX float
-    VY float
-    VZ float
+    X    float
+    Y    float
+    Z    float
+    VX   float
+    VY   float
+    VZ   float
     Mass float
 
     func Energy() float {
@@ -45,7 +45,15 @@ func main() {
     var bodies []Body = []
     for i in 0..5 {
         var f = float(i)
-        bodies = append(bodies, Body{X: f, Y: f * 0.5, Z: f * 0.25, VX: 0.1 * f, VY: 0.2, VZ: 0.3, Mass: 1.0 + f})
+        bodies = append(bodies, Body{
+            X: f,
+            Y: f * 0.5,
+            Z: f * 0.25,
+            VX: 0.1 * f,
+            VY: 0.2,
+            VZ: 0.3,
+            Mass: 1.0 + f,
+        })
     }
     for _ in 0..5000000 {
         Advance(bodies, 0.001)

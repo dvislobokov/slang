@@ -8,8 +8,7 @@ func Fail(msg string) void! {
     return error(msg)
 }
 
-func Ok() void! {
-}
+func Ok() void! {}
 
 func main() {
     try {

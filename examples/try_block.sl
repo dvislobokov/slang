@@ -1,10 +1,10 @@
 namespace examples.try_block
 
-import std.io
 import std
+import std.io
 
 struct Config {
-    Port int
+    Port    int
     Workers int
 }
 

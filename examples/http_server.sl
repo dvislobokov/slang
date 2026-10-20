@@ -1,0 +1,63 @@
+namespace examples.http_server
+
+import std.io
+import std
+import std.net
+
+// An HTTP server with a router, queried by the client in the same program.
+
+async func Hello(req *http.Request, res *http.Response) void! {
+    res.Text(200, "hello, " + req.Param("name") + "!\n")
+}
+
+async func Echo(req *http.Request, res *http.Response) void! {
+    res.SetHeader("X-Echo-Length", fmt.Format("{0}", len(req.Body)))
+    res.Json(201, "{\"got\": \"" + req.Body + "\"}")
+}
+
+async func Fail(req *http.Request, res *http.Response) void! {
+    return error("database is down")
+}
+
+async func main() void! {
+    var r = http.NewRouter()
+    r.Get("/hello/{name}", Hello)
+    r.Post("/echo", Echo)
+    r.Get("/fail", Fail)
+    r.Get("/old", async func(req *http.Request, res *http.Response) void! {
+        res.SetHeader("Location", "/hello/redirected")
+        res.Status = 302
+    })
+
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: r}
+    srv.Listen()?
+    var serving = srv.Serve()
+    var base = fmt.Format("http://127.0.0.1:{0}", srv.Port())
+
+    var a = await http.Get(base + "/hello/world")?
+    println(a.Status, a.Header("Content-Type"))
+    print(a.Body)
+
+    var b = await http.Post(base + "/echo", "ping", "text/plain")?
+    println(b.Status, b.Header("X-Echo-Length"), b.Body)
+
+    var c = await http.Get(base + "/old")?
+    println(c.Status, c.Body == "hello, redirected!\n")
+
+    var d = await http.Get(base + "/missing")?
+    println(d.Status, d.Body == "404 Not Found\n")
+
+    var e = await http.Post(base + "/hello/x", "", "")?
+    println(e.Status, e.Header("Allow"))
+
+    var f = await http.Get(base + "/fail")?
+    print(f.Status, " ", f.Body)
+
+    try await http.Get("https://example.com/") catch err {
+        println("error:", err)
+    }
+
+    await srv.Shutdown()
+    await serving?
+    println("server stopped")
+}

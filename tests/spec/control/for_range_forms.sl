@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.control.for_range_forms
 
-import std.io
 import std
+import std.io
 
 func main() {
     var out = ""

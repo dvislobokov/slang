@@ -1,0 +1,18 @@
+  alice 1000
+  bob 500
+  carol 100
+  total 1600
+transfers 100 failed 0
+  alice 520
+  bob 850
+  carol 230
+  total 1600
+error: bob has 850, needs 10000
+short by 9150
+error: alice->dave: no such account true
+error: same account carol
+swap 102
+  alice 520
+  bob 850
+  carol 230
+  total 1600

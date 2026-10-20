@@ -4,8 +4,8 @@
 // stderr: boom
 namespace spec.async.async_main_error_exit
 
-import std.io
 import std
+import std.io
 
 async func main() void! {
     await task.Delay(1)

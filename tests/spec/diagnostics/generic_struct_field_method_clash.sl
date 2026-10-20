@@ -1,0 +1,15 @@
+// error: struct Box has both a field and a method named Get
+// status: passing
+namespace spec.diagnostics.generic_struct_field_method_clash
+
+import std.io
+
+struct Box<T> {
+    Get T
+    func Get() T { return this.Get }
+}
+
+func main() {
+    var b = Box<int>{}
+    println(b.Get())
+}

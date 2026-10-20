@@ -1,0 +1,15 @@
+// error: Drop cannot be called directly
+// status: passing
+namespace spec.memory2.drop_explicit_call_error
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop", this.Name) }
+}
+
+func main() {
+    var r = R{Name: "x"}
+    r.Drop()
+}

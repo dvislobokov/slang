@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.deep_await_chain
 
-import std.io
 import std
+import std.io
 
 async func Depth(n int) int {
     if n == 0 {

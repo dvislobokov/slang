@@ -5,10 +5,14 @@ Language support for `.sl` files:
 - **Syntax highlighting** without a server: the TextMate grammar in
   `syntaxes/slang.tmLanguage.json`.
 - **Language server** (`slang-lsp`, the `lsp/` crate of this repository):
-  diagnostics as you type, document outline, go to definition, find
-  references, hover (signature + doc comment), rename across files,
-  semantic highlighting, folding and completion (members after `.`, names
-  in scope, keywords).
+  diagnostics as you type (also in half-written code: the parser recovers),
+  quick fixes (unused variable, unhandled `T!`, unused or missing import),
+  document outline, go to definition, find references, highlights, hover
+  (signature + doc comment), rename across files, semantic highlighting,
+  folding, completion (members after `.`, names in scope, keywords),
+  signature help, inlay hints (inferred `var` types, parameter names),
+  formatting (`slang fmt` rules, whole document or selection) and
+  workspace symbols.
 
 ## Build the language server
 
@@ -48,9 +52,25 @@ the `.vsix` (Extensions view, "Install from VSIX...").
 | `slang.serverPath` | `slang-lsp` | Server executable (a path to `slang` runs `slang lsp`) |
 | `slang.serverArgs` | `[]` | Extra server arguments |
 | `slang.trace.server` | `off` | `messages` / `verbose` LSP tracing |
+| `slang.inlayHints.types.enabled` | `true` | inferred type after `var x = ...` / `for x in ...` names |
+| `slang.inlayHints.parameterNames.enabled` | `true` | parameter names before literal call arguments |
 
 Command palette: **Slang: Restart server** (also done automatically when
-`slang.serverPath` changes).
+`slang.serverPath` changes) and **Slang: Format document (slang fmt)**.
+
+### Formatting
+
+The server formats with the canonical `slang fmt` style (the same code as
+the CLI). The extension makes itself the default formatter for `.sl` files
+and turns on format-on-save for them (`configurationDefaults`); to opt out,
+add to your settings:
+
+```json
+"[slang]": { "editor.formatOnSave": false }
+```
+
+**Format Selection** formats only the changed lines inside the selection.
+A file with syntax errors is left unchanged.
 
 ## Project discovery
 

@@ -1,0 +1,33 @@
+// test: values declared in a loop body are dropped every iteration, also on continue and break
+// status: passing
+namespace spec.memory2.drop_loop_break_continue
+
+import std.io
+
+struct R {
+    N int
+    func Drop() { println("drop", this.N) }
+}
+
+func main() {
+    for i in 0..5 {
+        var r = R{N: i}
+        if i == 1 {
+            println("continue", i)
+            continue
+        }
+        if i == 3 {
+            var extra = R{N: 30}
+            println("break", i)
+            break
+        }
+        println("body", i)
+    }
+    println("after loop")
+    var n = 0
+    for n < 2 {
+        var w = R{N: 100 + n}
+        n += 1
+    }
+    println("done")
+}

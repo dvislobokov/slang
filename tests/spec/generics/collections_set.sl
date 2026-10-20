@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics.collections_set
 
-import std.io
 import std.collections
+import std.io
 
 func main() {
     var s = Set<string>{}

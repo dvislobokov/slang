@@ -1,5 +1,5 @@
 // test: a @reflect type keeps full metadata, visible through typeof on an any
-// status: pending
+// status: passing
 namespace spec.reflection.reflect_retention
 
 import std.io

@@ -1,0 +1,34 @@
+// test: two tasks alternate strictly over two unbuffered channels
+// status: passing
+namespace spec.async2.ping_pong_unbuffered
+
+import std.io
+import std
+
+async func Player(name string, inbox task.Channel<int>, outbox task.Channel<int>, log task.Channel<string>) {
+    for {
+        var n = try await inbox.Recv() else break
+        await log.Send(fmt.Format("{0} {1}", name, n))
+        if n >= 5 {
+            outbox.Close()
+            break
+        }
+        await outbox.Send(n + 1)
+    }
+}
+
+async func main() {
+    var ab = task.Channel<int>(0)
+    var ba = task.Channel<int>(0)
+    var log = task.Channel<string>(100)
+    var a = Player("ping", ba, ab, log)
+    var b = Player("pong", ab, ba, log)
+    await ba.Send(0)
+    await a
+    await b
+    log.Close()
+    for {
+        var line = try await log.Recv() else break
+        println(line)
+    }
+}

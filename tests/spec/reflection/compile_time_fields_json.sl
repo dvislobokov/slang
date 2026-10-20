@@ -1,5 +1,5 @@
 // test: compile-time reflect.Fields<T>() in a generic encoder honours @json name and skip
-// status: pending
+// status: passing
 namespace spec.reflection.compile_time_fields_json
 
 import std.io

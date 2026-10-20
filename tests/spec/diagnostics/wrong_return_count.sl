@@ -1,0 +1,14 @@
+// error: wrong number of return values: want 2, got 3
+// status: passing
+namespace spec.diagnostics.wrong_return_count
+
+import std.io
+
+func F() (int, int) {
+    return 1, 2, 3
+}
+
+func main() {
+    var (a, b) = F()
+    println(a, b)
+}

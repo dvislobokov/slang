@@ -1,0 +1,17 @@
+// test: a generic function recursing 10000 times with the same instantiation works (only nesting of type arguments is limited)
+// status: passing
+namespace spec.generics2.deep_generic_recursion
+
+import std.io
+
+func CountDown<T>(x T, n int) T {
+    if n == 0 {
+        return x
+    }
+    return CountDown(x, n - 1)
+}
+
+func main() {
+    println(CountDown("done", 10000))
+    println(CountDown(7, 5000))
+}

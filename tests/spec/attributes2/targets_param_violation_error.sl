@@ -1,0 +1,19 @@
+// error: attribute @column cannot be applied to a param
+// status: passing
+namespace spec.attributes2.targets_param_violation_error
+
+import std
+import std.io
+
+@attribute(targets: [reflect.Target.Field])
+struct column {
+    name string
+}
+
+func Save(@column("id") id int) {
+    println(id)
+}
+
+func main() {
+    Save(1)
+}

@@ -2,8 +2,8 @@
 // status: pending
 namespace spec.memory.arena_basic
 
-import std.io
 import std
+import std.io
 
 struct Point {
     X int

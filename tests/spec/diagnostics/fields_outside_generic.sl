@@ -1,0 +1,14 @@
+// error: reflect.Fields<T>() can only be used in a generic function
+// status: passing
+namespace spec.diagnostics.fields_outside_generic
+
+import std.io
+import std
+
+struct P { X int }
+
+func main() {
+    for f in reflect.Fields<P>() {
+        println(f.Name)
+    }
+}

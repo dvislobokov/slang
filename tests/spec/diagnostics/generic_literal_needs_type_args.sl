@@ -1,0 +1,12 @@
+// error: missing type arguments for generic type Box
+// status: passing
+namespace spec.diagnostics.generic_literal_needs_type_args
+
+import std.io
+
+struct Box<T> { V T }
+
+func main() {
+    var b = Box{V: 1}
+    println(b.V)
+}

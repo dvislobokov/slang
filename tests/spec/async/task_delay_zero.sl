@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.task_delay_zero
 
-import std.io
 import std
+import std.io
 
 async func main() {
     for i in 0..3 {

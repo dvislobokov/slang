@@ -24,6 +24,9 @@ Contents
 12. [Environment variables](#12-environment-variables)
 13. [Known limits in v0.1](#13-known-limits-in-v01)
 14. [Standard library](#14-standard-library)
+15. [Platform layer](#15-platform-layer)
+16. [Networking: std.net and std.net.http](#16-networking-stdnet-and-stdnethttp)
+17. [Reflection tables and std.encoding.json](#17-reflection-tables-and-stdencodingjson)
 
 ---
 
@@ -867,6 +870,127 @@ given by `elem_size` and `ops`. Elements are copied and retained on send.
 
 Buffered values are released when the channel is freed.
 
+(The Slang `std.task.Channel<T>` and `std.task.Mutex` are written in Slang on
+top of the primitives of 10.10, not on `slang_chan`/`slang_mutex`, because their
+zero values must work without a constructor and the element type is only known
+to the compiler. `slang_chan`/`slang_mutex` remain for C code and tests.)
+
+### 10.8 Task context
+
+Every thread has a **current context**: one owned `slang_object *` (NULL =
+empty). The runtime never looks inside it. `std.task` stores a one-entry
+`map[string]any` there whose value is the head of an immutable linked list of
+frames `ctxFrame{key int, val any, next *ctxFrame}`: `task.With(key, value, fn)`
+pushes one frame for the duration of `fn`, `task.Get(key)` walks the list,
+inheritance is copying the pointer. Keys are `task.Key<T>()` (ids from
+`int64_t slang_task_next_key(void)`). Cancellation lives alongside, in the task
+tree of 10.11.
+
+| Function | Semantics |
+|---|---|
+| `slang_object *slang_task_get_ctx(void)` | the current context, **+1** (NULL if empty) |
+| `void slang_task_set_ctx(slang_object *ctx)` | makes `ctx` (borrowed; retained) current and releases the previous one |
+
+Propagation, with no help from compiled code:
+
+- `slang_task_add_continuation` records the registering thread's context in the
+  continuation (retained); the job that resumes it runs with that context. So an
+  `async` function sees, after every `await`, the context it had when it
+  suspended, on whatever worker resumes it.
+- `slang_sched_post` (and so `slang_task_spawn[_ex]`) captures the poster's
+  context for the job.
+- A worker sets the job's context before calling `fn(arg)` and releases whatever
+  is current when `fn` returns, so contexts never leak between jobs.
+- Calling an `async` function starts it on the caller's thread, so it inherits
+  the caller's context. `std.task.RunWith(ctx, f)` sets `ctx`, calls `f`, and
+  restores the previous context before returning `f`'s task.
+
+### 10.9 I/O readiness waits (`src/task_io.c`)
+
+One I/O thread (started lazily, stopped by `slang_runtime_shutdown` after the
+timers; pending waits are then released without completing) runs the platform
+poller (epoll on Linux, section 15). A wait is a `Task<int>` completed by the I/O
+thread, which posts the continuations to the scheduler exactly like a timer.
+
+| Function | Semantics |
+|---|---|
+| `slang_task *slang_io_wait_readable(int64_t fd, int64_t timeout_ms)` | +1 task whose `int64_t` result is **0** when `fd` is readable (or at end of stream / error), **1** when `timeout_ms` (>= 0) elapsed first, **2** when `slang_io_forget(fd)` was called. `timeout_ms < 0`: no timeout |
+| `slang_task *slang_io_wait_writable(int64_t fd, int64_t timeout_ms)` | the same for writability |
+| `void slang_io_forget(int64_t fd)` | completes pending waits on `fd` with 2 and unregisters it. **Call it before `close(fd)`** (a reused descriptor number must not inherit waits) |
+
+Rules: `fd` must be non-blocking. At most one reader and one writer may wait on a
+descriptor at a time (a second one panics `two tasks wait to read file descriptor
+N at the same time`). The poller is level-triggered and an fd is registered only
+while somebody waits on it, so a wait completes at once when data is already
+there. A descriptor that cannot be polled (a regular file) is always ready.
+
+### 10.10 Primitives for the Slang-source `std.task`
+
+| Function | Semantics |
+|---|---|
+| `bool slang_task_try_complete(slang_task *t, const void *result)` | `slang_task_complete` that returns false instead of panicking when `t` is already done |
+| `slang_task *slang_task_rt_signal(void)` | a pending `Task<void>`, +1 (a "signal"), fired early when the current task is cancelled (10.11) |
+| `slang_task *slang_task_rt_waker(void)` | the same, but never fired by cancellation (`Mutex`, `WaitGroup`) |
+| `void slang_task_rt_fire(slang_task *t)` | completes `t` if it is still pending; if `t` is a pending `slang_task_delay` timer, the timer is cancelled first (used by `task.Timeout`) |
+| `void slang_task_spin_lock(int64_t *slot)` / `slang_task_spin_unlock` | a test-and-set spin lock on an `int64_t` (0 = free, 1 = held; spins, then yields the CPU). Slang code passes `&this.guard` of an `int` field. Hold it only for a few statements, never across an `await` |
+| `slang_task *slang_task_yield(void)` | `task.Yield()`: +1 `Task<void>` completed by a fresh job, so awaiting it reschedules the coroutine (on any worker) |
+
+`task.Delay`, `task.All`, `task.Any` and `task.Yield` are runtime functions; the
+rest of `std.task` is Slang (`compiler/src/sema/stdlib_src/task.sl`):
+
+- `Mutex`: `{ guard int; locked bool; waiters []Task<void> }`. `Lock()` returns a
+  completed task if the mutex was free, else a signal queued in `waiters`;
+  `Unlock()` hands ownership to the oldest waiter by firing its signal (FIFO).
+- `Channel<T>`: a handle to a heap `chanState<T>` (copies share it) with the
+  values in a `[]T` and waiting receivers/senders as signals; waiters re-check
+  their condition after waking, so wake-ups are never lost (a signal fired
+  before it is awaited is simply already complete). Unbuffered channels admit
+  one value at a time and the sender waits until a receiver took it.
+- `WaitGroup`, `Spawn`/`Go` (`await task.Yield()` then call), `Timeout` (a delay
+  that a watcher task cancels with `slang_task_rt_fire` when the watched task
+  finishes), `Key`/`Get`/`With`/`CurrentContext`/`RunWith`/`SpawnWith` (10.8),
+  `NewCancel`/`WithTimeout`/`CheckCancelled`/`IsCancelled`/`ErrCancelled` (10.11).
+
+### 10.11 Cancellation and the current task
+
+**The task tree.** Every thread has a *current task* (owned, NULL = none),
+carried by jobs and continuations exactly like the context of 10.8.
+
+- `slang_task_new` (the coroutine ramp's call) makes the new task a **child of
+  the current task** and **current** itself. The current task becomes its parent
+  again when the coroutine suspends (`slang_task_add_continuation` returning
+  true) or completes (`slang_task_complete` of the current task); after that the
+  code running on the thread is the caller's. So `async` calls form a tree with
+  no help from the compiler. Runtime-made tasks (delays, signals, waits, `All`,
+  `Any`, spawns) use `slang_task_new_plain`, which does neither;
+  **C code that makes a task for a callback must use `slang_task_new_plain`**.
+- A child holds a reference to its parent until it is freed; the parent lists
+  its children without owning them.
+
+| Function | Semantics |
+|---|---|
+| `void slang_task_cancel(slang_task *t)` | sets the cancelled flag of `t` and of all its descendants (tasks created later under a cancelled task start cancelled) and runs their **cancel hooks** |
+| `bool slang_task_is_cancelled(const slang_task *t)` / `bool slang_task_cur_cancelled(void)` | the flag of `t` / of the current task (`task.IsCancelled()`) |
+| `void slang_task_set_deadline(slang_task *t, int64_t ms)` | the timer thread cancels `t` after `ms` milliseconds (`task.WithTimeout`) |
+| `slang_task *slang_task_current(void)` | the current task, +1 (or NULL) |
+| `slang_task *slang_task_new_scope(void)` | a plain task attached under the current task, used only as a cancellation node (`task.NewCancel`), +1 |
+| `slang_task *slang_task_enter_scope(slang_task *scope)` / `void slang_task_leave_scope(slang_task *prev)` | make `scope` current (NULL keeps the current task) and return the previous one (+1); restore it (`task.RunWith`) |
+| `slang_error *slang_task_err_cancelled(void)` | `task.ErrCancelled`, an immortal sentinel (`errors.Is`) with message `task cancelled` |
+
+**Cancel hooks** wake the waits of a cancelled task: `slang_task_delay`
+(completes at once), `slang_task_rt_signal` (fired, so `Channel.Send/Recv`
+re-check and give up), `slang_io_wait_*` (complete with **3**, so `std.net`
+operations fail with `task.ErrCancelled`). A wait started by an already
+cancelled task completes immediately. `task.Any` cancels its losing inputs.
+
+Limits (the compiler is not involved, so an `await` cannot be interrupted by
+itself): awaiting another task's result waits until that task finishes (it
+finishes early only if it reacts to the cancellation); `Delay`, `Channel.Send`
+and other `Task<void>` waits wake early but cannot carry the error, so
+cancellable loops call `task.CheckCancelled()?`; `Mutex.Lock` and
+`WaitGroup.Wait` are not cancellable; `task.All` does not cancel the others on
+the first error; there is no `task.Scope`, `WithDeadline` or `OnCancel` yet.
+
 ---
 
 ## 11. Program entry
@@ -925,8 +1049,10 @@ output still sitting in buffers may be lost if workers are still printing.
 - Map iteration order is deterministic but unspecified. Mutating a map during
   iteration is only partly supported (6.3).
 - `errors.Is` compares identity only (7.2).
-- I/O is blocking. There is no async file or network I/O yet, and no `select` over
-  channels.
+- File I/O and `std.io` are blocking. Network I/O is asynchronous (10.9, 16),
+  but there is no `select` over channels and no task cancellation.
+- The I/O poller exists for Linux (epoll) only; the kqueue (macOS/BSD) and IOCP
+  (Windows) backends are not written yet (15).
 - The scheduler uses a single global queue (no work stealing). Blocking awaits on
   workers start spare threads.
 - Panics do not unwind: no `defer`, no cleanup.
@@ -1129,3 +1255,167 @@ RFC 2104 (HMAC) and IEEE CRC-32. Inputs are the bytes of the string; hex is lowe
 |---|---|---|
 | `New() string` | `slang_string *slang_uuid_new(void)` | random version-4 UUID (RFC 9562) from `crypto.rand`, lowercase `8-4-4-4-12`; panics if no entropy source works |
 | `IsValid(s) bool` | `bool slang_uuid_is_valid(const slang_string *s)` | canonical 36-char form, hex digits of either case, any version |
+
+---
+
+## 15. Platform layer
+
+Everything OS-specific that the runtime needs is behind the internal interface
+`src/platform/platform.h` (hidden `slang__plat_*` symbols, not part of the ABI);
+see `docs/PLATFORMS.md`.
+
+| File | Contents |
+|---|---|
+| `platform/posix.c` | threads (`slang__plat_thread_start[_detached]`, `_join`), `cpu_count`, `yield`, monotonic clock `mono_ns`, entropy `random_bytes` (`getrandom`/`getentropy`, then `/dev/urandom`), `backtrace` (execinfo) |
+| `platform/poll_epoll.c` | the readiness poller on Linux: level-triggered epoll plus an eventfd for wake-ups (`poller_new/free/set/remove/wait/wake`) |
+| `platform/poll_kqueue.c` | the poller for macOS/BSD: not implemented, the file stops the build there with `#error` |
+| `platform/net_posix.c` | non-blocking TCP/UDP sockets (`tcp_connect`, `tcp_connect_result`, `tcp_listen`, `tcp_accept`, `udp_bind`, `sock_recv/send`, `udp_recvfrom/sendto`, `sock_close`, `sock_addr`, `sock_port`), `is_ip`, `resolve` (getaddrinfo), `strerror`. Results are `>= 0` or `-errno`; "would block" is `-SLANG_PLAT_EAGAIN` |
+
+Users of the layer: `task.c` (worker and timer threads, CPU count), `task_io.c`
+(poller), `panic.c` (backtrace), `std_crypto.c`/`std_random.c` (entropy),
+`std_net.c` (sockets). Mutexes and condition variables are still pthreads used
+directly in `task.c`; `std_time.c`/`std_fs.c`/`std_os.c` still call POSIX
+directly (the Windows port moves them).
+
+## 16. Networking: std.net and std.net.http
+
+`std.net` and `std.net.http` are Slang (`compiler/src/sema/stdlib_src/net.sl`,
+`http.sl`, see `compiler/src/sema/stdsrc.rs`) over the internal externs below
+(`src/std_net.c`, platform-independent; Slang names start with `rt`). Every
+socket is non-blocking; an operation that would block reports it and the Slang
+code awaits `slang_net_rt_wait_readable/writable` (10.9), so no worker thread
+ever blocks on the network.
+
+| Slang (internal) | C signature | Semantics |
+|---|---|---|
+| `rtConnect(ip, port) int!` | `int64_t slang_net_rt_connect(const slang_string *ip, int64_t port, slang_error **err)` | new TCP socket, connect started; the caller awaits writability, then `rtConnectResult` |
+| `rtConnectResult(fd) void!` | `void slang_net_rt_connect_result(int64_t fd, slang_error **err)` | `SO_ERROR` of the connect (`connect: Connection refused`) |
+| `rtListen(ip, port) int!` | `int64_t slang_net_rt_listen(const slang_string *ip, int64_t port, slang_error **err)` | bound, listening socket (`SO_REUSEADDR`, backlog 128); `ip` must be numeric |
+| `rtAccept(fd) int!` | `int64_t slang_net_rt_accept(int64_t fd, slang_error **err)` | new connection fd, or **-1** if none is pending |
+| `rtRead(fd, n) []byte!` | `void slang_net_rt_read(int64_t fd, int64_t n, slang_slice *out, slang_error **err)` | up to `n` bytes; empty at end of stream **or** when it would block: `rtAgain()` tells which |
+| `rtAgain() bool` | `bool slang_net_rt_again(void)` | the last `rtRead`/`rtRecvFrom` on this thread would have blocked (read it right after the call) |
+| `rtWrite(fd, data, off) int!` / `rtWriteStr(fd, s, off) int!` | `int64_t slang_net_rt_write(int64_t fd, const slang_slice *data, int64_t off, slang_error **err)` / `_write_str(..., const slang_string *s, ...)` | writes from byte `off`; bytes written or **-1** if it would block (`MSG_NOSIGNAL`: no SIGPIPE) |
+| `rtClose(fd)` | `void slang_net_rt_close(int64_t fd)` | `slang_io_forget` + close |
+| `rtWaitReadable(fd, ms)` / `rtWaitWritable` `Task<int>` | `slang_task *slang_net_rt_wait_readable(int64_t fd, int64_t ms)` | `slang_io_wait_*` with `ms <= 0` meaning no timeout |
+| `rtLocalAddr(fd)` / `rtRemoteAddr(fd) string`, `rtPort(fd) int` | `slang_string *slang_net_rt_local_addr(int64_t)`, ... | `"ip:port"` (`"[ip]:port"` for IPv6), local port |
+| `rtIsIP(s) bool` | `bool slang_net_rt_is_ip(const slang_string *s)` | numeric IPv4/IPv6 |
+| `rtResolve(host) Task<int>` / `rtResolveTake(h) []string!` | `slang_task *slang_net_rt_resolve(const slang_string *host)` / `void slang_net_rt_resolve_take(int64_t h, slang_slice *out, slang_error **err)` | getaddrinfo on a detached helper thread; the task's result is a request handle that `rtResolveTake` turns into the addresses (IPv4 first, no duplicates) or `lookup host: reason`, freeing it. IP literals complete at once |
+| `rtUdpBind(ip, port) int!`, `rtRecvFrom(fd, n) []byte!`, `rtLastFrom() string`, `rtLastFromPort() int`, `rtSendTo(fd, data, ip, port) int!` | `slang_net_rt_udp_bind`, `_recv_from`, `_last_from`, `_last_from_port`, `_send_to` | UDP; the sender of the last datagram is kept per thread like `rtAgain` |
+
+**Public Slang API** (the authoritative list with semantics is DESIGN.md, "Сеть и
+протоколы"): `net.Dial(addr) Task<Conn!>`, `net.DialTimeout(addr, ms)`,
+`net.Listen(addr) Listener!`, `net.ListenUDP(addr) UDPConn!`,
+`net.ResolveIP(host) Task<[]string!>`, `net.SplitHostPort`, `net.JoinHostPort`;
+`Conn` (`Read(n)`, `ReadString(n)`, `Write(b)`, `WriteString(s)`, `SetTimeout(ms)`,
+`Close()`, `IsClosed()`, `LocalAddr()`, `RemoteAddr()`), `Listener` (`Accept()`,
+`Close()`, `Addr()`, `Port()`), `UDPConn` (`RecvFrom(n) Task<Packet!>`,
+`SendTo(b, addr)`, ...). `Conn`, `Listener` and `UDPConn` are handles to a heap
+socket object whose `Drop` closes the descriptor, so a socket is closed by
+`Close()` or when the last copy goes away (and `--leak-check` sees forgotten
+ones).
+
+**HTTP** (`http.sl`): parsing and formatting are Slang, over a buffered reader
+on `net.Conn`; bodies are strings. Client: `http.Get(url)`, `http.Post(url, body,
+contentType)` and `http.Client{Timeout, MaxRedirects, Headers}` with
+`Get/Post/Do`, returning `Task<Response!>`; HTTP/1.1 with `Connection: close`
+(no pooling), `Content-Length`, chunked and read-to-end bodies, redirects
+301/302/303/307/308 (at most 10; 303 and a redirected POST become GET); `https`
+fails with `https is not supported yet`. Server: `http.Server{Addr, Handler,
+IdleTimeout}` with `Listen()`, `Port()`, `Serve() Task<void!>`, `Shutdown()
+Task<void>`; one task per connection, HTTP/1.1 keep-alive, request bodies with
+`Content-Length` or chunked, handler errors become 500. `interface Handler {
+func Serve(req *Request, res *Response) Task<void!> }` (an interface method
+cannot be `async`, so it returns the task of an async call); `http.NewRouter()`
+implements it with `Get/Post/Put/Delete/Handle(pattern, handler)`, `{name}`
+parameters and a final `*`.
+
+---
+
+## 17. Reflection tables and std.encoding.json
+
+Emitted by the compiler (`compiler/src/codegen/reflect.rs`) only for programs
+that use `std.reflect` (directly, through `typeof`, `json`, or a builtin
+attribute named as a type). C declarations and layout checks
+(`_Static_assert`) are in the reflection section of `slang_rt.h` and in
+`src/std_reflect.c`.
+
+### 17.1 Type tables
+
+With reflection on, **every `slang_type_info` the program emits is the head
+of a full table**: the type id stored in box headers, at `vtable[0]`, in the
+second word of an `any` and in `slang_error.user_type` is a
+`slang_reflect_type *`. Tables are immortal objects
+`{ i64 -1, ptr NULL, slang_reflect_type }`; the type id is the address of the
+payload (object + 16), so a Slang `*reflect.TypeInfo` and the type id are the
+same pointer and `==` on them compares types (one table per type: tables are
+deduplicated by type in the compiler). Only types that some code or table
+refers to get a table; unreferenced ones are removed by `globaldce`.
+
+```c
+struct slang_reflect_type {             /* std.reflect.TypeInfo, 232 bytes */
+    slang_type_info rt;                 /* +0   name (C string), 16 + sizeof T, drop */
+    int32_t kind;                       /* +24  slang_reflect_kind (std.reflect.Kind order) */
+    slang_string *name;                 /* +32  short name: User, *User, []int, map[string]int */
+    slang_string *full_name;            /* +40  namespace path + name */
+    int64_t size, align;                /* +48, +56 */
+    slang_slice fields;                 /* +64  []*FieldInfo of a struct */
+    slang_slice methods;                /* +96  []*MethodInfo (full types only) */
+    slang_slice variants;               /* +128 []*VariantInfo of an enum */
+    const slang_reflect_type *elem;     /* +160 element of *T, weak *T, []T, [N]T, T!, Task<T>; map value */
+    const slang_reflect_type *key;      /* +168 map key */
+    int64_t len;                        /* +176 array length */
+    slang_slice attrs;                  /* +184 []any, see 17.2 */
+    const slang_reflect_type *ptr_to;   /* +216 table of *T (full types only, for TypeInfo.New) */
+    const slang_reflect_type *canon;    /* +224 alias tables only */
+};
+```
+
+`slang_reflect_field` (FieldInfo, 72 bytes: `name`, `type`, `offset`,
+`index`, `embedded`, `exported`, `attrs` at +40), `slang_reflect_method`
+(MethodInfo, 72 bytes: `name`, `type`, `is_static` at +16, `invoke` at +24,
+`fnval` at +32, `attrs` at +40) and `slang_reflect_variant` (VariantInfo, 80
+bytes: `name`, `index`, `fields` at +16, `attrs` at +48) are immortal objects
+too; the slices holding them (and every other table slice) have a NULL
+backing, so retaining or releasing them is a no-op. Strings are immortal
+literals.
+
+- Field offsets are the C layout of the struct (declaration order, natural
+  alignment). Variant fields have offsets from the start of the enum value
+  (`{i32 tag, payload}`, payload at +8).
+- *Full* types — named in `reflect.TypeOf<T>()`, in a static `typeof(x)`, in
+  `reflect.Fields<T>()`, or declared `@reflect` — list their non-async
+  methods and get `ptr_to`; other tables have no methods.
+- A struct field spelled with a builtin alias (`int64`, `uint`, `uint8`,
+  `float64`) points at an *alias table*: a copy with that name whose `canon`
+  is the real table (`Value.Get/Set` compare canonical tables).
+
+### 17.2 Attribute values
+
+Every attribute is a constant value of its attribute struct (`@json` is
+`std.reflect.json {name string, omitEmpty bool, skip bool}`, `@deprecated`
+is `{message string}`, user attributes are their `@attribute` structs, with
+field defaults filled in). `attrs` is a `[]any` in source order whose
+elements hold a `*A`: `{data, type}` with `type` = the table of `*A` and
+`data` = an immortal box whose payload is the pointer to the immortal value
+object. `@attribute` and `@reflect` themselves are not listed.
+
+### 17.3 Methods
+
+`invoke` is `{any, slang_error*} invoke(any recv, slang_slice args)` (Slang
+ABI: aggregates by value): it accepts a receiver boxed as `*S` or `S`, checks
+the argument count and that every argument's dynamic type is the parameter
+type (`any` parameters take the value as is), unboxes them (retaining values
+for moved parameters), calls the method and boxes a non-void result into a
+new `any` (+1); a method error (or a check failure, `reflect: S.M: ...`) is
+returned as the error. `fnval` is a closure-convention thunk
+`fn(env, recv, args...)` (`MethodInfo.Call<F>()` returns `{fnval, NULL}`).
+
+### 17.4 std.encoding.json
+
+| Slang | C | Notes |
+|---|---|---|
+| `json.Quote(s)` | `slang_string *slang_encoding_json_quote(const slang_string *s)` | JSON string literal: quotes, `\" \\ \n \r \t \b \f`, other control bytes as `\u00XX`; other bytes (UTF-8) unchanged |
+| internal `json.scan(text)` | `void slang_encoding_json_scan(const slang_string *text, slang_slice *out, slang_error **err)` | `[]string` of tokens (`elem_size` 8, `slang_ops_ref`): `{ } [ ] : ,`, `s` + unescaped string bytes (`\uXXXX` and surrogate pairs to UTF-8, lone surrogates U+FFFD), `n` + number text (RFC 8259 syntax), `t` `f` `z` (true, false, null). Lexical errors: `json: <what> at offset N` (byte offset) |
+
+The parser, `json.Value`, `Parse<T>` and `Format<T>` are Slang
+(`compiler/src/sema/reflect_src/json.sl`).

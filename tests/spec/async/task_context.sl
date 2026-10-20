@@ -1,0 +1,55 @@
+// test: task.Key/With/Get: a value set with task.With is seen by the started task across awaits, nested calls and Spawn, and not after With returns
+// status: passing
+// run-flags: --leak-check
+namespace spec.async.task_context
+
+import std.io
+import std
+
+struct Request {
+    Id int
+}
+
+var RequestKey = task.Key<Request>()
+var UserKey = task.Key<string>()
+
+func Describe() string {
+    var r = task.Get(RequestKey)
+    var u = task.Get(UserKey)
+    var id = -1
+    if r != nil {
+        id = r.Id
+    }
+    var user = "?"
+    if u != nil {
+        user = *u
+    }
+    return fmt.Format("request {0} user {1}", id, user)
+}
+
+async func Inner() string {
+    await task.Delay(1)
+    return Describe()
+}
+
+async func Outer() string {
+    await task.Yield()
+    var inner = await Inner()
+    var spawned = await task.Spawn(Inner)
+    var bob = await task.With(UserKey, "bob", Inner)
+    return inner + " / " + spawned + " / " + bob
+}
+
+async func main() {
+    var t = task.With(RequestKey, Request{Id: 7}, async func() string {
+        return await task.With(UserKey, "ann", Outer)
+    })
+    println("outside:", Describe())
+    println(await t)
+    var ctx = task.CurrentContext()
+    var u = task.With(UserKey, "cid", async func() string {
+        return await task.SpawnWith(task.CurrentContext(), Inner)
+    })
+    println(await u)
+    println(await task.SpawnWith(ctx, Inner))
+}

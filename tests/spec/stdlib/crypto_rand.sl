@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.crypto_rand
 
-import std.io
 import std.crypto
+import std.io
 
 func main() {
     var a = try rand.Hex(16) else ""

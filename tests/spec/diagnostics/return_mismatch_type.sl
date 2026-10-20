@@ -1,0 +1,13 @@
+// error: cannot return string from a function returning int
+// status: passing
+namespace spec.diagnostics.return_mismatch_type
+
+import std.io
+
+func F() int {
+    return "x"
+}
+
+func main() {
+    println(F())
+}

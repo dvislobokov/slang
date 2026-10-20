@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors.block_try_return_err
 
-import std.io
 import std
+import std.io
 
 func Sum(a, b string) int! {
     var r = 0

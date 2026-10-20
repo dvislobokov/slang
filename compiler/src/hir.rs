@@ -95,6 +95,113 @@ pub struct Program {
     /// Source files by [`FileId`] (for error-trace sites); filled in by
     /// [`crate::driver`] after analysis, empty otherwise.
     pub sources: Vec<SourceInfo>,
+    /// Reflection metadata wanted by the program (`std.reflect` was used),
+    /// see [`Reflect`]; `None` when the program uses no reflection.
+    pub reflect: Option<Reflect>,
+}
+
+/// What code generation needs for reflection (DESIGN.md "Рефлексия",
+/// runtime/ABI.md §17). Present only when the program uses `std.reflect`
+/// (directly, through `typeof`, `json`, or an attribute type): then every
+/// run-time type id (`slang_type_info`) is the header of a full
+/// `std.reflect.TypeInfo` table.
+#[derive(Debug, Clone, Default)]
+pub struct Reflect {
+    /// Struct ids of `std.reflect.TypeInfo`, `FieldInfo`, `MethodInfo`,
+    /// `VariantInfo`.
+    pub type_info: u32,
+    pub field_info: u32,
+    pub method_info: u32,
+    pub variant_info: u32,
+    /// Enum id of `std.reflect.Kind`.
+    pub kind: u32,
+    /// Builtin attribute name (`json`, `deprecated`, ...) -> the struct id
+    /// of its value type in `std.reflect`.
+    pub attr_structs: Vec<(String, u32)>,
+    /// Types whose tables also list methods (and `New` works): named in
+    /// `reflect.TypeOf<T>()`, a static `typeof(x)`, `reflect.Fields<T>()`,
+    /// or declared `@reflect`. Other tables have no methods.
+    pub full: Vec<TypeId>,
+    /// Functions whose bodies code generation provides.
+    pub intrinsics: Vec<(FuncId, Intrinsic)>,
+    /// Builtin type spellings of struct fields that differ from the
+    /// canonical name (`int64` for `int`): (struct id, field index, name).
+    pub field_spellings: Vec<(u32, u32, String)>,
+    /// `T` -> `*T` for the types in `full` and the attribute structs (for
+    /// `TypeInfo.New` and the boxed attribute values).
+    pub pointers: Vec<(TypeId, TypeId)>,
+    /// Signature type (`func(*S, params) ret`, receiver first unless
+    /// static) of every method listed in a table.
+    pub method_types: Vec<(FuncId, TypeId)>,
+}
+
+/// Name of the `std.reflect.Kind` variant describing type `t`.
+pub fn reflect_kind_name(tt: &TypeTable, t: TypeId) -> &'static str {
+    use crate::types::{IntKind as I, Type};
+    match tt.get(t) {
+        Type::Void => "Void",
+        Type::Bool => "Bool",
+        Type::Int(k) => match k {
+            I::I8 => "Int8",
+            I::I16 => "Int16",
+            I::I32 => "Int32",
+            I::I64 => "Int",
+            I::U8 => "Uint8",
+            I::U16 => "Uint16",
+            I::U32 => "Uint32",
+            I::U64 => "Uint",
+        },
+        Type::Float32 => "Float32",
+        Type::Float64 => "Float",
+        Type::Char => "Char",
+        Type::String => "String",
+        Type::Error => "Error",
+        Type::Any => "Any",
+        Type::Interface(_) => "Interface",
+        Type::Struct(_) => "Struct",
+        Type::Enum(_) => "Enum",
+        Type::Pointer(_) => "Pointer",
+        Type::Weak(_) => "Weak",
+        Type::Slice(_) => "Slice",
+        Type::Array(..) => "Array",
+        Type::Map(..) => "Map",
+        Type::Tuple(_) => "Tuple",
+        Type::Func(_) => "Func",
+        Type::Fallible(_) => "Fallible",
+        Type::Task(_) => "Task",
+        Type::Nil | Type::Infer(_) | Type::Param(_) | Type::Invalid => "Invalid",
+    }
+}
+
+/// Bodies of `std.reflect` functions emitted by code generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Intrinsic {
+    /// `TypeOf<T>() *TypeInfo`: the static table of `T`.
+    TypeOf(TypeId),
+    /// `anyType(x any) *TypeInfo`: the dynamic type of an `any` (nil if nil).
+    AnyType,
+    /// `anyAddr(x any) int`: address of the boxed value.
+    AnyAddr,
+    /// `ifaceType<I>(x I) *TypeInfo`: dynamic type of an interface value.
+    IfaceType,
+    /// `errType(e error) *TypeInfo`: dynamic type of an error (the boxed
+    /// struct, or `error` itself), nil for nil.
+    ErrType,
+    /// `loadAddr(addr int) int`: the word at `addr`.
+    LoadAddr,
+    /// `load<T>(addr int) T`: copy of the `T` at `addr` (retained).
+    Load(TypeId),
+    /// `store<T>(addr int, v T)`: `*(T*)addr = v` with reference counting.
+    Store(TypeId),
+    /// `newOf(t *TypeInfo) any`: a zeroed heap `T`, as an `any` holding `*T`.
+    New,
+    /// `invokeMethod(fn int, recv any, args []any) any!`: calls a method's
+    /// packed thunk.
+    Invoke,
+    /// `asFunc<F>(fn int) F`: a closure value `{fn, nil}`.
+    AsFunc(TypeId),
+    /// `storeTag<T>(p *T, tag int)`: sets the tag of a plain enum.
+    StoreTag(TypeId),
 }
 
 /// Path and line table of one source file.

@@ -32,6 +32,8 @@ slang init  [dir] [--name n] [--format toml|json|yaml] [--lib]
 slang manifest schema               # JSON Schema of the manifest
 slang manifest convert <toml|json|yaml> [dir]
 slang parse <file.sl>               # print the AST
+slang fmt   [paths] [--check] [--diff] [--stdin]   # format .sl files (canonical style)
+slang lsp                           # language server on stdio
 ```
 
 `path` selects what to build:
@@ -57,6 +59,28 @@ Build options:
 | `-p, --package <name>` | one member (repeatable) |
 | `--locked` | fail if `slang.lock` would change |
 | `-v, --verbose` | log the object cache and the link step to stderr |
+
+### Formatting
+
+`slang fmt` rewrites `.sl` files in the one canonical style (like `gofmt`,
+no options): 4-space indentation, braces on the same line, spaces around
+binary operators, struct fields aligned in columns, imports sorted (`std`
+first, a blank line before the others), at most one blank line between
+statements, comments kept, lines up to 100 columns with long calls,
+literals and binary expressions broken one item per line (trailing commas).
+
+```
+slang fmt                      # every .sl file under the current directory
+slang fmt src/ main.sl         # files and directories
+slang fmt --check .            # CI: list unformatted files, exit 1 if any
+slang fmt --diff main.sl       # show what would change
+slang fmt --stdin < a.sl       # filter (editors)
+```
+
+Files with syntax errors are reported and left unchanged. The formatter
+re-parses its output and refuses to write anything whose syntax tree
+differs from the input. Editors get the same formatting through the
+language server (`textDocument/formatting`, see `editors/vscode`).
 
 ### Packages
 

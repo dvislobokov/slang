@@ -122,6 +122,7 @@ fn show(e: &Expr) -> String {
         ),
         ExprKind::Lambda { params, .. } => format!("lambda/{}", params.len()),
         ExprKind::Paren(e) => format!("[{}]", show(e)),
+        ExprKind::Error => "<error>".into(),
     }
 }
 
@@ -144,6 +145,7 @@ fn named(t: &TypeExpr) -> String {
             ret.as_ref().map(|r| format!(" {}", named(r))).unwrap_or_default()
         ),
         TypeKind::Tuple(ts) => format!("({})", ts.iter().map(named).collect::<Vec<_>>().join(", ")),
+        TypeKind::Error => "<error>".into(),
     }
 }
 
@@ -1103,6 +1105,118 @@ fn never_panics_on_truncated_input() {
     for &end in &boundaries {
         let _ = try_parse(&full[..end]);
     }
+}
+
+/// Every `.sl` file of the examples, spec corpus and benchmarks.
+fn corpus_files() -> Vec<std::path::PathBuf> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "sl") {
+                out.push(p);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let mut out = Vec::new();
+    for d in ["examples", "tests/spec", "benchmarks"] {
+        walk(&root.join(d), &mut out);
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn every_prefix_of_the_corpus_gives_a_file() {
+    // The recovering parser returns an AST for any input; check every
+    // character prefix of every corpus file (in parallel: ~125 MB parsed).
+    let files: Vec<String> = corpus_files().iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
+    assert!(files.len() > 100);
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16);
+    let chunks: Vec<Vec<String>> = (0..threads).map(|t| files.iter().skip(t).step_by(threads).cloned().collect()).collect();
+    let handles: Vec<_> = chunks
+        .into_iter()
+        .map(|chunk| {
+            std::thread::spawn(move || {
+                for src in chunk {
+                    let mut ends: Vec<usize> = src.char_indices().map(|(i, _)| i).collect();
+                    ends.push(src.len());
+                    for end in ends {
+                        let prefix = &src[..end];
+                        let mut diags = Diagnostics::new();
+                        let tokens = lexer::lex(prefix, &mut diags);
+                        let file = parser::parse_file(tokens, &mut diags);
+                        assert!(file.span.end as usize <= prefix.len(), "span past the end for prefix {end}");
+                        for d in &file.decls {
+                            assert!(d.span().end as usize <= prefix.len());
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().expect("parser panicked on a prefix");
+    }
+}
+
+#[test]
+fn recovery_produces_error_nodes() {
+    let (file, diags) = slang::parser::parse_source("namespace t\nfunc f() {\n    var c = 1\n    c.\n}\nfunc g() {\n    h(1,\n}\nfunc k() {\n    var x = \n    if {\n}\n");
+    assert!(diags.has_errors());
+    let names: Vec<String> = file
+        .decls
+        .iter()
+        .filter_map(|d| match d {
+            Decl::Func(f) => Some(f.name.name.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, ["f", "g", "k"], "{:#?}", file.decls);
+    let body = |i: usize| match &file.decls[i] {
+        Decl::Func(f) => f.body.clone().unwrap().stmts,
+        _ => unreachable!(),
+    };
+    // `c.` -> Field with an empty name.
+    let f = body(0);
+    assert!(matches!(&f[1].kind, StmtKind::Expr(Expr { kind: ExprKind::Field { name, .. }, .. }) if name.name.is_empty()), "{f:#?}");
+    // `h(1,` -> Call with an error argument at the end.
+    let g = body(1);
+    match &g[0].kind {
+        StmtKind::Expr(Expr { kind: ExprKind::Call { args, .. }, .. }) => {
+            assert_eq!(args.len(), 2);
+            assert!(matches!(args[1].kind, ExprKind::Error));
+        }
+        other => panic!("{other:?}"),
+    }
+    // `var x = ` -> error initializer; the missing `}` closes at end of file.
+    let k = body(2);
+    assert!(matches!(&k[0].kind, StmtKind::Var(v) if matches!(v.init.as_ref().unwrap().kind, ExprKind::Error)), "{k:#?}");
+    // A missing `}` before the next declaration closes the body there.
+    let (file, _) = slang::parser::parse_source("namespace t\nfunc a() {\n    if x {\n        y()\n}\nfunc b() {}\nstruct S { A int\nstruct T {}\n");
+    let kinds: Vec<String> = file.decls.iter().map(|d| match d {
+        Decl::Func(f) => format!("func {}", f.name.name),
+        Decl::Struct(s) => format!("struct {}", s.name.name),
+        Decl::Error(_) => "error".into(),
+        _ => "other".into(),
+    }).collect();
+    assert_eq!(kinds, ["func a", "func b", "struct S", "struct T"], "{:#?}", file.decls);
+    // Garbage between declarations becomes an error declaration.
+    let (file, _) = slang::parser::parse_source("namespace t\n) ] }\nfunc ok() {}\n");
+    assert!(matches!(file.decls[0], Decl::Error(_)));
+    assert!(matches!(&file.decls[1], Decl::Func(f) if f.name.name == "ok"));
+    // Statement-level recovery keeps the following statements.
+    let (file, _) = slang::parser::parse_source("namespace t\nfunc f() {\n    a b c\n    after()\n}\n");
+    let Decl::Func(f) = &file.decls[0] else { panic!() };
+    let stmts = &f.body.as_ref().unwrap().stmts;
+    assert!(stmts.iter().any(|s| matches!(s.kind, StmtKind::Error)), "{stmts:#?}");
+    assert!(matches!(&stmts.last().unwrap().kind, StmtKind::Expr(Expr { kind: ExprKind::Call { .. }, .. })));
+    // A missing type becomes TypeKind::Error.
+    let (file, _) = slang::parser::parse_source("namespace t\nvar m map[string]\n");
+    let Decl::Var(v) = &file.decls[0] else { panic!("{:#?}", file.decls) };
+    assert!(matches!(&v.ty.as_ref().unwrap().kind, TypeKind::Map(_, val) if matches!(val.kind, TypeKind::Error)));
 }
 
 #[test]

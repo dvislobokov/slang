@@ -1,0 +1,13 @@
+// test: os.Name and os.Arch are compile-time constants usable in const declarations
+// status: pending
+namespace spec.platform.os_name_const
+
+import std.io
+import std
+
+const IsLinux = os.Name == "linux"
+const Target = os.Name + "-" + os.Arch
+
+func main() {
+    println(IsLinux, len(Target) > 6)
+}

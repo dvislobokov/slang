@@ -227,6 +227,8 @@ impl<'a> Sema<'a> {
                         let cn = self.ide_cur_ns();
                         self.ide_def(index::SymKey::Global(gid.0), &c.name, c.span, cn);
                     }
+                    // Syntax error, already reported by the parser.
+                    ast::Decl::Error(_) => {}
                 }
             }
         }
@@ -314,6 +316,7 @@ impl<'a> Sema<'a> {
     /// Member `name` of namespace `ns`, checking visibility from the current
     /// namespace.
     pub(crate) fn member_of(&mut self, ns: NsIdx, name: &ast::Ident, report: bool) -> Option<Member> {
+        self.std_lookup_hook(ns, &name.name);
         let (m, _, _) = *self.nss[ns].members.get(&name.name)?;
         if report && ns != self.cur_ns && !self.nss[ns].is_std && !is_exported(&name.name) && !matches!(m, Member::Ns(_)) {
             let path = self.nss[ns].path.clone();
@@ -328,6 +331,7 @@ impl<'a> Sema<'a> {
         if let Some((m, _, _)) = self.nss[self.cur_ns].members.get(n) {
             return Some(PathRes::Member(*m));
         }
+        self.std_glob_hook(n);
         let mut found: Vec<(Member, NsIdx)> = Vec::new();
         let mut private: Option<NsIdx> = None;
         let mut used = Vec::new();
@@ -390,6 +394,9 @@ impl<'a> Sema<'a> {
                 return None;
             }
             return Some(PathRes::Member(Member::Ns(r)));
+        }
+        if let Some(s) = self.builtin_attr_type(n) {
+            return Some(PathRes::Member(Member::Struct(s)));
         }
         if let (Some(ns), true) = (private, report) {
             let path = self.nss[ns].path.clone();
@@ -477,6 +484,8 @@ impl<'a> Sema<'a> {
     pub(crate) fn resolve_type(&mut self, t: &ast::TypeExpr) -> TypeId {
         use ast::TypeKind as K;
         match &t.kind {
+            // Syntax error, already reported by the parser.
+            K::Error => self.tt.invalid,
             K::Named { path, generics } => {
                 if path.segments.len() == 1 && generics.is_empty() {
                     if let Some(ty) = self.type_param(&path.segments[0].name) {
@@ -499,6 +508,9 @@ impl<'a> Sema<'a> {
                 let segs: Vec<&ast::Ident> = path.segments.iter().collect();
                 match self.resolve_segments(&segs, true) {
                     Some((PathRes::Member(Member::Generic(g)), n)) if n == segs.len() => {
+                        if let Some(ty) = self.plain_std_type(g, path.span) {
+                            return ty;
+                        }
                         let name = self.gen.templates[g as usize].name.clone();
                         self.err(format!("generic type {name} needs type arguments ({name}<...>)"), path.span);
                         self.tt.invalid

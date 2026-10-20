@@ -1,8 +1,8 @@
 namespace examples.generics
 
-import std.io
 import std
 import std.collections
+import std.io
 
 // A generic function with the builtin Ordered constraint.
 func Max<T: Ordered>(a, b T) T {
@@ -55,7 +55,7 @@ func TotalArea<T: Shape>(xs []T) float {
 
 // A generic struct; its methods are instantiated with it.
 struct Pair<A, B> {
-    First A
+    First  A
     Second B
 
     func Swap() Pair<B, A> {

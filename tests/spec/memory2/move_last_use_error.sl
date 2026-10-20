@@ -1,0 +1,21 @@
+// error: R: it has a destructor (Drop), so it is move-only
+// (passing a variable by value is a copy even at its last use; there is no implicit move)
+// status: passing
+namespace spec.memory2.move_last_use_error
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop", this.Name) }
+}
+
+func Consume(r R) {
+    println("consume", r.Name)
+}
+
+func main() {
+    var r = R{Name: "x"}
+    Consume(r)
+    println("end")
+}

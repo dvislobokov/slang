@@ -1,0 +1,15 @@
+// test: byte-range slices of multibyte strings at code point boundaries; s[i] is a byte
+// status: passing
+namespace spec.strings2.multibyte_slicing
+
+import std.io
+import std
+
+func main() {
+    var s = "日本語"
+    println(s[0..3], s[3..], s[..6])
+    println(s[0], s[1], s[2])
+    var i = strings.Index(s, "本")
+    println(s[i..i + 3])
+    println(string('ж') + string('🙂'), int('é'))
+}

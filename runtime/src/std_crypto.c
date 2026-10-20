@@ -4,12 +4,12 @@
  * the IEEE 802.3 CRC-32 polynomial; no external libraries. Inputs are the raw
  * bytes of the Slang string. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/random.h>
 #include <unistd.h>
 
 static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
@@ -304,27 +304,7 @@ bool slang_crypto_hmac_equal(const slang_slice *a, const slang_slice *b) {
 
 /* Fills buf with n random bytes; returns 0 or an errno value. */
 static int fill_random(uint8_t *buf, size_t n) {
-    size_t got = 0;
-    while (got < n) {
-        ssize_t r = getrandom(buf + got, n - got, 0);
-        if (r < 0) {
-            if (errno == EINTR) continue;
-            if (errno == ENOSYS) break;
-            return errno;
-        }
-        got += (size_t)r;
-    }
-    if (got == n) return 0;
-    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return errno;
-    while (got < n) {
-        ssize_t r = read(fd, buf + got, n - got);
-        if (r < 0 && errno == EINTR) continue;
-        if (r <= 0) { int e = r < 0 ? errno : EIO; close(fd); return e; }
-        got += (size_t)r;
-    }
-    close(fd);
-    return 0;
+    return slang__plat_random_bytes(buf, n) ? 0 : (errno ? errno : EIO);
 }
 
 static void rand_err(slang_error **err, int e) {

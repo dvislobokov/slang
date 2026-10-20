@@ -1,0 +1,19 @@
+// error: too many arguments for attribute @note
+// status: passing
+namespace spec.attributes2.too_many_args_error
+
+import std.io
+
+@attribute
+struct note {
+    text string
+}
+
+@note("a", "b")
+struct Thing {
+    X int
+}
+
+func main() {
+    println(Thing{X: 1}.X)
+}

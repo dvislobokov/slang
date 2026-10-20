@@ -32,7 +32,14 @@ func Run(c Cmd) string {
 }
 
 func main() {
-    for c in [Cmd.Move(0, 0), Cmd.Move(2, 1), Cmd.Move(-1, 0), Cmd.Say(""), Cmd.Say("hi"), Cmd.Stop] {
+    for c in [
+        Cmd.Move(0, 0),
+        Cmd.Move(2, 1),
+        Cmd.Move(-1, 0),
+        Cmd.Say(""),
+        Cmd.Say("hi"),
+        Cmd.Stop,
+    ] {
         println(Run(c))
     }
 }

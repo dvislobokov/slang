@@ -1,0 +1,12 @@
+// error: const initializer is not a constant expression
+// status: passing
+namespace spec.diagnostics.const_not_constant
+
+import std.io
+
+func F() int { return 1 }
+
+func main() {
+    const X = F()
+    println(X)
+}

@@ -1,5 +1,5 @@
 // test: Fields lists fields in declaration order with type names and C-like aligned offsets
-// status: pending
+// status: passing
 namespace spec.reflection.fields_offsets
 
 import std.io

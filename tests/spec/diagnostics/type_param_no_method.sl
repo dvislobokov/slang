@@ -1,0 +1,19 @@
+// error: has no method Area (its constraint does not declare it)
+// status: passing
+namespace spec.diagnostics.type_param_no_method
+
+import std.io
+
+interface Named {
+    func Name() string
+}
+
+func Total<T: Named>(xs []T) float {
+    var t = 0.0
+    for x in xs { t += x.Area() }
+    return t
+}
+
+func main() {
+    println("x")
+}

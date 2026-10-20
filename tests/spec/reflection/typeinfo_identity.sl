@@ -1,5 +1,5 @@
 // test: TypeInfo values are unique per type, so == compares types (as an any type switch does)
-// status: pending
+// status: passing
 namespace spec.reflection.typeinfo_identity
 
 import std.io

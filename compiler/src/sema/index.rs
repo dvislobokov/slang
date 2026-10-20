@@ -289,9 +289,18 @@ impl<'a> Sema<'a> {
         self.ide.is_some()
     }
 
+    /// Checking stdlib code written in Slang (`std.collections`, `std.net`,
+    /// ...): its spans are not in any user file, so nothing is recorded.
+    fn ide_in_std(&self) -> bool {
+        self.nss.get(self.cur_ns).is_some_and(|n| n.is_std)
+    }
+
     /// Records a use of `key` at `span` in the current file.
     pub(crate) fn ide_ref(&mut self, span: Span, key: SymKey) {
         let file = self.cur_file;
+        if self.ide_in_std() {
+            return;
+        }
         if let Some(r) = &mut self.ide {
             if span != Span::DUMMY {
                 r.refs.push((file, span, key));
@@ -302,7 +311,7 @@ impl<'a> Sema<'a> {
     /// Records a declaration in the current file.
     pub(crate) fn ide_def(&mut self, key: SymKey, name: &ast::Ident, full_span: Span, container: Option<SymKey>) {
         // Synthesized std declarations (`errors.Frame`) are not in any file.
-        if name.span == Span::DUMMY {
+        if name.span == Span::DUMMY || self.ide_in_std() {
             return;
         }
         let file = self.cur_file;
@@ -385,7 +394,7 @@ impl<'a> Sema<'a> {
 
     /// Records a local constant just pushed onto the innermost scope.
     pub(crate) fn ide_def_local_const(&mut self, c: &ast::ConstDecl, ty: Option<TypeId>) {
-        if !self.ide_on() {
+        if !self.ide_on() || self.ide_in_std() {
             return;
         }
         let d = self.fns.len() - 1;

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.random_seeded
 
-import std.io
 import std
+import std.io
 
 func main() {
     random.Seed(42)

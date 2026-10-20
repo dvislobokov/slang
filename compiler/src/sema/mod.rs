@@ -16,6 +16,12 @@
 //! ordinary HIR function, struct or enum. `std.collections` is a set of
 //! generic structs written in Slang ([`collections`]).
 //!
+//! Reflection ([`reflect`]): `std.reflect`, `std.encoding.json` and
+//! `strings.Builder` are Slang sources loaded on first use; `typeof`,
+//! compile-time `reflect.Fields<T>()` loops and static `if`s on type kinds
+//! are handled there, and [`hir::Program::reflect`] tells code generation
+//! which type tables and intrinsics to emit.
+//!
 //! Untyped numeric constants are folded by [`consts`] and materialised with
 //! the type the context expects, as in Go.
 
@@ -29,12 +35,14 @@ mod generics;
 pub mod index;
 mod infer;
 mod ownership;
+mod reflect;
 mod resolve;
 mod stmt;
+mod stdsrc;
 pub mod stdlib;
 
 use crate::ast;
-use crate::diagnostics::{Diagnostic, Diagnostics};
+use crate::diagnostics::{codes, Diagnostic, Diagnostics, Fix};
 use crate::hir::{self, FuncId, GlobalId, Label, LocalId, LocalKind};
 use crate::span::Span;
 use crate::types::{Type, TypeId, TypeTable};
@@ -197,6 +205,9 @@ pub(crate) struct FnCtx {
     /// Number of enclosing block `try` bodies (a `?` inside one jumps to
     /// its `catch`, so it is allowed in any function).
     pub try_depth: u32,
+    /// The body has syntax errors (recovered by the parser): whole-body
+    /// checks (unused variables, missing return) are skipped.
+    pub recovering: bool,
 }
 
 impl FnCtx {
@@ -214,6 +225,7 @@ impl FnCtx {
             labels: Vec::new(),
             next_label: 0,
             try_depth: 0,
+            recovering: false,
         }
     }
 
@@ -276,6 +288,8 @@ pub(crate) struct Sema<'a> {
     pub(crate) ide: Option<Box<index::Recorder>>,
     /// Generics state (templates, instantiations, type environment).
     pub(crate) gen: generics::GenState<'a>,
+    /// Reflection state (lazily loaded library sources, compile-time fields).
+    pub(crate) refl: reflect::ReflState,
 }
 
 impl<'a> Sema<'a> {
@@ -314,6 +328,7 @@ impl<'a> Sema<'a> {
             policy: None,
             ide: None,
             gen: generics::GenState::default(),
+            refl: reflect::ReflState::default(),
         }
     }
 
@@ -322,6 +337,7 @@ impl<'a> Sema<'a> {
         self.collect_decls();
         self.add_std_structs();
         self.register_collections();
+        self.register_std_sources();
         self.resolve_imports();
         self.resolve_template_bounds();
         self.resolve_signatures();
@@ -351,13 +367,12 @@ impl<'a> Sema<'a> {
         }
     }
 
-    fn finish(self) -> hir::Program {
-        let mut namespaces = Vec::new();
-        for ns in &self.nss {
-            if ns.hir_id.is_some() {
-                namespaces.push(hir::Namespace { path: ns.path.clone(), attrs: ns.attrs.clone() });
-            }
-        }
+    fn finish(mut self) -> hir::Program {
+        let reflect = self.reflect_finish();
+        // Library namespaces loaded on demand get their ids late.
+        let mut nss: Vec<(hir::NamespaceId, &Ns)> = self.nss.iter().filter_map(|n| n.hir_id.map(|h| (h, n))).collect();
+        nss.sort_by_key(|(h, _)| *h);
+        let namespaces = nss.into_iter().map(|(_, ns)| hir::Namespace { path: ns.path.clone(), attrs: ns.attrs.clone() }).collect();
         let entry = self.find_entry();
         hir::Program {
             types: self.tt,
@@ -371,6 +386,7 @@ impl<'a> Sema<'a> {
             externs: self.externs,
             entry,
             sources: Vec::new(),
+            reflect,
         }
     }
 
@@ -401,6 +417,57 @@ impl<'a> Sema<'a> {
     pub fn err_note(&mut self, msg: impl Into<String>, span: Span, note: impl Into<String>, note_span: Option<Span>) {
         let d = Diagnostic::error(msg, span).with_note(note, note_span).in_file(self.cur_file);
         self.push_diag(d);
+    }
+
+    /// Reports an error with a stable code and quick fixes
+    /// (docs/TOOLING.md, structured diagnostics).
+    pub fn err_fix(&mut self, msg: impl Into<String>, span: Span, code: &'static str, fixes: Vec<Fix>) {
+        let mut d = Diagnostic::error(msg, span).in_file(self.cur_file).with_code(code);
+        d.fixes = fixes;
+        self.push_diag(d);
+    }
+
+    /// "unknown identifier X", with "import std.ns" fixes when `X` is a
+    /// stdlib member (or a std namespace) that is not imported.
+    pub fn unknown_ident(&mut self, id: &ast::Ident) {
+        let mut paths: Vec<String> = Vec::new();
+        for ns in self.nss.iter().filter(|n| n.is_std) {
+            if ns.members.get(&id.name).is_some_and(|m| !matches!(m.0, Member::Ns(_))) {
+                paths.push(ns.path.clone());
+            }
+        }
+        if paths.is_empty() && self.ns_index.contains_key(&format!("std.{}", id.name)) {
+            paths.push("std".into());
+        }
+        paths.sort();
+        let mut fixes = Vec::new();
+        if let Some(file) = self.files.get(self.cur_file) {
+            let at = file.imports.last().map(|i| i.span.end).unwrap_or(file.namespace.span.end);
+            let sep = if file.imports.is_empty() { "\n\n" } else { "\n" };
+            for p in paths.iter().filter(|p| !file.imports.iter().any(|i| i.path.to_string() == **p && i.alias.is_none())).take(3) {
+                fixes.push(Fix::edit(format!("Import {p}"), Span::new(at, at), format!("{sep}import {p}")));
+            }
+        }
+        self.err_fix(format!("unknown identifier {}", id.name), id.span, codes::UNKNOWN_IDENTIFIER, fixes);
+    }
+
+    /// "result of type T! must be handled" with quick fixes: append `?`
+    /// (only where `?` is allowed) or wrap in `try ... catch`.
+    pub fn unhandled_result(&mut self, ty: TypeId, span: Span) {
+        let can_propagate = self.fns.last().is_some_and(|f| f.try_depth > 0 || self.tt.is_fallible(f.ret));
+        let mut fixes = Vec::new();
+        if can_propagate {
+            fixes.push(Fix::edit("Propagate the error with `?`", Span::new(span.end, span.end), "?"));
+        }
+        fixes.push(Fix::new(
+            "Handle the error with `try ... catch`",
+            vec![
+                crate::diagnostics::TextEdit { span: Span::new(span.start, span.start), new_text: "try ".into() },
+                crate::diagnostics::TextEdit { span: Span::new(span.end, span.end), new_text: " catch err { panic(err.Message()) }".into() },
+            ],
+        ));
+        let msg = format!("result of type {} must be handled (use ?, try ... catch, try ... else, or `_ =`)", self.tn(ty));
+        self.err_fix(msg, span, codes::UNHANDLED_RESULT, fixes);
     }
 
     fn push_diag(&mut self, mut d: Diagnostic) {
@@ -461,9 +528,10 @@ impl<'a> Sema<'a> {
             if let ScopeEntry::Local(l) = e {
                 let f = self.fns.last().unwrap();
                 // A variable with a destructor is used by its destructor.
-                if !f.used[l.0 as usize] && !self.type_has_dtor(f.locals[l.0 as usize].ty) {
+                if !f.used[l.0 as usize] && !f.recovering && !self.type_has_dtor(f.locals[l.0 as usize].ty) {
                     let span = f.locals[l.0 as usize].span;
-                    self.err(format!("unused variable {name}: declared and never used"), span);
+                    let fix = Fix::edit(format!("Rename {name} to _"), span, "_");
+                    self.err_fix(format!("unused variable {name}: declared and never used"), span, codes::UNUSED_VARIABLE, vec![fix]);
                 }
             }
         }
@@ -590,7 +658,9 @@ impl<'a> Sema<'a> {
                 if !used && !root {
                     self.cur_file = fi;
                     let path = imp.map(|i| i.path.to_string()).unwrap_or_default();
-                    self.err(format!("unused import {path}: nothing from it is used"), span);
+                    let full = imp.map_or(span, |i| i.span);
+                    let fix = Fix::edit(format!("Remove import {path}"), full, "");
+                    self.err_fix(format!("unused import {path}: nothing from it is used"), span, codes::UNUSED_IMPORT, vec![fix]);
                 }
             }
         }
@@ -619,6 +689,7 @@ impl<'a> Sema<'a> {
         let f = &self.funcs[fid.0 as usize];
         let sig = self.sigs[fid.0 as usize].clone();
         let mut ctx = FnCtx::new(Some(fid), sig.ret, sig.is_async, f.name.clone());
+        ctx.recovering = body.has_errors();
         // Parameters were registered as locals by `resolve_signatures`.
         ctx.locals = f.locals.clone();
         ctx.used = vec![true; ctx.locals.len()];
@@ -640,7 +711,7 @@ impl<'a> Sema<'a> {
         let block = self.block(body);
         let needs_return = !matches!(self.tt.get(ret), Type::Void | Type::Invalid)
             && !matches!(self.tt.fallible_inner(ret).map(|t| self.tt.get(t)), Some(Type::Void));
-        if needs_return && !stmt::terminates(&block.stmts, false) {
+        if needs_return && !body.has_errors() && !stmt::terminates(&block.stmts, false) {
             let name = self.fns.last().map(|f| f.name.clone()).unwrap_or_default();
             let end = Span::new(body.span.end.saturating_sub(1), body.span.end);
             self.err_note(

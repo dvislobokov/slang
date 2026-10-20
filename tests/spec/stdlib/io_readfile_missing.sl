@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.io_readfile_missing
 
-import std.io
 import std
+import std.io
 
 func main() {
     var text = try io.ReadFile("/nonexistent-slang-spec/missing.txt") catch err {

@@ -1,0 +1,34 @@
+// test: task.WaitGroup counts tasks with Add/Done and Wait completes when the count reaches zero
+// status: passing
+// run-flags: --leak-check
+namespace spec.async.waitgroup
+
+import std.io
+import std
+
+struct Results {
+    Mu task.Mutex
+    Sum int
+}
+
+async func Job(wg *task.WaitGroup, r *Results, n int) {
+    await task.Delay(n)
+    await r.Mu.Lock()
+    r.Sum += n
+    r.Mu.Unlock()
+    wg.Done()
+}
+
+async func main() {
+    var wg = new task.WaitGroup{}
+    var r = new Results{}
+    await wg.Wait()
+    println("empty wait done")
+    wg.Add(5)
+    for i in 1..6 {
+        _ = Job(wg, r, i)
+    }
+    println("count before", wg.Count() > 0)
+    await wg.Wait()
+    println("sum", r.Sum, "count", wg.Count())
+}

@@ -1,0 +1,13 @@
+// test: ToUpper/ToLower convert non-ASCII letters per code point (Cyrillic, diacritics, Greek; ß has no one-rune upper case and stays, as in Go)
+// status: passing
+namespace spec.strings2.case_cyrillic
+
+import std.io
+import std
+
+func main() {
+    println(strings.ToUpper("привет, мир"))
+    println(strings.ToLower("ЁЛКА Ÿ ÄÖÜ"))
+    println(strings.ToUpper("straße ωμέγα"))
+    println(strings.EqualFold("Привет", "пРИВЕТ"))
+}

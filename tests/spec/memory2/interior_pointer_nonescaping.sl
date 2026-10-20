@@ -1,0 +1,42 @@
+// test: interior pointers (&s.f, &xs[i], &arr[i]) may be passed to parameters that do not escape
+// status: passing
+namespace spec.memory2.interior_pointer_nonescaping
+
+import std.io
+
+struct Stats {
+    Hits int
+    Misses int
+}
+
+struct Server {
+    Name string
+    St Stats
+}
+
+func Inc(p *int, by int) {
+    *p += by
+}
+
+func Hit(s *Stats) {
+    s.Hits += 1
+    Inc(&s.Misses, 0)
+}
+
+func Larger(a *int, b *int) bool {
+    return *a > *b
+}
+
+func main() {
+    var srv = new Server{Name: "s"}
+    Hit(&srv.St)
+    Hit(&srv.St)
+    Inc(&srv.St.Misses, 3)
+    println(srv.St.Hits, srv.St.Misses)
+    var xs = [1, 2, 3]
+    Inc(&xs[1], 40)
+    println(xs, Larger(&xs[1], &xs[2]))
+    var arr [3]int
+    Inc(&arr[2], 7)
+    println(arr)
+}

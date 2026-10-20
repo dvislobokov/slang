@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors.error_in_closure
 
-import std.io
 import std
+import std.io
 
 func main() {
     var parse = func(s string) int! {

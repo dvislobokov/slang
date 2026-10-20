@@ -1,0 +1,29 @@
+// test: async methods mutate the receiver through the pointer; concurrent calls on one object interleave at awaits
+// status: passing
+namespace spec.async2.async_method_pointer
+
+import std.io
+import std
+
+struct Account {
+    Name string
+    Balance int
+
+    async func Deposit(n int, ms int) int {
+        await task.Delay(ms)
+        this.Balance += n
+        return this.Balance
+    }
+}
+
+async func main() {
+    var acc = new Account{Name: "a"}
+    var t1 = acc.Deposit(10, 60)
+    var t2 = acc.Deposit(5, 1)
+    var second = await t1
+    var first = await t2
+    println(first, second, acc.Balance)
+    var local = Account{Name: "l"}
+    await local.Deposit(7, 0)
+    println(local.Balance)
+}

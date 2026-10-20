@@ -8,7 +8,7 @@ struct Point {
 
 struct Line {
     From Point
-    To Point
+    To   Point
 }
 
 func main() {

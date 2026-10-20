@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.crypto_hmac
 
-import std.io
 import std.crypto.hmac
+import std.io
 
 func main() {
     println(Sha256Hex("Jefe", "what do ya want for nothing?"))

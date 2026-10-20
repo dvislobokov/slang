@@ -2,10 +2,14 @@
 // status: passing
 namespace spec.namespaces.conflict_resolved
 
-import std.io
 import std.crypto.hash
 import std.crypto.hmac as mac
+import std.io
 
 func main() {
-    println(len(Sha256Hex("a")), len(mac.Sha256Hex("k", "a")), len(std.crypto.hmac.Sha256Hex("k", "a")))
+    println(
+        len(Sha256Hex("a")),
+        len(mac.Sha256Hex("k", "a")),
+        len(std.crypto.hmac.Sha256Hex("k", "a")),
+    )
 }

@@ -13,7 +13,7 @@ interface Sized {
 }
 
 struct File {
-    Path string
+    Path  string
     Bytes int
     func Name() string { return this.Path }
     func Size() int { return this.Bytes }

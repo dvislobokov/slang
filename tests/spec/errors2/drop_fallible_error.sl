@@ -1,0 +1,17 @@
+// error: must be declared as `func Drop()`
+// status: passing
+namespace spec.errors2.drop_fallible_error
+
+import std.io
+
+struct File {
+    Name string
+    func Drop() void! {
+        return error("close failed")
+    }
+}
+
+func main() {
+    var f = File{Name: "a"}
+    println(f.Name)
+}

@@ -1,5 +1,5 @@
 // test: reflect.ValueOf(&u).Field(name) reads and writes a field through the pointer
-// status: pending
+// status: passing
 namespace spec.reflection.value_field_set_get
 
 import std.io

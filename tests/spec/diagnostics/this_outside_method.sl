@@ -1,0 +1,13 @@
+// error: this used outside of a method
+// status: passing
+namespace spec.diagnostics.this_outside_method
+
+import std.io
+
+func F() int {
+    return this.X
+}
+
+func main() {
+    println(F())
+}

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.crypto_hashes
 
-import std.io
 import std.crypto
+import std.io
 
 func main() {
     println(hash.Sha256Hex(""))

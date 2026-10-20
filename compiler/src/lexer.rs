@@ -6,6 +6,12 @@
 //! (see [`TokenKind::ends_statement`]). Unlike Go, no semicolons are inserted
 //! while directly inside `( )` or `[ ]`, so argument lists and slice literals
 //! may span lines without trailing commas. Inside `{ }` the normal rule applies.
+//!
+//! **Trivia** ([`lex_with_trivia`]): comments and runs of newlines are
+//! recorded and attached to the following real token as its *leading
+//! trivia* (automatic semicolons are zero-width and get none; trivia at the
+//! end of the file belongs to `Eof`). The formatter uses it to keep
+//! comments and blank lines; the token stream is the same as [`lex`]'s.
 
 use crate::diagnostics::Diagnostics;
 use crate::span::Span;
@@ -14,16 +20,80 @@ use crate::token::{Token, TokenKind};
 /// Tokenizes `src`. Lexical errors are reported to `diags` and lexing
 /// continues; the result always ends with an `Eof` token.
 pub fn lex(src: &str, diags: &mut Diagnostics) -> Vec<Token> {
-    lex_with_comments(src, diags).0
+    lex_with_trivia(src, diags).tokens
 }
 
 /// Like [`lex`], but also returns the spans of all comments (`// ...` up to
 /// the end of the line, and `/* ... */`), in source order. The token stream
 /// is identical to [`lex`]'s.
 pub fn lex_with_comments(src: &str, diags: &mut Diagnostics) -> (Vec<Token>, Vec<Span>) {
-    let mut lexer = Lexer { src, pos: 0, tokens: Vec::new(), delims: Vec::new(), diags, comments: Vec::new() };
+    let l = lex_with_trivia(src, diags);
+    let comments = l.trivia.iter().filter(|t| t.is_comment()).map(|t| t.span).collect();
+    (l.tokens, comments)
+}
+
+/// A piece of source between tokens that tools must preserve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriviaKind {
+    /// `// ...` up to (not including) the end of the line.
+    LineComment,
+    /// `/* ... */` (nestable).
+    BlockComment,
+    /// A run of whitespace containing `n >= 1` newlines (`n >= 2` means at
+    /// least one blank line). Whitespace without newlines is not recorded.
+    Newlines(u32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Trivia {
+    pub kind: TriviaKind,
+    pub span: Span,
+}
+
+impl Trivia {
+    pub fn is_comment(&self) -> bool {
+        matches!(self.kind, TriviaKind::LineComment | TriviaKind::BlockComment)
+    }
+}
+
+/// Tokens plus their leading trivia (see the module docs).
+#[derive(Clone, Debug, Default)]
+pub struct Lexed {
+    pub tokens: Vec<Token>,
+    /// All trivia in source order.
+    pub trivia: Vec<Trivia>,
+    /// `leading[i]` is the range of `trivia` that precedes `tokens[i]`.
+    pub leading: Vec<std::ops::Range<usize>>,
+}
+
+impl Lexed {
+    /// Leading trivia of token `i`.
+    pub fn leading(&self, i: usize) -> &[Trivia] {
+        self.leading.get(i).map_or(&[], |r| &self.trivia[r.clone()])
+    }
+
+    /// Index of the first token starting at or after `offset` (binary search).
+    pub fn token_at(&self, offset: u32) -> usize {
+        self.tokens.partition_point(|t| t.span.start < offset)
+    }
+}
+
+/// Like [`lex`], also recording trivia (comments and newline runs) as the
+/// leading trivia of each token.
+pub fn lex_with_trivia(src: &str, diags: &mut Diagnostics) -> Lexed {
+    let mut lexer = Lexer {
+        src,
+        pos: 0,
+        tokens: Vec::new(),
+        delims: Vec::new(),
+        diags,
+        trivia: Vec::new(),
+        pending_from: 0,
+        leading: Vec::new(),
+        newlines: None,
+    };
     lexer.run();
-    (lexer.tokens, lexer.comments)
+    Lexed { tokens: lexer.tokens, trivia: lexer.trivia, leading: lexer.leading }
 }
 
 struct Lexer<'a, 'd> {
@@ -34,8 +104,14 @@ struct Lexer<'a, 'd> {
     /// Stack of currently open `(`, `[` and `{`.
     delims: Vec<TokenKind>,
     diags: &'d mut Diagnostics,
-    /// Spans of the comments skipped as trivia.
-    comments: Vec<Span>,
+    /// Trivia recorded so far.
+    trivia: Vec<Trivia>,
+    /// Start of the trivia not yet attached to a token.
+    pending_from: usize,
+    /// Leading trivia range of each token.
+    leading: Vec<std::ops::Range<usize>>,
+    /// Current newline run: (start offset, count, end offset).
+    newlines: Option<(usize, u32, usize)>,
 }
 
 impl Lexer<'_, '_> {
@@ -63,7 +139,21 @@ impl Lexer<'_, '_> {
         }
         self.insert_semi();
         let end = self.src.len() as u32;
+        self.attach_trivia();
         self.tokens.push(Token { kind: TokenKind::Eof, span: Span::new(end, end) });
+    }
+
+    /// Attaches the pending trivia to the token about to be pushed.
+    fn attach_trivia(&mut self) {
+        self.flush_newlines();
+        self.leading.push(self.pending_from..self.trivia.len());
+        self.pending_from = self.trivia.len();
+    }
+
+    fn flush_newlines(&mut self) {
+        if let Some((start, n, end)) = self.newlines.take() {
+            self.trivia.push(Trivia { kind: TriviaKind::Newlines(n), span: Span::new(start as u32, end as u32) });
+        }
     }
 
     // ----- helpers -------------------------------------------------------
@@ -92,6 +182,7 @@ impl Lexer<'_, '_> {
     }
 
     fn push(&mut self, kind: TokenKind, start: usize) {
+        self.attach_trivia();
         self.tokens.push(Token { kind, span: Span::new(start as u32, self.pos as u32) });
     }
 
@@ -123,6 +214,8 @@ impl Lexer<'_, '_> {
                 && TokenKind::keyword(last.kind.text()).is_some();
             if last.kind.ends_statement() || keyword_name {
                 let end = last.span.end;
+                // Zero-width: no trivia of its own.
+                self.leading.push(self.pending_from..self.pending_from);
                 self.tokens.push(Token { kind: TokenKind::Semi, span: Span::new(end, end) });
             }
         }
@@ -134,12 +227,18 @@ impl Lexer<'_, '_> {
             match c {
                 '\n' => {
                     self.insert_semi();
+                    let at = self.pos;
+                    self.newlines = Some(match self.newlines {
+                        Some((s, n, _)) => (s, n + 1, at + 1),
+                        None => (at, 1, at + 1),
+                    });
                     self.pos += 1;
                 }
                 c if c.is_whitespace() => {
                     self.bump();
                 }
                 '/' if self.peek_at(1) == Some('/') => {
+                    self.flush_newlines();
                     let start = self.pos;
                     while let Some(c) = self.peek() {
                         if c == '\n' {
@@ -147,9 +246,12 @@ impl Lexer<'_, '_> {
                         }
                         self.bump();
                     }
-                    self.comments.push(Span::new(start as u32, self.pos as u32));
+                    self.trivia.push(Trivia { kind: TriviaKind::LineComment, span: Span::new(start as u32, self.pos as u32) });
                 }
-                '/' if self.peek_at(1) == Some('*') => self.block_comment(),
+                '/' if self.peek_at(1) == Some('*') => {
+                    self.flush_newlines();
+                    self.block_comment()
+                }
                 _ => break,
             }
         }
@@ -173,7 +275,7 @@ impl Lexer<'_, '_> {
                 Some(_) => {}
             }
         }
-        self.comments.push(Span::new(start as u32, self.pos as u32));
+        self.trivia.push(Trivia { kind: TriviaKind::BlockComment, span: Span::new(start as u32, self.pos as u32) });
         if saw_newline {
             self.insert_semi();
         }
@@ -664,6 +766,26 @@ mod tests {
         assert_eq!(d.items[0].span, Span::new(4, 5));
         let k: Vec<_> = toks.into_iter().map(|t| t.kind).collect();
         assert_eq!(k, vec![ident("x"), Assign, Int("1".into()), Semi, Eof]);
+    }
+
+    #[test]
+    fn trivia_is_attached_to_the_next_token() {
+        let src = "a // one\n\n/* two */ b\nc\n";
+        let mut d = Diagnostics::new();
+        let l = lex_with_trivia(src, &mut d);
+        assert_eq!(l.tokens.len(), l.leading.len());
+        let kinds: Vec<TokenKind> = l.tokens.iter().map(|t| t.kind.clone()).collect();
+        assert_eq!(kinds, vec![ident("a"), Semi, ident("b"), Semi, ident("c"), Semi, Eof]);
+        let text = |t: &Trivia| &src[t.span.start as usize..t.span.end as usize];
+        // `b` carries the comment after `a`, the blank line and `/* two */`.
+        let b: Vec<(TriviaKind, &str)> = l.leading(2).iter().map(|t| (t.kind, text(t))).collect();
+        assert_eq!(b, vec![(TriviaKind::LineComment, "// one"), (TriviaKind::Newlines(2), "\n\n"), (TriviaKind::BlockComment, "/* two */")]);
+        assert!(l.leading(1).is_empty(), "automatic semicolons have no trivia");
+        assert_eq!(l.leading(4).iter().map(|t| t.kind).collect::<Vec<_>>(), vec![TriviaKind::Newlines(1)]);
+        assert_eq!(l.leading(6).iter().map(|t| t.kind).collect::<Vec<_>>(), vec![TriviaKind::Newlines(1)]);
+        assert_eq!(l.token_at(src.find('c').unwrap() as u32), 4);
+        let (_, comments) = lex_with_comments(src, &mut d);
+        assert_eq!(comments.len(), 2);
     }
 
     #[test]

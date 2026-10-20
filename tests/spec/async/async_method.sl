@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.async_method
 
-import std.io
 import std
+import std.io
 
 struct Account {
     Balance int

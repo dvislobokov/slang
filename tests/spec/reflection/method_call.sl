@@ -1,5 +1,5 @@
 // test: t.Method(name) finds a method; Call invokes it with a receiver; unknown names give nil
-// status: pending
+// status: passing
 namespace spec.reflection.method_call
 
 import std.io

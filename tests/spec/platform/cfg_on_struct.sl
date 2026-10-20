@@ -1,0 +1,22 @@
+// test: @cfg works on structs: each platform declares its own Handle type
+// status: pending
+namespace spec.platform.cfg_on_struct
+
+import std.io
+
+@cfg(os: "windows")
+struct Handle {
+    Raw int
+    func Kind() string { return "HANDLE" }
+}
+
+@cfg(os: "linux")
+struct Handle {
+    Fd int
+    func Kind() string { return "fd" }
+}
+
+func main() {
+    var h = Handle{Fd: 3}
+    println(h.Kind(), h.Fd)
+}

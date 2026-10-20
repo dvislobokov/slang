@@ -1,0 +1,39 @@
+// test: type arguments are inferred through func(T) U parameters, including a returned composition
+// status: passing
+namespace spec.generics2.infer_through_lambdas
+
+import std.io
+import std
+
+func MapAll<T, U>(xs []T, f func(T) U) []U {
+    var out []U = []
+    for x in xs {
+        out = append(out, f(x))
+    }
+    return out
+}
+
+func Compose<A, B, C>(f func(A) B, g func(B) C) func(A) C {
+    return (a A) => g(f(a))
+}
+
+func Fold<T, R>(xs []T, init R, f func(R, T) R) R {
+    var acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    return acc
+}
+
+func main() {
+    var stars = MapAll([1, 2, 3], (n int) => strings.Repeat("*", n))
+    println(stars)
+    var lens = MapAll(stars, (s string) => len(s) * 10)
+    println(lens)
+    var h = Compose((n int) => n + 1, (n int) => float(n) * 0.5)
+    println(h(4))
+    var joined = Fold(["a", "b", "c"], "", (acc string, s string) => acc + s + s)
+    println(joined)
+    var count = Fold(lens, 0, (acc int, n int) => acc + n)
+    println(count)
+}

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.os_env
 
-import std.io
 import std
+import std.io
 
 func main() {
     println("[" + os.Getenv("SLANG_SPEC_SURELY_UNSET_VAR") + "]")

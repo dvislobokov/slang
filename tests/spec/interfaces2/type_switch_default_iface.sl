@@ -1,0 +1,28 @@
+// test: a type switch case may name an interface that has default methods, and call them on the binding
+// status: pending
+namespace spec.interfaces2.type_switch_default_iface
+
+import std.io
+
+interface Named {
+    func Name() string
+    func Shout() string { return this.Name() + "!" }
+}
+
+struct Dog {
+    func Name() string { return "rex" }
+}
+
+struct Rock {}
+
+func Try(x any) {
+    switch x {
+        case Named n: println(n.Shout())
+        default: println("nameless")
+    }
+}
+
+func main() {
+    Try(Dog{})
+    Try(Rock{})
+}

@@ -1,5 +1,5 @@
 // test: f.Attribute<A>() returns the attribute value as *A, or nil when absent
-// status: pending
+// status: passing
 namespace spec.reflection.field_attribute
 
 import std.io

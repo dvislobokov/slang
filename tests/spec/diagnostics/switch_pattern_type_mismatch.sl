@@ -1,0 +1,13 @@
+// error: switch pattern type mismatch
+// status: passing
+namespace spec.diagnostics.switch_pattern_type_mismatch
+
+import std.io
+
+func main() {
+    var n = 1
+    switch n {
+        case "one": println("one")
+        default: println("other")
+    }
+}

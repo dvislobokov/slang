@@ -1,0 +1,12 @@
+// error: a fallible type cannot be fallible again
+// status: passing
+namespace spec.diagnostics.double_fallible
+
+import std.io
+
+func Wrap<T>(x T) T! { return x }
+
+func main() {
+    var n = try Wrap<int!>(1) else 0
+    println(n)
+}

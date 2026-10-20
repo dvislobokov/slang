@@ -3,6 +3,7 @@
 namespace spec.ns.mutual
 
 import std.io
+
 import spec.ns.mutual.a
 
 func main() {

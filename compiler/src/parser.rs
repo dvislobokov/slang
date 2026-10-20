@@ -22,18 +22,64 @@
 //! - `else`/`catch` may also start the line after `}`/the `try` operand.
 //! - `a, b = b, a` is an assignment whose target and value are `Tuple`s.
 //!
-//! Errors are reported as "expected X, found Y"; the parser then
-//! synchronizes to the next statement (`;` or `}`) and continues.
+//! ## Error recovery
+//!
+//! Errors are reported as "expected X, found Y". The parser never gives
+//! up: [`parse_file`] always returns a [`File`], with error nodes where
+//! input was missing or skipped, so tools (LSP, completion) work on
+//! half-written code:
+//! - **Expressions**: a missing operand becomes [`ExprKind::Error`]
+//!   (zero-width, nothing consumed); `x.` with no name yet becomes
+//!   `Field { base, name: "" }`; an unclosed `f(` becomes a `Call` whose
+//!   last argument is an error node.
+//! - **Expression lists** (call arguments, slice literals): a bad element
+//!   is skipped up to the next `,` or the closing bracket; a missing
+//!   closing bracket before `}`, end of line or end of file is reported
+//!   and the list is closed there.
+//! - **Types**: a missing type becomes [`TypeKind::Error`].
+//! - **Statements**: a statement that fails is skipped to the next `;` (or
+//!   the `}` of its block) and recorded as [`StmtKind::Error`]. A
+//!   declaration keyword at statement start (`func Name`, `struct`, ...)
+//!   means a `}` is missing: the block is closed there.
+//! - **Blocks**: a missing `}` at end of file closes the block (and every
+//!   enclosing one).
+//! - **Declarations**: a failed top-level declaration is skipped to the
+//!   next declaration keyword and recorded as [`Decl::Error`].
+//!
+//! Speculative parses (`silent` mode) never build error nodes: they fail,
+//! so the caller backtracks.
 
 use crate::ast::*;
 use crate::diagnostics::Diagnostics;
 use crate::span::Span;
 use crate::token::{Token, TokenKind};
 
-/// Parses a whole file. Every syntax error is reported to `diags`; the
-/// parser recovers and keeps going so several errors can be reported.
-/// Returns `None` if any syntax error was found.
-pub fn parse(mut tokens: Vec<Token>, diags: &mut Diagnostics) -> Option<File> {
+mod recovery;
+
+/// Parses a whole file and returns its AST even when there are syntax
+/// errors (see the module docs on recovery). Every syntax error is
+/// reported to `diags`.
+pub fn parse_file(tokens: Vec<Token>, diags: &mut Diagnostics) -> File {
+    parse_impl(tokens, diags).0
+}
+
+/// Compatibility wrapper over [`parse_file`] for phases that only accept
+/// a clean AST: `None` if any syntax error was found.
+pub fn parse(tokens: Vec<Token>, diags: &mut Diagnostics) -> Option<File> {
+    let (file, errors) = parse_impl(tokens, diags);
+    (errors == 0).then_some(file)
+}
+
+/// Lexes and parses `src`: the (possibly partial) AST and all lexer and
+/// parser diagnostics.
+pub fn parse_source(src: &str) -> (File, Diagnostics) {
+    let mut diags = Diagnostics::new();
+    let tokens = crate::lexer::lex(src, &mut diags);
+    let file = parse_file(tokens, &mut diags);
+    (file, diags)
+}
+
+fn parse_impl(mut tokens: Vec<Token>, diags: &mut Diagnostics) -> (File, usize) {
     if tokens.last().map(|t| &t.kind) != Some(&TokenKind::Eof) {
         let end = tokens.last().map(|t| t.span.end).unwrap_or(0);
         tokens.push(Token { kind: TokenKind::Eof, span: Span::new(end, end) });
@@ -47,15 +93,12 @@ pub fn parse(mut tokens: Vec<Token>, diags: &mut Diagnostics) -> Option<File> {
         silent: false,
         error_count: 0,
         last_error_at: None,
+        closed_early: false,
         splits: Vec::new(),
         diags,
     };
     let file = p.file();
-    if p.error_count > 0 {
-        None
-    } else {
-        Some(file)
-    }
+    (file, p.error_count)
 }
 
 /// Marker for "a diagnostic has already been recorded".
@@ -80,6 +123,9 @@ struct Parser<'d> {
     error_count: usize,
     /// Start offset of the last reported error, to avoid duplicates.
     last_error_at: Option<u32>,
+    /// A body was closed without its `}` (before a declaration or at end
+    /// of file), already reported; the declaration needs no terminator.
+    closed_early: bool,
     /// `>>` tokens split into two `>` (for nested generics), so a
     /// speculative parse can undo them: (index, original token).
     splits: Vec<(usize, Token)>,
@@ -178,122 +224,6 @@ impl Parser<'_> {
     }
 
     // =====================================================================
-    // Errors and recovery
-    // =====================================================================
-
-    fn error_at(&mut self, span: Span, msg: impl Into<String>) -> ParseError {
-        if !self.silent && self.last_error_at != Some(span.start) {
-            self.diags.error(msg, span);
-            self.error_count += 1;
-            self.last_error_at = Some(span.start);
-        }
-        if !self.silent {
-            // Even a de-duplicated error makes the parse fail.
-            self.error_count = self.error_count.max(1);
-        }
-        ParseError
-    }
-
-    /// "expected {what}, found {current token}".
-    fn unexpected(&mut self, what: &str) -> ParseError {
-        let msg = format!("expected {what}, found {}", self.peek().describe());
-        self.error_at(self.span(), msg)
-    }
-
-    /// After a statement or member: `;`/newline, or the closing `}`.
-    fn expect_terminator(&mut self) -> PResult<()> {
-        match self.peek() {
-            TokenKind::Semi => {
-                self.bump();
-                Ok(())
-            }
-            TokenKind::RBrace | TokenKind::Eof => Ok(()),
-            _ => Err(self.unexpected("end of line")),
-        }
-    }
-
-    /// Skips to the end of the current statement: past the next `;` at this
-    /// nesting level, or up to (not past) a `}` closing the enclosing block,
-    /// `case`/`default`, or end of file. Always makes progress unless it stops
-    /// at `}` or end of file.
-    fn sync_stmt(&mut self) {
-        let start = self.pos;
-        let mut depth = 0usize;
-        loop {
-            match self.peek() {
-                TokenKind::Eof => return,
-                TokenKind::Semi if depth == 0 => {
-                    self.bump();
-                    return;
-                }
-                TokenKind::RBrace if depth == 0 => return,
-                TokenKind::Case | TokenKind::Default if depth == 0 => {
-                    if self.pos == start {
-                        self.bump();
-                    }
-                    return;
-                }
-                TokenKind::LBrace => depth += 1,
-                TokenKind::RBrace => depth -= 1,
-                _ => {}
-            }
-            self.bump();
-        }
-    }
-
-    /// Top-level recovery: skip to the next `;` at depth 0 or the next
-    /// declaration keyword.
-    fn sync_decl(&mut self) {
-        let start = self.pos;
-        let mut depth = 0usize;
-        loop {
-            match self.peek() {
-                TokenKind::Eof => return,
-                TokenKind::Semi if depth == 0 => {
-                    self.bump();
-                    return;
-                }
-                TokenKind::Struct
-                | TokenKind::Interface
-                | TokenKind::Enum
-                | TokenKind::Func
-                | TokenKind::Async
-                | TokenKind::Var
-                | TokenKind::Const
-                | TokenKind::Import
-                    if depth == 0 && self.pos != start =>
-                {
-                    return
-                }
-                TokenKind::LBrace => depth += 1,
-                TokenKind::RBrace => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-            self.bump();
-        }
-    }
-
-    /// Runs `f` with one more level of nesting, failing if too deep.
-    fn nested<T>(&mut self, f: impl FnOnce(&mut Self) -> PResult<T>) -> PResult<T> {
-        if self.depth >= MAX_DEPTH {
-            return Err(self.error_at(self.span(), "nesting is too deep"));
-        }
-        self.depth += 1;
-        let r = f(self);
-        self.depth -= 1;
-        r
-    }
-
-    /// Runs `f` with struct literals allowed (`true`) or not (`false`).
-    fn with_struct_lit<T>(&mut self, allowed: bool, f: impl FnOnce(&mut Self) -> T) -> T {
-        let saved = self.no_struct_lit;
-        self.no_struct_lit = !allowed;
-        let r = f(self);
-        self.no_struct_lit = saved;
-        r
-    }
-
-    // =====================================================================
     // Names and paths
     // =====================================================================
 
@@ -381,19 +311,37 @@ impl Parser<'_> {
             if self.at_eof() {
                 break;
             }
+            let before = self.pos;
             if self.at(&TokenKind::Import) {
-                if !decls.is_empty() {
+                if decls.iter().any(|d| !matches!(d, Decl::Error(_))) {
                     self.error_at(self.span(), "imports must come before declarations");
                 }
                 match self.import() {
                     Ok(i) => imports.push(i),
                     Err(_) => self.sync_decl(),
                 }
-                continue;
+            } else {
+                let start = self.span();
+                match self.decl() {
+                    Ok(d) => {
+                        decls.push(d);
+                        // After a body closed early (missing `}`), the next
+                        // declaration follows directly.
+                        let early = std::mem::take(&mut self.closed_early);
+                        if !early && self.expect_terminator().is_err() {
+                            let skip = self.span();
+                            self.sync_decl();
+                            decls.push(Decl::Error(self.skipped_from(skip)));
+                        }
+                    }
+                    Err(_) => {
+                        self.sync_decl();
+                        decls.push(Decl::Error(self.skipped_from(start)));
+                    }
+                }
             }
-            match self.decl().and_then(|d| self.expect_terminator().map(|_| d)) {
-                Ok(d) => decls.push(d),
-                Err(_) => self.sync_decl(),
+            if self.pos == before && !self.at_eof() {
+                self.bump();
             }
         }
         File { attrs, namespace, imports, decls, span: self.span_from(start) }
@@ -433,6 +381,7 @@ impl Parser<'_> {
                 Decl::Func(d) => (d.attrs, d.span) = (attrs, span),
                 Decl::Var(d) => (d.attrs, d.span) = (attrs, span),
                 Decl::Const(d) => (d.attrs, d.span) = (attrs, span),
+                Decl::Error(_) => {}
             }
         }
         Ok(decl)
@@ -552,12 +501,19 @@ impl Parser<'_> {
             if self.at(&TokenKind::RBrace) || self.at_eof() {
                 break;
             }
+            if matches!(self.peek(), TokenKind::Struct | TokenKind::Interface | TokenKind::Enum | TokenKind::Import | TokenKind::Namespace) {
+                // A nested declaration: this body lacks its `}`.
+                break;
+            }
+            let before = self.pos;
             if member(self).and_then(|_| self.expect_terminator()).is_err() {
                 self.sync_stmt();
             }
+            if self.pos == before && !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                self.bump();
+            }
         }
-        self.expect(&TokenKind::RBrace)?;
-        Ok(())
+        self.close_brace()
     }
 
     /// `interface Name { func M(..) T }`
@@ -596,11 +552,17 @@ impl Parser<'_> {
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
         let mut methods = Vec::new();
+        let mut last = usize::MAX;
         loop {
             while self.eat(&TokenKind::Semi) || self.eat(&TokenKind::Comma) {}
-            if self.at(&TokenKind::RBrace) || self.at_eof() {
+            if self.at(&TokenKind::RBrace) || self.at_eof() || matches!(self.peek(), TokenKind::Struct | TokenKind::Interface | TokenKind::Enum | TokenKind::Import) {
                 break;
             }
+            if self.pos == last {
+                self.bump();
+                continue;
+            }
+            last = self.pos;
             if matches!(self.peek(), TokenKind::Func | TokenKind::Static | TokenKind::Async) || (self.at(&TokenKind::At) && !methods.is_empty()) {
                 let attrs = self.attributes()?;
                 match self.func_decl(true) {
@@ -629,7 +591,7 @@ impl Parser<'_> {
                 self.sync_stmt();
             }
         }
-        self.expect(&TokenKind::RBrace)?;
+        self.close_brace()?;
         Ok(EnumDecl { attrs: Vec::new(), name, generics, variants, methods, span: self.span_from(start) })
     }
 
@@ -848,7 +810,10 @@ impl Parser<'_> {
                     }
                     TypeKind::Tuple(types)
                 }
-                _ => return Err(p.unexpected("type")),
+                _ => {
+                    let here = p.here();
+                    return p.recover("type", TypeExpr { kind: TypeKind::Error, span: here });
+                }
             };
             Ok(TypeExpr { kind, span: p.span_from(start) })
         })
@@ -892,7 +857,7 @@ impl Parser<'_> {
         self.nested(|p| {
             let start = p.expect(&TokenKind::LBrace)?;
             let stmts = p.with_struct_lit(true, |p| p.stmt_list(|k| matches!(k, TokenKind::RBrace)));
-            p.expect(&TokenKind::RBrace)?;
+            p.close_brace()?;
             Ok(Block { stmts, span: p.span_from(start) })
         })
     }
@@ -905,14 +870,28 @@ impl Parser<'_> {
             if stop(self.peek()) || self.at_eof() {
                 break;
             }
+            if self.at_decl_start() {
+                // A declaration inside a body: the body lacks its `}`.
+                break;
+            }
+            let start = self.span();
+            let before = self.pos;
             match self.stmt() {
                 Ok(s) => {
                     stmts.push(s);
                     if !stop(self.peek()) && self.expect_terminator().is_err() {
+                        let skip = self.span();
                         self.sync_stmt();
+                        stmts.push(Stmt { kind: StmtKind::Error, span: self.skipped_from(skip) });
                     }
                 }
-                Err(_) => self.sync_stmt(),
+                Err(_) => {
+                    self.sync_stmt();
+                    stmts.push(Stmt { kind: StmtKind::Error, span: self.skipped_from(start) });
+                }
+            }
+            if self.pos == before && !stop(self.peek()) && !self.at_eof() {
+                self.bump();
             }
         }
         stmts
@@ -1087,13 +1066,18 @@ impl Parser<'_> {
                         default = Some(body);
                     }
                 }
+                _ if self.at_decl_start() => break,
                 _ => {
+                    let before = self.pos;
                     self.unexpected("`case`, `default` or `}`");
                     self.sync_stmt();
+                    if self.pos == before && !self.at(&TokenKind::RBrace) {
+                        self.bump();
+                    }
                 }
             }
         }
-        self.expect(&TokenKind::RBrace)?;
+        self.close_brace()?;
         Ok(SwitchStmt { subject, cases, default, span: self.span_from(start) })
     }
 
@@ -1275,8 +1259,14 @@ impl Parser<'_> {
             let start = expr.span;
             let kind = match self.peek() {
                 TokenKind::Dot => {
-                    self.bump();
-                    let name = self.field_name()?;
+                    let dot = self.bump().span;
+                    let name = if self.silent || self.field_name_ahead() {
+                        self.field_name()?
+                    } else {
+                        // `x.` being typed: an empty name right after the dot.
+                        self.unexpected("field name");
+                        Ident { name: String::new(), span: Span::new(dot.end, dot.end) }
+                    };
                     ExprKind::Field { base: Box::new(expr), name }
                 }
                 TokenKind::LParen => {
@@ -1353,6 +1343,14 @@ impl Parser<'_> {
         ok
     }
 
+    /// Can [`Parser::field_name`] succeed at the current token?
+    fn field_name_ahead(&self) -> bool {
+        match self.peek() {
+            TokenKind::Ident(_) | TokenKind::Int(_) => true,
+            k => k.text().chars().all(|c| c.is_ascii_lowercase()),
+        }
+    }
+
     /// Name after `.`: an identifier, a keyword used as a name, or a tuple index.
     fn field_name(&mut self) -> PResult<Ident> {
         let tok = self.peek().clone();
@@ -1368,18 +1366,7 @@ impl Parser<'_> {
     /// `(a, b, c)` with optional trailing comma.
     fn call_args(&mut self) -> PResult<Vec<Expr>> {
         self.expect(&TokenKind::LParen)?;
-        let args = self.with_struct_lit(true, |p| {
-            let mut args = Vec::new();
-            while !p.at(&TokenKind::RParen) && !p.at_eof() {
-                args.push(p.parse_expr()?);
-                if !p.eat(&TokenKind::Comma) {
-                    break;
-                }
-            }
-            Ok(args)
-        })?;
-        self.expect(&TokenKind::RParen)?;
-        Ok(args)
+        self.with_struct_lit(true, |p| p.recovering_list(&TokenKind::RParen, |p| p.parse_expr(), Expr::error))
     }
 
     /// `{ Name: value, ... }` after a struct literal's path.
@@ -1446,17 +1433,7 @@ impl Parser<'_> {
             TokenKind::LParen => return self.paren_or_lambda(),
             TokenKind::LBracket => {
                 self.bump();
-                let elems = self.with_struct_lit(true, |p| {
-                    let mut elems = Vec::new();
-                    while !p.at(&TokenKind::RBracket) && !p.at_eof() {
-                        elems.push(p.parse_expr()?);
-                        if !p.eat(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    Ok(elems)
-                })?;
-                self.expect(&TokenKind::RBracket)?;
+                let elems = self.with_struct_lit(true, |p| p.recovering_list(&TokenKind::RBracket, |p| p.parse_expr(), Expr::error))?;
                 ExprKind::SliceLit(elems)
             }
             TokenKind::Map => self.map_lit()?,
@@ -1483,7 +1460,10 @@ impl Parser<'_> {
                 }
                 e.kind
             }
-            _ => return Err(self.unexpected("expression")),
+            _ => {
+                let here = self.here();
+                return self.recover("expression", Expr::error(here));
+            }
         };
         Ok(Expr { kind, span: self.span_from(start) })
     }

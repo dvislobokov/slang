@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.collections_queue_stack
 
-import std.io
 import std.collections
+import std.io
 
 func main() {
     var q = Queue<int>{}

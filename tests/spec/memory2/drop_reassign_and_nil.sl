@@ -1,0 +1,28 @@
+// test: reassigning a pointer drops the old object at once; a struct value reassigned drops its old value
+// status: passing
+namespace spec.memory2.drop_reassign_and_nil
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop", this.Name) }
+}
+
+struct Slot {
+    P *R
+}
+
+func main() {
+    var p = new R{Name: "one"}
+    p = new R{Name: "two"}
+    println("reassigned")
+    var s = Slot{P: p}
+    p = nil
+    println("p cleared, slot keeps", s.P.Name)
+    s.P = new R{Name: "three"}
+    println("slot replaced")
+    var v = R{Name: "v1"}
+    v = R{Name: "v2"}
+    println("value replaced", v.Name)
+}

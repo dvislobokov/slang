@@ -8,7 +8,7 @@ enum State { Idle, Running, Done }
 
 struct Job {
     Name string
-    S State
+    S    State
 }
 
 func main() {

@@ -6,6 +6,7 @@ pub mod build;
 pub mod codegen;
 pub mod diagnostics;
 pub mod driver;
+pub mod fmt;
 pub mod hir;
 pub mod lexer;
 pub mod package;

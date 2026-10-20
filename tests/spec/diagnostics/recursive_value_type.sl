@@ -1,0 +1,14 @@
+// error: invalid recursive type
+// status: passing
+namespace spec.diagnostics.recursive_value_type
+
+import std.io
+
+struct Node {
+    V int
+    Next Node
+}
+
+func main() {
+    println("x")
+}

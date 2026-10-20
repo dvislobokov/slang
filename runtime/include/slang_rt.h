@@ -385,6 +385,45 @@ bool slang_chan_recv(slang_chan *ch, void *out);                 /* blocking; ou
 void slang_chan_close(slang_chan *ch);
 int64_t slang_chan_len(const slang_chan *ch);
 
+/* Completes `task` unless it is already done; returns whether it did. */
+bool slang_task_try_complete(slang_task *task, const void *result);
+
+/* Task context (ABI.md 10.8): an opaque object per running task, inherited
+ * by continuations, spawned jobs and tasks started from it. */
+slang_object *slang_task_get_ctx(void);          /* +1 or NULL */
+void slang_task_set_ctx(slang_object *ctx);      /* borrowed; retained */
+
+/* A task for callback-style producers; unlike slang_task_new it does not
+ * become the current task (ABI.md 10.11). */
+slang_task *slang_task_new_plain(int64_t result_size, const slang_value_ops *result_ops);
+
+/* Cancellation (ABI.md 10.11). */
+void slang_task_cancel(slang_task *task);               /* cascades to descendants */
+bool slang_task_is_cancelled(const slang_task *task);   /* NULL -> false */
+bool slang_task_cur_cancelled(void);                    /* the current task */
+void slang_task_set_deadline(slang_task *task, int64_t ms);  /* cancel after ms */
+slang_task *slang_task_current(void);                   /* +1 or NULL */
+slang_task *slang_task_new_scope(void);                 /* cancellation node under the current task, +1 */
+slang_task *slang_task_enter_scope(slang_task *scope);  /* returns the previous current (+1) */
+void slang_task_leave_scope(slang_task *prev);          /* borrowed */
+slang_error *slang_task_err_cancelled(void);            /* std.task.ErrCancelled, immortal */
+int64_t slang_task_next_key(void);
+
+/* std.task primitives used by the Slang-source parts of std.task. */
+slang_task *slang_task_rt_signal(void);          /* pending Task<void>, +1; fired when the current task is cancelled */
+slang_task *slang_task_rt_waker(void);           /* the same, never fired by cancellation */
+void slang_task_rt_fire(slang_task *signal);     /* complete (idempotent), cancels a delay */
+void slang_task_spin_lock(int64_t *slot);        /* 0 = free, 1 = held */
+void slang_task_spin_unlock(int64_t *slot);
+slang_task *slang_task_yield(void);              /* completes from a fresh job, +1 */
+
+/* Readiness waits (task_io.c, ABI.md 10.9). Result: int64_t
+ * 0 = ready, 1 = timed out, 2 = the fd was released with slang_io_forget,
+ * 3 = the waiting task was cancelled. */
+slang_task *slang_io_wait_readable(int64_t fd, int64_t timeout_ms);  /* +1; timeout < 0 = none */
+slang_task *slang_io_wait_writable(int64_t fd, int64_t timeout_ms);
+void slang_io_forget(int64_t fd);   /* call before close(fd): wakes waiters with 2 */
+
 /* ======================================================================
  * Entry / process
  * ====================================================================== */
@@ -593,6 +632,115 @@ slang_string *slang_encoding_hex_decode_string(const slang_string *s, slang_erro
 /* std.uuid (std_uuid.c) */
 slang_string *slang_uuid_new(void);                  /* random v4, lowercase */
 bool          slang_uuid_is_valid(const slang_string *s);
+
+/* std.net internals (std_net.c, ABI.md 16): used by the Slang-source std.net.
+ * Non-blocking sockets; -1 / empty + slang_net_rt_again() mean "would block". */
+int64_t slang_net_rt_connect(const slang_string *ip, int64_t port, slang_error **err);
+void    slang_net_rt_connect_result(int64_t fd, slang_error **err);
+int64_t slang_net_rt_listen(const slang_string *ip, int64_t port, slang_error **err);
+int64_t slang_net_rt_accept(int64_t fd, slang_error **err);
+void    slang_net_rt_read(int64_t fd, int64_t n, slang_slice *out, slang_error **err);
+bool    slang_net_rt_again(void);
+int64_t slang_net_rt_write(int64_t fd, const slang_slice *data, int64_t off, slang_error **err);
+int64_t slang_net_rt_write_str(int64_t fd, const slang_string *s, int64_t off, slang_error **err);
+void    slang_net_rt_close(int64_t fd);
+slang_task *slang_net_rt_wait_readable(int64_t fd, int64_t ms);
+slang_task *slang_net_rt_wait_writable(int64_t fd, int64_t ms);
+slang_string *slang_net_rt_local_addr(int64_t fd);
+slang_string *slang_net_rt_remote_addr(int64_t fd);
+int64_t slang_net_rt_port(int64_t fd);
+bool    slang_net_rt_is_ip(const slang_string *s);
+slang_task *slang_net_rt_resolve(const slang_string *host);   /* result: handle */
+void    slang_net_rt_resolve_take(int64_t handle, slang_slice *out, slang_error **err);
+int64_t slang_net_rt_udp_bind(const slang_string *ip, int64_t port, slang_error **err);
+void    slang_net_rt_recv_from(int64_t fd, int64_t n, slang_slice *out, slang_error **err);
+slang_string *slang_net_rt_last_from(void);
+int64_t slang_net_rt_last_from_port(void);
+int64_t slang_net_rt_send_to(int64_t fd, const slang_slice *data, const slang_string *ip, int64_t port,
+                             slang_error **err);
+
+/* ---- reflection tables (ABI.md section 17, std_reflect.c) ----------------
+ * Only programs that use std.reflect have them; then every slang_type_info
+ * a compiled program emits is the first part of a slang_reflect_type, and
+ * every table object is an immortal heap object (header refcount -1), so
+ * the payload pointers below are valid Slang pointers. Slices of tables
+ * have a NULL backing. Layouts are std.reflect.TypeInfo etc. in field
+ * order with natural alignment (checked by _Static_assert in std_reflect.c). */
+typedef struct slang_reflect_type slang_reflect_type;
+
+typedef enum slang_reflect_kind {
+    SLANG_KIND_INVALID, SLANG_KIND_VOID, SLANG_KIND_BOOL, SLANG_KIND_INT, SLANG_KIND_INT8,
+    SLANG_KIND_INT16, SLANG_KIND_INT32, SLANG_KIND_UINT, SLANG_KIND_UINT8, SLANG_KIND_UINT16,
+    SLANG_KIND_UINT32, SLANG_KIND_FLOAT, SLANG_KIND_FLOAT32, SLANG_KIND_CHAR, SLANG_KIND_STRING,
+    SLANG_KIND_ERROR, SLANG_KIND_ANY, SLANG_KIND_INTERFACE, SLANG_KIND_STRUCT, SLANG_KIND_ENUM,
+    SLANG_KIND_POINTER, SLANG_KIND_WEAK, SLANG_KIND_SLICE, SLANG_KIND_ARRAY, SLANG_KIND_MAP,
+    SLANG_KIND_TUPLE, SLANG_KIND_FUNC, SLANG_KIND_FALLIBLE, SLANG_KIND_TASK,
+    SLANG_KIND_COUNT
+} slang_reflect_kind;
+
+typedef struct slang_reflect_any {      /* a Slang `any`: 16 bytes */
+    void *data;                         /* +0  payload of the box */
+    const slang_reflect_type *type;     /* +8  dynamic type, NULL = nil */
+} slang_reflect_any;
+
+typedef struct slang_reflect_field {    /* std.reflect.FieldInfo, 72 bytes */
+    slang_string *name;                 /* +0 */
+    const slang_reflect_type *type;     /* +8 */
+    int64_t offset;                     /* +16 byte offset in the struct (enum value for variants) */
+    int64_t index;                      /* +24 */
+    bool embedded;                      /* +32 */
+    bool exported;                      /* +33 */
+    slang_slice attrs;                  /* +40 []any, each holding a *A */
+} slang_reflect_field;
+
+typedef struct slang_reflect_method {   /* std.reflect.MethodInfo, 72 bytes */
+    slang_string *name;                 /* +0 */
+    const slang_reflect_type *type;     /* +8  func(*S, params) ret (no receiver if static) */
+    bool is_static;                     /* +16 */
+    void *invoke;                       /* +24 packed thunk: {any, error*} (any recv, []any args) */
+    void *fnval;                        /* +32 closure-convention thunk fn(env, recv, args...) */
+    slang_slice attrs;                  /* +40 */
+} slang_reflect_method;
+
+typedef struct slang_reflect_variant {  /* std.reflect.VariantInfo, 80 bytes */
+    slang_string *name;                 /* +0 */
+    int64_t index;                      /* +8 */
+    slang_slice fields;                 /* +16 []*FieldInfo */
+    slang_slice attrs;                  /* +48 */
+} slang_reflect_variant;
+
+struct slang_reflect_type {             /* std.reflect.TypeInfo, 232 bytes */
+    slang_type_info rt;                 /* +0  name, size (16 + sizeof T), drop */
+    int32_t kind;                       /* +24 slang_reflect_kind */
+    slang_string *name;                 /* +32 short name: User, *User, []int */
+    slang_string *full_name;            /* +40 app.models.User */
+    int64_t size;                       /* +48 sizeof T */
+    int64_t align;                      /* +56 */
+    slang_slice fields;                 /* +64  []*FieldInfo (structs) */
+    slang_slice methods;                /* +96  []*MethodInfo (full types only) */
+    slang_slice variants;               /* +128 []*VariantInfo (enums) */
+    const slang_reflect_type *elem;     /* +160 pointer/slice/array/weak/T!/Task element, map value */
+    const slang_reflect_type *key;      /* +168 map key */
+    int64_t len;                        /* +176 array length */
+    slang_slice attrs;                  /* +184 []any */
+    const slang_reflect_type *ptr_to;   /* +216 *T (full types only; TypeInfo.New) */
+    const slang_reflect_type *canon;    /* +224 for a spelling alias (int64): the int table */
+};
+
+/* The table of a box (a heap object made by compiled code), or NULL. */
+const slang_reflect_type *slang_reflect_type_of(const void *obj);
+/* "Struct", "Int", ... (the std.reflect.Kind variant name). */
+const char *slang_reflect_kind_name(int32_t kind);
+/* Field / method by name ([borrowed] table entries), NULL if absent. */
+const slang_reflect_field *slang_reflect_field_by_name(const slang_reflect_type *t, const char *name);
+const slang_reflect_method *slang_reflect_method_by_name(const slang_reflect_type *t, const char *name);
+/* The canonical table (follows `canon`); NULL for NULL. */
+const slang_reflect_type *slang_reflect_canon(const slang_reflect_type *t);
+
+/* std.encoding.json (std_json.c): tokens of a JSON text (see there) and
+ * a quoted JSON string literal. */
+void          slang_encoding_json_scan(const slang_string *text, slang_slice *out, slang_error **err);
+slang_string *slang_encoding_json_quote(const slang_string *s);
 
 #ifdef __cplusplus
 }

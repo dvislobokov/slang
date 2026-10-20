@@ -13,7 +13,7 @@ CFLAGS  += -std=c11 -Wall -Wextra -Werror -fPIC -ffunction-sections -fdata-secti
 LDLIBS  = -lpthread -lm
 
 BUILD   := build
-SRCS    := $(wildcard src/*.c)
+SRCS    := $(wildcard src/*.c) $(wildcard src/platform/*.c)
 OBJS    := $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
 LIB     := $(BUILD)/libslang_rt.a
 TESTS   := $(patsubst tests/%.c,$(BUILD)/tests/%,$(wildcard tests/test_*.c))
@@ -34,13 +34,13 @@ libslang_rt.a: $(LIB)
 $(LIB): $(OBJS)
 	$(AR) rcs $@ $^
 
-$(BUILD)/%.o: src/%.c include/slang_rt.h src/rt_internal.h | $(BUILD)
+$(BUILD)/%.o: src/%.c include/slang_rt.h src/rt_internal.h src/platform/platform.h | $(BUILD) $(BUILD)/platform
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/tests/%: tests/%.c tests/test.h $(LIB) | $(BUILD)/tests
 	$(CC) $(CFLAGS) -rdynamic $< -o $@ $(LIB) $(LDLIBS)
 
-$(BUILD) $(BUILD)/tests:
+$(BUILD) $(BUILD)/tests $(BUILD)/platform:
 	mkdir -p $@
 
 # Real LLVM-coroutine lowering example (tests/coro_lowering.ll), see ABI.md.

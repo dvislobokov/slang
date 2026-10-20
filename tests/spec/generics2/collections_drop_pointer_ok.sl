@@ -1,0 +1,25 @@
+// test: values with a destructor go into collections by pointer; they are dropped when the collection releases them
+// status: passing
+namespace spec.generics2.collections_drop_pointer_ok
+
+import std.io
+import std.collections
+
+struct Handle {
+    Id int
+    func Drop() { println("close", this.Id) }
+}
+
+func Fill() {
+    var l = List<*Handle>{}
+    l.Add(new Handle{Id: 1})
+    l.Add(new Handle{Id: 2})
+    println("len", l.Len())
+    l.Remove(0)
+    println("removed")
+}
+
+func main() {
+    Fill()
+    println("end")
+}

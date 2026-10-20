@@ -1,5 +1,5 @@
 // test: strings.Builder accumulates text with Write and returns it with String
-// status: pending
+// status: passing
 namespace spec.stdlib.strings_builder
 
 import std.io

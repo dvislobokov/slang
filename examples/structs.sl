@@ -1,7 +1,7 @@
 namespace examples.structs
 
-import std.io
 import std
+import std.io
 
 struct Point {
     X float
@@ -43,7 +43,7 @@ struct Counter {
 
 struct Node {
     Value int
-    Next *Node
+    Next  *Node
 }
 
 struct Animal {

@@ -21,6 +21,10 @@ SLANG_HIDDEN int slang__utf8_encode(char *buf, int32_t r);
 /* Scheduler bootstrap (task.c), used by main.c. */
 SLANG_HIDDEN void slang__sched_start(void);
 SLANG_HIDDEN void slang__sched_stop(void);
+/* Stops the I/O poller thread (task_io.c); pending waits are dropped. */
+SLANG_HIDDEN void slang__io_stop(void);
+/* Runs fn(w) when the current task is cancelled (task.c, ABI.md 10.11). */
+SLANG_HIDDEN void slang__cancel_hook(void (*fn)(slang_task *), slang_task *w);
 
 /* Arguments registry (main.c). */
 SLANG_HIDDEN void slang__io_flush_all(void);

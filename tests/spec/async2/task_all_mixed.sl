@@ -1,0 +1,30 @@
+// test: task.All over tasks of different result types (int, string, []int, bool) destructures into a tuple
+// status: passing
+namespace spec.async2.task_all_mixed
+
+import std.io
+import std
+
+async func N() int {
+    await task.Delay(3)
+    return 7
+}
+
+async func S() string {
+    return "seven"
+}
+
+async func L() []int {
+    await task.Delay(1)
+    return [7, 7]
+}
+
+async func B() bool {
+    await task.Delay(2)
+    return true
+}
+
+async func main() {
+    var (n, s, l, b) = await task.All(N(), S(), L(), B())
+    println(n, s, l, b)
+}

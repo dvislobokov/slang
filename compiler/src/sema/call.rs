@@ -33,7 +33,7 @@ impl<'a> Sema<'a> {
             }
             let Some((res, n)) = self.resolve_segments(&segs, true) else {
                 if self.lookup_global(segs[0], false).is_none() && !self.diags.has_errors_at(segs[0].span, self.cur_file) {
-                    self.err(format!("unknown identifier {}", segs[0].name), segs[0].span);
+                    self.unknown_ident(segs[0]);
                 }
                 self.check_args_loose(args);
                 return self.invalid(span);
@@ -66,7 +66,9 @@ impl<'a> Sema<'a> {
     /// Checks call arguments against parameter types.
     pub(crate) fn check_args(&mut self, params: &[TypeId], args: &[ast::Expr], fname: &str, span: Span) -> Vec<hir::Expr> {
         if params.len() != args.len() {
-            self.err(format!("wrong number of arguments in call to {fname}: expected {}, got {}", params.len(), args.len()), span);
+            if !args.iter().any(|a| a.is_recovered()) {
+                self.err(format!("wrong number of arguments in call to {fname}: expected {}, got {}", params.len(), args.len()), span);
+            }
             self.check_args_loose(args);
             return Vec::new();
         }
@@ -156,6 +158,10 @@ impl<'a> Sema<'a> {
             self.check_args_loose(args);
             return self.invalid(span);
         }
+        let base = match self.reflect_method_call(base, name, targs, args, span) {
+            Ok(e) => return e,
+            Err(b) => b,
+        };
         if let Some(sid) = self.struct_of(base.ty) {
             if let Some(&t) = self.gen.methods.get(&(sid, name.name.clone())) {
                 let recv = if matches!(self.tt.get(base.ty), Type::Pointer(_)) { base } else { self.addr_of(base) };
@@ -253,7 +259,9 @@ impl<'a> Sema<'a> {
 
     fn arity(&mut self, name: &str, args: &[ast::Expr], n: usize, span: Span) -> bool {
         if args.len() != n {
-            self.err(format!("wrong number of arguments in call to {name}: expected {n}, got {}", args.len()), span);
+            if !args.iter().any(|a| a.is_recovered()) {
+                self.err(format!("wrong number of arguments in call to {name}: expected {n}, got {}", args.len()), span);
+            }
             self.check_args_loose(args);
             return false;
         }
@@ -338,11 +346,7 @@ impl<'a> Sema<'a> {
                 };
                 bi(Builtin::Panic, vec![v], self.tt.void)
             }
-            BuiltinFn::Typeof => {
-                self.err("typeof (reflection) is not supported yet", span);
-                self.check_args_loose(args);
-                self.invalid(span)
-            }
+            BuiltinFn::Typeof => self.typeof_builtin(args, span),
         }
     }
 

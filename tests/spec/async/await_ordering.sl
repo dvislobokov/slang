@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.await_ordering
 
-import std.io
 import std
+import std.io
 
 async func Step(name string, ms int) string {
     await task.Delay(ms)

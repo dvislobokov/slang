@@ -5,7 +5,7 @@ namespace spec.pointers.new_with_slice_fields
 import std.io
 
 struct Bag {
-    Items []string
+    Items  []string
     Counts map[string]int
 }
 

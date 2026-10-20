@@ -1,0 +1,18 @@
+// error: cannot bind a copy of
+// status: passing
+namespace spec.diagnostics.bind_copy_of_drop_value
+
+import std.io
+
+struct Res {
+    func Drop() { println("drop") }
+    func Message() string { return "res" }
+}
+
+func main() {
+    var e error = Res{}
+    switch e {
+        case Res r: println("res")
+        default: println("other")
+    }
+}

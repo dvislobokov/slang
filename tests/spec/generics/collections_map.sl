@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics.collections_map
 
-import std.io
 import std
+import std.io
 
 func main() {
     var m = collections.Map<string, int>{}

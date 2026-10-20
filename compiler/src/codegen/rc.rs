@@ -381,15 +381,18 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// The type info of a box (heap object) holding a `t`; also the run-time
     /// type id of `t`.
     pub(crate) fn type_info(&mut self, t: TypeId) -> PointerValue<'ctx> {
-        if let Some(g) = self.type_infos.get(&t) {
-            return g.as_pointer_value();
+        if let Some(p) = self.type_infos.get(&t) {
+            return *p;
+        }
+        if self.prog.reflect.is_some() {
+            return self.reflect_type_info(t);
         }
         let tity = self.type_info_ty();
         let n = self.fresh();
         let g = self.module.add_global(tity, None, &format!("ti.{n}"));
         g.set_linkage(Linkage::Internal);
         g.set_constant(true);
-        self.type_infos.insert(t, g);
+        self.type_infos.insert(t, g.as_pointer_value());
         let drop = if self.needs_rc(t) {
             let fty = self.ctx.void_type().fn_type(&[self.ptr_ty().into()], false);
             let f = self.module.add_function(&format!("drop.{n}"), fty, Some(Linkage::Internal));

@@ -117,7 +117,11 @@ impl<'a> Sema<'a> {
     fn attr_kind(&mut self, a: &ast::Attribute) -> Option<AttrKind> {
         let segs: Vec<&ast::Ident> = a.path.segments.iter().collect();
         let name = a.path.to_string();
-        if let Some((PathRes::Member(Member::Struct(s)), n)) = self.resolve_segments(&segs, false) {
+        // Builtin attribute names must not resolve to their value structs.
+        self.refl.in_attr = true;
+        let res = self.resolve_segments(&segs, false);
+        self.refl.in_attr = false;
+        if let Some((PathRes::Member(Member::Struct(s)), n)) = res {
             if n == segs.len() {
                 if self.structs[s as usize].is_attribute {
                     self.resolve_segments(&segs, true);
@@ -252,6 +256,47 @@ impl<'a> Sema<'a> {
         out
     }
 
+    /// An attribute-struct argument written as a literal (`unit{name: "ms"}`):
+    /// the values of all its fields in declaration order (defaults filled
+    /// in), as a [`ConstValue::List`].
+    fn attr_struct_value(&mut self, path: &ast::Path, generics: &[ast::TypeExpr], fields: &[ast::FieldInit], sid: u32, span: Span) -> Option<ConstValue> {
+        let ty = self.struct_ty(sid);
+        let found = self.struct_lit_struct(path, generics, Some(ty), span)?;
+        if found != sid {
+            let (want, got) = (self.structs[sid as usize].name.clone(), self.structs[found as usize].name.clone());
+            self.err(format!("attribute argument has type {got}, want {want}"), span);
+            return None;
+        }
+        if !self.structs[sid as usize].is_attribute {
+            let n = self.structs[sid as usize].name.clone();
+            self.err(format!("attribute arguments must be compile-time constants ({n} is not an @attribute struct)"), span);
+            return None;
+        }
+        for f in fields {
+            if !self.structs[sid as usize].fields.iter().any(|x| x.name == f.name.name) {
+                let n = self.structs[sid as usize].name.clone();
+                self.err(format!("unknown field {} in struct literal of type {n}", f.name.name), f.name.span);
+            }
+        }
+        let decl: Vec<(String, TypeId, Option<ConstValue>)> = self.structs[sid as usize].fields.iter().map(|f| (f.name.clone(), f.ty, f.default.clone())).collect();
+        let mut out = Vec::new();
+        for (name, fty, default) in decl {
+            let v = match fields.iter().find(|f| f.name.name == name) {
+                Some(f) => self.attr_value(&f.value, fty)?,
+                None => match default {
+                    Some(d) => d,
+                    None => {
+                        let n = self.structs[sid as usize].name.clone();
+                        self.err(format!("missing field {name} in attribute value {n}{{...}}"), span);
+                        return None;
+                    }
+                },
+            };
+            out.push(v);
+        }
+        Some(ConstValue::List(out))
+    }
+
     /// `[reflect.Target.Field, ...]`: the last path segment of each element.
     fn targets_value(&mut self, e: &ast::Expr) -> Option<ConstValue> {
         let ast::ExprKind::SliceLit(es) = &e.kind else {
@@ -274,6 +319,9 @@ impl<'a> Sema<'a> {
         if let (ast::ExprKind::SliceLit(es), Type::Slice(el)) = (&e.kind, self.tt.get(ty).clone()) {
             let vs: Option<Vec<ConstValue>> = es.iter().map(|x| self.attr_value(x, el)).collect();
             return vs.map(ConstValue::List);
+        }
+        if let (ast::ExprKind::StructLit { path, generics, fields }, Type::Struct(d)) = (&e.kind, self.tt.get(ty).clone()) {
+            return self.attr_struct_value(path, generics, fields, d.0, e.span);
         }
         let Some(f) = self.fold(e) else {
             self.err("attribute arguments must be compile-time constants", e.span);

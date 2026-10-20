@@ -1,12 +1,17 @@
 //! Slang language server (LSP over stdio), built on the compiler library's
-//! [`slang::session::Session`] API (docs/TOOLING.md, stages 1-2 plus
-//! semantic tokens and stage-1 completion).
+//! [`slang::session::Session`] API (docs/TOOLING.md, stages 1-5):
+//! diagnostics (with codes and quick fixes), outline, folding, definition,
+//! references, rename, hover, highlights, semantic tokens, completion,
+//! signature help, inlay hints, code actions, formatting (`slang::fmt`)
+//! and workspace symbols; `.sl` files created or deleted on disk are
+//! picked up through `workspace/didChangeWatchedFiles`.
 //!
 //! The server is synchronous (`lsp-server`): one thread reads messages;
 //! document changes mark the session dirty and analysis runs ~100 ms after
 //! the last change (or immediately before answering a request), after which
 //! diagnostics are published for every file.
 
+mod assist;
 mod features;
 
 use crossbeam_channel::{RecvTimeoutError, Sender};
@@ -48,6 +53,9 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn std::error::Error + Sen
     };
     connection.initialize_finish(id, serde_json::to_value(result)?)?;
     let mut server = Server::new(connection.sender.clone());
+    if let Some(opts) = &params.initialization_options {
+        server.hints.update(opts);
+    }
     server.discover(&params);
     server.refresh();
     loop {
@@ -99,6 +107,20 @@ pub fn capabilities() -> ServerCapabilities {
         })),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions { trigger_characters: Some(vec![".".into()]), ..Default::default() }),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".into(), ",".into()]),
+            retrigger_characters: Some(vec![",".into()]),
+            work_done_progress_options: Default::default(),
+        }),
+        inlay_hint_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            ..Default::default()
+        })),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        document_range_formatting_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -127,6 +149,8 @@ struct Server {
     open: HashSet<String>,
     /// URIs that got non-empty diagnostics last time.
     published: HashSet<Url>,
+    /// `slang.inlayHints.*` settings.
+    hints: assist::HintSettings,
 }
 
 /// Session key for a URI: the file path for `file:` URIs.
@@ -148,6 +172,7 @@ impl Server {
             uris: HashMap::new(),
             open: HashSet::new(),
             published: HashSet::new(),
+            hints: assist::HintSettings::default(),
         }
     }
 
@@ -281,6 +306,7 @@ impl Server {
                 slang::diagnostics::Severity::Warning => DiagnosticSeverity::WARNING,
             }),
             source: Some("slang".into()),
+            code: d.code.map(|c| NumberOrString::String(c.into())),
             message,
             related_information: (!related.is_empty()).then_some(related),
             ..Default::default()
@@ -341,6 +367,35 @@ impl Server {
                     self.changed();
                 }
             }
+            notification::DidChangeWatchedFiles::METHOD => {
+                let Ok(p) = serde_json::from_value::<DidChangeWatchedFilesParams>(n.params) else { return };
+                for ev in p.changes {
+                    let Ok(path) = ev.uri.to_file_path() else { continue };
+                    if path.extension().is_none_or(|x| x != "sl") {
+                        continue;
+                    }
+                    let key = path.display().to_string();
+                    if self.open.contains(&key) {
+                        continue; // the editor's text wins
+                    }
+                    if ev.typ == FileChangeType::DELETED {
+                        self.session.remove_file(&key);
+                        self.uris.remove(&key);
+                    } else if self.in_roots(&path) || self.session.contains(&key) {
+                        if let Ok(text) = std::fs::read_to_string(&path) {
+                            self.uris.insert(key.clone(), ev.uri);
+                            self.session.update_file(key, text);
+                        }
+                    }
+                }
+                self.changed();
+            }
+            notification::DidChangeConfiguration::METHOD => {
+                let Ok(p) = serde_json::from_value::<DidChangeConfigurationParams>(n.params) else { return };
+                if let Some(slang) = p.settings.get("slang") {
+                    self.hints.update(slang);
+                }
+            }
             notification::DidCloseTextDocument::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidCloseTextDocumentParams>(n.params) else { return };
                 let key = path_of(&p.text_document.uri);
@@ -392,6 +447,34 @@ impl Server {
             Err(r) => r,
         };
         let req = match try_handle::<request::Completion>(req, |id, p| self.completion(id, p)) {
+            Ok(()) => return,
+            Err(r) => r,
+        };
+        let req = match try_handle::<request::SignatureHelpRequest>(req, |id, p| self.signature_help(id, p)) {
+            Ok(()) => return,
+            Err(r) => r,
+        };
+        let req = match try_handle::<request::InlayHintRequest>(req, |id, p| self.inlay_hints(id, p)) {
+            Ok(()) => return,
+            Err(r) => r,
+        };
+        let req = match try_handle::<request::CodeActionRequest>(req, |id, p| self.code_actions(id, p)) {
+            Ok(()) => return,
+            Err(r) => r,
+        };
+        let req = match try_handle::<request::Formatting>(req, |id, p| self.formatting(id, p.text_document, None)) {
+            Ok(()) => return,
+            Err(r) => r,
+        };
+        let req = match try_handle::<request::RangeFormatting>(req, |id, p| self.formatting(id, p.text_document, Some(p.range))) {
+            Ok(()) => return,
+            Err(r) => r,
+        };
+        let req = match try_handle::<request::WorkspaceSymbolRequest>(req, |id, p| self.workspace_symbols(id, p)) {
+            Ok(()) => return,
+            Err(r) => r,
+        };
+        let req = match try_handle::<request::DocumentHighlightRequest>(req, |id, p| self.highlights(id, p)) {
             Ok(()) => return,
             Err(r) => r,
         };
@@ -468,11 +551,6 @@ impl Server {
             return Err(format!("{} is part of the standard library or a builtin and cannot be renamed", sym.name));
         }
         let span = a.name_span_at(file, off).ok_or("no name at this position")?;
-        let mut files: Vec<usize> = a.references_of(sym_id).iter().map(|r| r.file).collect();
-        files.extend(sym.loc.map(|l| l.file));
-        if let Some(&f) = files.iter().find(|&&f| a.stale[f]) {
-            return Err(format!("cannot rename while {} has syntax errors", a.files[f].path));
-        }
         Ok((sym_id, span))
     }
 
@@ -537,6 +615,53 @@ impl Server {
             let a = self.analysis.as_ref().unwrap();
             CompletionResponse::Array(features::completions(a, file, off))
         });
+        self.reply(id, result);
+    }
+}
+
+impl Server {
+    fn signature_help(&mut self, id: RequestId, p: SignatureHelpParams) {
+        let tdp = p.text_document_position_params;
+        let result = self.locate(&tdp.text_document, Some(tdp.position)).and_then(|(file, off)| assist::signature_help(self.analysis.as_ref()?, file, off));
+        self.reply(id, result);
+    }
+
+    fn inlay_hints(&mut self, id: RequestId, p: InlayHintParams) {
+        let hints = self.hints;
+        let result = self.locate(&p.text_document, None).map(|(file, _)| {
+            let a = self.analysis.as_ref().unwrap();
+            let within = assist::span_of(&a.files[file], &p.range);
+            assist::inlay_hints(a, file, within, hints)
+        });
+        self.reply(id, result);
+    }
+
+    fn code_actions(&mut self, id: RequestId, p: CodeActionParams) {
+        let result = self.locate(&p.text_document, None).map(|(file, _)| {
+            let a = self.analysis.as_ref().unwrap();
+            let span = assist::span_of(&a.files[file], &p.range);
+            assist::code_actions(a, file, &p.text_document.uri, span, |d| self.to_lsp_diag(a, d))
+        });
+        self.reply(id, result);
+    }
+
+    fn formatting(&mut self, id: RequestId, doc: TextDocumentIdentifier, range: Option<Range>) {
+        let result = self.locate(&doc, None).and_then(|(file, _)| {
+            let f = &self.analysis.as_ref()?.files[file];
+            assist::format_edits(f, range.map(|r| (r.start.line, r.end.line)))
+        });
+        self.reply(id, result);
+    }
+
+    fn workspace_symbols(&mut self, id: RequestId, p: WorkspaceSymbolParams) {
+        self.ensure_fresh();
+        let result = self.analysis.as_ref().map(|a| assist::workspace_symbols(a, &p.query, |f| self.uri_of(a, f)));
+        self.reply(id, result.map(WorkspaceSymbolResponse::Flat));
+    }
+
+    fn highlights(&mut self, id: RequestId, p: DocumentHighlightParams) {
+        let tdp = p.text_document_position_params;
+        let result = self.locate(&tdp.text_document, Some(tdp.position)).and_then(|(file, off)| assist::highlights(self.analysis.as_ref()?, file, off));
         self.reply(id, result);
     }
 }

@@ -1,0 +1,7 @@
+before: (none)
+handler sees request-1
+nested call sees request-1
+spawned child sees request-1
+inner scope sees inner
+handler again sees request-1
+after: (none)

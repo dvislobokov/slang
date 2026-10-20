@@ -1,0 +1,15 @@
+// error: must be called
+// status: passing
+namespace spec.diagnostics.generic_method_value
+
+import std.io
+
+struct S {
+    func Show<T>(x T) T { return x }
+}
+
+func main() {
+    var s = S{}
+    var f = s.Show<int>
+    println(f(1))
+}

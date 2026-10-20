@@ -3,6 +3,7 @@
 namespace spec.structs.priv
 
 import std.io
+
 import spec.structs.priv.models
 
 func main() {

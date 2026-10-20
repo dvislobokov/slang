@@ -1,0 +1,135 @@
+// std.reflect: static type tables, attributes as values, reflect.Value,
+// method calls, and compile-time field loops in generic code.
+namespace examples.reflection
+
+import std.io
+import std
+
+@attribute(targets: [reflect.Target.Field])
+struct column {
+    name string
+    primary bool = false
+}
+
+@reflect
+struct Product {
+    @column("product_id", primary: true) Id int
+    @column("title") Name string
+    Price float
+    Stock int32
+
+    func Total(n int) float {
+        return this.Price * float(n)
+    }
+
+    func Restock(n int) void! {
+        if n <= 0 {
+            return error("restock needs a positive amount")
+        }
+        this.Stock += int32(n)
+    }
+}
+
+enum Shape {
+    Dot
+    Circle(r float)
+    Box(w float, h float)
+}
+
+interface Named {
+    func Title() string
+}
+
+struct Tag {
+    Text string
+
+    func Title() string {
+        return "#" + this.Text
+    }
+}
+
+// Unrolled per field when T is known: f.Get(v) is a direct field access.
+func Describe<T>(v T) string {
+    var b = strings.Builder{}
+    b.Write(reflect.TypeOf<T>().Name)
+    for f in reflect.Fields<T>() {
+        var col = f.Attribute<column>()
+        var name = f.Name
+        if col != nil {
+            name = col.name
+        }
+        b.Write(fmt.Format(" {0}={1}", name, Show(f.Get(v))))
+    }
+    return b.String()
+}
+
+// A static if: only the branch for T's kind is compiled.
+func Show<T>(x T) string {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.String {
+        return "\"" + x + "\""
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float {
+        return fmt.Sprintf("%.2f", x)
+    } else {
+        return fmt.Format("{0}", x)
+    }
+}
+
+func Run() void! {
+    var t = reflect.TypeOf<Product>()
+    println(t.Name, t.FullName, t.Kind, t.Size, len(t.Fields), len(t.Methods))
+    for f in t.Fields {
+        var col = f.Attribute<column>()
+        if col != nil {
+            println(" ", f.Name, f.Type.Name, f.Offset, "column", col.name, col.primary)
+        } else {
+            println(" ", f.Name, f.Type.Name, f.Offset)
+        }
+    }
+    for m in t.Methods {
+        println("  method", m.Name, m.Type.Name)
+    }
+
+    var p = Product{Id: 7, Name: "lamp", Price: 19.5, Stock: 3}
+    var res = t.Method("Total").Call(&p, 4)?
+    switch res {
+        case float x:
+            println("Total(4) =", x)
+    }
+    try t.Method("Restock").Call(&p, 0) catch err {
+        println("Restock failed:", err)
+    }
+    var restock = t.Method("Restock").Call<func(*Product, int) void!>()
+    restock(&p, 5)?
+    println("stock", p.Stock)
+
+    var v = reflect.ValueOf(&p)
+    v.Field("Name").Set("desk lamp")
+    println(v.Field("Name").Get<string>(), v.Field("Stock").Get<int32>())
+
+    var fresh = t.New()
+    switch fresh {
+        case *Product q:
+            q.Name = "new"
+            println("New:", q.Name, q.Id)
+    }
+
+    for variant in reflect.TypeOf<Shape>().Variants {
+        println("variant", variant.Name, len(variant.Fields))
+    }
+
+    var items []any = [p, 3, "s", [1.5], Shape.Dot]
+    for x in items {
+        println("typeof", typeof(x).Name, typeof(x).Kind)
+    }
+    var n Named = Tag{Text: "go"}
+    println(typeof(n).Name, typeof(n) == reflect.TypeOf<Tag>(), n.Title())
+
+    println(Describe(p))
+    println(Describe(Tag{Text: "x"}))
+}
+
+func main() {
+    try Run() catch err {
+        println("error:", err)
+    }
+}

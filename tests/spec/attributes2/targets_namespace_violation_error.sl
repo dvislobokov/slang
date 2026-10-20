@@ -1,0 +1,20 @@
+// error: cannot be applied to a struct
+// status: passing
+namespace spec.attributes2.targets_namespace_violation_error
+
+import std
+import std.io
+
+@attribute(targets: [reflect.Target.Namespace])
+struct module {
+    name string
+}
+
+@module("core")
+struct Thing {
+    X int
+}
+
+func main() {
+    println(Thing{X: 1}.X)
+}

@@ -30,6 +30,7 @@ fn mentions(p: &ast::TypeExpr, names: &[String]) -> bool {
         K::Map(k, v) => mentions(k, names) || mentions(v, names),
         K::Func { params, ret } => params.iter().any(|x| mentions(x, names)) || ret.as_ref().is_some_and(|r| mentions(r, names)),
         K::Tuple(ts) => ts.iter().any(|x| mentions(x, names)),
+        K::Error => false,
     }
 }
 
@@ -151,10 +152,17 @@ impl<'a> Sema<'a> {
     /// Call of generic function or method template `t`. `recv` is the
     /// receiver (`*S`) for non-static methods.
     pub(crate) fn generic_call(&mut self, t: u32, targs: Option<&[ast::TypeExpr]>, recv: Option<hir::Expr>, args: &[ast::Expr], span: Span) -> hir::Expr {
+        if let Some(e) = self.reflect_generic_call(t, span) {
+            return e;
+        }
         let tm = &self.gen.templates[t as usize];
         let (decl, name) = match tm.decl {
             TmplDecl::Func(d) | TmplDecl::Method(d, _) => (d, tm.name.clone()),
             _ => {
+                if let Some(e) = self.std_type_call(t, targs, args, span) {
+                    return e;
+                }
+                let tm = &self.gen.templates[t as usize];
                 let n = tm.name.clone();
                 self.err(format!("cannot call type {n} (use a struct literal {n}<...>{{...}})"), span);
                 self.check_args_loose(args);
@@ -170,7 +178,7 @@ impl<'a> Sema<'a> {
             }
             None => self.infer_type_args(t, decl, args, &mut typed, span),
         };
-        let fid = match types.and_then(|ts| self.instantiate(t, ts, span)) {
+        let fid = match types.and_then(|ts| if ts.is_empty() { self.plain_std_inst(t, span).or_else(|| self.instantiate(t, ts, span)) } else { self.instantiate(t, ts, span) }) {
             Some(Inst::Func(f)) => f,
             _ => {
                 for (a, v) in args.iter().zip(&typed) {
@@ -217,7 +225,7 @@ impl<'a> Sema<'a> {
             }
             let Some((res, n)) = self.resolve_segments(&segs, true) else {
                 if self.lookup_global(segs[0], false).is_none() && !self.diags.has_errors_at(segs[0].span, self.cur_file) {
-                    self.err(format!("unknown identifier {}", segs[0].name), segs[0].span);
+                    self.unknown_ident(segs[0]);
                 }
                 self.check_args_loose(args);
                 return self.invalid(span);
@@ -399,6 +407,9 @@ impl<'a> Sema<'a> {
             }
             PathRes::Member(Member::Generic(t)) if n == segs.len() && matches!(self.gen.templates[t as usize].decl, TmplDecl::Struct(_)) => {
                 if generics.is_empty() {
+                    if let Some(s) = self.plain_std_struct(t, span) {
+                        return Some(s);
+                    }
                     if let Some(Type::Struct(d)) = expected.map(|e| self.tt.get(e).clone()) {
                         if self.gen.inst_structs.get(&d.0).is_some_and(|(it, _)| *it == t) {
                             return Some(d.0);

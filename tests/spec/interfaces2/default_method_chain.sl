@@ -1,0 +1,20 @@
+// test: a default method may call other default methods of the same interface
+// status: pending
+namespace spec.interfaces2.default_method_chain
+
+import std.io
+
+interface Counter {
+    func Get() int
+    func Double() int { return this.Get() * 2 }
+    func Quad() int { return this.Double() * 2 }
+}
+
+struct Seven {
+    func Get() int { return 7 }
+}
+
+func main() {
+    var c Counter = Seven{}
+    println(c.Get(), c.Double(), c.Quad())
+}

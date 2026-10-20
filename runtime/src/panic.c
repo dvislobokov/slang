@@ -1,7 +1,7 @@
 /* panic.c - fatal errors: message + best-effort backtrace, exit code 2. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <execinfo.h>
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -21,12 +21,10 @@ static SLANG_NORETURN void die(const char *msg, int64_t len) {
     fwrite(msg, 1, (size_t)len, stderr);
     fputc('\n', stderr);
     if (!getenv("SLANG_NO_BACKTRACE")) {
-        void *frames[64];
-        int n = backtrace(frames, 64);
         fputs("\nbacktrace (most recent call first):\n", stderr);
         fflush(stderr);
-        /* skip die() and the slang_panic* entry point */
-        if (n > 2) backtrace_symbols_fd(frames + 2, n - 2, STDERR_FILENO);
+        /* skip slang__plat_backtrace, die() and the slang_panic* entry point */
+        slang__plat_backtrace(STDERR_FILENO, 3);
     }
     fflush(stderr);
     _exit(2);

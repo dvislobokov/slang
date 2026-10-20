@@ -1,0 +1,12 @@
+// error: cannot take the address of this expression
+// status: passing
+namespace spec.diagnostics.address_of_invalid
+
+import std.io
+
+func F() int { return 1 }
+
+func main() {
+    var p = &F()
+    println(*p)
+}

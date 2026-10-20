@@ -3,8 +3,8 @@
 // stderr: INFO service started
 namespace spec.stdlib.log_basic
 
-import std.io
 import std
+import std.io
 
 func main() {
     log.Info("service started")

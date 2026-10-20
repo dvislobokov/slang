@@ -1,0 +1,6 @@
+listening true true
+remote is local true
+hello, tcp
+server echoed 10 bytes
+closed true
+read after close: use of closed network connection

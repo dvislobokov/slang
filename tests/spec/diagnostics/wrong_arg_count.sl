@@ -1,0 +1,11 @@
+// error: wrong number of arguments in call to Add: expected 2, got 3
+// status: passing
+namespace spec.diagnostics.wrong_arg_count
+
+import std.io
+
+func Add(a, b int) int { return a + b }
+
+func main() {
+    println(Add(1, 2, 3))
+}

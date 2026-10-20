@@ -1,0 +1,16 @@
+core 2
+1 ann Admin 9.5 [a b] Oslo 16
+true 0
+{"id":1,"Name":"ann","Email":"ann@example.com","Role":"Admin","Score":9.5,"Tags":["a","b"],"Home":{"City":"Oslo","Zip":"0150"},"Limits":{"cpu":4,"ram":16}}
+{"id":2,"Name":"bob é\n","Role":"Guest","Score":0,"Tags":null,"Home":null,"Limits":null}
+[1,2,3] "q\"uote" 2.5 true
+{"a":false,"z":true}
+Users[1].id: expected int, found string
+Users[0].id: expected int, found number 1.5
+Role: unknown Role value "Root"
+json: unexpected end of input
+json: invalid character 'x' at offset 10
+object 3 [a s n] true -125
+{"a":[1,{"b":null}],"s":"x\ty","n":-125}
+1 true
+json: string is not a number

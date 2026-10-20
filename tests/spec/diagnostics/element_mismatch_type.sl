@@ -1,0 +1,10 @@
+// error: cannot use string as element of type int
+// status: passing
+namespace spec.diagnostics.element_mismatch_type
+
+import std.io
+
+func main() {
+    var xs []int = [1, "two"]
+    println(xs)
+}

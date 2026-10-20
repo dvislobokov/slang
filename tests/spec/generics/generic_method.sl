@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics.generic_method
 
-import std.io
 import std
+import std.io
 
 struct Logger {
     Prefix string
