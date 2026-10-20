@@ -1,0 +1,13 @@
+server: SETTINGS flags 0 settings 4
+server: WINDOW_UPDATE flags 0
+server: SETTINGS flags 1
+ping: PING ack true 12345678
+header :status: 200
+header content-type: text/plain; charset=utf-8
+header content-length: 36
+DATA 10 bytes, end false
+DATA 13 bytes, end false
+DATA 13 bytes, end true
+body: 0123456789abcdefghijklmnopqrstuvwxyz
+bad stream id: GOAWAY error code 1
+connection closed: true

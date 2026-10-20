@@ -1,0 +1,52 @@
+// test: a[i] calls Index, a[i] = v calls IndexSet, a[i] op= v reads with Index and writes with IndexSet evaluating the index once; works through a pointer
+// status: passing
+// run-flags: --leak-check
+namespace spec.operators.index_struct
+
+import std.io
+
+struct Grid {
+    W int
+    cells []int
+
+    func Index(p (int, int)) int {
+        var (x, y) = p
+        return this.cells[y * this.W + x]
+    }
+    func IndexSet(p (int, int), v int) {
+        var (x, y) = p
+        this.cells[y * this.W + x] = v
+    }
+}
+
+struct Names {
+    m map[string]string
+    func Index(k string) string { return this.m[k] }
+    func IndexSet(k string, v string) { this.m[k] = v }
+}
+
+var calls = 0
+
+func next() int {
+    calls += 1
+    return calls - 1
+}
+
+func main() {
+    var g = Grid{W: 3, cells: [0, 0, 0, 0, 0, 0]}
+    g[(1, 0)] = 5
+    g[(2, 1)] = 7
+    g[(2, 1)] += 3
+    println(g[(1, 0)], g[(2, 1)], g.cells)
+    var p = &g
+    p[(0, 1)] = 9
+    println(p[(0, 1)], g[(0, 1)])
+    var row = Grid{W: 4, cells: [1, 2, 3, 4]}
+    row[(next(), 0)] *= 10
+    row[(next(), 0)] -= 1
+    println(row.cells, calls)
+    var n = Names{m: map[string]string{}}
+    n["a"] = "x"
+    n["a"] += "y"
+    println(n["a"], n["missing"] == "")
+}

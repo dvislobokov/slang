@@ -1,0 +1,104 @@
+// test: http.Transport pools keep-alive connections per host: reuse, MaxIdleConnsPerHost, MaxConnsPerHost (waiting requests), IdleConnTimeout, transparent retry of idempotent requests on a connection the server closed, DisableKeepAlives
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http_pool_reuse
+
+import std.io
+import std
+import std.net
+
+struct Stats {
+    mu task.Mutex
+    peers map[string]int
+    inFlight int
+    maxInFlight int
+}
+
+async func handle(s *Stats, req *http.Request, res *http.Response) void! {
+    await s.mu.Lock()
+    s.peers[req.RemoteAddr] += 1
+    s.inFlight += 1
+    if s.inFlight > s.maxInFlight {
+        s.maxInFlight = s.inFlight
+    }
+    s.mu.Unlock()
+    if req.Path == "/slow" {
+        await task.Delay(30)
+    }
+    await s.mu.Lock()
+    s.inFlight -= 1
+    s.mu.Unlock()
+    res.Text(200, "ok " + req.Path)
+}
+
+struct H {
+    s *Stats
+    func Serve(req *http.Request, res *http.Response) Task<void!> {
+        return handle(this.s, req, res)
+    }
+}
+
+async func main() void! {
+    var s = new Stats{peers: map[string]int{}}
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: H{s: s}, IdleTimeout: 200}
+    srv.Listen()?
+    var serving = srv.Serve()
+    var base = srv.URL()
+
+    // 1. sequential requests reuse one connection
+    var t1 = http.Transport{}
+    var c1 = http.Client{Transport: &t1}
+    for i in 0..10 {
+        var r = await c1.Get(base + fmt.Format("/seq{0}", i))?
+        if r.Body != fmt.Format("ok /seq{0}", i) {
+            println("bad body", r.Body)
+        }
+    }
+    var st = t1.Stats()
+    println("sequential: dials", st.Dials, "reused", st.Reused, "idle", st.Idle, "server peers", len(s.peers))
+
+    // 2. MaxConnsPerHost: 6 concurrent slow requests over at most 2 connections
+    s.peers = map[string]int{}
+    s.maxInFlight = 0
+    var t2 = http.Transport{MaxConnsPerHost: 2, MaxIdleConnsPerHost: 2}
+    var c2 = http.Client{Transport: &t2}
+    var tasks []Task<http.Response!> = []
+    for _ in 0..6 {
+        tasks = append(tasks, c2.Get(base + "/slow"))
+    }
+    for tk in tasks {
+        _ = await tk?
+    }
+    st = t2.Stats()
+    println("max conns: dials", st.Dials, "max in flight", s.maxInFlight, "idle kept", st.Idle)
+
+    // 3. IdleConnTimeout: an idle connection older than the timeout is not reused
+    var t3 = http.Transport{IdleConnTimeout: 20}
+    var c3 = http.Client{Transport: &t3}
+    _ = await c3.Get(base + "/a")?
+    await task.Delay(60)
+    _ = await c3.Get(base + "/b")?
+    println("idle timeout: dials", t3.Stats().Dials)
+
+    // 4. the server closes idle connections after 200 ms; the next GET on
+    //    the stale pooled connection is retried on a fresh one
+    var t4 = http.Transport{}
+    var c4 = http.Client{Transport: &t4}
+    _ = await c4.Get(base + "/x")?
+    await task.Delay(400)
+    var r4 = await c4.Get(base + "/y")?
+    println("stale retry:", r4.Status, r4.Body, "dials", t4.Stats().Dials)
+
+    // 5. DisableKeepAlives: one connection per request
+    var t5 = http.Transport{DisableKeepAlives: true}
+    var c5 = http.Client{Transport: &t5}
+    for _ in 0..3 {
+        _ = await c5.Get(base + "/k")?
+    }
+    println("no keep-alive: dials", t5.Stats().Dials, "idle", t5.Stats().Idle)
+
+    t1.CloseIdleConnections()
+    println("after CloseIdleConnections:", t1.Stats().Idle, t1.Stats().Open)
+    await srv.Shutdown()
+    await serving?
+}

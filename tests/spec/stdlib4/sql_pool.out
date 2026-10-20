@@ -1,0 +1,20 @@
+x = ?::int, y = ? [5]
+opened 2 open 2 idle 2 waits true
+prepared 2
+prepared without cache 3
+exec: fake: connection lost
+closed after failure 1 open 1
+closed by idle limit 3 idle 0
+pings true
+in use 1
+in use after close 0
+in use after drop 0
+waiter: task cancelled
+after cancel 1
+raw conn true
+ping: fake: cannot connect
+true sql: database is closed
+opened 4 closed 4
+conn1: update t set a = $1, b = $2 where a = $1 and c = ':a' -- :zz [1 2]
+conn1: sleep []
+conn4: select $1 [1]

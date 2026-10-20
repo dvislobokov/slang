@@ -160,6 +160,7 @@
 mod async_;
 mod cleanup;
 mod debug;
+mod debug_agent;
 pub use debug::dedup_declares;
 mod expr;
 mod funcs;
@@ -276,6 +277,9 @@ pub struct Options {
     pub debug_info: bool,
     /// The module will be optimised (`DW_AT_..._optimized` in the debug info).
     pub optimized: bool,
+    /// Hooks and tables of the in-process debug agent (`--debug-agent`,
+    /// [`debug_agent`], runtime/ABI.md §22).
+    pub debug_agent: bool,
 }
 
 /// Coroutine state of an `async` function being emitted.
@@ -369,6 +373,8 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) rc_cache: std::cell::RefCell<HashMap<TypeId, rc::RcKind>>,
     /// Debug-info state when [`Options::debug_info`] is set.
     pub(crate) dbg: Option<Box<debug::DebugInfo>>,
+    /// Debug-agent state when [`Options::debug_agent`] is set.
+    pub(crate) dbga: Option<Box<debug_agent::Agent<'ctx>>>,
 }
 
 /// Creates a target machine for the host.
@@ -436,8 +442,10 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         facts: hir::ownership::param_facts(program),
         rc_cache: Default::default(),
         dbg: None,
+        dbga: None,
     };
     cg.init_debug();
+    cg.init_agent();
     let mut errors = Vec::new();
     if let Err(e) = cg.declare_all() {
         return Err(vec![e]);
@@ -475,6 +483,7 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
     if let Err(e) = cg.finish_leak_fields() {
         errors.push(e);
     }
+    cg.finish_agent();
     cg.finish_debug();
     if errors.is_empty() {
         Ok(cg.module)
@@ -634,6 +643,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
         }
         self.call_rt("slang_runtime_init", &[argc.into(), argv.into()]);
+        self.dbga_boot();
         for gid in &self.prog.global_init_order {
             let g = &self.prog.globals[gid.0 as usize];
             let gv = self.globals[gid.0 as usize].as_pointer_value();
@@ -650,7 +660,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         let entry = self.prog.entry.unwrap();
         let ef = self.funcs[entry.0 as usize];
-        // `main() void!`: the error (owned) is reported after shutdown.
+        // `main() void!`: the error (owned) is reported before shutdown.
         let fallible = matches!(self.prog.types.get(self.prog.funcs[entry.0 as usize].ret), crate::types::Type::Fallible(_));
         let err_slot = fallible.then(|| self.entry_alloca(self.ptr_ty().into(), "main.err", true));
         let r = self.b.build_call(ef, &[], "").unwrap().try_as_basic_value().left();
@@ -678,7 +688,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.rc_slot(g.ty, gv, false);
             }
         }
-        self.call_rt("slang_runtime_shutdown", &[]);
+        // The returned error is reported and released before the shutdown,
+        // so that `--leak-check` neither counts it (nor what it holds) as
+        // leaked nor exits before the message is printed.
+        let mut code = i32t.const_zero();
         if let Some(es) = err_slot {
             let e = self.b.build_load(self.ptr_ty(), es, "").unwrap().into_pointer_value();
             let failed = self.block("main.failed");
@@ -688,10 +701,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             self.b.position_at_end(failed);
             self.call_rt("slang_error_report", &[e.into()]);
             self.call_rt("slang_release", &[e.into()]);
-            self.b.build_return(Some(&i32t.const_int(1, false))).unwrap();
+            self.b.build_unconditional_branch(ok).unwrap();
             self.b.position_at_end(ok);
+            code = self.b.build_select(isnull, i32t.const_zero(), i32t.const_int(1, false), "").unwrap().into_int_value();
         }
-        self.b.build_return(Some(&i32t.const_zero())).unwrap();
+        self.dbga_exit(code);
+        self.call_rt("slang_runtime_shutdown", &[]);
+        self.b.build_return(Some(&code)).unwrap();
         self.end_fn(saved, None);
         Ok(())
     }

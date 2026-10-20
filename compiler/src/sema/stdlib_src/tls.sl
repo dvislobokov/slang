@@ -350,16 +350,17 @@ func versionName(v int) string {
 }
 
 // Signature schemes we can verify, in our preference order:
-// ecdsa_secp256r1_sha256, ed25519, rsa_pss_rsae_sha256/384/512,
-// rsa_pkcs1_sha256/384/512 (TLS 1.2 and certificates only).
+// ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384, ed25519,
+// rsa_pss_rsae_sha256/384/512, rsa_pkcs1_sha256/384/512 (TLS 1.2 and
+// certificates only).
 func ourSchemes() []int {
-    return [1027, 2055, 2052, 2053, 2054, 1025, 1281, 1537]
+    return [1027, 1283, 2055, 2052, 2053, 2054, 1025, 1281, 1537]
 }
 
 func schemeHash(s int) string {
     switch s {
         case 1027, 2052, 1025: return "sha256"
-        case 2053, 1281: return "sha384"
+        case 2053, 1281, 1283: return "sha384"
         case 2054, 1537: return "sha512"
     }
     return ""
@@ -368,7 +369,9 @@ func schemeHash(s int) string {
 // The scheme to sign with for key, given what the peer accepts.
 func pickScheme(key std.crypto.x509.PrivateKey, peer []int, v13 bool) int {
     var prefs []int = []
-    if key.Algorithm == "ECDSA" {
+    if key.Algorithm == "ECDSA" && len(key.Bytes) == 48 {
+        prefs = [1283]
+    } else if key.Algorithm == "ECDSA" {
         prefs = [1027]
     } else if key.Algorithm == "Ed25519" {
         prefs = [2055]
@@ -396,6 +399,9 @@ func signWith(key std.crypto.x509.PrivateKey, scheme int, content []byte) []byte
     if scheme == 1027 {
         return std.crypto.ecdsa.Sign(key.Bytes, digest)?
     }
+    if scheme == 1283 {
+        return std.crypto.ecdsa.SignP384(key.Bytes, digest)?
+    }
     if scheme >= 2052 && scheme <= 2054 {
         return std.crypto.rsa.SignPSS(key.Bytes, h, digest)?
     }
@@ -415,8 +421,19 @@ func verifyWith(cert *std.crypto.x509.Certificate, scheme int, content []byte, s
         return error(std.fmt.Sprintf("tls: peer used an unsupported signature scheme 0x%04x", scheme))
     }
     var digest = hashOf(h, content)?
-    if scheme == 1027 {
-        if alg != "ECDSA" || cert.Curve != "P-256" || !std.crypto.ecdsa.Verify(cert.PublicKey, digest, sig) {
+    if scheme == 1027 || scheme == 1283 {
+        // TLS 1.3 ties the curve to the scheme; TLS 1.2 only the hash.
+        var curve = cert.Curve
+        if v13 && ((scheme == 1027 && curve != "P-256") || (scheme == 1283 && curve != "P-384")) {
+            return error("tls: ECDSA signature scheme does not match the certificate curve")
+        }
+        var good = false
+        if alg == "ECDSA" && curve == "P-256" {
+            good = std.crypto.ecdsa.Verify(cert.PublicKey, digest, sig)
+        } else if alg == "ECDSA" && curve == "P-384" {
+            good = std.crypto.ecdsa.VerifyP384(cert.PublicKey, digest, sig)
+        }
+        if !good {
             return error("tls: invalid ECDSA signature from the peer")
         }
         return
@@ -435,7 +452,8 @@ func verifyWith(cert *std.crypto.x509.Certificate, scheme int, content []byte, s
     }
 }
 
-// An ephemeral key exchange share: group 29 x25519 or 23 secp256r1.
+// An ephemeral key exchange share: group 29 x25519, 23 secp256r1 or 24
+// secp384r1.
 struct keyShare {
     group int
     priv []byte
@@ -447,6 +465,10 @@ func newKeyShare(group int) keyShare! {
         var p = std.crypto.x25519.GenerateKey()?
         return keyShare{group: 29, priv: p, pub: std.crypto.x25519.PublicKey(p)?}
     }
+    if group == 24 {
+        var p = std.crypto.ecdh.GenerateKeyP384()?
+        return keyShare{group: 24, priv: p, pub: std.crypto.ecdh.PublicKeyP384(p)?}
+    }
     var p = std.crypto.ecdh.GenerateKey()?
     return keyShare{group: 23, priv: p, pub: std.crypto.ecdh.PublicKey(p)?}
 }
@@ -457,6 +479,12 @@ func sharedSecret(ks keyShare, peer []byte) []byte! {
             return error("tls: invalid X25519 key share")
         }
         return std.crypto.x25519.SharedSecret(ks.priv, peer)?
+    }
+    if ks.group == 24 {
+        if len(peer) != 97 {
+            return error("tls: invalid P-384 key share")
+        }
+        return std.crypto.ecdh.SharedSecretP384(ks.priv, peer)?
     }
     if len(peer) != 65 {
         return error("tls: invalid P-256 key share")

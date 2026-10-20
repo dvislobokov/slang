@@ -1,0 +1,80 @@
+// test: http.ServeFile / ServeDir: Content-Type, ETag and Last-Modified with 304s, byte ranges (206, suffix, multipart/byteranges, 416, If-Range), HEAD, index.html, directory redirects and listings, no escape from the root; over plain TCP (sendfile), TLS and HTTP/2
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http_servefile
+
+import std.io
+import std
+import std.net
+
+func show(label string, r http.Response) {
+    var body = r.Body
+    if len(body) > 40 {
+        body = fmt.Format("<{0} bytes>", len(body))
+    }
+    println(label + ":", r.Status, r.Header("Content-Type"), "[" + r.Header("Content-Range") + "]", body)
+}
+
+async func main() void! {
+    var root = fs.Join(fs.TempDir(), fmt.Format("slang-servefile-{0}", os.Pid()))
+    fs.MkdirAll(fs.Join(root, "sub"))?
+    fs.MkdirAll(fs.Join(root, "docs"))?
+    io.WriteFile(fs.Join(root, "hello.txt"), "0123456789abcdefghij")?
+    io.WriteFile(fs.Join(root, "page.html"), "<h1>hi</h1>")?
+    io.WriteFile(fs.Join(root, "sub/index.html"), "sub index")?
+    io.WriteFile(fs.Join(root, "docs/a.css"), "a{}")?
+    io.WriteFile(fs.Join(root, "big.bin"), strings.Repeat("B", 300000))?
+
+    var r = http.NewRouter()
+    r.Mount("/static/*", http.ServeDir(root))
+    r.Get("/one", async func(req *http.Request, res *http.Response) void! {
+        await http.ServeFile(req, res, fs.Join(root, "hello.txt"))?
+    })
+    var ts = http.test.NewServer(r)?
+    var c = ts.Client
+    var base = ts.URL + "/static"
+
+    var a = await c.Get(base + "/hello.txt")?
+    show("full", a)
+    var etag = a.Header("Etag")
+    println("validators:", strings.HasPrefix(etag, "\""), a.Header("Last-Modified") != "", a.Header("Accept-Ranges"))
+    show("html", await c.Get(base + "/page.html")?)
+    show("css", await c.Get(base + "/docs/a.css")?)
+    show("If-None-Match", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-None-Match", etag))?)
+    show("If-Modified-Since", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-Modified-Since", a.Header("Last-Modified")))?)
+    show("If-Match mismatch", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-Match", "\"other\""))?)
+    show("range 0-4", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4"))?)
+    show("range 15-", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=15-"))?)
+    show("suffix -3", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=-3"))?)
+    var mr = await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-1,5-6"))?
+    println("multi:", mr.Status, strings.HasPrefix(mr.Header("Content-Type"), "multipart/byteranges; boundary="), strings.Contains(mr.Body, "Content-Range: bytes 0-1/20\r\n\r\n01"), strings.Contains(mr.Body, "Content-Range: bytes 5-6/20\r\n\r\n56"))
+    show("unsatisfiable", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=50-60"))?)
+    show("If-Range stale", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4").Header("If-Range", "\"old\""))?)
+    show("If-Range fresh", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4").Header("If-Range", etag))?)
+    var h = await c.Send(http.NewRequest("HEAD", base + "/big.bin"))?
+    println("HEAD:", h.Status, h.Header("Content-Length"), len(h.Body), h.Header("Content-Type"))
+    var big = await c.Get(base + "/big.bin")?
+    println("big:", big.Status, len(big.Body))
+    var br = await c.Send(http.NewRequest("GET", base + "/big.bin").Header("Range", "bytes=100000-100009"))?
+    println("big range:", br.Status, br.Body, br.Header("Content-Length"))
+
+    var noRedirect = http.Client{Transport: ts.Transport, MaxRedirects: -1}
+    var d = await noRedirect.Get(base + "/sub")?
+    println("dir redirect:", d.Status, d.Header("Location"))
+    show("dir index", await c.Get(base + "/sub/")?)
+    var l = await c.Get(base + "/docs/")?
+    println("listing:", l.Status, l.Header("Content-Type"), strings.Contains(l.Body, "<a href=\"a.css\">a.css</a>"))
+    show("missing", await c.Get(base + "/nope.txt")?)
+    show("dotdot", await c.Get(base + "/../../etc/passwd")?)
+    show("ServeFile", await c.Get(ts.URL + "/one")?)
+    await ts.Close()
+
+    // the same files over TLS (no sendfile) and HTTP/2
+    var tls2 = http.test.NewTLSServer(r)?
+    var tb = await tls2.Client.Get(tls2.URL + "/static/big.bin")?
+    println("tls big:", tb.Status, tb.Proto, len(tb.Body))
+    var tr = await tls2.Client.Send(http.NewRequest("GET", tls2.URL + "/static/hello.txt").Header("Range", "bytes=2-5"))?
+    println("tls range:", tr.Status, tr.Proto, tr.Body, tr.Header("Content-Range"))
+    await tls2.Close()
+    fs.RemoveAll(root)?
+}

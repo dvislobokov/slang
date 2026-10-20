@@ -583,8 +583,14 @@ func checkSignature(alg string, pssHash string, key *Certificate, signed []byte,
         if key.PublicKeyAlgorithm != "ECDSA" {
             return error("x509: signature algorithm " + alg + " does not match the " + key.PublicKeyAlgorithm + " key")
         }
+        if key.Curve == "P-384" {
+            if !std.crypto.ecdsa.VerifyP384(key.PublicKey, digest, sig) {
+                return error("x509: ECDSA signature verification failed")
+            }
+            return
+        }
         if key.Curve != "P-256" {
-            return error("x509: ECDSA curve " + key.Curve + " is not supported (only P-256)")
+            return error("x509: ECDSA curve " + key.Curve + " is not supported (only P-256 and P-384)")
         }
         if !std.crypto.ecdsa.Verify(key.PublicKey, digest, sig) {
             return error("x509: ECDSA signature verification failed")
@@ -1276,8 +1282,16 @@ func ecKey(der []byte, outerCurve string) PrivateKey! {
             curve = readOID(cr, "EC curve")?
         }
     }
+    if curve == "1.3.132.0.34" {
+        var s384 = k
+        if len(k) < 48 {
+            s384 = concatBytes(zeroBytes(48 - len(k)), k)
+        }
+        var pub384 = std.crypto.ecdsa.PublicKeyP384(s384)?
+        return PrivateKey{Algorithm: "ECDSA", Bytes: s384, Public: pub384}
+    }
     if curve != "1.2.840.10045.3.1.7" {
-        return error("x509: unsupported EC curve " + curve + " (only P-256)")
+        return error("x509: unsupported EC curve " + curve + " (only P-256 and P-384)")
     }
     var scalar = k
     if len(k) < 32 {

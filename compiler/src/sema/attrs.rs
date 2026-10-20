@@ -149,6 +149,11 @@ impl<'a> Sema<'a> {
                     self.resolve_segments(&segs, true);
                     return Some(AttrKind::User(s));
                 }
+                // `@json` with `import std.reflect` (or `@reflect.json`):
+                // the value struct of a builtin attribute names the builtin.
+                if let Some(n) = self.attr_value_struct_name(s) {
+                    return Some(AttrKind::Builtin(n.to_string()));
+                }
                 self.err(format!("{name} is not an attribute (declare the struct with @attribute)"), a.path.span);
                 return None;
             }
@@ -164,7 +169,11 @@ impl<'a> Sema<'a> {
         if segs.len() == 1 && (BUILTIN_ATTRS.contains(&name.as_str()) || name == "embed") {
             return Some(AttrKind::Builtin(name));
         }
-        self.err(format!("unknown attribute @{name}"), a.path.span);
+        let mut names: Vec<String> = BUILTIN_ATTRS.iter().map(|s| s.to_string()).collect();
+        names.push("embed".into());
+        names.extend(self.structs.iter().filter(|s| s.is_attribute).map(|s| s.name.clone()));
+        let help = self.did_you_mean(&name, &names).map(|h| h.replacen('`', "`@", 1));
+        self.err_maybe_help(format!("unknown attribute @{name}"), a.path.span, help);
         None
     }
 

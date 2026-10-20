@@ -402,7 +402,7 @@ impl<'a> Sema<'a> {
     pub(crate) fn struct_lit_struct(&mut self, path: &ast::Path, generics: &[ast::TypeExpr], expected: Option<TypeId>, span: Span) -> Option<u32> {
         let segs: Vec<&ast::Ident> = path.segments.iter().collect();
         if self.lookup_global(segs[0], false).is_none() {
-            self.err(format!("unknown type {}", path.to_string()), path.span);
+            self.unknown_type(path);
             return None;
         }
         let (res, n) = self.resolve_segments(&segs, true)?;

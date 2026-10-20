@@ -39,8 +39,14 @@ pub(crate) enum Bound {
     Any,
     /// Builtin `Ordered`: integers, floats, strings, chars (`< <= > >= == != +`).
     Ordered,
-    /// Builtin `Comparable` / `Equatable`: types with `==` / `!=`.
+    /// Builtin `Comparable`: types with builtin `==` / `!=` (also map keys).
     Comparable,
+    /// Builtin `Equatable`: `Comparable` types and types with
+    /// `func Equals(other T) bool` (`==` / `!=` only, not map keys).
+    Equatable,
+    /// Builtin operator constraint (`T: Add`): numeric types with the
+    /// operator or types with the operator method (`func Add(other T) T`).
+    Op(super::opover::OpIface),
     /// An interface: the type must have its methods.
     Iface(TypeId),
 }
@@ -268,11 +274,18 @@ impl<'a> Sema<'a> {
                 let n = &path.segments[0];
                 let builtin = match n.name.as_str() {
                     "Ordered" => Some(Bound::Ordered),
-                    "Comparable" | "Equatable" => Some(Bound::Comparable),
-                    _ => None,
+                    "Comparable" => Some(Bound::Comparable),
+                    "Equatable" => Some(Bound::Equatable),
+                    other => super::opover::OpIface::from_name(other).map(Bound::Op),
                 };
                 if let Some(bb) = builtin {
-                    if is_std || self.lookup_global(n, false).is_none() {
+                    // A user type of the same name wins; a function named
+                    // `Add` does not hide the builtin constraint.
+                    let user_type = matches!(
+                        self.lookup_global(n, false),
+                        Some(PathRes::Member(Member::Struct(_) | Member::Interface(_) | Member::Enum(_) | Member::Generic(_)))
+                    );
+                    if is_std || !user_type {
                         return bb;
                     }
                 }
@@ -283,7 +296,11 @@ impl<'a> Sema<'a> {
             Type::Interface(_) | Type::Error => Bound::Iface(ty),
             Type::Any | Type::Invalid => Bound::Any,
             _ => {
-                self.err(format!("constraint {} is not an interface (use an interface, Ordered or Comparable)", self.tn(ty)), b.span);
+                self.err_help(
+                    format!("constraint {} is not an interface", self.tn(ty)),
+                    b.span,
+                    "use an interface, or a builtin constraint: Ordered, Comparable, Equatable, Add, Sub, Mul, Div, Rem, Neg, MatMul",
+                );
                 Bound::Any
             }
         }
@@ -359,7 +376,8 @@ impl<'a> Sema<'a> {
                 .filter(|m| !have.iter().any(|h| h.name == m.name && h.params == m.params && h.ret == m.ret) && !(m.default.is_some() && !have.iter().any(|h| h.name == m.name)))
                 .map(|m| format!("missing method {}", m.name))
                 .collect(),
-            None if self.has_methods(ty) && !matches!(self.tt.get(ty), Type::Pointer(_)) => self.missing_methods(ty, iface),
+            // `S`, `*S` (like the conversion `var l Logger = &s`) and enums.
+            None if self.has_methods(ty) => self.missing_methods(ty, iface),
             None => self.iface_methods(iface).into_iter().map(|m| format!("missing method {}", m.name)).collect(),
         }
     }
@@ -372,10 +390,13 @@ impl<'a> Sema<'a> {
         let t = self.tn(ty);
         match bound {
             Bound::Any => Ok(()),
-            Bound::Ordered if self.is_ordered(ty) => Ok(()),
-            Bound::Ordered => Err(format!("type {t} does not satisfy constraint Ordered (only integers, floats, strings and chars are ordered)")),
+            Bound::Ordered if self.is_ordered(ty) || self.has_cmp_method(ty, "Compare") => Ok(()),
+            Bound::Ordered => Err(format!("type {t} does not satisfy constraint Ordered (integers, floats, strings, chars and types with func Compare(other {t}) int are ordered)")),
             Bound::Comparable if self.is_comparable(ty) => Ok(()),
             Bound::Comparable => Err(format!("type {t} does not satisfy constraint Comparable: values of {t} cannot be compared with ==")),
+            Bound::Equatable if self.is_comparable(ty) || self.has_cmp_method(ty, "Equals") || self.bound_of(ty) == Some(Bound::Equatable) => Ok(()),
+            Bound::Equatable => Err(format!("type {t} does not satisfy constraint Equatable: values of {t} cannot be compared with == (declare func Equals(other {t}) bool)")),
+            Bound::Op(k) => self.op_bound_ok(ty, k),
             Bound::Iface(i) => {
                 let missing = self.missing_for_bound(ty, i);
                 if missing.is_empty() {
@@ -718,7 +739,7 @@ impl<'a> Sema<'a> {
             }
             _ => {
                 if !self.diags.has_errors_at(path.span, self.cur_file) {
-                    self.err(format!("unknown type {}", path.to_string()), path.span);
+                    self.unknown_type(path);
                 }
                 self.tt.invalid
             }
@@ -842,10 +863,21 @@ impl<'a> Sema<'a> {
         use hir::BinOp as H;
         let bound = self.bound_of(l).unwrap_or(Bound::Any);
         let ordered = bound == Bound::Ordered;
-        let comparable = ordered || bound == Bound::Comparable;
+        let comparable = ordered || bound == Bound::Comparable || bound == Bound::Equatable;
         let b = self.tt.bool_;
+        let opk = match bound {
+            Bound::Op(k) => Some(k),
+            _ => None,
+        };
+        use super::opover::OpIface as K;
         let r = match op {
-            B::Add if ordered => Some((H::Add, l)),
+            B::Add if ordered || opk == Some(K::Add) => Some((H::Add, l)),
+            B::Sub if opk == Some(K::Sub) => Some((H::Sub, l)),
+            B::Mul if opk == Some(K::Mul) => Some((H::Mul, l)),
+            B::Div if opk == Some(K::Div) => Some((H::Div, l)),
+            B::Rem if opk == Some(K::Rem) => Some((H::Rem, l)),
+            // Abstract check only: instances call the MatMul method.
+            B::MatMul if opk == Some(K::MatMul) => Some((H::Mul, l)),
             B::Lt if ordered => Some((H::Lt, b)),
             B::Le if ordered => Some((H::Le, b)),
             B::Gt if ordered => Some((H::Gt, b)),
@@ -859,7 +891,12 @@ impl<'a> Sema<'a> {
             let t = self.tn(l);
             let hint = match op {
                 B::Eq | B::Ne => format!(" (constrain it: {t}: Comparable)"),
-                B::Lt | B::Le | B::Gt | B::Ge | B::Add => format!(" (constrain it: {t}: Ordered)"),
+                B::Lt | B::Le | B::Gt | B::Ge => format!(" (constrain it: {t}: Ordered)"),
+                B::Add => format!(" (constrain it: {t}: Add or {t}: Ordered)"),
+                B::Sub | B::Mul | B::Div | B::Rem | B::MatMul => {
+                    let k = super::opover::binary_method(op).unwrap_or("");
+                    format!(" (constrain it: {t}: {k})")
+                }
                 _ => String::new(),
             };
             self.err(format!("operator {sym} is not defined on type parameter {t}: its constraint does not allow it{hint}"), span);

@@ -32,7 +32,8 @@ fn reports_failures_and_summary() {
         "    about to fail\n    got 4, want 5\n    got \"a\", want \"b\"\n--- FAIL: TestFailing (",
         "    stop here\n--- FAIL: TestFatalStops (",
         "    (exit status 2)\n--- FAIL: TestPanics (",
-        "FAIL\nFAIL\t3 passed, 3 failed, 1 skipped (",
+        "    expected a panic, but the function returned\n--- FAIL: TestPanicsMissing (",
+        "FAIL\nFAIL\t6 passed, 4 failed, 1 skipped (",
     ] {
         assert!(out.contains(want), "missing {want:?} in:\n{out}");
     }
@@ -62,4 +63,31 @@ fn benchmarks() {
     let (code, out) = slang_test(&["--bench", "--filter", "Bench", "--benchtime", "20"]);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("BenchAdd ") && out.contains(" ns/op ") && out.contains(" allocs/op"), "{out}");
+    // `@bench func` is discovered like `@test func X(b *testing.B)`.
+    assert!(out.contains("BenchMul "), "{out}");
+}
+
+#[test]
+fn panics_probe_runs_in_a_child() {
+    let (code, out) = slang_test(&["-v", "--filter", "TestPanicsOK"]);
+    assert_eq!(code, 0, "{out}");
+    // the test's own output appears once: the probe children are silent
+    assert_eq!(out.matches("after the probes").count(), 1, "{out}");
+    assert!(out.contains("--- PASS: TestPanicsOK ("), "{out}");
+}
+
+#[test]
+fn parallel_tests_overlap_and_run_after_sequential_ones() {
+    let (code, out) = slang_test(&["-v", "--parallel", "2", "--filter", "TestParallel|TestDiv"]);
+    assert_eq!(code, 0, "{out}");
+    // the runner's own elapsed time (not the build): two 2s tests in
+    // parallel; sequentially they would take 4s or more
+    let summary = out.lines().find(|l| l.starts_with("ok  \t")).expect("summary line");
+    let secs: f64 = summary.rsplit('(').next().unwrap().trim_end_matches(')').trim_end_matches('s').parse().expect("elapsed seconds");
+    assert!(secs < 3.8, "took {secs}s:\n{out}");
+    // the sequential TestDiv (declared earlier) runs first anyway
+    let div = out.find("=== RUN   TestDiv").expect("TestDiv ran");
+    let a = out.find("=== RUN   TestParallelA").expect("TestParallelA ran");
+    let b = out.find("=== RUN   TestParallelB").expect("TestParallelB ran");
+    assert!(div < a && a < b, "{out}");
 }

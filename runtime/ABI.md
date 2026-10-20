@@ -644,7 +644,7 @@ typedef struct slang_error_frame {  // 16 bytes
 | `slang_string *slang_error_trace(const slang_error *err)` | owned trace text, `""` for NULL or no trace. Format below |
 | `void slang_error_frames(const slang_error *err, slang_slice *out)` | owned `[]errors.Frame`: one 32-byte record `{string File @0, int64 Line @8, string Func @16, string Context @24}` per trace line (`Context` is the `?("...")` text or NULL), elements owned via `slang_ops_error_frame` |
 | `slang_errors_trace` / `slang_errors_frames` | the `std.errors.Trace` / `Frames` externs (same functions) |
-| `void slang_error_report(const slang_error *err)` | writes `error: <message>`, then the trace (if any), to stderr. The C `main` calls it when `func main() void!` (or `async func main() void!`) returned an error, after `slang_runtime_shutdown`, and then exits with code 1 |
+| `void slang_error_report(const slang_error *err)` | writes `error: <message>`, then the trace (if any), to stderr. The C `main` calls it when `func main() void!` (or `async func main() void!`) returned an error, before `slang_runtime_shutdown` (then releases the error), and then exits with code 1 |
 
 - **Storage**: the first 8 frames live inline in the error object; more go to
   a growable raw array (`overflow`, doubling from 8). One `?` costs storing
@@ -1089,9 +1089,10 @@ define i32 @main(i32 %argc, ptr %argv) {
 ```
 
 For `func main() void!` the call returns the error (`ptr`; for `async` it
-is read, and retained, from the awaited task's result slot). After
-`slang_runtime_shutdown` a non-NULL error is passed to `slang_error_report`
-and released, and `main` returns 1.
+is read, and retained, from the awaited task's result slot). After the
+globals are released and before `slang_runtime_shutdown`, a non-NULL error
+is passed to `slang_error_report` and released (so `--leak-check` neither
+counts it nor what it holds as leaked), and `main` returns 1.
 
 | Function | Semantics |
 |---|---|
@@ -1113,6 +1114,7 @@ output still sitting in buffers may be lost if workers are still printing.
 | `SLANG_WORKERS=n` | number of worker threads (default: online CPUs, max 256) |
 | `SLANG_NO_BACKTRACE=1` | panic prints only the `panic: ...` line (useful for golden-output tests) |
 | `SLANG_NO_SLAB=1` | objects come straight from `malloc` instead of the small-object allocator (3.2), e.g. so Valgrind memcheck sees each object |
+| `SLANG_DEBUG=[host]:port[,wait]` | programs built with `--debug-agent` (default for debug builds) start the in-process debug agent before `main` (§22); port 0 picks a free port, announced on stderr as `slang-debug: listening on HOST:PORT`; `,wait` (or `SLANG_DEBUG_WAIT=1`) holds `main` until the client sends `configurationDone` |
 
 ---
 
@@ -1508,23 +1510,66 @@ Addr/Port`, `UDPConn.RecvFrom/SendTo/...`) is unchanged; error *messages*
 follow Go now (`dial tcp 127.0.0.1:1: connection refused` instead of
 `connect: Connection refused`).
 
-**HTTP** (`http.sl`): parsing and formatting are Slang, over a buffered reader
-on `net.Conn`; bodies are strings. Client: `http.Get(url)`, `http.Post(url, body,
-contentType)` and `http.Client{Timeout, MaxRedirects, Headers}` with
-`Get/Post/Do`, returning `Task<Response!>`; HTTP/1.1 with `Connection: close`
-(no pooling), `Content-Length`, chunked and read-to-end bodies, redirects
-301/302/303/307/308 (at most 10; 303 and a redirected POST become GET); `https`
-URLs dial `std.net.tls` (section 19; `Client.TLS *tls.Config`, default:
-system roots, SNI from the URL, ALPN `http/1.1`); both sides read and write
-through the internal `stream` interface (`std.net.Conn` or `tls.Conn`).
-Server: `http.Server{Addr, Handler, TLS *tls.ServerConfig,
-IdleTimeout}` with `Listen()`, `Port()`, `Serve() Task<void!>`, `Shutdown()
-Task<void>`; one task per connection, HTTP/1.1 keep-alive, request bodies with
-`Content-Length` or chunked, handler errors become 500. `interface Handler {
-func Serve(req *Request, res *Response) Task<void!> }` (an interface method
-cannot be `async`, so it returns the task of an async call); `http.NewRouter()`
-implements it with `Get/Post/Put/Delete/Handle(pattern, handler)`, `{name}`
-parameters and a final `*`.
+**HTTP** (`http.sl`, `http_server.sl`, `http_client.sl`, `http2.sl`,
+`http_extra.sl`, namespace `std.net.http`; `hpack.sl` = `std.net.http.hpack`,
+`httptest.sl` = `std.net.http.test`, `ws.sl` = `std.net.ws`): the protocol
+logic is Slang; the hot loops are the C helpers of 16.5. The authoritative
+API list is DESIGN.md, "Сеть и протоколы". In short:
+
+- **Server**: `http.Server{Addr, Handler, IdleTimeout, TLS, ReadTimeout,
+  WriteTimeout, MaxHeaderBytes, MaxBodyBytes, H2C, DisableHTTP2,
+  MaxConcurrentStreams, NoDate}`; one task per connection. HTTP/1.1
+  connections read into one per-connection buffer (`rbuf`, 4 KB, grown on
+  demand) that heads are parsed from in place (`rtHeadEnd`, `rtParseHead`);
+  a request costs one read, one handler task and one write in the common
+  case (`rtFormatHead` builds status line, headers, cached `Date` and the
+  body as one string). HTTP/2 (RFC 9113) via TLS ALPN `h2` or prior
+  knowledge (`H2C`): the connection task reads frames, each stream runs its
+  handler in a task; HPACK with static/dynamic tables and Huffman;
+  flow control on both sides; SETTINGS, PING, GOAWAY (also on Shutdown),
+  RST_STREAM; priority ignored; no server push. `Response.Flush()` streams
+  (chunked on HTTP/1.1, DATA frames on HTTP/2), `Response.SendFile` uses
+  sendfile(2) on plain TCP, `Response.Hijack()` hands an HTTP/1.x
+  connection over (`RawConn`, used by `ws.Upgrade`).
+- **Client**: `http.Client{Timeout, TotalTimeout, MaxRedirects, Headers,
+  TLS, Transport, Jar}` with `Get/Post/Do` (unchanged) and `Send(req)` /
+  `Stream(req)` for `http.NewRequest(method, url)` builders. `Transport`
+  pools connections per scheme+host+proxy (idle LIFO list, `MaxIdleConnsPerHost`
+  8, `IdleConnTimeout` 90 s, `MaxConnsPerHost` with FIFO waiters), shares
+  one HTTP/2 connection per host (no background reader: the waiting
+  request reads frames while it holds the connection's reader token),
+  resumes TLS sessions from its session cache, retries idempotent requests
+  once when a reused connection turns out stale, speaks to proxies (absolute
+  form for http, CONNECT for https; `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`),
+  asks for and decodes gzip. The process-wide `DefaultTransport()` lives in
+  the std.diag slot map (released before the leak report).
+
+### 16.5 std.net.http C helpers (`src/std_http.c`)
+
+Pure functions over their arguments (plus a per-thread Date cache, a
+per-thread scratch buffer for heads and the per-thread result of
+`rtHeadInfo`, valid until the next `rtParseHead` on the thread, like
+`rtAgain`). Slang names are in `std.net.http` unless noted.
+
+| Slang (internal) | C | Semantics |
+|---|---|---|
+| `rtCanonical(s) string` | `slang_net_http_rt_canonical` | `CanonicalHeader`: trims blanks, upper case at the start and after `-`; `s` itself (retained) when already canonical, an interned immortal string for ~90 common names, a name that is not a token unchanged |
+| `rtHeadEnd(buf, from, to) int` | `slang_net_http_rt_head_end` | offset just past the blank line ending a head in `buf[from..to)` (`\r\n\r\n`, `\n\n`, `\n\r\n`), or -1 |
+| `rtParseHead(buf, start, end, kind, h map[string]string) []string!` | `slang_net_http_rt_parse_head` | parses `buf[start..end)` into `h` (canonical names; repeats joined with `", "`, `Set-Cookie` with `"\n"`) and returns kind 0 `[method, path, query, proto]` (absolute-form targets keep their path) or kind 1 `[proto, status, reason]`; common methods, protocols and names are interned; errors `malformed request line "..."` and the like |
+| `rtHeadInfo() int` | `slang_net_http_rt_head_info` | flags of the last parse: 1 Content-Length (value `>> 16`), 2 chunked, 4 other Transfer-Encoding, 8 `Connection: close`, 16 `keep-alive`, 32 `Expect: 100-continue`, 64 traceparent, 128 Upgrade, 256 invalid or conflicting Content-Length |
+| `rtFormatHead(status, line, h, blen, flags, body) string` | `slang_net_http_rt_format_head` | a message head (+ `body` unless flag 4) as one string: status line (or `line` with flag 128, a request), `h` with canonical names (Content-Length/Connection/Transfer-Encoding ignored, `Set-Cookie` lines split at `"\n"`, CR/LF in values become spaces), default `Content-Type: text/plain; charset=utf-8` when `blen > 0` (not with 64), `Date` (not with 8), `Content-Length: blen` (16: `Transfer-Encoding: chunked`, 32: neither), 1 `Connection: keep-alive`, 2 `Connection: close` |
+| `rtHasToken(v, token) bool` | `slang_net_http_rt_has_token` | comma-separated token membership, ASCII case-insensitive, `;params` ignored |
+| `rtStatusText(code)`, `rtDate()`, `rtHttpTime(sec)`, `rtParseHttpTime(s) int` | `slang_net_http_rt_status_text`, `_date`, `_http_time`, `_parse_http_time` | reason phrases; the cached IMF-fixdate; Unix seconds to/from HTTP dates (IMF-fixdate, RFC 850, asctime; -1 if invalid) |
+| `rtItoa(n)`, `rtAtoi(s) int` | `slang_net_http_rt_itoa`, `_atoi` | decimal; a non-negative decimal of at most 18 digits or -1 |
+| `rtMask(b, off, n, key, phase)` | `slang_net_http_rt_mask` | WebSocket masking in place with a big-endian 32-bit key starting at key byte `phase` (8 bytes per step) |
+| `std.net.http.hpack.rtHuffLen(s) int`, `rtHuffEncode(s) []byte`, `rtHuffDecode(b, off, n) string!` | `slang_net_http_hpack_rt_huff_len`, `_encode`, `_decode` | the HPACK Huffman code of RFC 7541 appendix B (padding with EOS bits; decoding rejects EOS, padding over 7 bits or not all ones) |
+
+Sentinels (`StdConst::Error`, immortal): `http.ErrBodyTooLarge`
+(`slang_net_http_err_body_too_large`), `ErrHijacked`, `ErrAbortHandler`,
+`ErrServerClosed`, `ErrHandlerTimeout`, `ErrBodyClosed`; `ws.ErrClosed`
+(`slang_net_ws_err_closed`), `ws.ErrBadHandshake`. Integer constants
+`ws.TextMessage` (1), `ws.BinaryMessage` (2) and the close codes
+`ws.CloseNormal` (1000) ... `ws.CloseInternalError` (1011).
 
 ---
 
@@ -1776,3 +1821,238 @@ are `runtime/tests/test_std3.c`.
 | `encoding.xml.rtEscape(s, attr) string` | `slang_string *slang_encoding_xml_rt_escape(s, attr)` | `&<>"'` (and `\t\n\r` in attributes) |
 | `html.Escape`, `html.Unescape` | `slang_html_escape(s)`, `slang_html_unescape(s)` | Go's `html.EscapeString`/`UnescapeString` with all 2231 HTML5 entities (`std_html_entities.h`) |
 | `mime.rtType(ext)`, `rtAdd(ext, type)`, `rtExts(type)` | `slang_mime_rt_type/add/exts` | the extension table (built-ins + additions) |
+
+## 22. The in-process debug agent
+
+Programs built with `--debug-agent` (the default for debug builds; release
+builds only with the flag) carry statement hooks and static tables
+(`compiler/src/codegen/debug_agent.rs`); the agent itself is Slang code
+(`std.debug`, `compiler/src/sema/stdlib_src/debug*.sl`) that the compiler
+instantiates and links in. The C side (`src/debug.c`) filters the hot path,
+keeps the frame chain and per-task stop/step state, blocks stopped tasks,
+and gives `std.debug` its primitives. docs/DEBUGGER.md (stage 2) describes
+the design.
+
+### 22.1 Tables
+
+One `slang_dbg_tables` per program (`slang.dbg.tables`, passed to
+`slang_dbg_boot`); every record is little-endian, 8-aligned:
+
+```c
+typedef struct { int32_t file, line, col, func, scope, kind; } slang_dbg_stmt;   /* 24 bytes */
+typedef struct {
+    slang_string *name;        /* +0  full name: "app.Point.Length", "app.Max<int>" (immortal literal) */
+    slang_string *short_name;  /* +8  "Length" */
+    int32_t file, line;        /* +16 +20  declaration */
+    int32_t first_stmt;        /* +24 the entry statement (kind 1) */
+    int32_t last_stmt;         /* +28 */
+    int32_t nlocals, flags;    /* +32 +36  flags: 1 = async */
+    const slang_dbg_local *locals;  /* +40 nlocals records, NULL in optimised builds */
+    const void *addr;          /* +48 the function */
+} slang_dbg_func;              /* 56 bytes */
+typedef struct {
+    slang_string *name;        /* +0 */
+    const slang_type_info *type;  /* +8 a full std.reflect.TypeInfo (22.4) */
+    int32_t slot;              /* +16 index into the frame's locals array */
+    int32_t flags;             /* +20 1 = the slot holds a heap cell (value at cell + 16) */
+    int32_t line, end_line;    /* +24 +28 visible after `line` (parameters: from `line`) up to `end_line` */
+} slang_dbg_local;             /* 32 bytes */
+typedef struct {
+    int64_t version;           /* 1 */
+    int64_t nstmts;  const slang_dbg_stmt *stmts;
+    int64_t nfuncs;  const slang_dbg_func *funcs;
+    int64_t nfiles;  slang_string *const *files;   /* absolute paths, by HIR file id */
+    uint8_t *bp;               /* nstmts bytes: 1 = breakpoint (written by the agent) */
+} slang_dbg_tables;            /* 64 bytes */
+```
+
+Statement kinds: 0 a statement (every HIR statement with a span, plus one
+at each function's closing brace, run by every return), 1 a function
+entry (function breakpoints; steps ignore it), 2 reserved. `func` indexes
+`funcs`; statement ids are global and dense. Only user code gets records:
+functions whose full name starts with `std.` (the agent included) have no
+hooks.
+
+### 22.2 Hooks and frames
+
+```c
+typedef struct slang_dbg_frame {
+    struct slang_dbg_frame *prev;   /* +0  caller (the per-thread chain) */
+    const slang_dbg_func *func;     /* +8  */
+    void *const *locals;            /* +16 address of each local's slot, NULL in optimised builds */
+    int32_t stmt;                   /* +24 current statement */
+    int32_t active;                 /* +28 0 unlinked, 1 linked, 2 suspended at an await */
+} slang_dbg_frame;                  /* 32 bytes, in the function's frame (coroutine frame for async) */
+extern uint8_t slang_dbg_on;        /* hidden; 1 once the agent runs */
+```
+
+Every hooked function loads `slang_dbg_on` once at entry and calls, each
+behind `if (on)`:
+
+| Call | Where |
+|---|---|
+| `slang_dbg_enter(&F, &func, locals, entry_stmt)` | after the parameters are stored; initialises `F` (compiled code does not zero it), links it, runs the entry statement |
+| `slang_dbg_stmt(&F, id)` | before every statement |
+| `slang_dbg_stmt(&F, close)` then `slang_dbg_leave(&F)` | at the start of the exit block (`close` is the closing-brace statement) |
+| `slang_dbg_suspend(&F)` | in `await`, before the continuation is registered (the frame leaves this thread's chain) |
+| `slang_dbg_resume(&F)` | once the awaited task is ready (no-op unless suspended): the frame joins the chain of the thread that resumed it |
+
+`slang_dbg_boot(&tables, entry)` runs in the C `main` right after
+`slang_runtime_init`: with `SLANG_DEBUG` set and an agent linked (`entry`
+is `std.debug.AgentMain` wrapped as `void(void)`, NULL otherwise) it sets
+`slang_dbg_on` and calls `entry`. `slang_dbg_exit(code)` runs before the C
+`main` returns and in `slang_exit` (`os.Exit`): it calls the agent's exit
+hook once.
+
+**Optimised builds** (`--release --debug-agent`) emit every hooked non-async
+function twice: `sym.dbg` with the hooks, and `sym` without them, starting
+with `if (slang_dbg_on) return sym.dbg(args...)`. Direct calls inside
+`.dbg` copies go to `.dbg` copies; a plain function only called directly
+from plain functions loses its check (plain code is entered with the agent
+on only through a check: the C `main`, function values, vtables, code
+without copies). With the agent off the plain code is that of a build
+without the agent; locals are not described (`locals` NULL).
+
+**Tasks.** A task gets a debug record (`slang_task.dbg_id`, never reused)
+the first time it needs one; the C `main` thread is record 1. Async
+functions run their ramp on the caller's thread, so a fresh coroutine's
+frame links above its caller's until it first suspends.
+
+### 22.3 The agent's hook
+
+`std.debug.rtSetHook(func(stmt, frame, reason, task int) int)` registers
+the callback `slang_dbg_stmt` (and the panic / error hooks) calls, with
+hooks disabled on the calling thread, when a statement has a breakpoint
+byte, a step of some task ends there, a freeze is on, or the next statement
+was asked to stop (`stopOnEntry`). Reasons (bit set): 1 breakpoint, 2 step,
+4 pause (freeze), 8 panic (`slang_panic*`, before the message is printed),
+16 error creation (`slang_error_created`, when the agent asked for it),
+32 entry. Before the call the task is marked paused at `frame` (so the
+client can read its stack as soon as the `stopped` event is out). The
+result: 0 go on, 1 stopped (reported to the client; blocks until
+`rtResume` lets this task go), 2 frozen while another task is stopped
+(silent; ends with the freeze).
+
+Steps are per task: `rtResume(task, mode, single)` with mode 1 next, 2 step
+in, 3 step out records the paused frame, its caller and depth; a step ends
+at a statement of the same frame on another line (or an earlier statement:
+a loop), in the caller once the frame returned (not when it only suspended
+at an `await`: then the step goes on when the coroutine resumes, in its
+own task), or (step in) in a callee of the frame. Without `single` the
+freeze ends and every stopped task goes on (a task still deciding in its
+hook is not released by another task's resume).
+
+### 22.4 What std.debug reads
+
+Values are read with `std.unsafe` through the tables, frames (22.1, 22.2)
+and the reflection tables of §17: a local's `type` is a full
+`std.reflect.TypeInfo` (codegen loads reflection whenever the agent is
+linked), read at the offsets of its LLVM layout: `Kind` (i32) +24, `Name`
++32, `Size` +48, `Fields` +64 (slice of `*FieldInfo`), `Variants` +128,
+`Elem` +160, `Key` +168, `Len` +176; `FieldInfo`: `Name` +0, `Type` +8,
+`Offset` +16; `VariantInfo`: `Name` +0, `Fields` +16. Interfaces use the
+vtable header (`vtable[0]` type, `vtable[1]` boxed), `any` its type word;
+`T!` keeps its error at `round8(sizeof T)`. Runtime helpers:
+
+| Slang (`std.debug`) | C | Notes |
+|---|---|---|
+| `rtTables() int` | `slang_debug_rt_tables` | the tables (0 without agent) |
+| `rtSetHook(f)`, `rtSetExitHook(f)` | `slang_debug_rt_set_hook/_exit_hook(fn, env)` | closures as two words, env retained |
+| `rtSetBp(stmt, on)`, `rtOnError(on)`, `rtStopNext()` | | breakpoint byte, error-creation reports, stop at the next statement |
+| `rtFreeze(on)`, `rtResume(task, mode, single) bool`, `rtReleaseAll()` | | 22.3; `rtReleaseAll` clears every breakpoint, step and freeze (disconnect) |
+| `rtTasks() []int`, `rtTaskState(t)`, `rtTaskFrame(t)`, `rtTaskFunc(t)`, `rtTaskReason(t)` | | live task records; state 0 running, 1 paused, 2 at an await, -1 gone; the top frame of a paused/awaiting task |
+| `rtLock(n)`, `rtUnlock(n)` | | two agent mutexes (0 state, 1 output; taken in that order) |
+| `rtWaitReady()`, `rtSignalReady()` | | `,wait`: `AgentMain` blocks `main` until `configurationDone` |
+| `rtIgnoreHooks()` | | no hooks on this thread (the agent thread) |
+| `rtPanicText()`, `rtCurError() int`, `rtErrorText(e)`, `rtErrorType(e)` | | the panic / created error being reported; message (may run a user `Message()`), typed error's type name |
+| `rtString(addr) string` | `slang_debug_rt_string` | the `string` stored at `addr`, retained |
+| `rtMapLen(m)`, `rtMapEntries(m, start, n) []int` | | key/value slot addresses of entries `start..start+n` |
+| `rtTaskDone(t)`, `rtTaskSlot(t)`, `rtSymName(fn)`, `rtTypeName(ti)` | | `Task<T>` state and result slot; symbol of a code address |
+| `rtListen(host, port) int!`, `rtSockPort(fd)`, `rtAccept(fd)`, `rtRecv(fd, max) []byte`, `rtSend(fd, s) bool`, `rtClose(fd)` | | blocking TCP on a private poller: the agent thread is no scheduler task and must answer while every worker is blocked in a stopped task |
+| `rtEprint(s)`, `rtExit(code)`, `rtNowMs()` | | unbuffered stderr, `_exit` after flushing, monotonic ms |
+
+### 22.5 std.unsafe
+
+`ReadInt/ReadUint(addr, size)`, `ReadFloat(addr, size)`, `WriteInt(addr,
+size, v)`, `ReadBytes(addr, n)`, `WriteBytes(addr, b)`, `CString(addr)`,
+`AddrOf(x any)` / `TypeOf(x any)` (the two words of an `any`),
+`CallFunc(addr, []int) int` (C ABI, up to 8 integer arguments). Nothing is
+checked. Importing `std.unsafe` (and `std.plugin`) needs the capability in
+the package manifest (`[capabilities] unsafe = true` / `plugin = true`);
+plain (manifest-less) builds may not; the standard library may.
+
+### 22.6 std.thread
+
+`Spawn(f func()) int` starts an OS thread outside the scheduler (`await`
+there blocks), `Join(h)`, `Sleep(ms)`.
+
+### 22.7 std.plugin
+
+`rtOpen(path) int!`, `rtSym(h, name) int!`, `rtClose(h)`: `dlopen(RTLD_NOW |
+RTLD_LOCAL)` / `dlsym` through the platform layer (`slang__plat_dl_*`), for
+expressions compiled outside the process (not used by the v1 evaluator).
+
+## 23. Tier-3 stdlib helpers (sql, sqlite, crypto additions, zstd encoder)
+
+The tier-3 libraries (`docs/STDLIB.md`, level 3) are Slang
+(`compiler/src/sema/stdlib_src/{sql,sqlite,postgres,postgres_types,mail,kdf,password,rsa}.sl`);
+the C side follows the usual conventions (14.1). C tests:
+`runtime/tests/test_std4.c`.
+
+### 23.1 Linking system libraries per module
+
+`stdlib.rs` `LINK_LIBS` maps a runtime symbol prefix to a system library:
+`build.rs` adds `-l<lib>` to the link only when the program's LLVM module
+declares a function with that prefix (after optimisation for plain builds,
+on the whole module for package builds). Today: `slang_database_sqlite_`
+-> `-lsqlite3`. `std_sqlite.c` compiles without `<sqlite3.h>` too (every
+function then fails with `sqlite: not available` and `rtAvailable()` is
+false), but a program using the driver still needs the library to link.
+
+### 23.2 std.database.sql / std.database.sqlite
+
+| Slang | C | Notes |
+|---|---|---|
+| `sql.ErrNoRows`, `ErrTxDone`, `ErrConnDone` | `slang_database_sql_err_no_rows()` / `_tx_done` / `_conn_done` | immortal sentinels (`std_sql.c`) |
+| `sqlite.rtOpen(path, flags) int!` | `slang_database_sqlite_rt_open` | `sqlite3_open_v2` (`flags` 0: read-write + create) with URI names and the serialized threading mode; extended result codes on; busy timeout 5 s. The handle is the `sqlite3 *` as an int, owned by the Slang `conn` (its `Drop` closes it) |
+| `rtClose(h)`, `rtBusyTimeout(h, ms)`, `rtExec(h, sql) void!` | | `sqlite3_close_v2` (deferred until the statements are finalized), `sqlite3_exec` (scripts) |
+| `rtPrepare(h, sql) int!` | | `sqlite3_prepare_v2`; a non-blank tail (second statement) is an error |
+| `rtFinalize(st)`, `rtReset(st)`, `rtParamCount(st)`, `rtParamIndex(st, name)` | | `rtReset` also clears bindings |
+| `rtBindNull/Int/Float/Text/Blob(st, i, v) void!` | | 1-based; text and blobs are copied (`SQLITE_TRANSIENT`) |
+| `rtStep(st) int!` | | 1 row, 0 done |
+| `rtColumnCount/Name/Decltype/Type/Int/Float/Text/Blob(st, i)` | | type codes 1 INTEGER, 2 FLOAT, 3 TEXT, 4 BLOB, 5 NULL |
+| `rtChanges(h)`, `rtLastInsertId(h)`, `rtErrcode(h)`, `rtAutocommit(h)`, `rtAvailable()`, `rtVersion()` | | extended error code of the last failure |
+
+### 23.3 Crypto additions (`crypto/{p384,cbc,kdf,api2}.c`, `std_argon2.c`)
+
+| Slang | C | Notes |
+|---|---|---|
+| `kdf.Pbkdf2(pw, salt, iter, keyLen, hash) []byte!` | `slang_crypto_kdf_pbkdf2` | RFC 8018 over HMAC-SHA1/256/384/512 |
+| `kdf.Scrypt(pw, salt, N, r, p, keyLen) []byte!` | `slang_crypto_kdf_scrypt` | RFC 7914; `N` a power of two, `r*p < 2^30`; `128 r N` bytes of memory |
+| `kdf.rtArgon2(type, pw, salt, secret, ad, t, mKiB, p, keyLen) []byte!` | `slang_crypto_kdf_rt_argon2` | RFC 9106 v0x13; type 0 d, 1 i, 2 id; salt >= 8 bytes, secret <= 32 bytes; lanes are filled sequentially; memory is `malloc`ed and wiped |
+| `hash.Blake2b(data, size, key) []byte!` | `slang_crypto_hash_blake2b` | RFC 7693, size 1..64, key <= 64 bytes |
+| `ecdh.GenerateKeyP384()`, `PublicKeyP384(priv)`, `SharedSecretP384(priv, peer)` | `slang_crypto_ecdh_*_p384` | 48-byte scalars, 97-byte uncompressed points; constant-time 6x64-bit Montgomery arithmetic as P-256 |
+| `ecdsa.GenerateKeyP384`, `PublicKeyP384`, `SignP384(priv, digest)` (DER), `VerifyP384(pub, digest, sig) bool`, `SignP384Raw` (r‖s, RFC 6979 without added randomness, for vectors) | `slang_crypto_ecdsa_*_p384` | nonces: RFC 6979 with HMAC-SHA384, hedged with 48 random bytes |
+| `aes.DecryptBlock`, `CbcEncrypt/CbcDecrypt` (PKCS#7), `CbcEncryptRaw/CbcDecryptRaw`, `Pkcs7Pad/Pkcs7Unpad(data, block)` | `slang_crypto_aes_*` | decryption: AES-NI or a table-free byte-oriented inverse cipher; unpadding is constant time (`aes-cbc: invalid padding`) |
+| `rsa.EncryptOAEP(n, e, hash, msg, label)`, `DecryptOAEP(keyDER, hash, ct, label)` | `slang_crypto_rsa_encrypt_oaep` / `_decrypt_oaep` | RFC 8017 7.1, MGF1 with the same hash; constant-time decoding, one error (`rsa: decryption error`) |
+| `rsa.rtGenPrime(bits, e) []byte!`, `IsProbablePrime(p, rounds) bool` | | random candidates with the top two bits set, trial division by primes < 1000, `p mod e != 1`, Miller-Rabin (variable time: key generation data only); `rsa.GenerateKey` (Slang) builds the PKCS#1 key with `std.math.big` |
+
+### 23.4 zstd encoder
+
+`compress.rtZstdEncode(data, level, checksum) []byte!` ->
+`slang_compress_rt_zstd_encode` (`std_zstd_enc.c`): one frame per call,
+single segment up to 8 MiB (else an 8 MiB window), blocks of 128 KiB as
+raw, RLE or compressed (Huffman literals with direct or FSE-coded weights;
+sequences with predefined, RLE or per-block FSE tables; repeat offsets),
+optional XXH64 checksum. Levels select the hash-chain depth (1..256) and
+lazy matching (>= 5).
+
+### 23.5 brotli decoder
+
+`compress.rtBrotliDecode(data) []byte!` -> `slang_compress_rt_brotli_decode`
+(`std_brotli.c`): RFC 7932 streams decoded whole (window bits 10..24;
+large-window streams are an error). The static dictionary, the 121
+transforms and the context lookup tables are in `std_brotli_tables.h`,
+generated by `scripts/gen-brotli-tables.py` from the system
+libbrotlicommon; the dictionary is stored zstd-compressed (54 KB) and
+expanded once into a process-wide buffer on the first dictionary reference.

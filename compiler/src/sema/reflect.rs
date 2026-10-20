@@ -346,6 +346,11 @@ impl<'a> Sema<'a> {
         ATTR_STRUCTS.iter().any(|n| self.refl.structs.get(*n) == Some(&sid))
     }
 
+    /// The builtin attribute whose value struct is `sid` (`json`).
+    pub(crate) fn attr_value_struct_name(&self, sid: u32) -> Option<&'static str> {
+        ATTR_STRUCTS.iter().copied().find(|n| self.refl.structs.get(*n) == Some(&sid))
+    }
+
     /// A builtin attribute used as a type (`f.Attribute<json>()`): its
     /// value struct in `std.reflect`.
     pub(crate) fn builtin_attr_type(&mut self, name: &str) -> Option<u32> {

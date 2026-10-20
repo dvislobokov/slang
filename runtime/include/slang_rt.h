@@ -829,6 +829,90 @@ void          slang_log_rt_write(int64_t fd, const slang_string *s, slang_error 
 void          slang_log_rt_close(int64_t fd);
 bool          slang_log_rt_isatty(int64_t fd);
 
+/* ======================================================================
+ * Debug agent (debug.c, std_unsafe.c, std_thread.c, std_plugin.c;
+ * ABI.md section 22). The tables and frame records are described there;
+ * compiled code passes them as opaque pointers.
+ * ====================================================================== */
+
+struct slang_dbg_frame;
+struct slang_dbg_func;
+/* Hooks emitted by `--debug-agent` builds, each behind `if (on)`, where
+ * `on` is the hidden uint8_t `slang_dbg_on` loaded at function entry. */
+void slang_dbg_enter(struct slang_dbg_frame *f, const struct slang_dbg_func *func, void *const *locals, int32_t entry_stmt);
+void slang_dbg_stmt(struct slang_dbg_frame *f, int32_t stmt);
+void slang_dbg_leave(struct slang_dbg_frame *f);
+void slang_dbg_suspend(struct slang_dbg_frame *f);
+void slang_dbg_resume(struct slang_dbg_frame *f);
+/* C main: after slang_runtime_init (starts the agent when SLANG_DEBUG is
+ * set) and before returning (reports the exit to the client). */
+void slang_dbg_boot(const void *tables, void (*entry)(void));
+void slang_dbg_exit(int32_t code);
+
+/* std.debug internals (rt*). Closures are passed as their two words. */
+int64_t       slang_debug_rt_tables(void);
+void          slang_debug_rt_set_hook(void *fn, void *env);
+void          slang_debug_rt_set_exit_hook(void *fn, void *env);
+void          slang_debug_rt_set_bp(int64_t stmt, bool on);
+void          slang_debug_rt_on_error(bool on);
+void          slang_debug_rt_stop_next(void);
+void          slang_debug_rt_freeze(bool on);
+bool          slang_debug_rt_resume(int64_t task, int64_t mode, bool single);
+void          slang_debug_rt_release_all(void);
+void          slang_debug_rt_tasks(slang_slice *out);
+int64_t       slang_debug_rt_task_state(int64_t task);
+int64_t       slang_debug_rt_task_frame(int64_t task);
+int64_t       slang_debug_rt_task_func(int64_t task);
+int64_t       slang_debug_rt_task_reason(int64_t task);
+void          slang_debug_rt_lock(int64_t n);
+void          slang_debug_rt_unlock(int64_t n);
+void          slang_debug_rt_wait_ready(void);
+void          slang_debug_rt_signal_ready(void);
+void          slang_debug_rt_ignore_hooks(void);
+slang_string *slang_debug_rt_panic_text(void);
+int64_t       slang_debug_rt_cur_error(void);
+slang_string *slang_debug_rt_error_text(int64_t addr);
+slang_string *slang_debug_rt_type_name(int64_t addr);
+int64_t       slang_debug_rt_await_int(slang_task *t);
+bool          slang_debug_rt_task_done(int64_t addr);
+int64_t       slang_debug_rt_task_slot(int64_t addr);
+slang_string *slang_debug_rt_sym_name(int64_t addr);
+SLANG_NORETURN void slang_debug_rt_exit(int64_t code);
+int64_t       slang_debug_rt_now_ms(void);
+slang_string *slang_debug_rt_string(int64_t addr);
+int64_t       slang_debug_rt_map_len(int64_t m);
+void          slang_debug_rt_map_entries(int64_t m, int64_t start, int64_t n, slang_slice *out);
+slang_string *slang_debug_rt_error_type(int64_t addr);
+int64_t       slang_debug_rt_listen(const slang_string *host, int64_t port, slang_error **err);
+int64_t       slang_debug_rt_sock_port(int64_t fd);
+int64_t       slang_debug_rt_accept(int64_t fd);
+void          slang_debug_rt_recv(int64_t fd, int64_t max, slang_slice *out);
+bool          slang_debug_rt_send(int64_t fd, const slang_string *s);
+void          slang_debug_rt_close(int64_t fd);
+void          slang_debug_rt_eprint(const slang_string *s);
+
+/* std.unsafe (capability `unsafe`). */
+int64_t       slang_unsafe_read_int(int64_t addr, int64_t size);
+int64_t       slang_unsafe_read_uint(int64_t addr, int64_t size);
+double        slang_unsafe_read_float(int64_t addr, int64_t size);
+void          slang_unsafe_write_int(int64_t addr, int64_t size, int64_t v);
+void          slang_unsafe_read_bytes(int64_t addr, int64_t n, slang_slice *out);
+void          slang_unsafe_write_bytes(int64_t addr, const slang_slice *b);
+slang_string *slang_unsafe_c_string(int64_t addr);
+int64_t       slang_unsafe_addr_of(void *data, void *type);
+int64_t       slang_unsafe_type_of(void *data, void *type);
+int64_t       slang_unsafe_call_func(int64_t addr, const slang_slice *args);
+
+/* std.thread. */
+int64_t       slang_thread_spawn(void *fn, void *env);
+void          slang_thread_join(int64_t h);
+void          slang_thread_sleep(int64_t ms);
+
+/* std.plugin (capability `plugin`). */
+int64_t       slang_plugin_rt_open(const slang_string *path, slang_error **err);
+int64_t       slang_plugin_rt_sym(int64_t h, const slang_string *name, slang_error **err);
+void          slang_plugin_rt_close(int64_t h);
+
 #ifdef __cplusplus
 }
 #endif

@@ -192,6 +192,9 @@ pub const NAMESPACES: &[&str] = &[
     "std.uuid",
     "std.net",
     "std.net.http",
+    "std.net.http.hpack",
+    "std.net.http.test",
+    "std.net.ws",
     // TLS and the crypto primitives behind it (runtime/ABI.md section 19)
     "std.net.tls",
     "std.crypto.aes",
@@ -233,6 +236,23 @@ pub const NAMESPACES: &[&str] = &[
     "std.text.scanner",
     "std.text.table",
     // <<< tier 2 stdlib
+    // >>> tier 3 stdlib (docs/STDLIB.md level 3)
+    "std.database",
+    "std.database.sql",
+    "std.database.sqlite",
+    "std.database.postgres",
+    "std.net.mail",
+    "std.crypto.kdf",
+    "std.crypto.password",
+    // <<< tier 3 stdlib
+    // >>> tier 3b stdlib (docs/STDLIB.md level 3b: infrastructure clients)
+    "std.data",
+    "std.data.redis",
+    "std.data.kafka",
+    "std.cloud",
+    "std.cloud.s3",
+    "std.cloud.blob",
+    // <<< tier 3b stdlib
     // tier 0/1 stdlib (docs/STDLIB.md)
     "std.slices",
     "std.maps",
@@ -262,6 +282,12 @@ pub const NAMESPACES: &[&str] = &[
     "std.cli",
     "std.testing",
     "std.embed",
+    // >>> debugger (docs/DEBUGGER.md stage 2, runtime/ABI.md section 22)
+    "std.debug",
+    "std.unsafe",
+    "std.thread",
+    "std.plugin",
+    // <<< debugger
 ];
 
 /// An ordinary stdlib function implemented by the runtime.
@@ -415,6 +441,28 @@ pub const CONSTS: &[(&str, &str, StdConst)] = &[
     ("std.net", "ErrAddrInUse", StdConst::Error("slang_net_err_addr_in_use")),
     ("std.net", "ErrNotFound", StdConst::Error("slang_net_err_not_found")),
     ("std.net", "ErrEOF", StdConst::Error("slang_net_err_eof")),
+    // std.net.http / std.net.ws sentinels (runtime/src/std_http.c)
+    ("std.net.http", "ErrBodyTooLarge", StdConst::Error("slang_net_http_err_body_too_large")),
+    ("std.net.http", "ErrHijacked", StdConst::Error("slang_net_http_err_hijacked")),
+    ("std.net.http", "ErrAbortHandler", StdConst::Error("slang_net_http_err_abort_handler")),
+    ("std.net.http", "ErrServerClosed", StdConst::Error("slang_net_http_err_server_closed")),
+    ("std.net.http", "ErrHandlerTimeout", StdConst::Error("slang_net_http_err_handler_timeout")),
+    ("std.net.http", "ErrBodyClosed", StdConst::Error("slang_net_http_err_body_closed")),
+    ("std.net.ws", "ErrClosed", StdConst::Error("slang_net_ws_err_closed")),
+    ("std.net.ws", "ErrBadHandshake", StdConst::Error("slang_net_ws_err_bad_handshake")),
+    ("std.net.ws", "TextMessage", StdConst::Int(1)),
+    ("std.net.ws", "BinaryMessage", StdConst::Int(2)),
+    ("std.net.ws", "CloseNormal", StdConst::Int(1000)),
+    ("std.net.ws", "CloseGoingAway", StdConst::Int(1001)),
+    ("std.net.ws", "CloseProtocolError", StdConst::Int(1002)),
+    ("std.net.ws", "CloseUnsupportedData", StdConst::Int(1003)),
+    ("std.net.ws", "CloseNoStatus", StdConst::Int(1005)),
+    ("std.net.ws", "CloseAbnormal", StdConst::Int(1006)),
+    ("std.net.ws", "CloseInvalidPayload", StdConst::Int(1007)),
+    ("std.net.ws", "ClosePolicyViolation", StdConst::Int(1008)),
+    ("std.net.ws", "CloseMessageTooBig", StdConst::Int(1009)),
+    ("std.net.ws", "CloseMandatoryExtension", StdConst::Int(1010)),
+    ("std.net.ws", "CloseInternalError", StdConst::Int(1011)),
     // std.net.tls: protocol versions and ServerConfig.ClientAuth modes
     ("std.net.tls", "V12", StdConst::Int(0x0303)),
     ("std.net.tls", "V13", StdConst::Int(0x0304)),
@@ -497,6 +545,27 @@ pub const CONSTS: &[(&str, &str, StdConst)] = &[
     ("std.text.table", "Right", StdConst::Int(1)),
     ("std.text.table", "Center", StdConst::Int(2)),
     // <<< tier 2 stdlib constants
+    // >>> tier 3 stdlib constants
+    ("std.database.sql", "ErrNoRows", StdConst::Error("slang_database_sql_err_no_rows")),
+    ("std.database.sql", "ErrTxDone", StdConst::Error("slang_database_sql_err_tx_done")),
+    ("std.database.sql", "ErrConnDone", StdConst::Error("slang_database_sql_err_conn_done")),
+    ("std.database.sql", "PlaceholderQuestion", StdConst::Int(0)),
+    ("std.database.sql", "PlaceholderDollar", StdConst::Int(1)),
+    // <<< tier 3 stdlib constants
+    // >>> tier 3b stdlib constants (runtime/src/std_infra.c)
+    ("std.data.redis", "Nil", StdConst::Error("slang_data_redis_err_nil")),
+    ("std.data.redis", "ErrClosed", StdConst::Error("slang_data_redis_err_closed")),
+    ("std.data.redis", "ErrTxFailed", StdConst::Error("slang_data_redis_err_tx_failed")),
+    ("std.data.redis", "ErrPoolTimeout", StdConst::Error("slang_data_redis_err_pool_timeout")),
+    ("std.data.redis", "ErrCrossSlot", StdConst::Error("slang_data_redis_err_cross_slot")),
+    ("std.data.kafka", "ErrClosed", StdConst::Error("slang_data_kafka_err_closed")),
+    ("std.data.kafka", "ErrNoBrokers", StdConst::Error("slang_data_kafka_err_no_brokers")),
+    ("std.cloud.s3", "ErrNoSuchKey", StdConst::Error("slang_cloud_s3_err_no_such_key")),
+    ("std.cloud.s3", "ErrNoSuchBucket", StdConst::Error("slang_cloud_s3_err_no_such_bucket")),
+    ("std.cloud.s3", "ErrAccessDenied", StdConst::Error("slang_cloud_s3_err_access_denied")),
+    ("std.cloud.s3", "ErrPreconditionFailed", StdConst::Error("slang_cloud_s3_err_precondition")),
+    ("std.cloud.blob", "ErrNotFound", StdConst::Error("slang_cloud_blob_err_not_found")),
+    // <<< tier 3b stdlib constants
     ("std.io", "EOF", StdConst::Error("slang_io_err_eof")),
     ("std.io", "SeekStart", StdConst::Int(0)),
     ("std.io", "SeekCurrent", StdConst::Int(1)),
@@ -792,6 +861,23 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.net", "rtCopyBytes", "[]byte, int, []byte, int, int", "int", "slang_net_rt_copy_bytes"),
     f!("std.net", "rtIndexByte", "[]byte, int, int", "int", "slang_net_rt_index_byte"),
     f!("std.net", "rtJoin", "[]byte, []byte, int", "[]byte", "slang_net_rt_join"),
+    // std.net.http / std.net.ws hot loops (runtime/src/std_http.c, ABI.md 16.5)
+    f!("std.net.http", "rtCanonical", "string", "string", "slang_net_http_rt_canonical"),
+    f!("std.net.http", "rtHeadEnd", "[]byte, int, int", "int", "slang_net_http_rt_head_end"),
+    f!("std.net.http", "rtParseHead", "[]byte, int, int, int, map[string]string", "[]string!", "slang_net_http_rt_parse_head"),
+    f!("std.net.http", "rtHeadInfo", "", "int", "slang_net_http_rt_head_info"),
+    f!("std.net.http", "rtHasToken", "string, string", "bool", "slang_net_http_rt_has_token"),
+    f!("std.net.http", "rtStatusText", "int", "string", "slang_net_http_rt_status_text"),
+    f!("std.net.http", "rtDate", "", "string", "slang_net_http_rt_date"),
+    f!("std.net.http", "rtFormatHead", "int, string, map[string]string, int, int, string", "string", "slang_net_http_rt_format_head"),
+    f!("std.net.http", "rtMask", "[]byte, int, int, int, int", "void", "slang_net_http_rt_mask"),
+    f!("std.net.http.hpack", "rtHuffLen", "string", "int", "slang_net_http_hpack_rt_huff_len"),
+    f!("std.net.http.hpack", "rtHuffEncode", "string", "[]byte", "slang_net_http_hpack_rt_huff_encode"),
+    f!("std.net.http.hpack", "rtHuffDecode", "[]byte, int, int", "string!", "slang_net_http_hpack_rt_huff_decode"),
+    f!("std.net.http", "rtItoa", "int", "string", "slang_net_http_rt_itoa"),
+    f!("std.net.http", "rtAtoi", "string", "int", "slang_net_http_rt_atoi"),
+    f!("std.net.http", "rtHttpTime", "int", "string", "slang_net_http_rt_http_time"),
+    f!("std.net.http", "rtParseHttpTime", "string", "int", "slang_net_http_rt_parse_http_time"),
     // internal primitives of the Slang-source std.diag / std.log
     // (sema/stdlib_src/{diag,log}.sl; runtime diag.c, profile.c)
     f!("std.diag", "rtSlots", "", "map[string]any", "slang_diag_rt_slots"),
@@ -933,6 +1019,73 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.mime", "rtAdd", "string, string", "void", "slang_mime_rt_add"),
     f!("std.mime", "rtExts", "string", "[]string", "slang_mime_rt_exts"),
     // <<< tier 2 stdlib externs
+    // >>> tier 3 stdlib externs (docs/STDLIB.md level 3)
+    // std.database.sqlite over the system libsqlite3 (std_sqlite.c; LINK_LIBS adds -lsqlite3)
+    f!("std.database.sqlite", "rtAvailable", "", "bool", "slang_database_sqlite_rt_available"),
+    f!("std.database.sqlite", "rtVersion", "", "string", "slang_database_sqlite_rt_version"),
+    f!("std.database.sqlite", "rtOpen", "string, int", "int!", "slang_database_sqlite_rt_open"),
+    f!("std.database.sqlite", "rtClose", "int", "void", "slang_database_sqlite_rt_close"),
+    f!("std.database.sqlite", "rtBusyTimeout", "int, int", "void", "slang_database_sqlite_rt_busy_timeout"),
+    f!("std.database.sqlite", "rtExec", "int, string", "void!", "slang_database_sqlite_rt_exec"),
+    f!("std.database.sqlite", "rtPrepare", "int, string", "int!", "slang_database_sqlite_rt_prepare"),
+    f!("std.database.sqlite", "rtFinalize", "int", "void", "slang_database_sqlite_rt_finalize"),
+    f!("std.database.sqlite", "rtReset", "int", "void", "slang_database_sqlite_rt_reset"),
+    f!("std.database.sqlite", "rtParamCount", "int", "int", "slang_database_sqlite_rt_param_count"),
+    f!("std.database.sqlite", "rtParamIndex", "int, string", "int", "slang_database_sqlite_rt_param_index"),
+    f!("std.database.sqlite", "rtBindNull", "int, int", "void!", "slang_database_sqlite_rt_bind_null"),
+    f!("std.database.sqlite", "rtBindInt", "int, int, int", "void!", "slang_database_sqlite_rt_bind_int"),
+    f!("std.database.sqlite", "rtBindFloat", "int, int, float", "void!", "slang_database_sqlite_rt_bind_float"),
+    f!("std.database.sqlite", "rtBindText", "int, int, string", "void!", "slang_database_sqlite_rt_bind_text"),
+    f!("std.database.sqlite", "rtBindBlob", "int, int, []byte", "void!", "slang_database_sqlite_rt_bind_blob"),
+    f!("std.database.sqlite", "rtStep", "int", "int!", "slang_database_sqlite_rt_step"),
+    f!("std.database.sqlite", "rtColumnCount", "int", "int", "slang_database_sqlite_rt_column_count"),
+    f!("std.database.sqlite", "rtColumnName", "int, int", "string", "slang_database_sqlite_rt_column_name"),
+    f!("std.database.sqlite", "rtColumnDecltype", "int, int", "string", "slang_database_sqlite_rt_column_decltype"),
+    f!("std.database.sqlite", "rtColumnType", "int, int", "int", "slang_database_sqlite_rt_column_type"),
+    f!("std.database.sqlite", "rtColumnInt", "int, int", "int", "slang_database_sqlite_rt_column_int"),
+    f!("std.database.sqlite", "rtColumnFloat", "int, int", "float", "slang_database_sqlite_rt_column_float"),
+    f!("std.database.sqlite", "rtColumnText", "int, int", "string", "slang_database_sqlite_rt_column_text"),
+    f!("std.database.sqlite", "rtColumnBlob", "int, int", "[]byte", "slang_database_sqlite_rt_column_blob"),
+    f!("std.database.sqlite", "rtChanges", "int", "int", "slang_database_sqlite_rt_changes"),
+    f!("std.database.sqlite", "rtLastInsertId", "int", "int", "slang_database_sqlite_rt_last_insert_id"),
+    f!("std.database.sqlite", "rtErrcode", "int", "int", "slang_database_sqlite_rt_errcode"),
+    f!("std.database.sqlite", "rtAutocommit", "int", "bool", "slang_database_sqlite_rt_autocommit"),
+    // std.crypto tier-3 additions (crypto/api2.c, crypto/{kdf,cbc,p384}.c, std_argon2.c; ABI.md 22)
+    f!("std.crypto.kdf", "Pbkdf2", "[]byte, []byte, int, int, string", "[]byte!", "slang_crypto_kdf_pbkdf2"),
+    f!("std.crypto.kdf", "Scrypt", "[]byte, []byte, int, int, int, int", "[]byte!", "slang_crypto_kdf_scrypt"),
+    f!("std.crypto.kdf", "rtArgon2", "int, []byte, []byte, []byte, []byte, int, int, int, int", "[]byte!", "slang_crypto_kdf_rt_argon2"),
+    f!("std.crypto.hash", "Blake2b", "[]byte, int, []byte", "[]byte!", "slang_crypto_hash_blake2b"),
+    f!("std.crypto.ecdh", "GenerateKeyP384", "", "[]byte!", "slang_crypto_ecdh_generate_key_p384"),
+    f!("std.crypto.ecdh", "PublicKeyP384", "[]byte", "[]byte!", "slang_crypto_ecdh_public_key_p384"),
+    f!("std.crypto.ecdh", "SharedSecretP384", "[]byte, []byte", "[]byte!", "slang_crypto_ecdh_shared_secret_p384"),
+    f!("std.crypto.ecdsa", "GenerateKeyP384", "", "[]byte!", "slang_crypto_ecdsa_generate_key_p384"),
+    f!("std.crypto.ecdsa", "PublicKeyP384", "[]byte", "[]byte!", "slang_crypto_ecdsa_public_key_p384"),
+    f!("std.crypto.ecdsa", "SignP384", "[]byte, []byte", "[]byte!", "slang_crypto_ecdsa_sign_p384"),
+    f!("std.crypto.ecdsa", "SignP384Raw", "[]byte, []byte", "[]byte!", "slang_crypto_ecdsa_sign_p384_raw"),
+    f!("std.crypto.ecdsa", "VerifyP384", "[]byte, []byte, []byte", "bool", "slang_crypto_ecdsa_verify_p384"),
+    f!("std.crypto.aes", "DecryptBlock", "[]byte, []byte", "[]byte!", "slang_crypto_aes_decrypt_block"),
+    f!("std.crypto.aes", "CbcEncrypt", "[]byte, []byte, []byte", "[]byte!", "slang_crypto_aes_cbc_encrypt"),
+    f!("std.crypto.aes", "CbcDecrypt", "[]byte, []byte, []byte", "[]byte!", "slang_crypto_aes_cbc_decrypt"),
+    f!("std.crypto.aes", "CbcEncryptRaw", "[]byte, []byte, []byte", "[]byte!", "slang_crypto_aes_cbc_encrypt_raw"),
+    f!("std.crypto.aes", "CbcDecryptRaw", "[]byte, []byte, []byte", "[]byte!", "slang_crypto_aes_cbc_decrypt_raw"),
+    f!("std.crypto.aes", "Pkcs7Pad", "[]byte, int", "[]byte!", "slang_crypto_aes_pkcs7_pad"),
+    f!("std.crypto.aes", "Pkcs7Unpad", "[]byte, int", "[]byte!", "slang_crypto_aes_pkcs7_unpad"),
+    f!("std.crypto.rsa", "EncryptOAEP", "[]byte, []byte, string, []byte, []byte", "[]byte!", "slang_crypto_rsa_encrypt_oaep"),
+    f!("std.crypto.rsa", "DecryptOAEP", "[]byte, string, []byte, []byte", "[]byte!", "slang_crypto_rsa_decrypt_oaep"),
+    f!("std.crypto.rsa", "rtGenPrime", "int, int", "[]byte!", "slang_crypto_rsa_rt_gen_prime"),
+    f!("std.crypto.rsa", "IsProbablePrime", "[]byte, int", "bool", "slang_crypto_rsa_is_probable_prime"),
+    // std.compress.zstd encoder (std_zstd_enc.c)
+    f!("std.compress", "rtZstdEncode", "[]byte, int, bool", "[]byte!", "slang_compress_rt_zstd_encode"),
+    // std.compress.brotli decoder (std_brotli.c)
+    f!("std.compress", "rtBrotliDecode", "[]byte", "[]byte!", "slang_compress_rt_brotli_decode"),
+    // <<< tier 3 stdlib externs
+    // >>> tier 3b stdlib externs (runtime/src/std_infra.c, ABI.md section 24)
+    f!("std.data", "rtAppend", "[]byte, []byte", "[]byte", "slang_data_rt_append"),
+    f!("std.data", "rtAppendStr", "[]byte, string", "[]byte", "slang_data_rt_append_str"),
+    f!("std.data", "rtCrc16", "string", "int", "slang_data_rt_crc16"),
+    f!("std.data", "rtCrc32c", "int, []byte", "int", "slang_data_rt_crc32c"),
+    f!("std.data", "rtMurmur2", "[]byte", "int", "slang_data_rt_murmur2"),
+    // <<< tier 3b stdlib externs
     // std.math.big limb arithmetic (std_math_big.c)
     f!("std.math.big", "rtAdd", "[]uint32, []uint32", "[]uint32", "slang_math_big_rt_add"),
     f!("std.math.big", "rtSub", "[]uint32, []uint32", "[]uint32", "slang_math_big_rt_sub"),
@@ -997,6 +1150,64 @@ pub const FUNCS: &[StdFunc] = &[
     // std.uuid
     f!("std.uuid", "New", "", "string", "slang_uuid_new"),
     f!("std.uuid", "IsValid", "string", "bool", "slang_uuid_is_valid"),
+    // >>> debugger externs (runtime/src/debug.c, std_unsafe.c, std_thread.c, std_plugin.c; ABI.md section 22)
+    f!("std.debug", "rtTables", "", "int", "slang_debug_rt_tables"),
+    f!("std.debug", "rtSetHook", "func(int;int;int;int) int", "void", "slang_debug_rt_set_hook"),
+    f!("std.debug", "rtSetExitHook", "func(int)", "void", "slang_debug_rt_set_exit_hook"),
+    f!("std.debug", "rtSetBp", "int, bool", "void", "slang_debug_rt_set_bp"),
+    f!("std.debug", "rtOnError", "bool", "void", "slang_debug_rt_on_error"),
+    f!("std.debug", "rtStopNext", "", "void", "slang_debug_rt_stop_next"),
+    f!("std.debug", "rtFreeze", "bool", "void", "slang_debug_rt_freeze"),
+    f!("std.debug", "rtResume", "int, int, bool", "bool", "slang_debug_rt_resume"),
+    f!("std.debug", "rtReleaseAll", "", "void", "slang_debug_rt_release_all"),
+    f!("std.debug", "rtTasks", "", "[]int", "slang_debug_rt_tasks"),
+    f!("std.debug", "rtTaskState", "int", "int", "slang_debug_rt_task_state"),
+    f!("std.debug", "rtTaskFrame", "int", "int", "slang_debug_rt_task_frame"),
+    f!("std.debug", "rtTaskFunc", "int", "int", "slang_debug_rt_task_func"),
+    f!("std.debug", "rtTaskReason", "int", "int", "slang_debug_rt_task_reason"),
+    f!("std.debug", "rtLock", "int", "void", "slang_debug_rt_lock"),
+    f!("std.debug", "rtUnlock", "int", "void", "slang_debug_rt_unlock"),
+    f!("std.debug", "rtWaitReady", "", "void", "slang_debug_rt_wait_ready"),
+    f!("std.debug", "rtSignalReady", "", "void", "slang_debug_rt_signal_ready"),
+    f!("std.debug", "rtIgnoreHooks", "", "void", "slang_debug_rt_ignore_hooks"),
+    f!("std.debug", "rtPanicText", "", "string", "slang_debug_rt_panic_text"),
+    f!("std.debug", "rtCurError", "", "int", "slang_debug_rt_cur_error"),
+    f!("std.debug", "rtErrorText", "int", "string", "slang_debug_rt_error_text"),
+    f!("std.debug", "rtTypeName", "int", "string", "slang_debug_rt_type_name"),
+    f!("std.debug", "rtAwaitInt", "Task<int>", "int", "slang_debug_rt_await_int"),
+    f!("std.debug", "rtTaskDone", "int", "bool", "slang_debug_rt_task_done"),
+    f!("std.debug", "rtTaskSlot", "int", "int", "slang_debug_rt_task_slot"),
+    f!("std.debug", "rtSymName", "int", "string", "slang_debug_rt_sym_name"),
+    f!("std.debug", "rtExit", "int", "void", "slang_debug_rt_exit"),
+    f!("std.debug", "rtNowMs", "", "int", "slang_debug_rt_now_ms"),
+    f!("std.debug", "rtString", "int", "string", "slang_debug_rt_string"),
+    f!("std.debug", "rtMapLen", "int", "int", "slang_debug_rt_map_len"),
+    f!("std.debug", "rtMapEntries", "int, int, int", "[]int", "slang_debug_rt_map_entries"),
+    f!("std.debug", "rtErrorType", "int", "string", "slang_debug_rt_error_type"),
+    f!("std.debug", "rtListen", "string, int", "int!", "slang_debug_rt_listen"),
+    f!("std.debug", "rtSockPort", "int", "int", "slang_debug_rt_sock_port"),
+    f!("std.debug", "rtAccept", "int", "int", "slang_debug_rt_accept"),
+    f!("std.debug", "rtRecv", "int, int", "[]byte", "slang_debug_rt_recv"),
+    f!("std.debug", "rtSend", "int, string", "bool", "slang_debug_rt_send"),
+    f!("std.debug", "rtClose", "int", "void", "slang_debug_rt_close"),
+    f!("std.debug", "rtEprint", "string", "void", "slang_debug_rt_eprint"),
+    f!("std.unsafe", "ReadInt", "int, int", "int", "slang_unsafe_read_int"),
+    f!("std.unsafe", "ReadUint", "int, int", "int", "slang_unsafe_read_uint"),
+    f!("std.unsafe", "ReadFloat", "int, int", "float", "slang_unsafe_read_float"),
+    f!("std.unsafe", "WriteInt", "int, int, int", "void", "slang_unsafe_write_int"),
+    f!("std.unsafe", "ReadBytes", "int, int", "[]byte", "slang_unsafe_read_bytes"),
+    f!("std.unsafe", "WriteBytes", "int, []byte", "void", "slang_unsafe_write_bytes"),
+    f!("std.unsafe", "CString", "int", "string", "slang_unsafe_c_string"),
+    f!("std.unsafe", "AddrOf", "any", "int", "slang_unsafe_addr_of"),
+    f!("std.unsafe", "TypeOf", "any", "int", "slang_unsafe_type_of"),
+    f!("std.unsafe", "CallFunc", "int, []int", "int", "slang_unsafe_call_func"),
+    f!("std.thread", "Spawn", "func()", "int", "slang_thread_spawn"),
+    f!("std.thread", "Join", "int", "void", "slang_thread_join"),
+    f!("std.thread", "Sleep", "int", "void", "slang_thread_sleep"),
+    f!("std.plugin", "rtOpen", "string", "int!", "slang_plugin_rt_open"),
+    f!("std.plugin", "rtSym", "int, string", "int!", "slang_plugin_rt_sym"),
+    f!("std.plugin", "rtClose", "int", "void", "slang_plugin_rt_close"),
+    // <<< debugger externs
 ];
 
 /// Parses a type in the table's mini syntax: builtin names, `[]T`, `T!`,
@@ -1019,6 +1230,13 @@ pub fn parse_type(tt: &mut TypeTable, s: &str) -> TypeId {
     if let Some(inner) = s.strip_prefix('*') {
         let t = parse_type(tt, inner);
         return tt.pointer(t);
+    }
+    // `func(int;int) int`: closure types of callbacks (`;` separates the
+    // parameters, because the table splits parameter lists on ", ").
+    if let Some((ps, ret)) = s.strip_prefix("func(").and_then(|r| r.split_once(')')) {
+        let params = ps.split(';').map(str::trim).filter(|p| !p.is_empty()).map(|p| parse_type(tt, p)).collect();
+        let ret = if ret.trim().is_empty() { tt.void } else { parse_type(tt, ret) };
+        return tt.func(params, ret);
     }
     if let Some((k, v)) = s.strip_prefix("map[").and_then(|r| r.split_once(']')) {
         let (k, v) = (parse_type(tt, k), parse_type(tt, v));
@@ -1095,5 +1313,38 @@ mod tests {
             assert!(seen.insert(f.path()), "duplicate {}", f.path());
             assert!(syms.insert(f.symbol), "duplicate symbol {}", f.symbol);
         }
+    }
+}
+
+// -- per-module system libraries (build.rs link) --------------------------------
+
+/// System libraries some stdlib modules need at link time, by the prefix of
+/// the runtime symbols that use them: a program is linked with `-l<lib>`
+/// only if its module declares (calls) a runtime function whose symbol
+/// starts with the prefix, so programs that do not use the module do not
+/// depend on the library. `std.database.sqlite` binds the system SQLite.
+pub const LINK_LIBS: &[(&str, &str)] = &[("slang_database_sqlite_", "sqlite3")];
+
+/// The [`LINK_LIBS`] libraries needed by a module declaring `symbols`, in
+/// table order, without duplicates.
+pub fn link_libs<'a>(symbols: impl IntoIterator<Item = &'a str>) -> Vec<&'static str> {
+    let syms: Vec<&str> = symbols.into_iter().collect();
+    let mut libs: Vec<&'static str> = Vec::new();
+    for (prefix, lib) in LINK_LIBS {
+        if !libs.contains(lib) && syms.iter().any(|s| s.starts_with(prefix)) {
+            libs.push(lib);
+        }
+    }
+    libs
+}
+
+#[cfg(test)]
+mod link_lib_tests {
+    use super::link_libs;
+
+    #[test]
+    fn libraries_only_for_used_modules() {
+        assert!(link_libs(["slang_print_int", "slang_database_sql_err_no_rows"]).is_empty());
+        assert_eq!(link_libs(["slang_database_sqlite_rt_open", "slang_database_sqlite_rt_step"]), vec!["sqlite3"]);
     }
 }

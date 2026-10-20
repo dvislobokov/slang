@@ -1380,6 +1380,10 @@ impl Parser<'_> {
     fn field_name_ahead(&self) -> bool {
         match self.peek() {
             TokenKind::Ident(_) | TokenKind::Int(_) => true,
+            // Statement keywords are never member names: `c.` typed at a
+            // line end before `var d = 2` recovers as an empty Field
+            // (`c.` + newline + `Inc()` still joins, as in Go).
+            TokenKind::Var | TokenKind::Const | TokenKind::If | TokenKind::For | TokenKind::Switch | TokenKind::Return | TokenKind::Defer | TokenKind::Break | TokenKind::Continue => false,
             k => k.text().chars().all(|c| c.is_ascii_lowercase()),
         }
     }
@@ -1692,6 +1696,8 @@ fn binary_op(kind: &TokenKind) -> Option<BinaryOp> {
         TokenKind::Star => Mul,
         TokenKind::Slash => Div,
         TokenKind::Percent => Rem,
+        // `@` between operands; attributes only start declarations.
+        TokenKind::At => MatMul,
         TokenKind::Amp => BitAnd,
         TokenKind::Pipe => BitOr,
         TokenKind::Caret => BitXor,
@@ -1718,6 +1724,7 @@ fn assign_op(kind: &TokenKind) -> Option<AssignOp> {
         TokenKind::StarEq => Mul,
         TokenKind::SlashEq => Div,
         TokenKind::PercentEq => Rem,
+        TokenKind::AtEq => MatMul,
         TokenKind::AmpEq => BitAnd,
         TokenKind::PipeEq => BitOr,
         TokenKind::CaretEq => BitXor,
@@ -1758,7 +1765,11 @@ fn struct_lit_path(expr: &Expr) -> Option<Path> {
 fn is_name_path(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Ident(id) => id.name != "_",
-        ExprKind::Field { base, .. } => matches!(base.kind, ExprKind::Ident(_) | ExprKind::Field { .. } | ExprKind::Call { .. } | ExprKind::This),
+        // `x.Fields[1].Attribute<A>()`, `parse(s).Get<T>()`: any postfix
+        // chain before the last `.name` (try_type_args still decides).
+        ExprKind::Field { base, .. } => {
+            matches!(base.kind, ExprKind::Ident(_) | ExprKind::Field { .. } | ExprKind::Call { .. } | ExprKind::This | ExprKind::Index { .. } | ExprKind::TypeArgs { .. } | ExprKind::Paren(_))
+        }
         _ => false,
     }
 }

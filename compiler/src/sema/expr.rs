@@ -251,7 +251,7 @@ impl<'a> Sema<'a> {
         let mut b = self.auto_deref(base);
         let Type::Struct(d) = *self.tt.get(b.ty) else {
             let t = self.tn(b.ty);
-            self.err(format!("type {t} has no field {} (field access needs a struct or pointer to struct)", name.name), name.span);
+            self.err_help(format!("type {t} has no field {}", name.name), name.span, "field access needs a struct or a pointer to a struct");
             return self.invalid(span);
         };
         match self.find_field(d.0, &name.name) {
@@ -277,7 +277,9 @@ impl<'a> Sema<'a> {
                 if self.find_method(d.0, &name.name).is_some() {
                     self.err(format!("method {sname}.{} must be called (method values are not supported)", name.name), name.span);
                 } else {
-                    self.err(format!("struct {sname} has no field or method {}", name.name), name.span);
+                    let members = self.struct_member_names(d.0);
+                    let help = self.did_you_mean(&name.name, &members);
+                    self.err_maybe_help(format!("struct {sname} has no field or method {}", name.name), name.span, help);
                 }
                 self.invalid(span)
             }
@@ -323,8 +325,16 @@ impl<'a> Sema<'a> {
 
     fn index(&mut self, base: &ast::Expr, index: &ast::Expr, span: Span) -> hir::Expr {
         let b = self.value(base, None);
+        self.index_on(b, index, span)
+    }
+
+    /// `b[index]` for a checked base.
+    pub(crate) fn index_on(&mut self, b: hir::Expr, index: &ast::Expr, span: Span) -> hir::Expr {
         if self.tt.is_invalid(b.ty) {
             return self.invalid(span);
+        }
+        if self.index_overloaded(b.ty, "Index") {
+            return self.op_index(b, index, span);
         }
         if let ast::ExprKind::Range(lo, hi) = &index.kind {
             let ty = match *self.tt.get(b.ty) {
@@ -361,7 +371,11 @@ impl<'a> Sema<'a> {
                 mk(ExprKind::Index { base: Box::new(b), index: Box::new(i) }, byte, span)
             }
             _ => {
-                self.err(format!("cannot index value of type {}", self.tn(b.ty)), b.span);
+                self.err_help(
+                    format!("cannot index value of type {}", self.tn(b.ty)),
+                    b.span,
+                    "indexing works on slices, arrays, strings, maps and types with `func Index(i I) V`",
+                );
                 self.invalid(span)
             }
         }
@@ -379,8 +393,18 @@ impl<'a> Sema<'a> {
         match op {
             ast::UnaryOp::Neg => {
                 let v = self.value(x, expected);
+                if self.neg_overloaded(v.ty) {
+                    return self.op_neg(v, span);
+                }
+                if matches!(self.tt.get(v.ty), Type::Param(_)) && self.bound_of(v.ty) == Some(generics::Bound::Op(opover::OpIface::Neg)) {
+                    let ty = v.ty;
+                    return mk(ExprKind::Unary { op: UnOp::Neg, operand: Box::new(v) }, ty, span);
+                }
                 if !self.tt.is_numeric(v.ty) {
-                    if !self.tt.is_invalid(v.ty) {
+                    if matches!(self.tt.get(v.ty), Type::Param(_)) {
+                        let t = self.tn(v.ty);
+                        self.err(format!("operator - is not defined on type parameter {t}: its constraint does not allow it (constrain it: {t}: Neg)"), span);
+                    } else if !self.tt.is_invalid(v.ty) {
                         self.err(format!("operator - is not defined on {}", self.tn(v.ty)), span);
                     }
                     return self.invalid(span);
@@ -456,7 +480,16 @@ impl<'a> Sema<'a> {
             return mk(ExprKind::Binary { op: hop, lhs: Box::new(lv), rhs: Box::new(rv) }, bt, span);
         }
         let hint = if matches!(op, B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge) { None } else { expected.filter(|t| self.tt.is_numeric(*t)) };
-        let (lv, rv) = self.operands(l, r, hint);
+        if self.is_untyped(l) {
+            let (lv, rv) = self.operands(l, r, hint);
+            return self.make_binary(op, lv, rv, span);
+        }
+        let lv = self.value(l, hint);
+        // Struct and enum operands: operator methods (opover.rs).
+        if self.binary_overloaded(op, lv.ty, Some(r)) {
+            return self.op_binary(op, lv, opover::OpArg::Ast(r), span);
+        }
+        let rv = self.value(r, Some(lv.ty));
         self.make_binary(op, lv, rv, span)
     }
 
@@ -476,6 +509,9 @@ impl<'a> Sema<'a> {
                 return self.invalid(span);
             }
             return mk(ExprKind::IsNil { value: Box::new(v), negated: op == B::Ne }, self.tt.bool_, span);
+        }
+        if self.binary_overloaded(op, lv.ty, None) && !matches!(self.tt.get(lv.ty), Type::Param(_)) {
+            return self.op_binary(op, lv, opover::OpArg::Hir(rv), span);
         }
         if matches!(op, B::Div | B::Rem) && matches!(rv.kind, ExprKind::Const(hir::ConstValue::Int(0))) {
             self.err("division by zero", rv.span);
@@ -499,7 +535,22 @@ impl<'a> Sema<'a> {
             return Some((if op == B::Shl { BinOp::Shl } else { BinOp::Shr }, l));
         }
         if l != r {
-            self.err(format!("mismatched types {} and {} for operator {sym} (no implicit conversion; use int(x) or float(x))", self.tn(l), self.tn(r)), span);
+            if self.op_overload_type(r, false) && opover::binary_method(op).is_some() {
+                let (lt, rt) = (self.tn(l), self.tn(r));
+                self.err_help(
+                    format!("mismatched types {lt} and {rt} for operator {sym}"),
+                    span,
+                    format!("the left operand selects the operator method: put the {rt} value on the left, or call the method explicitly"),
+                );
+                return None;
+            }
+            let (lt, rt) = (self.tn(l), self.tn(r));
+            let help = if self.tt.is_numeric(l) && self.tt.is_numeric(r) {
+                format!("there are no implicit numeric conversions: convert one operand, e.g. `{rt}(a) {sym} b` or `a {sym} {lt}(b)`")
+            } else {
+                "both operands of a builtin operator must have the same type".to_string()
+            };
+            self.err_help(format!("mismatched types {lt} and {rt} for operator {sym}"), span, help);
             return None;
         }
         if matches!(self.tt.get(l), Type::Param(_)) {
@@ -546,7 +597,18 @@ impl<'a> Sema<'a> {
             _ => None,
         };
         if res.is_none() {
-            self.err(format!("operator {sym} is not defined on {}", self.tn(l)), span);
+            let tn = self.tn(l);
+            if self.op_overload_type(l, false) {
+                let help = match opover::binary_method(op) {
+                    Some("Equals") => format!("declare `func Equals(other {tn}) bool` in {tn} to compare with == and !="),
+                    Some("Compare") => format!("declare `func Compare(other {tn}) int` in {tn} to compare with < <= > >="),
+                    Some(m) => format!("declare `func {m}(other {tn}) {tn}` in {tn}"),
+                    None => "only + - * / % @ == != < <= > >= and indexing can be overloaded".to_string(),
+                };
+                self.err_help(format!("operator {sym} is not defined on {tn}"), span, help);
+            } else {
+                self.err(format!("operator {sym} is not defined on {tn}"), span);
+            }
         }
         res
     }
@@ -558,12 +620,16 @@ impl<'a> Sema<'a> {
             None => (self.tt.void, String::new(), false, false),
         };
         if !in_fn || (!self.tt.is_fallible(ret) && !in_try) {
-            self.err(format!("? outside of fallible function: {name} does not return a T! type (use try ... catch or try ... else instead)"), span);
+            self.err_help(
+                format!("? outside of fallible function: {name} does not return a T! type"),
+                span,
+                format!("handle the error here with `try ... catch` or `try ... else`, or declare {name} with a fallible result (`T!` / `void!`)"),
+            );
         }
         let ctx = context.map(|c| Box::new(self.expr_to(c, self.tt.string, Ctx::Other)));
         let Some(inner) = self.tt.fallible_inner(v.ty) else {
             if !self.tt.is_invalid(v.ty) {
-                self.err(format!("? requires a fallible (T!) operand, found {}", self.tn(v.ty)), v.span);
+                self.err_help(format!("? requires a fallible (T!) operand, found {}", self.tn(v.ty)), v.span, "remove the `?`: this expression cannot fail");
             }
             return self.invalid(span);
         };
@@ -573,7 +639,7 @@ impl<'a> Sema<'a> {
     fn await_expr(&mut self, x: &ast::Expr, span: Span) -> hir::Expr {
         let (is_async, name) = self.fns.last().map(|f| (f.is_async, f.name.clone())).unwrap_or_default();
         if !is_async {
-            self.err(format!("await outside async function: {name} is not declared async"), span);
+            self.err_help(format!("await outside async function: {name} is not declared async"), span, format!("declare it as `async func {name}(...)`; callers then await it too"));
         }
         let v = self.value(x, None);
         match *self.tt.get(v.ty) {
@@ -760,6 +826,7 @@ fn arith(op: ast::BinaryOp) -> BinOp {
         B::Mul => BinOp::Mul,
         B::Div => BinOp::Div,
         B::Rem => BinOp::Rem,
+        B::MatMul => unreachable!("@ is only defined through MatMul methods"),
         B::BitAnd => BinOp::BitAnd,
         B::BitOr => BinOp::BitOr,
         B::BitXor => BinOp::BitXor,
@@ -785,6 +852,7 @@ pub(crate) fn op_symbol(op: ast::BinaryOp) -> &'static str {
         B::Mul => "*",
         B::Div => "/",
         B::Rem => "%",
+        B::MatMul => "@",
         B::BitAnd => "&",
         B::BitOr => "|",
         B::BitXor => "^",

@@ -179,6 +179,7 @@ struct clientHS {
         var gl = b.open(2)
         b.u16(29)
         b.u16(23)
+        b.u16(24)
         b.close(gl, 2)
         b.close(g, 2)
         b.u16(13)
@@ -414,7 +415,7 @@ async func runClient(c *conn) void! {
             return c.fail(47, "HelloRetryRequest changes nothing")
         }
         if sh.keyShareGroup != 0 {
-            if (sh.keyShareGroup != 29 && sh.keyShareGroup != 23) || sh.keyShareGroup == h.share.group {
+            if (sh.keyShareGroup != 29 && sh.keyShareGroup != 23 && sh.keyShareGroup != 24) || sh.keyShareGroup == h.share.group {
                 return c.fail(47, "HelloRetryRequest asks for an unsupported group")
             }
             h.share = newKeyShare(sh.keyShareGroup)?
@@ -746,7 +747,7 @@ async func client12(h *clientHS, sh serverHello) void! {
     if !p.ok() || !p.empty() || curveType != 3 {
         return c.fail(50, "malformed ServerKeyExchange")
     }
-    if group != 29 && group != 23 {
+    if group != 29 && group != 23 && group != 24 {
         return c.fail(47, "server selected an unsupported group")
     }
     if !containsInt(ourSchemes(), scheme) {

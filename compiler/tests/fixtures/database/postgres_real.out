@@ -1,0 +1,40 @@
+connect: md5u ssl=false
+connect: postgres: FATAL: password authentication failed for user "md5u" (SQLSTATE 28P01)
+connect: scramu ssl=false
+connect: scramu ssl=true
+connect: postgres: FATAL: password authentication failed for user "scramu" (SQLSTATE 28P01)
+connect: pwu ssl=false
+connect: postgres: FATAL: pg_hba.conf rejects connection for host "127.0.0.1", user "sslu", database "postgres", no encryption (SQLSTATE 28000)
+connect: sslu ssl=true
+connect: sslu ssl=true
+connect: sslu ssl=true
+connect: sslu ssl=true
+connect: tls: server certificate: certificate signed by unknown authority (issuer "CN=localhost")
+connect: postgres ssl=false
+insert 1
+1 apple 1.25 2024-03-04T05:06:07.123456Z [red fruit, sweet with "quote"] [1 2 3] {"k":[1,2]} 5 true a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 2020-02-29
+2 pear 2.50 <nil> [] [] null 0 false 36 1999-12-31
+1 apple 1.25 2024-03-04T05:06:07.123456Z [red fruit, sweet with "quote"] [1 2 3] {"k":[1,2]} 5 true a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 2020-02-29
+2 pear 2.50 <nil> [] [] null 0 false 36 1999-12-31
+[int2 int4 int8 float4 float8 text bytea text numeric interval float8 bool]
+[1 2 3 1.5 2.5 x [1 2] nil 12.5 1 day NaN true]
+[1 2 3 1.5 2.5 x [1 2] nil 12.5]
+postgres: ERROR: duplicate key value violates unique constraint "items_pkey" (SQLSTATE 23505): Key (id)=(1) already exists.
+23505 items_pkey items true
+postgres: ERROR: column "nosuchcolumn" does not exist (SQLSTATE 42703)
+mid-stream: 2 postgres: ERROR: division by zero (SQLSTATE 22012)
+in tx 0
+after rollback 2
+tx error
+postgres: transaction was aborted (COMMIT rolled back)
+sum 1900 true
+timeout: task cancelled
+cancelled quickly true
+after timeout slangtest
+[NOTICE hello 42]
+copied 3
+copy out: 1	one
+copy out: 2	two
+copy out: 3	three
+still ok 2
+stmt two

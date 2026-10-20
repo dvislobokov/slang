@@ -1,0 +1,29 @@
+full: 200 text/plain; charset=utf-8 [] 0123456789abcdefghij
+validators: true true bytes
+html: 200 text/html; charset=utf-8 [] <h1>hi</h1>
+css: 200 text/css; charset=utf-8 [] a{}
+If-None-Match: 304  [] 
+If-Modified-Since: 304  [] 
+If-Match mismatch: 412 text/plain; charset=utf-8 [] 412 Precondition Failed
+
+range 0-4: 206 text/plain; charset=utf-8 [bytes 0-4/20] 01234
+range 15-: 206 text/plain; charset=utf-8 [bytes 15-19/20] fghij
+suffix -3: 206 text/plain; charset=utf-8 [bytes 17-19/20] hij
+multi: 206 true true true
+unsatisfiable: 416 text/plain; charset=utf-8 [bytes */20] 416 Range Not Satisfiable
+
+If-Range stale: 200 text/plain; charset=utf-8 [] 0123456789abcdefghij
+If-Range fresh: 206 text/plain; charset=utf-8 [bytes 0-4/20] 01234
+HEAD: 200 300000 0 application/octet-stream
+big: 200 300000
+big range: 206 BBBBBBBBBB 10
+dir redirect: 301 /static/sub/
+dir index: 200 text/html; charset=utf-8 [] sub index
+listing: 200 text/html; charset=utf-8 true
+missing: 404 text/plain; charset=utf-8 [] 404 Not Found
+
+dotdot: 404 text/plain; charset=utf-8 [] 404 Not Found
+
+ServeFile: 200 text/plain; charset=utf-8 [] 0123456789abcdefghij
+tls big: 200 HTTP/2.0 300000
+tls range: 206 HTTP/2.0 2345 bytes 2-5/20

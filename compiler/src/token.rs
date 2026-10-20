@@ -70,7 +70,8 @@ pub enum TokenKind {
     Question,  // ?
     Bang,      // !
     Arrow,     // =>
-    At,        // @ (attributes)
+    At,        // @ (attributes at declaration start; matrix multiplication between operands)
+    AtEq,      // @=
     Amp,       // &
     Star,      // *
     Plus,      // +
@@ -190,7 +191,7 @@ impl TokenKind {
             Shr => ">>", AndAnd => "&&", OrOr => "||", Lt => "<", Gt => ">", Le => "<=", Ge => ">=",
             EqEq => "==", NotEq => "!=", Assign => "=", PlusEq => "+=", MinusEq => "-=",
             StarEq => "*=", SlashEq => "/=", PercentEq => "%=", AmpEq => "&=", PipeEq => "|=",
-            CaretEq => "^=", ShlEq => "<<=", ShrEq => ">>=", Underscore => "_", Eof => "<eof>",
+            CaretEq => "^=", ShlEq => "<<=", ShrEq => ">>=", AtEq => "@=", Underscore => "_", Eof => "<eof>",
             Ident(_) | Int(_) | Float(_) | Str(_) | Char(_) => "<literal>",
         }
     }

@@ -1,0 +1,24 @@
+// test: with --leak-check, an error returned from main is printed and released before the leak report (exit code 1, not 66)
+// status: passing
+// exit: 1
+// run-flags: --leak-check
+// stderr: error: config: missing key port
+namespace spec.errors2.main_error_leak_check
+
+import std.io
+
+struct ConfigError {
+    Keys []string
+    Path string
+    func Message() string { return "config: missing key " + this.Keys[0] }
+}
+
+func load(path string) int! {
+    return ConfigError{Keys: ["port", "host"], Path: path}
+}
+
+func main() void! {
+    println("start")
+    var port = load("app.toml")?
+    println("unreachable", port)
+}

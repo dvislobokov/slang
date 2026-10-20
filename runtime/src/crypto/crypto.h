@@ -197,4 +197,57 @@ SLANG_CRYPTO_HIDDEN size_t slang__rsa_priv_size(const uint8_t *der, size_t derle
 SLANG_CRYPTO_HIDDEN bool slang__rsa_public(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen,
                                            const uint8_t *in, size_t ilen, uint8_t *out);
 
+/* ---- P-384 (p384.c, same contract as P-256 with 48-byte scalars,
+ * 97-byte points and HMAC-SHA384 RFC 6979 nonces) ---- */
+
+SLANG_CRYPTO_HIDDEN bool slang__p384_pubkey(uint8_t pub[97], const uint8_t priv[48]);
+SLANG_CRYPTO_HIDDEN bool slang__p384_ecdh(uint8_t out[48], const uint8_t priv[48], const uint8_t peer[97]);
+SLANG_CRYPTO_HIDDEN bool slang__p384_sign(uint8_t sig[96], const uint8_t priv[48], const uint8_t *digest,
+                                          size_t dlen, const uint8_t *extra, size_t elen);
+SLANG_CRYPTO_HIDDEN bool slang__p384_verify(const uint8_t sig[96], const uint8_t pub[97],
+                                            const uint8_t *digest, size_t dlen);
+SLANG_CRYPTO_HIDDEN bool slang__p384_genkey(uint8_t priv[48]);
+
+/* ---- AES decryption, CBC and PKCS#7 (cbc.c) ---- */
+
+SLANG_CRYPTO_HIDDEN void slang__aes_decrypt_block(const slang_aes_key *k, const uint8_t in[16], uint8_t out[16]);
+/* n is a multiple of 16; in and out may be equal. */
+SLANG_CRYPTO_HIDDEN void slang__cbc_encrypt(const slang_aes_key *k, const uint8_t iv[16], const uint8_t *in,
+                                            size_t n, uint8_t *out);
+SLANG_CRYPTO_HIDDEN void slang__cbc_decrypt(const slang_aes_key *k, const uint8_t iv[16], const uint8_t *in,
+                                            size_t n, uint8_t *out);
+/* Padding length (1..block) of a padded buffer, 0 if invalid (constant time). */
+SLANG_CRYPTO_HIDDEN size_t slang__pkcs7_unpad_len(const uint8_t *p, size_t n, size_t block);
+
+/* ---- password-based KDFs (kdf.c, ../std_argon2.c) ---- */
+
+SLANG_CRYPTO_HIDDEN bool slang__pbkdf2(int alg, const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen,
+                                       uint64_t iter, uint8_t *out, size_t n);
+/* 0 ok, 1 bad parameters (N a power of two > 1, r p < 2^30), 2 out of memory. */
+SLANG_CRYPTO_HIDDEN int slang__scrypt(const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen, uint64_t N,
+                                      uint64_t r, uint64_t p, uint8_t *out, size_t n);
+SLANG_CRYPTO_HIDDEN void slang__blake2b(uint8_t *out, size_t outlen, const uint8_t *key, size_t klen,
+                                        const uint8_t *p, size_t n);
+/* type 0 Argon2d, 1 Argon2i, 2 Argon2id; 0 ok, 1 bad parameters, 2 out of memory. */
+SLANG_CRYPTO_HIDDEN int slang__argon2(int type, const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen,
+                                      const uint8_t *secret, size_t klen, const uint8_t *ad, size_t adlen, uint32_t t,
+                                      uint32_t m, uint32_t p, uint8_t *out, size_t T);
+
+/* ---- RSA additions (rsa.c): OAEP (RFC 8017 7.1) and prime generation ---- */
+
+/* out gets the modulus size in bytes (*olen). */
+SLANG_CRYPTO_HIDDEN bool slang__rsa_encrypt_oaep(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
+                                                 const uint8_t *msg, size_t mlen, const uint8_t *label, size_t llen,
+                                                 uint8_t *out, size_t *olen);
+/* Decrypts into out (at least modulus size bytes), *mlen = message length;
+ * false on any failure (no distinction, constant time decoding). */
+SLANG_CRYPTO_HIDDEN bool slang__rsa_decrypt_oaep(const uint8_t *der, size_t derlen, int alg, const uint8_t *ct,
+                                                 size_t clen, const uint8_t *label, size_t llen, uint8_t *out,
+                                                 size_t *mlen);
+/* A random prime of exactly `bits` bits (top two bits set) with p mod e != 1;
+ * big-endian into out (bits/8 bytes). */
+SLANG_CRYPTO_HIDDEN bool slang__rsa_gen_prime(uint8_t *out, int bits, uint64_t e);
+/* Miller-Rabin with `rounds` random bases (public data, variable time). */
+SLANG_CRYPTO_HIDDEN bool slang__rsa_is_probable_prime(const uint8_t *p, size_t plen, int rounds);
+
 #endif

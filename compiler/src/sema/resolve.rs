@@ -19,7 +19,7 @@ pub(crate) enum PathRes {
 const MAX_EMBED_DEPTH: usize = 16;
 
 /// Builtin attribute names.
-pub(crate) const BUILTIN_ATTRS: &[&str] = &["attribute", "reflect", "deprecated", "inline", "test", "json", "log", "csv", "xml", "yaml", "toml", "serde"];
+pub(crate) const BUILTIN_ATTRS: &[&str] = &["attribute", "reflect", "deprecated", "inline", "test", "bench", "json", "log", "csv", "xml", "yaml", "toml", "serde"];
 
 impl<'a> Sema<'a> {
     // -- namespace tree ------------------------------------------------------
@@ -293,6 +293,10 @@ impl<'a> Sema<'a> {
             self.cur_ns = self.file_scopes[fi].ns;
             for imp in &file.imports {
                 let path = imp.path.to_string();
+                if let Err(msg) = self.check_capability(fi, &path) {
+                    self.err(msg, imp.path.span);
+                    continue;
+                }
                 if let Err(msg) = self.policy.map_or(Ok(()), |p| p.check(fi, &path)) {
                     self.err(msg, imp.path.span);
                     continue;
@@ -442,7 +446,9 @@ impl<'a> Sema<'a> {
                     None => {
                         if report {
                             let path = self.nss[ns].path.clone();
-                            self.err(format!("unknown identifier {} in namespace {path}", seg.name), seg.span);
+                            let names: Vec<String> = self.nss[ns].members.keys().filter(|n| self.nss[ns].is_std || is_exported(n)).cloned().collect();
+                            let help = self.did_you_mean(&seg.name, &names);
+                            self.err_maybe_help(format!("unknown identifier {} in namespace {path}", seg.name), seg.span, help);
                         }
                         return None;
                     }
@@ -545,12 +551,12 @@ impl<'a> Sema<'a> {
                         }
                     },
                     Some(_) => {
-                        self.err(format!("unknown type {}", path.to_string()), path.span);
+                        self.unknown_type(path);
                         self.tt.invalid
                     }
                     None => {
                         if !self.diags.has_errors_at(path.span, self.cur_file) {
-                            self.err(format!("unknown type {}", path.to_string()), path.span);
+                            self.unknown_type(path);
                         }
                         self.tt.invalid
                     }
@@ -695,7 +701,7 @@ impl<'a> Sema<'a> {
                 continue;
             }
             self.cur_file = self.funcs[fid].file;
-            self.cur_ns = self.file_scopes[self.cur_file].ns;
+            self.cur_ns = self.std_fn_ns.get(&(fid as u32)).copied().unwrap_or(self.file_scopes[self.cur_file].ns);
             self.resolve_func_sig(fid);
         }
     }
@@ -987,9 +993,17 @@ pub struct PackageScope {
     pub namespace: String,
     /// Declared (direct) dependencies, indices into `ImportPolicy::packages`.
     pub deps: Vec<usize>,
+    /// Capabilities granted by the manifest (`[capabilities]`: `unsafe`,
+    /// `plugin`), see [`super::debug_agent::GATED`].
+    pub capabilities: Vec<String>,
 }
 
 impl ImportPolicy {
+    /// Whether the package of file `file` was granted capability `cap`.
+    pub fn has_capability(&self, file: usize, cap: &str) -> bool {
+        self.file_package.get(file).and_then(|&i| self.packages.get(i)).is_some_and(|p| p.capabilities.iter().any(|c| c == cap))
+    }
+
     /// `Err(message)` if code in file `file` may not reference the
     /// namespace `path` (or anything under its root).
     pub fn check(&self, file: usize, path: &str) -> Result<(), String> {

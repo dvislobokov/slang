@@ -4,4 +4,4 @@
 (-1+0i) (1.298458+0.634964i) (0.83373-0.988898i)
 2 1.570796 (0+2i)
 true true false
-(+Inf+NaNi)
+(+Inf+NaNi) true true

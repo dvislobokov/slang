@@ -1,4 +1,4 @@
-HTTP/1.1 200 OK|Content-Type: text/plain; charset=utf-8|Content-Length: 16||POST /a body=abc
-HTTP/1.1 200 OK|Content-Type: text/plain; charset=utf-8|Content-Length: 14||GET /b body=hi
+HTTP/1.1 200 OK|Content-Type: text/plain; charset=utf-8|Date: <true>|Content-Length: 16||POST /a body=abc
+HTTP/1.1 200 OK|Content-Type: text/plain; charset=utf-8|Date: <true>|Content-Length: 14||GET /b body=hi
 GET /1 body= | GET /2 body= | GET /3 body=
 idle connection closed: true hits 5

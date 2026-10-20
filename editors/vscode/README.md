@@ -77,17 +77,31 @@ A file with syntax errors is left unchanged.
 
 ## Debugging
 
-The extension contributes the debug type **`slang`**. It runs
-[`lldb-dap`](https://lldb.llvm.org/use/lldbdap.html) (LLDB 18+; install
-`lldb-18` on Ubuntu, or point `slang.debug.lldbDapPath` at it) with the
-Slang formatters (`tools/lldb/slang_formatters.py`, located with
-`slang debug --formatters lldb`) loaded through `initCommands`, so strings,
-slices, maps, errors, `T!`, enums, interfaces, closures and tasks show as
-Slang values. Breakpoints, stepping, the call stack, variables, watch and
-the debug console (lldb commands; expressions in C syntax) work.
+The extension contributes the debug type **`slang`** with two adapters,
+chosen by `"adapter"`:
+
+- **`"agent"`** (default): the in-process debug agent that every debug
+  build links (`std.debug`, docs/DEBUGGER.md stage 2). `launch` starts the
+  program with `SLANG_DEBUG=127.0.0.1:0,wait`, reads the port it announces
+  on stderr (`slang-debug: listening on 127.0.0.1:PORT`) and connects VS
+  Code to it (`DebugAdapterServer`); the program's output goes to the debug
+  console and the program is killed with the session. Breakpoints with
+  conditions, hit counts and logpoints (`{expr}` interpolation, no stop),
+  function breakpoints, exception breakpoints (*Panics*; *Errors (on
+  creation)* with an optional type filter such as `NotFound`), stepping
+  that follows a task across `await`, pause, one entry per task in the
+  call-stack view, variables formatted as Slang values with paging of large
+  slices and maps, and watch / hover / debug-console expressions (variable
+  paths `a.b[2]`, `m["k"]`, comparisons) work. No lldb is needed.
+- **`"lldb"`**: [`lldb-dap`](https://lldb.llvm.org/use/lldbdap.html) (LLDB
+  18+; install `lldb-18` on Ubuntu, or point `slang.debug.lldbDapPath` at
+  it) with the Slang formatters (`tools/lldb/slang_formatters.py`, located
+  with `slang debug --formatters lldb`) loaded through `initCommands`;
+  expressions in the debug console are lldb's (C syntax). Use it for
+  attaching by pid to a program without the agent.
 
 F5 on a `.sl` file without a `launch.json` builds it (`slang build`; debug
-info is on by default) and debugs it. A `launch.json`:
+info and the agent are on by default) and debugs it. A `launch.json`:
 
 ```json
 {
@@ -104,23 +118,28 @@ info is on by default) and debugs it. A `launch.json`:
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "slang: build"
     },
-    { "type": "slang", "request": "attach", "name": "Attach", "pid": "${command:pickProcess}" }
+    { "type": "slang", "request": "attach", "name": "Attach to agent", "address": ":2345" },
+    { "type": "slang", "request": "attach", "name": "Attach (lldb)", "adapter": "lldb", "pid": "${command:pickProcess}" }
   ]
 }
 ```
 
 - `launch`: `program` (executable), or `source` (file / project) which is
   built first unless a `preLaunchTask` is set (`build: false` skips it,
-  `buildArgs` adds flags, e.g. `["--release", "-g"]`); `args`, `env`
-  (object or `["K=V"]`), `cwd`, `stopOnEntry`, and lldb-dap's
-  `initCommands`, `preRunCommands`, `stopCommands`.
-- `attach`: `pid` (asked for when missing), optionally `program`.
+  `buildArgs` adds flags; with `"--release"` the extension adds
+  `--debug-agent`); `args`, `env` (object or `["K=V"]`), `cwd`,
+  `stopOnEntry`; with `"adapter": "lldb"` also lldb-dap's `initCommands`,
+  `preRunCommands`, `stopCommands`.
+- `attach`: agent — `address` (`"host:port"` or `":port"`) or `host` +
+  `port` of a program started with `SLANG_DEBUG=:2345` (or
+  `slang debug run app.sl --headless --port 2345`); lldb — `pid` (asked
+  for when missing), optionally `program`.
 - Task type `slang` (`"command": "build"`, `source`, `program`, `args`):
   the provided task **slang: build** runs
   `slang build ${file} -o target/slang-debug/<name>`.
-- In the debug console, `slang-next` steps over a statement and follows an
-  `await` to the coroutine's next line (plain `next` stops in the caller
-  when the `await` suspends); a panic stops at `slang_panic`.
+- With lldb, `slang-next` in the debug console steps over a statement and
+  follows an `await` to the coroutine's next line (plain `next` stops in
+  the caller when the `await` suspends); a panic stops at `slang_panic`.
 
 ## Project discovery
 

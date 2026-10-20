@@ -1,9 +1,30 @@
 namespace std.compress.zstd
 
-// Zstandard (RFC 8878) decoding; the decoder is C (runtime/src/std_zstd.c).
-// Frames are decoded whole: the streaming Reader emits a frame's content
-// once all of it has arrived. Dictionaries are not supported; there is no
-// encoder yet.
+// Zstandard (RFC 8878); the decoder (runtime/src/std_zstd.c) and the
+// encoder (std_zstd_enc.c) are C. Frames are decoded whole: the streaming
+// Reader emits a frame's content once all of it has arrived. Dictionaries
+// are not supported.
+
+// Compresses data into one zstd frame with a content checksum. Levels
+// 1 (fastest) .. 19 (more match search); 0 or negative means 3. The
+// encoder is simpler than the reference one (predefined sequence tables,
+// no repeat offsets): ratios are between reference levels 1 and 3.
+func Compress(data []byte, level int) []byte! {
+    var l = level
+    if l <= 0 {
+        l = 3
+    }
+    return std.compress.rtZstdEncode(data, l, true)?
+}
+
+// Compress without the content checksum.
+func CompressNoChecksum(data []byte, level int) []byte! {
+    var l = level
+    if l <= 0 {
+        l = 3
+    }
+    return std.compress.rtZstdEncode(data, l, false)?
+}
 
 // Decompresses all frames of data (skippable frames are skipped).
 func Decompress(data []byte) []byte! {

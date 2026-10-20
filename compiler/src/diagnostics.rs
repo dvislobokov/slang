@@ -99,6 +99,13 @@ impl Diagnostic {
         self
     }
 
+    /// Adds a `help:` line (a suggested fix in words); stored as a note
+    /// whose text starts with `help: `.
+    pub fn with_help(mut self, help: impl Into<String>) -> Diagnostic {
+        self.notes.push((format!("help: {}", help.into()), None));
+        self
+    }
+
     /// Human-readable rendering:
     /// ```text
     /// error: unexpected token
@@ -121,6 +128,10 @@ impl Diagnostic {
         let caret_len = if eline == line { len.min(src.len().saturating_sub(col - 1).max(1)) } else { src.len().saturating_sub(col - 1).max(1) };
         out.push_str(&format!("{:w$} |\n{line:w$} | {src}\n{:w$} | {}{}\n", "", "", " ".repeat(col - 1), "^".repeat(caret_len), w = width));
         for (note, span) in &self.notes {
+            if let Some(help) = note.strip_prefix("help: ") {
+                out.push_str(&format!("{:w$} = help: {help}\n", "", w = width));
+                continue;
+            }
             match span {
                 Some(s) => {
                     let (l, c) = file.line_col(s.start);

@@ -1,0 +1,19 @@
+// error: Next must return (T, bool), (K, V, bool) or *T
+// status: passing
+namespace spec.iteration.err_bad_next
+
+import std.io
+
+struct Gen {
+    n int
+    func Next() int {
+        this.n += 1
+        return this.n
+    }
+}
+
+func main() {
+    for x in (Gen{}) {
+        println(x)
+    }
+}

@@ -15,7 +15,7 @@ The script builds both with release settings and reports wall time, CPU time
 | `json_like` | string building: `fmt.Format` of 100k JSON-like records (ints, floats, bools) + `Join`, 5 rounds |
 | `struct_map` | map[string]Point insert/update/lookup (100k keys, 2M updates, 100k lookups) |
 | `tcp_echo` | std.net: 1000 concurrent loopback TCP connections, 1 MB each written in 64 KB chunks and echoed back (`ReadInto` into per-connection buffers) |
-| `http_hello` | std.net.http server answering a keep-alive load generator (64 connections, 200k `GET /` in all); `run.sh` cross-measures both servers with both load generators in separate processes |
+| `http_hello` | std.net.http server answering a keep-alive load generator (64 connections, 200k `GET /` in all); `run.sh` cross-measures both servers with both load generators in separate processes, then HTTP/2 over TLS (`--server-tls` / `-server-tls`) with Go's h2 client (`-load2`) |
 | `regex` | std.regex: `FindAll` of an e-mail pattern over a 10 MB generated text (lazy DFA with prefix acceleration vs Go's `regexp`) |
 | `gzip` | std.compress.gzip: level-6 compression and decompression of 20 MB of mixed text, round trip checked |
 
@@ -101,24 +101,43 @@ first version of the benchmark built its buffers with `std.bytes.Repeat`
 
 `http_hello` (`benchmarks/http_hello/run.sh`, requests/s, 64 keep-alive
 connections, one request in flight each, server and load generator in
-separate processes sharing the 4 vCPUs; two runs, the better one):
+separate processes sharing the 4 vCPUs; the machine was shared with other
+jobs, so the numbers move by ±15% between runs; two runs, the better one per cell):
 
-| server \ load generator | Slang load | Go load |
-|---|---|---|
-| Slang `std.net.http` | 43 900 | 51 700 |
-| Go `net/http` | 59 400 | 104 300 |
+| server \ load generator | Slang load | Go load | Go HTTP/2 load (TLS, 64 streams, 1 connection) |
+|---|---|---|---|
+| Slang `std.net.http` | 67 100 | 103 300 | 31 600 |
+| Go `net/http` | 64 400 | 117 300 | 32 600 |
 
-The Slang server reaches about half of Go's `net/http`. A callgrind
-profile of the in-process run puts most of the server's time in the
-Slang-source HTTP layer (`http.sl`: header canonicalisation, splitting,
-string building) and in per-call task allocation of `async` functions;
-the socket layer itself (`sock.read/readInto/waitRead`) is a few percent.
-Fixed on the way: `Conn.Read(n)` used to allocate and zero an n-byte slice
-per call (16 KB per HTTP read, 24% of all instructions in memset); it now
-receives into a per-thread 64 KB buffer and copies exactly the bytes
-received. Each wait still costs a hop from the shard's poller thread to a
-worker through the global run queue (Go polls inside its workers): that is
-the next step if the HTTP layer stops dominating (ABI.md 16.1).
+Six alternating rounds of the Go load generator against both servers
+(`go -load`, same process pair): Slang 71–86k req/s, Go 61–85k req/s, ratio
+98–117% (median about 110%), with the Slang server using 13–16 µs of CPU per
+request (user + system) against Go's 15–17 µs. Before the rework of the HTTP
+layer the Slang server did 51 700 req/s against Go's 104 300 (about half)
+and used 35 µs of CPU per request. The HTTP/2 column is limited by the Go
+client (its single h2 connection serializes the 64 streams' writes); both
+servers stay below 100% CPU there.
+
+What changed (a callgrind profile of the old server put ~90% of its
+instructions in `http.sl`: `CanonicalHeader` alone 29%, `writeResponse` 22%,
+the router 14%, and in task allocation of `async` helpers):
+
+- Heads are parsed in place from the connection's read buffer by C helpers
+  (`rtHeadEnd`, `rtParseHead`, ABI.md 16.5): no per-line strings, common
+  methods/protocols/header names interned (no allocation), the facts the
+  server needs (Content-Length, chunked, Connection, Expect, traceparent)
+  returned as flags instead of map lookups.
+- The response head (status line, headers, cached `Date`, Content-Length)
+  and the body are formatted by one C call into one string and sent with one
+  write (sendfile with TCP_CORK for files); `CanonicalHeader` returns its
+  argument when it is already canonical.
+- The connection loop does the reads itself (`conn.readInto` straight into
+  the buffer): about three tasks per request (the read, the handler, the
+  write) instead of ten; the router compares static routes as strings
+  without splitting the path or allocating a parameter map.
+
+HTTP/2 uses the same handler path with a task per stream; HPACK Huffman is
+C, the rest of the framing Slang.
 
 ## Tier-2 stdlib (2026-10-20, `--release`, go 1.24)
 

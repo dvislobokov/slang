@@ -36,7 +36,7 @@
     ANDAND='&&' OROR='||'
     LT='<' GT='>' LE='<=' GE='>=' EQEQ='==' NOTEQ='!='
     ASSIGN='=' PLUSEQ='+=' MINUSEQ='-=' STAREQ='*=' SLASHEQ='/=' PERCENTEQ='%='
-    AMPEQ='&=' PIPEEQ='|=' CARETEQ='^=' SHLEQ='<<=' SHREQ='>>='
+    AMPEQ='&=' PIPEEQ='|=' CARETEQ='^=' SHLEQ='<<=' SHREQ='>>=' ATEQ='@='
     UNDERSCORE='_'
 
     // Literals and trivia (regex for the JFlex lexer)
@@ -165,7 +165,7 @@ defer_stmt ::= DEFER expr
 // `a, b = b, a` (all right-hand values are evaluated first) and
 // `(q, r) = f()` (tuple result, `_` discards) assign to existing places.
 assign_stmt ::= expr (COMMA expr)* assign_op expr (COMMA expr)*
-assign_op ::= ASSIGN | PLUSEQ | MINUSEQ | STAREQ | SLASHEQ | PERCENTEQ | AMPEQ | PIPEEQ | CARETEQ | SHLEQ | SHREQ
+assign_op ::= ASSIGN | PLUSEQ | MINUSEQ | STAREQ | SLASHEQ | PERCENTEQ | AMPEQ | PIPEEQ | CARETEQ | SHLEQ | SHREQ | ATEQ
 expr_stmt ::= expr
 
 eos ::= SEMI
@@ -185,7 +185,11 @@ or_expr ::= and_expr (OROR and_expr)*
 and_expr ::= cmp_expr (ANDAND cmp_expr)*
 cmp_expr ::= add_expr ((EQEQ | NOTEQ | LT | LE | GT | GE) add_expr)*
 add_expr ::= mul_expr ((PLUS | MINUS | PIPE | CARET) mul_expr)*
-mul_expr ::= unary_expr ((STAR | SLASH | PERCENT | SHL | SHR | AMP) unary_expr)*
+// AT between operands is matrix multiplication (`a @ b`, MatMul); an AT
+// that starts a declaration (or a field, method, parameter) is an attribute.
+// Operators on struct/enum values call their operator methods
+// (DESIGN.md "Перегрузка операторов").
+mul_expr ::= unary_expr ((STAR | SLASH | PERCENT | AT | SHL | SHR | AMP) unary_expr)*
 unary_expr ::= (MINUS | BANG | AMP | STAR | AWAIT) unary_expr | postfix_expr
 postfix_expr ::= primary_expr postfix*
 postfix ::= DOT IDENTIFIER

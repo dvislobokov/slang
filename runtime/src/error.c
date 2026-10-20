@@ -193,6 +193,7 @@ slang_error *slang_error_created(slang_error *err, const slang_error_site *site)
     if (!err || err->created || !site) return err;
     err = unshare(err);
     err->created = site;
+    if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED) && slang__dbg_error_wanted()) slang__dbg_error(err);
     return err;
 }
 

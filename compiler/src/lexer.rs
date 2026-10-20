@@ -535,7 +535,7 @@ impl Lexer<'_, '_> {
             ':' => Colon,
             ';' => Semi,
             '?' => Question,
-            '@' => At,
+            '@' => self.with_eq(At, AtEq),
             '.' => {
                 if self.eat('.') {
                     DotDot
@@ -727,12 +727,12 @@ mod tests {
     #[test]
     fn punctuation() {
         assert_eq!(
-            kinds("( ) { } [ ] , . .. : ; ? @ ! => & * + - / % | ^ << >> && || < > <= >= == != = += -= *= /= %= &= |= ^= <<= >>="),
+            kinds("( ) { } [ ] , . .. : ; ? @ ! => & * + - / % | ^ << >> && || < > <= >= == != = += -= *= /= %= &= |= ^= <<= >>= @="),
             vec![
                 LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Dot, DotDot, Colon, Semi,
                 Question, At, Bang, Arrow, Amp, Star, Plus, Minus, Slash, Percent, Pipe, Caret, Shl, Shr,
                 AndAnd, OrOr, Lt, Gt, Le, Ge, EqEq, NotEq, Assign, PlusEq, MinusEq, StarEq, SlashEq,
-                PercentEq, AmpEq, PipeEq, CaretEq, ShlEq, ShrEq, Eof
+                PercentEq, AmpEq, PipeEq, CaretEq, ShlEq, ShrEq, AtEq, Eof
             ]
         );
     }

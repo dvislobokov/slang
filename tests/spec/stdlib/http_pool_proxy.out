@@ -1,0 +1,8 @@
+http via proxy: 200 proxied http://example.invalid/path?q=1
+https via CONNECT: 200 direct HTTP/2.0
+again (pooled): direct HTTP/2.0 dials 1
+HTTP_PROXY: proxied http://example.invalid/env
+NO_PROXY: direct HTTP/1.1
+proxy saw: GET http://example.invalid/path?q=1 auth=Basic dXNlcjpzZWNyZXQ=
+proxy saw: CONNECT <tls>
+proxy saw: GET http://example.invalid/env

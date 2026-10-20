@@ -80,6 +80,10 @@ pub struct BuildOptions {
     pub debug_info: bool,
     /// `--strip`: no debug information and a stripped executable.
     pub strip: bool,
+    /// `--debug-agent` / `--no-debug-agent`: statement hooks and tables of
+    /// the in-process debugger (docs/DEBUGGER.md stage 2); `None` = on in
+    /// debug builds, off in release builds.
+    pub debug_agent: Option<bool>,
 }
 
 impl BuildOptions {
@@ -100,7 +104,13 @@ impl BuildOptions {
             target: None,
             debug_info: false,
             strip: false,
+            debug_agent: None,
         }
+    }
+
+    /// Whether the build links the debug agent (see [`Self::debug_agent`]).
+    pub fn debug_agent_on(&self) -> bool {
+        self.debug_agent.unwrap_or(!self.release) && self.emit != Emit::Obj
     }
 
     /// Whether the build emits DWARF: debug builds unless `--strip`,
@@ -141,6 +151,8 @@ pub fn parse_args(args: &[String]) -> Result<(BuildOptions, Vec<String>), String
             "--release" => o.release = true,
             "-g" | "--debug-info" => o.debug_info = true,
             "--strip" => o.strip = true,
+            "--debug-agent" => o.debug_agent = Some(true),
+            "--no-debug-agent" => o.debug_agent = Some(false),
             "--leak-check" => o.leak_check = true,
             "--no-error-trace" => o.no_error_trace = true,
             "--static" => o.static_link = true,
@@ -453,7 +465,7 @@ fn front_end_package(project: &Project, target: PkgId, dev: bool) -> Result<(pac
 // -- plain builds -----------------------------------------------------------------
 
 fn build_plain(input: &Path, opts: &BuildOptions) -> Result<PathBuf, String> {
-    let (_, program) = front_end_plain(input)?;
+    let (_, program) = crate::sema::debug_agent::with(opts.debug_agent_on(), || front_end_plain(input))?;
     let output = opts.output.clone().unwrap_or_else(|| default_output(input, opts.emit));
     let name = input.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into());
     emit_plain(&program, &name, output, opts)
@@ -466,7 +478,7 @@ fn build_plain(input: &Path, opts: &BuildOptions) -> Result<PathBuf, String> {
 pub fn build_sources(files: Vec<crate::span::SourceFile>, output: &Path, opts: &BuildOptions) -> Result<PathBuf, String> {
     use_target(opts, true)?;
     let mut diags = Diagnostics::new();
-    let program = driver::check(&files, &mut diags);
+    let program = crate::sema::debug_agent::with(opts.debug_agent_on(), || driver::check(&files, &mut diags));
     if !diags.is_empty() {
         eprint!("{}", diags.render_all_files(&files));
     }
@@ -503,9 +515,10 @@ fn emit_plain(program: &Program, name: &str, output: PathBuf, opts: &BuildOption
         }
         Emit::Exe => {}
     }
+    let libs = module_link_libs(&module);
     let obj = output.with_extension(format!("{}.o", std::process::id()));
     write_object(&machine, &module, &obj)?;
-    let r = link(&[obj.clone()], &output, opts);
+    let r = link(&[obj.clone()], &output, &libs, opts);
     let _ = std::fs::remove_file(&obj);
     r?;
     Ok(output)
@@ -518,7 +531,7 @@ fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path,
         (true, true) => 1,
         (true, false) => 2,
     };
-    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace, debug_info: opts.emits_debug_info(), optimized: opts.opt > 0 }) {
+    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace, debug_info: opts.emits_debug_info(), optimized: opts.opt > 0, debug_agent: opts.debug_agent_on() }) {
         Ok(m) => m,
         Err(errs) => {
             for e in &errs {
@@ -559,12 +572,24 @@ fn write_object(machine: &TargetMachine, module: &Module, path: &Path) -> Result
     machine.write_to_file(module, FileType::Object, path).map_err(|e| format!("cannot write {}: {}", path.display(), e.to_string()))
 }
 
-/// Links `objs` with the runtime into the executable `output`.
-fn link(objs: &[PathBuf], output: &Path, opts: &BuildOptions) -> Result<(), String> {
+/// The system libraries (`stdlib::LINK_LIBS`) that the runtime functions
+/// declared in `module` need.
+fn module_link_libs(module: &Module) -> Vec<&'static str> {
+    let names: Vec<String> = module.get_functions().filter(|f| f.count_basic_blocks() == 0).map(|f| f.get_name().to_string_lossy().into_owned()).collect();
+    crate::sema::stdlib::link_libs(names.iter().map(|s| s.as_str()))
+}
+
+/// Links `objs` with the runtime (and the system libraries `libs`) into
+/// the executable `output`.
+fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> Result<(), String> {
     let rt = find_runtime()?;
     let clang = find_clang()?;
     let mut cmd = Command::new(&clang);
-    cmd.args(objs).arg(&rt).arg("-lpthread").arg("-lm").arg("-o").arg(output);
+    cmd.args(objs).arg(&rt);
+    for l in libs {
+        cmd.arg(format!("-l{l}"));
+    }
+    cmd.arg("-lpthread").arg("-lm").arg("-o").arg(output);
     if opts.release {
         cmd.arg("-Wl,--gc-sections");
     } else if !opts.static_link {
@@ -591,7 +616,7 @@ fn link(objs: &[PathBuf], output: &Path, opts: &BuildOptions) -> Result<(), Stri
 /// its closure (library, returns `None`).
 fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Result<Option<PathBuf>, String> {
     let pkg = &project.packages[target];
-    let (checked, program) = front_end_package(project, target, false)?;
+    let (checked, program) = crate::sema::debug_agent::with(opts.debug_agent_on(), || front_end_package(project, target, false))?;
     let profile = if opts.release { "release" } else { "debug" };
     let out_dir = project.target_dir().join(profile);
     let output = opts.output.clone().unwrap_or_else(|| with_emit_ext(out_dir.join(&pkg.name), opts.emit));
@@ -612,6 +637,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
         }
         return Ok(Some(output));
     }
+    let libs = module_link_libs(&module);
     let cache = project.target_dir().join("slang");
     std::fs::create_dir_all(&cache).map_err(|e| format!("cannot create {}: {e}", cache.display()))?;
     let compiler = compiler_id();
@@ -623,6 +649,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
         let mut h = Sha256::new();
         h.update(compiler.as_bytes());
         h.update(format!("\0opt={}\0release={}\0leak={}\0trace={}\0debug={}\0triple={}\0", opts.opt, opts.release, opts.leak_check, !opts.no_error_trace, opts.emits_debug_info(), machine.get_triple()).as_bytes());
+        h.update(format!("agent={}\0", opts.debug_agent_on()).as_bytes());
         h.update(part.print_to_string().to_bytes());
         let key = lock::hex(&h.finalize()[..8]);
         let obj = cache.join(format!("{name}-{key}.o"));
@@ -641,7 +668,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
         log(opts, format!("library {} checked and compiled ({} object(s))", package::describe(pkg), objs.len()));
         return Ok(None);
     }
-    link(&objs, &output, opts)?;
+    link(&objs, &output, &libs, opts)?;
     Ok(Some(output))
 }
 

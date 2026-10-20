@@ -12,5 +12,5 @@ time: missing unit in duration "1.5"
 time: unknown unit "x" in duration "3x"
 time: invalid duration ""
 1s 2s -2s 1.75s
-3.5s 250ms 250ms 1 true
+3.5s 250ms 250ms 1 true true false
 true true

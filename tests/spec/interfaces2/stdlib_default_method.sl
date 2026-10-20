@@ -1,0 +1,48 @@
+// test: stdlib interfaces can have default methods: hash.Hasher's WriteString defaults to Write of the bytes; it is called on the struct variable itself (not a copy), on a pointer and through the interface
+// status: passing
+// run-flags: --leak-check
+namespace spec.interfaces2.stdlib_default_method
+
+import std.io
+import std
+
+// A toy hash that sums bytes; it relies on the default WriteString.
+struct Sum8 {
+    s uint
+    func Write(p []byte) int! {
+        for b in p {
+            this.s = (this.s + uint(b)) % 256
+        }
+        return len(p)
+    }
+    func Sum() []byte {
+        return [byte(this.s)]
+    }
+    func Reset() {
+        this.s = 0
+    }
+    func Size() int {
+        return 1
+    }
+    func BlockSize() int {
+        return 1
+    }
+}
+
+func feed(h hash.Hasher, s string) {
+    _ = try h.WriteString(s) else 0
+}
+
+func main() {
+    var h = Sum8{}
+    feed(&h, "ab")
+    println(h.s)
+    _ = try h.WriteString("c") else 0
+    println(h.s)
+    var p = &h
+    _ = try p.WriteString("d") else 0
+    println(h.s, h.Sum(), p.Size())
+    var f = hash.fnv.New32a()
+    feed(&f, "x")
+    println(f.Sum32())
+}

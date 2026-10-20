@@ -1,0 +1,104 @@
+// test: std.net.ws: upgrade inside an http handler, Dial, text/binary/fragmented messages, ping/pong, concurrent senders, close codes, a bad handshake; served by std.net.http.test
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.ws_echo
+
+import std.io
+import std
+import std.net
+
+struct Seen {
+    closeCode int
+    reason string
+    done task.Channel<int>
+}
+
+async func echo(seen *Seen, req *http.Request, res *http.Response) void! {
+    // a failed handshake has its response (400/426) already: just return
+    var conn = try await ws.Upgrade(req, res) catch err {
+        return
+    }
+    for msg in conn {
+        if msg.IsText() && msg.Text() == "bye" {
+            await conn.CloseWith(ws.CloseGoingAway, "server done")?
+            break
+        }
+        await conn.Send(msg)?
+    }
+    // the client's close (or ours) ends the loop
+    try await conn.Recv() catch err {
+        var ce ws.CloseError
+        if errors.As(err, &ce) {
+            seen.closeCode = ce.Code
+            seen.reason = ce.Reason
+        }
+    }
+    await seen.done.Send(1)
+}
+
+async func main() void! {
+    var seen = new Seen{done: task.Channel<int>(1)}
+    var r = http.NewRouter()
+    r.Get("/ws", func(req *http.Request, res *http.Response) Task<void!> {
+        return echo(seen, req, res)
+    })
+    var ts = http.test.NewServer(r)?
+    var url = strings.Replace(ts.URL, "http://", "ws://") + "/ws"
+
+    var c = await ws.Dial(url)?
+    await c.SendText("hello")?
+    var m = await c.Recv()?
+    println("text:", m.Type == ws.TextMessage, m.Text())
+    await c.SendBinary([byte(0), byte(1), byte(2), byte(255)])?
+    m = await c.Recv()?
+    println("binary:", m.Type == ws.BinaryMessage, m.Data)
+    var big = strings.Repeat("abcdefghijklmnopqrstuvwxyz", 10000)
+    await c.SendText(big)?
+    m = await c.Recv()?
+    println("big:", len(m.Data), m.Text() == big)
+    await c.SendFragments(ws.TextMessage, [strings.Bytes("frag"), strings.Bytes("men"), strings.Bytes("ted")])?
+    m = await c.Recv()?
+    println("fragments:", m.Text())
+    await c.Ping(strings.Bytes("p"))?
+    await c.SendText("after ping")?
+    m = await c.Recv()?
+    println("after ping:", m.Text(), "pongs", c.Pongs())
+
+    // five tasks send concurrently; frames never interleave
+    var senders []Task<void!> = []
+    for i in 0..5 {
+        senders = append(senders, c.SendText(fmt.Format("msg {0} ", i) + strings.Repeat("x", 5000)))
+    }
+    for t in senders {
+        await t?
+    }
+    var got = 0
+    for _ in 0..5 {
+        var x = await c.Recv()?
+        if len(x.Data) == 5006 {
+            got += 1
+        }
+    }
+    println("concurrent:", got)
+
+    await c.CloseWith(4000, "client bye")?
+    _ = await seen.done.Recv()
+    println("server saw close:", seen.closeCode, seen.reason)
+
+    // the server closes
+    var c2 = await ws.Dial(url)?
+    await c2.SendText("bye")?
+    try await c2.Recv() catch err {
+        println("client got:", err, ws.IsCloseError(err, [ws.CloseGoingAway]))
+    }
+    await c2.Close()?
+    _ = await seen.done.Recv()
+
+    // not a WebSocket request
+    var plain = await ts.Client.Get(ts.URL + "/ws")?
+    println("plain GET:", plain.Status)
+    try await ws.Dial(strings.Replace(ts.URL, "http://", "ws://") + "/nope") catch err {
+        println("dial error:", errors.Is(err, ws.ErrBadHandshake))
+    }
+    await ts.Close()
+}

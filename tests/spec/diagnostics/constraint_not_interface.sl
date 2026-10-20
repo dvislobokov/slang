@@ -1,4 +1,4 @@
-// error: is not an interface (use an interface, Ordered or Comparable)
+// error: is not an interface
 // status: passing
 namespace spec.diagnostics.constraint_not_interface
 

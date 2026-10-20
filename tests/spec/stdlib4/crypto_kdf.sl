@@ -1,0 +1,63 @@
+// test: std.crypto.kdf Argon2d/i/id (RFC 9106 5.1-5.3 vectors, argon2 CLI vector), PBKDF2 (RFC 6070, RFC 7914), scrypt (RFC 7914), HKDF (RFC 5869 A.1), BLAKE2b (RFC 7693); std.crypto.password PHC hashes, Verify (also of an argon2-cffi hash), NeedsRehash, malformed input
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib4.crypto_kdf
+
+import std.io
+import std
+import std.encoding
+
+func rep(b int, n int) []byte {
+    var out []byte = []
+    for _ in 0..n {
+        out = append(out, byte(b))
+    }
+    return out
+}
+
+func main() void! {
+    for v in ["argon2d", "argon2i", "argon2id"] {
+        var p = crypto.kdf.Argon2Params{Variant: v, Time: 3, Memory: 32, Threads: 4, KeyLen: 32, Secret: rep(3, 8), AssociatedData: rep(4, 12)}
+        println(v, hex.Encode(crypto.kdf.Argon2(rep(1, 32), rep(2, 16), p)?))
+    }
+    // echo -n password | argon2 somesalt -id -t 2 -m 16 -p 1 -l 32
+    println(hex.Encode(crypto.kdf.Argon2id(strings.Bytes("password"), strings.Bytes("somesalt"), 2, 65536, 1, 32)?))
+    try crypto.kdf.Argon2id(strings.Bytes("pw"), strings.Bytes("short"), 1, 64, 1, 32) catch err {
+        println(err)
+    }
+    try crypto.kdf.Argon2id(strings.Bytes("pw"), strings.Bytes("saltsalt"), 0, 64, 1, 32) catch err {
+        println(err)
+    }
+    println(hex.Encode(crypto.kdf.Pbkdf2(strings.Bytes("password"), strings.Bytes("salt"), 2, 20, "sha1")?))
+    println(hex.Encode(crypto.kdf.Pbkdf2(strings.Bytes("passwordPASSWORDpassword"), strings.Bytes("saltSALTsaltSALTsaltSALTsaltSALTsalt"), 4096, 25, "sha1")?))
+    println(hex.Encode(crypto.kdf.Pbkdf2(strings.Bytes("passwd"), strings.Bytes("salt"), 1, 64, "sha256")?))
+    println(hex.Encode(crypto.kdf.Scrypt(strings.Bytes(""), strings.Bytes(""), 16, 1, 1, 64)?))
+    println(hex.Encode(crypto.kdf.Scrypt(strings.Bytes("password"), strings.Bytes("NaCl"), 1024, 8, 16, 64)?))
+    try crypto.kdf.Scrypt(strings.Bytes("a"), strings.Bytes("b"), 1000, 8, 1, 32) catch err {
+        println(err)
+    }
+    var ikm = rep(11, 22)
+    println(hex.Encode(crypto.kdf.Hkdf("sha256", ikm, hex.Decode("000102030405060708090a0b0c")?, hex.Decode("f0f1f2f3f4f5f6f7f8f9")?, 42)?))
+    println(hex.Encode(crypto.hash.Blake2b(strings.Bytes("abc"), 64, [])?))
+    println(hex.Encode(crypto.hash.Blake2b(strings.Bytes(""), 32, [])?))
+
+    // password hashing
+    var params = crypto.password.Params{Time: 1, Memory: 256, Threads: 2}
+    var h = crypto.password.HashWith("hunter2", params)?
+    var info = crypto.password.Parse(h)?
+    println(strings.HasPrefix(h, "$argon2id$v=19$m=256,t=1,p=2$"), len(info.Salt), len(info.Key))
+    println(crypto.password.Verify("hunter2", h), crypto.password.Verify("hunter3", h))
+    println(crypto.password.NeedsRehash(h), crypto.password.NeedsRehashWith(h, params))
+    var h2 = crypto.password.HashWith("hunter2", params)?
+    println("salted", h != h2)
+    var py = "$argon2id$v=19$m=512,t=2,p=2$0DqTbj2hiFHHdYNYjB/x8w$pRQESEq/o0gvJ7ZqX+4S/w"
+    println("argon2-cffi", crypto.password.Verify("correct horse", py), crypto.password.Verify("wrong", py))
+    for bad in ["", "$argon2id$v=19$m=512,t=2$c2FsdHNhbHQ$aGFzaA", "$bcrypt$x", "$argon2id$v=16$m=512,t=2,p=1$c2FsdHNhbHQ$aGFzaA"] {
+        try crypto.password.Parse(bad) catch err {
+            println(err)
+        }
+        println(crypto.password.Verify("x", bad), crypto.password.NeedsRehash(bad))
+    }
+    var d = crypto.password.Hash("default")?
+    println(strings.HasPrefix(d, "$argon2id$v=19$m=65536,t=3,p=4$"), crypto.password.Verify("default", d), crypto.password.NeedsRehash(d))
+}

@@ -381,6 +381,21 @@ void slang__plat_symbolize_done(void) {
     g_exe_lo = g_exe_hi = 0;
 }
 
+/* ---- dynamic loading (std.plugin) ---- */
+
+void *slang__plat_dl_open(const char *path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
+
+void *slang__plat_dl_sym(void *h, const char *name) { return h ? dlsym(h, name) : NULL; }
+
+void slang__plat_dl_close(void *h) {
+    if (h) dlclose(h);
+}
+
+const char *slang__plat_dl_error(void) {
+    const char *e = dlerror();
+    return e ? e : "unknown error";
+}
+
 #else
 #error "platform/posix.c: unsupported platform (a win32.c implementation is planned)"
 #endif

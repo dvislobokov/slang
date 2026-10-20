@@ -5,6 +5,7 @@ pub mod ast;
 pub mod build;
 pub mod cfg;
 pub mod codegen;
+pub mod dap;
 pub mod diagnostics;
 pub mod driver;
 pub mod fmt;

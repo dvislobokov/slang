@@ -31,11 +31,16 @@ mod call;
 mod coerce;
 mod collections;
 mod consts;
+// >>> debugger
+pub mod debug_agent;
+// <<< debugger
 mod expr;
 mod generics;
 mod ifaces;
+mod opover;
 pub mod index;
 mod infer;
+mod iterate;
 mod litcheck;
 mod logtmpl;
 mod ownership;
@@ -43,6 +48,7 @@ mod reflect;
 mod resolve;
 mod stmt;
 mod stdsrc;
+mod suggest;
 pub mod stdlib;
 
 use crate::ast;
@@ -291,6 +297,9 @@ pub(crate) struct Sema<'a> {
     pub iface_defaults: HashMap<(u32, String), FuncId>,
     /// The interface owning each default method (by function id).
     pub iface_default_owner: HashMap<u32, u32>,
+    /// Default methods of stdlib-source interfaces: function id -> the
+    /// stdlib namespace whose names their signature and body use.
+    pub std_fn_ns: HashMap<u32, NsIdx>,
     /// [`Sema::check_attributes`] ran: later struct instances evaluate
     /// their attributes themselves.
     pub attrs_done: bool,
@@ -339,6 +348,7 @@ impl<'a> Sema<'a> {
             enum_method_owner: HashMap::new(),
             iface_defaults: HashMap::new(),
             iface_default_owner: HashMap::new(),
+            std_fn_ns: HashMap::new(),
             attrs_done: false,
             policy: None,
             ide: None,
@@ -363,6 +373,7 @@ impl<'a> Sema<'a> {
             self.ensure_global(GlobalId(g as u32));
         }
         self.check_templates();
+        self.instantiate_debug_agent();
         // Instantiations append functions while bodies are checked; they
         // are checked in turn.
         let mut f = 0;
@@ -435,6 +446,33 @@ impl<'a> Sema<'a> {
         self.push_diag(d);
     }
 
+    /// Reports an error with an optional `help:` line.
+    pub fn err_maybe_help(&mut self, msg: impl Into<String>, span: Span, help: Option<String>) {
+        let mut d = Diagnostic::error(msg, span).in_file(self.cur_file);
+        if let Some(h) = help {
+            d = d.with_help(h);
+        }
+        self.push_diag(d);
+    }
+
+    /// "unknown type X" with a "did you mean" help for a one-segment name.
+    pub fn unknown_type(&mut self, path: &ast::Path) {
+        let help = match path.segments.as_slice() {
+            [one] => {
+                let names = self.visible_names();
+                self.did_you_mean(&one.name, &names)
+            }
+            _ => None,
+        };
+        self.err_maybe_help(format!("unknown type {}", path.to_string()), path.span, help);
+    }
+
+    /// Reports an error with a `help:` line suggesting the fix.
+    pub fn err_help(&mut self, msg: impl Into<String>, span: Span, help: impl Into<String>) {
+        let d = Diagnostic::error(msg, span).with_help(help).in_file(self.cur_file);
+        self.push_diag(d);
+    }
+
     /// Reports an error with a stable code and quick fixes
     /// (docs/TOOLING.md, structured diagnostics).
     pub fn err_fix(&mut self, msg: impl Into<String>, span: Span, code: &'static str, fixes: Vec<Fix>) {
@@ -464,7 +502,19 @@ impl<'a> Sema<'a> {
                 fixes.push(Fix::edit(format!("Import {p}"), Span::new(at, at), format!("{sep}import {p}")));
             }
         }
-        self.err_fix(format!("unknown identifier {}", id.name), id.span, codes::UNKNOWN_IDENTIFIER, fixes);
+        let help = match paths.first() {
+            Some(p) => Some(format!("{} is in {p}: add `import {p}`", id.name)),
+            None => {
+                let names = self.visible_names();
+                self.did_you_mean(&id.name, &names)
+            }
+        };
+        let mut d = Diagnostic::error(format!("unknown identifier {}", id.name), id.span).in_file(self.cur_file).with_code(codes::UNKNOWN_IDENTIFIER);
+        if let Some(h) = help {
+            d = d.with_help(h);
+        }
+        d.fixes = fixes;
+        self.push_diag(d);
     }
 
     /// "result of type T! must be handled" with quick fixes: append `?`
@@ -483,7 +533,14 @@ impl<'a> Sema<'a> {
             ],
         ));
         let msg = format!("result of type {} must be handled (use ?, try ... catch, try ... else, or `_ =`)", self.tn(ty));
-        self.err_fix(msg, span, codes::UNHANDLED_RESULT, fixes);
+        let help = if can_propagate {
+            "add `?` to pass the error to the caller, or handle it here with `try ... catch err { ... }` / `try ... else <fallback>`"
+        } else {
+            "handle it with `try ... catch err { ... }` or `try ... else <fallback>` (`?` needs a function returning T!)"
+        };
+        let mut d = Diagnostic::error(msg, span).in_file(self.cur_file).with_code(codes::UNHANDLED_RESULT).with_help(help);
+        d.fixes = fixes;
+        self.push_diag(d);
     }
 
     fn push_diag(&mut self, mut d: Diagnostic) {
@@ -531,7 +588,16 @@ impl<'a> Sema<'a> {
     pub fn declare_local(&mut self, name: &str, ty: TypeId, kind: LocalKind, span: Span) -> LocalId {
         let dup = self.fns.last().and_then(|f| f.scopes.last()).is_some_and(|s| s.iter().any(|(n, _)| n == name));
         if dup && name != "_" && kind != LocalKind::Temp {
-            self.err(format!("{name} redeclared in this block"), span);
+            let prev = self.fns.last().and_then(|f| {
+                f.scopes.last()?.iter().rev().find(|(n, _)| n == name).and_then(|(_, e)| match e {
+                    ScopeEntry::Local(l) => Some(f.locals[l.0 as usize].span),
+                    _ => None,
+                })
+            });
+            match prev {
+                Some(p) => self.err_note(format!("{name} redeclared in this block"), span, "previously declared here", Some(p)),
+                None => self.err(format!("{name} redeclared in this block"), span),
+            }
         }
         let f = self.fcx();
         let id = LocalId(f.locals.len() as u32);
@@ -565,7 +631,12 @@ impl<'a> Sema<'a> {
                 if !f.used[l.0 as usize] && !f.recovering && !self.type_has_dtor(f.locals[l.0 as usize].ty) {
                     let span = f.locals[l.0 as usize].span;
                     let fix = Fix::edit(format!("Rename {name} to _"), span, "_");
-                    self.err_fix(format!("unused variable {name}: declared and never used"), span, codes::UNUSED_VARIABLE, vec![fix]);
+                    let mut d = Diagnostic::error(format!("unused variable {name}: declared and never used"), span)
+                        .in_file(self.cur_file)
+                        .with_code(codes::UNUSED_VARIABLE)
+                        .with_help("use it, remove it, or rename it to `_`");
+                    d.fixes = vec![fix];
+                    self.push_diag(d);
                 }
             }
         }
@@ -714,6 +785,15 @@ impl<'a> Sema<'a> {
         }
         let f = &self.funcs[fid.0 as usize];
         self.cur_file = f.file;
+        if let Some(&ns) = self.std_fn_ns.get(&fid.0) {
+            // A stdlib default method: its namespace's scope, nothing
+            // recorded for the IDE (the spans are in the stdlib source).
+            self.cur_ns = ns;
+            let ide = self.ide.take();
+            self.check_body_in_scope(fid, decl, body);
+            self.ide = ide;
+            return;
+        }
         self.cur_ns = self.ns_of_hir(f.namespace);
         self.check_body_in_scope(fid, decl, body);
     }

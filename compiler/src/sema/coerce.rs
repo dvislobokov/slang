@@ -213,7 +213,7 @@ impl<'a> Sema<'a> {
     /// Rejects untyped `nil` where no type is known (`var x = nil`).
     pub(crate) fn default_type(&mut self, e: hir::Expr) -> hir::Expr {
         if matches!(self.tt.get(e.ty), Type::Nil) {
-            self.err("use of untyped nil: give the variable an explicit type", e.span);
+            self.err_help("use of untyped nil", e.span, "give the variable an explicit type: `var x *T = nil`");
             return mk(e.kind, self.tt.invalid, e.span);
         }
         e

@@ -1,0 +1,77 @@
+// test: for ... in over the std.collections types through the iteration protocol: LinkedList, OrderedMap and LRU (Iter), Deque, Ring, Heap and BitSet (Items)
+// status: passing
+// run-flags: --leak-check
+namespace spec.iteration.collections
+
+import std.io
+import std.collections
+
+func main() {
+    var l = LinkedList<string>{}
+    l.PushBack("b")
+    l.PushBack("c")
+    l.PushFront("a")
+    for x in l {
+        print(x, " ")
+    }
+    println()
+    for i, x in l {
+        print(i, "=", x, " ")
+    }
+    println()
+    var d = Deque<int>{}
+    d.PushBack(2)
+    d.PushFront(1)
+    d.PushBack(3)
+    for x in d {
+        print(x, " ")
+    }
+    println()
+    var r = Ring<int>.New(3)
+    for i in 0..5 {
+        r.Push(i)
+    }
+    for i, x in r {
+        print(i, ":", x, " ")
+    }
+    println()
+    var h = Heap<int>.From([5, 1, 4])
+    var sum = 0
+    for x in h {
+        sum += x
+    }
+    println("heap sum", sum, h.Len())
+    var m = OrderedMap<string, int>{}
+    m.Set("pear", 3)
+    m.Set("apple", 1)
+    m.Set("fig", 2)
+    for k, v in m {
+        print(k, "=", v, " ")
+    }
+    println()
+    var c = LRU<string, int>.New(2)
+    c.Set("x", 1)
+    c.Set("y", 2)
+    _ = c.Get("x")
+    for k, v in c {
+        print(k, "=", v, " ")
+    }
+    println()
+    var b = BitSet{}
+    b.Set(9)
+    b.Set(2)
+    for bit in b {
+        print(bit, " ")
+    }
+    println()
+    // break and continue work as in any loop
+    for x in l {
+        if x == "a" {
+            continue
+        }
+        if x == "c" {
+            break
+        }
+        println("only", x)
+    }
+}

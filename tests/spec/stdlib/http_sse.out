@@ -1,0 +1,14 @@
+h1 event message id= welcome
+h1 event message id=1 tick 1
+h1 event even id=2 tick 2|second line
+h1 event message id=3 tick 3
+h1 event even id=4 tick 4|second line
+h1 event message id=5 tick 5
+h1 connects: 3 Last-Event-ID sent: [] [2] [4] last: 5
+h2 event message id= welcome
+h2 event message id=1 tick 1
+h2 event even id=2 tick 2|second line
+h2 event message id=3 tick 3
+h2 event even id=4 tick 4|second line
+h2 event message id=5 tick 5
+h2 connects: 3 Last-Event-ID sent: [] [2] [4] last: 5

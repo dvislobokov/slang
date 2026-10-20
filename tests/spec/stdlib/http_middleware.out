@@ -1,0 +1,19 @@
+log: Information GET /ok 200 false
+ok: 200 ok outer, inner
+log: Error GET /fail 500 false
+fail: 500 500 Internal Server Error
+log: Information OPTIONS /ok 204 false
+preflight: 204 https://app.example | GET, HEAD, POST, PUT, PATCH, DELETE | X-Token | 600
+log: Information GET /ok 200 false
+simple CORS: https://app.example Origin, Accept-Encoding
+log: Information GET /ok 200 false
+other origin: []
+log: Information GET /big 200 false
+gzip: gzip true 4200
+log: Information POST /upload 413 false
+body limit: 413 413 Content Too Large
+timeout: 503 timed out
+in time: 201 in time
+log: Information GET /ok 200 false
+network: 200 ok outer, inner
+MaxBodyBytes: 413 413 Content Too Large: http: request body too large

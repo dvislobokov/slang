@@ -1,0 +1,10 @@
+text: true hello
+binary: true [0 1 2 255]
+big: 260000 true
+fragments: fragmented
+after ping: after ping pongs 1
+concurrent: 5
+server saw close: 4000 client bye
+client got: websocket: close 1001 server done true
+plain GET: 400
+dial error: true

@@ -4,9 +4,9 @@ namespace std.math.big
 //
 // Values are immutable: every operation returns a new value (unlike Go's
 // z.Add(x, y)), so copies may share storage safely. The method names are
-// those of the operator interfaces (Add, Sub, Mul, Div, Neg, Compare,
-// Equals), so `+ - * /` can map onto them once operator overloading
-// lands. Magnitudes are []uint32 limbs; the limb arithmetic (Karatsuba
+// those of the operator interfaces (Add, Sub, Mul, Div, Rem, Neg,
+// Compare, Equals), so `+ - * / %`, unary `-`, `== !=` and `< <= > >=`
+// work on Int, Rat and Decimal (DESIGN.md "Перегрузка операторов"). Magnitudes are []uint32 limbs; the limb arithmetic (Karatsuba
 // multiplication, Knuth division, base conversion) is C
 // (runtime/src/std_math_big.c).
 
@@ -74,8 +74,15 @@ struct Int {
         return (q, r)
     }
 
-    // Euclidean division (Go's Div): the remainder Mod(y) is always >= 0.
+    // Truncated division, the operator `/`: same as Quo, so that `/` and
+    // `%` (Rem) behave like Slang's int operators (a == a/b*b + a%b).
+    // Go's Euclidean Div is DivEuclid here.
     func Div(y Int) Int {
+        return this.Quo(y)
+    }
+
+    // Euclidean division (Go's Div): the remainder Mod(y) is always >= 0.
+    func DivEuclid(y Int) Int {
         var (q, r) = this.QuoRem(y)
         if r.neg {
             if y.neg {
@@ -724,7 +731,7 @@ struct Decimal {
 
     // this / y rounded to scale digits after the point with mode; error
     // on division by zero.
-    func Div(y Decimal, scale int, mode RoundingMode) Decimal! {
+    func DivRound(y Decimal, scale int, mode RoundingMode) Decimal! {
         if y.IsZero() {
             return error("big: decimal division by zero")
         }
@@ -755,7 +762,13 @@ struct Decimal {
         if y.scale > s {
             s = y.scale
         }
-        return this.Div(y, s, RoundingMode.HalfEven)?
+        return this.DivRound(y, s, RoundingMode.HalfEven)?
+    }
+
+    // The operator `/`: Quo (16 digits after the point, HalfEven); an
+    // error on division by zero, so `(a / b)?` or `try a / b else ...`.
+    func Div(y Decimal) Decimal! {
+        return this.Quo(y)?
     }
 
     // Remainder of truncated division (sign of this).

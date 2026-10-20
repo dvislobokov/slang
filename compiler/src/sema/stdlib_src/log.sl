@@ -1269,7 +1269,7 @@ struct ConsoleSink {
     func Emit(e *Event) {
         var s = renderOutput(this.segs, e, this.colors)
         if this.stdout {
-            print(s)
+            std.io.print(s)
         } else {
             std.io.Eprint(s)
         }
@@ -1459,7 +1459,7 @@ struct JsonSink {
         }
         var s = clef(e)
         if this.stdout {
-            print(s)
+            std.io.print(s)
         } else {
             std.io.Eprint(s)
         }

@@ -355,7 +355,7 @@ async func server13(c *conn, chIn clientHello, minV int, maxV int) void! {
     var group = 0
     var peerKey []byte = []
     for i in 0..len(ch.shareGroups) {
-        if group == 0 && (ch.shareGroups[i] == 29 || ch.shareGroups[i] == 23) {
+        if group == 0 && (ch.shareGroups[i] == 29 || ch.shareGroups[i] == 23 || ch.shareGroups[i] == 24) {
             group = ch.shareGroups[i]
             peerKey = ch.shareKeys[i]
         }
@@ -367,6 +367,8 @@ async func server13(c *conn, chIn clientHello, minV int, maxV int) void! {
             want = 29
         } else if containsInt(ch.groups, 23) {
             want = 23
+        } else if containsInt(ch.groups, 24) {
+            want = 24
         }
         if want == 0 {
             return c.fail(40, "no key exchange group in common")
@@ -626,6 +628,8 @@ async func server12(c *conn, ch clientHello, maxV int) void! {
         group = 29
     } else if containsInt(ch.groups, 23) || len(ch.groups) == 0 {
         group = 23
+    } else if containsInt(ch.groups, 24) {
+        group = 24
     }
     if group == 0 {
         return c.fail(40, "no key exchange group in common")

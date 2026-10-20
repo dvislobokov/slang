@@ -1,0 +1,11 @@
+hello, ann (HTTP/2.0)
+hello, bob (HTTP/2.0)
+hello, cy (HTTP/2.0)
+connections: 1
+welcome, ann / welcome, bob
+bob got: ann: hi bob
+ann got: ann: hi bob
+ann got: bob: hi ann
+bob got: bob: hi ann
+event 1 chat ann: hi bob
+event 2 chat bob: hi ann

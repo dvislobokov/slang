@@ -1,0 +1,20 @@
+namespace app
+
+import std
+import std.io
+
+// Debug-agent fixture: a long computation to pause.
+
+func work(i int) int {
+    return i % 7
+}
+
+func main() {
+    var n = 0
+    var i = 0
+    for i < 4000000000 {
+        n += work(i) // BREAK spin
+        i += 1
+    }
+    println(n)
+}

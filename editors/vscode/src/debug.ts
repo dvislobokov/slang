@@ -1,11 +1,22 @@
-// Debugging Slang programs (docs/DEBUGGER.md, stage 1).
+// Debugging Slang programs (docs/DEBUGGER.md).
 //
-// A debug configuration of `type: "slang"` is resolved here and handed to
-// `lldb-dap` (LLVM's Debug Adapter Protocol server, `lldb-vscode` before
-// LLVM 18) with the Slang formatters loaded through `initCommands`
-// (`command script import tools/lldb/slang_formatters.py`, path printed by
-// `slang debug --formatters lldb`). The `slang` task type builds the
-// program with debug info (`slang build`), for `preLaunchTask`.
+// A debug configuration of `type: "slang"` is resolved here and served by
+// one of two adapters (`"adapter"`):
+//
+// * `"agent"` (default, stage 2): the in-process debug agent (`std.debug`,
+//   linked into every debug build). `launch` starts the program with
+//   `SLANG_DEBUG=127.0.0.1:0,wait`, reads the announced port from its
+//   stderr (`slang-debug: listening on HOST:PORT`) and connects VS Code to
+//   it with a `DebugAdapterServer`; the program's output goes to the debug
+//   console. `attach` connects to `address` / `host` + `port` of a program
+//   started with `SLANG_DEBUG=:2345` (or `slang debug run --headless`).
+// * `"lldb"` (stage 1): `lldb-dap` (`lldb-vscode` before LLVM 18) with the
+//   Slang formatters loaded through `initCommands` (`command script import
+//   tools/lldb/slang_formatters.py`, path printed by `slang debug
+//   --formatters lldb`).
+//
+// The `slang` task type builds the program with debug info (`slang
+// build`), for `preLaunchTask`.
 
 import * as cp from "child_process";
 import * as fs from "fs";
@@ -127,6 +138,9 @@ class SlangConfigurationProvider implements vscode.DebugConfigurationProvider {
     _folder: vscode.WorkspaceFolder | undefined,
     cfg: vscode.DebugConfiguration,
   ): Promise<vscode.DebugConfiguration | undefined> {
+    if (usesAgent(cfg)) {
+      return resolveAgent(cfg);
+    }
     const init: string[] = [];
     const formatters = formattersPath();
     if (formatters) {
@@ -192,17 +206,146 @@ function build(source: string, program: string, extra: string[]): Promise<boolea
   });
 }
 
-class LldbDapFactory implements vscode.DebugAdapterDescriptorFactory {
-  createDebugAdapterDescriptor(): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
-    const dap = findLldbDap();
-    if (!dap) {
-      void vscode.window.showErrorMessage(
-        'Slang: lldb-dap not found. Install LLDB 18+ (e.g. `apt install lldb-18`) or set "slang.debug.lldbDapPath".',
-      );
+/** Whether a configuration uses the in-process agent (the default). */
+function usesAgent(cfg: vscode.DebugConfiguration): boolean {
+  return (cfg.adapter ?? "agent") !== "lldb";
+}
+
+/** Resolution of an `adapter: "agent"` configuration. */
+async function resolveAgent(cfg: vscode.DebugConfiguration): Promise<vscode.DebugConfiguration | undefined> {
+  if (cfg.request === "launch") {
+    if (cfg.source && !cfg.program) {
+      cfg.program = defaultProgram(cfg.source);
+    }
+    if (cfg.source && cfg.build !== false && !cfg.preLaunchTask) {
+      // Debug builds include the agent; `--debug-agent` also covers `--release`.
+      const extra = (cfg.buildArgs as string[] | undefined) ?? [];
+      const ok = await build(cfg.source, cfg.program, extra.includes("--release") ? [...extra, "--debug-agent"] : extra);
+      if (!ok) {
+        return undefined;
+      }
+    }
+    if (!cfg.program) {
+      void vscode.window.showErrorMessage("Slang: the launch configuration needs `program` or `source`.");
       return undefined;
     }
-    return new vscode.DebugAdapterExecutable(dap, []);
+  } else if (cfg.request === "attach") {
+    if (!cfg.address && cfg.port === undefined) {
+      const a = await vscode.window.showInputBox({ prompt: "Debug agent address ([host:]port of a program started with SLANG_DEBUG)", value: ":2345" });
+      if (!a) {
+        return undefined;
+      }
+      cfg.address = a;
+    }
   }
+  return cfg;
+}
+
+/** `[host:]port` -> host and port (default host 127.0.0.1). */
+export function parseAddress(address: string): { host: string; port: number } {
+  const i = address.lastIndexOf(":");
+  const host = i > 0 ? address.slice(0, i) : "127.0.0.1";
+  const port = Number(i >= 0 ? address.slice(i + 1) : address);
+  return { host, port };
+}
+
+/** The announcement the agent writes to stderr. */
+const LISTENING = /slang-debug: listening on (\S+):(\d+)/;
+
+/** Programs started for agent `launch` sessions, by session id. */
+const launched = new Map<string, cp.ChildProcess>();
+
+/** Starts `cfg.program` under the agent and resolves with its address. */
+function launchUnderAgent(session: vscode.DebugSession): Promise<{ host: string; port: number }> {
+  const cfg = session.configuration;
+  const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+  if (Array.isArray(cfg.env)) {
+    for (const kv of cfg.env as string[]) {
+      const eq = String(kv).indexOf("=");
+      if (eq > 0) {
+        env[String(kv).slice(0, eq)] = String(kv).slice(eq + 1);
+      }
+    }
+  } else if (cfg.env && typeof cfg.env === "object") {
+    for (const [k, v] of Object.entries(cfg.env as Record<string, unknown>)) {
+      env[k] = String(v);
+    }
+  }
+  env.SLANG_DEBUG = "127.0.0.1:0,wait";
+  const child = cp.spawn(cfg.program as string, (cfg.args as string[] | undefined) ?? [], { cwd: cfg.cwd as string | undefined, env });
+  launched.set(session.id, child);
+  const console = (text: string) => vscode.debug.activeDebugConsole.append(text);
+  return new Promise((resolve, reject) => {
+    let pending = "";
+    let found = false;
+    const timer = setTimeout(() => {
+      if (!found) {
+        child.kill();
+        reject(new Error("the program did not start the debug agent (built without it? `--release` needs `--debug-agent`)"));
+      }
+    }, 20000);
+    child.stdout?.on("data", (d: Buffer) => console(d.toString()));
+    child.stderr?.on("data", (d: Buffer) => {
+      if (found) {
+        console(d.toString());
+        return;
+      }
+      pending += d.toString();
+      const m = LISTENING.exec(pending);
+      if (m) {
+        found = true;
+        clearTimeout(timer);
+        const rest = pending.slice(pending.indexOf("\n", m.index) + 1);
+        if (rest) {
+          console(rest);
+        }
+        resolve({ host: m[1], port: Number(m[2]) });
+      }
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("exit", (code) => {
+      launched.delete(session.id);
+      if (!found) {
+        clearTimeout(timer);
+        reject(new Error(`the program exited (code ${code}) before the debug agent started`));
+      }
+    });
+  });
+}
+
+class SlangAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
+  async createDebugAdapterDescriptor(session: vscode.DebugSession): Promise<vscode.DebugAdapterDescriptor | undefined> {
+    const cfg = session.configuration;
+    if (!usesAgent(cfg)) {
+      return lldbDescriptor();
+    }
+    try {
+      if (cfg.request === "attach") {
+        const a = cfg.address ? parseAddress(String(cfg.address)) : { host: String(cfg.host ?? "127.0.0.1"), port: Number(cfg.port) };
+        return new vscode.DebugAdapterServer(a.port, a.host);
+      }
+      const a = await launchUnderAgent(session);
+      return new vscode.DebugAdapterServer(a.port, a.host);
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Slang: ${(e as Error).message}`);
+      return undefined;
+    }
+  }
+}
+
+/** `adapter: "lldb"`: lldb-dap as an executable adapter. */
+function lldbDescriptor(): vscode.DebugAdapterDescriptor | undefined {
+  const dap = findLldbDap();
+  if (!dap) {
+    void vscode.window.showErrorMessage(
+      'Slang: lldb-dap not found. Install LLDB 18+ (e.g. `apt install lldb-18`) or set "slang.debug.lldbDapPath".',
+    );
+    return undefined;
+  }
+  return new vscode.DebugAdapterExecutable(dap, []);
 }
 
 interface SlangTaskDefinition extends vscode.TaskDefinition {
@@ -242,7 +385,13 @@ class SlangTaskProvider implements vscode.TaskProvider {
 export function registerDebugging(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.debug.registerDebugConfigurationProvider("slang", new SlangConfigurationProvider()),
-    vscode.debug.registerDebugAdapterDescriptorFactory("slang", new LldbDapFactory()),
+    vscode.debug.registerDebugAdapterDescriptorFactory("slang", new SlangAdapterFactory()),
+    vscode.debug.onDidTerminateDebugSession((s) => {
+      // A launched program dies with its session (the agent also exits it
+      // on `disconnect` with terminateDebuggee).
+      launched.get(s.id)?.kill();
+      launched.delete(s.id);
+    }),
     vscode.tasks.registerTaskProvider("slang", new SlangTaskProvider()),
   );
 }

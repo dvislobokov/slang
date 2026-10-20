@@ -229,7 +229,7 @@ struct slang_task {
      * std.diag spans) never leak into the caller (10.8). */
     slang_object *caller_ctx;
     int32_t ctx_saved;
-    int32_t _pad2;
+    int32_t dbg_id;             /* debug agent record (debug.c), 0 = none */
     unsigned char slot[];       /* result_size bytes (8-aligned) */
 };
 
@@ -255,6 +255,7 @@ static void task_drop(void *obj) {
     hook *h = t->hooks;
     while (h) { hook *n = h->next; slang_release(h->w); free(h); h = n; }
     if (t->ctx_saved) slang_release(t->caller_ctx);
+    if (t->dbg_id) slang__dbg_task_drop(t->dbg_id);
     if (t->parent) {
         slang_task *p = t->parent;
         pthread_mutex_lock(&p->mu);
@@ -1147,6 +1148,11 @@ slang_task *slang_task_rt_signal(void) {
     cancel_hook(signal_cancelled, t);
     return t;
 }
+
+/* debug.c: the current task (borrowed) and its debug record id. */
+slang_task *slang__task_cur(void) { return t_cur; }
+int32_t slang__task_dbg_id(const slang_task *t) { return t ? __atomic_load_n(&t->dbg_id, __ATOMIC_ACQUIRE) : 0; }
+void slang__task_set_dbg_id(slang_task *t, int32_t id) { __atomic_store_n(&t->dbg_id, id, __ATOMIC_RELEASE); }
 
 slang_task *slang_task_current(void) {
     slang_retain(t_cur);

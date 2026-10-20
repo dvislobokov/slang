@@ -271,6 +271,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Opens a lexical block starting at `sp`.
     pub(crate) fn dbg_push_block(&mut self, sp: Span) {
+        self.dbga_push_block(sp);
         let Some((fd, d)) = self.cur_fn() else { return };
         let (unit, parent) = (fd.unit, *fd.scopes.last().unwrap());
         let u = &d.units[unit];
@@ -282,6 +283,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Closes the innermost lexical block.
     pub(crate) fn dbg_pop_block(&mut self) {
+        self.dbga_pop_block();
         if self.cur_fn().is_none() {
             return;
         }
@@ -344,6 +346,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Declares local `l` in the current lexical scope (once).
     pub(crate) fn dbg_declare(&mut self, l: LocalId) {
+        self.dbga_declare(l);
         self.dbg_declare_as(l, None);
     }
 

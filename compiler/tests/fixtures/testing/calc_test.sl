@@ -75,3 +75,48 @@ func BenchAdd(b *testing.B) {
         b.Log("overflow")
     }
 }
+
+@bench
+func BenchMul(b *testing.B) {
+    var s = 1
+    for i in 0..b.N {
+        s = (s * 3 + i) % 1000003
+    }
+    if s < 0 {
+        b.Log("never")
+    }
+}
+
+// testing.Panics runs the function in a child process (the second call
+// checks that each Panics call gets its own probe).
+@test
+func TestPanicsOK(t *testing.T) {
+    testing.True(t, testing.Panics(t, func() {
+        var xs []int = []
+        println(xs[1])
+    }), "index out of range panics")
+    testing.True(t, testing.Panics(t, func() {
+        panic("boom")
+    }), "panic panics")
+    t.Log("after the probes")
+}
+
+@test
+func TestPanicsMissing(t *testing.T) {
+    testing.Panics(t, func() {
+        _ = Add(1, 2)
+    })
+}
+
+// Parallel tests: each waits 2s; with --parallel 2 they overlap.
+@test
+func TestParallelA(t *testing.T) {
+    t.Parallel()
+    time.SleepFor(time.Milliseconds(2000))
+}
+
+@test
+func TestParallelB(t *testing.T) {
+    t.Parallel()
+    time.SleepFor(time.Milliseconds(2000))
+}

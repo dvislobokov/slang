@@ -92,6 +92,14 @@ const RUNTIME: &[(&str, &str, bool)] = &[
     ("slang_runtime_init", "v:ip", false),
     ("slang_runtime_shutdown", "v:", false),
     ("slang_runtime_drain", "v:", false),
+    // debug agent hooks (debug_agent.rs, ABI.md §22)
+    ("slang_dbg_enter", "v:pppi", false),
+    ("slang_dbg_stmt", "v:pi", false),
+    ("slang_dbg_leave", "v:p", false),
+    ("slang_dbg_suspend", "v:p", false),
+    ("slang_dbg_resume", "v:p", false),
+    ("slang_dbg_boot", "v:pp", false),
+    ("slang_dbg_exit", "v:i", false),
 ];
 
 impl<'a, 'ctx> CodeGen<'a, 'ctx> {

@@ -71,6 +71,16 @@ SLANG_PLAT_HIDDEN bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char 
 /* Drops the symbol table cache. */
 SLANG_PLAT_HIDDEN void slang__plat_symbolize_done(void);
 
+/* ---- dynamic loading (std.plugin, posix.c) ---------------------------- */
+
+/* Opens a shared object (symbols bound now, kept local); NULL on failure. */
+SLANG_PLAT_HIDDEN void *slang__plat_dl_open(const char *path);
+/* Address of `name` in an opened object, NULL if absent. */
+SLANG_PLAT_HIDDEN void *slang__plat_dl_sym(void *h, const char *name);
+SLANG_PLAT_HIDDEN void slang__plat_dl_close(void *h);
+/* The last loader error (static text). */
+SLANG_PLAT_HIDDEN const char *slang__plat_dl_error(void);
+
 /* ---- readiness poller (async I/O backend) -----------------------------
  * A readiness poller is level-triggered and one-shot: poller_arm(fd,
  * interest, token) asks for ONE report when fd is ready for any direction

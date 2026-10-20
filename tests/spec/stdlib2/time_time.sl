@@ -1,4 +1,4 @@
-// test: std.time.Time with Go layouts, strftime, parsing, calendar accessors, arithmetic and IANA zones from tzdata
+// test: std.time.Time with Go layouts, strftime, parsing, calendar accessors, arithmetic (Time + Duration, Time - Time, < >) and IANA zones from tzdata
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.time_time
@@ -17,8 +17,8 @@ func main() {
     var (wy, wk) = t.ISOWeek()
     println(y, m, d, h, mi, s, t.Year(), t.Month(), t.MonthName(), t.Day(), t.Weekday(), t.WeekdayName(), t.YearDay(), wy, wk, t.Nanosecond())
     println(t.Unix(), t.UnixMilli(), t.UnixMicro(), t.UnixNano(), time.Unix(t.Unix(), 0).Format(time.DateTime), time.UnixMilli(-1).Format(time.RFC3339Nano))
-    var later = t.Add(time.Hours(36))
-    println(later.Format(time.DateTime), later.Sub(t).String(), t.Sub(later).String(), later.After(t), later.Before(t), t.Equal(t.In(time.FixedZone("X", 3600))), t.Compare(later))
+    var later = t + time.Hours(36)
+    println(later.Format(time.DateTime), (later - t).String(), (t - later).String(), later > t, later < t, t.Equal(t.In(time.FixedZone("X", 3600))), t.Compare(later))
     println(t.AddDate(0, 1, 0).Format(time.DateOnly), t.AddDate(1, 0, 0).Format(time.DateOnly), time.Date(2023, 10, 31, 0, 0, 0, 0, nil).AddDate(0, 1, 0).Format(time.DateOnly), time.Date(2024, 13, 1, 25, 0, 0, 0, nil).Format(time.DateTime))
     println(t.Truncate(time.Hours(1)).Format(time.RFC3339Nano), t.Round(time.Minutes(1)).Format(time.RFC3339Nano), t.Truncate(time.Hours(24 * 7)).Format(time.DateOnly), t.Round(time.Milliseconds(1)).Nanosecond())
     var zero time.Time

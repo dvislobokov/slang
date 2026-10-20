@@ -1,0 +1,275 @@
+// test: std.database.sql pool and driver interface with an in-test driver: max open connections and waiting, idle limit, broken connections discarded, health check pings, cancelled waiters, statement cache per connection, named parameters rewritten to $n, rows released on Close/Drop, Raw, Close of the pool
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib4.sql_pool
+
+import std.io
+import std
+import std.database
+
+struct counters {
+    opened int
+    closed int
+    prepared int
+    pings int
+    queries []string
+}
+
+// A fake driver: "select N" returns rows 1..N of one column; "fail" breaks
+// the connection; "sleep" waits 50 ms.
+struct fakeDriver {
+    c *counters
+
+    func Open(dsn string) Task<sql.DriverConn!> {
+        return openFake(this.c, dsn)
+    }
+}
+
+async func openFake(c *counters, dsn string) sql.DriverConn! {
+    if dsn == "bad" {
+        return error("fake: cannot connect")
+    }
+    c.opened += 1
+    return new fakeConn{c: c, id: c.opened}
+}
+
+struct fakeConn {
+    c *counters
+    id int
+    broken bool
+
+    func Prepare(query string) Task<sql.DriverStmt!> {
+        return this.prepare(query)
+    }
+
+    async func prepare(query string) sql.DriverStmt! {
+        this.c.prepared += 1
+        return new fakeStmt{conn: this, q: query}
+    }
+
+    func Exec(query string, args []any) Task<sql.Result!> {
+        return this.exec(query, args)
+    }
+
+    async func exec(query string, args []any) sql.Result! {
+        this.c.queries = append(this.c.queries, fmt.Format("conn{0}: {1} {2}", this.id, query, args))
+        if query == "fail" {
+            this.broken = true
+            return error("fake: connection lost")
+        }
+        if query == "sleep" {
+            await task.Delay(50)
+        }
+        return sql.Result{RowsAffected: len(args)}
+    }
+
+    func Query(query string, args []any) Task<sql.DriverRows!> {
+        return this.query(query, args)
+    }
+
+    async func query(query string, args []any) sql.DriverRows! {
+        this.c.queries = append(this.c.queries, fmt.Format("conn{0}: {1} {2}", this.id, query, args))
+        var n = 3
+        if len(args) > 0 {
+            switch args[0] {
+                case int k:
+                    n = k
+            }
+        }
+        return new fakeRows{n: n}
+    }
+
+    func Begin() Task<sql.DriverTx!> {
+        return this.begin()
+    }
+
+    async func begin() sql.DriverTx! {
+        return new fakeTx{c: this.c}
+    }
+
+    func Ping() Task<void!> {
+        return this.ping()
+    }
+
+    async func ping() void! {
+        this.c.pings += 1
+    }
+
+    func Close() void! {
+        this.c.closed += 1
+    }
+
+    func IsValid() bool {
+        return !this.broken
+    }
+
+    func Placeholder() int {
+        return sql.PlaceholderDollar
+    }
+}
+
+struct fakeStmt {
+    conn *fakeConn
+    q string
+
+    func Exec(args []any) Task<sql.Result!> {
+        return this.conn.exec(this.q, args)
+    }
+
+    func Query(args []any) Task<sql.DriverRows!> {
+        return this.conn.query(this.q, args)
+    }
+
+    func NumInput() int {
+        return -1
+    }
+
+    func Close() void! {
+    }
+}
+
+struct fakeRows {
+    n int
+    i int
+
+    func Columns() []string {
+        return ["n"]
+    }
+
+    func ColumnTypes() []string {
+        return ["int"]
+    }
+
+    func Next(dest []any) Task<bool!> {
+        return this.next(dest)
+    }
+
+    async func next(dest []any) bool! {
+        if this.i >= this.n {
+            return false
+        }
+        this.i += 1
+        dest[0] = this.i
+        return true
+    }
+
+    func Close() void! {
+    }
+}
+
+struct fakeTx {
+    c *counters
+
+    func Commit() Task<void!> {
+        return this.end("commit")
+    }
+
+    func Rollback() Task<void!> {
+        return this.end("rollback")
+    }
+
+    async func end(what string) void! {
+        this.c.queries = append(this.c.queries, what)
+    }
+}
+
+async func sleeper(db *sql.DB) void! {
+    _ = await db.Exec("sleep", [])?
+}
+
+async func main() void! {
+    var c = new counters{}
+    var db = sql.OpenDriver(fakeDriver{c: c}, "fake")
+    db.SetMaxOpenConns(2)
+    db.SetHealthCheck(-1)
+
+    // named parameters become $n in order of first use
+    _ = await db.Exec("update t set a = :a, b = :b where a = :a and c = ':a' -- :zz", [sql.Named("b", 2), sql.Named("a", 1)])?
+    var (q, args) = sql.RewriteNamed("x = :x::int, y = ?", [sql.Named("x", 5)], sql.PlaceholderQuestion)?
+    println(q, args)
+
+    // 5 tasks through 2 connections
+    var ts []Task<void!> = []
+    for _ in 0..5 {
+        ts = append(ts, sleeper(db))
+    }
+    for t in ts {
+        await t?
+    }
+    var s = db.Stats()
+    println("opened", c.opened, "open", s.OpenConnections, "idle", s.Idle, "waits", s.WaitCount > 0)
+
+    // statements are prepared once per connection
+    for i in 1..5 {
+        _ = await db.Query<int>("select $1", [i])?
+    }
+    println("prepared", c.prepared)
+    db.SetStmtCacheSize(0)
+    _ = await db.Query<int>("select $1", [2])?
+    println("prepared without cache", c.prepared)
+    db.SetStmtCacheSize(64)
+
+    // a broken connection is discarded, not reused
+    try await db.Exec("fail", []) catch err {
+        println("exec:", err)
+    }
+    println("closed after failure", c.closed, "open", db.Stats().OpenConnections)
+
+    // idle limit
+    db.SetMaxIdleConns(0)
+    _ = await db.Exec("x", [])?
+    println("closed by idle limit", c.closed, "idle", db.Stats().Idle)
+    db.SetMaxIdleConns(2)
+
+    // health check pings idle connections before reuse
+    db.SetHealthCheck(0)
+    _ = await db.Exec("y", [])?
+    _ = await db.Exec("z", [])?
+    println("pings", c.pings > 0)
+    db.SetHealthCheck(-1)
+
+    // rows hold their connection until Close or the end
+    db.SetMaxOpenConns(1)
+    var rows = await db.QueryRows("select", [])?
+    _ = await rows.Next()?
+    println("in use", db.Stats().InUse)
+    await rows.Close()?
+    println("in use after close", db.Stats().InUse)
+    {
+        var dropped = await db.QueryRows("select", [])?
+        _ = await dropped.Next()?
+    }
+    println("in use after drop", db.Stats().InUse)
+
+    // a waiter cancelled by a timeout leaves the pool consistent
+    var held = await db.Begin()?
+    try await task.WithTimeout(30, async func() int! {
+        return await db.QueryOne<int>("select", [])?
+    }) catch err {
+        println("waiter:", err)
+    }
+    await held.Commit()?
+    println("after cancel", await db.QueryOne<int>("select $1", [1])?)
+
+    // Raw, connection errors, closing
+    await db.Raw(async func(dc sql.DriverConn) void! {
+        switch dc {
+            case *fakeConn f:
+                println("raw conn", f.id > 0)
+        }
+    })?
+    var bad = sql.OpenDriver(fakeDriver{c: c}, "bad")
+    try await bad.Ping() catch err {
+        println("ping:", err)
+    }
+    bad.Close()
+    db.Close()
+    try await db.Exec("x", []) catch err {
+        println(errors.Is(err, sql.ErrConnDone), err)
+    }
+    println("opened", c.opened, "closed", c.closed)
+    for x in c.queries[..2] {
+        println(x)
+    }
+    println(c.queries[len(c.queries) - 1])
+}

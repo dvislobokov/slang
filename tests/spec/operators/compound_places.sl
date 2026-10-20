@@ -1,0 +1,38 @@
+// test: overloaded compound assignment on slice elements and map entries: a computed index or key is evaluated once
+// status: passing
+// run-flags: --leak-check
+namespace spec.operators.compound_places
+
+import std.io
+
+struct Money {
+    Cents int
+    Tags []string
+    func Add(o Money) Money { return Money{Cents: this.Cents + o.Cents, Tags: this.Tags} }
+}
+
+var calls = 0
+
+func key(k string) string {
+    calls += 1
+    return k
+}
+
+func idx(i int) int {
+    calls += 1
+    return i
+}
+
+func main() {
+    var xs = [Money{Cents: 1}, Money{Cents: 2}]
+    var i = 0
+    xs[i] += Money{Cents: 10}
+    xs[idx(1)] += Money{Cents: 20}
+    println(xs[0].Cents, xs[1].Cents, calls)
+    var m = map[string]Money{}
+    m["a"] = Money{Cents: 5, Tags: ["x"]}
+    m["a"] += Money{Cents: 1}
+    m[key("a")] += Money{Cents: 1}
+    m[key("b")] += Money{Cents: 7}
+    println(m["a"].Cents, m["a"].Tags, m["b"].Cents, calls)
+}

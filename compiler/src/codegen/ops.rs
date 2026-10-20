@@ -389,9 +389,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let s = self.expr_owned(&args[0])?;
                 let sp = self.spill(s);
                 let hs = self.hold_raw(args[0].ty, s);
-                let x = self.expr(&args[1])?;
+                // Every value is evaluated before the first one is appended
+                // (Go: `append(xs, len(xs), len(xs))`).
+                let mut xs = Vec::with_capacity(args.len() - 1);
+                for a in &args[1..] {
+                    xs.push(self.expr(a)?);
+                }
                 self.unhold(hs);
-                self.append_fast(sp, et, x);
+                for x in xs {
+                    self.append_fast(sp, et, x);
+                }
                 Ok(Val::owned(self.b.build_load(self.slice_ty(), sp, "").unwrap()))
             }
             Builtin::Delete => {

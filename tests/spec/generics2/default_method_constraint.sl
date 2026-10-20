@@ -1,0 +1,74 @@
+// test: a T: Logger body calls the default method Info (an overriding method wins in the instance); *S satisfies an interface constraint; a sealed interface is implemented by an instance of a generic struct of its namespace and switched on exhaustively
+// status: passing
+namespace spec.generics2.default_method_constraint
+
+import std.io
+
+interface Logger {
+    func Log(level int, msg string)
+    func Info(msg string) {
+        this.Log(1, msg)
+    }
+}
+
+struct Console {
+    prefix string
+    func Log(level int, msg string) {
+        println(this.prefix, level, msg)
+    }
+}
+
+struct Loud {
+    func Log(level int, msg string) {
+        println("LOUD", level, msg)
+    }
+    func Info(msg string) {
+        println("LOUD INFO", msg)
+    }
+}
+
+func Hello<T: Logger>(l T) {
+    l.Info("hello")
+    l.Log(2, "direct")
+}
+
+struct Wrap<T: Logger> {
+    inner T
+    func Say(m string) {
+        this.inner.Info(m)
+    }
+}
+
+sealed interface Shape {
+    func Area() int
+}
+
+struct Sq<T: Add> {
+    S T
+    func Area() int {
+        return 4
+    }
+}
+
+struct Circle {
+    func Area() int {
+        return 3
+    }
+}
+
+func describe(s Shape) int {
+    switch s {
+        case Sq<int> q:
+            return q.Area() * 10
+        case Circle c:
+            return c.Area()
+    }
+}
+
+func main() {
+    Hello(&Console{prefix: ">"})
+    Hello(Loud{})
+    var w = Wrap<*Console>{inner: &Console{prefix: "w"}}
+    w.Say("x")
+    println(describe(Sq<int>{S: 1}), describe(Circle{}))
+}

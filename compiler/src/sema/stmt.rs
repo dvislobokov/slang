@@ -264,6 +264,11 @@ impl<'a> Sema<'a> {
             Ok(k) => return k,
             Err(seq) => seq,
         };
+        // Iter() / Next() / Items() (iterate.rs).
+        let seq = match self.protocol_for(vars, seq, body, span) {
+            Ok(k) => return k,
+            Err(seq) => seq,
+        };
         let (first_ty, second_ty) = match self.tt.get(seq.ty).clone() {
             Type::Slice(t) | Type::Array(t, _) => {
                 if vars.len() == 1 {
@@ -282,7 +287,11 @@ impl<'a> Sema<'a> {
             Type::Map(k, v) => (k, Some(v)),
             Type::Invalid => (self.tt.invalid, Some(self.tt.invalid)),
             _ => {
-                self.err(format!("cannot iterate over value of type {}", self.tn(seq.ty)), seq.span);
+                self.err_help(
+                    format!("cannot iterate over value of type {}", self.tn(seq.ty)),
+                    seq.span,
+                    "for ... in works on ranges, slices, arrays, strings, maps, collections and types with `Iter()`, `Next()` or `Items()` (the iteration protocol)",
+                );
                 (self.tt.invalid, Some(self.tt.invalid))
             }
         };
@@ -562,7 +571,7 @@ impl<'a> Sema<'a> {
             Some(t) => t,
             None => {
                 if !self.tt.is_invalid(v.ty) {
-                    self.err(format!("try requires a fallible (T!) expression, found {}", self.tn(v.ty)), v.span);
+                    self.err_help(format!("try requires a fallible (T!) expression, found {}", self.tn(v.ty)), v.span, "remove `try`: this expression cannot fail");
                 }
                 self.tt.invalid
             }
@@ -622,7 +631,7 @@ impl<'a> Sema<'a> {
         if self.tt.is_fallible(h.ty) {
             self.unhandled_result(h.ty, h.span);
         } else if !matches!(inner.kind, ast::ExprKind::Call { .. } | ast::ExprKind::Await(_) | ast::ExprKind::Propagate { .. }) && !inner.is_recovered() {
-            self.err("expression is evaluated but not used", e.span);
+            self.err_help("expression is evaluated but not used", e.span, "assign the value to a variable, or discard it explicitly with `_ = ...`");
         }
         StmtKind::Expr(h)
     }
@@ -643,12 +652,27 @@ impl<'a> Sema<'a> {
                 return StmtKind::Discard(v);
             }
             if self.lookup_local(&id.name, false).is_none() && self.lookup_global(id, false).is_none() {
-                self.err(format!("cannot assign to undeclared variable {} (declare it with var)", id.name), id.span);
+                self.err_help(format!("cannot assign to undeclared variable {}", id.name), id.span, format!("declare it with `var {} = ...`", id.name));
                 self.expr(value, None);
                 return StmtKind::Block(hir::Block::default());
             }
         }
+        // `b[i] = v` / `b[i] op= v` on a struct: IndexSet (opover.rs).
+        let mut indexed = None;
+        if let ast::ExprKind::Index { base, index } = &expr::strip_parens(target).kind {
+            let b = self.value(base, None);
+            if self.index_overloaded(b.ty, "IndexSet") {
+                let bop = (op != ast::AssignOp::Assign).then(|| compound_binop(op));
+                return self.op_index_assign(b, index, bop, value, span);
+            }
+            indexed = Some((b, &**index));
+        }
         let t = match &target.kind {
+            _ if indexed.is_some() => {
+                let (b, index) = indexed.take().unwrap();
+                let h = self.index_on(b, index, target.span);
+                self.require_value_raw(h)
+            }
             ast::ExprKind::Ident(id) => match self.lookup_local(&id.name, false) {
                 Some(Ok(v)) => {
                     self.ide_local_ref(id);
@@ -669,28 +693,41 @@ impl<'a> Sema<'a> {
             };
             self.err(msg, target.span);
         }
-        let bop = match op {
-            ast::AssignOp::Assign => {
-                let v = self.expr_to(value, t.ty, Ctx::Assign);
-                return StmtKind::Assign { target: t, value: v };
-            }
-            ast::AssignOp::Add => ast::BinaryOp::Add,
-            ast::AssignOp::Sub => ast::BinaryOp::Sub,
-            ast::AssignOp::Mul => ast::BinaryOp::Mul,
-            ast::AssignOp::Div => ast::BinaryOp::Div,
-            ast::AssignOp::Rem => ast::BinaryOp::Rem,
-            ast::AssignOp::BitAnd => ast::BinaryOp::BitAnd,
-            ast::AssignOp::BitOr => ast::BinaryOp::BitOr,
-            ast::AssignOp::BitXor => ast::BinaryOp::BitXor,
-            ast::AssignOp::Shl => ast::BinaryOp::Shl,
-            ast::AssignOp::Shr => ast::BinaryOp::Shr,
-        };
+        if op == ast::AssignOp::Assign {
+            let v = self.expr_to(value, t.ty, Ctx::Assign);
+            return StmtKind::Assign { target: t, value: v };
+        }
+        let bop = compound_binop(op);
+        if self.binary_overloaded(bop, t.ty, Some(value)) {
+            return self.op_compound_assign(bop, t, value, span);
+        }
         let v = self.value(value, Some(t.ty));
         match self.binop_for(bop, t.ty, v.ty, span) {
             Some((hop, _)) => StmtKind::CompoundAssign { target: t, op: hop, value: v },
             None => StmtKind::Block(hir::Block::default()),
         }
     }
+}
+
+/// The binary operator of a compound assignment `op=`.
+fn compound_binop(op: ast::AssignOp) -> ast::BinaryOp {
+        match op {
+            ast::AssignOp::Assign => unreachable!("plain assignment"),
+            ast::AssignOp::Add => ast::BinaryOp::Add,
+            ast::AssignOp::Sub => ast::BinaryOp::Sub,
+            ast::AssignOp::Mul => ast::BinaryOp::Mul,
+            ast::AssignOp::Div => ast::BinaryOp::Div,
+            ast::AssignOp::Rem => ast::BinaryOp::Rem,
+            ast::AssignOp::MatMul => ast::BinaryOp::MatMul,
+            ast::AssignOp::BitAnd => ast::BinaryOp::BitAnd,
+            ast::AssignOp::BitOr => ast::BinaryOp::BitOr,
+            ast::AssignOp::BitXor => ast::BinaryOp::BitXor,
+            ast::AssignOp::Shl => ast::BinaryOp::Shl,
+            ast::AssignOp::Shr => ast::BinaryOp::Shr,
+        }
+}
+
+impl<'a> Sema<'a> {
 
     /// `a, b = x, y` (parallel: every value is evaluated into a temporary
     /// first) and `(a, b) = f()` (tuple result). `_` discards. Lowered to a
@@ -709,7 +746,7 @@ impl<'a> Sema<'a> {
                         self.var_expr(v, t.span)
                     }
                     _ if self.lookup_global(id, false).is_none() => {
-                        self.err(format!("cannot assign to undeclared variable {} (declare it with var)", id.name), id.span);
+                        self.err_help(format!("cannot assign to undeclared variable {}", id.name), id.span, format!("declare it with `var {} = ...`", id.name));
                         self.invalid(t.span)
                     }
                     _ => self.place_target(t),

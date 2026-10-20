@@ -501,7 +501,7 @@ pub enum UnaryOp {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryOp {
-    Add, Sub, Mul, Div, Rem,
+    Add, Sub, Mul, Div, Rem, MatMul,
     BitAnd, BitOr, BitXor, Shl, Shr,
     Eq, Ne, Lt, Le, Gt, Ge,
     And, Or,
@@ -512,7 +512,7 @@ impl BinaryOp {
     pub fn precedence(self) -> u8 {
         use BinaryOp::*;
         match self {
-            Mul | Div | Rem | Shl | Shr | BitAnd => 5,
+            Mul | Div | Rem | MatMul | Shl | Shr | BitAnd => 5,
             Add | Sub | BitOr | BitXor => 4,
             Eq | Ne | Lt | Le | Gt | Ge => 3,
             And => 2,
@@ -523,5 +523,5 @@ impl BinaryOp {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssignOp {
-    Assign, Add, Sub, Mul, Div, Rem, BitAnd, BitOr, BitXor, Shl, Shr,
+    Assign, Add, Sub, Mul, Div, Rem, MatMul, BitAnd, BitOr, BitXor, Shl, Shr,
 }

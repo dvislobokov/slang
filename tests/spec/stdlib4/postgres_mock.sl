@@ -1,0 +1,451 @@
+// test: std.database.postgres against an in-process mock server speaking protocol 3.0: SSLRequest refused (sslmode=prefer falls back), SCRAM-SHA-256 verified by the server, ParameterStatus/BackendKeyData, simple query with text results, extended protocol (Parse/Describe/Bind/Execute/Sync) with binary results, typed Query<T>, ErrorResponse fields, NoticeResponse callback, transaction status, connection string parsing
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib4.postgres_mock
+
+import std.io
+import std
+import std.database
+
+// ---- a mock PostgreSQL server ----------------------------------------------------
+
+struct msgw {
+    b []byte
+
+    func msg(t int, body []byte) {
+        this.b = append(this.b, byte(t))
+        var n = len(body) + 4
+        this.b = append(this.b, byte(n >> 24), byte((n >> 16) & 255), byte((n >> 8) & 255), byte(n & 255))
+        for x in body {
+            this.b = append(this.b, x)
+        }
+    }
+}
+
+func i16(v int) []byte {
+    return [byte((v >> 8) & 255), byte(v & 255)]
+}
+
+func i32(v int) []byte {
+    return [byte((v >> 24) & 255), byte((v >> 16) & 255), byte((v >> 8) & 255), byte(v & 255)]
+}
+
+func cat(parts [][]byte) []byte {
+    var out []byte = []
+    for p in parts {
+        for x in p {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+func cstr(s string) []byte {
+    return cat([strings.Bytes(s), [0]])
+}
+
+// ErrorResponse / NoticeResponse fields (S, V, C, M, P and t for errors
+// with a table).
+func fields(sev string, code string, msg string, table string) []byte {
+    var parts [][]byte = [[83], cstr(sev), [86], cstr(sev), [67], cstr(code), [77], cstr(msg)]
+    if table != "" {
+        parts = append(parts, [80], cstr("15"), [116], cstr(table))
+    }
+    parts = append(parts, [0])
+    return cat(parts)
+}
+
+func be(b []byte, off int, n int) int {
+    var v = 0
+    for i in 0..n {
+        v = v * 256 + int(b[off + i])
+    }
+    return v
+}
+
+func readCstr(b []byte, off int) (string, int) {
+    var e = off
+    for b[e] != 0 {
+        e += 1
+    }
+    return (strings.FromBytes(b[off..e]), e + 1)
+}
+
+struct col {
+    name string
+    oid int
+}
+
+struct server {
+    c net.Conn
+    log []string
+    // statement name -> query
+    stmts map[string]string
+    formats []int
+    portal string
+    lastArgs []string
+
+    async func readN(n int) []byte! {
+        return await this.c.ReadExact(n)?
+    }
+
+    async func recv() (int, []byte)! {
+        var h = await this.readN(5)?
+        var n = be(h, 1, 4)
+        var body []byte = []
+        if n > 4 {
+            body = await this.readN(n - 4)?
+        }
+        return (int(h[0]), body)
+    }
+
+    async func send(w msgw) void! {
+        _ = await this.c.Write(w.b)?
+    }
+
+    func columns(q string) []col {
+        if strings.Contains(q, "from items") {
+            return [col{name: "id", oid: 23}, col{name: "name", oid: 25}, col{name: "created", oid: 1184}, col{name: "price", oid: 1700}, col{name: "tags", oid: 1009}, col{name: "data", oid: 17}, col{name: "ok", oid: 16}]
+        }
+        if strings.HasPrefix(q, "select") {
+            return [col{name: "n", oid: 20}]
+        }
+        return []
+    }
+
+    func rowDesc(cols []col, formats []int) []byte {
+        var parts [][]byte = [i16(len(cols))]
+        for i, c in cols {
+            var f = 0
+            if len(formats) == 1 {
+                f = formats[0]
+            } else if i < len(formats) {
+                f = formats[i]
+            }
+            parts = append(parts, cat([cstr(c.name), i32(0), i16(0), i32(c.oid), i16(-1), i32(-1), i16(f)]))
+        }
+        return cat(parts)
+    }
+
+    // The rows of a query: text values, or binary when asked.
+    func rows(q string, args []string, formats []int) [][]byte {
+        var out [][]byte = []
+        var cols = this.columns(q)
+        if len(cols) == 0 {
+            return out
+        }
+        var bin = len(formats) > 0 && formats[0] == 1
+        if cols[0].name == "n" {
+            var v = 42
+            if len(args) > 0 {
+                v = try std.strconv.Atoi(args[0]) else 0
+            }
+            if bin {
+                out = append(out, cat([i16(1), i32(8), i32(0), i32(v)]))
+            } else {
+                var t = strings.Bytes(fmt.Format("{0}", v))
+                out = append(out, cat([i16(1), i32(len(t)), t]))
+            }
+            return out
+        }
+        // items: two rows
+        for k in 0..2 {
+            var vals [][]byte = []
+            var id = k + 1
+            if bin {
+                vals = [i32(id), strings.Bytes(["apple", "pear"][k]), cat([i32(0x2b5cb), i32(0xc686a638)]), strings.Bytes(["1.25", "10.50"][k]), strings.Bytes(["{red,fruit}", "{}"][k]), [222, 173, 190, 239], [byte(1 - k)]]
+            } else {
+                vals = [strings.Bytes(fmt.Format("{0}", id)), strings.Bytes(["apple", "pear"][k]), strings.Bytes("2024-03-04 05:06:07.123+02"), strings.Bytes(["1.25", "10.50"][k]), strings.Bytes(["{red,fruit}", "{\"a b\",c}"][k]), strings.Bytes("\\xdeadbeef"), strings.Bytes(["t", "f"][k])]
+            }
+            var parts [][]byte = [i16(len(vals))]
+            for i, v in vals {
+                // tags and price are always sent as text (the driver asks text for them)
+                var raw = v
+                if bin && (i == 3 || i == 4) {
+                    raw = strings.Bytes(["1.25", "10.50", "{red,fruit}", "{}"][(i - 3) * 2 + k])
+                }
+                parts = append(parts, cat([i32(len(raw)), raw]))
+            }
+            out = append(out, cat(parts))
+        }
+        return out
+    }
+
+    async func scram() void! {
+        var w = msgw{}
+        w.msg(82, cat([i32(10), cstr("SCRAM-SHA-256"), [0]]))
+        await this.send(w)?
+        var (t, p) = await this.recv()?
+        var (mech, off) = readCstr(p, 0)
+        var first = strings.FromBytes(p[off + 4..])
+        this.log = append(this.log, "auth " + mech + " " + first[..8] + "<nonce>")
+        var bare = first[3..]
+        var cnonce = bare[strings.Index(bare, "r=") + 2..]
+        var salt = strings.Bytes("mock-salt-16byte")
+        var serverFirst = "r=" + cnonce + "srvnonce,s=" + encoding.base64.Encode(salt) + ",i=4096"
+        w = msgw{}
+        w.msg(82, cat([i32(11), strings.Bytes(serverFirst)]))
+        await this.send(w)?
+        (t, p) = await this.recv()?
+        _ = t
+        var final = strings.FromBytes(p)
+        var withoutProof = final[..strings.Index(final, ",p=")]
+        var proof = encoding.base64.Decode(final[strings.Index(final, ",p=") + 3..])?
+        var salted = crypto.kdf.Pbkdf2(strings.Bytes("s3cret"), salt, 4096, 32, "sha256")?
+        var clientKey = crypto.hmac.Sum("sha256", salted, strings.Bytes("Client Key"))?
+        var stored = crypto.hash.Sum("sha256", clientKey)?
+        var authMsg = bare + "," + serverFirst + "," + withoutProof
+        var sig = crypto.hmac.Sum("sha256", stored, strings.Bytes(authMsg))?
+        var recovered []byte = []
+        for i, b in proof {
+            recovered = append(recovered, b ^ sig[i])
+        }
+        if !crypto.hmac.Equal(crypto.hash.Sum("sha256", recovered)?, stored) {
+            this.log = append(this.log, "auth: bad proof")
+            w = msgw{}
+            w.msg(69, fields("FATAL", "28P01", "password authentication failed for user \"tester\"", ""))
+            await this.send(w)?
+            return error("bad proof")
+        }
+        this.log = append(this.log, "auth: proof ok")
+        var serverKey = crypto.hmac.Sum("sha256", salted, strings.Bytes("Server Key"))?
+        var ssig = crypto.hmac.Sum("sha256", serverKey, strings.Bytes(authMsg))?
+        w = msgw{}
+        w.msg(82, cat([i32(12), strings.Bytes("v=" + encoding.base64.Encode(ssig))]))
+        w.msg(82, i32(0))
+        w.msg(83, cat([cstr("server_version"), cstr("16.0 (mock)")]))
+        w.msg(75, cat([i32(4242), i32(99)]))
+        w.msg(90, [73])
+        await this.send(w)?
+    }
+
+    async func run() void! {
+        // SSLRequest first: refuse it
+        var h = await this.readN(8)?
+        if be(h, 4, 4) == 80877103 {
+            this.log = append(this.log, "ssl request refused")
+            _ = await this.c.Write([78])?
+            h = await this.readN(8)?
+        }
+        var n = be(h, 0, 4)
+        var rest = await this.readN(n - 8)?
+        var params []string = []
+        var off = 0
+        for off < len(rest) && rest[off] != 0 {
+            var (k, o2) = readCstr(rest, off)
+            var (v, o3) = readCstr(rest, o2)
+            off = o3
+            if k == "user" || k == "database" || k == "application_name" {
+                params = append(params, k + "=" + v)
+            }
+        }
+        this.log = append(this.log, "startup protocol " + fmt.Format("{0}", be(h, 4, 4)) + " " + strings.Join(params, " "))
+        await this.scram()?
+        var tx = 73
+        var err = false
+        for {
+            var (t, p) = try await this.recv() catch e {
+                return
+            }
+            var w = msgw{}
+            if t == 81 {
+                var (q, _) = readCstr(p, 0)
+                this.log = append(this.log, "Q " + q)
+                if q == "BEGIN" {
+                    tx = 84
+                    w.msg(67, cstr("BEGIN"))
+                } else if q == "COMMIT" || q == "ROLLBACK" {
+                    tx = 73
+                    w.msg(67, cstr(q))
+                } else if q == "notice" {
+                    w.msg(78, fields("NOTICE", "00000", "just so you know", ""))
+                    w.msg(67, cstr("DO"))
+                } else if q == "boom" {
+                    if tx == 84 {
+                        tx = 69
+                    }
+                    w.msg(69, fields("ERROR", "42P01", "relation \"nope\" does not exist", "nope"))
+                } else if q == "" {
+                    w.msg(73, [])
+                } else {
+                    var cols = this.columns(q)
+                    if len(cols) > 0 {
+                        w.msg(84, this.rowDesc(cols, []))
+                        var rs = this.rows(q, [], [])
+                        for r in rs {
+                            w.msg(68, r)
+                        }
+                        w.msg(67, cstr("SELECT " + fmt.Format("{0}", len(rs))))
+                    } else {
+                        w.msg(67, cstr("INSERT 0 3"))
+                    }
+                }
+                w.msg(90, [byte(tx)])
+                await this.send(w)?
+            } else if t == 80 {
+                var (name, o1) = readCstr(p, 0)
+                var (q, _) = readCstr(p, o1)
+                this.stmts[name] = q
+                this.log = append(this.log, "Parse " + name + " " + q)
+                if !err {
+                    w.msg(49, [])
+                    await this.send(w)?
+                }
+            } else if t == 68 {
+                var kind = int(p[0])
+                var (name, _) = readCstr(p, 1)
+                var q = this.stmts[name]
+                if kind == 80 {
+                    q = this.portal
+                }
+                var cols = this.columns(q)
+                if kind == 83 {
+                    var nparams = strings.Count(q, "$")
+                    var parts [][]byte = [i16(nparams)]
+                    for _ in 0..nparams {
+                        parts = append(parts, i32(23))
+                    }
+                    w.msg(116, cat(parts))
+                }
+                if len(cols) > 0 {
+                    w.msg(84, this.rowDesc(cols, this.formats))
+                } else {
+                    w.msg(110, [])
+                }
+                await this.send(w)?
+            } else if t == 66 {
+                var (_, o1) = readCstr(p, 0)
+                var (stmt, o2) = readCstr(p, o1)
+                var nf = be(p, o2, 2)
+                var pos = o2 + 2 + 2 * nf
+                var np = be(p, pos, 2)
+                pos += 2
+                var args []string = []
+                for _ in 0..np {
+                    var l = be(p, pos, 4)
+                    pos += 4
+                    if l == 4294967295 {
+                        args = append(args, "NULL")
+                        continue
+                    }
+                    args = append(args, strings.FromBytes(p[pos..pos + l]))
+                    pos += l
+                }
+                var nr = be(p, pos, 2)
+                pos += 2
+                var formats []int = []
+                for _ in 0..nr {
+                    formats = append(formats, be(p, pos, 2))
+                    pos += 2
+                }
+                this.formats = formats
+                this.portal = this.stmts[stmt]
+                this.log = append(this.log, "Bind " + stmt + " args=" + fmt.Format("{0}", args) + " formats=" + fmt.Format("{0}", formats))
+                this.lastArgs = args
+                w.msg(50, [])
+                await this.send(w)?
+            } else if t == 69 {
+                var q = this.portal
+                var rs = this.rows(q, this.lastArgs, this.formats)
+                for r in rs {
+                    w.msg(68, r)
+                }
+                if len(this.columns(q)) > 0 {
+                    w.msg(67, cstr("SELECT " + fmt.Format("{0}", len(rs))))
+                } else {
+                    w.msg(67, cstr("UPDATE " + fmt.Format("{0}", len(this.lastArgs))))
+                }
+                await this.send(w)?
+            } else if t == 83 {
+                w.msg(90, [byte(tx)])
+                await this.send(w)?
+            } else if t == 67 {
+                this.log = append(this.log, "Close statement")
+                w.msg(51, [])
+                await this.send(w)?
+            } else if t == 88 {
+                this.log = append(this.log, "Terminate")
+                this.c.Close()
+                return
+            }
+        }
+    }
+
+}
+
+struct Item {
+    Id int
+    Name string
+    Created time.Time
+    Price math.big.Decimal
+    Tags []string
+    Data []byte
+    Ok bool
+}
+
+async func serve(l net.Listener) *server! {
+    var c = await l.Accept()?
+    var s = new server{c: c, stmts: map[string]string{}}
+    await s.run()?
+    return s
+}
+
+async func main() void! {
+    // connection strings
+    for dsn in ["postgres://u:p%40ss@db.example.com:6543/app?sslmode=require&application_name=x", "host=/var/run/postgresql port=5433 user=bob password='it\\'s' dbname=d connect_timeout=3", "postgresql://[::1]/x", "postgres://h?sslmode=bogus"] {
+        var c = try postgres.ParseDSN(dsn) catch err {
+            println("dsn:", err)
+            continue
+        }
+        println("dsn:", c.Host, c.Port, c.User, c.Password, c.Database, c.SSLMode, c.ConnectTimeout, c.Params["application_name"])
+    }
+
+    var l = net.Listen("127.0.0.1:0")?
+    var srvTask = serve(l)
+    var notices []string = []
+    var d = postgres.Driver{OnNotice: func(e postgres.Error) {
+        notices = append(notices, e.Severity + ": " + e.Msg)
+    }}
+    var db = sql.OpenDriver(d, fmt.Format("postgres://tester:s3cret@127.0.0.1:{0}/shop?application_name=spec", l.Port()))
+    db.SetMaxOpenConns(1)
+    defer db.Close()
+    await db.Ping()?
+    var n = await db.QueryOne<int>("select 1", [])?
+    println("simple", n)
+    var items = await db.Query<Item>("select * from items", [])?
+    for it in items {
+        println("text", it.Id, it.Name, it.Created.Format(time.RFC3339Nano), it.Price.String(), it.Tags, len(it.Data), it.Ok)
+    }
+    var items2 = await db.Query<Item>("select * from items where id > $1", [0])?
+    for it in items2 {
+        println("binary", it.Id, it.Name, it.Created.Format(time.RFC3339Nano), it.Price.String(), it.Tags, len(it.Data), it.Ok)
+    }
+    println("param", await db.QueryOne<int>("select $1", [77])?)
+    println("param again (cached statement)", await db.QueryOne<int>("select $1", [78])?)
+    var r = await db.Exec("update items set ok = $1 where id = $2", [true, 1])?
+    println("affected", r.RowsAffected)
+    var r2 = await db.Exec("insert into items values (1), (2), (3)", [])?
+    println("affected", r2.RowsAffected)
+    _ = await db.Exec("notice", [])?
+    println(notices)
+    try await db.Exec("boom", []) catch err {
+        println(err)
+        var pe postgres.Error
+        if errors.As(err, &pe) {
+            println(pe.Code, pe.Position, pe.Table, pe.IsConstraint())
+        }
+    }
+    var tx = await db.Begin()?
+    try await tx.Exec("boom", []) catch err {
+        println("in tx:", err.Message()[..30])
+    }
+    try await tx.Commit() catch err {
+        println(err)
+    }
+    db.Close()
+    var srv = await srvTask?
+    for x in srv.log {
+        println("server:", x)
+    }
+    l.Close()
+}

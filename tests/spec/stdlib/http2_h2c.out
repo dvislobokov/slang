@@ -1,0 +1,11 @@
+200 HTTP/2.0 HTTP/2.0 text/plain; charset=utf-8
+hello h2 via HTTP/2.0
+concurrent ok: 20
+big: 200 300000 300000
+echo: 200003 bytes, last end
+stream: part 0 part 1 part 2 end 
+head: 200 0 300000
+fail: 500 500 Internal Server Error: boom
+missing: 404
+dials: 1 http2 conns: 1
+stopped

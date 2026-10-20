@@ -1,0 +1,111 @@
+// test: the HTTP/2 server at the frame level (raw frames over TCP, h2c): SETTINGS exchange and ACK, PING ACK, a tiny peer window (DATA split to fit, resumed by WINDOW_UPDATE), HPACK-decoded response headers, GOAWAY with PROTOCOL_ERROR for a HEADERS frame on an even stream id
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http2_frames
+
+import std.io
+import std
+import std.net
+
+func frame(typ int, flags int, sid int, payload []byte) []byte {
+    var n = len(payload)
+    var out []byte = [byte(n >> 16), byte((n >> 8) & 255), byte(n & 255), byte(typ), byte(flags), byte((sid >> 24) & 127), byte((sid >> 16) & 255), byte((sid >> 8) & 255), byte(sid & 255)]
+    for b in payload {
+        out = append(out, b)
+    }
+    return out
+}
+
+struct Frame {
+    Type int
+    Flags int
+    Stream int
+    Payload []byte
+}
+
+async func readFrame(r net.BufferedReader) Frame! {
+    var h = await r.ReadExact(9)?
+    var n = (int(h[0]) << 16) | (int(h[1]) << 8) | int(h[2])
+    var f = Frame{Type: int(h[3]), Flags: int(h[4]), Stream: ((int(h[5]) & 127) << 24) | (int(h[6]) << 16) | (int(h[7]) << 8) | int(h[8])}
+    if n > 0 {
+        f.Payload = await r.ReadExact(n)?
+    }
+    return f
+}
+
+func u32(v int) []byte {
+    return [byte((v >> 24) & 255), byte((v >> 16) & 255), byte((v >> 8) & 255), byte(v & 255)]
+}
+
+func name(t int) string {
+    var names = ["DATA", "HEADERS", "PRIORITY", "RST_STREAM", "SETTINGS", "PUSH_PROMISE", "PING", "GOAWAY", "WINDOW_UPDATE", "CONTINUATION"]
+    return names[t]
+}
+
+async func main() void! {
+    var r = http.NewRouter()
+    r.Get("/data", async func(req *http.Request, res *http.Response) void! {
+        res.Text(200, "0123456789abcdefghijklmnopqrstuvwxyz")
+    })
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: r, H2C: true, MaxConcurrentStreams: 10}
+    srv.Listen()?
+    var serving = srv.Serve()
+    var c = await net.Dial(fmt.Format("127.0.0.1:{0}", srv.Port()))?
+    var rd = net.NewBufferedReader(c, 65536)
+    // preface + SETTINGS (INITIAL_WINDOW_SIZE = 10)
+    var settings []byte = [byte(0), byte(4)]
+    for b in u32(10) {
+        settings = append(settings, b)
+    }
+    _ = await c.WriteString("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")?
+    _ = await c.Write(frame(4, 0, 0, settings))?
+    var f = await readFrame(rd)?
+    println("server:", name(f.Type), "flags", f.Flags, "settings", len(f.Payload) / 6)
+    // the server's WINDOW_UPDATE of the connection and the ACK of ours
+    for _ in 0..2 {
+        f = await readFrame(rd)?
+        println("server:", name(f.Type), "flags", f.Flags)
+    }
+    _ = await c.Write(frame(4, 1, 0, []))?
+    // PING
+    _ = await c.Write(frame(6, 0, 0, strings.Bytes("12345678")))?
+    f = await readFrame(rd)?
+    println("ping:", name(f.Type), "ack", f.Flags == 1, strings.FromBytes(f.Payload))
+    // GET /data with a 10-byte stream window
+    var enc = http.hpack.NewEncoder(4096)
+    var block = enc.Encode([http.hpack.HeaderField{Name: ":method", Value: "GET"}, http.hpack.HeaderField{Name: ":scheme", Value: "http"}, http.hpack.HeaderField{Name: ":authority", Value: "x"}, http.hpack.HeaderField{Name: ":path", Value: "/data"}])
+    _ = await c.Write(frame(1, 5, 1, block))?
+    var dec = http.hpack.NewDecoder(4096)
+    var body = ""
+    for {
+        f = await readFrame(rd)?
+        if f.Type == 1 {
+            for hf in dec.Decode(f.Payload)? {
+                if hf.Name != "date" {
+                    println("header", hf.Name + ":", hf.Value)
+                }
+            }
+            continue
+        }
+        if f.Type == 0 {
+            println("DATA", len(f.Payload), "bytes, end", (f.Flags & 1) != 0)
+            body += strings.FromBytes(f.Payload)
+            if (f.Flags & 1) != 0 {
+                break
+            }
+            // open the window by 13 bytes for the stream
+            _ = await c.Write(frame(8, 0, 1, u32(13)))?
+        }
+    }
+    println("body:", body)
+    // a HEADERS frame on stream 2 (even: client streams are odd)
+    _ = await c.Write(frame(1, 5, 2, block))?
+    f = await readFrame(rd)?
+    var code = (int(f.Payload[4]) << 24) | (int(f.Payload[5]) << 16) | (int(f.Payload[6]) << 8) | int(f.Payload[7])
+    println("bad stream id:", name(f.Type), "error code", code)
+    var eof = await c.Read(10)?
+    println("connection closed:", len(eof) == 0)
+    c.Close()
+    await srv.Shutdown()
+    await serving?
+}

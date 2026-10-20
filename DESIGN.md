@@ -296,7 +296,11 @@ func Describe(s Shape) {
 
   Метод по умолчанию вызывается и на значении типа, реализующего интерфейс
   (`console.Info("x")`, в том числе в обобщённом теле через ограничение
-  `T: Logger`): значение приводится к интерфейсу. Если такой метод дают два
+  `T: Logger`): значение приводится к интерфейсу (переменная-структура —
+  по адресу, так что изменения через методы видны в ней самой; `*S`
+  удовлетворяет ограничению-интерфейсу, как и `S`). Методы по умолчанию
+  могут объявлять и интерфейсы stdlib на Slang (`hash.Hasher.WriteString`
+  по умолчанию пишет байты строки через `Write`). Если такой метод дают два
   разных интерфейса, которые тип реализует, вызов — ошибка `ambiguous
   default method` (приведите значение к нужному интерфейсу явно).
   Реализация: метод по умолчанию компилируется один раз как функция от
@@ -350,13 +354,71 @@ func Describe(s Shape) {
 | `a[i]`, `a[i] = v` | `Index`, `IndexSet` | `func Index(i I) V`, `func IndexSet(i I, v V)` |
 | `a == b`, `a != b` | `Equatable` | `func Equals(other T) bool` |
 | `<`, `<=`, `>`, `>=` | `Ordered` | `func Compare(other T) int` |
-| `a += b` и прочие | через соответствующий бинарный | — |
+| `a += b` и прочие (`-= *= /= %= @=`) | через соответствующий бинарный | — |
 
-- Не перегружаются: `&&`, `||`, `!`, `=`, `.`, `&`, `*`(deref), `?`, `..`.
-- Операнды одного типа `T`; смешанные типы — через явные методы.
-- Компилятор вызывает метод напрямую (без динамической диспетчеризации),
-  в generic-коде `T: Add` даёт `+` на `T`.
-- Используется `std.math.Decimal`, `std.time.Duration`, `std.big`.
+```slang
+struct Vec {
+    X float
+    Y float
+    func Add(o Vec) Vec { return Vec{X: this.X + o.X, Y: this.Y + o.Y} }
+    func Mul(k float) Vec { return Vec{X: this.X * k, Y: this.Y * k} }
+    func Neg() Vec { return Vec{X: -this.X, Y: -this.Y} }
+}
+
+var v = (a + b) * 0.5 + -c      // a.Add(b).Mul(0.5).Add(c.Neg())
+v += a                          // v = v.Add(a)
+```
+
+Правила (реализация — `compiler/src/sema/opover.rs`):
+
+- Перегружаются операторы над значениями **структур и enum** (не над
+  числами, строками и указателями: `p == q` для `*T` сравнивает адреса);
+  индексация — также через указатель на структуру (`p[i]`).
+- Метод выбирает **левый операнд**: `a + b` — это `a.Add(b)`. Правый
+  операнд проверяется по типу параметра метода (с обычными неявными
+  приведениями и нетипизированными константами), поэтому метод может
+  принимать и другой тип: `func Mul(k float) Vec` разрешает `v * 2`, но не
+  `2 * v` (`mismatched types ... the left operand selects the operator
+  method`). Тип результата — тип результата метода: `Time.Sub(Time)
+  Duration` даёт `t1 - t0` типа `Duration`; метод с результатом `T!` делает
+  выражение ошибочным (`(a / b)?`, `try a / b else ...`, как `big.Decimal`).
+- Методы вызываются напрямую (без динамической диспетчеризации), в том
+  числе продвинутые через встраивание. Операторные методы не бывают
+  `async` и обобщёнными; `Equals` должен возвращать `bool`, `Compare` —
+  `int`, `IndexSet` — ничего.
+- `==`/`!=` и `< <= > >=` используют `Equals`/`Compare`, только если они
+  есть; иначе действуют встроенные правила (простые enum сравниваются по
+  тегу, структуры без `Equals` — ошибка с подсказкой `help: declare func
+  Equals(other T) bool`). `a != b` — это `!a.Equals(b)`, `a < b` —
+  `a.Compare(b) < 0`. Сравнение с `nil` не перегружается.
+- `a op= b` — это `a = a op b`, левая часть вычисляется дважды, поэтому она
+  должна быть переменной, полем или элементом с простым индексом;
+  `a[i] op= v` — `a.IndexSet(i, a.Index(i) op v)`, индекс вычисляется
+  один раз.
+- Не перегружаются: `&&`, `||`, `!`, `=`, `.`, `&` (и как адрес, и
+  побитовое), `|`, `^`, `<<`, `>>`, `*`(deref), `?`, `..` и срезы `a[i..j]`;
+  отсутствующий метод — ошибка с именем оператора (`operator / is not
+  defined on Money: Money has no method Div`).
+- `@` между операндами — `MatMul` с приоритетом `*`; `@` в начале
+  объявления (поля, метода, параметра) — атрибут. `@=` — составное
+  присваивание.
+- **Ограничения generics.** `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`,
+  `MatMul` — встроенные ограничения (если в области видимости нет типа с
+  таким именем): `T: Add` разрешает `+` (и `+=`) на `T` и выполняется для
+  чисел с этим оператором (`Add` — и для `string`, `Rem` — для целых) и для
+  типов с методом ровно `func Add(other T) T` (`Neg`: `func Neg() T`).
+  `Ordered` выполняется также для типов с `func Compare(other T) int`,
+  `Equatable` — для типов с `func Equals(other T) bool` (`Comparable`
+  остаётся множеством типов со встроенным `==`, годных в ключи `map`).
+  В экземпляре обобщённой функции оператор над `T = Vec` вызывает метод,
+  поэтому `Sum<T: Add>`, `Max<T: Ordered>` и обобщённые структуры с
+  операторными методами (`struct Vec2<T: Add> { ... func Add(o Vec2<T>)
+  Vec2<T> }`) работают и с числами, и с типами-значениями.
+- Используется в `std.math.big` (`Int`, `Rat`, `Decimal`; `Int./` — деление
+  с усечением, как у `int`, евклидово — `DivEuclid`; `Decimal./` и `%`
+  возвращают `Decimal!`), `std.time` (`Duration` с `* /` на `int`, `Time +
+  Duration`, `Time - Time`), `std.math.complex`, `std.collections.BitSet`
+  (`b[i]`, `b[i] = true`).
 
 ## Перечисления
 
@@ -448,8 +510,10 @@ var t = l.Show<string>("x")       // обобщённый метод
 | Ограничение | Допускает | Операции над `T` в теле |
 |---|---|---|
 | нет | любой тип | присваивание, передача, возврат, `var z T` (нулевое значение) |
-| `Ordered` (встроенное) | целые, дробные, `string`, `char` | также `< <= > >= == != +` |
-| `Comparable` / `Equatable` (встроенное) | числа, `bool`, `char`, `string`, указатели, простые enum | также `== !=`, ключ `map[T]V` |
+| `Ordered` (встроенное) | целые, дробные, `string`, `char`, типы с `func Compare(other T) int` | также `< <= > >= == != +` |
+| `Comparable` (встроенное) | числа, `bool`, `char`, `string`, указатели, простые enum | также `== !=`, ключ `map[T]V` |
+| `Equatable` (встроенное) | `Comparable` и типы с `func Equals(other T) bool` | также `== !=` |
+| `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`, `MatMul` (встроенные) | числа с этим оператором (`Add`: и `string`; `Rem`: целые), типы с операторным методом `func Add(other T) T` | также этот оператор (и `op=`), см. «Перегрузка операторов» |
 | интерфейс `I` | тип с методами `I` (структурно) | также методы `I`, преобразование в `I` |
 
 Тело обобщённой декларации проверяется **один раз** против ограничений (как в
@@ -796,6 +860,49 @@ for item in list { ... }
 for i, item in list { ... }
 for cond { ... }                // как while
 for { ... }                     // бесконечный
+```
+
+**Протокол итерации.** `for x in v` обходит срезы, массивы, строки (по
+code point), `map`, коллекции `std.collections` и любой тип, который
+следует протоколу (реализация — `compiler/src/sema/iterate.rs`):
+
+1. у `v` есть `func Iter() It` — цикл вызывает его один раз и обходит
+   итератор `It`;
+2. иначе `v` сам итератор, если у него есть `Next()`;
+3. иначе у `v` есть `func Items() []T` — цикл обходит этот срез.
+
+Итератор — значение (структура, указатель на структуру, интерфейс) с
+методом встроенного интерфейса `Iterator<T> { func Next() (T, bool) }`
+(сопоставляется структурно; обобщённых интерфейсов нет, поэтому
+`Iterator<T>` не пишется как тип): `false` завершает цикл. Также
+допускаются `func Next() (K, V, bool)` — две переменные цикла, ключ и
+значение (`for k, v in orderedMap`; с одной переменной — ошибка) — и
+`func Next() *T`, где `nil` завершает цикл (`for m in re.Iter(s)`).
+`async func Next()` ожидается (`await`) на каждом шаге, поэтому такой
+цикл допустим только в async-функции: `for v in ch` по `task.Channel<T>`
+получает значения, пока канал не закрыт и не опустошён. С одним
+значением `for i, x in v` нумерует элементы с 0. `break`/`continue`
+работают как обычно; `Iter()` вызывается один раз, `Next()` — перед каждой
+итерацией. Так обходятся `LinkedList`, `OrderedMap`, `LRU` (через
+`Iter()`), `Deque`, `Ring`, `Heap`, `BitSet` (через `Items()`),
+`regex.Iter` и `Channel`.
+
+```slang
+struct Countdown {
+    From int
+    func Iter() countIter { return countIter{n: this.From} }
+}
+
+struct countIter {
+    n int
+    func Next() (int, bool) {
+        if this.n == 0 { return (0, false) }
+        this.n -= 1
+        return (this.n + 1, true)
+    }
+}
+
+for x in (Countdown{From: 3}) { print(x) }   // 321
 ```
 
 ### switch
@@ -1445,27 +1552,94 @@ brotli, bzip2, lzw.
     блокируется. `Conn`/`Listener`/`UDPConn` — копируемые ручки на объект
     сокета; его `Drop` закрывает дескриптор, закрытие без гонок с
     переиспользованием номера дескриптора. SIGPIPE игнорируется.
-- `std.net.http` (HTTP/1.1; `https://` и `Server{TLS}` — через
-  `std.net.tls`): `Get(url) Task<Response!>`, `Post(url, body, contentType)`,
-  `Client{Timeout, MaxRedirects, Headers, TLS *tls.Config}` с `Get`/`Post`/`Do(method, url,
-  body, headers)`; `Response{Status int, Headers map[string]string, Body
-  string}` с `Header(name)`, `SetHeader`, `Write`, `Text(status, body)`,
-  `Json(status, body)`; chunked-тела, редиректы (до 10), заголовки в
-  каноническом виде (`Content-Type`). Сервер: `Server{Addr, Handler,
-  IdleTimeout, TLS *tls.ServerConfig}` (с `TLS` — HTTPS, ALPN `http/1.1`) с `Listen() void!`, `Port()`, `Serve() Task<void!>`,
-  `Shutdown() Task<void>` (перестаёт принимать, закрывает простаивающие
-  соединения, ждёт текущие запросы); задача на соединение, keep-alive.
-  `interface Handler { func Serve(req *Request, res *Response) Task<void!> }`
-  (метод интерфейса не может быть `async`, поэтому он возвращает задачу),
-  `NewRouter()` с `Get/Post/Put/Delete/Handle(pattern, handler)`, параметры
-  пути `{id}` (`req.Param("id")`) и `*` в конце; `Request{Method, Path, Query,
-  Proto, Headers, Body, Params, RemoteAddr}` с `Header`, `Param`,
-  `QueryValue`; `ParseURL`, `ParseQuery`, `StatusText`, `CanonicalHeader`.
-  Нет: HTTP/2, пула соединений клиента, middleware.
+- `std.net.http` (HTTP/1.1 и HTTP/2; `https://` и `Server{TLS}` — через
+  `std.net.tls`; горячие циклы — C, `runtime/ABI.md` §16.5):
+  - **Сообщения**: `Request{Method, Path, Query, Proto, Headers, Body,
+    Params, RemoteAddr, Host, Scheme}` с `Header`, `Param`, `QueryValue`,
+    `RequestURI`, `Cookie(name)`, `Cookies()`, `Set/Value` (значения для
+    следующих обработчиков), `JSON<T>()`, `IsWebSocket()`;
+    `Response{Status int, Headers map[string]string, Body string, Proto,
+    Reader *BodyReader}` с `Header`, `SetHeader`, `AddHeader`, `DelHeader`,
+    `Write`, `Text/Json/Html(status, body)`, `SendJSON<T>(status, v)`,
+    `JSON<T>()`, `Redirect(status, loc)`, `SetCookie(Cookie)`, а на сервере
+    — `Flush() Task<void!>` (потоковый ответ: chunked в HTTP/1.1, кадры DATA
+    в HTTP/2), `SendFile(path, off, n)` (sendfile(2) на TCP), `Hijack()
+    RawConn!` (HTTP/1.x: соединение переходит вызывающему, так работает
+    `ws.Upgrade`), `Started()`. Заголовки в каноническом виде
+    (`Content-Type`); повторы склеиваются через `", "`, `Set-Cookie` — через
+    `"\n"` (значения содержат запятые). `Cookie{Name, Value, Path, Domain,
+    Expires, MaxAge, Secure, HttpOnly, SameSite}`, `ParseCookies`,
+    `ParseSetCookie`, `ParseURL`, `ParseQuery`, `QueryEscape`,
+    `StatusText`, `CanonicalHeader`, `HasToken`, `Date`/`FormatTime`/`ParseTime`.
+  - **Клиент**: `Get(url)`, `Post(url, body, contentType)`,
+    `GetJSON<T>(url) Task<T!>`; `Client{Timeout (мс на подключение и
+    каждое чтение/запись), TotalTimeout (весь запрос, через отмену контекста
+    задачи), MaxRedirects, Headers, TLS, Transport, Jar}` с `Get`/`Post`/
+    `Do(method, url, body, headers)`, `Send(req)` и `Stream(req)` (тело не
+    читается: `res.Reader` — `io.AsyncReader`, конец тела или `Close`
+    возвращает соединение в пул). Построитель `NewRequest(method, url)`:
+    `.Header(k, v)`, `.Query(k, v)`, `.Body(string | []byte | io.Reader)`,
+    `.JSON<T>(v)`, `.Form(map)`, `.ContentType`, `.Cookie`, `.BasicAuth`,
+    `.Timeout(ms)`, `.Send()`. `Transport{MaxIdleConnsPerHost = 8,
+    MaxConnsPerHost (лишние запросы ждут), IdleConnTimeout = 90000,
+    DialTimeout, TLSHandshakeTimeout = 10000, ResponseHeaderTimeout, TLS,
+    Proxy, ProxyFromEnvironment, DisableKeepAlives, DisableCompression,
+    DisableHTTP2, H2C}`: пул соединений по схеме+хосту+прокси, одно общее
+    HTTP/2-соединение на хост (ALPN `h2` для https, `H2C` — prior knowledge
+    для http), повтор идемпотентного запроса на свежем соединении, если
+    переиспользованное оказалось закрыто сервером, возобновление TLS-сессий,
+    прокси (абсолютная форма для http, туннель CONNECT для https,
+    `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`), `Accept-Encoding: gzip` с
+    прозрачной распаковкой (`std.compress.gzip`), `Stats()`,
+    `CloseIdleConnections()`; `DefaultTransport()` — общий для процесса.
+    `NewCookieJar()` (RFC 6265: host-only и доменные cookie, пути, сроки,
+    `Secure`). `DialRaw(url, tls, ms) Task<RawConn!>` — сырое соединение для
+    протоколов с HTTP/1.1-upgrade.
+  - **Сервер**: `Server{Addr ("unix:/path" — Unix-сокет), Handler,
+    IdleTimeout = 5000, TLS *tls.ServerConfig (ALPN `h2`, `http/1.1`),
+    ReadTimeout, WriteTimeout, MaxHeaderBytes = 1 MB (431), MaxBodyBytes
+    (413), H2C, DisableHTTP2, MaxConcurrentStreams = 250, NoDate}` с
+    `Listen() void!`, `Port()`, `URL()`, `Serve() Task<void!>`, `Shutdown()
+    Task<void>` (перестаёт принимать, закрывает простаивающие соединения,
+    HTTP/2 получает GOAWAY, ждёт текущие запросы); `ListenAndServe(addr, h)`.
+    Задача на соединение; HTTP/1.1 keep-alive с разбором заголовков прямо в
+    буфере чтения соединения, `Date` в каждом ответе, `Expect:
+    100-continue`; HTTP/2 (RFC 9113): кадры, HPACK (`std.net.http.hpack`:
+    статическая и динамическая таблицы, Хаффман), потоки с управлением
+    потоком на обеих сторонах, SETTINGS, PING, GOAWAY, RST_STREAM;
+    приоритеты игнорируются, server push не реализован; задача на поток,
+    тот же `Handler`. Ошибка обработчика — 500 (`ErrAbortHandler` — разрыв
+    без ответа).
+    `interface Handler { func Serve(req *Request, res *Response) Task<void!> }`
+    (метод интерфейса не может быть `async`, поэтому он возвращает задачу);
+    `HandlerFunc{F}`/`Func(f)`; `NewRouter()` с `Get/Post/Put/Delete/Patch/
+    Options/Any/Handle(pattern, handler)`, `Mount(pattern, Handler)`,
+    параметры пути `{id}` и `*` в конце, HEAD через GET-маршруты, 404/405
+    с `Allow`, `Use(mw)` — middleware `func(next Handler) Handler` в порядке
+    добавления; `Chain(h, mws)`.
+  - **Middleware и файлы**: `Recover()` (ошибка обработчика → залогированный
+    500 без текста; паники в Slang не перехватываются), `Logging(logger)`
+    (событие `HTTP {RequestMethod} {RequestPath} responded {StatusCode} in
+    {Elapsed} ms` в `std.log`), `CORS(CORSOptions{...})` (preflight → 204),
+    `Gzip(level)`, `BodyLimit(n)`, `TimeoutHandler(h, ms, msg)` (503, отмена
+    через контекст задачи). `ServeFile(req, res, path)` и
+    `ServeDir(root)`/`FileServer{Root, Listing}`: `Content-Type` по
+    расширению (`std.mime`), `ETag` и `Last-Modified` с 304/412, диапазоны
+    (206, `multipart/byteranges`, 416, `If-Range`), HEAD, `index.html`,
+    редирект каталога на `/`, листинг, корень не покидается через `..`.
+  - **Server-Sent Events**: `ServerSentEvents(res) *EventWriter` с
+    `Send(data)`, `SendEvent(SSEEvent{ID, Event, Data, Retry})`,
+    `Comment`; клиент `NewEventSource(url)` — `for ev in es` / `Recv()`,
+    переподключение с `Last-Event-ID` (`MaxRetries`), `Close()`.
+  - **`std.net.http.test`** (как Go `httptest`): `NewServer(h)`,
+    `NewTLSServer(h)` (самоподписанный сертификат), `NewH2CServer(h)`,
+    `NewServerWith(h, Options{...})` — сервер на свободном порту
+    `127.0.0.1` с полями `URL`, `Client`, `Transport` и `Close()`;
+    `NewRecorder()`, `NewRequest(method, target, body)`, `Serve(h, req)`.
 | `std.net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Slang; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `slang.web`. ✓ реализовано (см. ниже), кроме OCSP, ACME и горячей перезагрузки сертификатов |
-| `std.net.ws` | WebSocket клиент и сервер |
+| `std.net.ws` | WebSocket (RFC 6455) клиент и сервер: `Upgrade(req, res) Task<Conn!>` / `UpgradeWith(req, res, UpgradeOptions{Subprotocols, Origins, Headers})` внутри `http.Handler`, `Dial(url)` / `DialWith(url, DialOptions{...})` (`ws://`, `wss://`); `Conn`: `Send(Message)`, `SendText`, `SendBinary`, `SendFragments`, `Ping`, `Recv() Task<Message!>`, `for msg in conn`, `Close()`, `CloseWith(code, reason)`, `Pongs()`, `SetMaxMessageSize`; фрагментация, ping/pong (pong — автоматически), коды закрытия (`CloseError`, `IsCloseError`), маскирование, проверка UTF-8; `Send` из нескольких задач сериализуется мьютексом. permessage-deflate не реализован. ✓ реализовано |
 | `std.net.url` | разбор и сборка URL, query-параметры |
-| `std.net.mail` | отправка писем по SMTP |
+| `std.net.mail` | адреса RFC 5322, сборка MIME-писем и отправка по SMTP — ✓ (см. ниже) |
 
 Реализовано (`std.net.tls`, Slang-код `compiler/src/sema/stdlib_src/tls*.sl`
 поверх `std.net` и примитивов `std.crypto.*`; рантайм — `runtime/ABI.md` §19):
@@ -1473,8 +1647,8 @@ brotli, bzip2, lzw.
 - Версии: TLS 1.3 (RFC 8446) и TLS 1.2 только с ECDHE + AEAD (RFC 5246,
   5288, 7905): наборы `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384`,
   `TLS_CHACHA20_POLY1305_SHA256`; `ECDHE_ECDSA/ECDHE_RSA_WITH_AES_128/256_GCM`,
-  `..._CHACHA20_POLY1305_SHA256`; группы X25519 и P-256; подписи
-  ECDSA P-256/SHA-256, Ed25519, RSA-PSS (SHA-256/384/512), RSA PKCS#1 v1.5
+  `..._CHACHA20_POLY1305_SHA256`; группы X25519, P-256 и P-384; подписи
+  ECDSA P-256/SHA-256 и P-384/SHA-384, Ed25519, RSA-PSS (SHA-256/384/512), RSA PKCS#1 v1.5
   (только TLS 1.2 и сертификаты). Без RSA-обмена ключами, CBC, сжатия,
   renegotiation (HelloRequest получает предупреждение `no_renegotiation`),
   SSLv3/TLS 1.0/1.1, 0-RTT. Порядок наборов — сначала AES-GCM при AES-NI,
@@ -1517,8 +1691,29 @@ brotli, bzip2, lzw.
   `InsecureSkipVerify` отключает только проверку цепочки и имени, подпись
   CertificateVerify проверяется всегда.
 - Нет: OCSP stapling, `signature_algorithms_cert`, экспорт ключей,
-  post-handshake auth, 0-RTT, P-384/P-521, RSA-PSS-ключи (`rsassa-pss` OID),
+  post-handshake auth, 0-RTT, P-521, RSA-PSS-ключи (`rsassa-pss` OID),
   горячей перезагрузки сертификатов.
+
+Реализовано (`std.net.mail`, Slang, `sema/stdlib_src/mail.sl`):
+
+- `Address{Name, Address}` с `String()` (имя в кавычках или RFC 2047),
+  `ParseAddress(s)`, `ParseAddressList(s)` (кавычки, `<...>`, старая форма
+  `a@b (Имя)`, закодированные слова, группы `Team: a, b;` разворачиваются).
+- `Message{From, To, Cc, Bcc, ReplyTo, Subject, Text, HTML, Attachments,
+  Headers, Date, MessageID, Boundary}` с `Build() string!`: `text/plain` и
+  `text/html` (7bit или quoted-printable) в `multipart/alternative`,
+  вложения (`Attachment{Filename, ContentType, Data, Inline, ContentID}`,
+  base64 по 76 символов) в `multipart/mixed`, встроенные части в
+  `multipart/related`; не-ASCII заголовки — Q-слова ≤ 75 символов,
+  перенос строк заголовков (`FoldHeader`) до 78 символов.
+- SMTP: `Dial(addr, Config{TLS, TLSConfig, HelloName, Timeout,
+  AllowInsecureAuth}) *Client!` (EHLO, при `TLS: "auto"` — SMTPS на 465,
+  иначе STARTTLS, если сервер его предлагает; `"starttls"` требует его),
+  `Client.StartTLS/Authenticate/Mail/Rcpt/Data/Reset/Quit/Extension`;
+  `Send(addr, auth, msg)` и `SendWith(addr, cfg, auth, msg)`; `Auth`
+  (`PlainAuth`, `LoginAuth`, `CramMD5Auth`; без механизма — лучший из
+  предложенных; PLAIN/LOGIN без TLS — ошибка), ответы 4xx/5xx —
+  `SMTPError{Code, Msg}` с `Temporary()`. DKIM-подписи нет.
 
 ### Криптография
 
@@ -1526,14 +1721,14 @@ brotli, bzip2, lzw.
 |--------------|------------|
 | `std.crypto.hash` | `Sha256`, `Sha512`, `Sha3`, `Blake2`, `Md5` (только для совместимости), потоковый интерфейс `Hasher` |
 | `std.crypto.hmac` | HMAC поверх любого хэша |
-| `std.crypto.aes` | AES-GCM, AES-CBC; `ChaCha20-Poly1305` — ✓ AES-GCM (`std.crypto.aes`), ChaCha20-Poly1305 (`std.crypto.chacha`); нет AES-CBC |
-| `std.crypto.rsa` | генерация ключей, подпись, шифрование, PKCS#1/OAEP — ✓ подпись и проверка PKCS#1 v1.5 и PSS; нет генерации ключей и шифрования |
-| `std.crypto.ecdsa`, `std.crypto.ed25519` | ключи на эллиптических кривых, подпись и проверка — ✓ P-256 и Ed25519 |
-| `std.crypto.ecdh`, `std.crypto.x25519` | обмен ключами — ✓ P-256 и X25519 |
-| `std.crypto.kdf` | `Pbkdf2`, `Argon2`, `Scrypt`, `Hkdf` — ✓ HKDF (`std.crypto.hkdf`) |
+| `std.crypto.aes` | AES-GCM, AES-CBC; `ChaCha20-Poly1305` — ✓ AES-GCM (`std.crypto.aes`), AES-CBC с PKCS#7 (для старых форматов), ChaCha20-Poly1305 (`std.crypto.chacha`) |
+| `std.crypto.rsa` | генерация ключей, подпись, шифрование, PKCS#1/OAEP — ✓ подпись и проверка PKCS#1 v1.5 и PSS, шифрование OAEP, генерация ключей (Miller-Rabin) |
+| `std.crypto.ecdsa`, `std.crypto.ed25519` | ключи на эллиптических кривых, подпись и проверка — ✓ P-256, P-384 и Ed25519 |
+| `std.crypto.ecdh`, `std.crypto.x25519` | обмен ключами — ✓ P-256, P-384 и X25519 |
+| `std.crypto.kdf` | `Pbkdf2`, `Argon2`, `Scrypt`, `Hkdf` — ✓ все (см. ниже) |
 | `std.crypto.rand` | криптографически стойкие случайные числа и байты |
 | `std.crypto.x509` | разбор и проверка сертификатов, PEM/DER — ✓ |
-| `std.crypto.password` | `Hash`/`Verify` на базе Argon2 для паролей |
+| `std.crypto.password` | `Hash`/`Verify` на базе Argon2 для паролей — ✓ |
 
 Реализация: примитивы — на C в рантайме, по проверенным реализациям с
 константным временем (без ветвлений и обращений к памяти по секретам),
@@ -1580,6 +1775,36 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
   возведения в степень, проверка результата открытым ключом).
 - `std.crypto.hkdf`: `Extract(hash, salt, ikm)`, `Expand(hash, prk, info, n)`
   (RFC 5869).
+- `std.crypto.kdf`: `Pbkdf2(password, salt, iter, keyLen, hash)` (RFC 8018),
+  `Scrypt(password, salt, N, r, p, keyLen)` (RFC 7914), `Argon2id/Argon2i/
+  Argon2d(password, salt, time, memoryKiB, threads, keyLen)` и
+  `Argon2(password, salt, Argon2Params{Variant, Time, Memory, Threads,
+  KeyLen, Secret, AssociatedData})` (RFC 9106, версия 0x13; полосы
+  заполняются последовательно), `Hkdf(hash, secret, salt, info, keyLen)`;
+  `std.crypto.hash.Blake2b(data, size, key)` (RFC 7693). Пароли и соли —
+  `[]byte`.
+- `std.crypto.password`: `Hash(pw) string!` — строка PHC
+  `$argon2id$v=19$m=65536,t=3,p=4$<соль>$<хэш>` (base64 без `=`, соль
+  16 байт, параметры по умолчанию RFC 9106 §4), `HashWith(pw, Params)`,
+  `Verify(pw, hash) bool` (параметры из строки, сравнение за постоянное
+  время; совместимо с argon2-cffi/libargon2), `NeedsRehash(hash)` /
+  `NeedsRehashWith`, `Parse(hash) Info!`.
+- P-384 (`crypto/p384.c`, та же схема, что у P-256, на 6×64 битах):
+  `ecdh.GenerateKeyP384/PublicKeyP384/SharedSecretP384`,
+  `ecdsa.GenerateKeyP384/PublicKeyP384/SignP384/VerifyP384` (DER, nonce
+  RFC 6979 с HMAC-SHA384); в TLS — группа secp384r1 и схема
+  `ecdsa_secp384r1_sha384`, в x509 — проверка подписей ключами P-384 и
+  `ParsePrivateKey` для P-384.
+- `std.crypto.aes`: `CbcEncrypt/CbcDecrypt` (PKCS#7; ошибка заполнения —
+  `aes-cbc: invalid padding`, проверка за постоянное время), `CbcEncryptRaw/
+  CbcDecryptRaw`, `Pkcs7Pad/Pkcs7Unpad`, `DecryptBlock` (AES-NI или
+  обратный шифр без таблиц). CBC без MAC — только для старых форматов.
+- `std.crypto.rsa`: `GenerateKey(bits) []byte!` (PKCS#1 DER, e = 65537;
+  простые — случайные кандидаты, пробное деление и Miller-Rabin на C,
+  остальное — `std.math.big`), `PublicKeyOf(der) PublicKey!`,
+  `EncryptOAEP(n, e, hash, msg, label)` / `DecryptOAEP(keyDER, hash, ct,
+  label)` (RFC 8017 §7.1, декодирование за постоянное время),
+  `IsProbablePrime(p, rounds)`.
 - `std.crypto.x509` (Slang, `sema/stdlib_src/x509.sl`): `ParseDER(der)
   *Certificate!`, `ParsePEM(text) []*Certificate!`, `DecodePEM`/`EncodePEM`,
   `Certificate{Raw, RawTBSCertificate, Version, SerialNumber, Subject,
@@ -1611,10 +1836,10 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 | `std.encoding.xml`, `std.encoding.yaml`, `std.encoding.toml` | та же модель; XML pull-reader и атрибуты `@xml(attr)`, YAML якоря и многодокументные потоки, TOML с сохранением комментариев |
 | `std.encoding.base64`, `std.encoding.hex` | кодировки |
 | `std.encoding.csv` | чтение и запись CSV |
-| `std.compress` | gzip, zlib, zstd |
+| `std.compress` | gzip, zlib, zstd (декодер и кодер), brotli (декодер) |
 | `std.regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Slang |
 | `std.unicode` | классификация символов, нормализация (✓ классы и регистр по таблицам Unicode 15, `utf8`, `utf16`; нет нормализации) |
-| `std.database.sql` | единый интерфейс к SQL, драйверы PostgreSQL/SQLite/MySQL отдельными пакетами |
+| `std.database.sql` | единый асинхронный интерфейс к SQL с пулом и `Query<T>`; драйверы `std.database.postgres` (на Slang) и `std.database.sqlite` (системная libsqlite3) — ✓ (см. `docs/FRAMEWORK.md` §3); MySQL позже |
 
 Реализовано: `std.encoding.base64` — `Encode`, `EncodeString`, `Decode`,
 `DecodeString`, URL-safe `EncodeURL`/`DecodeURL`; `std.encoding.hex` —
@@ -1803,7 +2028,7 @@ cfg         = "@cfg" "(" cond { "," cond } ")" ;
 cond        = ( "os" | "arch" | "feature" ) ":" string | ( "not" | "any" | "all" ) "(" cond { "," cond } ")" ;
 struct      = "struct" ident [ generics ] [ "implements" type { "," type } ] "{" { field | method } "}" ;
 generics    = "<" tparam { "," tparam } ">" ;
-tparam      = ident [ ":" type ] ;            (* type: interface, Ordered, Comparable *)
+tparam      = ident [ ":" type ] ;            (* type: interface, or builtin Ordered, Comparable, Equatable, Add, Sub, Mul, Div, Rem, Neg, MatMul *)
 interface   = [ "sealed" ] "interface" ident "{" { type | ifacemethod } "}" ;   (* type: embedded interface *)
 ifacemethod = { attribute } [ "async" ] "func" ident "(" [ params ] ")" [ type ] [ block ] ;  (* block: default method *)
 enum        = "enum" ident [ generics ] [ "implements" type { "," type } ] "{" variant { ( "," | newline ) variant } { method } "}" ;
@@ -1819,6 +2044,7 @@ type        = path [ typeargs ] [ "!" ] | "*" type | "weak" "*" type | "[" [ con
 block       = "{" { stmt } "}" ;
 stmt        = var | const | if | for | switch | trystmt | "return" [ exprs ]
             | "break" | "continue" | "defer" expr | exprs [ assignop exprs ] ;
+assignop    = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "@=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
                                               (* a, b = b, a ; (q, r) = f() *)
 var         = "var" ident [ type ] [ "=" expr ] ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
@@ -1827,6 +2053,9 @@ switch      = "switch" expr "{" { "case" pattern { "," pattern } ":" stmts }
               [ "default" ":" stmts ] "}" ;
 pattern     = expr | expr ".." expr | path "(" [ idents ] ")" | type ident ;
 expr        = unary { binop unary } ;
+binop       = "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
+            | "+" | "-" | "|" | "^" | "*" | "/" | "%" | "@" | "<<" | ">>" | "&" ;
+                                              (* "@" between operands: MatMul; an "@" starting a decl is an attribute *)
 unary       = ( "-" | "!" | "&" | "*" | "await" ) unary | tryexpr | postfix ;
 tryexpr     = "try" expr ( "catch" ident block | "else" expr ) ;
 trystmt     = "try" block "catch" ident block ;

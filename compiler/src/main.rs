@@ -26,6 +26,11 @@ commands:
                                  with the Slang formatters loaded (docs/DEBUGGER.md)
                                  (--source <file>: run debugger commands, --batch: then exit)
   debug --formatters lldb|gdb    print the path of the formatter script
+  debug run [path] [--port N] [--headless [--wait]] [options] [-- args]
+                                 build with the in-process debug agent and debug it
+                                 (gdb-like commands; --headless: only start the agent,
+                                 for an editor to attach)
+  debug attach [host:]port       debug a program started with SLANG_DEBUG=[host]:port
   manifest schema                print the manifest JSON Schema
   manifest convert <toml|json|yaml> [dir]
                                  rewrite the manifest in another format
@@ -290,6 +295,11 @@ fn formatter_script(which: &str) -> PathBuf {
 /// formatters loaded. `slang debug --formatters lldb|gdb` prints the script
 /// path (used by the VS Code extension for `initCommands`).
 fn debug(args: &[String]) {
+    match args.first().map(String::as_str) {
+        Some("run") => return debug_agent_run(&args[1..]),
+        Some("attach") => return debug_agent_attach(&args[1..]),
+        _ => {}
+    }
     let mut gdb = false;
     let mut batch = false;
     let mut source: Option<String> = None;
@@ -369,4 +379,73 @@ fn debug(args: &[String]) {
         Ok(s) => exit(s.code().unwrap_or(1)),
         Err(e) => fail(&format!("cannot start the debugger: {e}")),
     }
+}
+
+/// `slang debug run [path] [--port N] [--headless [--wait]] [build options] [-- args]`:
+/// builds with the debug agent and starts the program with
+/// `SLANG_DEBUG`; without `--headless`, debugs it with the command-line
+/// client (`slang::dap::repl`).
+fn debug_agent_run(args: &[String]) {
+    let mut port = 0u16;
+    let mut headless = false;
+    let mut wait = false;
+    let mut flags = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--" => {
+                flags.extend_from_slice(&args[i..]);
+                break;
+            }
+            "--port" => {
+                i += 1;
+                port = args.get(i).and_then(|p| p.parse().ok()).unwrap_or_else(|| usage_error("--port needs a number"));
+            }
+            "--headless" => headless = true,
+            "--wait" => wait = true,
+            a => flags.push(a.to_string()),
+        }
+        i += 1;
+    }
+    let (mut opts, prog_args) = parse_build_args(&flags);
+    opts.emit = slang::build::Emit::Exe;
+    opts.debug_agent = Some(true);
+    let tmp = std::env::temp_dir().join(format!("slang-debug-{}", std::process::id()));
+    let plain = opts.input.as_ref().is_some_and(|p| p.is_file());
+    if plain && opts.output.is_none() {
+        if let Err(e) = std::fs::create_dir_all(&tmp) {
+            fail(&format!("cannot create {}: {e}", tmp.display()));
+        }
+        let stem = opts.input.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "prog".into());
+        opts.output = Some(tmp.join(stem));
+    }
+    let exes = slang::build::build(&opts).unwrap_or_else(|e| fail(&e));
+    let exe = match exes.as_slice() {
+        [e] => e.clone(),
+        [] => fail("nothing to debug: no executable was built"),
+        _ => fail("several executables were built; choose one with -p"),
+    };
+    let code = if headless {
+        let spec = if wait { format!("127.0.0.1:{port},wait") } else { format!("127.0.0.1:{port}") };
+        let st = std::process::Command::new(&exe).args(&prog_args).env("SLANG_DEBUG", spec).status();
+        match st {
+            Ok(s) => s.code().unwrap_or(1),
+            Err(e) => fail(&format!("cannot run {}: {e}", exe.display())),
+        }
+    } else {
+        let (child, addr) = slang::dap::spawn(&exe, &prog_args, port, true, false).unwrap_or_else(|e| fail(&e));
+        let c = slang::dap::Client::connect(&addr, std::time::Duration::from_secs(10)).unwrap_or_else(|e| fail(&format!("cannot connect to the debug agent at {addr}: {e}")));
+        slang::dap::repl(c, Some(child))
+    };
+    let _ = std::fs::remove_dir_all(&tmp);
+    exit(code);
+}
+
+/// `slang debug attach [host:]port`: the command-line client for a
+/// program already running with `SLANG_DEBUG`.
+fn debug_agent_attach(args: &[String]) {
+    let Some(a) = args.first() else { usage_error("debug attach needs [host:]port") };
+    let addr = if a.starts_with(':') { format!("127.0.0.1{a}") } else if a.contains(':') { a.clone() } else { format!("127.0.0.1:{a}") };
+    let c = slang::dap::Client::connect(&addr, std::time::Duration::from_secs(10)).unwrap_or_else(|e| fail(&format!("cannot connect to the debug agent at {addr}: {e}")));
+    exit(slang::dap::repl(c, None));
 }

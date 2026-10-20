@@ -214,7 +214,8 @@ impl Project {
                 if dev && i + 1 == closure.len() {
                     deps.extend(p.dev_deps.iter().filter_map(|&d| local(d)));
                 }
-                PackageScope { name: p.name.clone(), namespace: p.namespace.clone(), deps }
+                let capabilities = p.manifest.manifest.capabilities.iter().filter(|(_, on)| **on).map(|(c, _)| c.clone()).collect();
+                PackageScope { name: p.name.clone(), namespace: p.namespace.clone(), deps, capabilities }
             })
             .collect();
         ImportPolicy { file_package: file_pkg, packages }

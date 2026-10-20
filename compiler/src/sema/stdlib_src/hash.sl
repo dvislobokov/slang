@@ -7,7 +7,10 @@ namespace std.hash
 // A streaming hash: Write data (never fails), then Sum.
 interface Hasher {
     func Write(p []byte) int!
-    func WriteString(s string) int!
+    // Default: Write of the string's bytes (implementations may override).
+    func WriteString(s string) int! {
+        return this.Write(std.strings.Bytes(s))?
+    }
     // The hash of everything written so far (big-endian bytes); does not
     // change the state.
     func Sum() []byte
@@ -20,7 +23,10 @@ interface Hasher {
 // A Hasher with a 32-bit result.
 interface Hash32 {
     func Write(p []byte) int!
-    func WriteString(s string) int!
+    // Default: Write of the string's bytes (implementations may override).
+    func WriteString(s string) int! {
+        return this.Write(std.strings.Bytes(s))?
+    }
     func Sum() []byte
     func Reset()
     func Size() int
@@ -31,7 +37,10 @@ interface Hash32 {
 // A Hasher with a 64-bit result.
 interface Hash64 {
     func Write(p []byte) int!
-    func WriteString(s string) int!
+    // Default: Write of the string's bytes (implementations may override).
+    func WriteString(s string) int! {
+        return this.Write(std.strings.Bytes(s))?
+    }
     func Sum() []byte
     func Reset()
     func Size() int

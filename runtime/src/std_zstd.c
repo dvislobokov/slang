@@ -736,3 +736,7 @@ int64_t slang_compress_rt_xxh64(const slang_slice *data) {
     const uint8_t *p = data && data->len ? data->data : (const uint8_t *)"";
     return (int64_t)xxh64(p, data ? (size_t)data->len : 0);
 }
+
+/* XXH64 (seed 0) for the encoder (std_zstd_enc.c). */
+uint64_t slang__zstd_xxh64(const uint8_t *p, size_t n);
+uint64_t slang__zstd_xxh64(const uint8_t *p, size_t n) { return xxh64(p, n); }

@@ -526,3 +526,164 @@ bool slang__rsa_sign_pss(const uint8_t *der, size_t derlen, int alg, const uint8
     if (!emsa_pss_encode(em + (k - emlen), emlen, embits, alg, digest, dlen)) return false;
     return priv_op(der, derlen, em, sig, siglen);
 }
+
+/* ---- RSAES-OAEP (RFC 8017 7.1), MGF1 with the same hash ---- */
+
+bool slang__rsa_encrypt_oaep(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
+                             const uint8_t *msg, size_t mlen, const uint8_t *label, size_t llen,
+                             uint8_t *out, size_t *olen) {
+    pubkey pk;
+    size_t hl = slang__hash_size(alg);
+    if (!hl || !pub_load(&pk, n, nlen, e, elen)) return false;
+    size_t k = pk.k;
+    if (k < 2 * hl + 2 || mlen > k - 2 * hl - 2) return false;
+    uint8_t em[1024];
+    memset(em, 0, k);
+    uint8_t *seed = em + 1, *db = em + 1 + hl;
+    size_t dblen = k - hl - 1;
+    slang__hash(alg, label, llen, db);
+    db[dblen - mlen - 1] = 1;
+    memcpy(db + dblen - mlen, msg, mlen);
+    if (!slang__crypto_random(seed, hl)) return false;
+    mgf1_xor(alg, db, dblen, seed, hl);
+    mgf1_xor(alg, seed, hl, db, dblen);
+    bool ok = pub_op(&pk, em, k, out);
+    slang__crypto_wipe(em, sizeof em);
+    if (ok) *olen = k;
+    return ok;
+}
+
+bool slang__rsa_decrypt_oaep(const uint8_t *der, size_t derlen, int alg, const uint8_t *ct, size_t clen,
+                             const uint8_t *label, size_t llen, uint8_t *out, size_t *mlen) {
+    size_t hl = slang__hash_size(alg);
+    size_t k = slang__rsa_priv_size(der, derlen);
+    if (!hl || k == 0 || k > 1024 || clen != k || k < 2 * hl + 2) return false;
+    uint8_t em[1024], lh[64];
+    size_t klen = 0;
+    if (!priv_op(der, derlen, ct, em, &klen)) return false;
+    uint8_t *seed = em + 1, *db = em + 1 + hl;
+    size_t dblen = k - hl - 1;
+    mgf1_xor(alg, seed, hl, db, dblen);
+    mgf1_xor(alg, db, dblen, seed, hl);
+    slang__hash(alg, label, llen, lh);
+    /* constant-time checks: em[0] == 0, lHash matches, PS zeros then 0x01 */
+    uint32_t good = (uint32_t)slang__crypto_ct_eq(db, lh, hl);
+    good &= (uint32_t)(((uint32_t)em[0] - 1) >> 31) & 1;   /* em[0] == 0 */
+    uint32_t looking = 1, index = 0, invalid = 0;
+    for (size_t i = hl; i < dblen; i++) {
+        uint32_t b = db[i];
+        uint32_t is0 = ((b - 1) >> 31) & 1, is1 = (((b ^ 1) - 1) >> 31) & 1;
+        uint32_t take = looking & is1;
+        index = (index & ~(0u - take)) | ((uint32_t)i & (0u - take));
+        looking &= ~is1 & 1;
+        invalid |= looking & ~is0 & 1;
+    }
+    good &= ~looking & 1;
+    good &= ~invalid & 1;
+    bool ok = good == 1;
+    if (ok) {
+        size_t start = (size_t)index + 1;
+        *mlen = dblen - start;
+        memcpy(out, db + start, *mlen);
+    }
+    slang__crypto_wipe(em, sizeof em);
+    return ok;
+}
+
+/* ---- prime generation ---- */
+
+static const uint16_t SMALL_PRIMES[] = {
+    3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109,
+    113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239,
+    241, 251, 257, 263, 269, 271, 277, 281, 283, 293, 307, 311, 313, 317, 331, 337, 347, 349, 353, 359, 367, 373, 379,
+    383, 389, 397, 401, 409, 419, 421, 431, 433, 439, 443, 449, 457, 461, 463, 467, 479, 487, 491, 499, 503, 509, 521,
+    523, 541, 547, 557, 563, 569, 571, 577, 587, 593, 599, 601, 607, 613, 617, 619, 631, 641, 643, 647, 653, 659, 661,
+    673, 677, 683, 691, 701, 709, 719, 727, 733, 739, 743, 751, 757, 761, 769, 773, 787, 797, 809, 811, 821, 823, 827,
+    829, 839, 853, 857, 859, 863, 877, 881, 883, 887, 907, 911, 919, 929, 937, 941, 947, 953, 967, 971, 977, 983, 991, 997,
+};
+
+static uint64_t bn_mod_small(const uint64_t *a, int nl, uint64_t m) {
+    u128 r = 0;
+    for (int i = nl - 1; i >= 0; i--) r = ((r << 64) | a[i]) % m;
+    return (uint64_t)r;
+}
+
+static bool miller_rabin(const uint64_t *nn, int nl, int rounds) {
+    mctx c;
+    if (!mctx_init(&c, nn, nl)) return false;
+    uint64_t nm1[MAXL], d[MAXL], one[MAXL] = { 1 };
+    bn_sub(nm1, nn, one, nl);
+    memcpy(d, nm1, (size_t)nl * 8);
+    int s = 0;
+    while (!(d[0] & 1)) {
+        for (int i = 0; i < nl; i++) d[i] = (d[i] >> 1) | (i + 1 < nl ? d[i + 1] << 63 : 0);
+        s++;
+    }
+    uint64_t mone[MAXL], mnm1[MAXL];
+    mmul(&c, mone, one, c.rr);
+    mmul(&c, mnm1, nm1, c.rr);
+    for (int r = 0; r < rounds; r++) {
+        uint64_t a[MAXL] = { 0 }, t[MAXL], x[MAXL];
+        /* random base in [2, n-2]: random nl-limb value reduced below n-3 */
+        do {
+            if (!slang__crypto_random((uint8_t *)a, (size_t)nl * 8)) return false;
+            int top = bn_bits(nn, nl) - 1;
+            a[top / 64] &= ((uint64_t)1 << (top % 64)) - 1;   /* a < 2^top <= n - 1 */
+            if (top % 64 == 0) a[top / 64] = 0;
+        } while (bn_bits(a, nl) < 2);
+        modexp_pub(&c, x, a, d, nl);
+        mmul(&c, t, x, c.rr);   /* Montgomery form */
+        if (memcmp(t, mone, (size_t)nl * 8) == 0 || memcmp(t, mnm1, (size_t)nl * 8) == 0) continue;
+        bool comp = true;
+        for (int i = 1; i < s; i++) {
+            mmul(&c, t, t, t);
+            if (memcmp(t, mnm1, (size_t)nl * 8) == 0) {
+                comp = false;
+                break;
+            }
+            if (memcmp(t, mone, (size_t)nl * 8) == 0) break;
+        }
+        if (comp) return false;
+    }
+    return true;
+}
+
+bool slang__rsa_is_probable_prime(const uint8_t *p, size_t plen, int rounds) {
+    while (plen && *p == 0) { p++; plen--; }
+    if (plen == 0 || plen > 512) return false;
+    int nl = (int)((plen + 7) / 8);
+    uint64_t a[MAXL] = { 0 };
+    bn_from_be(a, nl, p, plen);
+    if (nl == 1 && a[0] < 1000) {
+        if (a[0] < 2) return false;
+        if (a[0] == 2) return true;
+        for (size_t i = 0; i < sizeof SMALL_PRIMES / sizeof SMALL_PRIMES[0]; i++)
+            if (a[0] == SMALL_PRIMES[i]) return true;
+        return false;
+    }
+    if (!(a[0] & 1)) return false;
+    for (size_t i = 0; i < sizeof SMALL_PRIMES / sizeof SMALL_PRIMES[0]; i++)
+        if (bn_mod_small(a, nl, SMALL_PRIMES[i]) == 0) return false;
+    return miller_rabin(a, nl, rounds);
+}
+
+bool slang__rsa_gen_prime(uint8_t *out, int bits, uint64_t e) {
+    if (bits < 64 || bits > 4096 || bits % 8 != 0) return false;
+    size_t len = (size_t)bits / 8;
+    int nl = (bits + 63) / 64;
+    int rounds = bits >= 1024 ? 8 : bits >= 512 ? 12 : 20;
+    for (int tries = 0; tries < 100000; tries++) {
+        if (!slang__crypto_random(out, len)) return false;
+        out[0] |= 0xC0;
+        out[len - 1] |= 1;
+        uint64_t a[MAXL] = { 0 };
+        bn_from_be(a, nl, out, len);
+        bool small = false;
+        for (size_t i = 0; i < sizeof SMALL_PRIMES / sizeof SMALL_PRIMES[0] && !small; i++)
+            if (bn_mod_small(a, nl, SMALL_PRIMES[i]) == 0) small = true;
+        if (small) continue;
+        if (e > 1 && bn_mod_small(a, nl, e) == 1) continue;
+        if (miller_rabin(a, nl, rounds)) return true;
+    }
+    return false;
+}

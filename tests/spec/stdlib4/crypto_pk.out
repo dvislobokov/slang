@@ -1,0 +1,25 @@
+04ec3a4e415b4e19a4568618029f427fa5da9a8bc4ae92e02e06aae5286b300c64def8f0ea9055866064a254515480bc138015d9b72d7d57244ea8ef9ac0c621896708a59367f9dfb9f54ca84b3f1c9db1288b231c3ae0d4fe7344fd2533264720
+94edbb92a5ecb8aad4736e56c691916b3f88140666ce9fa73d64c4ea95ad133c81a648152e44acf96e36dd1e80fabe4699ef4aeb15f178cea1fe40db2603138f130e740a19624526203b6351d0a3a94fa329c145786e679e7b82c71a38628ac8
+true false
+48 97 true
+eba84ea917fa14c9c21df9ac192af27df0f378c5ea49c0853bfe3d41c4a3c9fc180aadb1da2117fea2872a73a1ca316a
+true
+p384: invalid peer public key
+7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2
+true
+f58c4c04d6e5f1ba779eabfb5f7bfbd69cfc4e967edb808d679f777bc6702c7d
+true
+16 legacy secret
+aes-cbc: invalid padding
+aes-cbc: input is not a multiple of the block size
+6162630505050505 abc
+pkcs7: invalid padding
+modulus bytes 256 010001
+from python
+256 round trip
+rsa: decryption error
+rsa: OAEP encryption failed (invalid key or message too long)
+generated 256 true
+RSA
+true false
+rsa: key size must be a multiple of 16 in 1024..8192 bits

@@ -10,6 +10,8 @@ import std.net
 //   main                  server and load generator in one process
 //   main --server         only the server: prints its port (stderr), serves until killed
 //   main --load host:port only the load generator (against any server)
+//   main --server-tls     HTTP/2 over TLS (std.net.http.test certificate, ALPN h2):
+//                         prints its port (stderr), serves until killed
 
 async func Hello(req *http.Request, res *http.Response) void! {
     res.Text(200, "hello, world\n")
@@ -80,6 +82,13 @@ async func main() void! {
     }
     var r = http.NewRouter()
     r.Get("/", Hello)
+    if len(args) > 1 && args[1] == "--server-tls" {
+        var ts = http.test.NewTLSServer(r)?
+        io.Eprintln(fmt.Format("{0}", ts.Port()))
+        for {
+            await task.Delay(1000000)
+        }
+    }
     var srv = http.Server{Addr: "127.0.0.1:0", Handler: r}
     srv.Listen()?
     var serving = srv.Serve()

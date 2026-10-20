@@ -1,69 +1,46 @@
 namespace std.net.http
 
-// The Slang-source std.net.http v1 (see sema/stdsrc.rs for the rules):
-// HTTP/1.1 over plain TCP (std.net). Requests and responses are parsed
-// here, in Slang, on top of a small buffered reader. Bodies are strings
-// (byte strings: any bytes are allowed). https URLs and Server.TLS use
-// std.net.tls; both sides talk to a `stream` (std.net.Conn or tls.Conn).
+// The Slang-source std.net.http (see sema/stdsrc.rs for the rules), split
+// over several files of this namespace:
+//   http.sl          shared helpers, Request/Response, URLs, connections
+//   http_server.sl   Server (HTTP/1.1 keep-alive loop), Router, middleware chain
+//   http_client.sl   Client, Transport (connection pool, proxies), cookies
+//   http2.sl         HTTP/2 (RFC 9113) frames, streams, flow control (std.net.http.hpack)
+//   http_extra.sl    middleware, ServeFile/ServeDir, Server-Sent Events
+// The hot loops (head scanning/parsing, header canonicalisation, response
+// heads, WebSocket masking, HPACK Huffman) are C in runtime/src/std_http.c
+// (the rt* externs, runtime/ABI.md 16.5). Bodies are strings (byte strings:
+// any bytes are allowed); https and Server.TLS use std.net.tls.
 
 // ---- shared helpers ---------------------------------------------------
 
-// The canonical form of a header name: "content-type" -> "Content-Type".
+// The canonical form of a header name: "content-type" -> "Content-Type"
+// (surrounding blanks trimmed; a name that is not a token is kept as is).
 func CanonicalHeader(name string) string {
-    var parts = std.strings.Split(std.strings.ToLower(std.strings.Trim(name)), "-")
-    var out = ""
-    for i, p in parts {
-        if i > 0 {
-            out += "-"
-        }
-        if len(p) > 0 {
-            out += std.strings.ToUpper(p[..1]) + p[1..]
-        }
-    }
-    return out
+    return rtCanonical(name)
 }
 
 // The reason phrase of a status code ("Not Found"); "" if unknown.
 func StatusText(code int) string {
-    switch code {
-        case 100: return "Continue"
-        case 101: return "Switching Protocols"
-        case 200: return "OK"
-        case 201: return "Created"
-        case 202: return "Accepted"
-        case 204: return "No Content"
-        case 206: return "Partial Content"
-        case 301: return "Moved Permanently"
-        case 302: return "Found"
-        case 303: return "See Other"
-        case 304: return "Not Modified"
-        case 307: return "Temporary Redirect"
-        case 308: return "Permanent Redirect"
-        case 400: return "Bad Request"
-        case 401: return "Unauthorized"
-        case 403: return "Forbidden"
-        case 404: return "Not Found"
-        case 405: return "Method Not Allowed"
-        case 408: return "Request Timeout"
-        case 409: return "Conflict"
-        case 411: return "Length Required"
-        case 413: return "Content Too Large"
-        case 415: return "Unsupported Media Type"
-        case 422: return "Unprocessable Content"
-        case 429: return "Too Many Requests"
-        case 431: return "Request Header Fields Too Large"
-        case 500: return "Internal Server Error"
-        case 501: return "Not Implemented"
-        case 502: return "Bad Gateway"
-        case 503: return "Service Unavailable"
-        case 504: return "Gateway Timeout"
-        case 505: return "HTTP Version Not Supported"
-    }
-    return ""
+    return rtStatusText(code)
 }
 
 func itoa(n int) string {
-    return std.fmt.Format("{0}", n)
+    return rtItoa(n)
+}
+
+func maxInt(a int, b int) int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+func minInt(a int, b int) int {
+    if a < b {
+        return a
+    }
+    return b
 }
 
 func parseHex(s string) int! {
@@ -88,6 +65,20 @@ func parseHex(s string) int! {
         n = n * 16 + d
     }
     return n
+}
+
+func hexString(n int) string {
+    if n == 0 {
+        return "0"
+    }
+    var digits = "0123456789abcdef"
+    var out = ""
+    var x = n
+    for x > 0 {
+        out = digits[x % 16..x % 16 + 1] + out
+        x = x / 16
+    }
+    return out
 }
 
 // Percent-decoding of a query component ('+' is a space).
@@ -119,6 +110,26 @@ func unescape(s string) string {
     return std.strings.FromBytes(out)
 }
 
+// Percent-encoding of a query component (space as '+').
+func QueryEscape(s string) string {
+    var hex = "0123456789ABCDEF"
+    var out []byte = []
+    for i in 0..len(s) {
+        var c = int(s[i])
+        var plain = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 46 || c == 95 || c == 126
+        if plain {
+            out = append(out, byte(c))
+        } else if c == 32 {
+            out = append(out, byte(43))
+        } else {
+            out = append(out, byte(37))
+            out = append(out, hex[c / 16])
+            out = append(out, hex[c % 16])
+        }
+    }
+    return std.strings.FromBytes(out)
+}
+
 // Parses "a=1&b=x%20y" into a map (the last value of a repeated key wins).
 func ParseQuery(q string) map[string]string {
     var m = map[string]string{}
@@ -139,148 +150,360 @@ func ParseQuery(q string) map[string]string {
     return m
 }
 
-// A byte stream: a std.net.Conn or a std.net.tls.Conn.
-interface stream {
-    func Read(n int) Task<[]byte!>
-    func WriteString(text string) Task<int!>
-    func SetTimeout(ms int)
-    func Close()
-    func IsClosed() bool
-    func RemoteAddr() string
+// Whether the comma-separated header h[name] contains token (case-insensitive).
+func headerHas(h map[string]string, name string, token string) bool {
+    var v = h[name]
+    if v == "" {
+        return false
+    }
+    return rtHasToken(v, token)
 }
 
-// A buffered reader over a connection.
-struct reader {
-    c stream
-    buf string
+// Whether a comma-separated header value contains token (case-insensitive;
+// "gzip;q=1" counts as "gzip").
+func HasToken(value string, token string) bool {
+    return rtHasToken(value, token)
+}
+
+// Sets h[name] (canonical), joining an existing value with ", " (or "\n"
+// for Set-Cookie, whose values may contain commas).
+func addHeader(h map[string]string, name string, value string) {
+    var k = rtCanonical(name)
+    var old = h[k]
+    if old == "" {
+        h[k] = value
+    } else if k == "Set-Cookie" {
+        h[k] = old + "\n" + value
+    } else {
+        h[k] = old + ", " + value
+    }
+}
+
+// The current time as an HTTP date ("Mon, 02 Jan 2006 15:04:05 GMT").
+func Date() string {
+    return rtDate()
+}
+
+// Unix seconds as an HTTP date.
+func FormatTime(unixSeconds int) string {
+    return rtHttpTime(unixSeconds)
+}
+
+// The Unix seconds of an HTTP date (IMF-fixdate, RFC 850 or asctime).
+func ParseTime(s string) int! {
+    var t = rtParseHttpTime(s)
+    if t < 0 {
+        return error("invalid HTTP date \"" + s + "\"")
+    }
+    return t
+}
+
+// ---- connections --------------------------------------------------------
+
+// The byte stream under an HTTP connection: plain TCP (std.net.Conn) or
+// TLS (std.net.tls.Conn). Plain TCP reads go straight into the caller's
+// buffer (ReadInto); TLS copies a decrypted record.
+struct conn {
+    nc std.net.Conn
+    tc std.net.tls.Conn
+    isTLS bool
+    // TLS bytes decrypted but not yet consumed by readInto
+    tpend []byte
+
+    // Reads into buf[off..]: bytes read, 0 at the end of the stream.
+    func readInto(buf []byte, off int) Task<int!> {
+        if this.isTLS {
+            return tlsReadInto(this, buf, off)
+        }
+        return this.nc.ReadInto(buf[off..])
+    }
+
+    func read(n int) Task<[]byte!> {
+        if this.isTLS {
+            return this.tc.Read(n)
+        }
+        return this.nc.Read(n)
+    }
+
+    func writeString(s string) Task<int!> {
+        if this.isTLS {
+            return this.tc.WriteString(s)
+        }
+        return this.nc.WriteString(s)
+    }
+
+    func write(b []byte) Task<int!> {
+        if this.isTLS {
+            return this.tc.Write(b)
+        }
+        return this.nc.Write(b)
+    }
+
+    // Sends n bytes of the file at path from off (sendfile(2) on plain TCP).
+    func sendFile(path string, off int, n int) Task<int!> {
+        if this.isTLS {
+            return copyFile(this, path, off, n)
+        }
+        return this.nc.SendFile(path, off, n)
+    }
+
+    func setTimeout(ms int) {
+        if this.isTLS {
+            this.tc.SetTimeout(ms)
+        } else {
+            this.nc.SetTimeout(ms)
+        }
+    }
+
+    func setCork(on bool) {
+        if !this.isTLS {
+            try this.nc.SetCork(on) catch err {
+                return
+            }
+        }
+    }
+
+    func close() {
+        if this.isTLS {
+            this.tc.Close()
+        } else {
+            this.nc.Close()
+        }
+    }
+
+    func isClosed() bool {
+        if this.isTLS {
+            return this.tc.IsClosed()
+        }
+        return this.nc.IsClosed()
+    }
+
+    func remoteAddr() string {
+        if this.isTLS {
+            return this.tc.RemoteAddr()
+        }
+        return this.nc.RemoteAddr()
+    }
+
+    func localAddr() string {
+        if this.isTLS {
+            return this.tc.LocalAddr()
+        }
+        return this.nc.LocalAddr()
+    }
+
+    // The ALPN protocol of a TLS connection ("" for plain TCP); runs the
+    // handshake first.
+    async func alpn() string! {
+        if !this.isTLS {
+            return ""
+        }
+        await this.tc.Handshake()?
+        return this.tc.ConnectionState().ALPN
+    }
+}
+
+func plainConn(c std.net.Conn) *conn {
+    return new conn{nc: c}
+}
+
+func tlsConn(c std.net.tls.Conn) *conn {
+    return new conn{tc: c, isTLS: true}
+}
+
+async func tlsReadInto(c *conn, buf []byte, off int) int! {
+    if len(c.tpend) == 0 {
+        c.tpend = await c.tc.Read(maxInt(len(buf) - off, 16384))?
+        if len(c.tpend) == 0 {
+            return 0
+        }
+    }
+    var k = std.net.rtCopyBytes(buf, off, c.tpend, 0, len(c.tpend))
+    c.tpend = c.tpend[k..]
+    return k
+}
+
+// SendFile over TLS: read the file in 64 KB pieces and write them.
+async func copyFile(c *conn, path string, off int, n int) int! {
+    var f = std.os.Open(path)?
+    var info = f.Stat()?
+    var size = info.Size
+    var end = size
+    if n >= 0 && off + n < size {
+        end = off + n
+    }
+    var pos = off
+    var buf = std.net.MakeBuffer(65536)
+    for pos < end {
+        var want = minInt(65536, end - pos)
+        var k = try f.ReadAt(buf[..want], pos) catch err {
+            _ = f.Close()
+            return err
+        }
+        if k <= 0 {
+            break
+        }
+        _ = try await c.write(buf[..k]) catch err {
+            _ = f.Close()
+            return err
+        }
+        pos += k
+    }
+    _ = f.Close()
+    return pos - off
+}
+
+// A read buffer over a connection: buf[r..w) holds received bytes not yet
+// consumed; heads are parsed in place (rtHeadEnd/rtParseHead), so a
+// keep-alive connection reuses one buffer for every request.
+struct rbuf {
+    buf []byte
+    r int
+    w int
+    // where the search for the end of the head resumes
+    scan int
     eof bool
 
-    async func fill() void! {
-        var b = await this.c.Read(16384)?
-        if len(b) == 0 {
-            this.eof = true
-        } else {
-            this.buf += std.strings.FromBytes(b)
-        }
+    func buffered() int {
+        return this.w - this.r
     }
 
-    // Reads up to and including the blank line that ends a header block;
-    // "" if the stream ended before any byte.
-    async func readHead(limit int) string! {
-        for {
-            var i = std.strings.Index(this.buf, "\r\n\r\n")
-            if i >= 0 {
-                var head = this.buf[..i + 4]
-                this.buf = this.buf[i + 4..]
-                return head
-            }
-            if len(this.buf) > limit {
-                return error("header too large")
-            }
-            if this.eof {
-                if len(this.buf) == 0 {
-                    return ""
-                }
-                return error("unexpected end of stream in header")
-            }
-            await this.fill()?
+    // Consumes n bytes.
+    func skip(n int) {
+        this.r += n
+        if this.r >= this.w {
+            this.r = 0
+            this.w = 0
         }
+        this.scan = this.r
     }
 
-    async func readLine() string! {
-        for {
-            var i = std.strings.Index(this.buf, "\r\n")
-            if i >= 0 {
-                var line = this.buf[..i]
-                this.buf = this.buf[i + 2..]
-                return line
-            }
-            if this.eof {
-                return error("unexpected end of stream")
-            }
-            await this.fill()?
+    // Makes room for at least `need` more bytes after w (compacting first,
+    // then growing).
+    func room(need int) {
+        if len(this.buf) - this.w >= need {
+            return
         }
+        if this.r > 0 {
+            var n = this.w - this.r
+            _ = std.net.rtCopyBytes(this.buf, 0, this.buf, this.r, n)
+            this.scan -= this.r
+            if this.scan < 0 {
+                this.scan = 0
+            }
+            this.w = n
+            this.r = 0
+            if len(this.buf) - this.w >= need {
+                return
+            }
+        }
+        var size = maxInt(len(this.buf) * 2, this.w + need)
+        var nb = std.net.MakeBuffer(size)
+        _ = std.net.rtCopyBytes(nb, 0, this.buf, 0, this.w)
+        this.buf = nb
     }
 
-    async func readN(n int) string! {
-        for len(this.buf) < n {
-            if this.eof {
-                return error("unexpected end of stream in body")
-            }
-            await this.fill()?
-        }
-        var s = this.buf[..n]
-        this.buf = this.buf[n..]
+    // Takes n buffered bytes as a string.
+    func take(n int) string {
+        var s = std.strings.FromBytes(this.buf[this.r..this.r + n])
+        this.skip(n)
         return s
     }
 
-    async func readAll() string! {
-        for !this.eof {
-            await this.fill()?
-        }
-        var s = this.buf
-        this.buf = ""
-        return s
+    // The buffered bytes (a copy), emptying the buffer.
+    func drain() []byte {
+        var out = std.bytes.Clone(this.buf[this.r..this.w])
+        this.r = 0
+        this.w = 0
+        this.scan = 0
+        return out
     }
+}
 
-    // A chunked body (RFC 9112 section 7.1); trailers are skipped.
-    async func readChunked() string! {
-        var body = ""
-        for {
-            var line = await this.readLine()?
-            var semi = std.strings.Index(line, ";")
-            if semi >= 0 {
-                line = line[..semi]
-            }
-            var n = parseHex(line)?
-            if n == 0 {
-                for {
-                    var t = await this.readLine()?
-                    if t == "" {
-                        return body
-                    }
-                }
-            }
-            body += await this.readN(n)?
-            var crlf = await this.readLine()?
-            if crlf != "" {
-                return error("malformed chunk")
-            }
+func newRbuf(size int) *rbuf {
+    return new rbuf{buf: std.net.MakeBuffer(size)}
+}
+
+// Reads more bytes into b (at least one, or sets eof); false at the end
+// of the stream.
+async func fill(c *conn, b *rbuf) bool! {
+    b.room(4096)
+    var k = await c.readInto(b.buf, b.w)?
+    if k == 0 {
+        b.eof = true
+        return false
+    }
+    b.w += k
+    return true
+}
+
+// Reads until n bytes are buffered; fails at the end of the stream.
+async func fillTo(c *conn, b *rbuf, n int) void! {
+    if b.buffered() < n {
+        b.room(n - b.buffered())
+    }
+    for b.buffered() < n {
+        if !await fill(c, b)? {
+            return error("unexpected end of stream in body")
         }
     }
 }
 
-// Parses header lines (after the first line) of a header block.
-func parseHeaders(lines []string) map[string]string! {
-    var h = map[string]string{}
-    for i in 1..len(lines) {
-        var line = lines[i]
-        if line == "" {
-            continue
+// Reads one CRLF-terminated line (without the terminator).
+async func readLine(c *conn, b *rbuf, limit int) string! {
+    var from = b.r
+    for {
+        var i = std.net.rtIndexByte(b.buf[..b.w], from, 10)
+        if i >= 0 {
+            var end = i
+            if end > b.r && b.buf[end - 1] == 13 {
+                end -= 1
+            }
+            var line = std.strings.FromBytes(b.buf[b.r..end])
+            b.skip(i + 1 - b.r)
+            return line
         }
-        var c = std.strings.Index(line, ":")
-        if c <= 0 {
-            return error("malformed header line \"" + line + "\"")
+        if b.buffered() > limit {
+            return error("line too long")
         }
-        var k = CanonicalHeader(line[..c])
-        var v = std.strings.Trim(line[c + 1..])
-        var old = h[k]
-        if old != "" {
-            h[k] = old + ", " + v
-        } else {
-            h[k] = v
+        from = b.w
+        var off = b.r
+        if !await fill(c, b)? {
+            return error("unexpected end of stream")
         }
+        from -= off - b.r
     }
-    return h
 }
 
-func headerHas(h map[string]string, name string, token string) bool {
-    for part in std.strings.Split(h[name], ",") {
-        if std.strings.EqualFold(std.strings.Trim(part), token) {
-            return true
+// A chunked body (RFC 9112 section 7.1); trailers are skipped. limit < 0:
+// no limit.
+async func readChunked(c *conn, b *rbuf, limit int) string! {
+    var body = ""
+    for {
+        var line = await readLine(c, b, 4096)?
+        var semi = std.strings.Index(line, ";")
+        if semi >= 0 {
+            line = line[..semi]
         }
+        var n = parseHex(line)?
+        if n == 0 {
+            for {
+                var t = await readLine(c, b, 65536)?
+                if t == "" {
+                    return body
+                }
+            }
+        }
+        if limit >= 0 && len(body) + n > limit {
+            return ErrBodyTooLarge
+        }
+        await fillTo(c, b, n + 2)?
+        body += b.take(n)
+        if b.buf[b.r] != 13 || b.buf[b.r + 1] != 10 {
+            return error("malformed chunk")
+        }
+        b.skip(2)
     }
-    return false
 }
 
 // ---- messages ------------------------------------------------------------
@@ -292,12 +515,19 @@ struct Request {
     Path string
     // The raw query after '?' ("" if none).
     Query string
+    // "HTTP/1.1", "HTTP/1.0" or "HTTP/2.0".
     Proto string
     Headers map[string]string
     Body string
     // Path parameters set by the Router ({id} -> Params["id"]).
     Params map[string]string
     RemoteAddr string
+    // The Host header (the :authority of HTTP/2).
+    Host string
+    // "http" or "https".
+    Scheme string
+    // Values set by middleware for later handlers (Set/Value).
+    values map[string]any
 
     func Header(name string) string {
         return this.Headers[CanonicalHeader(name)]
@@ -312,14 +542,78 @@ struct Request {
         var m = ParseQuery(this.Query)
         return m[name]
     }
+
+    // The path with the query ("/a?b=1").
+    func RequestURI() string {
+        if this.Query == "" {
+            return this.Path
+        }
+        return this.Path + "?" + this.Query
+    }
+
+    // The value of the cookie name ("" if absent).
+    func Cookie(name string) string {
+        for c in ParseCookies(this.Headers["Cookie"]) {
+            if c.Name == name {
+                return c.Value
+            }
+        }
+        return ""
+    }
+
+    // Every cookie of the Cookie header.
+    func Cookies() []Cookie {
+        return ParseCookies(this.Headers["Cookie"])
+    }
+
+    // Stores a value for later handlers of the chain (middleware).
+    func Set(key string, value any) {
+        if this.values == nil {
+            this.values = map[string]any{}
+        }
+        this.values[key] = value
+    }
+
+    // A value stored with Set (nil if absent).
+    func Value(key string) any {
+        if this.values == nil {
+            return nil
+        }
+        return this.values[key]
+    }
+
+    // The body parsed as JSON.
+    func JSON<T>() T! {
+        return std.encoding.json.Parse<T>(this.Body)?
+    }
+
+    // Whether the request asks for a WebSocket upgrade.
+    func IsWebSocket() bool {
+        return headerHas(this.Headers, "Connection", "upgrade") && rtHasToken(this.Headers["Upgrade"], "websocket")
+    }
 }
 
 // Response is the response of a client request, and what a server handler
-// fills in (Status defaults to 200, Body is sent with a Content-Length).
+// fills in (Status defaults to 200, Body is sent with a Content-Length
+// unless the handler streams it with Flush).
 struct Response {
     Status int
     Headers map[string]string
     Body string
+    // Client side: the protocol of the response ("HTTP/1.1", "HTTP/2.0").
+    Proto string
+    // Client side, for Client.Stream: the body, read incrementally
+    // (Body stays ""). Close it (or read it to the end) to release the
+    // connection.
+    Reader *BodyReader
+    // server side: the connection's writer (nil in a recorder)
+    w *respWriter
+    // a file body set by SendFile
+    file string
+    fileOff int
+    fileLen int
+    // flushes so far (recorders count them too)
+    flushes int
 
     func Header(name string) string {
         return this.Headers[CanonicalHeader(name)]
@@ -330,6 +624,20 @@ struct Response {
             this.Headers = map[string]string{}
         }
         this.Headers[CanonicalHeader(name)] = value
+    }
+
+    // Adds a value to a header (repeated values are joined with ", ").
+    func AddHeader(name string, value string) {
+        if this.Headers == nil {
+            this.Headers = map[string]string{}
+        }
+        addHeader(this.Headers, name, value)
+    }
+
+    func DelHeader(name string) {
+        if this.Headers != nil {
+            delete(this.Headers, CanonicalHeader(name))
+        }
     }
 
     // Appends to the body.
@@ -350,6 +658,200 @@ struct Response {
         this.SetHeader("Content-Type", "application/json")
         this.Body = body
     }
+
+    // Sets status, Content-Type text/html and body.
+    func Html(status int, body string) {
+        this.Status = status
+        this.SetHeader("Content-Type", "text/html; charset=utf-8")
+        this.Body = body
+    }
+
+    // Encodes v as the JSON body (status, Content-Type application/json).
+    func SendJSON<T>(status int, v T) {
+        this.Json(status, std.encoding.json.Format<T>(v))
+    }
+
+    // Client side: the body parsed as JSON.
+    func JSON<T>() T! {
+        return std.encoding.json.Parse<T>(this.Body)?
+    }
+
+    // Redirects to location with status (301, 302, 303, 307 or 308).
+    func Redirect(status int, location string) {
+        this.Status = status
+        this.SetHeader("Location", location)
+    }
+
+    // Adds a Set-Cookie header.
+    func SetCookie(c Cookie) {
+        this.AddHeader("Set-Cookie", c.String())
+    }
+
+    // Server side: sends the status, the headers and the body written so
+    // far, and empties Body; later writes go out with the next Flush or
+    // when the handler returns (HTTP/1.1: chunked transfer encoding;
+    // HTTP/2: DATA frames). A no-op on a recorder (it only counts).
+    func Flush() Task<void!> {
+        this.flushes += 1
+        if this.w == nil {
+            return doneTask()
+        }
+        return flushResponse(this)
+    }
+
+    // Server side: the body is n bytes of the file at path from off
+    // (n < 0: to the end), sent with sendfile(2) on plain TCP after the
+    // handler returns. Sets Content-Length; Body is ignored.
+    func SendFile(path string, off int, n int) void! {
+        var info = std.os.Stat(path)?
+        var end = info.Size
+        if n >= 0 && off + n < end {
+            end = off + n
+        }
+        if off > end {
+            return error("SendFile: offset past the end of " + path)
+        }
+        this.file = path
+        this.fileOff = off
+        this.fileLen = end - off
+    }
+
+    // Server side: whether the head has been sent (by Flush).
+    func Started() bool {
+        return this.w != nil && this.w.started
+    }
+
+    // Server side, HTTP/1.x: takes the connection over (see RawConn); the
+    // server then neither writes a response nor closes the connection.
+    func Hijack() RawConn! {
+        return hijack(this)?
+    }
+
+    // How many times Flush was called (recorders, tests).
+    func Flushes() int {
+        return this.flushes
+    }
+}
+
+async func doneTask() void! {
+}
+
+
+// ---- cookies ---------------------------------------------------------------
+
+// Cookie is an HTTP cookie (RFC 6265): Set-Cookie attributes for a
+// response, Name/Value for a request.
+struct Cookie {
+    Name string
+    Value string
+    Path string
+    Domain string
+    // Unix seconds (0: a session cookie).
+    Expires int
+    // Max-Age in seconds (0: not set, < 0: delete now).
+    MaxAge int
+    Secure bool
+    HttpOnly bool
+    // "Strict", "Lax", "None" or "".
+    SameSite string
+
+    // The Set-Cookie header value.
+    func String() string {
+        var s = this.Name + "=" + this.Value
+        if this.Path != "" {
+            s += "; Path=" + this.Path
+        }
+        if this.Domain != "" {
+            s += "; Domain=" + this.Domain
+        }
+        if this.Expires > 0 {
+            s += "; Expires=" + rtHttpTime(this.Expires)
+        }
+        if this.MaxAge > 0 {
+            s += "; Max-Age=" + itoa(this.MaxAge)
+        } else if this.MaxAge < 0 {
+            s += "; Max-Age=0"
+        }
+        if this.HttpOnly {
+            s += "; HttpOnly"
+        }
+        if this.Secure {
+            s += "; Secure"
+        }
+        if this.SameSite != "" {
+            s += "; SameSite=" + this.SameSite
+        }
+        return s
+    }
+}
+
+// Parses a Cookie request header ("a=1; b=2").
+func ParseCookies(h string) []Cookie {
+    var out []Cookie = []
+    if h == "" {
+        return out
+    }
+    for part in std.strings.Split(h, ";") {
+        var p = std.strings.Trim(part)
+        var eq = std.strings.Index(p, "=")
+        if eq <= 0 {
+            continue
+        }
+        var v = p[eq + 1..]
+        if len(v) >= 2 && v[0] == 34 && v[len(v) - 1] == 34 {
+            v = v[1..len(v) - 1]
+        }
+        out = append(out, Cookie{Name: p[..eq], Value: v})
+    }
+    return out
+}
+
+// Parses one Set-Cookie header value; now is the current Unix time (for
+// Max-Age).
+func ParseSetCookie(v string, now int) Cookie! {
+    var parts = std.strings.Split(v, ";")
+    var first = std.strings.Trim(parts[0])
+    var eq = std.strings.Index(first, "=")
+    if eq <= 0 {
+        return error("malformed Set-Cookie \"" + v + "\"")
+    }
+    var c = Cookie{Name: std.strings.Trim(first[..eq]), Value: std.strings.Trim(first[eq + 1..])}
+    if len(c.Value) >= 2 && c.Value[0] == 34 && c.Value[len(c.Value) - 1] == 34 {
+        c.Value = c.Value[1..len(c.Value) - 1]
+    }
+    for i in 1..len(parts) {
+        var a = std.strings.Trim(parts[i])
+        var k = a
+        var val = ""
+        var e = std.strings.Index(a, "=")
+        if e >= 0 {
+            k = std.strings.Trim(a[..e])
+            val = std.strings.Trim(a[e + 1..])
+        }
+        var lk = std.strings.ToLower(k)
+        if lk == "path" {
+            c.Path = val
+        } else if lk == "domain" {
+            c.Domain = std.strings.TrimPrefix(std.strings.ToLower(val), ".")
+        } else if lk == "expires" {
+            c.Expires = try ParseTime(val) else 0
+        } else if lk == "max-age" {
+            var n = try std.strings.ToInt(val) else 0
+            if n <= 0 {
+                c.MaxAge = -1
+            } else {
+                c.MaxAge = n
+                c.Expires = now + n
+            }
+        } else if lk == "secure" {
+            c.Secure = true
+        } else if lk == "httponly" {
+            c.HttpOnly = true
+        } else if lk == "samesite" {
+            c.SameSite = val
+        }
+    }
+    return c
 }
 
 // ---- URLs -----------------------------------------------------------------
@@ -363,6 +865,8 @@ struct URL {
     Port int
     Path string
     RawQuery string
+    // user:password before '@' ("" if none).
+    User string
 
     // The path with the query, as sent in the request line.
     func RequestURI() string {
@@ -375,9 +879,15 @@ struct URL {
     func String() string {
         return this.Scheme + "://" + this.Host + this.RequestURI()
     }
+
+    // host:port with the default port filled in ("[::1]:443").
+    func Addr() string {
+        return std.net.JoinHostPort(this.Hostname, this.Port)
+    }
 }
 
-// ParseURL parses "http://host[:port][/path][?query]" (a fragment is dropped).
+// ParseURL parses "scheme://[user@]host[:port][/path][?query]" (a fragment
+// is dropped).
 func ParseURL(raw string) URL! {
     var i = std.strings.Index(raw, "://")
     if i <= 0 {
@@ -400,6 +910,11 @@ func ParseURL(raw string) URL! {
     }
     u.Host = rest[..end]
     rest = rest[end..]
+    var at = std.strings.LastIndex(u.Host, "@")
+    if at >= 0 {
+        u.User = u.Host[..at]
+        u.Host = u.Host[at + 1..]
+    }
     q = std.strings.Index(rest, "?")
     if q >= 0 {
         u.RawQuery = rest[q + 1..]
@@ -413,7 +928,7 @@ func ParseURL(raw string) URL! {
         return error("invalid URL \"" + raw + "\": missing host")
     }
     var defPort = 80
-    if u.Scheme == "https" {
+    if u.Scheme == "https" || u.Scheme == "wss" {
         defPort = 443
     }
     var c = std.strings.LastIndex(u.Host, ":")
@@ -440,6 +955,9 @@ func resolveRef(u URL, location string) string {
         return location
     }
     var base = u.Scheme + "://" + u.Host
+    if std.strings.HasPrefix(location, "//") {
+        return u.Scheme + ":" + location
+    }
     if std.strings.HasPrefix(location, "/") {
         return base + location
     }
@@ -451,197 +969,7 @@ func resolveRef(u URL, location string) string {
     return base + dir + location
 }
 
-// ---- client ---------------------------------------------------------------
-
-// Client sends requests. Timeout (milliseconds, 0 = none) applies to the
-// connect and to every network read and write; MaxRedirects (default 10
-// when 0, negative = do not follow) limits followed redirects.
-struct Client {
-    Timeout int
-    MaxRedirects int
-    // Extra headers sent with every request.
-    Headers map[string]string
-    // TLS settings for https URLs (nil: system roots, SNI and host name
-    // from the URL, ALPN http/1.1).
-    TLS *std.net.tls.Config
-
-    func Get(url string) Task<Response!> {
-        return doRequest(this.TLS, this.Timeout, this.MaxRedirects, this.Headers, "GET", url, "", "")
-    }
-
-    func Post(url string, body string, contentType string) Task<Response!> {
-        return doRequest(this.TLS, this.Timeout, this.MaxRedirects, this.Headers, "POST", url, body, contentType)
-    }
-
-    // Any method; headers may be nil.
-    func Do(method string, url string, body string, headers map[string]string) Task<Response!> {
-        var h = map[string]string{}
-        for k, v in this.Headers {
-            h[k] = v
-        }
-        for k, v in headers {
-            h[k] = v
-        }
-        return doRequest(this.TLS, this.Timeout, this.MaxRedirects, h, method, url, body, "")
-    }
-}
-
-// Get fetches url with a default client (30 s timeout, 10 redirects).
-func Get(url string) Task<Response!> {
-    return doRequest(nil, 30000, 0, nil, "GET", url, "", "")
-}
-
-// Post sends body with the given Content-Type.
-func Post(url string, body string, contentType string) Task<Response!> {
-    return doRequest(nil, 30000, 0, nil, "POST", url, body, contentType)
-}
-
-async func doRequest(tc *std.net.tls.Config, timeout int, maxRedirects int, headers map[string]string, method string, url string, body string, contentType string) Response! {
-    var limit = maxRedirects
-    if limit == 0 {
-        limit = 10
-    }
-    var m = method
-    var target = url
-    var payload = body
-    var ctype = contentType
-    var redirects = 0
-    for {
-        var u = ParseURL(target)?
-        var res = await roundTrip(tc, timeout, headers, m, u, payload, ctype)?
-        var loc = res.Header("Location")
-        var st = res.Status
-        var isRedirect = st == 301 || st == 302 || st == 303 || st == 307 || st == 308
-        if !isRedirect || loc == "" || limit < 0 {
-            return res
-        }
-        redirects += 1
-        if redirects > limit {
-            return error("GET " + url + ": stopped after " + itoa(limit) + " redirects")
-        }
-        if st == 303 || ((st == 301 || st == 302) && m == "POST") {
-            m = "GET"
-            payload = ""
-            ctype = ""
-        }
-        target = resolveRef(u, loc)
-    }
-}
-
-// Connects to the host of u: plain TCP for http, TLS for https.
-async func dialStream(tc *std.net.tls.Config, u URL, timeout int) stream! {
-    var addr = std.net.JoinHostPort(u.Hostname, u.Port)
-    if u.Scheme == "https" {
-        var cfg = std.net.tls.Config{}
-        if tc != nil {
-            cfg = *tc
-        }
-        if cfg.ServerName == "" {
-            cfg.ServerName = u.Hostname
-        }
-        if len(cfg.ALPN) == 0 {
-            cfg.ALPN = ["http/1.1"]
-        }
-        var tlsConn = await std.net.tls.DialTimeout(addr, cfg, timeout)?
-        return tlsConn
-    }
-    var c = await std.net.DialTimeout(addr, timeout)?
-    return c
-}
-
-async func roundTrip(tc *std.net.tls.Config, timeout int, headers map[string]string, method string, u URL, body string, contentType string) Response! {
-    if u.Scheme != "http" && u.Scheme != "https" {
-        return error(method + " " + u.String() + ": unsupported URL scheme \"" + u.Scheme + "\"")
-    }
-    var c = try await dialStream(tc, u, timeout) catch err {
-        return std.errors.Wrap(err, method + " " + u.String())
-    }
-    c.SetTimeout(timeout)
-    var req = method + " " + u.RequestURI() + " HTTP/1.1\r\nHost: " + u.Host + "\r\n"
-    var sentUA = false
-    var sentAccept = false
-    for k, v in headers {
-        var ck = CanonicalHeader(k)
-        if ck == "User-Agent" {
-            sentUA = true
-        }
-        if ck == "Accept" {
-            sentAccept = true
-        }
-        if ck != "Host" && ck != "Content-Length" && ck != "Connection" {
-            req += ck + ": " + v + "\r\n"
-        }
-    }
-    if !sentUA {
-        req += "User-Agent: slang-http/0.1\r\n"
-    }
-    if !sentAccept {
-        req += "Accept: */*\r\n"
-    }
-    // std.diag: W3C trace context of the current span.
-    var traceparent = std.diag.Traceparent()
-    if traceparent != "" && headers["traceparent"] == "" && headers["Traceparent"] == "" {
-        req += "traceparent: " + traceparent + "\r\n"
-    }
-    if contentType != "" {
-        req += "Content-Type: " + contentType + "\r\n"
-    }
-    if body != "" || method == "POST" || method == "PUT" || method == "PATCH" {
-        req += "Content-Length: " + itoa(len(body)) + "\r\n"
-    }
-    req += "Connection: close\r\n\r\n" + body
-    _ = try await c.WriteString(req) catch err {
-        c.Close()
-        return std.errors.Wrap(err, method + " " + u.String())
-    }
-    var r = new reader{c: c}
-    var res = try await readResponse(r, method) catch err {
-        c.Close()
-        return std.errors.Wrap(err, method + " " + u.String())
-    }
-    c.Close()
-    return res
-}
-
-async func readResponse(r *reader, method string) Response! {
-    for {
-        var head = await r.readHead(1 << 20)?
-        if head == "" {
-            return error("server closed the connection without a response")
-        }
-        var lines = std.strings.Split(head, "\r\n")
-        var sl = std.strings.SplitN(lines[0], " ", 3)
-        if len(sl) < 2 || !std.strings.HasPrefix(sl[0], "HTTP/") {
-            return error("malformed status line \"" + lines[0] + "\"")
-        }
-        var status = try std.strings.ToInt(sl[1]) else -1
-        if status < 100 || status > 999 {
-            return error("malformed status line \"" + lines[0] + "\"")
-        }
-        var h = parseHeaders(lines)?
-        if status >= 100 && status < 200 {
-            continue
-        }
-        var res = Response{Status: status, Headers: h}
-        if method == "HEAD" || status == 204 || status == 304 {
-            return res
-        }
-        if headerHas(h, "Transfer-Encoding", "chunked") {
-            res.Body = await r.readChunked()?
-        } else if h["Content-Length"] != "" {
-            var n = try std.strings.ToInt(h["Content-Length"]) else -1
-            if n < 0 {
-                return error("invalid Content-Length \"" + h["Content-Length"] + "\"")
-            }
-            res.Body = await r.readN(n)?
-        } else {
-            res.Body = await r.readAll()?
-        }
-        return res
-    }
-}
-
-// ---- server ---------------------------------------------------------------
+// ---- handlers ---------------------------------------------------------------
 
 // Handler serves requests. Handler methods are not async (interfaces
 // cannot declare async methods); they return the task of an async call,
@@ -650,366 +978,28 @@ interface Handler {
     func Serve(req *std.net.http.Request, res *std.net.http.Response) Task<void!>
 }
 
-struct route {
-    method string
-    parts []string
-    handler func(*Request, *Response) Task<void!>
-}
-
-// Router dispatches by method and path pattern; "{name}" segments match
-// any one segment and are stored in req.Params, a final "*" matches the
-// rest of the path. Unknown paths get 404, other methods 405.
-struct Router {
-    routes []route
-
-    func Handle(method string, pattern string, h func(*Request, *Response) Task<void!>) {
-        this.routes = append(this.routes, route{method: method, parts: splitPath(pattern), handler: h})
-    }
-
-    func Get(pattern string, h func(*Request, *Response) Task<void!>) {
-        this.Handle("GET", pattern, h)
-    }
-
-    func Post(pattern string, h func(*Request, *Response) Task<void!>) {
-        this.Handle("POST", pattern, h)
-    }
-
-    func Put(pattern string, h func(*Request, *Response) Task<void!>) {
-        this.Handle("PUT", pattern, h)
-    }
-
-    func Delete(pattern string, h func(*Request, *Response) Task<void!>) {
-        this.Handle("DELETE", pattern, h)
-    }
+// HandlerFunc adapts a function to Handler.
+struct HandlerFunc {
+    F func(*Request, *Response) Task<void!>
 
     func Serve(req *Request, res *Response) Task<void!> {
-        var parts = splitPath(req.Path)
-        var allowed = ""
-        for r in this.routes {
-            var params = matchRoute(r.parts, parts)
-            if params == nil {
-                continue
-            }
-            if r.method != req.Method && !(r.method == "GET" && req.Method == "HEAD") {
-                if allowed != "" {
-                    allowed += ", "
-                }
-                allowed += r.method
-                continue
-            }
-            req.Params = params
-            return r.handler(req, res)
-        }
-        if allowed != "" {
-            res.SetHeader("Allow", allowed)
-            return plainStatus(res, 405)
-        }
-        return plainStatus(res, 404)
+        return this.F(req, res)
     }
 }
 
-// NewRouter makes an empty router.
-func NewRouter() *Router {
-    return new Router{}
+// Wraps a function as a Handler.
+func Func(f func(*Request, *Response) Task<void!>) Handler {
+    return HandlerFunc{F: f}
 }
 
-async func plainStatus(res *Response, status int) void! {
-    res.Text(status, itoa(status) + " " + StatusText(status) + "\n")
-}
-
-func splitPath(p string) []string {
-    var out []string = []
-    for s in std.strings.Split(p, "/") {
-        if s != "" {
-            out = append(out, s)
-        }
+// Middleware wraps a handler (Router.Use, Chain).
+// A middleware is `func(next Handler) Handler`.
+func Chain(h Handler, mws []func(Handler) Handler) Handler {
+    var out = h
+    var i = len(mws) - 1
+    for i >= 0 {
+        out = mws[i](out)
+        i -= 1
     }
     return out
-}
-
-// The parameters if pattern matches path, else nil.
-func matchRoute(pattern []string, path []string) map[string]string {
-    var params = map[string]string{}
-    for i, p in pattern {
-        if p == "*" && i == len(pattern) - 1 {
-            var rest = ""
-            for j in i..len(path) {
-                if j > i {
-                    rest += "/"
-                }
-                rest += path[j]
-            }
-            params["*"] = rest
-            return params
-        }
-        if i >= len(path) {
-            return nil
-        }
-        if std.strings.HasPrefix(p, "{") && std.strings.HasSuffix(p, "}") {
-            params[p[1..len(p) - 1]] = unescape(path[i])
-        } else if p != path[i] {
-            return nil
-        }
-    }
-    if len(pattern) != len(path) {
-        return nil
-    }
-    return params
-}
-
-// Server serves HTTP/1.1 on Addr ("host:port"; port 0 picks a free one).
-// Every connection is a task; keep-alive connections serve several
-// requests. IdleTimeout (ms, default 5000) closes connections that send
-// nothing; Shutdown stops accepting, closes idle connections and waits
-// for the requests in flight.
-struct Server {
-    Addr string
-    Handler Handler
-    IdleTimeout int
-    // Serves HTTPS with this configuration when set (ALPN defaults to
-    // http/1.1).
-    TLS *std.net.tls.ServerConfig
-    st *serverState
-
-    // Binds the listening socket (Serve does it if needed).
-    func Listen() void! {
-        if this.st != nil {
-            return
-        }
-        var l = std.net.Listen(this.Addr)?
-        var idle = this.IdleTimeout
-        if idle == 0 {
-            idle = 5000
-        }
-        var st = new serverState{l: l, handler: this.Handler, idle: idle}
-        if this.TLS != nil {
-            var cfg = *this.TLS
-            if len(cfg.ALPN) == 0 {
-                cfg.ALPN = ["http/1.1"]
-            }
-            st.tlsL = try std.net.tls.Server(l, cfg) catch err {
-                l.Close()
-                return err
-            }
-            st.useTLS = true
-        }
-        this.st = st
-    }
-
-    // The bound port (after Listen).
-    func Port() int {
-        if this.st == nil {
-            return 0
-        }
-        return this.st.l.Port()
-    }
-
-    // Accepts connections until Shutdown.
-    func Serve() Task<void!> {
-        try this.Listen() catch err {
-            return failed(err)
-        }
-        return acceptLoop(this.st)
-    }
-
-    // Stops the server: no new connections, idle ones are closed, and the
-    // task completes once every request in flight has been answered.
-    func Shutdown() Task<void> {
-        if this.st == nil {
-            return std.task.Delay(0)
-        }
-        return shutdown(this.st)
-    }
-}
-
-async func failed(err error) void! {
-    return err
-}
-
-struct connEntry {
-    c stream
-    idle bool
-}
-
-struct serverState {
-    l std.net.Listener
-    useTLS bool
-    tlsL std.net.tls.Listener
-    handler Handler
-    idle int
-    guard int
-    closing bool
-    conns []*connEntry
-    wg std.task.WaitGroup
-}
-
-// The next connection, wrapped in TLS for an HTTPS server (its handshake
-// runs in the connection task, on the first read).
-async func acceptStream(st *serverState) stream! {
-    if st.useTLS {
-        var tc = await st.tlsL.Accept()?
-        return tc
-    }
-    var c = await st.l.Accept()?
-    return c
-}
-
-async func acceptLoop(st *serverState) void! {
-    for {
-        var c = try await acceptStream(st) catch err {
-            if st.closing {
-                return
-            }
-            return err
-        }
-        var e = new connEntry{c: c, idle: true}
-        std.task.rtLock(&st.guard)
-        if st.closing {
-            std.task.rtUnlock(&st.guard)
-            c.Close()
-            return
-        }
-        st.conns = append(st.conns, e)
-        st.wg.Add(1)
-        std.task.rtUnlock(&st.guard)
-        _ = serveConn(st, e)
-    }
-}
-
-async func shutdown(st *serverState) {
-    std.task.rtLock(&st.guard)
-    st.closing = true
-    var conns = st.conns
-    std.task.rtUnlock(&st.guard)
-    st.l.Close()
-    for e in conns {
-        if e.idle {
-            e.c.Close()
-        }
-    }
-    await st.wg.Wait()
-}
-
-func dropConn(st *serverState, e *connEntry) {
-    std.task.rtLock(&st.guard)
-    var keep []*connEntry = []
-    for x in st.conns {
-        if x != e {
-            keep = append(keep, x)
-        }
-    }
-    st.conns = keep
-    std.task.rtUnlock(&st.guard)
-    e.c.Close()
-    st.wg.Done()
-}
-
-async func serveConn(st *serverState, e *connEntry) {
-    var r = new reader{c: e.c}
-    for {
-        e.c.SetTimeout(st.idle)
-        var req = try await readRequest(r) catch err {
-            if !e.c.IsClosed() {
-                _ = await writeResponse(e.c, "HTTP/1.1", false, errorResponse(400, err.Message()), false)
-            }
-            break
-        }
-        if req == nil {
-            break
-        }
-        e.idle = false
-        req.RemoteAddr = e.c.RemoteAddr()
-        var res = new Response{Status: 200}
-        // std.diag: a traceparent header makes the caller's span the parent.
-        var remote = std.diag.enterRemote(req.Header("traceparent"))
-        try await st.handler.Serve(req, res) catch err {
-            res = errorResponse(500, err.Message())
-        }
-        std.diag.leaveRemote(remote)
-        var keep = req.Proto == "HTTP/1.1" && !headerHas(req.Headers, "Connection", "close") && !st.closing
-        if req.Proto == "HTTP/1.0" && headerHas(req.Headers, "Connection", "keep-alive") && !st.closing {
-            keep = true
-        }
-        var head = req.Method == "HEAD"
-        var ok = try await writeResponse(e.c, req.Proto, keep, res, head) else false
-        if !ok || !keep || st.closing {
-            break
-        }
-        e.idle = true
-    }
-    dropConn(st, e)
-}
-
-func errorResponse(status int, msg string) *Response {
-    var res = new Response{}
-    res.Text(status, itoa(status) + " " + StatusText(status) + ": " + msg + "\n")
-    return res
-}
-
-// Reads one request; nil at a clean end of stream.
-async func readRequest(r *reader) *Request! {
-    var head = await r.readHead(64 << 10)?
-    if head == "" {
-        return nil
-    }
-    var lines = std.strings.Split(head, "\r\n")
-    var rl = std.strings.Split(lines[0], " ")
-    if len(rl) != 3 || !std.strings.HasPrefix(rl[2], "HTTP/1.") {
-        return error("malformed request line")
-    }
-    var req = new Request{Method: rl[0], Proto: rl[2]}
-    var target = rl[1]
-    var q = std.strings.Index(target, "?")
-    if q >= 0 {
-        req.Query = target[q + 1..]
-        target = target[..q]
-    }
-    req.Path = target
-    req.Headers = parseHeaders(lines)?
-    if headerHas(req.Headers, "Transfer-Encoding", "chunked") {
-        req.Body = await r.readChunked()?
-    } else if req.Headers["Content-Length"] != "" {
-        var n = try std.strings.ToInt(req.Headers["Content-Length"]) else -1
-        if n < 0 {
-            return error("invalid Content-Length")
-        }
-        req.Body = await r.readN(n)?
-    }
-    return req
-}
-
-async func writeResponse(c stream, proto string, keep bool, res *Response, headOnly bool) bool! {
-    var status = res.Status
-    if status == 0 {
-        status = 200
-    }
-    var out = "HTTP/1.1 " + itoa(status) + " " + StatusText(status) + "\r\n"
-    var hasType = false
-    for k, v in res.Headers {
-        var ck = CanonicalHeader(k)
-        if ck == "Content-Length" || ck == "Connection" || ck == "Transfer-Encoding" {
-            continue
-        }
-        if ck == "Content-Type" {
-            hasType = true
-        }
-        out += ck + ": " + v + "\r\n"
-    }
-    if !hasType && res.Body != "" {
-        out += "Content-Type: text/plain; charset=utf-8\r\n"
-    }
-    out += "Content-Length: " + itoa(len(res.Body)) + "\r\n"
-    if keep {
-        if proto == "HTTP/1.0" {
-            out += "Connection: keep-alive\r\n"
-        }
-    } else {
-        out += "Connection: close\r\n"
-    }
-    out += "\r\n"
-    if !headOnly {
-        out += res.Body
-    }
-    _ = await c.WriteString(out)?
-    return true
 }

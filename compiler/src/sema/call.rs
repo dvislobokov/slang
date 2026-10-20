@@ -67,7 +67,9 @@ impl<'a> Sema<'a> {
     pub(crate) fn check_args(&mut self, params: &[TypeId], args: &[ast::Expr], fname: &str, span: Span) -> Vec<hir::Expr> {
         if params.len() != args.len() {
             if !args.iter().any(|a| a.is_recovered()) {
-                self.err(format!("wrong number of arguments in call to {fname}: expected {}, got {}", params.len(), args.len()), span);
+                let ps: Vec<String> = params.iter().map(|p| self.tn(*p)).collect();
+                let help = format!("{fname} takes ({})", ps.join(", "));
+                self.err_help(format!("wrong number of arguments in call to {fname}: expected {}, got {}", params.len(), args.len()), span, help);
             }
             self.check_args_loose(args);
             return Vec::new();
@@ -222,7 +224,9 @@ impl<'a> Sema<'a> {
                 return self.default_method_call(base, iface, name, args, span);
             }
             let sname = self.structs[sid as usize].name.clone();
-            self.err(format!("struct {sname} has no method {}", name.name), name.span);
+            let members = self.struct_member_names(sid);
+            let help = self.did_you_mean(&name.name, &members);
+            self.err_maybe_help(format!("struct {sname} has no method {}", name.name), name.span, help);
             self.check_args_loose(args);
             return self.invalid(span);
         }
@@ -254,7 +258,9 @@ impl<'a> Sema<'a> {
         if self.tt.is_interface(base.ty) {
             let methods = self.iface_methods(base.ty);
             let Some(idx) = methods.iter().position(|m| m.name == name.name) else {
-                self.err(format!("interface {} has no method {}", self.tn(base.ty), name.name), name.span);
+                let names: Vec<String> = methods.iter().map(|m| m.name.clone()).collect();
+                let help = self.did_you_mean(&name.name, &names);
+                self.err_maybe_help(format!("interface {} has no method {}", self.tn(base.ty), name.name), name.span, help);
                 self.check_args_loose(args);
                 return self.invalid(span);
             };
@@ -266,10 +272,12 @@ impl<'a> Sema<'a> {
             let args = self.check_args(&m.params, args, &fname, span);
             return mk(ExprKind::Call { callee: Callee::Interface { recv: Box::new(base), method: idx as u32 }, args }, m.ret, span);
         }
-        self.err(
-            format!("cannot call method {} on value of type {} (methods exist only on structs and interfaces)", name.name, self.tn(base.ty)),
-            name.span,
-        );
+        let help = match name.name.as_str() {
+            "Len" | "Length" => "use the builtin `len(x)`".to_string(),
+            "String" => "convert with `fmt.Format(\"{0}\", x)` or `strconv.Itoa(x)`".to_string(),
+            _ => "methods exist only on structs, enums and interfaces".to_string(),
+        };
+        self.err_help(format!("cannot call method {} on value of type {}", name.name, self.tn(base.ty)), name.span, help);
         self.check_args_loose(args);
         self.invalid(span)
     }
@@ -281,6 +289,9 @@ impl<'a> Sema<'a> {
         let idx = methods.iter().position(|m| m.name == name.name).unwrap();
         let m = methods[idx].clone();
         let fname = format!("{}.{}", self.tn(iface), m.name);
+        // A struct variable is converted by address (its methods take
+        // `this` by pointer), so the default method acts on it, not a copy.
+        let base = if matches!(self.tt.get(base.ty), Type::Struct(_)) && self.is_place(&base, false) { self.addr_of(base) } else { base };
         let recv = self.coerce(base, iface, Ctx::Other);
         let args = self.check_args(&m.params, args, &fname, span);
         mk(ExprKind::Call { callee: Callee::Interface { recv: Box::new(recv), method: idx as u32 }, args }, m.ret, span)

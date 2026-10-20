@@ -3,14 +3,26 @@ namespace std.testing
 // std.testing and the runtime half of `slang test`.
 //
 // Test functions are marked @test: `@test func TestAdd(t *testing.T)` or
-// a plain `@test func Something()`; `@test func BenchX(b *testing.B)` is a
-// benchmark (run with `slang test --bench`). `slang test [path]` finds
-// them, generates a driver calling Main with every Case and runs it.
+// a plain `@test func Something()`; `@bench func BenchX(b *testing.B)`
+// (or `@test` with a *testing.B) is a benchmark (run with `slang test
+// --bench`). `slang test [path]` finds them, generates a driver calling
+// Main with every Case and runs it.
 //
 // Isolation: Main runs every test in its own child process (the test
 // binary re-executes itself with --run-one), so t.Fatal, t.Skip and even
 // a panic end only that test. t.Run subtests run inside their parent's
 // process; a Fatal in a subtest ends the whole top-level test.
+//
+// Parallel tests: a test whose body calls `t.Parallel()` (as a statement
+// of the test function; `slang test` finds the call when it discovers the
+// tests) runs concurrently with the other parallel tests, up to
+// `--parallel N` (default 4) child processes at a time, after the
+// sequential tests (each sequential test runs alone). Results are printed
+// in that order: sequential tests, then parallel ones by declaration.
+//
+// testing.Panics(t, fn) checks that fn panics: the test binary re-runs
+// the current test in a child process up to that Panics call, where the
+// child calls fn (code before the call runs again in the child).
 //
 // Assertions (testing.Equal(t, got, want) ...) report through t.Error and
 // keep going; the ...Fatal variants stop the test (testing.EqualFatal).
@@ -30,6 +42,8 @@ struct Case {
     Name string
     Run func(*T)
     Bench func(*B)
+    // The test calls t.Parallel() (found by `slang test`).
+    Parallel bool
 }
 
 // The handle of a running test.
@@ -40,6 +54,11 @@ struct T {
     depth int
     verbose bool
     noTime bool
+    // testing.Panics: calls seen so far in this test, and (in a probe
+    // child) which call of which (sub)test to run.
+    panicsSeen int
+    probeName string
+    probe int
 
     func Name() string {
         return this.name
@@ -100,14 +119,15 @@ struct T {
         std.os.Exit(3)
     }
 
-    // Marks the test as safe to run in parallel (tests already run in
-    // separate processes; `slang test --parallel N` runs N at a time).
+    // Marks the test as safe to run in parallel with the other parallel
+    // tests. `slang test` finds the call statically (it must be a
+    // statement of the test function); at run time it does nothing.
     func Parallel() {
     }
 
     // Runs fn as subtest name; returns true if it passed.
     func Run(name string, fn func(*T)) bool {
-        var sub = new T{name: this.name + "/" + std.strings.Replace(name, " ", "_"), depth: this.depth + 1, verbose: this.verbose, noTime: this.noTime}
+        var sub = new T{name: this.name + "/" + std.strings.Replace(name, " ", "_"), depth: this.depth + 1, verbose: this.verbose, noTime: this.noTime, probeName: this.probeName, probe: this.probe}
         var start = std.time.NowInstant()
         std.io.println(std.strings.Repeat("    ", this.depth + 1) + "=== RUN   " + sub.name)
         fn(sub)
@@ -302,6 +322,58 @@ func ErrorIs(t *T, err error, target error) bool {
     return true
 }
 
+// Exit code of a probe child whose fn returned without panicking.
+func noPanicCode() int {
+    return 77
+}
+
+// Reports an error unless fn panics. The test binary runs the current
+// test again in a child process (`--run-one` with a probe of this call);
+// the child calls fn and exits with the panic's status, or with a
+// "no panic" status when fn returns. Code of the test before this call
+// runs again in the child; earlier Panics calls do not run fn there.
+func Panics(t *T, fn func()) bool {
+    t.panicsSeen += 1
+    var k = t.panicsSeen
+    if t.probeName != "" {
+        if t.probeName == t.name && t.probe == k {
+            fn()
+            std.os.Exit(noPanicCode())
+        }
+        return true
+    }
+    var top = t.name
+    var slash = std.strings.Index(top, "/")
+    if slash >= 0 {
+        top = top[..slash]
+    }
+    var args = ["--run-one", top, "--probe-name", t.name, "--probe", std.strconv.Itoa(k)]
+    var opts = std.process.Options{Stdin: 2, Stdout: 2, Stderr: 2}
+    var p = try std.process.Start(std.os.Args()[0], args, opts) catch err {
+        t.Error("testing.Panics: cannot start the probe process: " + err.Message())
+        return false
+    }
+    var code = -1
+    for code < 0 {
+        code = try std.process.rtWaitPid(p.Pid()) catch err {
+            t.Error("testing.Panics: " + err.Message())
+            return false
+        }
+        if code < 0 {
+            std.time.Sleep(1)
+        }
+    }
+    if code == 2 {
+        return true
+    }
+    if code == noPanicCode() {
+        t.Error("expected a panic, but the function returned")
+    } else {
+        t.Error("testing.Panics: the probe run of " + top + " ended with exit status " + std.strconv.Itoa(code) + " before calling the function")
+    }
+    return false
+}
+
 // Reports an error unless s contains sub.
 func Contains(t *T, s string, sub string) bool {
     if !std.strings.Contains(s, sub) {
@@ -323,10 +395,12 @@ struct options {
     benchMs int
     parallel int
     noTime bool
+    probeName string
+    probe int
 }
 
 func parseArgs(args []string) options {
-    var o = options{benchMs: 1000, parallel: 1}
+    var o = options{benchMs: 1000, parallel: 4}
     var i = 1
     for i < len(args) {
         var a = args[i]
@@ -339,10 +413,14 @@ func parseArgs(args []string) options {
             o.verbose = true
         } else if a == "--no-time" {
             o.noTime = true
-        } else if (a == "--filter" || a == "--run-one" || a == "--bench-one" || a == "--benchtime" || a == "--parallel") && i < len(args) {
+        } else if (a == "--filter" || a == "--run-one" || a == "--bench-one" || a == "--benchtime" || a == "--parallel" || a == "--probe-name" || a == "--probe") && i < len(args) {
             var v = args[i]
             i += 1
-            if a == "--filter" {
+            if a == "--probe-name" {
+                o.probeName = v
+            } else if a == "--probe" {
+                o.probe = try std.strconv.Atoi(v) else 0
+            } else if a == "--filter" {
                 o.filter = v
             } else if a == "--run-one" {
                 o.runOne = v
@@ -398,7 +476,7 @@ func runChild(c Case, o options) int {
         std.io.Eprintln("testing: " + c.Name + " is not a test")
         return 1
     }
-    var t = new T{name: c.Name, verbose: o.verbose, noTime: o.noTime}
+    var t = new T{name: c.Name, verbose: o.verbose, noTime: o.noTime, probeName: o.probeName, probe: o.probe}
     var run = c.Run
     run(t)
     if t.failed {
@@ -515,23 +593,35 @@ async func Main(cases []Case) int {
     var failed = 0
     var skipped = 0
     var tests []Case = []
+    var parallel []Case = []
     var benches []Case = []
     for c in cases {
         if !matches(o.filter, c.Name) {
             continue
         }
-        if c.Run != nil {
+        if c.Run != nil && !c.Parallel {
             tests = append(tests, c)
+        } else if c.Run != nil {
+            parallel = append(parallel, c)
         } else if c.Bench != nil {
             benches = append(benches, c)
         }
     }
+    // the sequential tests one at a time, then the parallel ones in
+    // batches of up to o.parallel
+    var nseq = len(tests)
+    for c in parallel {
+        tests = append(tests, c)
+    }
     var i = 0
     for i < len(tests) {
-        // a batch of up to o.parallel tests at a time
+        var width = 1
+        if i >= nseq && o.parallel > 1 {
+            width = o.parallel
+        }
         var batch []Task<outcome> = []
         var j = i
-        for j < len(tests) && j - i < o.parallel {
+        for j < len(tests) && j - i < width {
             batch = append(batch, runOne(self, tests[j], o))
             j += 1
         }

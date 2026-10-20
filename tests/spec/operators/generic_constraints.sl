@@ -1,0 +1,41 @@
+// test: builtin constraints Add, Sub, Mul, Neg give the operators on T; numbers satisfy them, structs through their methods
+// status: passing
+namespace spec.operators.generic_constraints
+
+import std.io
+
+struct V {
+    X int
+    Y int
+    func Add(o V) V { return V{X: this.X + o.X, Y: this.Y + o.Y} }
+    func Neg() V { return V{X: -this.X, Y: -this.Y} }
+}
+
+func Sum<T: Add>(xs []T) T {
+    var acc T
+    for x in xs {
+        acc += x
+    }
+    return acc
+}
+
+func Negate<T: Neg>(x T) T {
+    return -x
+}
+
+func Square<T: Mul>(x T) T {
+    return x * x
+}
+
+func Diff<T: Sub>(a T, b T) T {
+    return a - b
+}
+
+func main() {
+    println(Sum([1, 2, 3]), Sum([0.5, 0.25]), Sum(["a", "b", "c"]))
+    var v = Sum([V{X: 1, Y: 2}, V{X: 3, Y: 4}])
+    println(v.X, v.Y)
+    var n = Negate(v)
+    println(n.X, n.Y, Negate(5), Negate(2.5))
+    println(Square(7), Square(1.5), Diff(10, 4), Diff(1.0, 0.5))
+}

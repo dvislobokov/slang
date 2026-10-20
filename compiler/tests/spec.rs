@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 const AREAS: &[&str] = &[
     "basics", "control", "structs", "interfaces", "enums", "errors", "generics", "memory", "async", "attributes", "reflection", "stdlib",
     "namespaces", "switch", "closures", "pointers", "interfaces2", "generics2", "memory2", "errors2", "async2", "strings2",
-    "diagnostics", "programs", "attributes2", "platform", "stdlib2", "stdlib3",
+    "diagnostics", "programs", "attributes2", "platform", "stdlib2", "stdlib3", "stdlib4", "operators", "iteration",
 ];
 
 /// Per-process timeout for a built program (a pending feature may hang).
@@ -387,6 +387,9 @@ areas!(
     spec_platform = "platform",
     spec_stdlib2 = "stdlib2",
     spec_stdlib3 = "stdlib3",
+    spec_stdlib4 = "stdlib4",
+    spec_operators = "operators",
+    spec_iteration = "iteration",
 );
 
 #[test]

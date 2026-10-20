@@ -51,6 +51,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         let d = self.depth();
         self.dbg_span(s.span);
+        self.dbga_stmt(s.span);
         let r = self.stmt_inner(s);
         self.release_temps_from(d);
         r
@@ -249,7 +250,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     }
                     ExprKind::Builtin { op: crate::hir::Builtin::Append, args } if same(&args[0]) => {
                         let p = self.local_addr(*l);
-                        return self.append_in_place(p, target.ty, &args[1]);
+                        return self.append_in_place(p, target.ty, &args[1..]);
                     }
                     _ => {}
                 }
@@ -289,10 +290,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// `xs = append(xs, x)` for a local `xs` at `p`: the variable's
     /// reference moves into the append (which grows a uniquely referenced
     /// backing in place) and the result is stored back.
-    fn append_in_place(&mut self, p: PointerValue<'ctx>, ty: TypeId, x: &Expr) -> R<()> {
+    fn append_in_place(&mut self, p: PointerValue<'ctx>, ty: TypeId, xs: &[Expr]) -> R<()> {
         let et = self.elem_of(ty).unwrap();
-        let xv = self.expr(x)?;
-        self.append_fast(p, et, xv);
+        // All values first, then the appends (`append(xs, len(xs), len(xs))`).
+        let mut vals = Vec::with_capacity(xs.len());
+        for x in xs {
+            vals.push(self.expr(x)?);
+        }
+        for xv in vals {
+            self.append_fast(p, et, xv);
+        }
         Ok(())
     }
 

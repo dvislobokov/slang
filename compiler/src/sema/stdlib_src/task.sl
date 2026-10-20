@@ -111,7 +111,8 @@ struct WaitGroup {
 // makes one with a buffer of n values (0: unbuffered, every Send waits for
 // its Recv). Copies of a Channel share it. `await ch.Send(v)` waits for
 // room, `await ch.Recv()` for a value and fails once the channel is closed
-// and drained; Send on a closed channel panics.
+// and drained; Send on a closed channel panics. `for v in ch` receives
+// until then (Next, the iteration protocol).
 struct Channel<T> {
     st *chanState<T>
 
@@ -128,6 +129,16 @@ struct Channel<T> {
 
     func Recv() Task<T!> {
         return this.st.recv()
+    }
+
+    // The iteration protocol: `for v in ch` (inside an async function)
+    // receives values until the channel is closed and drained.
+    async func Next() (T, bool) {
+        var v = try await this.Recv() catch _ {
+            var zero T
+            return (zero, false)
+        }
+        return (v, true)
     }
 
     func Close() {

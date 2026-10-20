@@ -68,6 +68,17 @@ SLANG_HIDDEN int64_t slang__sched_queue_len(void);
 /* std.diag (diag.c): releases the process-wide slots before the leak report. */
 SLANG_HIDDEN void slang__diag_shutdown(void);
 
+/* Debug agent (debug.c, ABI.md 22): the hook flag, the panic and error
+ * hooks, and task.c's view of the per-task debug records. */
+SLANG_HIDDEN extern uint8_t slang_dbg_on;
+SLANG_HIDDEN void slang__dbg_panic(const char *msg, int64_t len);
+SLANG_HIDDEN void slang__dbg_error(const slang_error *err);
+SLANG_HIDDEN int slang__dbg_error_wanted(void);
+SLANG_HIDDEN void slang__dbg_task_drop(int32_t id);
+SLANG_HIDDEN slang_task *slang__task_cur(void);
+SLANG_HIDDEN int32_t slang__task_dbg_id(const slang_task *t);
+SLANG_HIDDEN void slang__task_set_dbg_id(slang_task *t, int32_t id);
+
 #define SLANG_ROUND8(n) (((n) + 7) & ~(int64_t)7)
 
 #endif

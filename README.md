@@ -3,6 +3,10 @@
 A compiled language with Go-like simplicity, C#-style namespaces and
 `var` type inference, methods inside structs, `T!` error types instead of
 `if err != nil`, and built-in `async`/`await`. Backend: LLVM.
+Operators can be overloaded through a fixed set of methods (`Add`, `Sub`,
+`Mul`, `Div`, `Rem`, `Neg`, `MatMul` for `@`, `Index`/`IndexSet`, `Equals`,
+`Compare`), and `for x in v` works on any type with `Iter()`/`Next()`
+(the iteration protocol); see DESIGN.md.
 
 See [DESIGN.md](DESIGN.md) for the language design.
 
@@ -21,20 +25,30 @@ cargo build --release
 ./target/release/slang parse examples/hello.sl
 ```
 
+## System libraries
+
+Programs link only the Slang runtime, libc, libm and pthreads, plus a
+system library for a stdlib module that needs one, and only when the
+program uses it: `std.database.sqlite` links `-lsqlite3` (install
+`libsqlite3-dev`). Everything else (TLS, crypto, compression, the
+PostgreSQL driver, SMTP) is self-contained.
+
 ## Command line
 
 ```
 slang build [path] [options]        # compile (default output: ./<name>, or target/<profile>/<pkg>)
 slang run   [path] [options] [-- args]
 slang check [path] [--dump-hir] [options]
-slang test  [path] [options]        # type-checks with dev-dependencies; no test runner yet
+slang test  [path] [options]        # runs @test / @bench functions (std.testing; -v, --json, --bench, --filter, --parallel N)
 slang init  [dir] [--name n] [--format toml|json|yaml] [--lib]
 slang manifest schema               # JSON Schema of the manifest
 slang manifest convert <toml|json|yaml> [dir]
 slang parse <file.sl>               # print the AST
 slang fmt   [paths] [--check] [--diff] [--stdin]   # format .sl files (canonical style)
 slang lsp                           # language server on stdio
-slang debug [--lldb|--gdb] [path] [options] [-- args]   # build with DWARF, start the debugger
+slang debug run [path] [--port N] [--headless [--wait]]   # in-process debug agent + CLI client
+slang debug attach [host:]port      # CLI client for a program started with SLANG_DEBUG
+slang debug [--lldb|--gdb] [path] [options] [-- args]   # build with DWARF, start lldb/gdb
 ```
 
 `path` selects what to build:
@@ -55,6 +69,7 @@ Build options:
 | `--release` | `-O2`, linked with `--gc-sections` and stripped (`-s`), no `-rdynamic`, no debug info |
 | `-g` | keep DWARF debug info (and symbols) in a `--release` build; debug builds always have it |
 | `--strip` | no debug info, stripped executable |
+| `--debug-agent` / `--no-debug-agent` | statement hooks and tables of the in-process debugger (default: on in debug builds, off in `--release`) |
 | `-O0` … `-O3` | optimisation level |
 | `--static` | fully static executable (`clang -static`) |
 | `--emit=exe\|obj\|llvm-ir` | what to produce (`obj`/`llvm-ir`: whole program, one file) |
@@ -65,7 +80,28 @@ Build options:
 
 ### Debugging
 
-Debug builds carry DWARF 5 (types, locals, async frames, line tables; see
+Debug builds link the **in-process debug agent** (`std.debug`, written in
+Slang; docs/DEBUGGER.md stage 2): run a program with
+`SLANG_DEBUG=127.0.0.1:2345` (`:0` = a free port, announced on stderr;
+`,wait` holds `main` until the debugger is configured) and any Debug
+Adapter Protocol client can attach — no ptrace, no lldb. `slang debug run`
+does it with a gdb-like command line:
+
+```
+$ slang debug run app.sl
+(slang) b app.sl:12 if n > 3         # also `b Func`, `log file:line text {expr}`
+(slang) c
+stopped (breakpoint) in task 1 at app.main (app.sl:12)
+(slang) p ages["bob"]                # variable paths and comparisons
+ages["bob"] = 31
+(slang) n                            # steps follow the task across `await`
+(slang) bt / locals / tasks / task N / catch panic / q
+```
+
+Release builds get the agent with `--release --debug-agent` (with the agent
+off the code is that of a plain release build; variables are not shown).
+
+Debug builds also carry DWARF 5 (types, locals, async frames, line tables; see
 `docs/DEBUGGER.md`). `slang debug` builds and starts lldb with the Slang
 formatters loaded, so values print in Slang terms:
 
@@ -85,8 +121,8 @@ $ slang debug --lldb app.sl          # or --gdb; -- args are the program's
 With a plain lldb or gdb, load the formatters by hand:
 `command script import tools/lldb/slang_formatters.py` (lldb) or
 `source tools/gdb/slang_printers.py` (gdb); `slang debug --formatters lldb`
-prints the path. VS Code: debug type `slang` (lldb-dap), see
-`editors/vscode/README.md`.
+prints the path. VS Code: debug type `slang` (the agent by default,
+`"adapter": "lldb"` for lldb-dap), see `editors/vscode/README.md`.
 
 ### Formatting
 

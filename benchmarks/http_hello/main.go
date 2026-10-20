@@ -4,11 +4,22 @@ package main
 //   main                  server and load generator in one process
 //   main -server          only the server: prints its port (stderr), serves until killed
 //   main -load host:port  only the load generator
+// HTTP/2 over TLS (self-signed certificate, ALPN h2):
+//   main -server-tls      a TLS server (net/http enables h2): prints its port (stderr)
+//   main -load2 host:port HTTP/2 load: 64 goroutines share one connection
+//                         (http.Transport{ForceAttemptHTTP2}, InsecureSkipVerify)
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -80,10 +91,70 @@ func load(addr string, conns, total int) {
 	fmt.Println("requests", n)
 }
 
+func selfSigned() tls.Certificate {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// HTTP/2 load: `conns` goroutines issue requests concurrently on the
+// transport's single h2 connection to addr.
+func load2(addr string, conns, total int) {
+	tr := &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, MaxIdleConnsPerHost: conns}
+	c := &http.Client{Transport: tr}
+	url := "https://" + addr + "/"
+	one := func() {
+		res, err := c.Get(url)
+		if err != nil {
+			panic(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != 200 || res.ProtoMajor != 2 || string(b) != "hello, world\n" {
+			panic("bad response " + res.Proto + " " + res.Status)
+		}
+	}
+	for i := 0; i < 100; i++ {
+		one()
+	}
+	t0 := time.Now()
+	var wg sync.WaitGroup
+	for i := 0; i < conns; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < total/conns; j++ {
+				one()
+			}
+		}()
+	}
+	wg.Wait()
+	n := total / conns * conns
+	secs := time.Since(t0).Seconds()
+	fmt.Fprintf(os.Stderr, "http_hello go h2 load: %d requests, %d streams on one connection in %.3f s: %.0f req/s\n", n, conns, secs, float64(n)/secs)
+	fmt.Println("requests", n)
+}
+
 func main() {
 	conns, total := 64, 200000
 	if len(os.Args) > 2 && os.Args[1] == "-load" {
 		load(os.Args[2], conns, total)
+		return
+	}
+	if len(os.Args) > 2 && os.Args[1] == "-load2" {
+		load2(os.Args[2], conns, total/2)
 		return
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -95,6 +166,12 @@ func main() {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, "hello, world\n")
 	})
+	if len(os.Args) > 1 && os.Args[1] == "-server-tls" {
+		srv := &http.Server{Handler: mux, TLSConfig: &tls.Config{Certificates: []tls.Certificate{selfSigned()}}}
+		go srv.ServeTLS(l, "", "")
+		fmt.Fprintln(os.Stderr, l.Addr().(*net.TCPAddr).Port)
+		select {}
+	}
 	go http.Serve(l, mux)
 	port := l.Addr().(*net.TCPAddr).Port
 	if len(os.Args) > 1 && os.Args[1] == "-server" {

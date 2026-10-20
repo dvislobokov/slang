@@ -1,0 +1,68 @@
+// test: Server-Sent Events: http.ServerSentEvents on the server (ids, event types, multi-line data, comments, retry) and http.EventSource on the client (`for ev in es`, reconnection with Last-Event-ID), over HTTP/1.1 and HTTP/2
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http_sse
+
+import std.io
+import std
+import std.net
+
+struct Feed {
+    connects int
+    lastIDs []string
+}
+
+async func events(f *Feed, req *http.Request, res *http.Response) void! {
+    f.connects += 1
+    f.lastIDs = append(f.lastIDs, "[" + req.Header("Last-Event-ID") + "]")
+    var sse = http.ServerSentEvents(res)
+    var start = 1
+    if req.Header("Last-Event-ID") != "" {
+        start = strings.ToInt(req.Header("Last-Event-ID"))? + 1
+    }
+    await sse.Comment("hello")?
+    if start == 1 {
+        await sse.SendEvent(http.SSEEvent{Retry: 20, Data: "welcome"})?
+    }
+    // two events per connection, then the stream ends
+    for i in start..start + 2 {
+        var ev = http.SSEEvent{ID: fmt.Format("{0}", i), Data: fmt.Format("tick {0}", i)}
+        if i % 2 == 0 {
+            ev.Event = "even"
+            ev.Data += "\nsecond line"
+        }
+        await sse.SendEvent(ev)?
+    }
+}
+
+async func main() void! {
+    for proto in ["h1", "h2"] {
+        var f = new Feed{}
+        var r = http.NewRouter()
+        r.Get("/events", func(req *http.Request, res *http.Response) Task<void!> {
+            return events(f, req, res)
+        })
+        var ts = http.test.NewServer(r)?
+        if proto == "h2" {
+            await ts.Close()
+            ts = http.test.NewH2CServer(r)?
+        }
+        var es = http.NewEventSource(ts.URL + "/events")
+        es.Client = ts.Client
+        var n = 0
+        for ev in es {
+            var kind = ev.Event
+            if kind == "" {
+                kind = "message"
+            }
+            println(proto, "event", kind, "id=" + ev.ID, strings.Replace(ev.Data, "\n", "|"))
+            n += 1
+            if n == 6 {
+                break
+            }
+        }
+        println(proto, "connects:", f.connects, "Last-Event-ID sent:", strings.Join(f.lastIDs, " "), "last:", es.LastEventID)
+        es.Close()
+        await ts.Close()
+    }
+}

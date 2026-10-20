@@ -2,9 +2,13 @@ namespace std.collections
 
 // More std.collections types (the core List/Map/Set/Queue/Stack are in
 // sema/collections.rs): LinkedList, Deque, Ring, Heap, PriorityQueue,
-// OrderedMap, LRU and BitSet. They iterate through Items()/Keys() slices
-// (`for x in d.Items()`); the zero value of each is ready to use except
-// where a constructor takes a parameter (Ring, PriorityQueue, LRU).
+// OrderedMap, LRU and BitSet. `for x in c` works on each through the
+// iteration protocol (DESIGN.md "Управление потоком"): LinkedList,
+// OrderedMap and LRU have Iter() (OrderedMap and LRU yield key and value:
+// `for k, v in m`), the others iterate their Items() slice. BitSet also has
+// `b[i]` / `b[i] = true` (Index/IndexSet). The zero value of each is ready
+// to use except where a constructor takes a parameter (Ring,
+// PriorityQueue, LRU).
 
 struct listNode<T> {
     value T
@@ -166,6 +170,11 @@ struct LinkedList<T> {
         this.n = 0
     }
 
+    // Iterator front to back (`for x in list`); no copy.
+    func Iter() listIter<T> {
+        return listIter<T>{p: this.head}
+    }
+
     // The elements front to back (a copy).
     func Items() []T {
         var out []T = []
@@ -175,6 +184,21 @@ struct LinkedList<T> {
             p = p.next
         }
         return out
+    }
+}
+
+// Iterator of a LinkedList (the Iterator<T> protocol).
+struct listIter<T> {
+    p *listNode<T>
+
+    func Next() (T, bool) {
+        if this.p == nil {
+            var zero T
+            return (zero, false)
+        }
+        var v = this.p.value
+        this.p = this.p.next
+        return (v, true)
     }
 }
 
@@ -694,6 +718,11 @@ struct OrderedMap<K: Ordered, V> {
         return std.slices.Clone(this.keys)
     }
 
+    // Iterator over (key, value) in ascending key order (`for k, v in m`).
+    func Iter() orderedIter<K, V> {
+        return orderedIter<K, V>{keys: this.keys, vals: this.vals}
+    }
+
     func Values() []V {
         return std.slices.Clone(this.vals)
     }
@@ -701,6 +730,24 @@ struct OrderedMap<K: Ordered, V> {
     func Clear() {
         this.keys = nil
         this.vals = nil
+    }
+}
+
+// Iterator of an OrderedMap: (key, value, more).
+struct orderedIter<K, V> {
+    keys []K
+    vals []V
+    i int
+
+    func Next() (K, V, bool) {
+        if this.i >= len(this.keys) {
+            var zk K
+            var zv V
+            return (zk, zv, false)
+        }
+        var i = this.i
+        this.i += 1
+        return (this.keys[i], this.vals[i], true)
     }
 }
 
@@ -837,6 +884,12 @@ struct LRU<K: Comparable, V> {
         return true
     }
 
+    // Iterator over (key, value) from most to least recently used; does
+    // not mark entries as used.
+    func Iter() lruIter<K, V> {
+        return lruIter<K, V>{p: this.newest}
+    }
+
     // Keys from most to least recently used.
     func Keys() []K {
         var out []K = []
@@ -858,6 +911,22 @@ struct LRU<K: Comparable, V> {
         this.newest = nil
         this.oldest = nil
         this.index = map[K]*lruNode<K, V>{}
+    }
+}
+
+// Iterator of an LRU: (key, value, more).
+struct lruIter<K, V> {
+    p *lruNode<K, V>
+
+    func Next() (K, V, bool) {
+        if this.p == nil {
+            var zk K
+            var zv V
+            return (zk, zv, false)
+        }
+        var n = this.p
+        this.p = n.older
+        return (n.key, n.value, true)
     }
 }
 
@@ -1008,5 +1077,19 @@ struct BitSet {
 
     func Reset() {
         this.words = nil
+    }
+
+    // `b[i]`: Has(i).
+    func Index(i int) bool {
+        return this.Has(i)
+    }
+
+    // `b[i] = v`: Set(i) or Clear(i).
+    func IndexSet(i int, v bool) {
+        if v {
+            this.Set(i)
+        } else {
+            this.Clear(i)
+        }
     }
 }

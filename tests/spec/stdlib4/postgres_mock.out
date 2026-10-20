@@ -1,0 +1,39 @@
+dsn: db.example.com 6543 u p@ss app require 0 x
+dsn: /var/run/postgresql 5433 bob it's d prefer 3000 
+dsn: ::1 5432   x prefer 0 
+dsn: postgres: invalid sslmode "bogus"
+simple 42
+text 1 apple 2024-03-04T03:06:07.123Z 1.25 [red fruit] 4 true
+text 2 pear 2024-03-04T03:06:07.123Z 10.50 [a b c] 4 false
+binary 1 apple 2024-03-04T03:06:07.123Z 1.25 [red fruit] 4 true
+binary 2 pear 2024-03-04T03:06:07.123Z 10.50 [] 4 false
+param 77
+param again (cached statement) 78
+affected 2
+affected 3
+[NOTICE: just so you know]
+postgres: ERROR: relation "nope" does not exist (SQLSTATE 42P01)
+42P01 15 nope false
+in tx: postgres: ERROR: relation "nop
+postgres: transaction was aborted (COMMIT rolled back)
+server: ssl request refused
+server: startup protocol 196608 user=tester database=shop application_name=spec
+server: auth SCRAM-SHA-256 n,,n=,r=<nonce>
+server: auth: proof ok
+server: Q 
+server: Q select 1
+server: Q select * from items
+server: Parse slang_1 select * from items where id > $1
+server: Bind slang_1 args=[0] formats=[1 1 1 0 0 1 1]
+server: Parse slang_2 select $1
+server: Bind slang_2 args=[77] formats=[1]
+server: Bind slang_2 args=[78] formats=[1]
+server: Parse slang_3 update items set ok = $1 where id = $2
+server: Bind slang_3 args=[t 1] formats=[]
+server: Q insert into items values (1), (2), (3)
+server: Q notice
+server: Q boom
+server: Q BEGIN
+server: Q boom
+server: Q COMMIT
+server: Terminate

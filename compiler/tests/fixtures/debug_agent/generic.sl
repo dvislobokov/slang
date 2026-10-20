@@ -1,0 +1,22 @@
+namespace app
+
+import std
+import std.io
+
+// Debug-agent fixture: locals of a generic instance.
+
+struct Box<T> {
+    Value T
+    Count int
+}
+
+func Wrap<T>(v T, n int) Box<T> {
+    var b = Box<T>{Value: v, Count: n}
+    return b // BREAK wrap
+}
+
+func main() {
+    var x = Wrap(42, 1)
+    var y = Wrap("hi", 2)
+    println(x.Value, y.Value, x.Count + y.Count)
+}

@@ -359,7 +359,7 @@ impl<'a> Sema<'a> {
         // Only the List methods need `==` (the newer collections have
         // their own constraints, or no type parameter at all: BitSet).
         let Some(&elem) = args.first() else { return };
-        if self.is_comparable(elem) {
+        if self.satisfies(elem, generics::Bound::Equatable).is_ok() {
             return;
         }
         let skip: Vec<u32> = self.structs[sid as usize]
@@ -378,7 +378,7 @@ impl<'a> Sema<'a> {
             return;
         }
         let elem = args[0];
-        if let Err(msg) = self.satisfies(elem, generics::Bound::Comparable) {
+        if let Err(msg) = self.satisfies(elem, generics::Bound::Equatable) {
             let sname = self.structs[sid as usize].name.clone();
             self.err(format!("{msg} (required by {sname}.{method})"), span);
         }
@@ -386,7 +386,9 @@ impl<'a> Sema<'a> {
 
     /// Lowercase members of stdlib collections are private to the stdlib.
     pub(crate) fn check_std_private(&mut self, sid: u32, member: &str, span: Span) {
-        if is_exported(member) || self.nss[self.cur_ns].is_std {
+        // Attribute structs (`cli.flag`) are data: their fields are read
+        // through `Attribute<A>()` like the builtin `reflect.json` ones.
+        if is_exported(member) || self.nss[self.cur_ns].is_std || self.structs[sid as usize].is_attribute {
             return;
         }
         let Some((t, _)) = self.gen.inst_structs.get(&sid) else { return };

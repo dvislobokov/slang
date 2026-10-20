@@ -1338,3 +1338,64 @@ fn tuple_and_parallel_assignment() {
     assert!(matches!(stmt("a, b = b, a"), StmtKind::Assign { target: Expr { kind: ExprKind::Tuple(_), .. }, value: Expr { kind: ExprKind::Tuple(_), .. }, .. }));
     assert!(matches!(stmt("(q, _) = f()"), StmtKind::Assign { target: Expr { kind: ExprKind::Tuple(_), .. }, .. }));
 }
+
+// ---------------------------------------------------------------------------
+// Operators added with overloading, generic calls after an index, `x.` at
+// a line end
+// ---------------------------------------------------------------------------
+
+#[test]
+fn matmul_operator_and_attributes() {
+    // `@` between operands is MatMul with the precedence of `*`.
+    match expr("a + b @ c").kind {
+        ExprKind::Binary { op: BinaryOp::Add, right, .. } => {
+            assert!(matches!(right.kind, ExprKind::Binary { op: BinaryOp::MatMul, .. }), "{right:?}")
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(stmt("m @= n"), StmtKind::Assign { op: AssignOp::MatMul, .. }));
+    // `@` at the start of a declaration is still an attribute, also after
+    // a line ending in an operand.
+    let file = parse_ok("namespace t\nstruct S {\n    A int = 1\n    @deprecated(\"x\") B int\n}\n@test\nfunc f() { var x = a @ b }\n");
+    let Decl::Struct(s) = &file.decls[0] else { panic!() };
+    assert_eq!(s.fields[1].attrs.len(), 1);
+    let Decl::Func(f) = &file.decls[1] else { panic!() };
+    assert_eq!(f.attrs[0].path.to_string(), "test");
+}
+
+#[test]
+fn generic_call_after_index() {
+    // `x.Fields[1].Attribute<A>()`: type arguments, not `<` / `>`.
+    let e = expr("x.Fields[1].Attribute<A>()");
+    let ExprKind::Call { callee, .. } = &e.kind else { panic!("{e:?}") };
+    let ExprKind::TypeArgs { base, args } = &callee.kind else { panic!("{callee:?}") };
+    assert_eq!(args.len(), 1);
+    assert!(matches!(&base.kind, ExprKind::Field { base, name } if name.name == "Attribute" && matches!(base.kind, ExprKind::Index { .. })));
+    let e = expr("p.Items[i].Parse<int, string>(s)");
+    assert!(matches!(&e.kind, ExprKind::Call { callee, .. } if matches!(callee.kind, ExprKind::TypeArgs { .. })));
+    // Comparisons after an index stay comparisons.
+    assert!(matches!(expr("xs[0].v < n").kind, ExprKind::Binary { op: BinaryOp::Lt, .. }));
+    assert!(matches!(expr("xs[0].v < n && m > xs[1].v").kind, ExprKind::Binary { op: BinaryOp::And, .. }));
+}
+
+#[test]
+fn trailing_dot_joins_the_next_line_and_recovers() {
+    // Go behaviour: no semicolon after `.`, so `c.` + newline + `Inc()`
+    // is `c.Inc()` (a method chain split after the dot).
+    let s = stmts("    c.\n        Inc()");
+    assert_eq!(s.len(), 1);
+    match &s[0].kind {
+        StmtKind::Expr(Expr { kind: ExprKind::Call { callee, .. }, .. }) => {
+            assert!(matches!(&callee.kind, ExprKind::Field { base, name } if name.name == "Inc" && matches!(&base.kind, ExprKind::Ident(i) if i.name == "c")))
+        }
+        other => panic!("{other:?}"),
+    }
+    // While typing (`c.` before `}` or a keyword), the recovering parser
+    // still produces the Field node with an empty name, so the LSP has
+    // the receiver `c`.
+    let (file, diags) = slang::parser::parse_source("namespace t\nfunc f() {\n    var c = 1\n    c.\n    var d = 2\n}\n");
+    assert!(diags.has_errors());
+    let Decl::Func(f) = &file.decls[0] else { panic!() };
+    let stmts = &f.body.as_ref().unwrap().stmts;
+    assert!(stmts.iter().any(|s| matches!(&s.kind, StmtKind::Expr(Expr { kind: ExprKind::Field { base, name }, .. }) if name.name.is_empty() && matches!(&base.kind, ExprKind::Ident(i) if i.name == "c"))), "{stmts:#?}");
+}

@@ -1,0 +1,38 @@
+available true true
+drivers [sqlite]
+sql: unknown driver "nope" (forgotten sql.Register("nope", ...)?)
+insert 1 1
+insert 1 2
+sql: cannot mix named and positional arguments
+sql: missing named argument :missing
+1 ann ann@example.com 2024-02-29T12:30:00Z 9.5 10.25 true 3 
+2 bob <nil> 2024-03-01T12:30:00Z NULL 0 false 0 
+3 cy <nil> 2020-01-02T03:04:05Z 2 -1.5 true 0 
+one 2 bob <nil> 2024-03-01T12:30:00Z NULL 0 false 0 
+true sql: no rows in result set
+count 3
+names [cy bob ann]
+2 1 ann cy
+false true 7
+[id name mail score] [INTEGER TEXT TEXT REAL]
+row 1 ann true 9.5 ann
+row 2 bob false NULL bob
+row 3 cy false 2 cy
+scan: sql: column "score": cannot store NULL in float (use a pointer or sql.Null<T>)
+scan: sql: no rows in result set
+any 1.5
+sqlite: UNIQUE constraint failed: users.name true 2067
+in tx 10.5
+true
+rolled back 9.5
+committed 100
+transact: abort
+still 1
+stmt 1 ann
+stmt 3 cy
+prepare: sqlite: near "selec": syntax error
+temp 3
+sql: column "name": cannot convert string ann to int
+sql: column "null": cannot store NULL in int (use a pointer or sql.Null<T>)
+sql: column "300": value 300 overflows int8
+stats 1 1 0

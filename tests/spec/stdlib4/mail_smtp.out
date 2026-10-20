@@ -1,0 +1,74 @@
+parse ann@example.com ->  | ann@example.com | <ann@example.com>
+parse <b@x.org> ->  | b@x.org | <b@x.org>
+parse Bob Smith <bob@x.org> -> Bob Smith | bob@x.org | Bob Smith <bob@x.org>
+parse "Smith, Bob" <bob@x.org> -> Smith, Bob | bob@x.org | "Smith, Bob" <bob@x.org>
+parse =?utf-8?q?J=C3=BCrgen?= <j@x.de> -> Jürgen | j@x.de | =?utf-8?q?J=C3=BCrgen?= <j@x.de>
+parse carl@x.org (Carl) -> Carl | carl@x.org | Carl <carl@x.org>
+parse bad -> mail: invalid address "bad"
+parse a@b, c@d -> mail: expected a single address in "a@b, c@d"
+2 a@x.org B, b
+Subject: word word word word word word word word word word word word word word
+ word word word
+
+Date: Mon, 06 May 2024 07:08:09 +0000
+From: Ann Example <ann@example.com>
+To: <bob@example.com>, "Smith, Carol" <carol@example.org>
+Subject: =?utf-8?q?=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82=2C_a_subject_that_is_long_?=
+ =?utf-8?q?enough_to_need_several_encoded_words_in_the_header?=
+Message-ID: <fixed@example.com>
+X-Mailer: slang
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BOUND_2"
+
+--BOUND_2
+Content-Type: multipart/alternative; boundary="BOUND_1"
+
+--BOUND_1
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hello Bob,
+.leading dot line
+bye
+
+--BOUND_1
+Content-Type: text/html; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+<p>Hello <b>Bob</b></p>
+--BOUND_1--
+
+--BOUND_2
+Content-Type: text/plain; charset=utf-8; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+Content-Transfer-Encoding: base64
+
+YXR0YWNoZWQgdGV4dA==
+
+--BOUND_2--
+plain: EHLO localhost (tls=false)
+plain: AUTH PLAIN |ann|secret
+plain: MAIL FROM:<ann@example.com>
+plain: RCPT TO:<bob@example.com>
+plain: RCPT TO:<carol@example.org>
+plain: RCPT TO:<dave@example.net>
+plain: DATA 899 bytes
+plain: QUIT
+dot-stuffed line kept: true
+tls: EHLO localhost (tls=false)
+tls: STARTTLS
+tls: EHLO localhost (tls=true)
+tls: AUTH LOGIN ann|pw
+tls: MAIL FROM:<ann@example.com>
+tls: RCPT TO:<bob@example.com>
+tls: RCPT TO:<carol@example.org>
+tls: RCPT TO:<dave@example.net>
+tls: DATA 899 bytes
+tls: QUIT
+send error: smtp: 550 5.1.1 no such user
+true 550 false
+cram: EHLO localhost (tls=false)
+cram: AUTH CRAM-MD5 tim b913a602c7eda7a495b4e6e7334d3890 ok=true
+cram: MAIL FROM:<ann@example.com>
+cram: RCPT TO:<bounce@example.com>
+refused: smtp: refusing AUTH PLAIN over an unencrypted connection

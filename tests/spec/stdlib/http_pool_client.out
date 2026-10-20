@@ -1,0 +1,13 @@
+POST /echo?q=a+b&n=2 ct= x=1 body=plain
+POST /echo ct=application/octet-stream x= body=bytes
+POST /echo ct= x= body=from a reader
+POST /echo ct=application/x-www-form-urlencoded x= body=a=1%26&b=2+3
+json: widget 2 application/json
+GetJSON: seven 7
+gzip: 6000 encoding [] true
+raw gzip: true gzip
+jar: 200 session=abc123 theme=dark stored 2
+cookies for /other: 1
+stream: [chunk 0][chunk 1][chunk 2][chunk 3] true
+timeout: true true
+TotalTimeout: true

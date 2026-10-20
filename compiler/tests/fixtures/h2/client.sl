@@ -1,0 +1,73 @@
+namespace fixtures.h2.client
+
+import std.io
+import std
+import std.net
+
+// The Slang client of the interop tests (compiler/tests/net_http.rs):
+// `client <h2c-base> <tls-base>` requests a Go net/http server over h2c
+// (prior knowledge) and over TLS (ALPN h2), concurrently on one
+// connection each, and prints what it got; `client ws <url>` talks to a
+// WebSocket echo server.
+
+async func run(c http.Client, base string) void! {
+    var a = await c.Get(base + "/hello")?
+    println(a.Proto, a.Status, a.Header("X-Proto"), strings.Trim(a.Body))
+    var tasks []Task<http.Response!> = []
+    for _ in 0..10 {
+        tasks = append(tasks, c.Get(base + "/big"))
+    }
+    var total = 0
+    for t in tasks {
+        var r = await t?
+        total += len(r.Body)
+    }
+    println("10 x /big:", total)
+    var e = await c.Post(base + "/echo", strings.Repeat("y", 150000), "text/plain")?
+    println(e.Body)
+    var s = await c.Get(base + "/stream")?
+    println(strings.Replace(strings.Trim(s.Body), "\n", " | "))
+    var g = await c.Get(base + "/gzip")?
+    println("gzip:", len(g.Body), g.Header("Content-Encoding") == "", strings.HasPrefix(g.Body, "gzip body"))
+    // streamed body
+    var st = await c.Stream(http.NewRequest("GET", base + "/big"))?
+    var n = 0
+    for {
+        var chunk = await st.Reader.Read(7000)?
+        if len(chunk) == 0 {
+            break
+        }
+        n += len(chunk)
+    }
+    println("streamed:", n)
+}
+
+// `client ws <url>`: a WebSocket session with an echo server.
+async func wsSession(url string) void! {
+    var c = await ws.Dial(url)?
+    await c.SendText("hello from slang")?
+    var m = await c.Recv()?
+    println("echo:", m.Type, m.Text())
+    await c.SendFragments(ws.TextMessage, [strings.Bytes("a"), strings.Bytes("b"), strings.Bytes("c")])?
+    m = await c.Recv()?
+    println("fragments:", m.Text())
+    await c.SendBinary(strings.Bytes(strings.Repeat("z", 70000)))?
+    m = await c.Recv()?
+    println("binary:", m.Type, len(m.Data))
+    await c.Close()?
+    println("closed")
+}
+
+async func main() void! {
+    var args = os.Args()
+    if args[1] == "ws" {
+        await wsSession(args[2])?
+        return
+    }
+    var h2c = http.Transport{H2C: true}
+    await run(http.Client{Transport: &h2c}, args[1])?
+    var cfg = tls.Config{InsecureSkipVerify: true}
+    var secure = http.Transport{TLS: &cfg}
+    await run(http.Client{Transport: &secure}, args[2])?
+    println("dials:", h2c.Stats().Dials, secure.Stats().Dials)
+}

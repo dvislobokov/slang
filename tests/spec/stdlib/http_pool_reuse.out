@@ -1,0 +1,6 @@
+sequential: dials 1 reused 9 idle 1 server peers 1
+max conns: dials 2 max in flight 2 idle kept 2
+idle timeout: dials 2
+stale retry: 200 ok /y dials 2
+no keep-alive: dials 3 idle 0
+after CloseIdleConnections: 0 0

@@ -13,9 +13,13 @@ pub(crate) const MAX_DEFERS: u32 = 64;
 impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// Emits the body of HIR function `fid`.
     pub(crate) fn emit_function(&mut self, fid: FuncId) -> R<()> {
+        if self.dbga_emit_cloned(fid)? {
+            return Ok(());
+        }
         let f: &'a hir::Function = &self.prog.funcs[fid.0 as usize];
         let fv = self.funcs[fid.0 as usize];
         let saved = self.begin_fn(fv, Some(f));
+        self.dbga_dispatch();
         let off = if matches!(f.kind, FuncKind::Lambda { .. }) { 1 } else { 0 };
         if off == 1 {
             self.fs_mut().env = Some(fv.get_nth_param(0).unwrap().into_pointer_value());
@@ -59,14 +63,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.fs_mut().borrowed[p.0 as usize] = true;
             }
         }
+        self.dbga_enter(f);
         self.block_stmts(&f.body)?;
         self.br(exit);
         self.b.position_at_end(exit);
         // The epilogue (defers, releases) belongs to the closing brace.
         self.dbg_loc(f.span.end.saturating_sub(1));
+        self.dbga_leave();
         self.dbg_keep_coro_locals();
         self.emit_exit()?;
         self.end_fn(saved, None);
+        self.dbga_end();
         Ok(())
     }
 

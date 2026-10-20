@@ -3,7 +3,6 @@
 // run-flags: --leak-check
 namespace spec.stdlib.log_structured
 
-import std.io
 import std
 
 struct Card {

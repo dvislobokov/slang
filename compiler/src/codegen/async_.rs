@@ -109,6 +109,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let done = self.call_rt_v("slang_task_is_done", &[t.into()]).into_int_value();
         self.b.build_conditional_branch(done, ready, try_).unwrap();
         self.b.position_at_end(try_);
+        self.dbga_suspend();
         let save = self.intrinsic("llvm.coro.save", &mut [co.hdl.as_value_ref()]);
         let resume = self.rt("slang_coro_resume").as_global_value().as_pointer_value();
         let reg = self.call_rt_v("slang_task_add_continuation", &[t.into(), resume.into(), co.hdl.into()]).into_int_value();
@@ -120,6 +121,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let i8t = self.ctx.i8_type();
         self.b.build_switch(sv, co.suspended, &[(i8t.const_zero(), ready), (i8t.const_int(1, false), co.cleanup)]).unwrap();
         self.b.position_at_end(ready);
+        self.dbga_resume();
         self.call_rt_v("slang_task_result", &[t.into()]).into_pointer_value()
     }
 

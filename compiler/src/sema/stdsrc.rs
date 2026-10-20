@@ -9,7 +9,9 @@
 //! `bytes`, `strconv`, `time` types, `math.bits/big/complex`,
 //! `unicode.utf8/utf16`, `hash.*`, `encoding.binary/base32/pem/asn1`, `io`,
 //! `os` files, `os.signal`, `os.user`, `process`, more `collections`, `sync`,
-//! `cli`, `testing`, `embed`). The sources live in `sema/stdlib_src/*.sl`; like
+//! `cli`, `testing`, `embed`), and the tier 3 modules (`std.database.sql`
+//! with the `postgres` and `sqlite` drivers, `std.net.mail`,
+//! `std.crypto.kdf/password`, RSA key generation). The sources live in `sema/stdlib_src/*.sl`; like
 //! `std.collections` ([`super::collections`]) they are parsed once per
 //! process and registered as stdlib templates, so only what a program uses
 //! is instantiated, checked and compiled.
@@ -38,6 +40,13 @@ const MODULES: &[(&str, &str, &str)] = &[
     ("std.net", "net.sl", include_str!("stdlib_src/net.sl")),
     ("std.net", "net_udp.sl", include_str!("stdlib_src/net_udp.sl")),
     ("std.net.http", "http.sl", include_str!("stdlib_src/http.sl")),
+    ("std.net.http", "http_server.sl", include_str!("stdlib_src/http_server.sl")),
+    ("std.net.http", "http_client.sl", include_str!("stdlib_src/http_client.sl")),
+    ("std.net.http", "http2.sl", include_str!("stdlib_src/http2.sl")),
+    ("std.net.http", "http_extra.sl", include_str!("stdlib_src/http_extra.sl")),
+    ("std.net.http.hpack", "hpack.sl", include_str!("stdlib_src/hpack.sl")),
+    ("std.net.http.test", "httptest.sl", include_str!("stdlib_src/httptest.sl")),
+    ("std.net.ws", "ws.sl", include_str!("stdlib_src/ws.sl")),
     ("std.crypto.x509", "x509.sl", include_str!("stdlib_src/x509.sl")),
     ("std.net.tls", "tls.sl", include_str!("stdlib_src/tls.sl")),
     ("std.net.tls", "tls_client.sl", include_str!("stdlib_src/tls_client.sl")),
@@ -45,6 +54,11 @@ const MODULES: &[(&str, &str, &str)] = &[
     ("std.log", "log.sl", include_str!("stdlib_src/log.sl")),
     ("std.diag", "diag.sl", include_str!("stdlib_src/diag.sl")),
     ("std.arena", "arena.sl", include_str!("stdlib_src/arena.sl")),
+    // >>> debugger (docs/DEBUGGER.md stage 2)
+    ("std.debug", "debug.sl", include_str!("stdlib_src/debug.sl")),
+    ("std.debug", "debug_dap.sl", include_str!("stdlib_src/debug_dap.sl")),
+    ("std.debug", "debug_vars.sl", include_str!("stdlib_src/debug_vars.sl")),
+    // <<< debugger
     // >>> tier 2 stdlib (docs/STDLIB.md level 2)
     ("std.regex", "regex.sl", include_str!("stdlib_src/regex.sl")),
     ("std.regex", "regex_syntax.sl", include_str!("stdlib_src/regex_syntax.sl")),
@@ -74,6 +88,17 @@ const MODULES: &[(&str, &str, &str)] = &[
     ("std.text.scanner", "scanner.sl", include_str!("stdlib_src/scanner.sl")),
     ("std.text.table", "table.sl", include_str!("stdlib_src/table.sl")),
     // <<< tier 2 stdlib
+    // >>> tier 3 stdlib (docs/STDLIB.md level 3)
+    ("std.database.sql", "sql.sl", include_str!("stdlib_src/sql.sl")),
+    ("std.database.sqlite", "sqlite.sl", include_str!("stdlib_src/sqlite.sl")),
+    ("std.crypto.kdf", "kdf.sl", include_str!("stdlib_src/kdf.sl")),
+    ("std.crypto.password", "password.sl", include_str!("stdlib_src/password.sl")),
+    ("std.crypto.rsa", "rsa.sl", include_str!("stdlib_src/rsa.sl")),
+    ("std.database.postgres", "postgres.sl", include_str!("stdlib_src/postgres.sl")),
+    ("std.database.postgres", "postgres_types.sl", include_str!("stdlib_src/postgres_types.sl")),
+    ("std.net.mail", "mail.sl", include_str!("stdlib_src/mail.sl")),
+    ("std.compress.brotli", "brotli.sl", include_str!("stdlib_src/brotli.sl")),
+    // <<< tier 3 stdlib
     // tier 0/1 stdlib (docs/STDLIB.md)
     ("std.slices", "slices.sl", include_str!("stdlib_src/slices.sl")),
     ("std.maps", "maps.sl", include_str!("stdlib_src/maps.sl")),
@@ -208,11 +233,6 @@ impl<'a> Sema<'a> {
                     ast::Decl::Func(f) => (&f.name.name, self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false)),
                     ast::Decl::Enum(e) => (&e.name.name, self.new_template(&e.name.name, TmplDecl::Enum(e), &e.generics, Vec::new(), false)),
                     ast::Decl::Interface(it) => {
-                        assert!(
-                            it.methods.iter().all(|m| m.body.is_none()),
-                            "internal error: default methods are not supported in stdlib sources yet (interface {})",
-                            it.name.name
-                        );
                         let id = self.interfaces.len() as u32;
                         self.interfaces.push(hir::Interface {
                             name: it.name.name.clone(),
@@ -227,6 +247,20 @@ impl<'a> Sema<'a> {
                         });
                         self.iface_src.push(it);
                         self.nss[ns].members.insert(it.name.name.clone(), (Member::Interface(id), Span::DUMMY, 0));
+                        // Default methods: ordinary functions of the stdlib
+                        // namespace (signature and body in its scope).
+                        for m in it.methods.iter().filter(|m| m.body.is_some()) {
+                            assert!(
+                                !m.is_static && !m.is_async && m.generics.is_empty(),
+                                "internal error: default method {}.{} in a stdlib source is static, async or generic",
+                                it.name.name,
+                                m.name.name
+                            );
+                            let fid = self.new_func(m, hir::FuncKind::Free, FuncSrc::Free(m), &format!("{}.{}", it.name.name, m.name.name));
+                            self.iface_defaults.insert((id, m.name.name.clone()), fid);
+                            self.iface_default_owner.insert(fid.0, id);
+                            self.std_fn_ns.insert(fid.0, ns);
+                        }
                         continue;
                     }
                     _ => panic!("internal error: unsupported declaration in stdlib source {}", file.namespace.to_string()),

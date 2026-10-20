@@ -1,0 +1,1794 @@
+namespace std.database.sql
+
+// std.database.sql: one asynchronous interface to SQL databases
+// (docs/FRAMEWORK.md section 3). A driver (std.database.postgres,
+// std.database.sqlite, or any type implementing Driver) is registered by
+// name with Register and opened with Open, or passed to OpenDriver. A DB
+// is a pool of driver connections: Exec/QueryRows/QueryRow/Query<T>/Begin
+// borrow a connection for the duration of the operation (a Rows or a Tx
+// keeps it until Close/Commit/Rollback). Typed queries map result columns
+// to struct fields by name or @column("x") through compile-time
+// reflection. Named parameters (:name with sql.Named or a map[string]any
+// argument) are rewritten to the driver's placeholders ($1 or ?).
+// Cancellation and timeouts come from the task context: a cancelled
+// operation fails with task.ErrCancelled and the connection it used is
+// discarded.
+
+// ---- driver interface -------------------------------------------------------
+
+// A database driver: opens connections from a data source name.
+interface Driver {
+    func Open(dsn string) Task<std.database.sql.DriverConn!>
+}
+
+// One driver connection. It is used by one task at a time (the pool
+// guarantees that). Values passed in args and returned by DriverRows.Next
+// are nil, int, float, bool, string, []byte, std.time.Time or []any
+// (arrays).
+interface DriverConn {
+    // Prepares a statement with positional parameters.
+    func Prepare(query string) Task<std.database.sql.DriverStmt!>
+    // Runs a statement (no args: may be several statements).
+    func Exec(query string, args []any) Task<std.database.sql.Result!>
+    func Query(query string, args []any) Task<std.database.sql.DriverRows!>
+    func Begin() Task<std.database.sql.DriverTx!>
+    func Ping() Task<void!>
+    func Close() void!
+    // False once the connection is unusable (I/O error, cancelled
+    // operation, protocol error): the pool then discards it.
+    func IsValid() bool
+    // Placeholder style of the database: PlaceholderQuestion (?) or
+    // PlaceholderDollar ($1).
+    func Placeholder() int
+}
+
+interface DriverStmt {
+    func Exec(args []any) Task<std.database.sql.Result!>
+    func Query(args []any) Task<std.database.sql.DriverRows!>
+    // Number of parameters (-1 if unknown).
+    func NumInput() int
+    func Close() void!
+}
+
+interface DriverRows {
+    func Columns() []string
+    // Database type names of the columns ("" if unknown).
+    func ColumnTypes() []string
+    // Stores the next row's values into dest (len(dest) == len(Columns()));
+    // false after the last row.
+    func Next(dest []any) Task<bool!>
+    // Discards the rest of the result. It must not block: a driver may
+    // leave unread data to be skipped by the connection's next operation.
+    func Close() void!
+}
+
+interface DriverTx {
+    func Commit() Task<void!>
+    func Rollback() Task<void!>
+}
+
+// A value that converts itself to a driver value when passed as an
+// argument (sql.Null<T> implements it).
+interface Valuer {
+    func SqlValue() any
+}
+
+// A destination that converts a column value itself (sql.Null<T>
+// implements it); Scan, Query<T> and QueryOne<T> use it for *T.
+interface Scanner {
+    func ScanValue(v any) void!
+}
+
+// The outcome of Exec.
+struct Result {
+    RowsAffected int
+    // The row id of the last insert (SQLite; 0 for PostgreSQL, use
+    // RETURNING there).
+    LastInsertId int
+}
+
+// A named argument: sql.Named("id", 5) binds :id.
+struct NamedArg {
+    Name string
+    Value any
+}
+
+func Named(name string, value any) NamedArg {
+    return NamedArg{Name: name, Value: value}
+}
+
+// Column attribute for typed queries: @column("user_id") maps the field
+// to that column, @column(skip: true) leaves it alone.
+@attribute(targets: [std.reflect.Target.Field])
+struct column {
+    name string = ""
+    skip bool = false
+}
+
+// A nullable value: Valid is false for NULL. Usable as a field of a
+// Query<T> struct, a Scan destination and an argument.
+struct Null<T> {
+    Value T
+    Valid bool
+
+    func ScanValue(v any) void! {
+        var z T
+        this.Value = z
+        this.Valid = false
+        if v == nil {
+            return
+        }
+        convertInto(&this.Value, v, "")?
+        this.Valid = true
+    }
+
+    func SqlValue() any {
+        if !this.Valid {
+            return nil
+        }
+        return argOf(this.Value)
+    }
+
+    func String() string {
+        if !this.Valid {
+            return "NULL"
+        }
+        return std.fmt.Format("{0}", this.Value)
+    }
+}
+
+// Constructs a valid Null<T>.
+func Some<T>(v T) Null<T> {
+    return Null<T>{Value: v, Valid: true}
+}
+
+// ---- driver registry --------------------------------------------------------
+
+struct driverEntry {
+    name string = ""
+    d Driver
+}
+
+struct registry {
+    items []driverEntry
+}
+
+func regSlot() *registry {
+    var m = std.diag.rtSlots()
+    if m == nil {
+        m = map[string]any{}
+        std.diag.rtSetSlots(m)
+    }
+    switch m["std.database.sql.drivers"] {
+        case *registry r:
+            return r
+    }
+    var r = new registry{}
+    m["std.database.sql.drivers"] = r
+    return r
+}
+
+// Registers a driver under name (replacing an earlier one).
+func Register(name string, d Driver) {
+    std.diag.rtLock()
+    var r = regSlot()
+    var found = false
+    for i, e in r.items {
+        if e.name == name {
+            r.items[i] = driverEntry{name: name, d: d}
+            found = true
+        }
+    }
+    if !found {
+        r.items = append(r.items, driverEntry{name: name, d: d})
+    }
+    std.diag.rtUnlock()
+}
+
+// Names of the registered drivers, in registration order.
+func Drivers() []string {
+    std.diag.rtLock()
+    var r = regSlot()
+    var out []string = []
+    for e in r.items {
+        out = append(out, e.name)
+    }
+    std.diag.rtUnlock()
+    return out
+}
+
+func lookupDriver(name string) Driver! {
+    std.diag.rtLock()
+    var r = regSlot()
+    var d Driver
+    var found = false
+    for e in r.items {
+        if e.name == name {
+            d = e.d
+            found = true
+        }
+    }
+    std.diag.rtUnlock()
+    if !found {
+        return error("sql: unknown driver \"" + name + "\" (forgotten sql.Register(\"" + name + "\", ...)?)")
+    }
+    return d
+}
+
+// Opens a pool for the registered driver driverName. No connection is
+// made yet (use Ping to check the DSN).
+func Open(driverName string, dsn string) *DB! {
+    var d = lookupDriver(driverName)?
+    return OpenDriver(d, dsn)
+}
+
+// Opens a pool over driver d.
+func OpenDriver(d Driver, dsn string) *DB {
+    return new DB{st: new dbState{driver: d, dsn: dsn}}
+}
+
+// ---- pool ---------------------------------------------------------------------
+
+func nowMs() int {
+    return std.diag.rtMonoNanos() / 1000000
+}
+
+// A pooled connection with its prepared-statement cache.
+struct poolConn {
+    c DriverConn
+    created int
+    lastUsed int
+    stmts map[string]DriverStmt
+    order []string
+
+    func stmt(query string, limit int) Task<DriverStmt!> {
+        return this.stmtAsync(query, limit)
+    }
+
+    async func stmtAsync(query string, limit int) DriverStmt! {
+        if limit <= 0 {
+            return await this.c.Prepare(query)?
+        }
+        if this.stmts == nil {
+            this.stmts = map[string]DriverStmt{}
+        }
+        if this.stmts[query] != nil {
+            return this.stmts[query]
+        }
+        var s = await this.c.Prepare(query)?
+        if limit > 0 {
+            for len(this.order) >= limit {
+                var old = this.order[0]
+                this.order = this.order[1..]
+                var os = this.stmts[old]
+                delete(this.stmts, old)
+                if os != nil {
+                    _ = os.Close()
+                }
+            }
+            this.stmts[query] = s
+            this.order = append(this.order, query)
+        }
+        return s
+    }
+
+    func close() {
+        for q in this.order {
+            var s = this.stmts[q]
+            if s != nil {
+                _ = s.Close()
+            }
+        }
+        this.stmts = nil
+        this.order = []
+        _ = this.c.Close()
+    }
+}
+
+struct waiter {
+    id int
+    ch std.task.Channel<int>
+}
+
+// Pool statistics (DB.Stats).
+struct Stats {
+    MaxOpenConnections int
+    OpenConnections int
+    InUse int
+    Idle int
+    // Times a caller had to wait for a connection.
+    WaitCount int
+    // Connections closed because of SetMaxIdleConns / idle time / lifetime.
+    MaxIdleClosed int
+    MaxIdleTimeClosed int
+    MaxLifetimeClosed int
+}
+
+struct dbState {
+    guard int
+    driver Driver
+    dsn string
+    idle []*poolConn
+    numOpen int
+    waiters []waiter
+    nextWaiter int
+    closed bool
+    maxOpen int
+    maxIdle int = 2
+    maxIdleTime int
+    maxLifetime int
+    healthCheck int = 30000
+    stmtCache int = 64
+    stats Stats
+
+    func lock() {
+        std.task.rtLock(&this.guard)
+    }
+
+    func unlock() {
+        std.task.rtUnlock(&this.guard)
+    }
+
+    // Under the lock: wakes the oldest waiter (it retries acquire).
+    func wakeOne() {
+        if len(this.waiters) > 0 {
+            var w = this.waiters[0]
+            this.waiters = this.waiters[1..]
+            _ = w.ch.Send(1)
+        }
+    }
+
+    // Why an idle connection must not be reused: 0 fine, 1 idle time,
+    // 2 lifetime.
+    func expired(pc *poolConn, now int) int {
+        if this.maxLifetime > 0 && now - pc.created >= this.maxLifetime {
+            return 2
+        }
+        if this.maxIdleTime > 0 && now - pc.lastUsed >= this.maxIdleTime {
+            return 1
+        }
+        return 0
+    }
+
+    // Under the lock: removes expired idle connections (closed by the
+    // caller after unlocking).
+    func sweep(now int) []*poolConn {
+        var dead []*poolConn = []
+        var keep []*poolConn = []
+        for pc in this.idle {
+            var why = this.expired(pc, now)
+            if why == 0 {
+                keep = append(keep, pc)
+            } else {
+                if why == 1 {
+                    this.stats.MaxIdleTimeClosed += 1
+                } else {
+                    this.stats.MaxLifetimeClosed += 1
+                }
+                this.numOpen -= 1
+                dead = append(dead, pc)
+            }
+        }
+        this.idle = keep
+        return dead
+    }
+
+    func closeAll(pcs []*poolConn) {
+        for pc in pcs {
+            pc.close()
+        }
+        if len(pcs) > 0 {
+            this.lock()
+            for _ in pcs {
+                this.wakeOne()
+            }
+            this.unlock()
+        }
+    }
+
+    async func acquire() *poolConn! {
+        for {
+            std.task.CheckCancelled()?
+            var now = nowMs()
+            this.lock()
+            if this.closed {
+                this.unlock()
+                return ErrConnDone
+            }
+            var dead = this.sweep(now)
+            if len(this.idle) > 0 {
+                var n = len(this.idle)
+                var pc = this.idle[n - 1]
+                this.idle = this.idle[..n - 1]
+                this.unlock()
+                this.closeAll(dead)
+                if !pc.c.IsValid() {
+                    this.discard(pc)
+                    continue
+                }
+                if this.healthCheck >= 0 && now - pc.lastUsed >= this.healthCheck {
+                    var ok = true
+                    try await pc.c.Ping() catch err {
+                        ok = false
+                    }
+                    if !ok {
+                        this.discard(pc)
+                        continue
+                    }
+                }
+                return pc
+            }
+            if this.maxOpen <= 0 || this.numOpen < this.maxOpen {
+                this.numOpen += 1
+                this.unlock()
+                this.closeAll(dead)
+                var c = try await this.driver.Open(this.dsn) catch err {
+                    this.lock()
+                    this.numOpen -= 1
+                    this.wakeOne()
+                    this.unlock()
+                    return err
+                }
+                var t = nowMs()
+                return new poolConn{c: c, created: t, lastUsed: t}
+            }
+            this.nextWaiter += 1
+            var w = waiter{id: this.nextWaiter, ch: std.task.Channel<int>(1)}
+            this.waiters = append(this.waiters, w)
+            this.stats.WaitCount += 1
+            this.unlock()
+            this.closeAll(dead)
+            try await w.ch.Recv() catch err {
+                this.lock()
+                var found = false
+                var rest []waiter = []
+                for x in this.waiters {
+                    if x.id == w.id {
+                        found = true
+                    } else {
+                        rest = append(rest, x)
+                    }
+                }
+                this.waiters = rest
+                if !found {
+                    // Woken and cancelled at once: pass the wake-up on.
+                    this.wakeOne()
+                }
+                this.unlock()
+                return err
+            }
+        }
+    }
+
+    // Closes a connection that left the pool for good.
+    func discard(pc *poolConn) {
+        pc.close()
+        this.lock()
+        this.numOpen -= 1
+        this.wakeOne()
+        this.unlock()
+    }
+
+    // Returns a borrowed connection.
+    func release(pc *poolConn) {
+        var now = nowMs()
+        var drop = !pc.c.IsValid()
+        this.lock()
+        if !drop && (this.closed || this.expired(pc, now) != 0) {
+            drop = true
+        }
+        if !drop && len(this.idle) >= this.maxIdle {
+            this.stats.MaxIdleClosed += 1
+            drop = true
+        }
+        if drop {
+            this.numOpen -= 1
+        } else {
+            pc.lastUsed = now
+            this.idle = append(this.idle, pc)
+        }
+        this.wakeOne()
+        this.unlock()
+        if drop {
+            pc.close()
+        }
+    }
+}
+
+// A pool of connections to one database (sql.Open). Safe for concurrent
+// use by many tasks.
+struct DB {
+    st *dbState
+
+    // Maximum number of open connections (0: unlimited, the default);
+    // callers wait for a free one beyond it.
+    func SetMaxOpenConns(n int) {
+        this.st.lock()
+        this.st.maxOpen = n
+        if n > 0 && this.st.maxIdle > n {
+            this.st.maxIdle = n
+        }
+        this.st.unlock()
+    }
+
+    // Maximum number of idle connections kept (default 2; 0 keeps none).
+    func SetMaxIdleConns(n int) {
+        this.st.lock()
+        if n < 0 {
+            n = 0
+        }
+        this.st.maxIdle = n
+        var extra []*poolConn = []
+        for len(this.st.idle) > n {
+            extra = append(extra, this.st.idle[0])
+            this.st.idle = this.st.idle[1..]
+            this.st.numOpen -= 1
+            this.st.stats.MaxIdleClosed += 1
+        }
+        this.st.unlock()
+        this.st.closeAll(extra)
+    }
+
+    // Idle connections unused for ms milliseconds are closed (0: never).
+    func SetConnMaxIdleTime(ms int) {
+        this.st.lock()
+        this.st.maxIdleTime = ms
+        this.st.unlock()
+    }
+
+    // Connections older than ms milliseconds are closed when they become
+    // idle (0: never).
+    func SetConnMaxLifetime(ms int) {
+        this.st.lock()
+        this.st.maxLifetime = ms
+        this.st.unlock()
+    }
+
+    // An idle connection unused for ms milliseconds is pinged before it is
+    // handed out (default 30000; 0: always; negative: never).
+    func SetHealthCheck(ms int) {
+        this.st.lock()
+        this.st.healthCheck = ms
+        this.st.unlock()
+    }
+
+    // Prepared statements cached per connection (default 64; 0 disables
+    // the cache: every query with arguments is prepared and closed).
+    func SetStmtCacheSize(n int) {
+        this.st.lock()
+        this.st.stmtCache = n
+        this.st.unlock()
+    }
+
+    func Stats() Stats {
+        this.st.lock()
+        var s = this.st.stats
+        s.MaxOpenConnections = this.st.maxOpen
+        s.OpenConnections = this.st.numOpen
+        s.Idle = len(this.st.idle)
+        s.InUse = this.st.numOpen - len(this.st.idle)
+        this.st.unlock()
+        return s
+    }
+
+    // Closes the idle connections and makes the pool refuse new
+    // operations (ErrConnDone); connections in use are closed when they
+    // are returned.
+    func Close() {
+        this.st.lock()
+        this.st.closed = true
+        var idle = this.st.idle
+        this.st.idle = []
+        this.st.numOpen -= len(idle)
+        var ws = this.st.waiters
+        this.st.waiters = []
+        this.st.unlock()
+        for w in ws {
+            w.ch.Close()
+        }
+        for pc in idle {
+            pc.close()
+        }
+    }
+
+    // Checks that a connection can be made and is alive.
+    async func Ping() void! {
+        var pc = await this.st.acquire()?
+        defer this.st.release(pc)
+        await pc.c.Ping()?
+    }
+
+    async func Exec(query string, args []any) Result! {
+        var pc = await this.st.acquire()?
+        defer this.st.release(pc)
+        return await execOn(this.st, pc, query, args)?
+    }
+
+    // Runs a query; the Rows hold a connection until they are closed (or
+    // fully read).
+    async func QueryRows(query string, args []any) Rows! {
+        var pc = await this.st.acquire()?
+        var r = try await queryOn(this.st, pc, query, args) catch err {
+            this.st.release(pc)
+            return err
+        }
+        return Rows{st: new rowsState{db: this.st, pc: pc, r: r, owned: true, cols: r.Columns()}}
+    }
+
+    // Runs a query expected to return at most one row; errors (including
+    // ErrNoRows) are reported by Row.Scan.
+    async func QueryRow(query string, args []any) Row {
+        var rows = try await this.QueryRows(query, args) catch err {
+            return Row{err: err}
+        }
+        return await firstRow(rows)
+    }
+
+    // Runs a query and maps every row to a T: a struct (columns to fields
+    // by name, snake_case name or @column) or a single-column scalar.
+    async func Query<T>(query string, args []any) []T! {
+        var rows = await this.QueryRows(query, args)?
+        return await collect<T>(rows)?
+    }
+
+    // Like Query<T> for exactly one row: ErrNoRows if there is none.
+    async func QueryOne<T>(query string, args []any) T! {
+        var rows = await this.QueryRows(query, args)?
+        return await collectOne<T>(rows)?
+    }
+
+    // Starts a transaction on a dedicated connection. Idiom:
+    //   var tx = await db.Begin()?
+    //   defer tx.Rollback()      // no-op after Commit
+    //   ...
+    //   await tx.Commit()?
+    async func Begin() Tx! {
+        var pc = await this.st.acquire()?
+        var t = try await pc.c.Begin() catch err {
+            this.st.release(pc)
+            return err
+        }
+        return Tx{st: new txState{db: this.st, pc: pc, tx: t}}
+    }
+
+    // Validates a statement and returns a handle that runs it; it is
+    // prepared once per pooled connection (statement cache).
+    async func Prepare(query string) Stmt! {
+        var pc = await this.st.acquire()?
+        defer this.st.release(pc)
+        var (q, _) = rewriteNamed(query, [namedStub(query)], pc.c.Placeholder())?
+        var s = await pc.stmt(q, this.st.stmtCache)?
+        if this.st.stmtCache <= 0 {
+            _ = s.Close()
+        }
+        return Stmt{db: this, query: query}
+    }
+
+    // A dedicated connection from the pool (for session state such as
+    // temporary tables); Close returns it.
+    async func Conn() Conn! {
+        var pc = await this.st.acquire()?
+        return Conn{st: new connState{db: this.st, pc: pc}}
+    }
+
+    // Runs f with one pooled driver connection (driver-specific features
+    // such as postgres.CopyFrom); the connection returns to the pool after.
+    async func Raw(f func(DriverConn) Task<void!>) void! {
+        var pc = await this.st.acquire()?
+        defer this.st.release(pc)
+        await f(pc.c)?
+    }
+
+    // Runs f in a transaction: committed if f succeeds, rolled back if it
+    // fails (the error is returned).
+    async func Transact(f func(Tx) Task<void!>) void! {
+        var tx = await this.Begin()?
+        defer tx.Rollback()
+        await f(tx)?
+        await tx.Commit()?
+    }
+}
+
+// A statement handle (DB.Prepare).
+struct Stmt {
+    db *DB
+    query string
+
+    func Exec(args []any) Task<Result!> {
+        return this.db.Exec(this.query, args)
+    }
+
+    func QueryRows(args []any) Task<Rows!> {
+        return this.db.QueryRows(this.query, args)
+    }
+
+    func QueryRow(args []any) Task<Row> {
+        return this.db.QueryRow(this.query, args)
+    }
+
+    func Query<T>(args []any) Task<[]T!> {
+        return this.db.Query<T>(this.query, args)
+    }
+
+    func QueryOne<T>(args []any) Task<T!> {
+        return this.db.QueryOne<T>(this.query, args)
+    }
+
+    func Close() {
+    }
+}
+
+// ---- running statements -----------------------------------------------------
+
+// Converts the user's arguments to driver values and rewrites named
+// parameters.
+func prepareArgs(query string, args []any, style int) (string, []any)! {
+    var (q, a) = rewriteNamed(query, args, style)?
+    var out []any = []
+    for x in a {
+        out = append(out, driverValue(x))
+    }
+    return (q, out)
+}
+
+async func execOn(db *dbState, pc *poolConn, query string, args []any) Result! {
+    var (q, a) = prepareArgs(query, args, pc.c.Placeholder())?
+    if len(a) == 0 {
+        return await pc.c.Exec(q, a)?
+    }
+    var s = await pc.stmt(q, db.stmtCache)?
+    if db.stmtCache <= 0 {
+        defer closeStmt(s)
+    }
+    return await s.Exec(a)?
+}
+
+async func queryOn(db *dbState, pc *poolConn, query string, args []any) DriverRows! {
+    var (q, a) = prepareArgs(query, args, pc.c.Placeholder())?
+    if len(a) == 0 {
+        return await pc.c.Query(q, a)?
+    }
+    var s = await pc.stmt(q, db.stmtCache)?
+    if db.stmtCache <= 0 {
+        // The driver keeps the portal alive until the rows are closed.
+        defer closeStmt(s)
+    }
+    return await s.Query(a)?
+}
+
+func closeStmt(s DriverStmt) {
+    _ = s.Close()
+}
+
+// ---- rows -------------------------------------------------------------------
+
+struct rowsState {
+    db *dbState
+    pc *poolConn
+    r DriverRows
+    // The rows release pc to the pool when closed (false inside a Tx/Conn).
+    owned bool
+    cols []string
+    vals []any
+    closed bool
+    started bool
+
+    async func close() void! {
+        if this.closed {
+            return
+        }
+        this.closed = true
+        var err error
+        try this.r.Close() catch e {
+            err = e
+        }
+        if this.owned {
+            this.db.release(this.pc)
+        }
+        if err != nil {
+            return err
+        }
+    }
+
+    // Rows dropped without Close: the driver result is discarded (the
+    // driver skips it before the connection's next operation) and the
+    // connection goes back to the pool.
+    func Drop() {
+        if !this.closed {
+            this.closed = true
+            _ = this.r.Close()
+            if this.owned {
+                this.db.release(this.pc)
+            }
+        }
+    }
+}
+
+// The result of a query: `for await rows.Next()? { rows.Scan([&a, &b])? }`.
+// Close it (defer rows.Close()) unless it is read to the end.
+struct Rows {
+    st *rowsState
+
+    func Columns() []string {
+        return this.st.cols
+    }
+
+    // Database type names of the columns.
+    func ColumnTypes() []string {
+        return this.st.r.ColumnTypes()
+    }
+
+    // Advances to the next row; false (and the rows closed) after the last.
+    func Next() Task<bool!> {
+        return rowsNext(this.st)
+    }
+
+    // The raw values of the current row (nil, int, float, bool, string,
+    // []byte, time.Time, []any).
+    func Values() []any {
+        return this.st.vals
+    }
+
+    // Stores the current row into pointers: *int (and the other integer
+    // types), *float, *bool, *string, *[]byte, *time.Time, *big.Decimal,
+    // *any, **T for nullable values, or a Scanner such as *sql.Null<T>.
+    func Scan(dest []any) void! {
+        if !this.st.started || this.st.vals == nil {
+            return error("sql: Scan called without calling Next")
+        }
+        if len(dest) != len(this.st.cols) {
+            return error("sql: expected " + std.fmt.Format("{0}", len(this.st.cols)) + " destination arguments in Scan, not " + std.fmt.Format("{0}", len(dest)))
+        }
+        for i, d in dest {
+            scanAny(d, this.st.vals[i], this.st.cols[i])?
+        }
+    }
+
+    // Column i of the current row converted to T.
+    func Get<T>(i int) T! {
+        if i < 0 || i >= len(this.st.vals) {
+            return error("sql: column index out of range")
+        }
+        var out T
+        convertInto(&out, this.st.vals[i], this.st.cols[i])?
+        return out
+    }
+
+    // The current row mapped to a T (as Query<T> does).
+    func Row<T>() T! {
+        var m = fieldMap<T>(this.st.cols)
+        var out T
+        mapRow(&out, this.st.vals, this.st.cols, m)?
+        return out
+    }
+
+    func Close() Task<void!> {
+        return this.st.close()
+    }
+}
+
+async func rowsNext(st *rowsState) bool! {
+    if st.closed {
+        return false
+    }
+    st.started = true
+    if st.vals == nil || len(st.vals) != len(st.cols) {
+        var vs []any = []
+        for _ in st.cols {
+            vs = append(vs, nil)
+        }
+        st.vals = vs
+    } else {
+        for i in 0..len(st.vals) {
+            st.vals[i] = nil
+        }
+    }
+    var more = try await st.r.Next(st.vals) catch err {
+        _ = await st.close()
+        return err
+    }
+    if !more {
+        await st.close()?
+        st.vals = nil
+    }
+    return more
+}
+
+// A single row (QueryRow).
+struct Row {
+    err error
+    cols []string
+    vals []any
+
+    // The row's error, if any (ErrNoRows when the query returned none).
+    func Err() error {
+        return this.err
+    }
+
+    func Scan(dest []any) void! {
+        if this.err != nil {
+            return this.err
+        }
+        if len(dest) != len(this.cols) {
+            return error("sql: expected " + std.fmt.Format("{0}", len(this.cols)) + " destination arguments in Scan, not " + std.fmt.Format("{0}", len(dest)))
+        }
+        for i, d in dest {
+            scanAny(d, this.vals[i], this.cols[i])?
+        }
+    }
+
+    func Columns() []string {
+        return this.cols
+    }
+}
+
+async func firstRow(rows Rows) Row {
+    var more = try await rows.Next() catch err {
+        return Row{err: err}
+    }
+    if !more {
+        return Row{err: ErrNoRows}
+    }
+    var row = Row{cols: rows.st.cols, vals: rows.st.vals}
+    try await rows.Close() catch err {
+        return Row{err: err}
+    }
+    return row
+}
+
+async func collect<T>(rows Rows) []T! {
+    defer rows.Close()
+    var m = fieldMap<T>(rows.st.cols)
+    var out []T = []
+    for await rows.Next()? {
+        var x T
+        mapRow(&x, rows.st.vals, rows.st.cols, m)?
+        out = append(out, x)
+    }
+    return out
+}
+
+async func collectOne<T>(rows Rows) T! {
+    defer rows.Close()
+    var m = fieldMap<T>(rows.st.cols)
+    if !await rows.Next()? {
+        return ErrNoRows
+    }
+    var x T
+    mapRow(&x, rows.st.vals, rows.st.cols, m)?
+    return x
+}
+
+// ---- transactions and dedicated connections ---------------------------------
+
+struct txState {
+    db *dbState
+    pc *poolConn
+    tx DriverTx
+    done bool
+}
+
+// A transaction (DB.Begin). Statements run on its connection; Commit or
+// Rollback ends it and returns the connection to the pool. Rollback after
+// Commit is a no-op that returns ErrTxDone.
+struct Tx {
+    st *txState
+
+    func check() void! {
+        if this.st.done {
+            return ErrTxDone
+        }
+    }
+
+    async func Exec(query string, args []any) Result! {
+        this.check()?
+        return await execOn(this.st.db, this.st.pc, query, args)?
+    }
+
+    async func QueryRows(query string, args []any) Rows! {
+        this.check()?
+        var r = await queryOn(this.st.db, this.st.pc, query, args)?
+        return Rows{st: new rowsState{db: this.st.db, pc: this.st.pc, r: r, cols: r.Columns()}}
+    }
+
+    async func QueryRow(query string, args []any) Row {
+        var rows = try await this.QueryRows(query, args) catch err {
+            return Row{err: err}
+        }
+        return await firstRow(rows)
+    }
+
+    async func Query<T>(query string, args []any) []T! {
+        var rows = await this.QueryRows(query, args)?
+        return await collect<T>(rows)?
+    }
+
+    async func QueryOne<T>(query string, args []any) T! {
+        var rows = await this.QueryRows(query, args)?
+        return await collectOne<T>(rows)?
+    }
+
+    async func Commit() void! {
+        this.check()?
+        this.st.done = true
+        defer this.st.db.release(this.st.pc)
+        await this.st.tx.Commit()?
+    }
+
+    async func Rollback() void! {
+        this.check()?
+        this.st.done = true
+        defer this.st.db.release(this.st.pc)
+        await this.st.tx.Rollback()?
+    }
+
+    func IsDone() bool {
+        return this.st.done
+    }
+}
+
+struct connState {
+    db *dbState
+    pc *poolConn
+    closed bool
+}
+
+// A dedicated pooled connection (DB.Conn); Close returns it to the pool.
+struct Conn {
+    st *connState
+
+    func check() void! {
+        if this.st.closed {
+            return ErrConnDone
+        }
+    }
+
+    async func Exec(query string, args []any) Result! {
+        this.check()?
+        return await execOn(this.st.db, this.st.pc, query, args)?
+    }
+
+    async func QueryRows(query string, args []any) Rows! {
+        this.check()?
+        var r = await queryOn(this.st.db, this.st.pc, query, args)?
+        return Rows{st: new rowsState{db: this.st.db, pc: this.st.pc, r: r, cols: r.Columns()}}
+    }
+
+    async func QueryRow(query string, args []any) Row {
+        var rows = try await this.QueryRows(query, args) catch err {
+            return Row{err: err}
+        }
+        return await firstRow(rows)
+    }
+
+    async func Query<T>(query string, args []any) []T! {
+        var rows = await this.QueryRows(query, args)?
+        return await collect<T>(rows)?
+    }
+
+    async func QueryOne<T>(query string, args []any) T! {
+        var rows = await this.QueryRows(query, args)?
+        return await collectOne<T>(rows)?
+    }
+
+    async func Ping() void! {
+        this.check()?
+        await this.st.pc.c.Ping()?
+    }
+
+    async func Begin() Tx! {
+        this.check()?
+        var t = await this.st.pc.c.Begin()?
+        // The transaction borrows the connection; it is returned by Close.
+        var pc = this.st.pc
+        return Tx{st: new txState{db: this.st.db, pc: pc, tx: t}}
+    }
+
+    func Close() {
+        if !this.st.closed {
+            this.st.closed = true
+            this.st.db.release(this.st.pc)
+        }
+    }
+}
+
+// ---- named parameters ---------------------------------------------------------
+
+func isIdentStart(c int) bool {
+    return c == 95 || (c >= 97 && c <= 122) || (c >= 65 && c <= 90)
+}
+
+func isIdentChar(c int) bool {
+    return isIdentStart(c) || (c >= 48 && c <= 57)
+}
+
+// Rewrites :name parameters to placeholders of style (PlaceholderDollar:
+// $1, $2 in order of first use; PlaceholderQuestion: ? per use) when args
+// contain sql.Named values or one map[string]any; other queries are left
+// alone. String literals, quoted identifiers, comments and :: casts are
+// skipped.
+func RewriteNamed(query string, args []any, style int) (string, []any)! {
+    return rewriteNamed(query, args, style)?
+}
+
+// A map with every :name of query (nil values), to rewrite a query
+// without its arguments (DB.Prepare).
+func namedStub(query string) map[string]any {
+    var m = map[string]any{}
+    var i = 0
+    var n = len(query)
+    for i < n {
+        var c = int(query[i])
+        if c == 39 || c == 34 || c == 96 {
+            var j = i + 1
+            for j < n && int(query[j]) != c {
+                j += 1
+            }
+            i = j + 1
+            continue
+        }
+        if c == 58 && i + 1 < n && int(query[i + 1]) == 58 {
+            i += 2
+            continue
+        }
+        if c == 58 && i + 1 < n && isIdentStart(int(query[i + 1])) {
+            var j = i + 1
+            for j < n && isIdentChar(int(query[j])) {
+                j += 1
+            }
+            m[query[i + 1..j]] = nil
+            i = j
+            continue
+        }
+        i += 1
+    }
+    return m
+}
+
+func rewriteNamed(query string, args []any, style int) (string, []any)! {
+    var names []string = []
+    var values []any = []
+    var named = false
+    var positional []any = []
+    for a in args {
+        switch a {
+            case NamedArg n:
+                names = append(names, n.Name)
+                values = append(values, n.Value)
+                named = true
+            case map[string]any m:
+                for k, v in m {
+                    names = append(names, k)
+                    values = append(values, v)
+                }
+                named = true
+            default:
+                positional = append(positional, a)
+        }
+    }
+    if !named {
+        return (query, args)
+    }
+    if len(positional) > 0 {
+        return error("sql: cannot mix named and positional arguments")
+    }
+    var b = std.strings.Builder{}
+    var used []string = []
+    var out []any = []
+    var i = 0
+    var n = len(query)
+    var start = 0
+    for i < n {
+        var c = int(query[i])
+        if c == 39 || c == 34 || c == 96 {
+            var j = i + 1
+            for j < n && int(query[j]) != c {
+                j += 1
+            }
+            i = j + 1
+            continue
+        }
+        if c == 45 && i + 1 < n && int(query[i + 1]) == 45 {
+            for i < n && int(query[i]) != 10 {
+                i += 1
+            }
+            continue
+        }
+        if c == 47 && i + 1 < n && int(query[i + 1]) == 42 {
+            var j = i + 2
+            for j + 1 < n && !(int(query[j]) == 42 && int(query[j + 1]) == 47) {
+                j += 1
+            }
+            i = j + 2
+            continue
+        }
+        if c == 58 && i + 1 < n && int(query[i + 1]) == 58 {
+            i += 2
+            continue
+        }
+        if c == 58 && i + 1 < n && isIdentStart(int(query[i + 1])) && (i == 0 || int(query[i - 1]) != 58) {
+            var j = i + 1
+            for j < n && isIdentChar(int(query[j])) {
+                j += 1
+            }
+            var name = query[i + 1..j]
+            var vi = -1
+            for k, nm in names {
+                if nm == name {
+                    vi = k
+                }
+            }
+            if vi < 0 {
+                return error("sql: missing named argument :" + name)
+            }
+            b.Write(query[start..i])
+            if style == PlaceholderDollar {
+                var pos = -1
+                for k, u in used {
+                    if u == name {
+                        pos = k
+                    }
+                }
+                if pos < 0 {
+                    used = append(used, name)
+                    out = append(out, values[vi])
+                    pos = len(used) - 1
+                }
+                b.Write("$" + std.fmt.Format("{0}", pos + 1))
+            } else {
+                out = append(out, values[vi])
+                b.Write("?")
+            }
+            start = j
+            i = j
+            continue
+        }
+        i += 1
+    }
+    b.Write(query[start..])
+    return (b.String(), out)
+}
+
+// ---- value conversion -------------------------------------------------------
+
+// The driver value of an argument: integers become int, float32 float,
+// Valuer values their SqlValue, big.Decimal its string; other values
+// (nil, int, float, bool, string, []byte, time.Time, []any) pass as is.
+func driverValue(a any) any {
+    switch a {
+        case nil:
+            return nil
+        case Valuer v:
+            return driverValue(v.SqlValue())
+        case int n:
+            return n
+        case int8 n:
+            return int(n)
+        case int16 n:
+            return int(n)
+        case int32 n:
+            return int(n)
+        case uint n:
+            return int(n)
+        case byte n:
+            return int(n)
+        case uint16 n:
+            return int(n)
+        case uint32 n:
+            return int(n)
+        case float32 f:
+            return float(f)
+        case std.math.big.Decimal d:
+            return d.String()
+        case std.encoding.json.Value j:
+            return j.Format()
+        case []string ss:
+            var out []any = []
+            for s in ss {
+                out = append(out, s)
+            }
+            return out
+        case []int ns:
+            var out []any = []
+            for x in ns {
+                out = append(out, x)
+            }
+            return out
+        case []float fs:
+            var out []any = []
+            for x in fs {
+                out = append(out, x)
+            }
+            return out
+        case []bool bs:
+            var out []any = []
+            for x in bs {
+                out = append(out, x)
+            }
+            return out
+    }
+    return a
+}
+
+// The argument form of a typed value (Null<T>.SqlValue).
+func argOf<T>(v T) any {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+        if v == nil {
+            return nil
+        }
+        return argOf(*v)
+    } else {
+        return driverValue(v)
+    }
+}
+
+func typeName(v any) string {
+    switch v {
+        case nil:
+            return "NULL"
+        case int n:
+            return "int"
+        case float f:
+            return "float"
+        case bool b:
+            return "bool"
+        case string s:
+            return "string"
+        case []byte b:
+            return "[]byte"
+        case std.time.Time t:
+            return "time.Time"
+        case []any a:
+            return "array"
+    }
+    return "value"
+}
+
+func convError(col string, v any, want string) error {
+    var where = "sql: "
+    if col != "" {
+        where = "sql: column \"" + col + "\": "
+    }
+    if v == nil {
+        return error(where + "cannot store NULL in " + want + " (use a pointer or sql.Null<T>)")
+    }
+    return error(where + "cannot convert " + typeName(v) + " " + std.fmt.Format("{0}", v) + " to " + want)
+}
+
+func toInt(v any, col string, want string) int! {
+    switch v {
+        case int n:
+            return n
+        case float f:
+            if f == std.math.Trunc(f) && f >= -9223372036854775808.0 && f < 9223372036854775808.0 {
+                return int(f)
+            }
+        case bool b:
+            if b {
+                return 1
+            }
+            return 0
+        case string s:
+            var n = try std.strconv.Atoi(std.strings.Trim(s)) catch err {
+                return convError(col, v, want)
+            }
+            return n
+        case []byte b:
+            var n = try std.strconv.Atoi(std.strings.Trim(std.strings.FromBytes(b))) catch err {
+                return convError(col, v, want)
+            }
+            return n
+    }
+    return convError(col, v, want)
+}
+
+func toIntRange(v any, col string, want string, lo int, hi int) int! {
+    var n = toInt(v, col, want)?
+    if n < lo || n > hi {
+        return error("sql: column \"" + col + "\": value " + std.fmt.Format("{0}", n) + " overflows " + want)
+    }
+    return n
+}
+
+func toFloat(v any, col string) float! {
+    switch v {
+        case int n:
+            return float(n)
+        case float f:
+            return f
+        case string s:
+            var f = try std.strconv.ParseFloat(std.strings.Trim(s)) catch err {
+                return convError(col, v, "float")
+            }
+            return f
+        case []byte b:
+            var f = try std.strconv.ParseFloat(std.strings.Trim(std.strings.FromBytes(b))) catch err {
+                return convError(col, v, "float")
+            }
+            return f
+    }
+    return convError(col, v, "float")
+}
+
+func toBool(v any, col string) bool! {
+    switch v {
+        case bool b:
+            return b
+        case int n:
+            if n == 0 || n == 1 {
+                return n == 1
+            }
+        case string s:
+            var t = std.strings.ToLower(std.strings.Trim(s))
+            if t == "1" || t == "t" || t == "true" || t == "y" || t == "yes" || t == "on" {
+                return true
+            }
+            if t == "0" || t == "f" || t == "false" || t == "n" || t == "no" || t == "off" {
+                return false
+            }
+    }
+    return convError(col, v, "bool")
+}
+
+func toString(v any, col string) string! {
+    switch v {
+        case string s:
+            return s
+        case []byte b:
+            return std.strings.FromBytes(b)
+        case int n:
+            return std.fmt.Format("{0}", n)
+        case float f:
+            return std.strconv.FormatFloat(f, 'g', -1)
+        case bool b:
+            if b {
+                return "true"
+            }
+            return "false"
+        case std.time.Time t:
+            return t.Format("2006-01-02T15:04:05.999999999Z07:00")
+    }
+    return convError(col, v, "string")
+}
+
+func toBytes(v any, col string) []byte! {
+    switch v {
+        case []byte b:
+            var out []byte = []
+            for x in b {
+                out = append(out, x)
+            }
+            return out
+        case string s:
+            return std.strings.Bytes(s)
+    }
+    return convError(col, v, "[]byte")
+}
+
+// Text layouts tried for time values stored as text (SQLite, text
+// protocols).
+func ParseTimeText(s string) std.time.Time! {
+    var t = std.strings.Trim(s)
+    var layouts = ["2006-01-02 15:04:05.999999999Z07:00", "2006-01-02T15:04:05.999999999Z07:00", "2006-01-02 15:04:05.999999999Z07", "2006-01-02 15:04:05.999999999", "2006-01-02T15:04:05.999999999", "2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02"]
+    for l in layouts {
+        var r = try std.time.ParseTime(l, t) catch err {
+            continue
+        }
+        return r
+    }
+    return error("sql: cannot parse \"" + s + "\" as a time")
+}
+
+func toTime(v any, col string) std.time.Time! {
+    switch v {
+        case std.time.Time t:
+            return t
+        case string s:
+            var t = try ParseTimeText(s) catch err {
+                return convError(col, v, "time.Time")
+            }
+            return t
+        case []byte b:
+            var t = try ParseTimeText(std.strings.FromBytes(b)) catch err {
+                return convError(col, v, "time.Time")
+            }
+            return t
+        case int n:
+            return std.time.Unix(n, 0).UTC()
+    }
+    return convError(col, v, "time.Time")
+}
+
+func toDecimal(v any, col string) std.math.big.Decimal! {
+    switch v {
+        case string s:
+            var d = try std.math.big.ParseDecimal(std.strings.Trim(s)) catch err {
+                return convError(col, v, "big.Decimal")
+            }
+            return d
+        case []byte b:
+            var d = try std.math.big.ParseDecimal(std.strings.Trim(std.strings.FromBytes(b))) catch err {
+                return convError(col, v, "big.Decimal")
+            }
+            return d
+        case int n:
+            return std.math.big.NewDecimal(n, 0)
+        case float f:
+            var d = try std.math.big.ParseDecimal(std.strconv.FormatFloat(f, 'g', -1)) catch err {
+                return convError(col, v, "big.Decimal")
+            }
+            return d
+    }
+    return convError(col, v, "big.Decimal")
+}
+
+// Stores driver value v into *p, converting to F. NULL goes to pointers
+// (nil), Scanners and any; elsewhere it is an error.
+func convertInto<F>(p *F, v any, col string) void! {
+    if std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.encoding.json.Value>() {
+        if v == nil {
+            *p = std.encoding.json.NewNull()
+            return
+        }
+        var text = toString(v, col)?
+        *p = std.encoding.json.ParseValue(text)?("sql: column \"" + col + "\"")
+        return
+    }
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Struct && !(std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.time.Time>()) && !(std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.math.big.Decimal>()) {
+        // A Scanner (sql.Null<T>, user types): scanned into a fresh value
+        // so that p itself does not escape.
+        var probe F
+        var a any = &probe
+        switch a {
+            case Scanner s:
+                s.ScanValue(v)?
+                *p = probe
+                return
+        }
+        return error("sql: column \"" + col + "\": unsupported destination type " + std.reflect.TypeOf<F>().Name + " (implement sql.Scanner)")
+    }
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Any {
+        *p = v
+        return
+    }
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {
+        if v == nil {
+            *p = nil
+            return
+        }
+        convertPtr(p, v, col)?
+        return
+    }
+    if v == nil {
+        if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+            // NULL arrays and blobs become nil slices
+            *p = nil
+            return
+        }
+        return convError(col, v, std.reflect.TypeOf<F>().Name)
+    }
+    if std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.time.Time>() {
+        *p = toTime(v, col)?
+    } else if std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.math.big.Decimal>() {
+        *p = toDecimal(v, col)?
+    } else if std.reflect.TypeOf<F>() == std.reflect.TypeOf<[]byte>() {
+        *p = toBytes(v, col)?
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.String {
+        *p = toString(v, col)?
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int {
+        *p = toInt(v, col, "int")?
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 {
+        *p = int8(toIntRange(v, col, "int8", -128, 127)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 {
+        *p = int16(toIntRange(v, col, "int16", -32768, 32767)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 {
+        *p = int32(toIntRange(v, col, "int32", std.math.MinInt32, std.math.MaxInt32)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint {
+        *p = uint(toIntRange(v, col, "uint", 0, std.math.MaxInt)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 {
+        *p = byte(toIntRange(v, col, "byte", 0, 255)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 {
+        *p = uint16(toIntRange(v, col, "uint16", 0, 65535)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
+        *p = uint32(toIntRange(v, col, "uint32", 0, std.math.MaxUint32)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float {
+        *p = toFloat(v, col)?
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
+        *p = float32(toFloat(v, col)?)
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool {
+        *p = toBool(v, col)?
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+        convertSlice(p, v, col)?
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Enum {
+        var name = toString(v, col)?
+        var t = std.reflect.TypeOf<F>()
+        var variant = t.Variant(name)
+        if variant == nil || len(variant.Fields) > 0 {
+            return error("sql: column \"" + col + "\": unknown " + t.Name + " value \"" + name + "\"")
+        }
+        std.reflect.storeTag(p, variant.Index)
+    } else {
+        return error("sql: column \"" + col + "\": unsupported destination type " + std.reflect.TypeOf<F>().Name)
+    }
+}
+
+func convertPtr<E>(p **E, v any, col string) void! {
+    var e E
+    convertInto(&e, v, col)?
+    *p = &e
+}
+
+func convertSlice<E>(p *[]E, v any, col string) void! {
+    switch v {
+        case []any items:
+            var out []E = []
+            for x in items {
+                var e E
+                convertInto(&e, x, col)?
+                out = append(out, e)
+            }
+            *p = out
+            return
+    }
+    return convError(col, v, std.reflect.TypeOf<[]E>().Name)
+}
+
+// Scan into one destination pointer.
+func scanAny(d any, v any, col string) void! {
+    switch d {
+        case Scanner s:
+            s.ScanValue(v)?
+        case *any p:
+            *p = v
+        case *int p:
+            convertInto(p, v, col)?
+        case *int8 p:
+            convertInto(p, v, col)?
+        case *int16 p:
+            convertInto(p, v, col)?
+        case *int32 p:
+            convertInto(p, v, col)?
+        case *uint p:
+            convertInto(p, v, col)?
+        case *byte p:
+            convertInto(p, v, col)?
+        case *uint16 p:
+            convertInto(p, v, col)?
+        case *uint32 p:
+            convertInto(p, v, col)?
+        case *float p:
+            convertInto(p, v, col)?
+        case *float32 p:
+            convertInto(p, v, col)?
+        case *bool p:
+            convertInto(p, v, col)?
+        case *string p:
+            convertInto(p, v, col)?
+        case *[]byte p:
+            convertInto(p, v, col)?
+        case *std.time.Time p:
+            convertInto(p, v, col)?
+        case *std.math.big.Decimal p:
+            convertInto(p, v, col)?
+        case **int p:
+            convertInto(p, v, col)?
+        case **float p:
+            convertInto(p, v, col)?
+        case **bool p:
+            convertInto(p, v, col)?
+        case **string p:
+            convertInto(p, v, col)?
+        case **std.time.Time p:
+            convertInto(p, v, col)?
+        case *[]int p:
+            convertInto(p, v, col)?
+        case *[]string p:
+            convertInto(p, v, col)?
+        case *[]float p:
+            convertInto(p, v, col)?
+        case nil:
+            // a nil destination discards the column
+        default:
+            return error("sql: column \"" + col + "\": unsupported Scan destination (want a pointer)")
+    }
+}
+
+// ---- struct mapping -------------------------------------------------------------
+
+// snake_case of a Go-style field name: UserID -> user_id, CreatedAt ->
+// created_at.
+func SnakeCase(name string) string {
+    var b = std.strings.Builder{}
+    var n = len(name)
+    for i in 0..n {
+        var c = int(name[i])
+        if c >= 65 && c <= 90 {
+            var p = 0
+            if i > 0 {
+                p = int(name[i - 1])
+            }
+            var nx = 0
+            if i + 1 < n {
+                nx = int(name[i + 1])
+            }
+            var prevLower = (p >= 97 && p <= 122) || (p >= 48 && p <= 57)
+            var prevUpper = p >= 65 && p <= 90
+            var nextLower = nx >= 97 && nx <= 122
+            if i > 0 && (prevLower || (prevUpper && nextLower)) {
+                b.Write("_")
+            }
+            b.Write(string(char(c + 32)))
+        } else {
+            b.Write(string(char(c)))
+        }
+    }
+    return b.String()
+}
+
+// The column index for each field of T (-1: not mapped); for a non-struct
+// T a single entry 0.
+func fieldMap<T>(cols []string) []int {
+    var m []int = []
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.time.Time>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.math.big.Decimal>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.encoding.json.Value>()) {
+        for f in std.reflect.Fields<T>() {
+            var tag = f.Attribute<column>()
+            var idx = -1
+            if tag == nil || !tag.skip {
+                if tag != nil && tag.name != "" {
+                    for i, c in cols {
+                        if c == tag.name {
+                            idx = i
+                        }
+                    }
+                } else {
+                    var lower = std.strings.ToLower(f.Name)
+                    var snake = SnakeCase(f.Name)
+                    for i, c in cols {
+                        if idx < 0 && c == f.Name {
+                            idx = i
+                        }
+                    }
+                    if idx < 0 {
+                        for i, c in cols {
+                            var lc = std.strings.ToLower(c)
+                            if idx < 0 && (lc == lower || lc == snake) {
+                                idx = i
+                            }
+                        }
+                    }
+                }
+            }
+            m = append(m, idx)
+        }
+    } else {
+        m = append(m, 0)
+    }
+    return m
+}
+
+func mapRow<T>(out *T, vals []any, cols []string, m []int) void! {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.time.Time>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.math.big.Decimal>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.encoding.json.Value>()) {
+        var a any = out
+        switch a {
+            case Scanner s:
+                if len(vals) != 1 {
+                    return error("sql: a Scanner result type needs exactly one column")
+                }
+                s.ScanValue(vals[0])?
+                return
+        }
+        var fi = 0
+        for f in std.reflect.Fields<T>() {
+            var idx = m[fi]
+            fi += 1
+            if idx >= 0 {
+                convertInto(&f.Get(*out), vals[idx], cols[idx])?
+            }
+        }
+    } else {
+        if len(vals) != 1 {
+            return error("sql: query returned " + std.fmt.Format("{0}", len(vals)) + " columns for a scalar result type " + std.reflect.TypeOf<T>().Name)
+        }
+        convertInto(out, vals[0], cols[0])?
+    }
+}

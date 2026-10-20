@@ -38,6 +38,7 @@ void slang_os_args(slang_slice *out) {
 }
 
 void slang_exit(int32_t code) {
+    slang_dbg_exit(code);
     slang__io_flush_all();
     _Exit(code);
 }

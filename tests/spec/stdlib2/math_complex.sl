@@ -1,4 +1,4 @@
-// test: std.math.complex arithmetic methods and cmplx functions (Abs, Phase, Exp, Log, Sqrt, Pow)
+// test: std.math.complex arithmetic operators (+ - * / unary - ==) and cmplx functions (Abs, Phase, Exp, Log, Sqrt, Pow)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.math_complex
@@ -18,12 +18,12 @@ func show(c complex.Complex) string {
 func main() {
     var a = complex.New(1, 2)
     var b = complex.Complex{Re: 3, Im: -1}
-    println(a.String(), b.String(), a.Add(b).String(), a.Sub(b).String(), a.Mul(b).String(), show(a.Div(b)), a.Neg().String(), a.Conj().String())
-    println(complex.New(3, 4).Abs(), round(complex.New(0, 1).Phase()), a.Equals(complex.New(1, 2)), a.Scale(2).String())
+    println(a.String(), b.String(), (a + b).String(), (a - b).String(), (a * b).String(), show(a / b), (-a).String(), a.Conj().String())
+    println(complex.New(3, 4).Abs(), round(complex.New(0, 1).Phase()), a == complex.New(1, 2), a.Scale(2).String())
     println(show(complex.Exp(complex.New(0, math.Pi))), show(complex.Log(complex.New(-1, 0))), show(complex.Sqrt(complex.New(-4, 0))), show(complex.Sqrt(complex.New(3, 4))))
     println(show(complex.Pow(complex.New(0, 1), complex.New(2, 0))), show(complex.Sin(complex.New(1, 1))), show(complex.Cos(complex.New(1, 1))))
     var (r, theta) = complex.Polar(complex.New(0, 2))
     println(r, round(theta), show(complex.Rect(2, math.Pi / 2)))
     println(complex.IsNaN(complex.New(math.NaN(), 0)), complex.IsInf(complex.New(math.Inf(1), math.NaN())), complex.IsNaN(complex.New(math.Inf(1), math.NaN())))
-    println(show(complex.New(1, 0).Div(complex.New(0, 0))))
+    println(show(complex.New(1, 0) / complex.New(0, 0)), a != b, a.Add(b) == a + b)
 }

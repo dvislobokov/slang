@@ -1,0 +1,36 @@
+namespace app
+
+import std
+import std.io
+
+// Debug-agent fixture: exception breakpoints on panics and on the
+// creation of typed errors.
+
+struct NotFound {
+    Key string
+
+    func Message() string {
+        return "not found: " + this.Key
+    }
+}
+
+func lookup(m map[string]int, key string) int! {
+    if m[key] == 0 {
+        return NotFound{Key: key} // BREAK error
+    }
+    return m[key]
+}
+
+func divide(a int, b int) int {
+    if b == 0 {
+        panic("division by zero") // BREAK panic
+    }
+    return a / b
+}
+
+func main() {
+    var m = map[string]int{"a": 1}
+    var v = try lookup(m, "zzz") else -1
+    println(v, divide(6, 3))
+    println(divide(1, 0))
+}

@@ -77,6 +77,38 @@ switch any {
   `http.Get<T>(url)` с автоматическим разбором JSON.
 - WebSocket, Server-Sent Events, graceful shutdown, Unix-сокеты.
 
+**Статус (реализовано, `std.net.http`, `std.net.http.hpack`,
+`std.net.http.test`, `std.net.ws`; см. DESIGN.md «Сеть и протоколы» и
+`runtime/ABI.md` §16.4–16.5):**
+
+- ✓ HTTP/1.1 сервер: задача на соединение, keep-alive, разбор заголовков в
+  буфере соединения на C (без строки на строку заголовка), один `write` на
+  ответ с кэшированным `Date`; на `benchmarks/http_hello` — на уровне Go
+  `net/http` (см. `benchmarks/README.md`).
+- ✓ HTTP/2 (RFC 9113) сервер и клиент: h2 по ALPN поверх `std.net.tls`,
+  h2c с prior knowledge (`Server{H2C: true}`, `Transport{H2C: true}`),
+  HPACK со статической/динамической таблицами и Хаффманом, управление
+  потоком, SETTINGS/PING/GOAWAY/RST_STREAM, задача на поток, тот же
+  `Handler`; приоритеты игнорируются, server push не реализован. Interop:
+  `curl --http2`, `curl --http2-prior-knowledge`, клиент и сервер Go
+  `net/http` (`compiler/tests/net_http.rs`).
+- ✓ Клиент: пул соединений (`Transport`: на хост, `MaxIdleConnsPerHost`,
+  `MaxConnsPerHost`, `IdleConnTimeout`, повтор на «протухшем» соединении,
+  TLS-сессии), прокси (CONNECT, `HTTP_PROXY`/`NO_PROXY`), таймауты
+  (подключение, TLS, заголовок ответа, весь запрос — через контекст задачи),
+  gzip, `CookieJar`, построитель запроса, потоковое тело (`io.AsyncReader`),
+  `JSON<T>`; `http.GetJSON<T>(url)`.
+- ✓ WebSocket (`std.net.ws`), Server-Sent Events (`ServerSentEvents`,
+  `EventSource`), `ServeFile`/`ServeDir` (диапазоны, ETag, sendfile),
+  middleware в роутере (`Recover`, `Logging` через `std.log`, `CORS`,
+  `Gzip`, `BodyLimit`, `TimeoutHandler`), лимиты заголовков и тел, graceful
+  shutdown (HTTP/2 — GOAWAY), Unix-сокеты (`Addr: "unix:/path"`),
+  `std.net.http.test` (`NewServer`, `NewRecorder`, `NewRequest`).
+- Нет: HTTP/3, server push, permessage-deflate, `http.Context`-обработчики
+  (`Handler` пока `Serve(req, res)`), WebSocket поверх HTTP/2 (RFC 8441),
+  потоковое чтение тела запроса на сервере (тело буферизуется; лимит —
+  `MaxBodyBytes`).
+
 ### TLS
 
 Собственная реализация, сразу, без BoringSSL/OpenSSL:
@@ -221,6 +253,76 @@ async func main() {
   SQL Server и ClickHouse позже.
 - Типизированные запросы: `db.Query<User>("select ... where id = $1", id)`
   маппит строки в структуры по именам столбцов и `@column`.
+
+#### Статус реализации (`std.database.sql`)
+
+Реализовано (Slang: `sema/stdlib_src/sql.sl`, драйверы `postgres.sl`,
+`postgres_types.sl`, `sqlite.sl`; C — только SQLite и сигнальные ошибки,
+`runtime/ABI.md` §23):
+
+- Интерфейс драйвера: `Driver.Open(dsn) Task<DriverConn!>`, `DriverConn
+  {Prepare, Exec, Query, Begin, Ping, Close, IsValid, Placeholder}`,
+  `DriverStmt {Exec, Query, NumInput, Close}`, `DriverRows {Columns,
+  ColumnTypes, Next, Close}`, `DriverTx {Commit, Rollback}`; значения —
+  `nil`, `int`, `float`, `bool`, `string`, `[]byte`, `time.Time`, `[]any`.
+  `sql.Register(name, d)`, `sql.Drivers()`, `sql.Open(name, dsn) *DB!`,
+  `sql.OpenDriver(d, dsn)`; `postgres.Open(dsn)`, `sqlite.Open(dsn)` —
+  без регистрации.
+- `DB` — асинхронный пул: `SetMaxOpenConns` (ожидающие задачи — FIFO,
+  ожидание отменяется контекстом), `SetMaxIdleConns` (по умолчанию 2),
+  `SetConnMaxIdleTime`, `SetConnMaxLifetime`, `SetHealthCheck` (ping
+  простоявшего соединения перед выдачей, по умолчанию после 30 с),
+  `SetStmtCacheSize` (кэш подготовленных выражений на соединение, 64),
+  `Stats()`, `Close()`. Сломанные соединения (`IsValid() == false` после
+  ошибки ввода-вывода или отмены) выбрасываются. Фоновой задачи-уборщика
+  нет: просроченные соединения закрываются при выдаче и возврате.
+- `Exec(q, args) Result!` (`RowsAffected`, `LastInsertId`), `QueryRows(q,
+  args) Rows!` (`Next`, `Scan([&a, &b])`, `Get<T>(i)`, `Row<T>()`,
+  `Values`, `Columns`, `ColumnTypes`, `Close`; соединение возвращается в
+  пул на `Close`, в конце строк или при уничтожении `Rows`), `QueryRow`
+  (`Row.Scan`, `ErrNoRows`), `Query<T>(q, args) []T!` и `QueryOne<T>` —
+  столбцы в поля по `@sql.column("x")`, имени или snake_case имени
+  (`@sql.column(skip: true)`), либо скаляр для одного столбца;
+  преобразования в целые (с проверкой диапазона), `float`, `bool`,
+  `string`, `[]byte`, `time.Time` (в том числе из текста), `big.Decimal`,
+  `json.Value`, enum по имени, срезы (массивы), `*T` и `sql.Null<T>` для
+  NULL, свои типы через `sql.Scanner`/`sql.Valuer`. Методы называются
+  `QueryRows`/`Query<T>`, а не `Query`/`Query<T>`: перегрузки нет.
+- Аргументы — `[]any`; именованные `:name` (`sql.Named("name", v)` или один
+  `map[string]any`) переписываются в `$1..` или `?` по драйверу
+  (`sql.RewriteNamed`; строки, идентификаторы в кавычках, комментарии и
+  `::` пропускаются).
+- `Begin() Tx!` (`Exec`, `QueryRows`, `QueryRow`, `Query<T>`, `QueryOne<T>`,
+  `Commit`, `Rollback`; идиома `defer tx.Rollback()` — после `Commit`
+  ничего не делает и возвращает `ErrTxDone`), `Transact(f)`, `Prepare(q)
+  Stmt!`, `Conn()` (выделенное соединение), `Raw(f)` (доступ к соединению
+  драйвера). Таймауты — `task.WithTimeout`: отменённый запрос прерывается,
+  его соединение выбрасывается.
+- PostgreSQL (`std.database.postgres`, на Slang поверх `std.net`/
+  `std.net.tls`): DSN `postgres://user:pass@host:port/db?sslmode=...` и
+  `key=value`, переменные `PG*`, Unix-сокеты (`host=/dir`); sslmode
+  `disable/allow/prefer/require/verify-ca/verify-full` (`sslrootcert`);
+  аутентификация trust, password, MD5, SCRAM-SHA-256 (без channel
+  binding); simple query (без аргументов, несколько команд) и extended
+  protocol с именованными подготовленными выражениями, бинарные результаты
+  для bool/int2/4/8/oid/float4/8/bytea/uuid/timestamp(tz)/date/text/json(b),
+  текст для остальных (numeric → строка → `big.Decimal`, interval, массивы
+  → `[]any`); ошибки `postgres.Error{Severity, Code, Msg, Detail, Hint,
+  Position, Table, Column, Constraint, ...}`; `Driver{OnNotice,
+  OnNotification}`; `postgres.CopyFrom(db, "COPY ... FROM STDIN", data)`,
+  `COPY ... TO STDOUT` — строки столбца `data`. Проверено против
+  PostgreSQL 16 (`compiler/tests/database.rs`) и mock-сервера
+  (`tests/spec/stdlib4/postgres_mock.sl`). Нет: CancelRequest при отмене
+  (соединение просто закрывается), бинарного кодирования аргументов
+  (передаются текстом, `[]byte` — бинарно), многомерных массивов,
+  SCRAM-SHA-256-PLUS.
+- SQLite (`std.database.sqlite`): системная libsqlite3 через C-обёртку;
+  компилятор добавляет `-lsqlite3` только программам, использующим драйвер
+  (`stdlib.rs` `LINK_LIBS`). DSN — путь, `:memory:` или URI `file:`, опции
+  `_busy_timeout`, `_foreign_keys`, `_journal_mode`, `_synchronous`,
+  `_txlock`; столбцы DATE/TIME → `time.Time`, BOOLEAN → `bool`; ошибки
+  `sqlite.Error{Code, ExtendedCode, Msg}` с `IsConstraint()`. Вызовы
+  синхронные (выполняются на потоке воркера).
 
 ### `slang.data` (ORM)
 

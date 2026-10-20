@@ -25,7 +25,9 @@ fn prog(body: &str) -> String {
 }
 
 fn ok(body: &str) {
-    let errors = analyze(&prog(body));
+    // `prog` imports std.io for the programs that print; in the others it
+    // is unused (the logger's output does not use the program's imports).
+    let errors: Vec<String> = analyze(&prog(body)).into_iter().filter(|e| !e.starts_with("unused import std.io")).collect();
     assert!(errors.is_empty(), "unexpected errors: {errors:#?}");
 }
 
@@ -111,7 +113,10 @@ fn disabled_levels_do_not_evaluate_arguments_and_skip_works() {
 #[test]
 fn global_logger_writes_to_stderr() {
     let dir = tmp("global");
-    let (code, out, errs) = run_in(&dir, &prog("func main() {\n    log.Info(\"hello {Name}\", \"x\")\n    log.Debug(\"hidden\")\n    log.Error(error(\"e\"), \"failed {N}\", 2)\n}"), &[]);
+    // (no std.io import: nothing here uses it, the logger's own output does
+    // not count as a use of the program's imports)
+    let src = "namespace t\nimport std\nfunc main() {\n    log.Info(\"hello {Name}\", \"x\")\n    log.Debug(\"hidden\")\n    log.Error(error(\"e\"), \"failed {N}\", 2)\n}\n";
+    let (code, out, errs) = run_in(&dir, src, &[]);
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(code, 0, "{errs}");
     assert_eq!(out, "");

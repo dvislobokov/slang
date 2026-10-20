@@ -70,6 +70,11 @@ pub struct Manifest {
     pub features: IndexMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<Workspace>,
+    /// `[capabilities]`: low-level standard modules the package may
+    /// import (`unsafe = true` for `std.unsafe`, `plugin = true` for
+    /// `std.plugin`; docs/DEBUGGER.md).
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub capabilities: IndexMap<String, bool>,
 }
 
 /// `[package]`.

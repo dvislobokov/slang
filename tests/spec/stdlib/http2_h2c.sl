@@ -1,0 +1,76 @@
+// test: HTTP/2 with prior knowledge (Server{H2C}, Transport{H2C}): concurrent requests multiplexed on one connection, request and response bodies above the flow-control windows, streamed responses, HEAD, errors, Shutdown with GOAWAY
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http2_h2c
+
+import std.io
+import std
+import std.net
+
+async func main() void! {
+    var r = http.NewRouter()
+    r.Get("/hello/{name}", async func(req *http.Request, res *http.Response) void! {
+        res.SetHeader("X-Proto", req.Proto)
+        res.Text(200, "hello " + req.Param("name") + " via " + req.Proto + "\n")
+    })
+    r.Post("/echo", async func(req *http.Request, res *http.Response) void! {
+        res.Text(200, fmt.Format("{0} bytes, last {1}", len(req.Body), req.Body[len(req.Body) - 3..]))
+    })
+    r.Get("/big", async func(req *http.Request, res *http.Response) void! {
+        res.Text(200, strings.Repeat("0123456789", 30000))
+    })
+    r.Get("/stream", async func(req *http.Request, res *http.Response) void! {
+        for i in 0..3 {
+            res.Write(fmt.Format("part {0}\n", i))
+            await res.Flush()?
+        }
+        res.Write("end\n")
+    })
+    r.Get("/fail", async func(req *http.Request, res *http.Response) void! {
+        return error("boom")
+    })
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: r, H2C: true}
+    srv.Listen()?
+    var serving = srv.Serve()
+    var base = srv.URL()
+    var t = http.Transport{H2C: true}
+    var c = http.Client{Transport: &t}
+
+    var a = await c.Get(base + "/hello/h2")?
+    println(a.Status, a.Proto, a.Header("X-Proto"), a.Header("Content-Type"))
+    print(a.Body)
+
+    // 20 concurrent requests share the connection
+    var tasks []Task<http.Response!> = []
+    for i in 0..20 {
+        tasks = append(tasks, c.Get(base + fmt.Format("/hello/n{0}", i)))
+    }
+    var ok = 0
+    for i, tk in tasks {
+        var res = await tk?
+        if res.Body == fmt.Format("hello n{0} via HTTP/2.0\n", i) {
+            ok += 1
+        }
+    }
+    println("concurrent ok:", ok)
+
+    var big = await c.Get(base + "/big")?
+    println("big:", big.Status, len(big.Body), big.Header("Content-Length"))
+    var payload = strings.Repeat("x", 200000) + "end"
+    var e = await c.Post(base + "/echo", payload, "text/plain")?
+    println("echo:", e.Body)
+    var s = await c.Get(base + "/stream")?
+    print("stream: ", strings.Replace(s.Body, "\n", " "), "\n")
+    var h = await c.Send(http.NewRequest("HEAD", base + "/big"))?
+    println("head:", h.Status, len(h.Body), h.Header("Content-Length"))
+    var f = await c.Get(base + "/fail")?
+    print("fail: ", f.Status, " ", f.Body)
+    var m = await c.Get(base + "/missing")?
+    println("missing:", m.Status)
+    var st = t.Stats()
+    println("dials:", st.Dials, "http2 conns:", st.HTTP2)
+
+    await srv.Shutdown()
+    await serving?
+    println("stopped")
+}

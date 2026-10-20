@@ -127,13 +127,26 @@
     "debuggers": [
       {
         "type": "slang",
-        "label": "Slang (lldb-dap)",
+        "label": "Slang",
         "languages": [
           "slang"
         ],
         "configurationAttributes": {
           "launch": {
             "properties": {
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "lldb"
+                ],
+                "default": "agent",
+                "enumDescriptions": [
+                  "The in-process debug agent (std.debug): the program is started with SLANG_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
+                  "lldb-dap with the Slang formatters (stage 1; DWARF, needs LLDB 18+)."
+                ],
+                "description": "Debug adapter: the in-process agent (default) or lldb-dap."
+              },
               "program": {
                 "type": "string",
                 "description": "Executable to debug (built with debug info: any non-release `slang build`, or `--release -g`)."
@@ -205,12 +218,38 @@
           },
           "attach": {
             "properties": {
+              "adapter": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "lldb"
+                ],
+                "default": "agent",
+                "enumDescriptions": [
+                  "The in-process debug agent (std.debug): the program is started with SLANG_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
+                  "lldb-dap with the Slang formatters (stage 1; DWARF, needs LLDB 18+)."
+                ],
+                "description": "Debug adapter: the in-process agent (default) or lldb-dap."
+              },
+              "address": {
+                "type": "string",
+                "description": "agent: [host:]port of a program started with SLANG_DEBUG (e.g. \"127.0.0.1:2345\" or \":2345\")."
+              },
+              "host": {
+                "type": "string",
+                "default": "127.0.0.1",
+                "description": "agent: host of the debug agent."
+              },
+              "port": {
+                "type": "number",
+                "description": "agent: port of the debug agent."
+              },
               "pid": {
                 "type": [
                   "number",
                   "string"
                 ],
-                "description": "Process id to attach to (asked for when missing)."
+                "description": "lldb: process id to attach to (asked for when missing)."
               },
               "program": {
                 "type": "string",
@@ -271,13 +310,25 @@
             }
           },
           {
-            "label": "Slang: Attach to process",
+            "label": "Slang: Attach to process (lldb)",
             "description": "Attach lldb-dap to a running Slang program",
             "body": {
               "type": "slang",
               "request": "attach",
               "name": "Attach",
-              "pid": "^\"\\${command:pickProcess}\""
+              "pid": "^\"\\${command:pickProcess}\"",
+              "adapter": "lldb"
+            }
+          },
+          {
+            "label": "Slang: Attach to the debug agent",
+            "description": "Connect to a program started with SLANG_DEBUG=:2345 (or `slang debug run --headless --port 2345`)",
+            "body": {
+              "type": "slang",
+              "request": "attach",
+              "name": "Attach to agent",
+              "adapter": "agent",
+              "address": ":2345"
             }
           }
         ]

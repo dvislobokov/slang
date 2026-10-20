@@ -1,0 +1,28 @@
+// test: a generic method call directly after an index (`t.Fields[1].Attribute<json>()`, `xs[0].Get<int>()`) parses as a call with type arguments, not as comparisons
+// status: passing
+namespace spec.reflection.attribute_after_index
+
+import std.io
+import std
+
+struct User {
+    @json(name: "id") Id int
+    @json(name: "mail", omitEmpty: true) Email string
+}
+
+struct Box {
+    v int
+    func Get<T>() int { return this.v }
+}
+
+func main() {
+    var t = reflect.TypeOf<User>()
+    var a = t.Fields[1].Attribute<json>()
+    println(a != nil, a.name, a.omitEmpty)
+    println(t.Fields[0].Attribute<json>().name)
+    var xs = [Box{v: 4}, Box{v: 5}]
+    println(xs[1].Get<string>(), xs[0].Get<int>() + 1)
+    // a comparison after an index still parses as one
+    var n = 3
+    println(xs[0].v < n, xs[1].v > n)
+}
