@@ -1,5 +1,5 @@
 // test: async lambdas are values returning Task<T>
-// status: pending
+// status: passing
 namespace spec.async.async_lambda
 
 import std.io

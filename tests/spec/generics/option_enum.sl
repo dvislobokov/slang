@@ -1,5 +1,5 @@
 // test: generic enum Option<T> constructed with explicit type args and destructured in a switch
-// status: pending
+// status: passing
 namespace spec.generics.option_enum
 
 import std.io

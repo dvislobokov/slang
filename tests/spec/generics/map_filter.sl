@@ -1,5 +1,5 @@
 // test: generic slice helpers Map<T, U> and Filter<T> with lambdas
-// status: pending
+// status: passing
 namespace spec.generics.map_filter
 
 import std.io

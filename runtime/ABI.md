@@ -204,6 +204,17 @@ strings, pointers, slices (`slang_slice_release`) and so on. It must **not** fre
 are no such fields, `type` may point to a type info whose `drop` is NULL, or
 `type` itself may be NULL.
 
+**Allocation (implementation note, not ABI).** Objects of at most 128 bytes
+(header included) come from a small-object allocator: per-thread free lists
+per 16-byte size class, carved from 4 MB regions that are never returned to
+the OS; a bitmap over the address space identifies region memory on free.
+Larger objects use `malloc`. It is disabled under AddressSanitizer, with leak
+check mode 2 and with `SLANG_NO_SLAB=1`. Nothing outside the runtime may free
+or `realloc` object memory itself. `slang_release` skips the atomic
+decrement when it reads a count of exactly 1 with no weak flag (the caller
+holds the only reference, so no other thread can retain it); otherwise the
+decrement is `acq_rel`, and `slang_retain` is a relaxed increment.
+
 **Immortal objects** (`refcount == -1`, `SLANG_RC_IMMORTAL`) are never modified or
 freed. Use them for string literals and sentinel errors emitted as LLVM globals.
 
@@ -387,7 +398,7 @@ the new value, release the old one, write.
 | `slang_slice_release(slang_slice *s)` | -1 on `s->backing`, then `*s = {0}` |
 | `slang_slice_assign(dst, src)` | `dst = src` (retains src, releases the old dst, copies). `dst == src` is safe |
 | `void *slang_slice_index(s, i, elem_size)` | **[borrowed]** address of element `i`. Panics `index out of range [i] with length len` unless `0 <= i < len`. The compiler may instead inline `i <u len` and call `slang_panic_bounds` |
-| `slang_slice_append(slang_slice *s, elem_size, ops, const void *elem)` | `s = append(s, elem)` **in place**. The element is copied and retained. If `len < cap` it writes into the shared backing, like Go. Otherwise it allocates a new backing array (growth: at least 4, doubling below 1024 elements, then x1.5), copies and retains the elements, and releases the old backing; if `s` is the only reference to its backing (and starts at its first element) the backing is instead resized in place and the elements keep their references. `elem` may point into `s` itself. For `t = append(s, x)` with `t != s`, first do `slang_slice_assign(&t, &s)`, then append to `t` |
+| `slang_slice_append(slang_slice *s, elem_size, ops, const void *elem)` | `s = append(s, elem)` **in place**. The element is copied and retained. If `len < cap` it writes into the shared backing, like Go. Otherwise it allocates a new backing array (growth: at least 4, doubling below 1024 elements, then x1.5), copies and retains the elements, and releases the old backing; if `s` is the only reference to its backing (and starts at its first element) the backing is instead resized in place and the elements keep their references. `elem` may point into `s` itself. For `t = append(s, x)` with `t != s`, first do `slang_slice_assign(&t, &s)`, then append to `t`. The compiler inlines the `len < cap` case (store the element by the 2.3 store rule, `len += 1`) and calls this function only when `len == cap` |
 | `slang_slice_append_slice(s, elem_size, ops, const slang_slice *other)` | `s = append(s, other...)` in place. `other` may alias `s` (memmove semantics) |
 | `slang_slice_sub(out, s, lo, hi, elem_size)` | `s[lo:hi]`, with `cap = s.cap - lo`. Panics unless `0 <= lo <= hi <= cap`. Returns a +1 reference in `*out`. If `out == s` (`s = s[lo:hi]`), the old reference is released. Otherwise `*out` is overwritten without being released, so release it first if it held a slice |
 | `int64_t slang_slice_copy(dst, src, elem_size, ops)` | Go `copy(dst, src)`. Copies `min(len)` elements with memmove semantics (overlap is fine), retains the copied values and releases the overwritten ones. Returns the count |
@@ -437,7 +448,7 @@ borrowed.
 
 | Function | Semantics |
 |---|---|
-| `slang_map *slang_map_new(const slang_map_desc *d, int64_t hint)` | new empty map, +1. `hint` pre-sizes the bucket array |
+| `slang_map *slang_map_new(const slang_map_desc *d, int64_t hint)` | new empty map, +1. `hint` pre-sizes the table for that many entries |
 | `slang_map_new_str(val_size, val_ops)` | `map[string]V`. The key slot is `slang_string *` (with `slang_ops_ref`) |
 | `slang_map_new_int(val_size, val_ops)` | `map[int]V`. The key slot is `int64_t` |
 | `int64_t slang_map_len(m)` | number of entries (0 for nil) |
@@ -447,6 +458,20 @@ borrowed.
 | `bool slang_map_delete(m, key)` | removes the entry (releasing the key and value). Returns whether it existed. A nil map gives false |
 | `slang_map_get_str / set_str / delete_str(m, slang_string *key, ...)` | fast paths for string-keyed maps. The key is passed directly, not by pointer |
 | `slang_map_get_int / set_int / delete_int(m, int64_t key, ...)` | fast paths for int-keyed maps |
+| `void *slang_map_get_or_insert_str(m, slang_string *key)` / `slang_map_get_or_insert_int(m, int64_t key)` | **[borrowed]** `get_or_insert` fast paths (added in v0.1.1; the compiler uses them for `m[k] op= v` and `m[k].f = x` on string/int keys) |
+
+The `_str`/`_int` entry points require a map created for that key type
+(`slang_map_new_str`/`_int`, or `slang_map_new` with `slang_hash_str`/`slang_eq_str`
+or `slang_hash_int`/`slang_eq_int`, which select the same specialised paths).
+
+**Implementation (not ABI):** open addressing in SwissTable style: one
+control byte per slot (empty, deleted or 7 hash bits), groups of 8 matched
+with SWAR, triangular probing over groups, power-of-two capacity, growth at
+7/8 load. Entries live inline in one table and move only when it is resized,
+so a value pointer from `get`/`get_or_insert` stays valid until the next
+insertion of a new key or `delete`. String keys are hashed internally with a
+word-at-a-time hash (`slang_string_hash` itself stays FNV-1a); int keys with a
+64-bit mixer.
 
 ### 6.3 Iteration
 
@@ -463,7 +488,7 @@ Copy and retain them into the loop variables.
 - The iterator does **not** retain the map. The compiler must keep the map alive
   for the duration of the loop. It usually already holds it in a variable;
   otherwise retain it before the loop and release it after.
-- The order is unspecified (it is bucket order, not randomised).
+- The order is unspecified (it is table-slot order, not randomised).
 - **Deleting the entry just returned is allowed.** Inserting into the map, or
   deleting any other entry, during iteration is undefined behaviour (entries may
   be skipped or visited twice, and the iterator may read freed memory).
@@ -480,13 +505,20 @@ means no error.
 ```c
 typedef slang_string *(*slang_message_fn)(void *payload);  // returns an OWNED string
 
-typedef struct slang_error {            // 56 bytes
+typedef struct slang_error {            // 224 bytes
     slang_object hdr;                   // +0   type = &slang_type_error
     slang_string *message;              // +16  own message, or the wrap context (owned)
     struct slang_error *inner;          // +24  wrapped error (owned) or NULL
     const slang_type_info *user_type;   // +32  type of a boxed user error, or NULL
     void *payload;                      // +40  boxed user value (a slang object, owned) or NULL
     slang_message_fn message_fn;        // +48  user Message() thunk or NULL
+    // error trace (7.4), all zero for an error without one:
+    struct slang_error *origin;         // +56  error this is a copy-on-write copy of (owned) or NULL
+    const slang_error_site *created;    // +64  creation site or NULL
+    int64_t nframes;                    // +72  number of `returned via` frames
+    slang_error_frame frames[8];        // +80  first 8 frames {site, ctx}
+    slang_error_frame *overflow;        // +208 frames 8.. (raw heap array) or NULL
+    int64_t overflow_cap;               // +216
 } slang_error;
 ```
 
@@ -495,8 +527,9 @@ documented so the compiler can emit **static sentinel errors** directly:
 
 ```llvm
 ; const ErrNotFound = error("not found")
-@ErrNotFound = constant { i64, ptr, ptr, ptr, ptr, ptr, ptr }
-    { i64 -1, ptr @slang_type_error, ptr @.str.not_found, ptr null, ptr null, ptr null, ptr null }
+@ErrNotFound = constant { i64, ptr, ptr, ptr, ptr, ptr, ptr, [168 x i8] }
+    { i64 -1, ptr @slang_type_error, ptr @.str.not_found, ptr null, ptr null, ptr null, ptr null,
+      [168 x i8] zeroinitializer }   ; the trace fields stay zero
 ```
 
 `slang_error_sentinel(msg)` creates an immortal error at run time instead (for
@@ -513,7 +546,7 @@ example in a module initialiser).
 | `slang_error_wrap(slang_error *inner, const slang_string *ctx)` | `err?("ctx")` and `errors.Wrap(err, ctx)`: a new error whose own text is `ctx`, wrapping `inner` (retained). **`inner == NULL` returns NULL** |
 | `slang_error_unwrap(const slang_error *e)` | `errors.Unwrap`: the inner error, +1, or NULL |
 | `slang_string *slang_error_message(const slang_error *e)` | owned full text: own text, then `": "` plus the text of each inner error down the chain, for example `startup: loading config: file missing`. The own text of a typed error is `message_fn(payload)`. NULL gives `"<nil>"` |
-| `bool slang_error_is(const slang_error *err, const slang_error *target)` | `errors.Is`: walks `err`, `err->inner`, ... and returns true if any link **is the same object** (pointer identity) as `target`. Sentinels work because they are unique objects. `is(NULL, NULL)` is true and `is(x, NULL)` is false for non-NULL `x` |
+| `bool slang_error_is(const slang_error *err, const slang_error *target)` | `errors.Is`: walks `err`, `err->inner`, ... and returns true if any link **is the same object** (pointer identity) as `target`, where a copy-on-write copy (7.4) counts as its `origin`. Sentinels work because they are unique objects. `is(NULL, NULL)` is true and `is(x, NULL)` is false for non-NULL `x` |
 | `void *slang_error_as(const slang_error *err, const slang_type_info *type)` | `errors.As`: the **[borrowed]** payload of the first link with `user_type == type`, or NULL. The compiler copies (and retains) the struct out of `payload + 16` into the target |
 | `slang_err_eof` | immortal sentinel `"EOF"`, returned by `slang_read_line` |
 
@@ -531,12 +564,61 @@ wanted, can be added by the compiler before calling `slang_error_is`.
 - `e?` becomes: if `err != null`, release any partially built locals and return
   `{zero, err}`, moving the reference.
 - `e?("ctx")` becomes: `w = slang_error_wrap(err, @.str.ctx)`, then
-  `slang_release(err)`, then return `w`.
+  `slang_release(err)`, then return `w` (with traces on, both steps are
+  `w = slang_error_returned(err, @site, @.str.ctx)`, see 7.4).
+- Inside a block `try { } catch err { }`, `e?` does not return: it releases
+  the temporaries and block locals of the `try` body, stores the error and
+  branches to the `catch` block.
 - `try e catch err { ... }` binds `err` (owned) and releases it at the end of the
   catch scope. `try e else d` releases `err` and uses `d`.
 - Runtime functions that can fail use `slang_error **err` out-parameters
   (`*err = NULL` on success, an owned error on failure), or they return
   `slang_error *` directly (NULL = ok).
+
+### 7.4 Error traces
+
+Every error can carry a *return trace* (DESIGN.md "Трасса ошибки"): its
+creation site plus one frame per `?` it passed and per `try ... catch` that
+caught it. Sites are static, read-only records emitted by the compiler:
+
+```c
+typedef struct slang_error_site {   // 24 bytes
+    const char *file;               // +0  source path as given to the compiler
+    const char *func;               // +8  "Open", "Cache.Get", "main$lambda1"
+    int64_t line;                   // +16 1-based
+} slang_error_site;
+
+typedef struct slang_error_frame {  // 16 bytes
+    const slang_error_site *site;
+    slang_string *ctx;              // the `?("ctx")` context (owned) or NULL
+} slang_error_frame;
+```
+
+| Function | Semantics |
+|---|---|
+| `slang_error *slang_error_created(slang_error *err, const slang_error_site *site)` | **consumes** `err`, returns it (or its copy) owned. Sets the creation site unless one is already set. NULL err -> NULL. The compiler calls it after `error(..)` / `errors.New`, after boxing a struct as `error`, on the result of `errors.Wrap`, on errors returned by fallible stdlib externs (the call is the creation site), and on the value of `return err` (so a sentinel gets the site of its `return`) |
+| `slang_error *slang_error_returned(slang_error *err, const slang_error_site *site, const slang_string *ctx)` | **consumes** `err`, returns the error to propagate (owned). With `ctx` it first wraps (`slang_error_wrap`) and moves the trace into the wrapper; then it appends the frame `{site, ctx}`. Used by `e?` / `e?("ctx")` (also inside a block `try`) and by `try e catch err` before `err` is bound |
+| `slang_string *slang_error_trace(const slang_error *err)` | owned trace text, `""` for NULL or no trace. Format below |
+| `void slang_error_frames(const slang_error *err, slang_slice *out)` | owned `[]errors.Frame`: one 32-byte record `{string File @0, int64 Line @8, string Func @16, string Context @24}` per trace line (`Context` is the `?("...")` text or NULL), elements owned via `slang_ops_error_frame` |
+| `slang_errors_trace` / `slang_errors_frames` | the `std.errors.Trace` / `Frames` externs (same functions) |
+| `void slang_error_report(const slang_error *err)` | writes `error: <message>`, then the trace (if any), to stderr. The C `main` calls it when `func main() void!` (or `async func main() void!`) returned an error, after `slang_runtime_shutdown`, and then exits with code 1 |
+
+- **Storage**: the first 8 frames live inline in the error object; more go to
+  a growable raw array (`overflow`, doubling from 8). One `?` costs storing
+  two pointers.
+- **Copy-on-write**: if `err` is shared (`refcount != 1`, including immortal
+  sentinels), both functions first make a shallow copy (message, inner,
+  payload retained; `origin` = the original's root, retained; the trace
+  copied) and release the original, so other holders never see a changed
+  trace. `slang_error_is` treats a copy as its `origin`.
+- **Text** (`errors.Trace`): lines joined by `\n`, no trailing newline:
+  `  created at   <loc>  <func>` (if there is a creation site), then for each
+  frame, oldest first, `  returned via <loc>  <func>[  ?("<ctx>")]`, where
+  `<loc>` = `<file>:<line>` is padded to the longest location, `<func>` is
+  padded to the longest function name when a context follows, and trailing
+  spaces are trimmed.
+- `--no-error-trace` builds emit no sites and no calls (`?("ctx")` calls
+  `slang_error_wrap` directly), so traces are empty.
 
 ---
 
@@ -580,6 +662,7 @@ panic, and before `slang_read_line`.
 | `slang_print_str(s)` / `slang_print_cstr(const char *)` | the bytes as-is (NULL gives nothing) |
 | `slang_print_int(int64)` / `slang_print_uint(uint64)` | decimal |
 | `slang_print_float(double)` | same format as `slang_string_from_float` |
+| `double slang_float32_shortest(float f)` | the double nearest to the shortest decimal that round-trips as the float32 `f` (NaN/Inf unchanged). The compiler passes a `float32` through it before `slang_print_float` / `slang_string_from_float`, so `float32(0.1)` prints `0.1` and `float32(1)/3` prints `0.33333334` (Go) |
 | `slang_print_bool(bool)` | `true` or `false` |
 | `slang_print_rune(int32)` | UTF-8 encoding |
 | `slang_print_space()` / `slang_print_newline()` | `' '` / `'\n'` |
@@ -804,6 +887,11 @@ define i32 @main(i32 %argc, ptr %argv) {
 }
 ```
 
+For `func main() void!` the call returns the error (`ptr`; for `async` it
+is read, and retained, from the awaited task's result slot). After
+`slang_runtime_shutdown` a non-NULL error is passed to `slang_error_report`
+and released, and `main` returns 1.
+
 | Function | Semantics |
 |---|---|
 | `void slang_runtime_init(int argc, char **argv)` | stores the arguments and starts the worker pool and the timer thread. Idempotent. Call it first, on the main thread |
@@ -823,6 +911,7 @@ output still sitting in buffers may be lost if workers are still printing.
 |---|---|
 | `SLANG_WORKERS=n` | number of worker threads (default: online CPUs, max 256) |
 | `SLANG_NO_BACKTRACE=1` | panic prints only the `panic: ...` line (useful for golden-output tests) |
+| `SLANG_NO_SLAB=1` | objects come straight from `malloc` instead of the small-object allocator (3.2), e.g. so Valgrind memcheck sees each object |
 
 ---
 

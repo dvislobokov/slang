@@ -83,7 +83,11 @@ impl<'a> Sema<'a> {
                         self.ensure_global(g);
                         self.global_folded.get(&g.0).cloned()
                     }
-                    PathRes::Member(Member::StdConst(i)) => untyped(ConstValue::Float(stdlib::CONSTS[i].2)),
+                    PathRes::Member(Member::StdConst(i)) => match stdlib::CONSTS[i].2 {
+                        stdlib::StdConst::Float(v) => untyped(ConstValue::Float(v)),
+                        stdlib::StdConst::Int(v) => untyped(ConstValue::Int(v)),
+                        stdlib::StdConst::Error(_) => None,
+                    },
                     PathRes::Variant(en, v) if self.enums[en as usize].variants[v as usize].fields.is_empty() => {
                         let ty = self.enum_ty(en);
                         Some(Folded { value: ConstValue::Enum(en, v), ty: Some(ty) })

@@ -1,5 +1,5 @@
 // test: block try in a T! function; catch may re-propagate with return err
-// status: pending
+// status: passing
 namespace spec.errors.block_try_return_err
 
 import std.io

@@ -1,5 +1,5 @@
 // test: std.collections.Queue<T> is FIFO and Stack<T> is LIFO; Pop on empty fails
-// status: pending
+// status: passing
 namespace spec.stdlib.collections_queue_stack
 
 import std.io

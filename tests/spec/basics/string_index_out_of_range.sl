@@ -1,5 +1,5 @@
 // test: indexing past the end of a string panics with exit code 2
-// status: pending
+// status: passing
 // exit: 2
 namespace spec.basics.string_index_out_of_range
 

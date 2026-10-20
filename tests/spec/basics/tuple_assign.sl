@@ -1,5 +1,5 @@
 // test: (a, b) = f() assigns a tuple result to existing variables
-// status: pending
+// status: passing
 namespace spec.basics.tuple_assign
 
 import std.io

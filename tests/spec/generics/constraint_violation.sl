@@ -1,5 +1,5 @@
 // error: does not satisfy
-// status: pending
+// status: passing
 namespace spec.generics.constraint_violation
 
 import std.io

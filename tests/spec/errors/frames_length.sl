@@ -1,5 +1,5 @@
 // test: errors.Frames returns one record per trace line with File, Line, Func and Context
-// status: pending
+// status: passing
 namespace spec.errors.frames_length
 
 import std.io

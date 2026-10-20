@@ -1,5 +1,5 @@
 // test: explicit type arguments Max<int>(1, 2); untyped constants convert to T
-// status: pending
+// status: passing
 namespace spec.generics.explicit_type_args
 
 import std.io

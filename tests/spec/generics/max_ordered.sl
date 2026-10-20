@@ -1,5 +1,5 @@
 // test: generic func with an Ordered constraint, type inferred from the arguments
-// status: pending
+// status: passing
 namespace spec.generics.max_ordered
 
 import std.io

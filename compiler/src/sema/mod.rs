@@ -11,15 +11,23 @@
 //! 4. Function bodies are checked and lowered to HIR in one pass
 //!    ([`expr`], [`call`], [`stmt`]); lambdas are lifted to functions.
 //!
+//! Generic declarations ([`generics`]) are checked once against their
+//! constraints and monomorphised: every distinct instantiation becomes an
+//! ordinary HIR function, struct or enum. `std.collections` is a set of
+//! generic structs written in Slang ([`collections`]).
+//!
 //! Untyped numeric constants are folded by [`consts`] and materialised with
 //! the type the context expects, as in Go.
 
 mod attrs;
 mod call;
 mod coerce;
+mod collections;
 mod consts;
 mod expr;
+mod generics;
 pub mod index;
+mod infer;
 mod ownership;
 mod resolve;
 mod stmt;
@@ -80,6 +88,8 @@ pub(crate) enum Member {
     StdConst(usize),
     /// A child namespace.
     Ns(NsIdx),
+    /// A generic function, struct or enum (index into `GenState::templates`).
+    Generic(u32),
 }
 
 /// A namespace during analysis.
@@ -115,6 +125,9 @@ pub(crate) enum ImportEntry {
 pub(crate) struct FileScope {
     pub ns: NsIdx,
     pub imports: Vec<ImportEntry>,
+    /// Per entry of `imports`: the `import` line's path span and whether a
+    /// lookup went through it (unused imports are errors).
+    pub import_uses: Vec<(Span, bool)>,
 }
 
 /// Signature of a user function (for calls), receiver excluded.
@@ -181,6 +194,9 @@ pub(crate) struct FnCtx {
     pub capture_keys: Vec<(usize, LocalId)>,
     pub labels: Vec<(Label, LabelKind)>,
     pub next_label: u32,
+    /// Number of enclosing block `try` bodies (a `?` inside one jumps to
+    /// its `catch`, so it is allowed in any function).
+    pub try_depth: u32,
 }
 
 impl FnCtx {
@@ -197,6 +213,7 @@ impl FnCtx {
             capture_keys: Vec::new(),
             labels: Vec::new(),
             next_label: 0,
+            try_depth: 0,
         }
     }
 
@@ -248,10 +265,17 @@ pub(crate) struct Sema<'a> {
     /// Function contexts, innermost last.
     pub fns: Vec<FnCtx>,
     pub lambda_count: u32,
+    /// Methods of enums by (enum id, name). They are ordinary functions
+    /// whose first parameter is `this` (the enum value).
+    pub enum_methods: HashMap<(u32, String), FuncId>,
+    /// The enum owning each enum method (by function id).
+    pub enum_method_owner: HashMap<u32, u32>,
     /// Package isolation hook (see [`ImportPolicy`]); `None` = no limits.
     pub policy: Option<&'a ImportPolicy>,
     /// IDE symbol recording (see [`index`]); `None` = off.
     pub(crate) ide: Option<Box<index::Recorder>>,
+    /// Generics state (templates, instantiations, type environment).
+    pub(crate) gen: generics::GenState<'a>,
 }
 
 impl<'a> Sema<'a> {
@@ -285,30 +309,44 @@ impl<'a> Sema<'a> {
             cur_ns: 0,
             fns: Vec::new(),
             lambda_count: 0,
+            enum_methods: HashMap::new(),
+            enum_method_owner: HashMap::new(),
             policy: None,
             ide: None,
+            gen: generics::GenState::default(),
         }
     }
 
     fn run(&mut self) {
         self.build_stdlib();
         self.collect_decls();
+        self.add_std_structs();
+        self.register_collections();
         self.resolve_imports();
+        self.resolve_template_bounds();
         self.resolve_signatures();
+        self.run_deferred_bounds();
         self.check_attributes();
         for g in 0..self.globals.len() {
             self.ensure_global(GlobalId(g as u32));
         }
-        for f in 0..self.func_src.len() {
+        self.check_templates();
+        // Instantiations append functions while bodies are checked; they
+        // are checked in turn.
+        let mut f = 0;
+        while f < self.func_src.len() {
             self.check_function_body(FuncId(f as u32));
+            f += 1;
         }
+        self.check_unused_imports();
         if let Some(main) = self.find_entry() {
             let sig = &self.sigs[main.0 as usize];
-            if !sig.params.is_empty() || !matches!(self.tt.get(sig.ret), Type::Void) {
+            let void_ok = matches!(self.tt.get(sig.ret), Type::Void) || matches!(self.tt.fallible_inner(sig.ret).map(|t| self.tt.get(t)), Some(Type::Void));
+            if !sig.params.is_empty() || !void_ok {
                 let f = &self.funcs[main.0 as usize];
                 self.cur_file = f.file;
                 let span = f.span;
-                self.err("main must take no parameters and return nothing", span);
+                self.err("main must take no parameters and return nothing (or void!)", span);
             }
         }
     }
@@ -332,6 +370,7 @@ impl<'a> Sema<'a> {
             global_init_order: self.global_order,
             externs: self.externs,
             entry,
+            sources: Vec::new(),
         }
     }
 
@@ -351,14 +390,27 @@ impl<'a> Sema<'a> {
 
     // -- diagnostics --------------------------------------------------------
 
-    /// Reports an error in the current file.
+    /// Reports an error in the current file (with the generic
+    /// instantiation context, if any).
     pub fn err(&mut self, msg: impl Into<String>, span: Span) {
-        self.diags.push(Diagnostic::error(msg, span).in_file(self.cur_file));
+        let d = Diagnostic::error(msg, span).in_file(self.cur_file);
+        self.push_diag(d);
     }
 
     /// Reports an error with a note.
     pub fn err_note(&mut self, msg: impl Into<String>, span: Span, note: impl Into<String>, note_span: Option<Span>) {
-        self.diags.push(Diagnostic::error(msg, span).with_note(note, note_span).in_file(self.cur_file));
+        let d = Diagnostic::error(msg, span).with_note(note, note_span).in_file(self.cur_file);
+        self.push_diag(d);
+    }
+
+    fn push_diag(&mut self, mut d: Diagnostic) {
+        if self.gen.mute > 0 {
+            return;
+        }
+        if let Some(n) = &self.gen.note {
+            d = d.with_note(n.clone(), None);
+        }
+        self.diags.push(d);
     }
 
     /// Spelling of a type for messages.
@@ -523,6 +575,27 @@ impl<'a> Sema<'a> {
         id
     }
 
+    /// Reports imports no name was looked up through (like Go). Not when
+    /// other errors were found (a failed lookup may hide the use). Imports
+    /// of a root namespace (`import std`) are exempt: they only make child
+    /// namespaces reachable by short name and are customary boilerplate.
+    fn check_unused_imports(&mut self) {
+        if self.diags.has_errors() {
+            return;
+        }
+        for fi in 0..self.file_scopes.len() {
+            for (span, used) in self.file_scopes[fi].import_uses.clone() {
+                let imp = self.files[fi].imports.iter().find(|i| i.path.span == span);
+                let root = imp.is_some_and(|i| i.path.segments.len() == 1 && i.alias.is_none());
+                if !used && !root {
+                    self.cur_file = fi;
+                    let path = imp.map(|i| i.path.to_string()).unwrap_or_default();
+                    self.err(format!("unused import {path}: nothing from it is used"), span);
+                }
+            }
+        }
+    }
+
     /// Checks one function body (no-op for synthetic functions).
     fn check_function_body(&mut self, fid: FuncId) {
         let decl = match self.func_src[fid.0 as usize] {
@@ -531,9 +604,19 @@ impl<'a> Sema<'a> {
             FuncSrc::Synthetic => return,
         };
         let Some(body) = &decl.body else { return };
+        if self.gen.insts.contains_key(&fid.0) {
+            self.check_instance_body(fid, decl, body);
+            return;
+        }
         let f = &self.funcs[fid.0 as usize];
         self.cur_file = f.file;
         self.cur_ns = self.ns_of_hir(f.namespace);
+        self.check_body_in_scope(fid, decl, body);
+    }
+
+    /// Checks a function body in the current file/namespace scope.
+    pub(crate) fn check_body_in_scope(&mut self, fid: FuncId, decl: &ast::FuncDecl, body: &ast::Block) {
+        let f = &self.funcs[fid.0 as usize];
         let sig = self.sigs[fid.0 as usize].clone();
         let mut ctx = FnCtx::new(Some(fid), sig.ret, sig.is_async, f.name.clone());
         // Parameters were registered as locals by `resolve_signatures`.
@@ -604,13 +687,15 @@ impl<'a> Sema<'a> {
     /// Runs `f` with the file/namespace context of `file`, saving and
     /// restoring the current function stack.
     pub fn in_file<R>(&mut self, file: usize, f: impl FnOnce(&mut Self) -> R) -> R {
-        let saved = (self.cur_file, self.cur_ns, std::mem::take(&mut self.fns));
+        let saved = (self.cur_file, self.cur_ns, std::mem::take(&mut self.fns), std::mem::take(&mut self.gen.tenv), self.gen.note.take());
         self.cur_file = file;
         self.cur_ns = self.file_scopes[file].ns;
         let r = f(self);
         self.cur_file = saved.0;
         self.cur_ns = saved.1;
         self.fns = saved.2;
+        self.gen.tenv = saved.3;
+        self.gen.note = saved.4;
         r
     }
 }
@@ -624,6 +709,9 @@ impl hir::dump::DeclNames for Sema<'_> {
     }
     fn enum_name(&self, id: u32) -> String {
         self.enums.get(id as usize).map(|s| s.full_name.clone()).unwrap_or_default()
+    }
+    fn param_name(&self, id: u32) -> String {
+        self.gen.tparams.get(id as usize).map(|p| p.name.clone()).unwrap_or_default()
     }
 }
 

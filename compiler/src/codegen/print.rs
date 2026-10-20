@@ -33,7 +33,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                             self.call_rt(f, &[w.into()]);
                         }
                         PrintOp::Float => {
-                            let d = self.b.build_float_ext(x.into_float_value(), self.ctx.f64_type(), "").unwrap();
+                            let d = self.float_for_print(x);
                             self.call_rt("slang_print_float", &[d.into()]);
                         }
                         PrintOp::Bool => {
@@ -51,6 +51,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
         }
         Ok(())
+    }
+
+    /// A float operand as the `double` to format: a `float32` goes through
+    /// `slang_float32_shortest` so it prints with float32 precision.
+    fn float_for_print(&mut self, x: BasicValueEnum<'ctx>) -> inkwell::values::FloatValue<'ctx> {
+        let f = x.into_float_value();
+        if f.get_type() == self.ctx.f32_type() {
+            return self.call_rt_v("slang_float32_shortest", &[f.into()]).into_float_value();
+        }
+        f
     }
 
     /// `ToString(e)`: a string as `println` would print `e`.
@@ -77,7 +87,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 Val::owned(self.call_rt_v(if k.signed() { "slang_string_from_int" } else { "slang_string_from_uint" }, &[w.into()]))
             }
             Type::Float32 | Type::Float64 => {
-                let d = self.b.build_float_ext(x.into_float_value(), self.ctx.f64_type(), "").unwrap();
+                let d = self.float_for_print(x);
                 Val::owned(self.call_rt_v("slang_string_from_float", &[d.into()]))
             }
             Type::Bool => Val::owned(self.call_rt_v("slang_string_from_bool", &[x.into()])),
@@ -111,13 +121,79 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 });
                 Val::borrowed(self.b.build_select(isnil, a, b, "").unwrap())
             }
-            Type::Interface(_) | Type::Any => {
+            Type::Any => {
+                // Dynamic: dispatch on the type info (see `finish_any_tostr`).
+                let f = self.any_tostr_fn();
+                let pair = x.into_struct_value();
+                let data = self.b.build_extract_value(pair, 0, "").unwrap();
+                let ti = self.b.build_extract_value(pair, 1, "").unwrap();
+                Val::owned(self.b.build_call(f, &[data.into(), ti.into()], "").unwrap().try_as_basic_value().left().unwrap())
+            }
+            Type::Interface(_) => {
                 let isnil = self.nil_test(t, x);
                 let a = self.str_lit("nil");
                 let b = self.str_lit("<interface>");
                 Val::borrowed(self.b.build_select(isnil, a, b, "").unwrap())
             }
             _ => return unsupported(format!("printing a value of type {}", self.type_name(t))),
+        })
+    }
+
+    /// `string any.tostr(ptr data, ptr typeinfo)`: formats the value held by
+    /// an `any`. Declared on first use; its body is emitted at the end of
+    /// the module by [`finish_any_tostr`](Self::finish_any_tostr), when every
+    /// type stored in an `any` (every type info) is known.
+    fn any_tostr_fn(&mut self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("any.tostr") {
+            return f;
+        }
+        let fty = self.ptr_ty().fn_type(&[self.ptr_ty().into(), self.ptr_ty().into()], false);
+        self.module.add_function("any.tostr", fty, Some(Linkage::Internal))
+    }
+
+    /// Emits the body of `any.tostr`: compares the type info against each
+    /// boxed type of the program; `nil` for a nil `any`, `<T>` for types
+    /// `println` cannot print.
+    pub(crate) fn finish_any_tostr(&mut self) -> R<()> {
+        let Some(f) = self.module.get_function("any.tostr") else { return Ok(()) };
+        let mut types: Vec<(TypeId, inkwell::values::GlobalValue<'ctx>)> = self.type_infos.iter().map(|(t, g)| (*t, *g)).collect();
+        types.sort_by_key(|(t, _)| *t);
+        self.with_helper(f, |cg| {
+            let data = f.get_nth_param(0).unwrap().into_pointer_value();
+            let ti = f.get_nth_param(1).unwrap().into_pointer_value();
+            let nil = cg.block("nil");
+            let start = cg.block("test");
+            let isnil = cg.b.build_is_null(ti, "").unwrap();
+            cg.b.build_conditional_branch(isnil, nil, start).unwrap();
+            cg.b.position_at_end(nil);
+            let s = cg.str_lit("nil");
+            cg.b.build_return(Some(&s)).unwrap();
+            cg.b.position_at_end(start);
+            for (t, g) in types {
+                let yes = cg.block("is");
+                let next = cg.block("next");
+                let eq = cg.ptr_eq(ti, g.as_pointer_value());
+                cg.b.build_conditional_branch(eq, yes, next).unwrap();
+                cg.b.position_at_end(yes);
+                let printable = matches!(cg.ty(t), Type::Int(_) | Type::Float32 | Type::Float64 | Type::Bool | Type::Char | Type::String | Type::Error | Type::Slice(_) | Type::Array(..))
+                    || matches!(cg.ty(t), Type::Enum(d) if cg.prog.enums[d.0 as usize].is_plain);
+                let r = if printable {
+                    let lt = cg.llty(t);
+                    let v = cg.b.build_load(lt, data, "").unwrap();
+                    match cg.stringify(t, v) {
+                        // Borrowed results are immortal literals (enum names).
+                        Ok(s) => s.get(),
+                        Err(_) => cg.str_lit(&format!("<{}>", cg.type_name(t))).into(),
+                    }
+                } else {
+                    cg.str_lit(&format!("<{}>", cg.type_name(t))).into()
+                };
+                cg.b.build_return(Some(&r)).unwrap();
+                cg.b.position_at_end(next);
+            }
+            let s = cg.str_lit("<any>");
+            cg.b.build_return(Some(&s)).unwrap();
+            Ok(())
         })
     }
 

@@ -1,5 +1,5 @@
 // test: nested instantiations List<List<int>> (the >> closes two lists)
-// status: pending
+// status: passing
 namespace spec.generics.nested_generics
 
 import std.io

@@ -1,5 +1,5 @@
 // test: a generic struct implementing error, returned from a fallible generic func
-// status: pending
+// status: passing
 namespace spec.generics.generic_error_type
 
 import std.io

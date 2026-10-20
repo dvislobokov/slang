@@ -1,5 +1,5 @@
 // test: task.Any returns the result of the first task to complete
-// status: pending
+// status: passing
 namespace spec.async.task_any
 
 import std.io

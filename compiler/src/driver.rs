@@ -61,7 +61,13 @@ pub fn parse_all(files: &[SourceFile], diags: &mut Diagnostics) -> Option<Vec<as
 /// Parses and analyses a project.
 pub fn check(files: &[SourceFile], diags: &mut Diagnostics) -> Option<Program> {
     let asts = parse_all(files, diags)?;
-    sema::analyze(&asts, diags)
+    sema::analyze(&asts, diags).map(|p| with_sources(p, files))
+}
+
+/// Records the source paths and line tables (error-trace sites).
+fn with_sources(mut p: Program, files: &[SourceFile]) -> Program {
+    p.sources = files.iter().map(|f| crate::hir::SourceInfo::new(&f.path, &f.text)).collect();
+    p
 }
 
 /// Like [`check`] for a package graph: `prepare` sees the parsed files
@@ -78,5 +84,5 @@ pub fn check_with_policy(
     if diags.has_errors() {
         return None;
     }
-    sema::analyze_with_policy(&asts, diags, Some(policy))
+    sema::analyze_with_policy(&asts, diags, Some(policy)).map(|p| with_sources(p, files))
 }

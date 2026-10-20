@@ -1,5 +1,5 @@
 // test: block try: ? inside the block jumps to its catch; execution continues after catch
-// status: pending
+// status: passing
 namespace spec.errors.block_try
 
 import std.io

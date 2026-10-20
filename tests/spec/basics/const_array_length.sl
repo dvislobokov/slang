@@ -1,5 +1,5 @@
 // test: a constant expression may be used as an array length (like Go)
-// status: pending
+// status: passing
 namespace spec.basics.const_array_length
 
 import std.io

@@ -1,5 +1,5 @@
 // test: errors.Trace for a struct error returned directly and propagated once
-// status: pending
+// status: passing
 namespace spec.errors.trace_typed_error
 
 import std.io

@@ -1,5 +1,5 @@
 // test: an interface used as a constraint; methods of T are callable
-// status: pending
+// status: passing
 namespace spec.generics.interface_constraint
 
 import std.io

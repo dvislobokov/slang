@@ -75,7 +75,17 @@ impl<'a> Sema<'a> {
         if matches!(self.tt.get(target), Type::Any) {
             return true;
         }
-        self.struct_of(src).is_some() && self.missing_methods(src, target).is_empty()
+        (self.struct_of(src).is_some() && self.missing_methods(src, target).is_empty()) || self.param_implements(src, target) || self.iface_subset(src, target)
+    }
+
+    /// Interface `src` has every method of interface `target` (same
+    /// signatures): its values convert implicitly (decision 18).
+    pub(crate) fn iface_subset(&self, src: TypeId, target: TypeId) -> bool {
+        if src == target || !matches!(self.tt.get(src), Type::Interface(_)) || !matches!(self.tt.get(target), Type::Interface(_)) {
+            return false;
+        }
+        let have = self.iface_methods(src);
+        self.iface_methods(target).iter().all(|m| have.iter().any(|h| h.name == m.name && h.params == m.params && h.ret == m.ret))
     }
 
     /// Converts `e` to `target` if assignable (identity, typed `nil`,
@@ -101,7 +111,7 @@ impl<'a> Sema<'a> {
         }
         if self.tt.is_interface(target) {
             let any = matches!(self.tt.get(target), Type::Any);
-            if any || (self.struct_of(src).is_some() && self.missing_methods(src, target).is_empty()) {
+            if any || (self.struct_of(src).is_some() && self.missing_methods(src, target).is_empty()) || self.param_implements(src, target) || self.iface_subset(src, target) {
                 if self.tt.is_fallible(src) || matches!(self.tt.get(src), Type::Void) {
                     self.mismatch(src, target, &ctx, e.span);
                     return e;

@@ -80,12 +80,75 @@ TEST(typed) {
     slang_release(m); slang_release(c); slang_release(e); slang_release(w);
 }
 
+static const slang_error_site site_open = { "app/fs.sl", "Open", 42 };
+static const slang_error_site site_cfg = { "app/config.sl", "ReadConfig", 17 };
+static const slang_error_site site_main = { "app/main.sl", "main", 9 };
+
+TEST(trace) {
+    slang_error *e = slang_error_created(slang_error_new_cstr("not found"), &site_open);
+    assert(e->created == &site_open);
+    assert(slang_error_created(e, &site_main) == e && e->created == &site_open); /* first site wins */
+    slang_string *ctx = S("config");
+    e = slang_error_returned(e, &site_cfg, ctx);
+    e = slang_error_returned(e, &site_main, NULL);
+    slang_string *m = slang_error_message(e);
+    assert(STR_IS(m, "config: not found"));
+    slang_string *t = slang_error_trace(e);
+    assert(STR_IS(t, "  created at   app/fs.sl:42      Open\n"
+                     "  returned via app/config.sl:17  ReadConfig  ?(\"config\")\n"
+                     "  returned via app/main.sl:9     main"));
+    slang_slice fr;
+    slang_error_frames(e, &fr);
+    assert(fr.len == 3);
+    struct { slang_string *file; int64_t line; slang_string *func; slang_string *ctx; } *f = fr.data;
+    assert(STR_IS(f[1].func, "ReadConfig") && f[1].line == 17 && STR_IS(f[1].ctx, "config") && f[2].ctx == NULL);
+    slang_slice_release(&fr);
+    slang_release(t); slang_release(m); slang_release(ctx); slang_release(e);
+    slang_string *empty = slang_error_trace(NULL);
+    assert(slang_string_len(empty) == 0);
+    slang_release(empty);
+}
+
+TEST(trace_cow_and_overflow) {
+    slang_error *e = slang_error_new_cstr("x");
+    slang_retain(e);                      /* shared: the trace must not change for the other owner */
+    slang_error *c = slang_error_returned(e, &site_main, NULL);
+    assert(c != e && e->nframes == 0 && c->nframes == 1 && c->origin == e);
+    assert(slang_error_is(c, e));         /* a copy keeps the identity of its origin */
+    for (int i = 0; i < 20; i++) c = slang_error_returned(c, &site_cfg, NULL);
+    assert(c->nframes == 21);
+    slang_string *t = slang_error_trace(c);
+    assert(strstr(slang_string_data(t), "  returned via app/main.sl:9     main\n"));
+    slang_release(t);
+    slang_release(c);
+    slang_release(e);
+    /* immortal sentinels are copied too */
+    slang_error *s = slang_error_returned(slang_err_eof, &site_main, NULL);
+    assert(s != slang_err_eof && slang_error_is(s, slang_err_eof));
+    slang_release(s);
+}
+
+TEST(errno_sentinel) {
+    slang_error *e = slang_error_errno("open", "/x/y", 2 /* ENOENT */);
+    assert(slang_error_is(e, slang_fs_err_not_found()));
+    slang_string *m = slang_error_message(e);
+    assert(STR_IS(m, "open /x/y: No such file or directory"));
+    slang_release(m);
+    slang_release(e);
+    slang_error *p = slang_error_errno("open", "/x", 13 /* EACCES */);
+    assert(!slang_error_is(p, slang_fs_err_not_found()));
+    slang_release(p);
+}
+
 int main(void) {
     printf("test_error\n");
     int64_t live = slang_live_objects();
     RUN(basic);
     RUN(wrap_chain);
     RUN(typed);
+    RUN(trace);
+    RUN(trace_cow_and_overflow);
+    RUN(errno_sentinel);
     int64_t live2 = slang_live_objects();
     RUN(sentinel);
     assert(live2 == live);

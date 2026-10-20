@@ -57,9 +57,7 @@ void slang_eprintln_str(const slang_string *s) {
 }
 
 static slang_error *errno_error(const char *op, const slang_string *path, int e) {
-    char buf[1024];
-    snprintf(buf, sizeof buf, "%s %s: %s", op, slang_string_data(path), strerror(e));
-    return slang_error_new_cstr(buf);
+    return slang_error_errno(op, slang_string_data(path), e);
 }
 
 slang_string *slang_read_file(const slang_string *path, slang_error **err) {

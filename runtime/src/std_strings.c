@@ -25,10 +25,8 @@ static int64_t rune_width(const slang_string *s, int64_t i) {
 
 static int64_t count_nonoverlapping(const slang_string *s, const slang_string *sub) {
     int64_t n = slen(s), m = slen(sub), c = 0;
-    const char *p = sdata(s), *q = sdata(sub);
-    for (int64_t i = 0; i + m <= n;) {
-        if (memcmp(p + i, q, (size_t)m) == 0) { c++; i += m; } else i++;
-    }
+    const char *p = sdata(s), *q = sdata(sub), *end = p + n;
+    for (const char *f; (f = slang__memmem(p, end - p, q, m)) != NULL; p = f + m) c++;
     return c;
 }
 
@@ -49,21 +47,16 @@ void slang_strings_split(const slang_string *s, const slang_string *sep, slang_s
         }
         return;
     }
+    /* Count first so the result slice is allocated once, then cut. */
     int64_t count = count_nonoverlapping(s, sep) + 1;
     slang_slice_new_ops(out, 8, count, count, &slang_ops_ref);
     slang_string **slots = out->data;
-    const char *q = sdata(sep);
-    int64_t start = 0, k = 0;
-    for (int64_t i = 0; i + m <= n;) {
-        if (memcmp(p + i, q, (size_t)m) == 0) {
-            slots[k++] = slang_string_new(p + start, i - start);
-            i += m;
-            start = i;
-        } else {
-            i++;
-        }
-    }
-    slots[k] = slang_string_new(p + start, n - start);
+    const char *q = sdata(sep), *start = p, *end = p + n;
+    int64_t k = 0;
+    for (const char *f; k < count - 1 && (f = slang__memmem(start, end - start, q, m)) != NULL;
+         start = f + m)
+        slots[k++] = slang_string_new(start, f - start);
+    slots[k] = slang_string_new(start, end - start);
 }
 
 slang_string *slang_strings_join(const slang_slice *parts, const slang_string *sep) {
@@ -72,7 +65,7 @@ slang_string *slang_strings_join(const slang_slice *parts, const slang_string *s
     slang_string *const *el = parts->data;
     int64_t m = slen(sep), total = m * (cnt - 1);
     for (int64_t i = 0; i < cnt; i++) total += slen(el[i]);
-    slang_string *r = slang__string_alloc(total);
+    slang_string *r = slang__string_alloc_uninit(total);
     char *w = r->data;
     for (int64_t i = 0; i < cnt; i++) {
         if (i > 0 && m) { memcpy(w, sdata(sep), (size_t)m); w += m; }
@@ -155,16 +148,15 @@ slang_string *slang_strings_replace(const slang_string *s, const slang_string *o
     }
     int64_t c = count_nonoverlapping(s, old);
     if (c == 0) return same(s);
-    slang_string *r = slang__string_alloc(n + c * (mn - mo));
+    slang_string *r = slang__string_alloc_uninit(n + c * (mn - mo));
     char *w = r->data;
-    for (int64_t i = 0; i < n;) {
-        if (i + mo <= n && memcmp(p + i, po, (size_t)mo) == 0) {
-            if (mn) memcpy(w, pn, (size_t)mn);
-            w += mn; i += mo;
-        } else {
-            *w++ = p[i++];
-        }
+    const char *start = p, *end = p + n;
+    for (const char *f; (f = slang__memmem(start, end - start, po, mo)) != NULL; start = f + mo) {
+        memcpy(w, start, (size_t)(f - start)); w += f - start;
+        if (mn) memcpy(w, pn, (size_t)mn);
+        w += mn;
     }
+    memcpy(w, start, (size_t)(end - start));
     return r;
 }
 
@@ -219,12 +211,37 @@ static int32_t to_lower(int32_t r) {
     return r;
 }
 
-static slang_string *map_case(const slang_string *s, int32_t (*f)(int32_t)) {
+/* ASCII case change of 8 bytes at once (all bytes < 0x80): flips bit 5 of
+ * every byte in [lo, hi]. */
+static inline uint64_t swar_case(uint64_t x, unsigned char lo, unsigned char hi) {
+    const uint64_t ones = 0x0101010101010101ULL;
+    uint64_t ge = x + ones * (0x80 - lo);          /* bit 7 set if byte >= lo */
+    uint64_t gt = x + ones * (0x7F - hi);          /* bit 7 set if byte > hi */
+    uint64_t in = (ge & ~gt) & (ones * 0x80);
+    return x ^ (in >> 2);
+}
+
+static slang_string *map_case(const slang_string *s, int32_t (*f)(int32_t), bool upper) {
     int64_t n = slen(s);
     const char *p = sdata(s);
-    char *buf = slang_alloc(n + 1);
+    unsigned char lo = upper ? 'a' : 'A', hi = upper ? 'z' : 'Z';
+    /* No mapping grows the UTF-8 length, so n bytes always suffice; a
+     * shorter result just leaves slack in the allocation. */
+    slang_string *res = slang__string_alloc_uninit(n);
+    char *buf = res->data;
     int64_t len = 0;
     for (int64_t i = 0; i < n;) {
+        /* ASCII fast path, 8 bytes per step. */
+        while (i + 8 <= n) {
+            uint64_t x;
+            memcpy(&x, p + i, 8);
+            if (x & 0x8080808080808080ULL) break;
+            x = swar_case(x, lo, hi);
+            memcpy(buf + len, &x, 8);
+            i += 8;
+            len += 8;
+        }
+        if (i >= n) break;
         unsigned char c = (unsigned char)p[i];
         if (c < 0x80) { buf[len++] = (char)f(c); i++; continue; }
         int64_t w;
@@ -238,13 +255,13 @@ static slang_string *map_case(const slang_string *s, int32_t (*f)(int32_t)) {
         }
         i += w;
     }
-    slang_string *res = slang_string_new(buf, len);
-    slang_free(buf);
+    res->len = len;
+    buf[len] = 0;
     return res;
 }
 
-slang_string *slang_strings_to_upper(const slang_string *s) { return map_case(s, to_upper); }
-slang_string *slang_strings_to_lower(const slang_string *s) { return map_case(s, to_lower); }
+slang_string *slang_strings_to_upper(const slang_string *s) { return map_case(s, to_upper, true); }
+slang_string *slang_strings_to_lower(const slang_string *s) { return map_case(s, to_lower, false); }
 
 /* ---- Repeat ---- */
 

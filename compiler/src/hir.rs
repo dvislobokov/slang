@@ -24,6 +24,10 @@
 //!   `defer` (a closure value, see [`StmtKind::Defer`]).
 //! * Methods are ordinary [`Function`]s; non-static methods take the
 //!   receiver `this` as their first parameter, of type `*S`.
+//! * There are no generics: every instantiation of a generic function,
+//!   struct or enum is an ordinary item named after it (`Max<int>`,
+//!   `std.collections.List<string>`, `Pair<int, bool>.Swap`) with a mangled
+//!   symbol (`slang_app__Max__int`); `Type::Param` never appears.
 //! * `async func f() T` is a [`Function`] with `is_async = true` and
 //!   `ret = T`; calling it yields `Task<T>`, and its `Type::Func` signature
 //!   returns `Task<T>`. `return` inside it completes the task.
@@ -86,8 +90,34 @@ pub struct Program {
     pub externs: Vec<Extern>,
     /// The entry point: `main` of the root namespace (the namespace with the
     /// shortest path that declares `main`). `None` for libraries. It takes no
-    /// parameters and returns `void` (it may be `async`).
+    /// parameters and returns `void` or `void!` (it may be `async`).
     pub entry: Option<FuncId>,
+    /// Source files by [`FileId`] (for error-trace sites); filled in by
+    /// [`crate::driver`] after analysis, empty otherwise.
+    pub sources: Vec<SourceInfo>,
+}
+
+/// Path and line table of one source file.
+#[derive(Debug, Clone, Default)]
+pub struct SourceInfo {
+    /// The path as given to the compiler.
+    pub path: String,
+    /// Byte offset of the start of each line.
+    pub line_starts: Vec<u32>,
+}
+
+impl SourceInfo {
+    /// Builds the line table of `text`.
+    pub fn new(path: &str, text: &str) -> SourceInfo {
+        let mut line_starts = vec![0];
+        line_starts.extend(text.bytes().enumerate().filter(|(_, b)| *b == b'\n').map(|(i, _)| i as u32 + 1));
+        SourceInfo { path: path.to_string(), line_starts }
+    }
+
+    /// 1-based line of byte `offset`.
+    pub fn line_of(&self, offset: u32) -> u32 {
+        self.line_starts.partition_point(|&s| s <= offset).max(1) as u32
+    }
 }
 
 /// A user namespace (merged across files).
@@ -129,7 +159,9 @@ pub struct StructField {
     pub embedded: bool,
     /// Exported (capitalised) name.
     pub exported: bool,
-    /// Default value (only allowed in `@attribute` structs).
+    /// Default value (`Name string = "x"`): used by struct literals that
+    /// omit the field and by `var x T` without initializer (sema fills it
+    /// into the [`ExprKind::StructLit`]).
     pub default: Option<ConstValue>,
     pub attrs: Vec<Attr>,
     pub span: Span,
@@ -408,6 +440,14 @@ pub enum StmtKind {
     /// (`return`, error return via `?`, falling off the end).
     Defer(Expr),
     Block(Block),
+    /// Block `try { body } catch err { handler }`. A [`ExprKind::Propagate`]
+    /// lexically inside `body` (not inside a nested `TryBlock` body, a
+    /// lambda, or `handler`) whose operand fails does not return: it
+    /// releases the temporaries and block locals of `body`, binds the error
+    /// to `err` (released at the end of `handler`; `None` = `_`, released at
+    /// once) and runs `handler`, after which execution continues after the
+    /// statement. On success `handler` is skipped.
+    TryBlock { body: Block, err: Option<LocalId>, handler: Block },
 }
 
 /// What a `return` returns.
@@ -495,7 +535,8 @@ pub enum ExprKind {
     AddrOf(Box<Expr>),
     /// `new e`: heap-allocate a copy of `e`, result `*T` (owned).
     New(Box<Expr>),
-    /// Element of a slice or array (bounds-checked).
+    /// Element of a slice or array (bounds-checked), or the byte at an
+    /// offset of a string (`ty` is `byte`; not a place).
     Index { base: Box<Expr>, index: Box<Expr> },
     /// `m[k]`: value or zero value if missing.
     MapGet { map: Box<Expr>, key: Box<Expr> },
@@ -528,8 +569,10 @@ pub enum ExprKind {
     /// Create a closure of lifted lambda `func`, capturing by reference.
     Closure { func: FuncId, captures: Vec<CaptureSource> },
     /// `e?` / `e?(ctx)`: `value` has type `T!`, the result type is `T`. On
-    /// error: wrap with `context` (a string) if present, then return the
-    /// error from the current (fallible) function, running defers.
+    /// error: wrap with `context` (a string) if present, record the `?` in
+    /// the error trace, then return the error from the current (fallible)
+    /// function, running defers, or jump to the `catch` of the enclosing
+    /// [`StmtKind::TryBlock`] if there is one (see there).
     Propagate { value: Box<Expr>, context: Option<Box<Expr>> },
     /// `try value catch err { handler }`. On success yields `T`. On error
     /// binds the error to `err` (if named) and runs `handler`. When
@@ -647,6 +690,10 @@ pub enum Builtin {
     /// `*S` for a struct `S`; if some error in the chain has dynamic type
     /// `S`, copies it into `*target` and yields true.
     ErrorsAs,
+    /// `task.Any(t1, ..., tn)`: every `ti` is a `Task<T>`; the result is a
+    /// `Task<T>` yielding the result of the first task to complete (the
+    /// others keep running). Only valid as the operand of `await`.
+    TaskAny,
 }
 
 /// One primitive print operation of a lowered `println`.

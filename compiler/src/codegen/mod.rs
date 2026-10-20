@@ -59,7 +59,10 @@
 //! functions. Stdlib externs follow `slang_rt.h`: `[]T` params as
 //! `const slang_slice*`, a `[]T` result through a trailing out-pointer,
 //! `T!` as `T` plus a trailing `slang_error **err` (`void!`: only the
-//! out-error).
+//! out-error). Errors record a return trace (ABI.md §7.4, [`trace`]):
+//! creation sites and every `?` / catching `try` pass a static
+//! `slang_error_site` to the runtime. A `?` inside a block `try` branches
+//! to its `catch` ([`TryTarget`]) instead of returning.
 //!
 //! **Functions.** Every function has a single exit block: `return` stores
 //! the result into a slot and branches there; the exit block runs deferred
@@ -137,6 +140,7 @@ mod print;
 mod rc;
 mod runtime;
 mod stmt;
+mod trace;
 mod types;
 
 use crate::hir::{self, FuncId, Program};
@@ -202,6 +206,17 @@ pub(crate) struct LoopTarget<'ctx> {
     pub depth: usize,
 }
 
+/// The `catch` of an enclosing block `try` (target of `?` inside it).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TryTarget<'ctx> {
+    /// The handler block; it loads the error from `slot`.
+    pub catch: BasicBlock<'ctx>,
+    /// Holds the (owned) error while jumping to `catch`.
+    pub slot: PointerValue<'ctx>,
+    /// Cleanup-stack depth at the `try` statement.
+    pub depth: usize,
+}
+
 /// An entry of the per-function cleanup stack (see [`cleanup`]).
 #[derive(Clone, Debug)]
 pub(crate) enum Cleanup<'ctx> {
@@ -222,6 +237,9 @@ pub struct Options {
     /// 0: off; 1: report the number of live objects at exit; 2: also their
     /// type names (`slang_leak_check_enable`).
     pub leak_check: i32,
+    /// Do not record error traces (`--no-error-trace`): the trace calls are
+    /// elided; `errors.Trace` then returns "".
+    pub no_error_trace: bool,
 }
 
 /// Coroutine state of an `async` function being emitted.
@@ -259,6 +277,8 @@ pub(crate) struct FnState<'a, 'ctx> {
     /// Per local: drop flag of a stack value with a destructor (`i1`, set
     /// while the slot holds a live value).
     pub flags: Vec<Option<PointerValue<'ctx>>>,
+    /// Enclosing block `try`s, innermost last.
+    pub try_targets: Vec<TryTarget<'ctx>>,
 }
 
 /// The code generator.
@@ -275,6 +295,11 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) globals: Vec<GlobalValue<'ctx>>,
     pub(crate) strings: HashMap<String, PointerValue<'ctx>>,
     pub(crate) cstrings: HashMap<String, PointerValue<'ctx>>,
+    /// Error-trace site records by `file\0func\0line` (see [`trace`]).
+    pub(crate) error_sites: HashMap<String, PointerValue<'ctx>>,
+    /// Interface-to-interface conversion functions by target interface
+    /// (bodies emitted last, see `iface::finish_iface_convs`).
+    pub(crate) iface_convs: Vec<(TypeId, FunctionValue<'ctx>)>,
     pub(crate) type_infos: HashMap<TypeId, GlobalValue<'ctx>>,
     pub(crate) rc_helpers: HashMap<TypeId, (FunctionValue<'ctx>, FunctionValue<'ctx>)>,
     pub(crate) value_ops: HashMap<TypeId, PointerValue<'ctx>>,
@@ -337,6 +362,8 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         globals: Vec::new(),
         strings: HashMap::new(),
         cstrings: HashMap::new(),
+        error_sites: HashMap::new(),
+        iface_convs: Vec::new(),
         type_infos: HashMap::new(),
         rc_helpers: HashMap::new(),
         value_ops: HashMap::new(),
@@ -375,6 +402,12 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         if let Err(e) = cg.emit_c_main() {
             errors.push(e);
         }
+    }
+    if let Err(e) = cg.finish_any_tostr() {
+        errors.push(e);
+    }
+    if let Err(e) = cg.finish_iface_convs() {
+        errors.push(e);
     }
     if errors.is_empty() {
         Ok(cg.module)
@@ -445,6 +478,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             cleanups: Vec::new(),
             borrowed: Vec::new(),
             flags: Vec::new(),
+            try_targets: Vec::new(),
         };
         let saved = self.f.replace(st);
         self.b.position_at_end(body);
@@ -542,11 +576,21 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         let entry = self.prog.entry.unwrap();
         let ef = self.funcs[entry.0 as usize];
+        // `main() void!`: the error (owned) is reported after shutdown.
+        let fallible = matches!(self.prog.types.get(self.prog.funcs[entry.0 as usize].ret), crate::types::Type::Fallible(_));
+        let err_slot = fallible.then(|| self.entry_alloca(self.ptr_ty().into(), "main.err", true));
         let r = self.b.build_call(ef, &[], "").unwrap().try_as_basic_value().left();
         if self.prog.funcs[entry.0 as usize].is_async {
             let t = r.unwrap();
-            self.call_rt("slang_task_await", &[t.into()]);
+            let slot = self.call_rt_v("slang_task_await", &[t.into()]).into_pointer_value();
+            if let Some(es) = err_slot {
+                let e = self.b.build_load(self.ptr_ty(), slot, "").unwrap();
+                self.call_rt("slang_retain", &[e.into()]);
+                self.b.build_store(es, e).unwrap();
+            }
             self.call_rt("slang_release", &[t.into()]);
+        } else if let (Some(es), Some(e)) = (err_slot, r) {
+            self.b.build_store(es, e).unwrap();
         }
         // Globals are released in reverse initialisation order once no task
         // runs any more (their destructors run before the final shutdown).
@@ -561,6 +605,18 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
         }
         self.call_rt("slang_runtime_shutdown", &[]);
+        if let Some(es) = err_slot {
+            let e = self.b.build_load(self.ptr_ty(), es, "").unwrap().into_pointer_value();
+            let failed = self.block("main.failed");
+            let ok = self.block("main.ok");
+            let isnull = self.b.build_is_null(e, "").unwrap();
+            self.b.build_conditional_branch(isnull, ok, failed).unwrap();
+            self.b.position_at_end(failed);
+            self.call_rt("slang_error_report", &[e.into()]);
+            self.call_rt("slang_release", &[e.into()]);
+            self.b.build_return(Some(&i32t.const_int(1, false))).unwrap();
+            self.b.position_at_end(ok);
+        }
         self.b.build_return(Some(&i32t.const_zero())).unwrap();
         self.end_fn(saved, None);
         Ok(())

@@ -10,6 +10,10 @@ pub trait DeclNames {
     fn struct_name(&self, id: u32) -> String;
     fn interface_name(&self, id: u32) -> String;
     fn enum_name(&self, id: u32) -> String;
+    /// Name of generic type parameter `id` (only seen by the analyser).
+    fn param_name(&self, id: u32) -> String {
+        format!("T#{id}")
+    }
 }
 
 impl DeclNames for Program {
@@ -47,6 +51,7 @@ pub fn type_name(tt: &TypeTable, id: TypeId, names: &dyn DeclNames) -> String {
         Type::Struct(d) => names.struct_name(d.0),
         Type::Interface(d) => names.interface_name(d.0),
         Type::Enum(d) => names.enum_name(d.0),
+        Type::Param(p) => names.param_name(*p),
         _ => tt.display(id, &|d| format!("decl#{}", d.0)),
     }
 }
@@ -303,6 +308,13 @@ impl<'a> Dumper<'a> {
                 self.line(&line);
             }
             StmtKind::Block(b) => self.block(b),
+            StmtKind::TryBlock { body, err, handler } => {
+                self.line("try");
+                self.block(body);
+                let line = format!("catch {}", self.opt_local(*err));
+                self.line(&line);
+                self.block(handler);
+            }
         }
     }
 

@@ -86,9 +86,12 @@ field_decl ::= IDENTIFIER type
 embed_decl ::= type
 method_decl ::= STATIC? func_decl
 
-interface_decl ::= INTERFACE IDENTIFIER generic_params? LBRACE (func_signature eos?)* RBRACE
+// An embedded interface is a bare interface name on its own line.
+interface_decl ::= INTERFACE IDENTIFIER generic_params? LBRACE ((func_signature | named_type) eos?)* RBRACE
 
-enum_decl ::= ENUM IDENTIFIER LBRACE enum_variant ((COMMA | eos) enum_variant)* (COMMA | eos)? RBRACE
+// Methods (with `this` = the enum value) follow the variants.
+enum_decl ::= ENUM IDENTIFIER generic_params? LBRACE enum_variant ((COMMA | eos) enum_variant)* (COMMA | eos)?
+              (attribute* func_decl eos?)* RBRACE
 enum_variant ::= attribute* IDENTIFIER (LPAREN param_list? RPAREN)?
 
 func_decl ::= func_signature block
@@ -117,7 +120,8 @@ generic_args ::= LT type (COMMA type)* GT
 // "weak" directly before STAR; it is not a reserved word.
 pointer_type ::= STAR prefix_type
 slice_type ::= LBRACKET RBRACKET prefix_type
-array_type ::= LBRACKET INT_LITERAL RBRACKET prefix_type
+// The length is an integer constant expression (`[3]int`, `[N + 1]int`).
+array_type ::= LBRACKET expr RBRACKET prefix_type
 map_type ::= MAP LBRACKET type RBRACKET prefix_type
 func_type ::= FUNC LPAREN (type (COMMA type)*)? RPAREN type?
 tuple_type ::= LPAREN type (COMMA type)+ RPAREN
@@ -152,7 +156,9 @@ return_stmt ::= RETURN (expr (COMMA expr)*)?
 break_stmt ::= BREAK
 continue_stmt ::= CONTINUE
 defer_stmt ::= DEFER expr
-assign_stmt ::= expr assign_op expr
+// `a, b = b, a` (all right-hand values are evaluated first) and
+// `(q, r) = f()` (tuple result, `_` discards) assign to existing places.
+assign_stmt ::= expr (COMMA expr)* assign_op expr (COMMA expr)*
 assign_op ::= ASSIGN | PLUSEQ | MINUSEQ | STAREQ | SLASHEQ | PERCENTEQ | AMPEQ | PIPEEQ | CARETEQ | SHLEQ | SHREQ
 expr_stmt ::= expr
 
@@ -165,8 +171,9 @@ eos ::= SEMI
 expr ::= try_expr | lambda_expr | or_expr
 try_expr ::= TRY expr (CATCH var_name block | ELSE else_value)
 else_value ::= CONTINUE | BREAK | return_stmt | expr
-lambda_expr ::= FUNC LPAREN param_list? RPAREN type? block
-              | LPAREN param_list? RPAREN ARROW (block | expr)
+// `async` lambdas return Task<T> when called.
+lambda_expr ::= ASYNC? FUNC LPAREN param_list? RPAREN type? block
+              | ASYNC? LPAREN param_list? RPAREN ARROW (block | expr)
 
 or_expr ::= and_expr (OROR and_expr)*
 and_expr ::= cmp_expr (ANDAND cmp_expr)*
@@ -179,6 +186,9 @@ postfix ::= DOT IDENTIFIER
           | LPAREN arg_list? RPAREN
           | LBRACKET (range_expr | expr) RBRACKET
           | QUESTION (LPAREN expr RPAREN)?
+          // explicit type arguments `Max<int>(1, 2)`, `Option<int>.Some(1)`, `F<int>`;
+          // the compiler accepts them only before ( { . ) ] } , or the end of a statement
+          | generic_args
 arg_list ::= expr (COMMA expr)* COMMA?
 
 primary_expr ::= literal | THIS | NIL

@@ -63,14 +63,17 @@ TEST(layout) {
     assert(sizeof(slang_slice) == 32);
     assert(sizeof(slang_map_desc) == 48);
     assert(sizeof(slang_map_iter) == 32);
-    assert(sizeof(slang_error) == 56);
+    assert(sizeof(slang_error) == 224 && sizeof(slang_error_site) == 24 && sizeof(slang_error_frame) == 16);
     assert(sizeof(slang_string) == 24);
     assert(offsetof(slang_string, len) == 16 && offsetof(slang_string, data) == 24);
     assert(offsetof(slang_slice, data) == 0 && offsetof(slang_slice, len) == 8);
     assert(offsetof(slang_slice, cap) == 16 && offsetof(slang_slice, backing) == 24);
     assert(offsetof(slang_error, message) == 16 && offsetof(slang_error, inner) == 24);
     assert(offsetof(slang_error, user_type) == 32 && offsetof(slang_error, payload) == 40);
-    assert(offsetof(slang_error, message_fn) == 48);
+    assert(offsetof(slang_error, message_fn) == 48 && offsetof(slang_error, origin) == 56);
+    assert(offsetof(slang_error, created) == 64 && offsetof(slang_error, nframes) == 72);
+    assert(offsetof(slang_error, frames) == 80 && offsetof(slang_error, overflow) == 208);
+    assert(offsetof(slang_error, overflow_cap) == 216);
 }
 
 TEST(payload_pointers) {

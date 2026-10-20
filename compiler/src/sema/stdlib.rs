@@ -39,6 +39,8 @@
 //! | `std.errors.Wrap` | `slang_errors_wrap` | `(error, string) error` |
 //! | `std.errors.Unwrap` | `slang_errors_unwrap` | `(error) error` (nil if not a wrapper) |
 //! | `std.errors.Is` | `slang_errors_is` | `(error, error) bool` |
+//! | `std.errors.Trace` | `slang_errors_trace` | `(error) string` (the return trace, see DESIGN.md) |
+//! | `std.errors.Frames` | `slang_errors_frames` | `(error) []errors.Frame` (special: struct result) |
 //! | `std.task.Delay` | `slang_task_delay` | `(int) Task<void>` |
 //!
 //!
@@ -51,9 +53,11 @@
 //! [`FUNCS`] table below. Int versions of the float `math.Min/Max/Abs` are
 //! `IMin/IMax/IAbs` (no overloading).
 //!
-//! Constants: `std.math.Pi`, `std.math.E` (untyped float constants, inlined).
-//! There are no int constants yet (`math.MaxInt`/`MinInt` would need an int
-//! variant of [`CONSTS`]).
+//! Constants ([`CONSTS`]): `std.math.Pi`, `std.math.E` (untyped float),
+//! `std.math.MaxInt`/`MinInt`/`MaxInt32`/`MinInt32`/`MaxUint32`/`MaxUint`
+//! (untyped int), all inlined, and the sentinel error `std.fs.ErrNotFound`
+//! (runtime `slang_fs_err_not_found()`, wrapped by every "file not found"
+//! error of `std.io`/`std.fs`).
 //!
 //! Specials (no extern; see `hir`):
 //! `std.io.println` / `std.io.print` → [`crate::hir::ExprKind::Print`]
@@ -61,6 +65,7 @@
 //! `std.fmt.Format` → extern `slang_fmt_format` with a `[]string` of
 //! [`crate::hir::ExprKind::ToString`] arguments,
 //! `std.task.All` → [`crate::hir::ExprKind::TaskAll`],
+//! `std.task.Any` → [`crate::hir::Builtin::TaskAny`],
 //! `std.errors.New` → [`crate::hir::Builtin::ErrorNew`],
 //! `std.errors.As` → [`crate::hir::Builtin::ErrorsAs`].
 //!
@@ -69,7 +74,78 @@
 //! the other numeric type names), `typeof` (rejected for now: reflection is
 //! not implemented).
 
+use crate::ast;
+use crate::span::Span;
 use crate::types::{TypeId, TypeTable};
+use std::sync::OnceLock;
+
+/// Synthesized declarations of [`STRUCTS`] (shared by every analysis).
+fn std_struct_decls() -> &'static [ast::StructDecl] {
+    static DECLS: OnceLock<Vec<ast::StructDecl>> = OnceLock::new();
+    DECLS.get_or_init(|| {
+        let ident = |n: &str| ast::Ident { name: n.to_string(), span: Span::DUMMY };
+        STRUCTS
+            .iter()
+            .map(|(_, name, fields)| ast::StructDecl {
+                attrs: Vec::new(),
+                name: ident(name),
+                generics: Vec::new(),
+                fields: fields
+                    .iter()
+                    .map(|(f, t)| ast::Field {
+                        attrs: Vec::new(),
+                        name: ident(f),
+                        ty: ast::TypeExpr {
+                            kind: ast::TypeKind::Named { path: ast::Path { segments: vec![ident(t)], span: Span::DUMMY }, generics: Vec::new() },
+                            span: Span::DUMMY,
+                        },
+                        default: None,
+                        span: Span::DUMMY,
+                    })
+                    .collect(),
+                embeds: Vec::new(),
+                methods: Vec::new(),
+                span: Span::DUMMY,
+            })
+            .collect()
+    })
+}
+
+impl<'a> super::Sema<'a> {
+    /// Registers the [`STRUCTS`] (after the user declarations, so user
+    /// struct ids are unchanged). Needs at least one file.
+    pub(crate) fn add_std_structs(&mut self) {
+        if self.files.is_empty() {
+            return;
+        }
+        for ((ns, name, _), decl) in STRUCTS.iter().zip(std_struct_decls()) {
+            let id = self.structs.len() as u32;
+            self.structs.push(crate::hir::Struct {
+                name: name.to_string(),
+                full_name: format!("{ns}.{name}"),
+                namespace: crate::hir::NamespaceId(0),
+                fields: Vec::new(),
+                methods: Vec::new(),
+                attrs: Vec::new(),
+                is_attribute: false,
+                exported: true,
+                file: 0,
+                span: Span::DUMMY,
+            });
+            self.struct_src.push(decl);
+            let nsi = self.ns_index[*ns];
+            self.nss[nsi].members.insert(name.to_string(), (super::Member::Struct(id), Span::DUMMY, 0));
+        }
+    }
+
+    /// The id of builtin struct `ns.name` (see [`STRUCTS`]).
+    pub(crate) fn std_struct(&self, ns: &str, name: &str) -> Option<u32> {
+        match self.nss[*self.ns_index.get(ns)?].members.get(name)? {
+            (super::Member::Struct(id), _, _) => Some(*id),
+            _ => None,
+        }
+    }
+}
 
 /// Stdlib namespaces (all start with `std`).
 /// Nested namespaces (`std.crypto.hash`) need no extra support: the
@@ -122,12 +198,20 @@ pub enum Special {
     Print,
     /// `std.fmt.Format(template string, args ...any) string`.
     Format,
+    /// `std.fmt.Sprintf(format string, args ...any) string` (Go verbs):
+    /// extern [`SPRINTF_SYMBOL`] with per-argument kinds and values.
+    Sprintf,
     /// `std.task.All(tasks ...)`.
     TaskAll,
+    /// `std.task.Any(tasks ...)` → [`crate::hir::Builtin::TaskAny`].
+    TaskAny,
     /// `std.errors.New(msg string) error`.
     ErrorsNew,
     /// `std.errors.As(err error, target *T) bool`.
     ErrorsAs,
+    /// `std.errors.Frames(err error) []errors.Frame` (extern
+    /// `slang_errors_frames`; the result type names a [`STRUCTS`] entry).
+    ErrorsFrames,
 }
 
 /// Special functions by namespace and name.
@@ -135,16 +219,64 @@ pub const SPECIALS: &[(&str, &str, Special)] = &[
     ("std.io", "println", Special::Println),
     ("std.io", "print", Special::Print),
     ("std.fmt", "Format", Special::Format),
+    ("std.fmt", "Sprintf", Special::Sprintf),
     ("std.task", "All", Special::TaskAll),
+    ("std.task", "Any", Special::TaskAny),
     ("std.errors", "New", Special::ErrorsNew),
     ("std.errors", "As", Special::ErrorsAs),
+    ("std.errors", "Frames", Special::ErrorsFrames),
+];
+
+/// Builtin stdlib struct types: (namespace, name, fields as (name, type)).
+/// They become ordinary [`crate::hir::Struct`]s (after the user structs)
+/// whose C layout the runtime shares.
+pub const STRUCTS: &[(&str, &str, &[(&str, &str)])] = &[
+    // One error-trace record (runtime `frame_rec` in error.c, 32 bytes).
+    ("std.errors", "Frame", &[("File", "string"), ("Line", "int"), ("Func", "string"), ("Context", "string")]),
 ];
 
 /// Symbol used for the lowered `fmt.Format`.
 pub const FORMAT_SYMBOL: &str = "slang_fmt_format";
 
-/// Untyped float constants: (namespace, name, value).
-pub const CONSTS: &[(&str, &str, f64)] = &[("std.math", "Pi", std::f64::consts::PI), ("std.math", "E", std::f64::consts::E)];
+/// Symbol of the lowered `fmt.Sprintf`: `(format string, kinds string,
+/// ints []int, floats []float, texts []string) string`, see
+/// `runtime/src/std_fmt_sprintf.c`.
+pub const SPRINTF_SYMBOL: &str = "slang_fmt_sprintf";
+
+/// Value of a stdlib constant ([`CONSTS`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StdConst {
+    /// Untyped float constant (inlined).
+    Float(f64),
+    /// Untyped integer constant (inlined).
+    Int(i128),
+    /// Sentinel error: a zero-argument runtime function returning the
+    /// immortal error object (so `errors.Is` compares identity).
+    Error(&'static str),
+}
+
+impl std::fmt::Display for StdConst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StdConst::Float(v) => write!(f, "{v} (untyped float)"),
+            StdConst::Int(v) => write!(f, "{v} (untyped int)"),
+            StdConst::Error(_) => write!(f, "error (sentinel)"),
+        }
+    }
+}
+
+/// Stdlib constants: (namespace, name, value).
+pub const CONSTS: &[(&str, &str, StdConst)] = &[
+    ("std.math", "Pi", StdConst::Float(std::f64::consts::PI)),
+    ("std.math", "E", StdConst::Float(std::f64::consts::E)),
+    ("std.math", "MaxInt", StdConst::Int(i64::MAX as i128)),
+    ("std.math", "MinInt", StdConst::Int(i64::MIN as i128)),
+    ("std.math", "MaxInt32", StdConst::Int(i32::MAX as i128)),
+    ("std.math", "MinInt32", StdConst::Int(i32::MIN as i128)),
+    ("std.math", "MaxUint32", StdConst::Int(u32::MAX as i128)),
+    ("std.math", "MaxUint", StdConst::Int(u64::MAX as i128)),
+    ("std.fs", "ErrNotFound", StdConst::Error("slang_fs_err_not_found")),
+];
 
 macro_rules! f {
     ($ns:literal, $name:literal, $params:literal, $ret:literal, $sym:literal) => {
@@ -185,6 +317,7 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.errors", "Wrap", "error, string", "error", "slang_errors_wrap"),
     f!("std.errors", "Unwrap", "error", "error", "slang_errors_unwrap"),
     f!("std.errors", "Is", "error, error", "bool", "slang_errors_is"),
+    f!("std.errors", "Trace", "error", "string", "slang_errors_trace"),
     f!("std.task", "Delay", "int", "Task<void>", "slang_task_delay"),
     // std.strings (more)
     f!("std.strings", "Fields", "string", "[]string", "slang_strings_fields"),

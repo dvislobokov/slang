@@ -154,6 +154,8 @@ impl TokenKind {
             Ident(_) | Int(_) | Float(_) | Str(_) | Char(_)
                 | Return | Break | Continue | Nil | True | False | This | Underscore
                 | RParen | RBrace | RBracket | Question | Bang
+                // closing generic arguments: `var nf NotFound<string>`
+                | Gt | Shr
         )
     }
 

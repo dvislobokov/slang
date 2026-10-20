@@ -136,6 +136,7 @@ fn named(t: &TypeExpr) -> String {
         TypeKind::Weak(t) => format!("weak *{}", named(t)),
         TypeKind::Slice(t) => format!("[]{}", named(t)),
         TypeKind::Array(t, n) => format!("[{n}]{}", named(t)),
+        TypeKind::ArrayExpr(t, n) => format!("[{}]{}", show(n), named(t)),
         TypeKind::Map(k, v) => format!("map[{}]{}", named(k), named(v)),
         TypeKind::Func { params, ret } => format!(
             "func({}){}",
@@ -828,13 +829,13 @@ fn struct_literal_ambiguity_in_headers() {
 #[test]
 fn lambdas_and_parens() {
     let e = expr("func(x int) int { return x * 2 }");
-    let ExprKind::Lambda { params, ret, body } = e.kind else { panic!() };
+    let ExprKind::Lambda { params, ret, body, .. } = e.kind else { panic!() };
     assert_eq!(params.len(), 1);
     assert_eq!(named(ret.as_deref().unwrap()), "int");
     assert!(matches!(*body, LambdaBody::Block(_)));
 
     let e = expr("(x int) => x * 2");
-    let ExprKind::Lambda { params, ret, body } = e.kind else { panic!() };
+    let ExprKind::Lambda { params, ret, body, .. } = e.kind else { panic!() };
     assert_eq!(params[0].name.name, "x");
     assert!(ret.is_none());
     assert!(matches!(*body, LambdaBody::Expr(ref e) if show(e) == "(x Mul 2)"));
@@ -845,7 +846,12 @@ fn lambdas_and_parens() {
     assert!(matches!(expr("(xs []int) => { return len(xs) }").kind,
         ExprKind::Lambda { ref body, .. } if matches!(**body, LambdaBody::Block(_))));
     assert!(matches!(expr("(f func(int) int, m map[string]int) => f(m[\"a\"])").kind, ExprKind::Lambda { .. }));
+    assert!(matches!(expr("async func(n int) int { return n }").kind, ExprKind::Lambda { is_async: true, .. }));
+    assert!(matches!(expr("async (n int) => n").kind, ExprKind::Lambda { is_async: true, .. }));
+    assert!(matches!(expr("func() {}").kind, ExprKind::Lambda { is_async: false, .. }));
     assert_eq!(show(&expr("(a, b)")), "tuple(a, b)");
+    assert_eq!(named(&ty("[N + 1]int")), "[(N Add 1)]int");
+    assert_eq!(named(&ty("[3]int")), "[3]int");
     assert_eq!(show(&expr("(a)")), "[a]");
     assert_eq!(show(&expr("apply((x int) => x, 1)")), "apply(lambda/1, 1)");
     assert_eq!(show(&expr("func() {}")), "lambda/0");
@@ -1156,4 +1162,24 @@ fn successful_parse_has_no_diagnostics() {
     let (file, diags) = try_parse("namespace t\nfunc main() {\n    println(\"hi\")\n}\n");
     assert!(file.is_some());
     assert!(diags.is_empty());
+}
+
+#[test]
+fn block_try() {
+    let StmtKind::TryBlock { body, err, handler } = stmt("try {\n    var x = f()?\n    g(x)?\n} catch e {\n    println(e)\n}") else { panic!() };
+    assert_eq!(body.stmts.len(), 2);
+    assert_eq!(err.name, "e");
+    assert_eq!(handler.stmts.len(), 1);
+    // `catch` may start the next line; `_` ignores the error.
+    assert!(matches!(stmt("try {\n    f()?\n}\ncatch _ {\n}"), StmtKind::TryBlock { ref err, .. } if err.name == "_"));
+    // The expression form is unchanged.
+    assert!(matches!(stmt("try f() catch e { return }"), StmtKind::Expr(_)));
+    let d = parse_err("namespace t\nfunc f() {\n    try {\n        g()?\n    } else {\n    }\n}\n");
+    assert!(d.iter().any(|d| d.message.contains("block try has no else form")), "{d:?}");
+}
+
+#[test]
+fn tuple_and_parallel_assignment() {
+    assert!(matches!(stmt("a, b = b, a"), StmtKind::Assign { target: Expr { kind: ExprKind::Tuple(_), .. }, value: Expr { kind: ExprKind::Tuple(_), .. }, .. }));
+    assert!(matches!(stmt("(q, _) = f()"), StmtKind::Assign { target: Expr { kind: ExprKind::Tuple(_), .. }, .. }));
 }

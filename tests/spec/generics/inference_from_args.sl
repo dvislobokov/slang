@@ -1,5 +1,5 @@
 // test: type parameters are inferred from slice and function arguments
-// status: pending
+// status: passing
 namespace spec.generics.inference_from_args
 
 import std.io

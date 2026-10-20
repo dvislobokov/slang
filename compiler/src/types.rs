@@ -67,6 +67,12 @@ pub enum Type {
     Enum(DeclId),
     /// Placeholder for inference; must not survive type checking.
     Infer(u32),
+    /// A generic type parameter (`T` of `func Max<T: Ordered>`), the index
+    /// of the parameter in the analyser's table. Only used while a generic
+    /// declaration is checked against its constraints; instantiations are
+    /// monomorphised, so it never reaches a program returned by
+    /// `sema::analyze`.
+    Param(u32),
     /// Type of an ill-typed expression, used by the checker to suppress
     /// cascading diagnostics. Never present in a program returned by
     /// `sema::analyze` (analysis fails if any error was reported).
@@ -231,6 +237,7 @@ impl TypeTable {
             }
             Struct(d) | Interface(d) | Enum(d) => names(*d),
             Infer(n) => format!("?{n}"),
+            Param(n) => format!("T#{n}"),
         }
     }
 }

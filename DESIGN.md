@@ -20,7 +20,8 @@ Slang — компилируемый язык с простой структур
 
 ## Не цели
 
-- Наследование классов, generics на первом этапе (планируются позже).
+- Наследование классов. Generics есть (мономорфизация, см. «Generics»),
+  но без обобщённых интерфейсов, вариантности и специализации.
 - Исключения. Ошибки — обычные значения.
 - Макросы и метапрограммирование.
 - Сборщик мусора. Память управляется подсчётом ссылок с оптимизациями
@@ -58,8 +59,14 @@ struct UserService {
 - Конфликт коротких имён из двух импортов — ошибка компиляции; её решают
   псевдонимом (`as`) или полным путём.
 - Импортировать можно и отдельный тип: `import app.models.User`.
+- Неиспользуемый импорт — ошибка компиляции (`unused import`), как в Go.
+  Исключение — импорт корневого пространства имён (`import std`): он лишь
+  делает дочерние пространства доступными по последнему сегменту.
 - Точка входа — функция `main`, указанная при сборке (по умолчанию ищется в
-  корневом пространстве имён проекта).
+  корневом пространстве имён проекта). `main` не принимает параметров и
+  возвращает ничего или `void!` (также `async func main() void!`): если она
+  вернула ошибку, программа печатает в stderr `error: <сообщение>` и трассу,
+  код выхода 1.
 - Видимость: имя с заглавной буквы экспортируется (как в Go). Строчная —
   приватно для пространства имён. Исключение — функции стандартной
   библиотеки вроде `println`, которые для краткости экспортируются со
@@ -78,8 +85,14 @@ var list []int = []  // явный тип нужен, если из значен
 var count int        // без инициализатора: нулевое значение
 ```
 
-- `const` — константы времени компиляции: `const Pi = 3.14159`.
+- `const` — константы времени компиляции: `const Pi = 3.14159`. Константное
+  выражение может задавать длину массива: `var buf [N * 2]byte`.
 - Переменные нельзя объявить и не использовать (как в Go).
+- Множественное присваивание существующим переменным:
+  `a, b = b, a` (сначала вычисляются все значения справа) и
+  `(q, r) = DivMod(17, 5)` для кортежного результата (`_` отбрасывает).
+- `s[i]` строки — байт (`byte`) по смещению `i`, выход за границы — паника;
+  `for i, ch in s` перебирает кодовые точки.
 
 ## Типы
 
@@ -89,7 +102,7 @@ var count int        // без инициализатора: нулевое зн
 | Дробные | `float` (64 бит), `float32` |
 | Прочие примитивы | `bool`, `string`, `char` (Unicode code point) |
 | Составные | `[]T` (срез), `[N]T` (массив), `map[K]V`, `*T` (указатель) |
-| Пользовательские | `struct`, `interface`, `enum` |
+| Пользовательские | `struct`, `interface`, `enum`; обобщённые `List<int>`, `Pair<A, B>` (см. «Generics») |
 | Специальные | `void`, `T!` (результат или ошибка), `Task<T>` (асинхронный результат) |
 
 Строки — неизменяемые, UTF-8. Срезы и map — как в Go (ссылочная семантика
@@ -147,6 +160,12 @@ var q = Point{X: 3, Y: 4}
 - Поля с заглавной буквы — публичные, со строчной — приватные.
 - Встраивание (композиция) как в Go: поле без имени `Base` поднимает его
   поля и методы.
+- Поле может иметь значение по умолчанию — константу: `Port int = 8080`.
+  Оно подставляется в литерал, где поле не указано, и в `var c Config`
+  без инициализатора; остальные нулевые значения (`new Config`, элементы
+  массивов, отсутствующий ключ map) остаются нулевыми.
+- Структуры нельзя сравнивать через `==` (`operator == is not defined
+  on ...`): сравнивают поля или пишут метод `Equal`.
 - Свободные `func` на уровне пространства имён допустимы для утилит и `main`.
 
 ## Атрибуты
@@ -245,7 +264,13 @@ func Describe(s Shape) {
 - Интерфейс может содержать методы с телом, выраженные через остальные его
   методы; реализация обязана дать только методы без тела. Состояния у
   интерфейса нет, `this` в таком теле — значение интерфейса.
-- `interface ReadWriter { Reader; Writer }` встраивает интерфейсы.
+- `interface ReadWriter { Reader; Writer }` встраивает интерфейсы: имя
+  интерфейса на отдельной строке тела добавляет его методы (одноимённые
+  методы должны совпадать по сигнатуре).
+- Значение интерфейса неявно приводится к интерфейсу с подмножеством его
+  методов (`var n Named = shape`); `case Mover m:` в `switch` по
+  интерфейсу проверяет, реализует ли динамический тип другой интерфейс.
+- `println` значения `any` печатает его динамическое значение.
 - `sealed interface Shape { ... }` — реализации только в том же пространстве
   имён; `switch` по типу такого интерфейса проверяется на полноту.
 - `struct Circle implements Shape { ... }` — опциональная проверка на месте
@@ -270,6 +295,126 @@ switch r {
     case Result.Fail(c): println("fail", c)
 }
 ```
+
+После вариантов перечисление может объявлять методы; `this` — само
+значение (копия, а не указатель). Статических методов у перечислений нет.
+
+```slang
+enum Color {
+    Red
+    Green
+
+    func IsWarm() bool { return this == Color.Red }
+}
+
+println(Color.Green.IsWarm())
+```
+
+- Нулевое значение простого перечисления — первый вариант.
+- Повторяющиеся константные `case` (`case 1, 2:` и `case 2:`) — ошибка
+  компиляции.
+
+## Generics
+
+Обобщёнными могут быть функции, методы (в том числе методы обычных
+структур), структуры и перечисления. Интерфейсы обобщёнными быть не могут
+(пока). Реализация — мономорфизация, как в Rust и для структур в C#: каждый
+различный набор аргументов типа компилируется в отдельную функцию/структуру,
+кодогенерация и рантайм про generics ничего не знают.
+
+```slang
+func Max<T: Ordered>(a, b T) T {
+    if a > b { return a }
+    return b
+}
+
+struct Stack<T> {
+    items []T
+    func Push(x T) { this.items = append(this.items, x) }
+    func Pop() T! { ... }
+}
+
+enum Option<T> {
+    Some(value T)
+    None
+}
+
+struct Pair<A, B> {
+    First A
+    Second B
+    func Swap() Pair<B, A> { return Pair<B, A>{First: this.Second, Second: this.First} }
+}
+
+var m = Max(3, 7)                 // вывод: Max<int>
+var f = Max<float>(1, 2)          // явные аргументы; 1 и 2 становятся float
+var s = Stack<string>{}           // литерал экземпляра
+var o = Option<int>.Some(1)       // вариант экземпляра enum
+var g = Max<int>                  // экземпляр как значение func(int, int) int
+switch o { case Option.Some(v): println(v) }   // в образце аргументы не пишутся
+var t = l.Show<string>("x")       // обобщённый метод
+```
+
+**Синтаксис.** Параметры типа — после имени объявления: `<T>`, `<K, V>`,
+`<T: Ограничение>`. Аргументы типа — после имени: `List<int>` в типах,
+`F<int>(x)`, `S<int>{...}`, `E<int>.V`, `S<int>.Static()` и `F<int>` как
+значение в выражениях (как в C#: `<...>` считается аргументами типа, если
+за `>` идёт `(`, `{`, `.`, `)`, `]`, `}`, `,` или конец оператора). Строка,
+заканчивающаяся на `>` или `>>`, завершает оператор (`var x List<List<int>>`).
+Внутри обобщённого кода экземпляры пишутся явно: `Pair<B, A>{...}`; без
+аргументов литерал допустим, только если ожидаемый тип — экземпляр того же
+шаблона.
+
+**Ограничения.**
+
+| Ограничение | Допускает | Операции над `T` в теле |
+|---|---|---|
+| нет | любой тип | присваивание, передача, возврат, `var z T` (нулевое значение) |
+| `Ordered` (встроенное) | целые, дробные, `string`, `char` | также `< <= > >= == != +` |
+| `Comparable` / `Equatable` (встроенное) | числа, `bool`, `char`, `string`, указатели, простые enum | также `== !=`, ключ `map[T]V` |
+| интерфейс `I` | тип с методами `I` (структурно) | также методы `I`, преобразование в `I` |
+
+Тело обобщённой декларации проверяется **один раз** против ограничений (как в
+Go): `a + b` для `T` без `Ordered` — ошибка в самой декларации, даже без
+экземпляров. Затем каждый экземпляр проверяется с конкретными типами
+(например, `println(x)` для `T = Point` даёт ошибку с пометкой
+`in instantiation of Show<Point>`). Нарушение ограничения в месте
+использования: `type Point does not satisfy constraint Ordered` /
+`type Sq does not satisfy constraint Shape: missing method Area`; неверное
+число аргументов: `wrong number of type arguments for Id: expected 1, got 2`.
+
+**Вывод аргументов типа** (если `<...>` не написаны): объявленные типы
+параметров сопоставляются с типами аргументов структурно (`[]T` с `[]int`,
+`func(T) U` с `func(int) string`, `Pair<A, B>` с экземпляром `Pair`,
+`map[K]V`, `*T`, `T!`, кортежи). Нетипизированные константы обрабатываются
+последними: если параметр — ровно `T`, уже выведенный из другого аргумента,
+константа получает этот тип (`Max(x, 1)` при `x float`), иначе — тип по
+умолчанию (`Max(1, 2)` — `Max<int>`). Разные типы для одного параметра
+(`conflicting types for type parameter T`) и невыводимый параметр
+(`cannot infer type parameter T`, например `Id(nil)`) — ошибки. Лямбды
+всегда имеют типы параметров, поэтому выводятся по своему типу.
+
+**Мономорфизация.** Экземпляр `(шаблон, аргументы)` создаётся один раз и
+кэшируется; его имя читаемое (`Max<int>`, `Pair<string, int>.Swap`), символ —
+`slang_<ns>__Max__int` (видно в `slang check --dump-hir`). Методы обобщённой
+структуры инстанцируются вместе с ней; обобщённые методы — при вызове.
+Рекурсия в обобщённом коде допустима; бесконечное разрастание
+(`F<T>` вызывает `F<[]T>`) обрывается ошибкой после 48 уровней вложенности.
+Значения экземпляров освобождаются как обычные значения своих типов
+(`Drop` экземпляра работает).
+
+**`std.collections`** написана на Slang (обобщённые структуры поверх срезов и
+`map`, встроены в компилятор):
+
+| Тип | Методы |
+|---|---|
+| `List<T>` | `New()`, `Add(x)`, `Len()`, `Get(i)`, `Set(i, x)`, `Insert(i, x)`, `Remove(i)`, `Contains(x)` и `IndexOf(x)` (требуют `T: Comparable` в месте вызова), `Clear()`, `Items() []T` (копия) |
+| `Map<K: Comparable, V>` | `New()`, `Set(k, v)`, `Get(k) V` (нулевое значение, если нет), `Has(k)`, `Remove(k)`, `Len()`, `Clear()`, `Keys() []K`, `Values() []V` — в порядке вставки |
+| `Set<T: Comparable>` | `New()`, `Add(x)` (идемпотентно), `Has(x)`, `Remove(x)`, `Len()`, `Clear()`, `Items() []T` — в порядке вставки |
+| `Queue<T>` / `Stack<T>` | `New()`, `Push(x)`, `Pop() T!` и `Peek() T!` (ошибка на пустой), `Len()` |
+
+`for x in list`, `for i, x in list`, `for x in set`, `for k, v in m` (и
+`for k in m`) обходят элементы в этом порядке. Пустое значение (`List<int>{}`,
+`var m Map<string, int>`) готово к использованию.
 
 ## Указатели
 
@@ -320,7 +465,8 @@ func Save(path string, data []byte) void! { ... }
 
 `expr?` возвращает значение, если ошибки нет, и немедленно выходит из текущей
 функции с этой ошибкой, если она есть. Это замена `if err != nil { return err }`.
-Работает только внутри функции с типом `T!`.
+Работает только внутри функции с типом `T!` (или внутри блочного `try`,
+см. ниже).
 
 ```slang
 func ReadConfig(path string) Config! {
@@ -379,7 +525,13 @@ try {
   объявленную до `try`.
 - `catch` блочной формы не обязан завершать функцию: после него выполнение
   продолжается. `else` у блочной формы нет.
-- Блоки вкладываются; `?` идёт в ближайший `catch`.
+- Блоки вкладываются; `?` идёт в ближайший `catch`. `?` внутри самого
+  `catch` или внутри лямбды, объявленной в блоке, к этому `try` не
+  относится (идёт во внешний `try` или возвращает из функции).
+- Блочный `try` разрешает `?` в любой функции, даже без `T!`.
+- При переходе в `catch` освобождаются временные значения и переменные
+  блока (как при `break`); `defer` функции не выполняются — функция
+  продолжается.
 - Если из многострочного кода нужно значение, идиоматично вынести его в
   функцию с типом `T!` и использовать `?` или `try f() catch`.
 
@@ -494,18 +646,40 @@ try ReadConfig("app.toml") catch err {
 ```
 config: open app.toml: not found
   created at   app/fs.sl:42      Open
-  returned via app/config.sl:17  ReadConfig   ?("config")
+  returned via app/config.sl:17  ReadConfig  ?("config")
   returned via app/main.sl:9     main
 ```
 
 - `println(err)` печатает только сообщение; трасса показывается явно через
-  `errors.Trace(err)` (строка) или `errors.Frames(err)` (срез записей).
+  `errors.Trace(err)` (строка) или `errors.Frames(err)` (срез записей
+  `errors.Frame { File string; Line int; Func string; Context string }`,
+  по одной на строку трассы; `Context` — текст из `?("...")` или `""`).
+- Формат `errors.Trace` точный: только строки трассы (без сообщения),
+  через `\n`, без завершающего перевода строки. Первая строка
+  `  created at   <файл>:<строка>  <функция>`, затем по одной
+  `  returned via <файл>:<строка>  <функция>[  ?("<контекст>")]` на каждый
+  `?`, от старых к новым, и последняя — для `try ... catch`, который ошибку
+  поймал (`main` в примере выше — такое место). Колонка места выравнивается
+  по самому длинному, имя функции — по самому длинному, если за ним идёт
+  контекст; колонки разделены двумя пробелами, хвостовые пробелы срезаются.
+  Файл — путь в том виде, в каком его получил компилятор; функция — имя
+  без пространства имён (`Open`, `Cache.Get`, `main$lambda1`).
+- Место создания: `error(...)`, `errors.New`, `errors.Wrap` (начинает
+  новую трассу, старая остаётся у обёрнутой ошибки), структура,
+  превращённая в `error` (`return Timeout{...}`), вызов функции stdlib,
+  вернувшей ошибку, и `return err` для ошибки, у которой места ещё нет
+  (так у ошибки-константы `const ErrX = error(...)` местом создания
+  становится `return ErrX`). `?` внутри блочного `try` тоже добавляет
+  строку `returned via` — это и есть место, где ошибку поймали.
+- Копия при записи сохраняет идентичность: `errors.Is(err, ErrX)` верно и
+  для копии константы.
 - Полный нативный стектрейс по-прежнему снимается при `panic`. Для ошибок
-  его можно включить в отладке: `slang run --debug-errors` или
-  `SLANG_ERROR_BACKTRACE=1` — тогда при создании ошибки сохраняются сырые
-  адреса кадров, а символизация делается лениво при печати.
+  его планируется включать в отладке (`slang run --debug-errors` или
+  `SLANG_ERROR_BACKTRACE=1`: при создании ошибки сохраняются сырые адреса
+  кадров, символизация лениво при печати); в 0.1 это не реализовано.
 - В release трасса включена; `--no-error-trace` отключает запись для
-  случаев, когда ошибки используются как управление потоком в горячем цикле.
+  случаев, когда ошибки используются как управление потоком в горячем цикле
+  (места не генерируются, вызовы опускаются, `errors.Trace` возвращает `""`).
 
 ### Как это выглядит вместе
 
@@ -570,8 +744,15 @@ switch res {
 }
 ```
 
-- `break`, `continue`, `return`. Меток нет.
-- `defer` — выполнить при выходе из функции, как в Go.
+- `break`, `continue`, `return`. Меток нет. `break` внутри `case`
+  выходит из `switch` (как в Go), `continue` продолжает объемлющий цикл;
+  поэтому из `case` нельзя выйти из цикла иначе, чем через `return`
+  (открытый вопрос: метки или `break` к циклу).
+- `defer` — выполнить при выходе из функции, как в Go. Аргументы
+  вычисляются сразу. Отложенный вызов функции с `T!` — ошибка компиляции
+  (результат нужно обработать): ошибку обрабатывают в отложенном замыкании,
+  `defer func() { try Close() catch err { ... } }()`. `defer await f()`
+  запрещён.
 
 ## Асинхронность
 
@@ -600,6 +781,10 @@ async func main() {
   переключение в точках `await`. Блокирующий ввод-вывод в стандартной
   библиотеке асинхронный.
 - Примитивы: `task.All`, `task.Any`, `task.Delay`, `Channel<T>`, `Mutex`.
+  `await task.Any(t1, ..., tn)` (все `Task<T>` одного типа) даёт результат
+  первой завершившейся задачи; остальные продолжают работать.
+- Асинхронные лямбды: `async func(n int) int { ... }` и
+  `async (n int) => ...`; вызов возвращает `Task<T>`.
 - Реализация в LLVM: через LLVM coroutines (`llvm.coro.*`), каждая `async`
   функция превращается в конечный автомат с выделенным фреймом.
 
@@ -871,13 +1056,13 @@ source generators в C#), без генерации исходников и бе
 | Пространство | Содержимое | Реализовано |
 |--------------|------------|-------------|
 | `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; нет `Reader`/`Writer` |
-| `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`; даты — `time.Format` |
+| `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`, `Sprintf` (глаголы Go: `%v %d %s %f %.2f %5d %-4d %03d %x %q %c %t %e %%`); даты — `time.Format` |
 | `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё, кроме `Builder`, плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
-| `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; констант `MaxInt`/`MinInt` пока нет |
-| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (после generics) | — |
+| `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
+| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓ |
 | `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Timeout` | ✓ `All`, `Delay` |
 | `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; нет процессов и сигналов |
-| `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir` |
+| `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir`; `fs.ErrNotFound` — ошибка-константа, которую оборачивают все ошибки «файл не найден» (`errors.Is(err, fs.ErrNotFound)`) |
 | `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; нет `Duration`/`Timer` (нужны типы в stdlib) |
 | `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New` | ✓ всё |
 
@@ -1059,19 +1244,24 @@ import      = "import" path [ "as" ident ] ;
 decl        = { attribute } ( struct | interface | enum | func | var | const ) ;
 attribute   = "@" path [ "(" [ attrarg { "," attrarg } ] ")" ] ;
 attrarg     = [ ident ":" ] expr ;
-struct      = "struct" ident [ "implements" type { "," type } ] "{" { field | method } "}" ;
-interface   = [ "sealed" ] "interface" ident "{" { type | func } "}" ;
-field       = { attribute } ident type ;
+struct      = "struct" ident [ generics ] [ "implements" type { "," type } ] "{" { field | method } "}" ;
+generics    = "<" tparam { "," tparam } ">" ;
+tparam      = ident [ ":" type ] ;            (* type: interface, Ordered, Comparable *)
+interface   = [ "sealed" ] "interface" ident "{" { type | func } "}" ;   (* type: embedded interface *)
+enum        = "enum" ident [ generics ] "{" variant { ( "," | newline ) variant } { method } "}" ;
+variant     = { attribute } ident [ "(" params ")" ] ;
+field       = { attribute } ident type [ "=" expr ] ;
 method      = [ "static" ] func ;
-func        = [ "async" ] "func" ident "(" [ params ] ")" [ type ] block ;
+func        = [ "async" ] "func" ident [ generics ] "(" [ params ] ")" [ type ] block ;
 params      = param { "," param } ;
 param       = ident { "," ident } type ;
-type        = path [ "!" ] | "*" type | "weak" "*" type | "[" [ int ] "]" type
+type        = path [ typeargs ] [ "!" ] | "*" type | "weak" "*" type | "[" [ constexpr ] "]" type
             | "map" "[" type "]" type | "func" "(" [ types ] ")" [ type ]
             | "(" types ")" ;
 block       = "{" { stmt } "}" ;
 stmt        = var | const | if | for | switch | trystmt | "return" [ exprs ]
-            | "break" | "continue" | "defer" expr | expr [ assignop expr ] ;
+            | "break" | "continue" | "defer" expr | exprs [ assignop exprs ] ;
+                                              (* a, b = b, a ; (q, r) = f() *)
 var         = "var" ident [ type ] [ "=" expr ] ;
 if          = "if" expr block [ "else" ( if | block ) ] ;
 for         = "for" [ ident [ "," ident ] "in" ( expr | range ) | expr ] block ;
@@ -1083,10 +1273,13 @@ unary       = ( "-" | "!" | "&" | "*" | "await" ) unary | tryexpr | postfix ;
 tryexpr     = "try" expr ( "catch" ident block | "else" expr ) ;
 trystmt     = "try" block "catch" ident block ;
 postfix     = primary { "." ident | "(" [ exprs ] ")" | "[" ( expr | range ) "]"
-            | "?" [ "(" expr ")" ] } ;
+            | "?" [ "(" expr ")" ] | typeargs } ;
+typeargs    = "<" type { "," type } ">" ;     (* only before ( { . ) ] } , or end of statement *)
 range       = [ expr ] ".." [ expr ] ;
-primary     = literal | ident | path "{" [ fields ] "}" | "new" primary
-            | "(" expr ")" | lambda ;
+primary     = literal | ident | path [ typeargs ] "{" [ fields ] "}" | "new" primary
+            | "(" expr ")" | "(" exprs ")" | lambda ;
+lambda      = [ "async" ] "func" "(" [ params ] ")" [ type ] block
+            | [ "async" ] "(" [ params ] ")" "=>" ( block | expr ) ;
 ```
 
 ## Этапы реализации
@@ -1101,7 +1294,8 @@ primary     = literal | ident | path "{" [ fields ] "}" | "new" primary
 5. **Async** — LLVM coroutines, планировщик, `std.task`.
 6. **Стандартная библиотека (ядро) и инструменты** — `std.io`, `std.strings`,
    `std.fmt`, `std.fs`, `std.os`, `std.time`, `slang fmt`, `slang test`.
-7. **Generics** — `List<T>`, ограничения через интерфейсы (мономорфизация).
+7. **Generics** — `List<T>`, ограничения через интерфейсы (мономорфизация). ✓
+   (без обобщённых интерфейсов; см. «Generics»).
 8. **Сеть и криптография** — `std.net`, `std.net.http`, `std.crypto.*` через
    BoringSSL/libsodium, `std.encoding.json`.
 9. **Остальная стандартная библиотека** — форматы, сжатие, regex, SQL, log.

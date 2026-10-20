@@ -567,10 +567,15 @@ impl Parser<'_> {
         let generics = self.generic_params()?;
         self.expect(&TokenKind::LBrace)?;
         let mut methods = Vec::new();
+        let mut embeds = Vec::new();
         self.member_list(|p| {
             let attrs = p.attributes()?;
+            if attrs.is_empty() && matches!(p.peek(), TokenKind::Ident(_)) {
+                embeds.push(p.parse_type()?);
+                return Ok(());
+            }
             if !matches!(p.peek(), TokenKind::Func | TokenKind::Async) {
-                return Err(p.unexpected("method signature or `}`"));
+                return Err(p.unexpected("method signature, embedded interface or `}`"));
             }
             let mut method = p.func_decl(false)?;
             if let Some(first) = attrs.first() {
@@ -580,19 +585,37 @@ impl Parser<'_> {
             methods.push(method);
             Ok(())
         })?;
-        Ok(InterfaceDecl { attrs: Vec::new(), name, generics, methods, span: self.span_from(start) })
+        Ok(InterfaceDecl { attrs: Vec::new(), name, generics, methods, embeds, span: self.span_from(start) })
     }
 
     /// `enum Name { A, B }` or `enum Name { Ok(value int) \n Fail(code int) }`
     fn enum_decl(&mut self) -> PResult<EnumDecl> {
         let start = self.expect(&TokenKind::Enum)?;
         let name = self.ident()?;
+        let generics = self.generic_params()?;
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
+        let mut methods = Vec::new();
         loop {
             while self.eat(&TokenKind::Semi) || self.eat(&TokenKind::Comma) {}
             if self.at(&TokenKind::RBrace) || self.at_eof() {
                 break;
+            }
+            if matches!(self.peek(), TokenKind::Func | TokenKind::Static | TokenKind::Async) || (self.at(&TokenKind::At) && !methods.is_empty()) {
+                let attrs = self.attributes()?;
+                match self.func_decl(true) {
+                    Ok(mut f) => {
+                        f.attrs = attrs;
+                        methods.push(f);
+                    }
+                    Err(_) => self.sync_stmt(),
+                }
+                continue;
+            }
+            if !methods.is_empty() {
+                self.unexpected("a method (variants come before the methods of an enum)");
+                self.sync_stmt();
+                continue;
             }
             match self.variant() {
                 Ok(v) => variants.push(v),
@@ -607,7 +630,7 @@ impl Parser<'_> {
             }
         }
         self.expect(&TokenKind::RBrace)?;
-        Ok(EnumDecl { attrs: Vec::new(), name, variants, span: self.span_from(start) })
+        Ok(EnumDecl { attrs: Vec::new(), name, generics, variants, methods, span: self.span_from(start) })
     }
 
     fn variant(&mut self) -> PResult<Variant> {
@@ -785,15 +808,16 @@ impl Parser<'_> {
                     if p.eat(&TokenKind::RBracket) {
                         TypeKind::Slice(Box::new(p.type_base()?))
                     } else {
-                        let len = match p.peek().clone() {
-                            TokenKind::Int(text) => {
-                                let span = p.bump().span;
-                                p.int_value(&text, span)
-                            }
-                            _ => return Err(p.unexpected("array length or `]`")),
-                        };
-                        p.expect(&TokenKind::RBracket)?;
-                        TypeKind::Array(Box::new(p.type_base()?), len)
+                        if let (TokenKind::Int(text), TokenKind::RBracket) = (p.peek().clone(), p.peek_n(1).clone()) {
+                            let span = p.bump().span;
+                            let len = p.int_value(&text, span);
+                            p.expect(&TokenKind::RBracket)?;
+                            TypeKind::Array(Box::new(p.type_base()?), len)
+                        } else {
+                            let len = p.with_struct_lit(false, |p| p.parse_expr())?;
+                            p.expect(&TokenKind::RBracket)?;
+                            TypeKind::ArrayExpr(Box::new(p.type_base()?), Box::new(len))
+                        }
                     }
                 }
                 TokenKind::Map => {
@@ -919,9 +943,26 @@ impl Parser<'_> {
                 StmtKind::Defer(self.parse_expr()?)
             }
             TokenKind::LBrace => StmtKind::Block(self.block()?),
+            TokenKind::Try if self.peek_n(1) == &TokenKind::LBrace => self.try_block()?,
             _ => self.simple_stmt()?,
         };
         Ok(Stmt { kind, span: self.span_from(start) })
+    }
+
+    /// `try { ... } catch err { ... }` (no `else` form).
+    fn try_block(&mut self) -> PResult<StmtKind> {
+        self.expect(&TokenKind::Try)?;
+        let body = self.block()?;
+        if self.at(&TokenKind::Semi) && matches!(self.peek_n(1), TokenKind::Catch | TokenKind::Else) {
+            self.bump();
+        }
+        if self.at(&TokenKind::Else) {
+            return Err(self.error_at(self.span(), "a block try has no else form; use catch err { ... }"));
+        }
+        self.expect(&TokenKind::Catch)?;
+        let err = self.binding()?;
+        let handler = self.block()?;
+        Ok(StmtKind::TryBlock { body, err, handler })
     }
 
     /// Values after `return`, if any on this line.
@@ -1282,8 +1323,9 @@ impl Parser<'_> {
     }
 
     /// Speculatively parses explicit type arguments `<T, U>`; succeeds only
-    /// if they are followed by `(` (a generic call) or `{` (a struct
-    /// literal), as in C#. Otherwise restores the position (`a < b` stays a
+    /// if they are followed by `(` (a generic call), `{` (a struct
+    /// literal), `.` (a member of a generic type) or a token that ends an
+    /// operand (a generic function value), as in C#. Otherwise restores the position (`a < b` stays a
     /// comparison).
     fn try_type_args(&mut self) -> Option<Vec<TypeExpr>> {
         let cp = self.checkpoint();
@@ -1295,7 +1337,14 @@ impl Parser<'_> {
                 return None;
             }
             self.expect_gt().ok()?;
-            matches!(self.peek(), TokenKind::LParen | TokenKind::LBrace).then_some(args)
+            // C#-style disambiguation: `F<int>(x)`, `S<int>{}`, `E<int>.V`,
+            // and a generic function value `F<int>` before `)`, `]`, `,`,
+            // `}` or the end of the statement.
+            matches!(
+                self.peek(),
+                TokenKind::LParen | TokenKind::LBrace | TokenKind::Dot | TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace | TokenKind::Comma | TokenKind::Semi | TokenKind::Eof
+            )
+            .then_some(args)
         })();
         self.silent = silent;
         if ok.is_none() {
@@ -1423,7 +1472,16 @@ impl Parser<'_> {
                     return Err(self.unexpected("`{`"));
                 }
                 let body = Box::new(LambdaBody::Block(self.block()?));
-                ExprKind::Lambda { params, ret, body }
+                ExprKind::Lambda { params, ret, body, is_async: false }
+            }
+            TokenKind::Async if matches!(self.peek_n(1), TokenKind::Func | TokenKind::LParen) => {
+                self.bump();
+                let mut e = self.primary()?;
+                match &mut e.kind {
+                    ExprKind::Lambda { is_async, .. } => *is_async = true,
+                    _ => return Err(self.error_at(start, "async must be followed by a lambda (async func(..) { } or async (..) => e)")),
+                }
+                e.kind
             }
             _ => return Err(self.unexpected("expression")),
         };
@@ -1503,7 +1561,7 @@ impl Parser<'_> {
                 LambdaBody::Expr(self.parse_expr()?)
             };
             return Ok(Expr {
-                kind: ExprKind::Lambda { params, ret, body: Box::new(body) },
+                kind: ExprKind::Lambda { params, ret, body: Box::new(body), is_async: false },
                 span: self.span_from(start),
             });
         }

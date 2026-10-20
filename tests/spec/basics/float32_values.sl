@@ -1,5 +1,5 @@
 // test: float32 arithmetic and printing use float32 precision (shortest for float32)
-// status: pending
+// status: passing
 namespace spec.basics.float32_values
 
 import std.io

@@ -1,5 +1,5 @@
 // test: generic struct Stack<T> with methods, instantiated twice
-// status: pending
+// status: passing
 namespace spec.generics.stack_struct
 
 import std.io

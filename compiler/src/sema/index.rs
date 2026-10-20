@@ -301,6 +301,10 @@ impl<'a> Sema<'a> {
 
     /// Records a declaration in the current file.
     pub(crate) fn ide_def(&mut self, key: SymKey, name: &ast::Ident, full_span: Span, container: Option<SymKey>) {
+        // Synthesized std declarations (`errors.Frame`) are not in any file.
+        if name.span == Span::DUMMY {
+            return;
+        }
         let file = self.cur_file;
         if let Some(r) = &mut self.ide {
             r.defs.push(RawDef { key, file, name: name.name.clone(), name_span: name.span, full_span, container, detail: None });
@@ -326,6 +330,7 @@ impl<'a> Sema<'a> {
             }
             Member::StdConst(i) => SymKey::Std(format!("{}.{}", stdlib::CONSTS[i].0, stdlib::CONSTS[i].1)),
             Member::Ns(n) => SymKey::Ns(self.nss[n].path.clone()),
+            Member::Generic(_) => return None,
         })
     }
 
@@ -478,7 +483,7 @@ impl<'a> Sema<'a> {
                             Some((SymbolKind::Func, format!("func {}({}){ret}", f.name, f.params)))
                         }
                         Member::Special(_) => Some((SymbolKind::Func, special_sig(&ns.path, name))),
-                        Member::StdConst(i) => Some((SymbolKind::Const, format!("const {} = {} (untyped float)", name, stdlib::CONSTS[*i].2))),
+                        Member::StdConst(i) => Some((SymbolKind::Const, format!("const {} = {}", name, stdlib::CONSTS[*i].2))),
                         _ => None,
                     };
                     if let Some(info) = info {

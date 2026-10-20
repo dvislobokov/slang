@@ -4,7 +4,7 @@
 //!
 //! Signatures are written in a tiny notation: `ret:params`, one letter per
 //! type: `v` void, `p` ptr, `l` i64, `i` i32, `b` bool (`zeroext i1`),
-//! `d` double, `c` i8.
+//! `d` double, `f` float, `c` i8.
 
 use super::CodeGen;
 use inkwell::attributes::{Attribute, AttributeLoc};
@@ -61,6 +61,9 @@ const RUNTIME: &[(&str, &str, bool)] = &[
     ("slang_error_wrap", "p:pp", false),
     ("slang_error_message", "p:p", false),
     ("slang_error_as", "p:pp", false),
+    ("slang_error_created", "p:pp", false),
+    ("slang_error_returned", "p:ppp", false),
+    ("slang_error_report", "v:p", false),
     ("slang_panic", "v:p", true),
     ("slang_panic_str", "v:p", true),
     ("slang_panic_error", "v:p", true),
@@ -70,6 +73,7 @@ const RUNTIME: &[(&str, &str, bool)] = &[
     ("slang_print_int", "v:l", false),
     ("slang_print_uint", "v:l", false),
     ("slang_print_float", "v:d", false),
+    ("slang_float32_shortest", "d:f", false),
     ("slang_print_bool", "v:b", false),
     ("slang_print_rune", "v:i", false),
     ("slang_print_space", "v:", false),
@@ -81,6 +85,7 @@ const RUNTIME: &[(&str, &str, bool)] = &[
     ("slang_task_add_continuation", "b:ppp", false),
     ("slang_task_result", "p:p", false),
     ("slang_task_await", "p:p", false),
+    ("slang_task_any", "p:pl", false),
     ("slang_runtime_init", "v:ip", false),
     ("slang_runtime_shutdown", "v:", false),
     ("slang_runtime_drain", "v:", false),
@@ -94,6 +99,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             'i' => self.ctx.i32_type().into(),
             'b' => self.ctx.bool_type().into(),
             'd' => self.ctx.f64_type().into(),
+            'f' => self.ctx.f32_type().into(),
             'c' => self.ctx.i8_type().into(),
             _ => return None,
         })

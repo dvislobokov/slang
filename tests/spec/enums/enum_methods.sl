@@ -1,5 +1,5 @@
 // test: enums may declare methods like structs; this is the enum value
-// status: pending
+// status: passing
 namespace spec.enums.enum_methods
 
 import std.io

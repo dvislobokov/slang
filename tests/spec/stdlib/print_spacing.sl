@@ -1,5 +1,5 @@
 // test: print(a, b) adds a space only between operands when neither is a string (Go fmt.Print)
-// status: pending
+// status: passing
 namespace spec.stdlib.print_spacing
 
 import std.io

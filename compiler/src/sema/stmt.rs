@@ -2,7 +2,6 @@
 //! `return`, `try`, and the terminating-statement analysis.
 
 use super::coerce::Ctx;
-use super::resolve::PathRes;
 use super::*;
 use crate::hir::{BinOp, Builtin, Callee, ExprKind, Pattern, ReturnValue, Stmt, StmtKind, TryFallback};
 
@@ -75,6 +74,16 @@ impl<'a> Sema<'a> {
                 let b = self.block(b);
                 push(out, StmtKind::Block(b));
             }
+            ast::StmtKind::TryBlock { body, err, handler } => {
+                self.fcx().try_depth += 1;
+                let body = self.block(body);
+                self.fcx().try_depth -= 1;
+                self.push_scope();
+                let err = if err.name == "_" { None } else { Some(self.declare_local(&err.name, self.tt.error, LocalKind::CatchVar, err.span)) };
+                let handler = self.block(handler);
+                self.pop_scope();
+                push(out, StmtKind::TryBlock { body, err, handler });
+            }
         }
     }
 
@@ -90,7 +99,14 @@ impl<'a> Sema<'a> {
                     let h = self.value(e, None);
                     Some(self.default_type(h))
                 }
-                (None, Some(_)) => None,
+                (None, Some(t)) => match *self.tt.get(t) {
+                    // `var c Config` applies the field defaults.
+                    Type::Struct(d) => {
+                        let fields = self.struct_defaults(d.0, v.span);
+                        (!fields.is_empty()).then(|| mk(ExprKind::StructLit { struct_id: d.0, fields }, t, v.span))
+                    }
+                    _ => None,
+                },
                 (None, None) => {
                     self.err("variable needs a type or an initializer", v.span);
                     None
@@ -236,6 +252,10 @@ impl<'a> Sema<'a> {
             return StmtKind::ForRange { label, var, start, end, body };
         }
         let seq = self.value(iter, None);
+        let seq = match self.collection_for(vars, seq, body) {
+            Ok(k) => return k,
+            Err(seq) => seq,
+        };
         let (first_ty, second_ty) = match self.tt.get(seq.ty).clone() {
             Type::Slice(t) | Type::Array(t, _) => {
                 if vars.len() == 1 {
@@ -293,10 +313,29 @@ impl<'a> Sema<'a> {
         let subj = subject.as_ref().map(|(l, v)| (*l, v.ty, v.span));
         let label = self.push_label(LabelKind::Switch);
         let mut cases = Vec::new();
+        let mut seen: Vec<hir::ConstValue> = Vec::new();
         for c in &sw.cases {
             self.push_scope();
             let multi = c.patterns.len() > 1;
             let patterns: Vec<Pattern> = c.patterns.iter().map(|p| self.pattern(p, subj, multi)).collect();
+            for (p, ap) in patterns.iter().zip(&c.patterns) {
+                // Duplicate constant cases are errors (Go).
+                let key = match p {
+                    Pattern::Cond(hir::Expr { kind: ExprKind::Binary { op: BinOp::Eq | BinOp::StrEq, lhs, rhs }, .. }) => match (&lhs.kind, &rhs.kind) {
+                        (ExprKind::Local(l), ExprKind::Const(v)) if subj.is_some_and(|s| s.0 == *l) => Some(v.clone()),
+                        _ => None,
+                    },
+                    Pattern::Variant { variant, bindings } if bindings.is_empty() => Some(hir::ConstValue::Enum(u32::MAX, *variant)),
+                    _ => None,
+                };
+                if let Some(k) = key {
+                    if seen.contains(&k) {
+                        self.err("duplicate case in switch: this value is already matched by an earlier case", ap.span);
+                    } else {
+                        seen.push(k);
+                    }
+                }
+            }
             let body = self.case_body(&c.body, c.span);
             self.pop_scope();
             cases.push(hir::Case { patterns, body, span: c.span });
@@ -403,15 +442,7 @@ impl<'a> Sema<'a> {
             ast::ExprKind::Call { callee, args } => (&**callee, Some(args)),
             _ => (e, None),
         };
-        let segs = Self::flatten_path(callee)?;
-        if self.lookup_local(&segs[0].name, false).is_some() {
-            return None;
-        }
-        let (res, n) = self.resolve_segments(&segs, false)?;
-        let PathRes::Variant(en, v) = res else { return None };
-        if n != segs.len() {
-            return None;
-        }
+        let (en, v) = self.pattern_variant(callee, eid)?;
         if en != eid {
             let found = self.enum_ty(en);
             let subject = self.enum_ty(eid);
@@ -586,6 +617,9 @@ impl<'a> Sema<'a> {
     }
 
     fn assign(&mut self, target: &ast::Expr, op: ast::AssignOp, value: &ast::Expr, span: Span) -> StmtKind {
+        if let ast::ExprKind::Tuple(targets) = &expr::strip_parens(target).kind {
+            return self.tuple_assign(targets, value, span);
+        }
         if let ast::ExprKind::Ident(id) = &target.kind {
             if id.name == "_" {
                 if op != ast::AssignOp::Assign {
@@ -647,6 +681,87 @@ impl<'a> Sema<'a> {
         }
     }
 
+    /// `a, b = x, y` (parallel: every value is evaluated into a temporary
+    /// first) and `(a, b) = f()` (tuple result). `_` discards. Lowered to a
+    /// block of temporaries followed by plain assignments.
+    fn tuple_assign(&mut self, targets: &[ast::Expr], value: &ast::Expr, span: Span) -> StmtKind {
+        let mut places: Vec<Option<hir::Expr>> = Vec::new();
+        for t in targets {
+            if matches!(&t.kind, ast::ExprKind::Ident(id) if id.name == "_") {
+                places.push(None);
+                continue;
+            }
+            let h = match &t.kind {
+                ast::ExprKind::Ident(id) => match self.lookup_local(&id.name, false) {
+                    Some(Ok(v)) => {
+                        self.ide_local_ref(id);
+                        self.var_expr(v, t.span)
+                    }
+                    _ if self.lookup_global(id, false).is_none() => {
+                        self.err(format!("cannot assign to undeclared variable {} (declare it with var)", id.name), id.span);
+                        self.invalid(t.span)
+                    }
+                    _ => self.place_target(t),
+                },
+                _ => self.place_target(t),
+            };
+            if !self.tt.is_invalid(h.ty) && !self.is_place(&h, true) {
+                self.err("cannot assign to this expression", t.span);
+            }
+            places.push(Some(h));
+        }
+        self.push_scope();
+        let mut stmts = Vec::new();
+        let mut temps: Vec<Option<(LocalId, TypeId)>> = Vec::new();
+        match &expr::strip_parens(value).kind {
+            ast::ExprKind::Tuple(vals) => {
+                if vals.len() != places.len() {
+                    self.err(format!("assignment mismatch: {} variables but {} values", places.len(), vals.len()), span);
+                }
+                for (v, p) in vals.iter().zip(&places) {
+                    let hv = match p {
+                        Some(p) if !self.tt.is_invalid(p.ty) => self.expr_to(v, p.ty, Ctx::Assign),
+                        _ => {
+                            let h = self.value(v, None);
+                            self.default_type(h)
+                        }
+                    };
+                    let (ty, vspan) = (hv.ty, hv.span);
+                    let l = self.temp(ty, vspan);
+                    stmts.push(Stmt { kind: StmtKind::Let { local: l, init: Some(hv) }, span: vspan });
+                    temps.push(p.as_ref().map(|_| (l, ty)));
+                }
+            }
+            _ => {
+                let hv = self.value(value, None);
+                let tys = match self.tt.get(hv.ty).clone() {
+                    Type::Tuple(ts) if ts.len() == places.len() => ts,
+                    Type::Invalid => vec![self.tt.invalid; places.len()],
+                    _ => {
+                        let n = if let Type::Tuple(ts) = self.tt.get(hv.ty) { ts.len() } else { 1 };
+                        self.err(format!("assignment mismatch: {} variables but the expression returns {n} value(s)", places.len()), span);
+                        vec![self.tt.invalid; places.len()]
+                    }
+                };
+                let locals: Vec<Option<LocalId>> = places.iter().zip(&tys).map(|(p, t)| p.as_ref().map(|_| self.temp(*t, value.span))).collect();
+                temps = locals.iter().zip(&tys).map(|(l, t)| l.map(|l| (l, *t))).collect();
+                stmts.push(Stmt { kind: StmtKind::LetTuple { locals, init: hv }, span: value.span });
+            }
+        }
+        for (p, t) in places.into_iter().zip(temps) {
+            let (Some(p), Some((l, ty))) = (p, t) else { continue };
+            if self.tt.is_invalid(p.ty) || self.tt.is_invalid(ty) {
+                continue;
+            }
+            let src = mk(ExprKind::Local(l), ty, p.span);
+            let v = self.coerce(src, p.ty, Ctx::Assign);
+            let sp = p.span;
+            stmts.push(Stmt { kind: StmtKind::Assign { target: p, value: v }, span: sp });
+        }
+        self.pop_scope();
+        StmtKind::Block(hir::Block { stmts, span })
+    }
+
     /// An assignment target (a `weak *T` place stays a place).
     fn place_target(&mut self, target: &ast::Expr) -> hir::Expr {
         let h = self.expr(target, None);
@@ -679,6 +794,11 @@ impl<'a> Sema<'a> {
         if self.tt.is_invalid(call.ty) {
             return;
         }
+        if self.tt.is_fallible(call.ty) {
+            let msg = format!("result of type {} of a deferred call must be handled: defer a closure that handles the error (defer func() {{ try f() catch err {{ ... }} }}())", self.tn(call.ty));
+            self.err(msg, call.span);
+            return;
+        }
         let mut caps: Vec<(LocalId, TypeId)> = Vec::new();
         let ty = call.ty;
         let cspan = call.span;
@@ -708,7 +828,7 @@ impl<'a> Sema<'a> {
             }
         };
         let body_expr = mk(kind, ty, cspan);
-        let stmt = if self.tt.is_fallible(ty) { StmtKind::Discard(body_expr) } else { StmtKind::Expr(body_expr) };
+        let stmt = StmtKind::Expr(body_expr);
         let parent = self.fns.last().and_then(|f| f.func).expect("defer outside a function");
         let fid = FuncId(self.funcs.len() as u32);
         self.lambda_count += 1;
@@ -755,6 +875,7 @@ pub(crate) fn terminates(stmts: &[Stmt], jumps: bool) -> bool {
         StmtKind::Break(_) | StmtKind::Continue(_) => jumps,
         StmtKind::Expr(e) => matches!(e.kind, ExprKind::Builtin { op: Builtin::Panic, .. }),
         StmtKind::Block(b) => terminates(&b.stmts, jumps),
+        StmtKind::TryBlock { body, handler, .. } => terminates(&body.stmts, jumps) && terminates(&handler.stmts, jumps),
         StmtKind::If { then, else_: Some(e), .. } => terminates(&then.stmts, jumps) && terminates(&e.stmts, jumps),
         StmtKind::Loop { label, cond: None, body } => !breaks_to(&body.stmts, *label),
         StmtKind::Switch(sw) => {
@@ -775,6 +896,7 @@ fn stmt_breaks_to(s: &Stmt, label: hir::Label) -> bool {
     match &s.kind {
         StmtKind::Break(l) => *l == label,
         StmtKind::Block(b) => blk(b),
+        StmtKind::TryBlock { body, handler, .. } => blk(body) || blk(handler),
         StmtKind::If { cond, then, else_ } => expr_breaks_to(cond, label) || blk(then) || else_.as_ref().is_some_and(blk),
         StmtKind::Loop { body, .. }
         | StmtKind::ForRange { body, .. }

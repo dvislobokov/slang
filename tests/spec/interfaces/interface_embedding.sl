@@ -1,5 +1,5 @@
 // test: an interface may embed other interfaces, gaining their methods
-// status: pending
+// status: passing
 namespace spec.interfaces.interface_embedding
 
 import std.io

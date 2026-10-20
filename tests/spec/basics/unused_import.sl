@@ -1,5 +1,5 @@
 // error: unused import
-// status: pending
+// status: passing
 namespace spec.basics.unused_import
 
 import std.io

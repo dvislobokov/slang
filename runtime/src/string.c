@@ -22,8 +22,17 @@ slang_string *slang__string_alloc(int64_t len) {
     return s;
 }
 
+slang_string *slang__string_alloc_uninit(int64_t len) {
+    if (len < 0) slang__panicf("negative string length %lld", (long long)len);
+    slang_string *s = (slang_string *)slang__object_new_uninit(
+        &slang_type_string, (int64_t)sizeof(slang_string) + len + 1);
+    s->len = len;
+    s->data[len] = 0;
+    return s;
+}
+
 slang_string *slang_string_new(const char *bytes, int64_t len) {
-    slang_string *s = slang__string_alloc(len);
+    slang_string *s = slang__string_alloc_uninit(len);
     if (len > 0) memcpy(s->data, bytes, (size_t)len);
     return s;
 }
@@ -100,7 +109,7 @@ int32_t slang_string_decode_rune(const slang_string *s, int64_t i, int64_t *widt
 
 slang_string *slang_string_concat(const slang_string *a, const slang_string *b) {
     int64_t la = slen(a), lb = slen(b);
-    slang_string *s = slang__string_alloc(la + lb);
+    slang_string *s = slang__string_alloc_uninit(la + lb);
     if (la) memcpy(s->data, a->data, (size_t)la);
     if (lb) memcpy(s->data + la, b->data, (size_t)lb);
     return s;
@@ -166,15 +175,26 @@ uint8_t slang_string_byte_at(const slang_string *s, int64_t i) {
     return (uint8_t)s->data[i];
 }
 
+const char *slang__memmem(const char *hay, int64_t n, const char *needle, int64_t m) {
+    if (m > n) return NULL;
+    /* memchr for the first byte (vectorised in libc), then verify. */
+    const char *p = hay, *last = hay + (n - m);
+    unsigned char c0 = (unsigned char)needle[0];
+    while (p <= last) {
+        p = memchr(p, c0, (size_t)(last - p + 1));
+        if (!p) return NULL;
+        if (memcmp(p + 1, needle + 1, (size_t)(m - 1)) == 0) return p;
+        p++;
+    }
+    return NULL;
+}
+
 int64_t slang_string_index(const slang_string *s, const slang_string *sub) {
     int64_t n = slen(s), m = slen(sub);
     if (m == 0) return 0;
-    if (m > n) return -1;
-    const char *hs = sdata(s), *nd = sdata(sub);
-    for (int64_t i = 0; i + m <= n; i++) {
-        if (hs[i] == nd[0] && memcmp(hs + i, nd, (size_t)m) == 0) return i;
-    }
-    return -1;
+    const char *hs = sdata(s);
+    const char *f = slang__memmem(hs, n, sdata(sub), m);
+    return f ? (int64_t)(f - hs) : -1;
 }
 
 bool slang_string_contains(const slang_string *s, const slang_string *sub) {
@@ -193,22 +213,82 @@ bool slang_string_has_suffix(const slang_string *s, const slang_string *p) {
 
 /* ---- conversions ---- */
 
+/* Decimal digits of v at the end of buf[0..32); returns the start. */
+static char *utoa_end(char *end, uint64_t v) {
+    char *p = end;
+    do { *--p = (char)('0' + v % 10); v /= 10; } while (v);
+    return p;
+}
+
 slang_string *slang_string_from_int(int64_t v) {
     char buf[32];
-    int n = snprintf(buf, sizeof buf, "%" PRId64, v);
-    return slang_string_new(buf, n);
+    char *end = buf + sizeof buf;
+    char *p = utoa_end(end, v < 0 ? 0 - (uint64_t)v : (uint64_t)v);
+    if (v < 0) *--p = '-';
+    return slang_string_new(p, end - p);
 }
 
 slang_string *slang_string_from_uint(uint64_t v) {
     char buf[32];
-    int n = snprintf(buf, sizeof buf, "%" PRIu64, v);
-    return slang_string_new(buf, n);
+    char *end = buf + sizeof buf;
+    char *p = utoa_end(end, v);
+    return slang_string_new(p, end - p);
+}
+
+/* Fast exact path of slang__format_float for values printed in fixed
+ * notation with few digits (1e-4 <= |v| < 1e6, at most 15 significant
+ * digits): finds the smallest k such that m = round(v * 10^k) parses back
+ * to v. That m is the shortest round-trip digit string, i.e. exactly what
+ * the %.*e search below produces. Returns the length, or -1 to fall back. */
+static int format_float_fast(char *buf, size_t cap, double v) {
+    static const double pow10[] = { 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8,
+                                    1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16,
+                                    1e17, 1e18, 1e19, 1e20 };
+    double a = fabs(v);
+    if (!(a >= 1e-4 && a < 1e6) || cap < 32) return -1;
+    for (int k = 0; k <= 20; k++) {
+        double p = pow10[k];
+        double m = rint(a * p);
+        if (m >= 1e15) return -1;            /* > 15 digits: use the general path */
+        if (m / p != a) continue;            /* exact: m, p < 2^53, one rounding */
+        /* m must be the correctly rounded k-decimal value of a, not a
+         * neighbour that happens to round-trip: check the exact residual. */
+        double r = fma(a, p, -m);
+        if (fabs(r) >= 0.4999) return -1;
+        if (m >= 1e6 * p) return -1;         /* rounded up to 1e6: exponent form */
+        char dig[32];
+        char *end = dig + sizeof dig;
+        char *d = utoa_end(end, (uint64_t)m);
+        int nd = (int)(end - d);
+        size_t n = 0;
+        if (v < 0) buf[n++] = '-';
+        if (nd <= k) {                       /* 0.000ddd */
+            buf[n++] = '0';
+            buf[n++] = '.';
+            for (int i = nd; i < k; i++) buf[n++] = '0';
+            memcpy(buf + n, d, (size_t)nd);
+            n += (size_t)nd;
+        } else {
+            memcpy(buf + n, d, (size_t)(nd - k));
+            n += (size_t)(nd - k);
+            if (k > 0) {
+                buf[n++] = '.';
+                memcpy(buf + n, d + nd - k, (size_t)k);
+                n += (size_t)k;
+            }
+        }
+        buf[n] = 0;
+        return (int)n;
+    }
+    return -1;
 }
 
 int slang__format_float(char *buf, size_t cap, double v) {
     if (isnan(v)) return snprintf(buf, cap, "NaN");
     if (isinf(v)) return snprintf(buf, cap, v > 0 ? "+Inf" : "-Inf");
     if (v == 0) return snprintf(buf, cap, signbit(v) ? "-0" : "0");
+    int fast = format_float_fast(buf, cap, v);
+    if (fast >= 0) return fast;
 
     /* Shortest precision that round-trips, in %e form to learn the exponent. */
     char tmp[64];

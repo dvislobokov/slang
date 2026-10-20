@@ -169,6 +169,10 @@ impl Walker<'_, '_> {
             StmtKind::Break(_) | StmtKind::Continue(_) => {}
             StmtKind::Defer(e) => self.expr(e, Store),
             StmtKind::Block(b) => self.block(b),
+            StmtKind::TryBlock { body, handler, .. } => {
+                self.block(body);
+                self.block(handler);
+            }
         }
     }
 

@@ -1,5 +1,5 @@
 // test: a generic method on a non-generic struct, inferred and explicit
-// status: pending
+// status: passing
 namespace spec.generics.generic_method
 
 import std.io

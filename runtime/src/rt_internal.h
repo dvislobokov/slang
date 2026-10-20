@@ -31,6 +31,12 @@ SLANG_HIDDEN void slang__object_immortalize(slang_object *o);
  * a uniquely referenced object (it may move; new bytes are not zeroed). */
 SLANG_HIDDEN int64_t slang__object_capacity(slang_object *o);
 SLANG_HIDDEN slang_object *slang__object_resize(slang_object *o, int64_t size);
+/* Like slang_object_new, but the payload (after the header) is NOT zeroed. */
+SLANG_HIDDEN slang_object *slang__object_new_uninit(const slang_type_info *type, int64_t size);
+/* Allocate a string object of len bytes; only len and the NUL are set. */
+SLANG_HIDDEN slang_string *slang__string_alloc_uninit(int64_t len);
+/* First occurrence of needle[0..m) in hay[0..n), or NULL (m > 0). */
+SLANG_HIDDEN const char *slang__memmem(const char *hay, int64_t n, const char *needle, int64_t m);
 SLANG_HIDDEN void slang__weak_clear(slang_object *o);
 SLANG_HIDDEN void slang__leak_report(void);
 

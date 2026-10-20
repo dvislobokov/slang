@@ -41,8 +41,15 @@ fn err(src: &str, needle: &str) {
     err_files(&[src], needle)
 }
 
-/// `namespace t` + `import std.io` + body.
+/// `namespace t` + `import std.io` (when the body prints: unused imports
+/// are errors) + `import std` + body.
 fn prog(body: &str) -> String {
+    let io = if body.contains("print") || body.contains("io.") { "import std.io\n" } else { "" };
+    format!("namespace t\n{io}import std\n{body}\n")
+}
+
+/// [`prog`] that always imports `std.io` (the caller appends printing code).
+fn prog_io(body: &str) -> String {
     format!("namespace t\nimport std.io\nimport std\n{body}\n")
 }
 
@@ -335,7 +342,7 @@ fn struct_literal_checks() {
 
 #[test]
 fn structural_interfaces() {
-    let src = prog("interface Shape { func Area() float }\nstruct Sq { S float\n func Area() float { return this.S * this.S } }\nstruct Bad { func Area() int { return 1 } }\nfunc Use(s Shape) float { return s.Area() }");
+    let src = prog_io("interface Shape { func Area() float }\nstruct Sq { S float\n func Area() float { return this.S * this.S } }\nstruct Bad { func Area() int { return 1 } }\nfunc Use(s Shape) float { return s.Area() }");
     let p = ok(&format!("{src}\nfunc main() {{ var q = Sq{{S: 2}}\n println(Use(q), Use(&q)) }}"));
     let ExprKind::Print(items) = &main_exprs(&p)[1].kind else { panic!() };
     let ExprKind::Call { args, .. } = &items[0].arg.as_ref().unwrap().kind else { panic!() };
@@ -456,7 +463,7 @@ fn switch_typing() {
 
 #[test]
 fn enum_payloads_and_matching() {
-    let src = prog("enum R { Ok(v int)\n Fail(code int, why string)\n Empty }\nenum C { Red, Green }");
+    let src = prog_io("enum R { Ok(v int)\n Fail(code int, why string)\n Empty }\nenum C { Red, Green }");
     let p = ok(&format!("{src}\nfunc F(r R) int {{ switch r {{ case R.Ok(v): return v\n case R.Fail(c, _): return c\n case R.Empty: return 0 }}\n return -1 }}\nfunc main() {{ println(F(R.Ok(1)), F(R.Empty), int(C.Green), C.Red == C.Green, C.Red) }}"));
     let StmtKind::Switch(sw) = &func(&p, "F").body.stmts[0].kind else { panic!() };
     let Pattern::Variant { variant: 1, bindings } = &sw.cases[1].patterns[0] else { panic!() };
@@ -489,11 +496,11 @@ fn defer_spills_arguments() {
 }
 
 #[test]
-fn generics_are_rejected() {
-    err(&prog("func Id<T>(x T) T { return x }\nfunc main() {}"), "generics are not supported yet");
-    err(&prog("struct Box<T> { V T }\nfunc main() {}"), "generics are not supported yet");
-    err(&prog("func F(l List<int>) {}\nfunc main() {}"), "generics are not supported yet");
-    err(&main_body("var x = Id<int>(1)\n_ = x"), "generics are not supported yet");
+fn generic_misuse_is_rejected() {
+    // Generic interfaces are not supported; see tests/generics.rs for the rest.
+    err(&prog("interface Box<T> { func Get() T }\nfunc main() {}"), "generic interfaces are not supported");
+    err(&prog("func F(l List<int>) {}\nfunc main() {}"), "unknown type List");
+    err(&main_body("var x = Id<int>(1)\n_ = x"), "unknown identifier Id");
 }
 
 #[test]

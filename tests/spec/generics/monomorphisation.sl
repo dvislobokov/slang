@@ -1,5 +1,5 @@
 // test: each instantiation is compiled separately; + and zero values follow T (byte/int8 wrap, string concatenates)
-// status: pending
+// status: passing
 namespace spec.generics.monomorphisation
 
 import std.io

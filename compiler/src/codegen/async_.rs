@@ -136,11 +136,47 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if let ExprKind::TaskAll(tasks) = &t.kind {
             return self.await_all(ty, tasks);
         }
+        if let ExprKind::Builtin { op: crate::hir::Builtin::TaskAny, args } = &t.kind {
+            return self.await_any(ty, args);
+        }
         let tv = self.expr(t)?;
         let tp = tv.get().into_pointer_value();
         let slot = self.await_slot(tp);
         let r = self.load_result(ty, slot);
         self.drop_val(t.ty, tv);
+        Ok(match r {
+            Some(v) => Val::owned(v),
+            None => Val::void(),
+        })
+    }
+
+    /// `await task.Any(t1, ..., tn)`: `slang_task_any` yields the index of
+    /// the first task to complete; its result is copied out (retained).
+    fn await_any(&mut self, ty: TypeId, tasks: &[Expr]) -> R<Val<'ctx>> {
+        let n = tasks.len() as u32;
+        let arr_ty = self.ptr_ty().array_type(n);
+        let arr = self.entry_alloca(arr_ty.into(), "any.tasks", false);
+        let mut tvs = Vec::new();
+        let d = self.depth();
+        for (i, t) in tasks.iter().enumerate() {
+            let v = self.expr(t)?;
+            self.hold(t.ty, v);
+            let p = unsafe { self.b.build_in_bounds_gep(arr_ty, arr, &[self.i64_ty().const_zero(), self.i64_ty().const_int(i as u64, false)], "") }.unwrap();
+            self.b.build_store(p, v.get()).unwrap();
+            tvs.push(v);
+        }
+        self.forget_from(d);
+        let any = self.call_rt_v("slang_task_any", &[arr.into(), self.i64_ty().const_int(n as u64, false).into()]).into_pointer_value();
+        let slot = self.await_slot(any);
+        let idx = self.b.build_load(self.i64_ty(), slot, "any.idx").unwrap().into_int_value();
+        self.call_rt("slang_release", &[any.into()]);
+        let p = unsafe { self.b.build_in_bounds_gep(arr_ty, arr, &[self.i64_ty().const_zero(), idx], "") }.unwrap();
+        let winner = self.b.build_load(self.ptr_ty(), p, "").unwrap().into_pointer_value();
+        let rslot = self.call_rt_v("slang_task_result", &[winner.into()]).into_pointer_value();
+        let r = self.load_result(ty, rslot);
+        for (t, tv) in tasks.iter().zip(tvs) {
+            self.drop_val(t.ty, tv);
+        }
         Ok(match r {
             Some(v) => Val::owned(v),
             None => Val::void(),

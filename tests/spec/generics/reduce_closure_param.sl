@@ -1,5 +1,5 @@
 // test: generic functions taking and returning func(T) U values
-// status: pending
+// status: passing
 namespace spec.generics.reduce_closure_param
 
 import std.io

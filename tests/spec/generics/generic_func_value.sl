@@ -1,5 +1,5 @@
 // test: an instantiated generic function is a first-class value
-// status: pending
+// status: passing
 namespace spec.generics.generic_func_value
 
 import std.io

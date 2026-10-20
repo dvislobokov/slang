@@ -1,5 +1,5 @@
 // test: s[i] yields the byte at index i (type byte, prints as a number)
-// status: pending
+// status: passing
 namespace spec.basics.string_index_byte
 
 import std.io

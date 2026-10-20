@@ -1,5 +1,5 @@
 // test: a generic function calling itself recursively
-// status: pending
+// status: passing
 namespace spec.generics.recursive_generic
 
 import std.io

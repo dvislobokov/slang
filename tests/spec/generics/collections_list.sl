@@ -1,5 +1,5 @@
 // test: std.collections.List<T>: Add, Len, Get, Set, Contains, Remove, iteration via Items
-// status: pending
+// status: passing
 namespace spec.generics.collections_list
 
 import std.io

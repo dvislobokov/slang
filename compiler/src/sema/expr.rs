@@ -29,6 +29,9 @@ impl<'a> Sema<'a> {
                 Some(segs) => self.path_expr(&segs, span, expected),
                 None => {
                     let K::Field { base, name } = &e.kind else { unreachable!() };
+                    if let Some(ty) = self.type_args_type(base) {
+                        return self.type_member_value(ty, name, span);
+                    }
                     let b = self.value(base, None);
                     self.field_access(b, name)
                 }
@@ -40,11 +43,8 @@ impl<'a> Sema<'a> {
             K::Propagate { expr, context } => self.propagate(expr, context.as_deref(), span),
             K::Try { .. } => self.try_expr(e, true),
             K::Await(inner) => self.await_expr(inner, span),
-            K::StructLit { path, generics, fields } => self.struct_lit(path, generics, fields, span),
-            K::TypeArgs { .. } => {
-                self.err("generics are not supported yet", span);
-                self.invalid(span)
-            }
+            K::StructLit { path, generics, fields } => self.struct_lit(path, generics, fields, span, expected),
+            K::TypeArgs { base, args } => self.generic_value(base, args, span),
             K::New(inner) => self.new_expr(inner, span),
             K::SliceLit(elems) => self.slice_lit(elems, span, expected),
             K::MapLit { key_ty, val_ty, entries } => {
@@ -73,7 +73,7 @@ impl<'a> Sema<'a> {
                 self.err("a range a..b is only allowed in for, as an index, or as a case pattern", span);
                 self.invalid(span)
             }
-            K::Lambda { params, ret, body } => self.lambda(params, ret.as_deref(), body, span),
+            K::Lambda { params, ret, body, is_async } => self.lambda(params, ret.as_deref(), body, *is_async, span),
             K::Paren(x) => self.expr(x, expected),
         }
     }
@@ -186,8 +186,16 @@ impl<'a> Sema<'a> {
                 mk(ExprKind::FuncRef(f), ty, span)
             }
             PathRes::Member(Member::StdConst(i)) => {
-                let f = Folded { value: hir::ConstValue::Float(stdlib::CONSTS[i].2), ty: None };
-                self.const_expr(f, expected, span)
+                let (ns, cname, c) = stdlib::CONSTS[i];
+                let value = match c {
+                    stdlib::StdConst::Float(v) => hir::ConstValue::Float(v),
+                    stdlib::StdConst::Int(v) => hir::ConstValue::Int(v),
+                    stdlib::StdConst::Error(sym) => {
+                        let x = self.extern_id(format!("{ns}.{cname}"), sym, Vec::new(), self.tt.error);
+                        return mk(ExprKind::Call { callee: hir::Callee::Extern(x), args: Vec::new() }, self.tt.error, span);
+                    }
+                };
+                self.const_expr(Folded { value, ty: None }, expected, span)
             }
             PathRes::Variant(e, v) => {
                 let ty = self.enum_ty(e);
@@ -208,6 +216,10 @@ impl<'a> Sema<'a> {
             }
             PathRes::Member(Member::Struct(_) | Member::Interface(_) | Member::Enum(_)) | PathRes::BuiltinType(_) => {
                 self.err(format!("{name} is a type, not a value"), span);
+                self.invalid(span)
+            }
+            PathRes::Member(Member::Generic(_)) => {
+                self.err(format!("generic {name} needs type arguments to be used as a value ({name}<...>)"), span);
                 self.invalid(span)
             }
         }
@@ -237,6 +249,7 @@ impl<'a> Sema<'a> {
                     let fname = field.name.clone();
                     let owner = self.structs[sd.0 as usize].namespace;
                     self.check_member_visibility(owner, &fname, name.span, true);
+                    self.check_std_private(sd.0, &fname, name.span);
                     b = mk(ExprKind::Field { base: Box::new(b2), index: idx }, fty, span);
                 }
                 b
@@ -272,7 +285,11 @@ impl<'a> Sema<'a> {
             ExprKind::Local(_) | ExprKind::Upvalue(_) | ExprKind::Deref(_) => true,
             ExprKind::Global(g) => !self.globals[g.0 as usize].is_const,
             ExprKind::Field { base, .. } => self.is_place(base, false),
-            ExprKind::Index { base, .. } => matches!(self.tt.get(base.ty), Type::Slice(_)) || self.is_place(base, false),
+            ExprKind::Index { base, .. } => match self.tt.get(base.ty) {
+                Type::Slice(_) => true,
+                Type::String => false,
+                _ => self.is_place(base, false),
+            },
             ExprKind::MapGet { .. } => allow_map,
             _ => false,
         }
@@ -320,8 +337,10 @@ impl<'a> Sema<'a> {
                 mk(ExprKind::MapGet { map: Box::new(b), key: Box::new(key) }, v, span)
             }
             Type::String => {
-                self.err("string indexing is not supported (iterate with `for ch in s`)", span);
-                self.invalid(span)
+                // The byte at offset i (bounds-checked; `for ch in s` gives code points).
+                let i = self.int_index(index);
+                let byte = self.tt.builtin("byte").expect("byte type");
+                mk(ExprKind::Index { base: Box::new(b), index: Box::new(i) }, byte, span)
             }
             _ => {
                 self.err(format!("cannot index value of type {}", self.tn(b.ty)), b.span);
@@ -387,7 +406,7 @@ impl<'a> Sema<'a> {
     }
 
     /// True if `e` folds to an untyped constant or is `nil`.
-    fn is_untyped(&mut self, e: &ast::Expr) -> bool {
+    pub(crate) fn is_untyped(&mut self, e: &ast::Expr) -> bool {
         matches!(strip_parens(e).kind, ast::ExprKind::Nil) || self.fold(e).is_some_and(|f| f.ty.is_none())
     }
 
@@ -465,6 +484,9 @@ impl<'a> Sema<'a> {
             self.err(format!("mismatched types {} and {} for operator {sym} (no implicit conversion; use int(x) or float(x))", self.tn(l), self.tn(r)), span);
             return None;
         }
+        if matches!(self.tt.get(l), Type::Param(_)) {
+            return self.param_binop(op, l, span);
+        }
         let t = self.tt.get(l).clone();
         let numeric = self.tt.is_numeric(l);
         let integer = self.tt.is_integer(l);
@@ -513,11 +535,11 @@ impl<'a> Sema<'a> {
 
     fn propagate(&mut self, x: &ast::Expr, context: Option<&ast::Expr>, span: Span) -> hir::Expr {
         let v = self.expr(x, None);
-        let (ret, name, in_fn) = match self.fns.last() {
-            Some(f) => (f.ret, f.name.clone(), f.func.is_some()),
-            None => (self.tt.void, String::new(), false),
+        let (ret, name, in_fn, in_try) = match self.fns.last() {
+            Some(f) => (f.ret, f.name.clone(), f.func.is_some(), f.try_depth > 0),
+            None => (self.tt.void, String::new(), false, false),
         };
-        if !in_fn || !self.tt.is_fallible(ret) {
+        if !in_fn || (!self.tt.is_fallible(ret) && !in_try) {
             self.err(format!("? outside of fallible function: {name} does not return a T! type (use try ... catch or try ... else instead)"), span);
         }
         let ctx = context.map(|c| Box::new(self.expr_to(c, self.tt.string, Ctx::Other)));
@@ -546,28 +568,8 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// Resolves the type named by a struct-literal path to a struct id.
-    fn struct_lit_target(&mut self, path: &ast::Path) -> Option<u32> {
-        let segs: Vec<&ast::Ident> = path.segments.iter().collect();
-        if self.lookup_global(segs[0], false).is_none() {
-            self.err(format!("unknown type {}", path.to_string()), path.span);
-            return None;
-        }
-        let (res, n) = self.resolve_segments(&segs, true)?;
-        match res {
-            PathRes::Member(Member::Struct(s)) if n == segs.len() => Some(s),
-            _ => {
-                self.err(format!("{} is not a struct type", path.to_string()), path.span);
-                None
-            }
-        }
-    }
-
-    fn struct_lit(&mut self, path: &ast::Path, generics: &[ast::TypeExpr], fields: &[ast::FieldInit], span: Span) -> hir::Expr {
-        if !generics.is_empty() {
-            self.err("generics are not supported yet", span);
-        }
-        let Some(sid) = self.struct_lit_target(path) else {
+    fn struct_lit(&mut self, path: &ast::Path, generics: &[ast::TypeExpr], fields: &[ast::FieldInit], span: Span, expected: Option<TypeId>) -> hir::Expr {
+        let Some(sid) = self.struct_lit_struct(path, generics, expected, span) else {
             for f in fields {
                 self.value(&f.value, None);
             }
@@ -588,12 +590,31 @@ impl<'a> Sema<'a> {
                 self.err(format!("duplicate field {} in struct literal", f.name.name), f.name.span);
             }
             self.check_member_visibility(owner, &f.name.name, f.name.span, true);
+            self.check_std_private(sid, &f.name.name, f.name.span);
             self.ide_ref(f.name.span, index::SymKey::Field(sid, idx as u32));
             let fty = self.structs[sid as usize].fields[idx].ty;
             let v = self.expr_to(&f.value, fty, Ctx::Field(f.name.name.clone()));
             out.push((idx as u32, v));
         }
+        for d in self.struct_defaults(sid, span) {
+            if !out.iter().any(|(i, _)| *i == d.0) {
+                out.push(d);
+            }
+        }
         mk(ExprKind::StructLit { struct_id: sid, fields: out }, ty, span)
+    }
+
+    /// Field defaults of struct `sid` as literal field inits (scalar
+    /// constants; slice defaults exist only for attribute arguments).
+    pub(crate) fn struct_defaults(&self, sid: u32, span: Span) -> Vec<(u32, hir::Expr)> {
+        let mut out = Vec::new();
+        for (i, f) in self.structs[sid as usize].fields.iter().enumerate() {
+            match &f.default {
+                Some(hir::ConstValue::List(_)) | None => {}
+                Some(v) => out.push((i as u32, mk(ExprKind::Const(v.clone()), f.ty, span))),
+            }
+        }
+        out
     }
 
     fn new_expr(&mut self, inner: &ast::Expr, span: Span) -> hir::Expr {
@@ -642,7 +663,7 @@ impl<'a> Sema<'a> {
     }
 
     /// Lambda: lifted into a new function; returns the closure value.
-    fn lambda(&mut self, params: &[ast::Param], ret: Option<&ast::TypeExpr>, body: &ast::LambdaBody, span: Span) -> hir::Expr {
+    fn lambda(&mut self, params: &[ast::Param], ret: Option<&ast::TypeExpr>, body: &ast::LambdaBody, is_async: bool, span: Span) -> hir::Expr {
         let Some(parent) = self.fns.last().and_then(|f| f.func) else {
             self.err("lambdas are not allowed in global initializers", span);
             return self.invalid(span);
@@ -658,8 +679,8 @@ impl<'a> Sema<'a> {
         f.span = span;
         self.funcs.push(f);
         self.func_src.push(FuncSrc::Synthetic);
-        self.sigs.push(Sig { params: ptys.clone(), ret: ret_ty.unwrap_or(self.tt.void), is_async: false });
-        self.fns.push(FnCtx::new(Some(fid), ret_ty.unwrap_or(self.tt.void), false, "lambda".into()));
+        self.sigs.push(Sig { params: ptys.clone(), ret: ret_ty.unwrap_or(self.tt.void), is_async });
+        self.fns.push(FnCtx::new(Some(fid), ret_ty.unwrap_or(self.tt.void), is_async, "lambda".into()));
         for (p, t) in params.iter().zip(&ptys) {
             self.declare_local(&p.name.name, *t, LocalKind::Param, p.span);
         }
@@ -695,8 +716,10 @@ impl<'a> Sema<'a> {
         f.captures = ctx.captures;
         f.body = block;
         f.ret = ret;
+        f.is_async = is_async;
         self.sigs[fid.0 as usize].ret = ret;
-        let ty = self.tt.func(ptys, ret);
+        let fret = if is_async { self.tt.task(ret) } else { ret };
+        let ty = self.tt.func(ptys, fret);
         mk(ExprKind::Closure { func: fid, captures }, ty, span)
     }
 }

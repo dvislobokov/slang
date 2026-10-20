@@ -97,6 +97,101 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         Ok(g.as_pointer_value())
     }
 
+    /// The vtable for interface `to` of the dynamic type behind vtable `vt`
+    /// (of another interface), or NULL if `vt` is NULL or the dynamic type
+    /// lacks a method of `to`.
+    pub(crate) fn convert_vtable(&mut self, vt: PointerValue<'ctx>, to: TypeId) -> PointerValue<'ctx> {
+        let isnull = self.b.build_is_null(vt, "").unwrap();
+        let has = self.block("conv.has");
+        let done = self.block("conv.done");
+        let from_bb = self.b.get_insert_block().unwrap();
+        self.b.build_conditional_branch(isnull, done, has).unwrap();
+        self.b.position_at_end(has);
+        let tid = self.b.build_load(self.ptr_ty(), vt, "tid").unwrap().into_pointer_value();
+        let f = self.iface_conv_fn(to);
+        let nvt = self.b.build_call(f, &[tid.into()], "").unwrap().try_as_basic_value().left().unwrap().into_pointer_value();
+        let has_end = self.b.get_insert_block().unwrap();
+        self.b.build_unconditional_branch(done).unwrap();
+        self.b.position_at_end(done);
+        let phi = self.b.build_phi(self.ptr_ty(), "vt").unwrap();
+        phi.add_incoming(&[(&self.ptr_ty().const_null(), from_bb), (&nvt, has_end)]);
+        phi.as_basic_value().into_pointer_value()
+    }
+
+    /// `ptr iface.conv.N(ptr typeid)`: vtable of interface `to` for a
+    /// dynamic type id, NULL if the type does not implement it. Declared
+    /// here; the body is emitted at the end of the module by
+    /// [`finish_iface_convs`](Self::finish_iface_convs), when every type
+    /// stored in an interface is known.
+    pub(crate) fn iface_conv_fn(&mut self, to: TypeId) -> FunctionValue<'ctx> {
+        if let Some((_, f)) = self.iface_convs.iter().find(|(t, _)| *t == to) {
+            return *f;
+        }
+        let fty = self.ptr_ty().fn_type(&[self.ptr_ty().into()], false);
+        let k = self.fresh();
+        let f = self.module.add_function(&format!("iface.conv.{k}"), fty, Some(Linkage::Internal));
+        self.iface_convs.push((to, f));
+        f
+    }
+
+    /// True if struct `sid` has every method of interface `iface` with the
+    /// same signature.
+    fn struct_implements(&self, sid: u32, iface: TypeId) -> bool {
+        let Type::Interface(d) = self.ty(iface) else { return false };
+        self.prog.interfaces[d.0 as usize].methods.iter().all(|m| match self.resolve_method(sid, &m.name) {
+            Some((fid, _)) => {
+                let f = &self.prog.funcs[fid.0 as usize];
+                let ps: Vec<TypeId> = f.params.iter().skip(1).map(|l| f.locals[l.0 as usize].ty).collect();
+                ps == m.params && f.ret == m.ret && !f.is_async
+            }
+            None => false,
+        })
+    }
+
+    /// Emits the bodies of the `iface.conv.*` functions: a comparison
+    /// against the type id of every type stored in some interface.
+    pub(crate) fn finish_iface_convs(&mut self) -> R<()> {
+        let mut dyn_tys: Vec<TypeId> = self.vtables.keys().map(|(t, _)| *t).collect();
+        dyn_tys.sort();
+        dyn_tys.dedup();
+        let mut i = 0;
+        while i < self.iface_convs.len() {
+            let (to, f) = self.iface_convs[i];
+            i += 1;
+            let mut cases = Vec::new();
+            for &t in &dyn_tys {
+                let sid = match self.ty(t) {
+                    Type::Struct(d) => d.0,
+                    Type::Pointer(p) => match self.ty(*p) {
+                        Type::Struct(d) => d.0,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                if self.struct_implements(sid, to) {
+                    let tid = self.type_info(t);
+                    let vt = self.vtable(t, sid, to)?;
+                    cases.push((tid, vt));
+                }
+            }
+            self.with_helper(f, |cg| {
+                let tid = f.get_nth_param(0).unwrap().into_pointer_value();
+                for (t, vt) in cases {
+                    let yes = cg.block("is");
+                    let next = cg.block("next");
+                    let eq = cg.ptr_eq(tid, t);
+                    cg.b.build_conditional_branch(eq, yes, next).unwrap();
+                    cg.b.position_at_end(yes);
+                    cg.b.build_return(Some(&vt)).unwrap();
+                    cg.b.position_at_end(next);
+                }
+                cg.b.build_return(Some(&cg.ptr_ty().const_null())).unwrap();
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
     /// `slang_message_fn` thunk calling `S.Message()` on a box payload.
     fn message_thunk(&mut self, sid: u32) -> R<FunctionValue<'ctx>> {
         if let Some(f) = self.msg_thunks.get(&sid) {
@@ -134,7 +229,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             (Type::Error, Type::Error) => self.expr(value),
             (Type::Error, Type::Struct(d)) => {
                 let v = self.expr_owned(value)?;
-                Ok(Val::owned(self.box_error(from, d.0, v)?))
+                let e = self.box_error(from, d.0, v)?;
+                Ok(Val::owned(self.trace_created(e, value.span.start)))
             }
             (Type::Error, Type::Pointer(inner)) => {
                 let Type::Struct(d) = self.ty(inner).clone() else { return unsupported("non-struct pointer as error") };
@@ -145,6 +241,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let sv = self.b.build_load(lt, p, "").unwrap();
                 self.retain_val(inner, sv);
                 let e = self.box_error(inner, d.0, sv)?;
+                let e = self.trace_created(e, value.span.start);
                 self.drop_val(from, pv);
                 Ok(Val::owned(e))
             }
@@ -164,6 +261,15 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 Ok(Val { v: Some(self.make_pair(p, vt)), owned: pv.owned })
             }
             (Type::Interface(_), Type::Interface(_)) if from == to => self.expr(value),
+            (Type::Interface(_), Type::Interface(_)) => {
+                // Same data, the target's vtable for the dynamic type.
+                let pv = self.expr(value)?;
+                let pair = pv.get().into_struct_value();
+                let data = self.b.build_extract_value(pair, 0, "").unwrap().into_pointer_value();
+                let vt = self.b.build_extract_value(pair, 1, "").unwrap().into_pointer_value();
+                let nvt = self.convert_vtable(vt, to);
+                Ok(Val { v: Some(self.make_pair(data, nvt)), owned: pv.owned })
+            }
             (Type::Any, Type::Any) => self.expr(value),
             (Type::Any, _) => {
                 let v = self.expr_owned(value)?;
@@ -251,7 +357,28 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 }
                 self.b.build_store(datap, d).unwrap();
             }
+            Type::Interface(_) if matches!(self.ty(pat), Type::Interface(_)) => {
+                // `case Mover m:` on an interface: the dynamic type must
+                // implement `Mover`; the binding gets its vtable.
+                let pair = subj.into_struct_value();
+                let data = self.b.build_extract_value(pair, 0, "").unwrap().into_pointer_value();
+                let vt = self.b.build_extract_value(pair, 1, "").unwrap().into_pointer_value();
+                let nn = self.b.build_is_not_null(vt, "").unwrap();
+                self.b.build_conditional_branch(nn, has, done).unwrap();
+                self.b.position_at_end(has);
+                let nvt = self.convert_vtable(vt, pat);
+                let ok = self.b.build_is_not_null(nvt, "").unwrap();
+                self.b.build_store(res, ok).unwrap();
+                let pt = self.llty(pat);
+                let slot = self.entry_alloca(pt, "tiface", false);
+                let np = self.make_pair(data, nvt);
+                self.b.build_store(slot, np).unwrap();
+                self.b.build_store(datap, slot).unwrap();
+            }
             Type::Interface(_) | Type::Any => {
+                if matches!(self.ty(pat), Type::Interface(_)) {
+                    return unsupported("interface type patterns on any");
+                }
                 let pair = subj.into_struct_value();
                 let data = self.b.build_extract_value(pair, 0, "").unwrap().into_pointer_value();
                 let vt = self.b.build_extract_value(pair, 1, "").unwrap().into_pointer_value();

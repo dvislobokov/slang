@@ -103,7 +103,7 @@ fn importing_an_undeclared_transitive_dependency_is_an_error() {
 
     // A fully qualified path without `import` is checked too.
     let main = root.join("phantom/app/src/main.sl");
-    std::fs::write(&main, "namespace app\n\nimport std.io\nimport liba\n\nfunc main() {\n    println(libb.math.Add(1, 2))\n}\n").unwrap();
+    std::fs::write(&main, "namespace app\n\nimport std.io\n\nfunc main() {\n    println(libb.math.Add(1, 2))\n}\n").unwrap();
     let err = fails(&root.join("phantom/app"), &["check"]);
     assert!(err.contains("cannot use namespace `libb`"), "{err}");
 

@@ -1,5 +1,5 @@
 // test: std.collections.Map<K, V>: Set, Get, Has, Remove, Len, Keys in insertion order
-// status: pending
+// status: passing
 namespace spec.generics.collections_map
 
 import std.io

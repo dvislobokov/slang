@@ -29,6 +29,7 @@ build options:
   -O0..-O3             optimisation level
   --static             fully static executable
   --leak-check         report objects still alive at exit, exit non-zero
+  --no-error-trace     do not record error return traces (errors.Trace is empty)
   --emit=exe|obj|llvm-ir
   --workspace          all workspace members
   -p, --package <name> one workspace member (repeatable)

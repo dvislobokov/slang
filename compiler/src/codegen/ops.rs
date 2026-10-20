@@ -265,7 +265,96 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         Ok(Val::borrowed(r))
     }
 
-    pub(crate) fn builtin(&mut self, ty: TypeId, op: Builtin, args: &[Expr]) -> R<Val<'ctx>> {
+    /// `*sp = append(*sp, x)` for the slice variable at `sp` with element
+    /// type `et`; consumes `x` (released if it is an owned temporary).
+    ///
+    /// The common case `len < cap` is inlined: store the element (retaining
+    /// it and releasing the slot's previous value, ABI.md 5.1) and bump
+    /// `len`. Only a full slice calls `slang_slice_append`, which grows the
+    /// backing (in place when uniquely referenced, ABI.md 5.2).
+    pub(crate) fn append_fast(&mut self, sp: inkwell::values::PointerValue<'ctx>, et: TypeId, x: Val<'ctx>) {
+        let size = self.size_of(et);
+        let slow_call = |cg: &mut Self| {
+            let xp = cg.spill(x.get());
+            let sz = cg.i64_ty().const_int(size, false);
+            let ops = cg.value_ops(et);
+            cg.call_rt("slang_slice_append", &[sp.into(), sz.into(), ops.into(), xp.into()]);
+        };
+        if size == 0 {
+            slow_call(self);
+            self.drop_val(et, x);
+            return;
+        }
+        let st = self.slice_ty();
+        let lenp = self.b.build_struct_gep(st, sp, 1, "len.p").unwrap();
+        let capp = self.b.build_struct_gep(st, sp, 2, "cap.p").unwrap();
+        let len = self.b.build_load(self.i64_ty(), lenp, "len").unwrap().into_int_value();
+        let cap = self.b.build_load(self.i64_ty(), capp, "cap").unwrap().into_int_value();
+        let room = self.b.build_int_compare(IntPredicate::ULT, len, cap, "room").unwrap();
+        let fast = self.block("append.fast");
+        let slow = self.block("append.grow");
+        let join = self.block("append.done");
+        // Growth is rare: weight the branch so the fast path is laid out inline.
+        let br = self.b.build_conditional_branch(room, fast, slow).unwrap();
+        let md = self.ctx.metadata_node(&[
+            self.ctx.metadata_string("branch_weights").into(),
+            self.ctx.i32_type().const_int(2000, false).into(),
+            self.ctx.i32_type().const_int(1, false).into(),
+        ]);
+        let _ = br.set_metadata(md, self.ctx.get_kind_id("prof"));
+        self.b.position_at_end(fast);
+        let data = self.b.build_load(self.ptr_ty(), sp, "data").unwrap().into_pointer_value();
+        let elt = self.llty(et);
+        let slot = unsafe { self.b.build_in_bounds_gep(elt, data, &[len], "slot") }.unwrap();
+        let v = x.get();
+        if self.needs_rc(et) {
+            // Retain first: the old slot value may be the same object.
+            self.retain_val(et, v);
+            let old = self.b.build_load(elt, slot, "old").unwrap();
+            self.b.build_store(slot, v).unwrap();
+            self.release_val(et, old);
+        } else {
+            self.b.build_store(slot, v).unwrap();
+        }
+        let len1 = self.b.build_int_add(len, self.i64_ty().const_int(1, false), "len1").unwrap();
+        self.b.build_store(lenp, len1).unwrap();
+        self.b.build_unconditional_branch(join).unwrap();
+        self.b.position_at_end(slow);
+        slow_call(self);
+        self.b.build_unconditional_branch(join).unwrap();
+        self.b.position_at_end(join);
+        self.drop_val(et, x);
+    }
+
+    /// `math.Sqrt/Abs/Floor/Ceil` as LLVM intrinsics instead of calls into
+    /// the runtime (same IEEE results as the C functions they wrap; lets
+    /// LLVM emit `sqrtsd`/`roundsd` inline and vectorise). `None` for other
+    /// externs.
+    pub(crate) fn math_intrinsic(&mut self, x: crate::hir::ExternId, args: &[Expr]) -> R<Option<Val<'ctx>>> {
+        let name = match self.prog.externs[x.0 as usize].symbol.as_str() {
+            "slang_math_sqrt" => "llvm.sqrt",
+            "slang_math_abs" => "llvm.fabs",
+            "slang_math_floor" => "llvm.floor",
+            "slang_math_ceil" => "llvm.ceil",
+            _ => return Ok(None),
+        };
+        if args.len() != 1 {
+            return Ok(None);
+        }
+        let v = self.expr(&args[0])?.get();
+        if !v.is_float_value() {
+            return unsupported(format!("{name} on a non-float argument"));
+        }
+        let f64t = self.ctx.f64_type();
+        let Some(f) = inkwell::intrinsics::Intrinsic::find(name).and_then(|i| i.get_declaration(&self.module, &[f64t.into()])) else {
+            return unsupported(format!("intrinsic {name}"));
+        };
+        let r = self.b.build_call(f, &[v.into()], "").unwrap().try_as_basic_value().left().unwrap();
+        Ok(Some(Val::borrowed(r)))
+    }
+
+    pub(crate) fn builtin(&mut self, e: &Expr, op: Builtin, args: &[Expr]) -> R<Val<'ctx>> {
+        let ty = e.ty;
         match op {
             Builtin::LenString => {
                 let s = self.expr(&args[0])?;
@@ -302,11 +391,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let hs = self.hold_raw(args[0].ty, s);
                 let x = self.expr(&args[1])?;
                 self.unhold(hs);
-                let xp = self.spill(x.get());
-                let size = self.i64_ty().const_int(self.size_of(et), false);
-                let ops = self.value_ops(et);
-                self.call_rt("slang_slice_append", &[sp.into(), size.into(), ops.into(), xp.into()]);
-                self.drop_val(et, x);
+                self.append_fast(sp, et, x);
                 Ok(Val::owned(self.b.build_load(self.slice_ty(), sp, "").unwrap()))
             }
             Builtin::Delete => {
@@ -336,10 +421,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             Builtin::ErrorNew => {
                 let m = self.expr(&args[0])?;
                 let r = self.call_rt_v("slang_error_new", &[m.get().into()]);
+                let r = self.trace_created(r, e.span.start);
                 self.drop_val(args[0].ty, m);
                 Ok(Val::owned(r))
             }
             Builtin::ErrorsAs => self.errors_as(&args[0], &args[1]),
+            Builtin::TaskAny => unsupported("task.Any whose result is not awaited directly"),
         }
     }
 }

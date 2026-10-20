@@ -12,6 +12,14 @@ impl<'a> Sema<'a> {
     /// `callee(args)`.
     pub(crate) fn call(&mut self, callee: &ast::Expr, args: &[ast::Expr], span: Span, expected: Option<TypeId>) -> hir::Expr {
         let target = expr::strip_parens(callee);
+        if let ast::ExprKind::TypeArgs { base, args: targs } = &target.kind {
+            return self.call_with_type_args(base, targs, args, span);
+        }
+        if let ast::ExprKind::Field { base, name } = &target.kind {
+            if let Some(ty) = self.type_args_type(base) {
+                return self.type_member_call(ty, name, args, span);
+            }
+        }
         if let Some(segs) = Self::flatten_path(target) {
             let last = *segs.last().unwrap();
             let head_local = self.lookup_local(&segs[0].name, false).is_some();
@@ -49,7 +57,7 @@ impl<'a> Sema<'a> {
     }
 
     /// Checks arguments without a signature (after an earlier error).
-    fn check_args_loose(&mut self, args: &[ast::Expr]) {
+    pub(crate) fn check_args_loose(&mut self, args: &[ast::Expr]) {
         for a in args {
             self.expr(a, None);
         }
@@ -66,7 +74,7 @@ impl<'a> Sema<'a> {
     }
 
     /// Call of a symbolically resolved callee.
-    fn call_res(&mut self, res: PathRes, name: &ast::Ident, args: &[ast::Expr], span: Span, expected: Option<TypeId>) -> hir::Expr {
+    pub(crate) fn call_res(&mut self, res: PathRes, name: &ast::Ident, args: &[ast::Expr], span: Span, expected: Option<TypeId>) -> hir::Expr {
         match res {
             PathRes::Member(Member::Func(f)) | PathRes::StaticMethod(f) => {
                 let sig = self.sigs[f.0 as usize].clone();
@@ -112,6 +120,7 @@ impl<'a> Sema<'a> {
                 self.err(format!("{} is a namespace, not a function", name.name), name.span);
                 self.invalid(span)
             }
+            PathRes::Member(Member::Generic(t)) => self.generic_call(t, None, None, args, span),
         }
     }
 
@@ -137,11 +146,28 @@ impl<'a> Sema<'a> {
     /// `base.name(args)`: struct methods (implicit `&`, promotion through
     /// embedded fields), func-typed fields, interface methods.
     pub(crate) fn method_call(&mut self, base: hir::Expr, name: &ast::Ident, args: &[ast::Expr], span: Span) -> hir::Expr {
+        self.method_call_targs(base, name, None, args, span)
+    }
+
+    /// [`method_call`](Self::method_call) with optional explicit type
+    /// arguments (generic methods).
+    pub(crate) fn method_call_targs(&mut self, base: hir::Expr, name: &ast::Ident, targs: Option<&[ast::TypeExpr]>, args: &[ast::Expr], span: Span) -> hir::Expr {
         if self.tt.is_invalid(base.ty) {
             self.check_args_loose(args);
             return self.invalid(span);
         }
         if let Some(sid) = self.struct_of(base.ty) {
+            if let Some(&t) = self.gen.methods.get(&(sid, name.name.clone())) {
+                let recv = if matches!(self.tt.get(base.ty), Type::Pointer(_)) { base } else { self.addr_of(base) };
+                return self.generic_call(t, targs, Some(recv), args, span);
+            }
+            if targs.is_some() {
+                let sname = self.structs[sid as usize].name.clone();
+                self.err(format!("method {sname}.{} is not generic (it takes no type arguments)", name.name), name.span);
+                self.check_args_loose(args);
+                return self.invalid(span);
+            }
+            self.check_std_method(sid, &name.name, name.span);
             if let Some((fid, path)) = self.find_method(sid, &name.name) {
                 self.ide_ref(name.span, index::SymKey::Func(fid.0));
                 let owner = self.funcs[fid.0 as usize].namespace;
@@ -179,6 +205,28 @@ impl<'a> Sema<'a> {
             self.err(format!("struct {sname} has no method {}", name.name), name.span);
             self.check_args_loose(args);
             return self.invalid(span);
+        }
+        if let Type::Enum(d) = *self.tt.get(base.ty) {
+            if let Some(&fid) = self.enum_methods.get(&(d.0, name.name.clone())) {
+                self.ide_ref(name.span, index::SymKey::Func(fid.0));
+                let sig = self.sigs[fid.0 as usize].clone();
+                let fname = format!("{}.{}", self.enums[d.0 as usize].name, name.name);
+                let mut hargs = vec![base];
+                hargs.extend(self.check_args(&sig.params, args, &fname, span));
+                let ty = if sig.is_async { self.tt.task(sig.ret) } else { sig.ret };
+                return mk(ExprKind::Call { callee: Callee::Func(fid), args: hargs }, ty, span);
+            }
+        }
+        if let Some(methods) = self.param_methods(base.ty) {
+            let Some(m) = methods.iter().find(|m| m.name == name.name).cloned() else {
+                self.err(format!("type parameter {} has no method {} (its constraint does not declare it)", self.tn(base.ty), name.name), name.span);
+                self.check_args_loose(args);
+                return self.invalid(span);
+            };
+            let idx = methods.iter().position(|x| x.name == m.name).unwrap() as u32;
+            let fname = format!("{}.{}", self.tn(base.ty), m.name);
+            let args = self.check_args(&m.params, args, &fname, span);
+            return mk(ExprKind::Call { callee: Callee::Interface { recv: Box::new(base), method: idx }, args }, m.ret, span);
         }
         if self.tt.is_interface(base.ty) {
             let methods = self.iface_methods(base.ty);
@@ -342,7 +390,9 @@ impl<'a> Sema<'a> {
     /// Whether values of `t` can be printed by `println` / formatted.
     fn printable(&self, t: TypeId) -> bool {
         match self.tt.get(t) {
-            Type::Int(_) | Type::Float32 | Type::Float64 | Type::Bool | Type::Char | Type::String | Type::Error | Type::Enum(_) | Type::Invalid => true,
+            Type::Int(_) | Type::Float32 | Type::Float64 | Type::Bool | Type::Char | Type::String | Type::Error | Type::Enum(_) | Type::Any | Type::Invalid => true,
+            // Checked again with the concrete type in each instantiation.
+            Type::Param(_) => true,
             Type::Slice(e) | Type::Array(e, _) => self.printable(*e),
             _ => false,
         }
@@ -370,11 +420,18 @@ impl<'a> Sema<'a> {
         match sp {
             Special::Println | Special::Print => {
                 let mut items = Vec::new();
-                for (i, a) in args.iter().enumerate() {
-                    if i > 0 {
-                        items.push(PrintItem { op: PrintOp::Space, arg: None });
-                    }
+                let mut prev_str: Option<bool> = None;
+                for a in args {
                     let v = self.print_arg(a);
+                    // println separates every operand; print (Go's fmt.Print)
+                    // only operands where neither side is a string.
+                    let is_str = v.ty == self.tt.string;
+                    if let Some(p) = prev_str {
+                        if sp == Special::Println || (!p && !is_str) {
+                            items.push(PrintItem { op: PrintOp::Space, arg: None });
+                        }
+                    }
+                    prev_str = Some(is_str);
                     let op = match self.tt.get(v.ty) {
                         Type::Int(k) if k.signed() => PrintOp::Int,
                         Type::Int(_) => PrintOp::Uint,
@@ -407,6 +464,46 @@ impl<'a> Sema<'a> {
                 let x = self.extern_id("std.fmt.Format".into(), stdlib::FORMAT_SYMBOL, vec![self.tt.string, sl], self.tt.string);
                 mk(ExprKind::Call { callee: Callee::Extern(x), args: vec![tmpl, list] }, self.tt.string, span)
             }
+            Special::Sprintf => {
+                if args.is_empty() {
+                    self.err("fmt.Sprintf needs a format string", span);
+                    return self.invalid(span);
+                }
+                let fmt = self.expr_to(&args[0], self.tt.string, Ctx::Arg(0, "fmt.Sprintf".into()));
+                let (int, float, string) = (self.tt.int, self.tt.float, self.tt.string);
+                let mut kinds = String::new();
+                let (mut ints, mut floats, mut texts) = (Vec::new(), Vec::new(), Vec::new());
+                for a in &args[1..] {
+                    // Each argument is evaluated once, into the slot of its kind.
+                    let v = self.print_arg(a);
+                    let sp = v.span;
+                    let zi = mk(ExprKind::Const(hir::ConstValue::Int(0)), int, sp);
+                    let zf = mk(ExprKind::Const(hir::ConstValue::Float(0.0)), float, sp);
+                    let zs = mk(ExprKind::Const(hir::ConstValue::Str(String::new())), string, sp);
+                    let conv = |kind, v: hir::Expr, ty| mk(ExprKind::Convert { kind, value: Box::new(v) }, ty, sp);
+                    let (k, i, f, t) = match self.tt.get(v.ty).clone() {
+                        Type::Int(k) => {
+                            let iv = if v.ty == int { v } else { conv(ConvKind::IntToInt, v, int) };
+                            (if k.signed() { 'i' } else { 'u' }, iv, zf, zs)
+                        }
+                        Type::Float64 => ('f', zi, v, zs),
+                        Type::Float32 => ('g', zi, conv(ConvKind::FloatToFloat, v, float), zs),
+                        Type::Char => ('c', conv(ConvKind::CharToInt, v, int), zf, zs),
+                        Type::String => ('s', zi, zf, v),
+                        Type::Bool => ('b', zi, zf, self.stringify(v)),
+                        _ => ('o', zi, zf, self.stringify(v)),
+                    };
+                    kinds.push(k);
+                    ints.push(i);
+                    floats.push(f);
+                    texts.push(t);
+                }
+                let kinds = mk(ExprKind::Const(hir::ConstValue::Str(kinds)), string, span);
+                let (si, sf, ss) = (self.tt.slice(int), self.tt.slice(float), self.tt.slice(string));
+                let lists = vec![fmt, kinds, mk(ExprKind::SliceLit(ints), si, span), mk(ExprKind::SliceLit(floats), sf, span), mk(ExprKind::SliceLit(texts), ss, span)];
+                let x = self.extern_id("std.fmt.Sprintf".into(), stdlib::SPRINTF_SYMBOL, vec![string, string, si, sf, ss], string);
+                mk(ExprKind::Call { callee: Callee::Extern(x), args: lists }, string, span)
+            }
             Special::TaskAll => {
                 if args.is_empty() {
                     self.err("task.All needs at least one task", span);
@@ -438,12 +535,48 @@ impl<'a> Sema<'a> {
                 let ty = self.tt.task(res);
                 mk(ExprKind::TaskAll(vs), ty, span)
             }
+            Special::TaskAny => {
+                if args.is_empty() {
+                    self.err("task.Any needs at least one task", span);
+                    return self.invalid(span);
+                }
+                let mut vs: Vec<hir::Expr> = Vec::new();
+                let mut res: Option<TypeId> = None;
+                for a in args {
+                    let v = self.value(a, None);
+                    match *self.tt.get(v.ty) {
+                        Type::Task(t) => match res {
+                            None => res = Some(t),
+                            Some(r) if r != t && !self.tt.is_invalid(r) => {
+                                self.err(format!("task.Any arguments must have the same type: Task<{}> and Task<{}>", self.tn(r), self.tn(t)), v.span);
+                            }
+                            _ => {}
+                        },
+                        Type::Invalid => {}
+                        _ => self.err(format!("task.Any arguments must be tasks, found {}", self.tn(v.ty)), v.span),
+                    }
+                    vs.push(v);
+                }
+                let ty = self.tt.task(res.unwrap_or(self.tt.invalid));
+                mk(ExprKind::Builtin { op: Builtin::TaskAny, args: vs }, ty, span)
+            }
             Special::ErrorsNew => {
                 if !self.arity("errors.New", args, 1, span) {
                     return self.invalid(span);
                 }
                 let m = self.expr_to(&args[0], self.tt.string, Ctx::Arg(0, "errors.New".into()));
                 mk(ExprKind::Builtin { op: Builtin::ErrorNew, args: vec![m] }, self.tt.error, span)
+            }
+            Special::ErrorsFrames => {
+                if !self.arity("errors.Frames", args, 1, span) {
+                    return self.invalid(span);
+                }
+                let err = self.expr_to(&args[0], self.tt.error, Ctx::Arg(0, "errors.Frames".into()));
+                let Some(sid) = self.std_struct("std.errors", "Frame") else { return self.invalid(span) };
+                let st = self.struct_ty(sid);
+                let ret = self.tt.slice(st);
+                let x = self.extern_id("std.errors.Frames".into(), "slang_errors_frames", vec![self.tt.error], ret);
+                mk(ExprKind::Call { callee: Callee::Extern(x), args: vec![err] }, ret, span)
             }
             Special::ErrorsAs => {
                 if !self.arity("errors.As", args, 2, span) {

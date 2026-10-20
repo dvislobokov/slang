@@ -1,5 +1,5 @@
 // test: println of an any prints its dynamic value (like Go)
-// status: pending
+// status: passing
 namespace spec.interfaces.any_println
 
 import std.io

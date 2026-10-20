@@ -1,5 +1,5 @@
 // test: nested block try: ? goes to the nearest catch; the outer block continues
-// status: pending
+// status: passing
 namespace spec.errors.block_try_nested
 
 import std.io

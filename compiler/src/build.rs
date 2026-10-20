@@ -69,6 +69,8 @@ pub struct BuildOptions {
     /// `--leak-check`: at exit the program reports objects still alive
     /// (with their type names unless `release`) and exits non-zero.
     pub leak_check: bool,
+    /// `--no-error-trace`: errors do not record their return trace.
+    pub no_error_trace: bool,
 }
 
 impl BuildOptions {
@@ -85,6 +87,7 @@ impl BuildOptions {
             workspace: false,
             packages: Vec::new(),
             leak_check: false,
+            no_error_trace: false,
         }
     }
 }
@@ -114,6 +117,7 @@ pub fn parse_args(args: &[String]) -> Result<(BuildOptions, Vec<String>), String
             }
             "--release" => o.release = true,
             "--leak-check" => o.leak_check = true,
+            "--no-error-trace" => o.no_error_trace = true,
             "--static" => o.static_link = true,
             "--verbose" | "-v" => o.verbose = true,
             "--locked" => o.locked = true,
@@ -442,7 +446,7 @@ fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path,
         (true, true) => 1,
         (true, false) => 2,
     };
-    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check }) {
+    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace }) {
         Ok(m) => m,
         Err(errs) => {
             for e in &errs {
@@ -527,7 +531,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
         set_sections(&part);
         let mut h = Sha256::new();
         h.update(compiler.as_bytes());
-        h.update(format!("\0opt={}\0release={}\0leak={}\0triple={}\0", opts.opt, opts.release, opts.leak_check, machine.get_triple()).as_bytes());
+        h.update(format!("\0opt={}\0release={}\0leak={}\0trace={}\0triple={}\0", opts.opt, opts.release, opts.leak_check, !opts.no_error_trace, machine.get_triple()).as_bytes());
         h.update(part.print_to_string().to_bytes());
         let key = lock::hex(&h.finalize()[..8]);
         let obj = cache.join(format!("{name}-{key}.o"));

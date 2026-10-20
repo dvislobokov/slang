@@ -1,5 +1,5 @@
 // test: errors.Trace shows where the error was created and each ? it passed, plus the catching try
-// status: pending
+// status: passing
 namespace spec.errors.trace_basic
 
 import std.io

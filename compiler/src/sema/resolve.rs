@@ -80,9 +80,9 @@ impl<'a> Sema<'a> {
         self.nss[ns].members.insert(name.name.clone(), (m, name.span, self.cur_file));
     }
 
-    fn reject_generics(&mut self, g: &[ast::GenericParam]) {
+    fn reject_generics(&mut self, g: &[ast::GenericParam], what: &str) {
         if let Some(p) = g.first() {
-            self.err("generics are not supported yet", p.span);
+            self.err(format!("generic {what} are not supported (only functions, methods, structs and enums can be generic)"), p.span);
         }
     }
 
@@ -96,13 +96,16 @@ impl<'a> Sema<'a> {
                 self.err("user code cannot declare a std namespace", file.namespace.span);
             }
             self.cur_ns = ns;
-            self.file_scopes.push(FileScope { ns, imports: Vec::new() });
+            self.file_scopes.push(FileScope { ns, imports: Vec::new(), import_uses: Vec::new() });
             self.ide_namespace_decl(file);
             let hns = self.cur_hir_ns();
             for d in &file.decls {
                 match d {
+                    ast::Decl::Struct(s) if !s.generics.is_empty() => {
+                        let t = self.new_template(&s.name.name, generics::TmplDecl::Struct(s), &s.generics, Vec::new(), false);
+                        self.register(ns, &s.name, Member::Generic(t));
+                    }
                     ast::Decl::Struct(s) => {
-                        self.reject_generics(&s.generics);
                         let id = self.structs.len() as u32;
                         let full_name = format!("{}.{}", self.nss[ns].path, s.name.name);
                         let is_attribute = s.attrs.iter().any(|a| a.path.to_string() == "attribute");
@@ -123,9 +126,13 @@ impl<'a> Sema<'a> {
                         let c = self.ide_cur_ns();
                         self.ide_def(index::SymKey::Struct(id), &s.name, s.span, c);
                         for m in &s.methods {
-                            self.reject_generics(&m.generics);
-                            if self.structs[id as usize].methods.iter().any(|(n, _)| *n == m.name.name) {
+                            if self.structs[id as usize].methods.iter().any(|(n, _)| *n == m.name.name) || self.gen.methods.contains_key(&(id, m.name.name.clone())) {
                                 self.err(format!("duplicate method {} in struct {}", m.name.name, s.name.name), m.name.span);
+                                continue;
+                            }
+                            if !m.generics.is_empty() {
+                                let t = self.new_template(&m.name.name, generics::TmplDecl::Method(m, id), &m.generics, Vec::new(), false);
+                                self.gen.methods.insert((id, m.name.name.clone()), t);
                                 continue;
                             }
                             let kind = FuncKind::Method { struct_id: id, is_static: m.is_static };
@@ -135,7 +142,7 @@ impl<'a> Sema<'a> {
                         }
                     }
                     ast::Decl::Interface(it) => {
-                        self.reject_generics(&it.generics);
+                        self.reject_generics(&it.generics, "interfaces");
                         let id = self.interfaces.len() as u32;
                         self.interfaces.push(hir::Interface {
                             name: it.name.name.clone(),
@@ -151,6 +158,10 @@ impl<'a> Sema<'a> {
                         self.register(ns, &it.name, Member::Interface(id));
                         let c = self.ide_cur_ns();
                         self.ide_def(index::SymKey::Interface(id), &it.name, it.span, c);
+                    }
+                    ast::Decl::Enum(e) if !e.generics.is_empty() => {
+                        let t = self.new_template(&e.name.name, generics::TmplDecl::Enum(e), &e.generics, Vec::new(), false);
+                        self.register(ns, &e.name, Member::Generic(t));
                     }
                     ast::Decl::Enum(e) => {
                         let id = self.enums.len() as u32;
@@ -169,9 +180,29 @@ impl<'a> Sema<'a> {
                         self.register(ns, &e.name, Member::Enum(id));
                         let c = self.ide_cur_ns();
                         self.ide_def(index::SymKey::Enum(id), &e.name, e.span, c);
+                        for m in &e.methods {
+                            if m.is_static || !m.generics.is_empty() {
+                                self.err("enum methods cannot be static or generic", m.name.span);
+                                continue;
+                            }
+                            if self.enum_methods.contains_key(&(id, m.name.name.clone())) || e.variants.iter().any(|v| v.name.name == m.name.name) {
+                                self.err(format!("duplicate member {} in enum {}", m.name.name, e.name.name), m.name.span);
+                                continue;
+                            }
+                            let fid = self.new_func(m, FuncKind::Free, FuncSrc::Free(m), &format!("{}.{}", e.name.name, m.name.name));
+                            self.enum_methods.insert((id, m.name.name.clone()), fid);
+                            self.enum_method_owner.insert(fid.0, id);
+                            self.ide_def(index::SymKey::Func(fid.0), &m.name, m.span, Some(index::SymKey::Enum(id)));
+                        }
+                    }
+                    ast::Decl::Func(f) if !f.generics.is_empty() => {
+                        if f.body.is_none() {
+                            self.err(format!("function {} has no body", f.name.name), f.name.span);
+                        }
+                        let t = self.new_template(&f.name.name, generics::TmplDecl::Func(f), &f.generics, Vec::new(), false);
+                        self.register(ns, &f.name, Member::Generic(t));
                     }
                     ast::Decl::Func(f) => {
-                        self.reject_generics(&f.generics);
                         if f.body.is_none() {
                             self.err(format!("function {} has no body", f.name.name), f.name.span);
                         }
@@ -201,7 +232,7 @@ impl<'a> Sema<'a> {
         }
     }
 
-    fn new_func(&mut self, d: &'a ast::FuncDecl, kind: FuncKind, src: FuncSrc<'a>, local_name: &str) -> FuncId {
+    pub(crate) fn new_func(&mut self, d: &'a ast::FuncDecl, kind: FuncKind, src: FuncSrc<'a>, local_name: &str) -> FuncId {
         let fid = FuncId(self.funcs.len() as u32);
         let mut f = self.dummy_function(d.name.name.clone(), kind, self.cur_hir_ns());
         f.full_name = format!("{}.{local_name}", self.nss[self.cur_ns].path);
@@ -273,6 +304,7 @@ impl<'a> Sema<'a> {
                     }
                 };
                 self.file_scopes[fi].imports.push(entry);
+                self.file_scopes[fi].import_uses.push((imp.path.span, false));
             }
         }
     }
@@ -298,11 +330,13 @@ impl<'a> Sema<'a> {
         }
         let mut found: Vec<(Member, NsIdx)> = Vec::new();
         let mut private: Option<NsIdx> = None;
-        for e in &self.file_scopes[self.cur_file].imports {
+        let mut used = Vec::new();
+        for (i, e) in self.file_scopes[self.cur_file].imports.iter().enumerate() {
             match e {
                 ImportEntry::Glob(ns) => {
                     if let Some((m, _, _)) = self.nss[*ns].members.get(n) {
                         if self.nss[*ns].is_std || is_exported(n) || matches!(m, Member::Ns(_)) {
+                            used.push(i);
                             if !found.iter().any(|(f, _)| f == m) {
                                 found.push((*m, *ns));
                             }
@@ -312,11 +346,17 @@ impl<'a> Sema<'a> {
                     }
                 }
                 ImportEntry::Named(alias, m, ns) if alias == n => {
+                    used.push(i);
                     if !found.iter().any(|(f, _)| f == m) {
                         found.push((*m, *ns));
                     }
                 }
                 ImportEntry::Named(..) => {}
+            }
+        }
+        for i in used {
+            if let Some(u) = self.file_scopes[self.cur_file].import_uses.get_mut(i) {
+                u.1 = true;
             }
         }
         if found.len() > 1 && report {
@@ -385,6 +425,10 @@ impl<'a> Sema<'a> {
                             self.check_member_visibility(self.structs[s as usize].namespace, &seg.name, seg.span, report);
                             PathRes::StaticMethod(f)
                         }
+                        None if self.gen.methods.contains_key(&(s, seg.name.clone())) => {
+                            self.check_member_visibility(self.structs[s as usize].namespace, &seg.name, seg.span, report);
+                            PathRes::Member(Member::Generic(self.gen.methods[&(s, seg.name.clone())]))
+                        }
                         _ => {
                             if report {
                                 let sn = self.structs[s as usize].name.clone();
@@ -421,7 +465,7 @@ impl<'a> Sema<'a> {
     /// Reports access to a lowercase member (field/method) of a type from
     /// another namespace.
     pub(crate) fn check_member_visibility(&mut self, owner: NamespaceId, name: &str, span: Span, report: bool) {
-        if report && !is_exported(name) && self.nss[self.cur_ns].hir_id != Some(owner) {
+        if report && !is_exported(name) && !self.nss[self.cur_ns].is_std && self.nss[self.cur_ns].hir_id != Some(owner) {
             let path = self.nss[self.ns_of_hir(owner)].path.clone();
             self.err(format!("{name} is private to namespace {path} (only capitalised names are exported)"), span);
         }
@@ -434,13 +478,17 @@ impl<'a> Sema<'a> {
         use ast::TypeKind as K;
         match &t.kind {
             K::Named { path, generics } => {
+                if path.segments.len() == 1 && generics.is_empty() {
+                    if let Some(ty) = self.type_param(&path.segments[0].name) {
+                        return ty;
+                    }
+                }
                 if !generics.is_empty() {
                     if path.segments.len() == 1 && path.segments[0].name == "Task" && generics.len() == 1 {
                         let inner = self.resolve_type(&generics[0]);
                         return self.tt.task(inner);
                     }
-                    self.err("generics are not supported yet", t.span);
-                    return self.tt.invalid;
+                    return self.resolve_generic_type(path, generics, t.span);
                 }
                 if path.segments.len() == 1 {
                     if let Some(b) = self.tt.builtin(&path.segments[0].name) {
@@ -450,6 +498,11 @@ impl<'a> Sema<'a> {
                 }
                 let segs: Vec<&ast::Ident> = path.segments.iter().collect();
                 match self.resolve_segments(&segs, true) {
+                    Some((PathRes::Member(Member::Generic(g)), n)) if n == segs.len() => {
+                        let name = self.gen.templates[g as usize].name.clone();
+                        self.err(format!("generic type {name} needs type arguments ({name}<...>)"), path.span);
+                        self.tt.invalid
+                    }
                     Some((res, n)) if n == segs.len() => match self.path_res_type(res) {
                         Some(ty) => ty,
                         None => {
@@ -492,6 +545,20 @@ impl<'a> Sema<'a> {
                 let i = self.resolve_type(inner);
                 self.tt.array(i, *n)
             }
+            K::ArrayExpr(inner, len) => {
+                let i = self.resolve_type(inner);
+                match self.fold(len).map(|f| f.value) {
+                    Some(hir::ConstValue::Int(n)) if n >= 0 && n <= u32::MAX as i128 => self.tt.array(i, n as u64),
+                    Some(hir::ConstValue::Int(_)) => {
+                        self.err("array length must be a non-negative constant", len.span);
+                        self.tt.invalid
+                    }
+                    _ => {
+                        self.err("array length must be an integer constant expression", len.span);
+                        self.tt.invalid
+                    }
+                }
+            }
             K::Map(k, v) => {
                 let k = self.resolve_type(k);
                 let v = self.resolve_type(v);
@@ -520,6 +587,7 @@ impl<'a> Sema<'a> {
         match self.tt.get(t) {
             Type::Int(_) | Type::Float32 | Type::Float64 | Type::Bool | Type::Char | Type::String | Type::Pointer(_) | Type::Invalid => true,
             Type::Enum(e) => self.enums.get(e.0 as usize).is_none_or(|e| e.is_plain),
+            Type::Param(_) => self.param_comparable(t),
             _ => false,
         }
     }
@@ -551,68 +619,21 @@ impl<'a> Sema<'a> {
     /// function signatures.
     pub(crate) fn resolve_signatures(&mut self) {
         for sid in 0..self.structs.len() {
-            let src = self.struct_src[sid];
+            if self.gen.inst_structs.contains_key(&(sid as u32)) {
+                continue;
+            }
             self.cur_file = self.structs[sid].file;
             self.cur_ns = self.file_scopes[self.cur_file].ns;
-            let mut fields: Vec<hir::StructField> = Vec::new();
-            for e in &src.embeds {
-                let ty = self.resolve_type(e);
-                let name = match (&e.kind, self.tt.get(ty)) {
-                    (ast::TypeKind::Named { path, .. }, Type::Struct(_)) => path.segments.last().unwrap().name.clone(),
-                    _ => {
-                        if !self.tt.is_invalid(ty) {
-                            self.err("only structs can be embedded", e.span);
-                        }
-                        continue;
-                    }
-                };
-                fields.push(hir::StructField { exported: is_exported(&name), name, ty, embedded: true, default: None, attrs: Vec::new(), span: e.span });
-            }
-            for f in &src.fields {
-                let ty = self.resolve_type(&f.ty);
-                if fields.iter().any(|x| x.name == f.name.name) {
-                    self.err(format!("duplicate field {} in struct {}", f.name.name, src.name.name), f.name.span);
-                    continue;
-                }
-                if f.default.is_some() && !self.structs[sid].is_attribute {
-                    self.err("field default values are only allowed in @attribute structs", f.span);
-                }
-                self.ide_def(index::SymKey::Field(sid as u32, fields.len() as u32), &f.name, f.span, Some(index::SymKey::Struct(sid as u32)));
-                fields.push(hir::StructField {
-                    name: f.name.name.clone(),
-                    ty,
-                    embedded: false,
-                    exported: is_exported(&f.name.name),
-                    default: None,
-                    attrs: Vec::new(),
-                    span: f.span,
-                });
-            }
-            let methods: Vec<String> = self.structs[sid].methods.iter().map(|m| m.0.clone()).collect();
-            for name in &methods {
-                if let Some(f) = fields.iter().find(|f| f.name == *name) {
-                    let span = f.span;
-                    self.err(format!("struct {} has both a field and a method named {name}", src.name.name), span);
-                }
-            }
-            self.structs[sid].fields = fields;
+            self.resolve_struct_fields(sid);
         }
         self.check_recursive_structs();
         for eid in 0..self.enums.len() {
-            let src = self.enum_src[eid];
+            if self.gen.inst_enums.contains_key(&(eid as u32)) {
+                continue;
+            }
             self.cur_file = self.enums[eid].file;
             self.cur_ns = self.file_scopes[self.cur_file].ns;
-            let mut vs: Vec<hir::Variant> = Vec::new();
-            for v in &src.variants {
-                if vs.iter().any(|x| x.name == v.name.name) {
-                    self.err(format!("duplicate variant {} in enum {}", v.name.name, src.name.name), v.name.span);
-                    continue;
-                }
-                self.ide_def(index::SymKey::Variant(eid as u32, vs.len() as u32), &v.name, v.span, Some(index::SymKey::Enum(eid as u32)));
-                let fields = v.fields.iter().map(|f| (f.name.name.clone(), self.resolve_type(&f.ty))).collect();
-                vs.push(hir::Variant { name: v.name.name.clone(), fields, attrs: Vec::new(), span: v.span });
-            }
-            self.enums[eid].variants = vs;
+            self.resolve_enum_variants(eid);
         }
         for iid in 0..self.interfaces.len() {
             let src = self.iface_src[iid];
@@ -620,7 +641,7 @@ impl<'a> Sema<'a> {
             self.cur_ns = self.file_scopes[self.cur_file].ns;
             let mut ms: Vec<hir::MethodSig> = Vec::new();
             for m in &src.methods {
-                self.reject_generics(&m.generics);
+                self.reject_generics(&m.generics, "interface methods");
                 if ms.iter().any(|x| x.name == m.name.name) {
                     self.err(format!("duplicate method {} in interface {}", m.name.name, src.name.name), m.name.span);
                     continue;
@@ -632,43 +653,175 @@ impl<'a> Sema<'a> {
             }
             self.interfaces[iid].methods = ms;
         }
+        self.resolve_interface_embeds();
+
         for fid in 0..self.funcs.len() {
-            let (decl, struct_id) = match self.func_src[fid] {
-                FuncSrc::Free(d) => (d, None),
-                FuncSrc::Method(d, s) => (d, Some(s)),
-                FuncSrc::Synthetic => continue,
-            };
+            if self.gen.insts.contains_key(&(fid as u32)) || matches!(self.func_src[fid], FuncSrc::Synthetic) {
+                continue;
+            }
             self.cur_file = self.funcs[fid].file;
             self.cur_ns = self.file_scopes[self.cur_file].ns;
-            let mut locals = Vec::new();
-            let mut params = Vec::new();
-            if let (Some(s), false) = (struct_id, decl.is_static) {
-                let st = self.struct_ty(s);
-                let ty = self.tt.pointer(st);
-                locals.push(hir::Local { name: "this".into(), ty, kind: LocalKind::This, captured: false, address_taken: false, span: decl.name.span });
-            }
-            for p in &decl.params {
-                let ty = self.resolve_type(&p.ty);
-                if p.name.name != "_" && locals.iter().any(|l: &hir::Local| l.name == p.name.name) {
-                    self.err(format!("duplicate parameter {}", p.name.name), p.name.span);
-                }
-                params.push(ty);
-                if p.name.name != "_" {
-                    self.ide_def(index::SymKey::Local(fid as u32, locals.len() as u32), &p.name, p.span, Some(index::SymKey::Func(fid as u32)));
-                }
-                locals.push(hir::Local { name: p.name.name.clone(), ty, kind: LocalKind::Param, captured: false, address_taken: false, span: p.span });
-            }
-            let ret = decl.ret.as_ref().map(|r| self.resolve_type(r)).unwrap_or(self.tt.void);
-            let f = &mut self.funcs[fid];
-            f.params = (0..locals.len()).map(|i| LocalId(i as u32)).collect();
-            f.locals = locals;
-            f.ret = ret;
-            self.sigs[fid] = Sig { params, ret, is_async: decl.is_async };
+            self.resolve_func_sig(fid);
         }
+    }
+
+    /// Adds the methods of embedded interfaces (`interface RW { Reader;
+    /// Writer }`), transitively, after the interface's own methods in the
+    /// order written. A method embedded twice must have the same signature.
+    fn resolve_interface_embeds(&mut self) {
+        let mut embeds: Vec<Vec<(u32, Span)>> = Vec::new();
+        for iid in 0..self.interfaces.len() {
+            let src = self.iface_src[iid];
+            self.cur_file = self.interfaces[iid].file;
+            self.cur_ns = self.file_scopes[self.cur_file].ns;
+            let mut v = Vec::new();
+            for e in &src.embeds {
+                let t = self.resolve_type(e);
+                match *self.tt.get(t) {
+                    Type::Interface(d) if d.0 as usize == iid => self.err(format!("interface {} embeds itself", src.name.name), e.span),
+                    Type::Interface(d) => v.push((d.0, e.span)),
+                    Type::Invalid => {}
+                    _ => self.err(format!("only interfaces can be embedded in an interface, found {}", self.tn(t)), e.span),
+                }
+            }
+            embeds.push(v);
+        }
+        // Fixpoint: nested embeddings settle in at most `n` rounds.
+        for _ in 0..=self.interfaces.len() {
+            let mut changed = false;
+            for iid in 0..self.interfaces.len() {
+                for &(other, span) in &embeds[iid] {
+                    for m in self.interfaces[other as usize].methods.clone() {
+                        match self.interfaces[iid].methods.iter().find(|x| x.name == m.name) {
+                            Some(x) if x.params == m.params && x.ret == m.ret => {}
+                            Some(_) => {
+                                self.cur_file = self.interfaces[iid].file;
+                                let name = self.interfaces[iid].name.clone();
+                                self.err(format!("interface {name} has conflicting signatures for method {}", m.name), span);
+                                self.interfaces[iid].methods.retain(|x| x.name != m.name || x.params == m.params);
+                            }
+                            None => {
+                                self.interfaces[iid].methods.push(m);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// Resolves the fields of struct `sid` in the current scope.
+    pub(crate) fn resolve_struct_fields(&mut self, sid: usize) {
+        let src = self.struct_src[sid];
+        let mut fields: Vec<hir::StructField> = Vec::new();
+        for e in &src.embeds {
+            let ty = self.resolve_type(e);
+            let name = match (&e.kind, self.tt.get(ty)) {
+                (ast::TypeKind::Named { path, .. }, Type::Struct(_)) => path.segments.last().unwrap().name.clone(),
+                _ => {
+                    if !self.tt.is_invalid(ty) {
+                        self.err("only structs can be embedded", e.span);
+                    }
+                    continue;
+                }
+            };
+            fields.push(hir::StructField { exported: is_exported(&name), name, ty, embedded: true, default: None, attrs: Vec::new(), span: e.span });
+        }
+        for f in &src.fields {
+            let ty = self.resolve_type(&f.ty);
+            if fields.iter().any(|x| x.name == f.name.name) {
+                self.err(format!("duplicate field {} in struct {}", f.name.name, src.name.name), f.name.span);
+                continue;
+            }
+            self.ide_def(index::SymKey::Field(sid as u32, fields.len() as u32), &f.name, f.span, Some(index::SymKey::Struct(sid as u32)));
+            fields.push(hir::StructField {
+                name: f.name.name.clone(),
+                ty,
+                embedded: false,
+                exported: is_exported(&f.name.name),
+                default: None,
+                attrs: Vec::new(),
+                span: f.span,
+            });
+        }
+        let methods: Vec<String> = self.structs[sid].methods.iter().map(|m| m.0.clone()).collect();
+        for name in &methods {
+            if let Some(f) = fields.iter().find(|f| f.name == *name) {
+                let span = f.span;
+                self.err(format!("struct {} has both a field and a method named {name}", src.name.name), span);
+            }
+        }
+        self.structs[sid].fields = fields;
+    }
+
+    /// Resolves the variants of enum `eid` in the current scope.
+    pub(crate) fn resolve_enum_variants(&mut self, eid: usize) {
+        let src = self.enum_src[eid];
+        let mut vs: Vec<hir::Variant> = Vec::new();
+        for v in &src.variants {
+            if vs.iter().any(|x| x.name == v.name.name) {
+                self.err(format!("duplicate variant {} in enum {}", v.name.name, src.name.name), v.name.span);
+                continue;
+            }
+            self.ide_def(index::SymKey::Variant(eid as u32, vs.len() as u32), &v.name, v.span, Some(index::SymKey::Enum(eid as u32)));
+            let fields = v.fields.iter().map(|f| (f.name.name.clone(), self.resolve_type(&f.ty))).collect();
+            vs.push(hir::Variant { name: v.name.name.clone(), fields, attrs: Vec::new(), span: v.span });
+        }
+        self.enums[eid].variants = vs;
+    }
+
+    /// Resolves the signature (parameters as locals, result) of user
+    /// function `fid` in the current scope.
+    pub(crate) fn resolve_func_sig(&mut self, fid: usize) {
+        let (decl, struct_id) = match self.func_src[fid] {
+            FuncSrc::Free(d) => (d, None),
+            FuncSrc::Method(d, s) => (d, Some(s)),
+            FuncSrc::Synthetic => return,
+        };
+        let mut locals = Vec::new();
+        let mut params = Vec::new();
+        if let (Some(s), false) = (struct_id, decl.is_static) {
+            let st = self.struct_ty(s);
+            let ty = self.tt.pointer(st);
+            locals.push(hir::Local { name: "this".into(), ty, kind: LocalKind::This, captured: false, address_taken: false, span: decl.name.span });
+        }
+        if let Some(&e) = self.enum_method_owner.get(&(fid as u32)) {
+            // Enum methods receive the value itself.
+            let ty = self.enum_ty(e);
+            locals.push(hir::Local { name: "this".into(), ty, kind: LocalKind::This, captured: false, address_taken: false, span: decl.name.span });
+        }
+        for p in &decl.params {
+            let ty = self.resolve_type(&p.ty);
+            if p.name.name != "_" && locals.iter().any(|l: &hir::Local| l.name == p.name.name) {
+                self.err(format!("duplicate parameter {}", p.name.name), p.name.span);
+            }
+            params.push(ty);
+            if p.name.name != "_" {
+                self.ide_def(index::SymKey::Local(fid as u32, locals.len() as u32), &p.name, p.span, Some(index::SymKey::Func(fid as u32)));
+            }
+            locals.push(hir::Local { name: p.name.name.clone(), ty, kind: LocalKind::Param, captured: false, address_taken: false, span: p.span });
+        }
+        let ret = decl.ret.as_ref().map(|r| self.resolve_type(r)).unwrap_or(self.tt.void);
+        let f = &mut self.funcs[fid];
+        f.params = (0..locals.len()).map(|i| LocalId(i as u32)).collect();
+        f.locals = locals;
+        f.ret = ret;
+        self.sigs[fid] = Sig { params, ret, is_async: decl.is_async };
     }
 
     /// Reports structs that contain themselves by value.
     fn check_recursive_structs(&mut self) {
+        for sid in 0..self.structs.len() {
+            self.check_recursive_struct(sid);
+        }
+    }
+
+    /// Reports struct `sid` if it contains itself by value.
+    pub(crate) fn check_recursive_struct(&mut self, sid: usize) {
         fn contains(s: &Sema, target: u32, ty: TypeId, seen: &mut Vec<u32>) -> bool {
             match s.tt.get(ty) {
                 Type::Struct(d) => {
@@ -687,14 +840,16 @@ impl<'a> Sema<'a> {
                 _ => false,
             }
         }
-        for sid in 0..self.structs.len() {
-            let mut seen = Vec::new();
-            if self.structs[sid].fields.iter().any(|f| contains(self, sid as u32, f.ty, &mut seen)) {
+        let mut seen = Vec::new();
+        if self.structs[sid].fields.iter().any(|f| contains(self, sid as u32, f.ty, &mut seen)) {
+            let saved = self.cur_file;
+            if !self.gen.inst_structs.contains_key(&(sid as u32)) {
                 self.cur_file = self.structs[sid].file;
-                let name = self.structs[sid].name.clone();
-                let span = self.struct_src[sid].name.span;
-                self.err(format!("invalid recursive type {name}: it contains itself by value (use a pointer)"), span);
             }
+            let name = self.structs[sid].name.clone();
+            let span = self.struct_src[sid].name.span;
+            self.err(format!("invalid recursive type {name}: it contains itself by value (use a pointer)"), span);
+            self.cur_file = saved;
         }
     }
 

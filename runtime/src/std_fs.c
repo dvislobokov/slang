@@ -17,9 +17,7 @@ static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
 static inline const char *sdata(const slang_string *s) { return s ? s->data : ""; }
 
 static slang_error *mkerr(const char *op, const char *path, int e) {
-    char buf[1024];
-    snprintf(buf, sizeof buf, "%s %.900s: %s", op, path, strerror(e));
-    return slang_error_new_cstr(buf);
+    return slang_error_errno(op, path, e);
 }
 static void set_err(slang_error **err, const char *op, const char *path, int e) {
     if (err) *err = mkerr(op, path, e);

@@ -16,6 +16,11 @@ typedef struct slang_backing {
 static void backing_drop(void *obj) {
     slang_backing *b = obj;
     if (!b->ops || !b->ops->release) return;
+    if (b->ops == &slang_ops_ref) {  /* common case: strings, maps, errors... */
+        slang_object **el = (slang_object **)b->data;
+        for (int64_t i = 0; i < b->cap; i++) slang_release(el[i]);
+        return;
+    }
     for (int64_t i = 0; i < b->cap; i++) b->ops->release(b->data + i * b->elem_size);
 }
 
@@ -134,6 +139,17 @@ static void store(void *slot, const void *val, int64_t elem_size, const slang_va
 
 void slang_slice_append(slang_slice *s, int64_t elem_size, const slang_value_ops *ops,
                         const void *elem) {
+    if (s->len < s->cap) {
+        /* Fast path: room in the (possibly shared) backing, as in Go. */
+        void *slot = (char *)s->data + s->len * elem_size;
+        if (!ops) {
+            memmove(slot, elem, (size_t)elem_size);
+        } else {
+            store(slot, elem, elem_size, ops);
+        }
+        s->len++;
+        return;
+    }
     /* elem may point into s's own backing: keep it alive across grow(). */
     unsigned char tmp[256];
     unsigned char *copy = (size_t)elem_size <= sizeof tmp ? tmp : slang_alloc(elem_size);

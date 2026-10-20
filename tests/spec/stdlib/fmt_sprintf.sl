@@ -1,5 +1,5 @@
 // test: fmt.Sprintf supports Go verbs %d %s %v %f with precision %x %q and padding
-// status: pending
+// status: passing
 namespace spec.stdlib.fmt_sprintf
 
 import std.io

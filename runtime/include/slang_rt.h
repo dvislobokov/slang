@@ -221,9 +221,11 @@ bool    slang_map_delete(slang_map *m, const void *key);
 void   *slang_map_get_str(const slang_map *m, const slang_string *key);
 void    slang_map_set_str(slang_map *m, const slang_string *key, const void *val);
 bool    slang_map_delete_str(slang_map *m, const slang_string *key);
+void   *slang_map_get_or_insert_str(slang_map *m, const slang_string *key); /* zeroed slot if new */
 void   *slang_map_get_int(const slang_map *m, int64_t key);
 void    slang_map_set_int(slang_map *m, int64_t key, const void *val);
 bool    slang_map_delete_int(slang_map *m, int64_t key);
+void   *slang_map_get_or_insert_int(slang_map *m, int64_t key);            /* zeroed slot if new */
 void    slang_map_iter_init(slang_map_iter *it, slang_map *m);
 bool    slang_map_iter_next(slang_map_iter *it, void **key, void **val);
 
@@ -233,6 +235,22 @@ bool    slang_map_iter_next(slang_map_iter *it, void **key, void **val);
 
 typedef slang_string *(*slang_message_fn)(void *payload); /* returns OWNED string */
 
+/* Static record of a source location, emitted by the compiler in read-only
+ * data (one per error-creation site, `?` and catching `try`). */
+typedef struct slang_error_site {
+    const char *file;                 /* +0  path as given to the compiler */
+    const char *func;                 /* +8  function name, e.g. "Load", "Cache.Get" */
+    int64_t line;                     /* +16 1-based */
+} slang_error_site;                   /* 24 bytes */
+
+/* One `returned via` entry of an error trace. */
+typedef struct slang_error_frame {
+    const slang_error_site *site;
+    slang_string *ctx;                /* `?("ctx")` context (owned ref) or NULL */
+} slang_error_frame;                  /* 16 bytes */
+
+#define SLANG_ERROR_INLINE_FRAMES 8
+
 typedef struct slang_error {
     slang_object hdr;                 /* +0  */
     slang_string *message;            /* +16 own message / wrap context (owned ref) */
@@ -240,7 +258,14 @@ typedef struct slang_error {
     const slang_type_info *user_type; /* +32 type of boxed user error or NULL */
     void *payload;                    /* +40 boxed user value: slang object (owned ref) or NULL */
     slang_message_fn message_fn;      /* +48 user Message() thunk or NULL */
-} slang_error;                        /* 56 bytes */
+    /* --- error trace (ABI.md 7.4); all zero for an error without one --- */
+    struct slang_error *origin;       /* +56 the error this is a copy-on-write copy of (owned ref) or NULL */
+    const slang_error_site *created;  /* +64 creation site or NULL */
+    int64_t nframes;                  /* +72 number of `returned via` frames */
+    slang_error_frame frames[SLANG_ERROR_INLINE_FRAMES]; /* +80 the first 8 frames */
+    slang_error_frame *overflow;      /* +208 frames 8.. (raw heap array) or NULL */
+    int64_t overflow_cap;             /* +216 capacity of overflow */
+} slang_error;                        /* 224 bytes */
 
 extern const slang_type_info slang_type_error;
 extern slang_error *const slang_err_eof;   /* sentinel returned by stdin reads at EOF */
@@ -255,6 +280,27 @@ slang_error *slang_error_unwrap(const slang_error *err);   /* owned inner or NUL
 slang_string *slang_error_message(const slang_error *err); /* owned; full chain text */
 bool  slang_error_is(const slang_error *err, const slang_error *target);
 void *slang_error_as(const slang_error *err, const slang_type_info *type); /* [borrowed] payload */
+/* Error traces (ABI.md 7.4). Both take an OWNED err and return it (or its
+ * copy-on-write replacement) OWNED; NULL err -> NULL. */
+slang_error *slang_error_created(slang_error *err, const slang_error_site *site);
+slang_error *slang_error_returned(slang_error *err, const slang_error_site *site,
+                                  const slang_string *ctx);
+slang_string *slang_error_trace(const slang_error *err);              /* owned; "" if none */
+void slang_error_frames(const slang_error *err, slang_slice *out);    /* owned []errors.Frame */
+extern const slang_value_ops slang_ops_error_frame;  /* ops of a 32-byte errors.Frame */
+/* The double nearest to the shortest decimal that round-trips as float32
+ * `f`; printing it with the float64 rules gives Go's float32 output. */
+double slang_float32_shortest(float f);
+/* "<op> <path>: <strerror(e)>"; for ENOENT the error wraps the immortal
+ * sentinel std.fs.ErrNotFound (slang_fs_err_not_found), so errors.Is works. */
+slang_error *slang_error_errno(const char *op, const char *path, int e);
+slang_error *slang_fs_err_not_found(void);           /* std.fs.ErrNotFound, immortal */
+/* std.fmt.Sprintf: Go verbs over the compiler's per-argument lowering
+ * (kind letters, int values, float values, println texts; std_fmt_sprintf.c). */
+slang_string *slang_fmt_sprintf(const slang_string *format, const slang_string *kinds, const slang_slice *ints,
+                                const slang_slice *floats, const slang_slice *texts);
+/* `main() void!` failed: "error: <message>" and the trace on stderr. */
+void slang_error_report(const slang_error *err);
 
 /* ======================================================================
  * Panic
@@ -405,6 +451,8 @@ slang_string *slang_io_read_line(slang_error **err);  /* EOF: NULL + slang_err_e
 slang_error *slang_errors_wrap(const slang_error *err, const slang_string *msg); /* NULL err -> NULL */
 slang_error *slang_errors_unwrap(const slang_error *err);  /* owned cause or NULL */
 bool         slang_errors_is(const slang_error *err, const slang_error *target);
+slang_string *slang_errors_trace(const slang_error *err);             /* errors.Trace */
+void         slang_errors_frames(const slang_error *err, slang_slice *out); /* errors.Frames */
 
 /* std.task.Delay is slang_task_delay (declared above). */
 

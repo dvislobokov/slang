@@ -1,7 +1,7 @@
 //! Statements, loops, `switch`, `return` and the error-handling
 //! expressions (`?`, `try ... catch`, `try ... else`).
 
-use super::{unsupported, CodeGen, LoopTarget, Val, R};
+use super::{unsupported, CodeGen, LoopTarget, TryTarget, Val, R};
 use crate::hir::{Block, Expr, ExprKind, Label, LocalId, Pattern, ReturnValue, Stmt, StmtKind, Switch, TryFallback};
 use crate::types::{Type, TypeId};
 use inkwell::basic_block::BasicBlock;
@@ -185,6 +185,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             StmtKind::Defer(e) => self.emit_defer(e),
             StmtKind::Block(b) => self.scoped_block(b),
+            StmtKind::TryBlock { body, err, handler } => self.try_block(body, *err, handler),
         }
     }
 
@@ -286,11 +287,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn append_in_place(&mut self, p: PointerValue<'ctx>, ty: TypeId, x: &Expr) -> R<()> {
         let et = self.elem_of(ty).unwrap();
         let xv = self.expr(x)?;
-        let xp = self.spill(xv.get());
-        let size = self.i64_ty().const_int(self.size_of(et), false);
-        let ops = self.value_ops(et);
-        self.call_rt("slang_slice_append", &[p.into(), size.into(), ops.into(), xp.into()]);
-        self.drop_val(et, xv);
+        self.append_fast(p, et, xv);
         Ok(())
     }
 
@@ -584,6 +581,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             ReturnValue::Error(e) => {
                 let v = self.expr_owned(e)?;
+                let v = self.trace_created(v, e.span.start);
                 return self.return_error(v);
             }
         }
@@ -604,7 +602,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     }
 
     /// `value?` / `value?(ctx)`.
-    pub(crate) fn propagate(&mut self, value: &Expr, ctx: Option<&Expr>) -> R<Val<'ctx>> {
+    pub(crate) fn propagate(&mut self, value: &Expr, ctx: Option<&Expr>, span: crate::span::Span) -> R<Val<'ctx>> {
         let fv = self.expr_owned(value)?;
         let (v, err) = self.split_fallible(value.ty, fv);
         let fail = self.block("prop.fail");
@@ -614,14 +612,23 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.position_at_end(fail);
         let mut e: BasicValueEnum = err.into();
         let d = self.depth();
-        if let Some(c) = ctx {
-            let cv = self.expr(c)?;
-            let w = self.call_rt_v("slang_error_wrap", &[e.into(), cv.get().into()]);
-            self.call_rt("slang_release", &[e.into()]);
-            self.drop_val(c.ty, cv);
-            e = w;
+        let at = span.end.saturating_sub(1);
+        match ctx {
+            Some(c) => {
+                let cv = self.expr(c)?;
+                e = self.trace_returned(e, at, Some(cv.get()));
+                self.drop_val(c.ty, cv);
+            }
+            None => e = self.trace_returned(e, at, None),
         }
-        self.return_error(e)?;
+        match self.fs().try_targets.last().copied() {
+            Some(t) => {
+                self.exit_cleanups(t.depth, true);
+                self.b.build_store(t.slot, e).unwrap();
+                self.jump(t.catch);
+            }
+            None => self.return_error(e)?,
+        }
         // Temporaries of the failure path were released by the return.
         self.forget_from(d);
         self.b.position_at_end(ok);
@@ -631,7 +638,39 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         })
     }
 
-    pub(crate) fn try_catch(&mut self, ty: TypeId, value: &Expr, err: Option<LocalId>, handler: &Block, result_used: bool) -> R<Val<'ctx>> {
+    /// Block `try { body } catch err { handler }`: `?` inside `body` stores
+    /// the error in the target's slot and jumps to the handler.
+    fn try_block(&mut self, body: &Block, err: Option<LocalId>, handler: &Block) -> R<()> {
+        let catch = self.block("trys.catch");
+        let end = self.block("trys.end");
+        let slot = self.entry_alloca(self.ptr_ty().into(), "trys.err", false);
+        let depth = self.depth();
+        self.fs_mut().try_targets.push(TryTarget { catch, slot, depth });
+        let r = self.scoped_block(body);
+        self.fs_mut().try_targets.pop();
+        r?;
+        self.br(end);
+        self.b.position_at_end(catch);
+        let e = self.b.build_load(self.ptr_ty(), slot, "err").unwrap();
+        let hd = self.depth();
+        self.push_scope();
+        match err {
+            Some(l) => {
+                self.assign_local(l, Val::owned(e), true)?;
+                self.scope_local(l);
+            }
+            None => {
+                self.call_rt("slang_release", &[e.into()]);
+            }
+        }
+        self.block_stmts(handler)?;
+        self.pop_scope(hd);
+        self.br(end);
+        self.b.position_at_end(end);
+        Ok(())
+    }
+
+    pub(crate) fn try_catch(&mut self, te: &Expr, value: &Expr, err: Option<LocalId>, handler: &Block, result_used: bool) -> R<Val<'ctx>> {
         let fv = self.expr_owned(value)?;
         let (v, e) = self.split_fallible(value.ty, fv);
         let res = match (result_used, v) {
@@ -652,7 +691,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.push_scope();
         match err {
             Some(l) => {
-                self.assign_local(l, Val::owned(e.into()), true)?;
+                let e = self.trace_returned(e.into(), te.span.start, None);
+                self.assign_local(l, Val::owned(e), true)?;
                 self.scope_local(l);
             }
             None => {
@@ -677,7 +717,6 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         self.br(cont);
         self.b.position_at_end(cont);
-        let _ = ty;
         Ok(match res {
             Some(p) => {
                 let lt = self.llty(inner);

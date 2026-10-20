@@ -1,5 +1,5 @@
 // test: std.collections.Set<T>: Add (idempotent), Has, Remove, Len, Items in insertion order
-// status: pending
+// status: passing
 namespace spec.generics.collections_set
 
 import std.io

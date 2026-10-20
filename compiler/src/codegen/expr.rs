@@ -358,12 +358,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             ExprKind::ToInterface { value } => self.to_interface(value, e.ty),
             ExprKind::Closure { func, captures } => self.emit_closure(*func, captures),
-            ExprKind::Propagate { value, context } => self.propagate(value, context.as_deref()),
-            ExprKind::TryCatch { value, err, handler, result_used } => self.try_catch(e.ty, value, *err, handler, *result_used),
+            ExprKind::Propagate { value, context } => self.propagate(value, context.as_deref(), e.span),
+            ExprKind::TryCatch { value, err, handler, result_used } => self.try_catch(e, value, *err, handler, *result_used),
             ExprKind::TryElse { value, fallback } => self.try_else(e.ty, value, fallback),
             ExprKind::Await(t) => self.await_expr(e.ty, t),
             ExprKind::TaskAll(_) => unsupported("task.All whose result is not awaited directly"),
-            ExprKind::Builtin { op, args } => self.builtin(e.ty, *op, args),
+            ExprKind::Builtin { op, args } => self.builtin(e, *op, args),
             ExprKind::ToString(v) => self.to_string(v),
             ExprKind::Print(items) => {
                 self.print(items)?;
@@ -618,7 +618,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.release_temps_from(d);
                 Ok(Val { v: r, owned: true })
             }
-            Callee::Extern(x) => self.extern_call(*x, args),
+            Callee::Extern(x) => self.extern_call(*x, args, e.span.start),
             Callee::Interface { recv, method } => self.iface_call(e.ty, recv, *method, args),
             Callee::Value(c) => {
                 let d = self.depth();
@@ -690,7 +690,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         f
     }
 
-    fn extern_call(&mut self, x: ExternId, args: &[Expr]) -> R<Val<'ctx>> {
+    /// A stdlib extern call; `at` is the call's offset (errors made by the
+    /// runtime are "created" at the call, see [`super::trace`]).
+    fn extern_call(&mut self, x: ExternId, args: &[Expr], at: u32) -> R<Val<'ctx>> {
+        if let Some(v) = self.math_intrinsic(x, args)? {
+            return Ok(v);
+        }
         let f = self.extern_decl(x);
         let ex = &self.prog.externs[x.0 as usize];
         let d = self.depth();
@@ -729,8 +734,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if let Some(o) = out {
             r = Some(self.b.build_load(self.slice_ty(), o, "").unwrap());
         }
+        if ex.symbol == "slang_errors_wrap" {
+            if let Some(w) = r {
+                r = Some(self.trace_created(w, at));
+            }
+        }
         if let Some(ep) = errp {
             let err = self.b.build_load(self.ptr_ty(), ep, "err").unwrap();
+            let err = self.trace_created(err, at);
             let v = match r {
                 None => err,
                 Some(val) => {
@@ -847,12 +858,30 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let kp = self.spill(key);
                 self.call_rt_v("slang_map_get", &[m.into(), kp.into()])
             }
+            (KeyKind::Str, true) => {
+                let f = self.map_insert_fn("slang_map_get_or_insert_str", self.ptr_ty().into());
+                self.call_c(f, &[m.into(), key.into()]).unwrap()
+            }
+            (KeyKind::Int, true) => {
+                let f = self.map_insert_fn("slang_map_get_or_insert_int", self.i64_ty().into());
+                self.call_c(f, &[m.into(), key.into()]).unwrap()
+            }
             (_, true) => {
                 let kp = self.spill(key);
                 self.call_rt_v("slang_map_get_or_insert", &[m.into(), kp.into()])
             }
         };
         r.into_pointer_value()
+    }
+
+    /// Declaration of `void *name(slang_map *, K key)` (ABI.md 6.2 key-typed
+    /// `get_or_insert` fast paths).
+    fn map_insert_fn(&mut self, name: &str, key_ty: inkwell::types::BasicMetadataTypeEnum<'ctx>) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function(name) {
+            return f;
+        }
+        let fty = self.ptr_ty().fn_type(&[self.ptr_ty().into(), key_ty], false);
+        self.module.add_function(name, fty, Some(Linkage::External))
     }
 
     /// `m[k] = v` (the map retains key and value).

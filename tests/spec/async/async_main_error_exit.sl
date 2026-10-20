@@ -1,5 +1,5 @@
 // test: an error returned from async main is printed to stderr and the exit code is 1
-// status: pending
+// status: passing
 // exit: 1
 // stderr: boom
 namespace spec.async.async_main_error_exit

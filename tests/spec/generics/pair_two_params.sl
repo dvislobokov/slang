@@ -1,5 +1,5 @@
 // test: a struct with two type parameters and a generic constructor function
-// status: pending
+// status: passing
 namespace spec.generics.pair_two_params
 
 import std.io

@@ -66,7 +66,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 }
             }
             // Never present after sema; map to a harmless type.
-            Type::Infer(_) | Type::Invalid => self.ctx.i8_type().into(),
+            Type::Infer(_) | Type::Param(_) | Type::Invalid => self.ctx.i8_type().into(),
         })
     }
 

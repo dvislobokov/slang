@@ -121,6 +121,8 @@ pub struct InterfaceDecl {
     pub generics: Vec<GenericParam>,
     /// Method signatures; `body` is always `None`.
     pub methods: Vec<FuncDecl>,
+    /// Embedded interfaces: a bare interface name on its own line.
+    pub embeds: Vec<TypeExpr>,
     pub span: Span,
 }
 
@@ -128,7 +130,10 @@ pub struct InterfaceDecl {
 pub struct EnumDecl {
     pub attrs: Vec<Attribute>,
     pub name: Ident,
+    pub generics: Vec<GenericParam>,
     pub variants: Vec<Variant>,
+    /// Methods declared after the variants; `this` is the enum value.
+    pub methods: Vec<FuncDecl>,
     pub span: Span,
 }
 
@@ -209,6 +214,9 @@ pub enum TypeKind {
     Slice(Box<TypeExpr>),
     /// `[N]T`
     Array(Box<TypeExpr>, u64),
+    /// `[N]T` whose length is a constant expression other than an integer
+    /// literal (`[N]int`, `[M + 1]string`), folded by sema.
+    ArrayExpr(Box<TypeExpr>, Box<Expr>),
     /// `map[K]V`
     Map(Box<TypeExpr>, Box<TypeExpr>),
     /// `func(int, string) bool`
@@ -247,6 +255,10 @@ pub enum StmtKind {
     Expr(Expr),
     Assign { target: Expr, op: AssignOp, value: Expr },
     Block(Block),
+    /// Block `try { body } catch err { handler }`: a `?` inside `body`
+    /// jumps to `handler` (the nearest enclosing block `try`) instead of
+    /// returning. `err` may be `_`.
+    TryBlock { body: Block, err: Ident, handler: Block },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -362,8 +374,9 @@ pub enum ExprKind {
     /// `a..b`, `a..`, `..b`; only valid as a `for` iterator, an index
     /// (sub-slice `s[1..3]`) or a `case` pattern. A missing end is `None`.
     Range(Option<Box<Expr>>, Option<Box<Expr>>),
-    /// `func(x int) int { ... }` or `(x int) => x * 2`
-    Lambda { params: Vec<Param>, ret: Option<Box<TypeExpr>>, body: Box<LambdaBody> },
+    /// `func(x int) int { ... }` or `(x int) => x * 2`; with `is_async`,
+    /// `async func(..) T { }` / `async (..) => e` (calling it yields `Task<T>`).
+    Lambda { params: Vec<Param>, ret: Option<Box<TypeExpr>>, body: Box<LambdaBody>, is_async: bool },
     /// `(expr)` kept for faithful formatting; semantics are those of `expr`.
     Paren(Box<Expr>),
 }

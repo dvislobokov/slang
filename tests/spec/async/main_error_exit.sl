@@ -1,5 +1,5 @@
 // test: func main() void! returning an error prints it to stderr and exits with code 1
-// status: pending
+// status: passing
 // exit: 1
 // stderr: config missing
 namespace spec.async.main_error_exit

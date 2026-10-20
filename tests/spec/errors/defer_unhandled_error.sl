@@ -1,5 +1,5 @@
 // error: must be handled
-// status: pending
+// status: passing
 namespace spec.errors.defer_unhandled_error
 
 import std.io

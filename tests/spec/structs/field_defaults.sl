@@ -1,5 +1,5 @@
 // test: fields may declare default values used when a literal omits them
-// status: pending
+// status: passing
 namespace spec.structs.field_defaults
 
 import std.io

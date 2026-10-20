@@ -1,0 +1,7 @@
+8080 4
+using defaults: workers: invalid integer: "many"
+9000 1
+using defaults: expected port in `host = x`
+80 1
+3
+total: 2 bad items

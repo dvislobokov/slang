@@ -1,5 +1,5 @@
 // error: type argument
-// status: pending
+// status: passing
 namespace spec.generics.wrong_type_arg_count
 
 import std.io

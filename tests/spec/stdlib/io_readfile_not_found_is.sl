@@ -1,5 +1,5 @@
 // test: a missing file error matches fs.ErrNotFound through errors.Is
-// status: pending
+// status: passing
 namespace spec.stdlib.io_readfile_not_found_is
 
 import std.io

@@ -1,5 +1,5 @@
 // test: an interface value converts implicitly to an interface with a subset of its methods, and a type switch can test for another interface
-// status: pending
+// status: passing
 namespace spec.interfaces.interface_to_interface
 
 import std.io

@@ -254,6 +254,10 @@ impl Checker<'_, '_> {
                 }
             }
             StmtKind::Block(b) => self.stmts(b, f),
+            StmtKind::TryBlock { body, handler, .. } => {
+                self.stmts(body, f);
+                self.stmts(handler, f);
+            }
             _ => {}
         }
     }

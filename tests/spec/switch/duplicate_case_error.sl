@@ -1,5 +1,5 @@
 // error: duplicate case
-// status: pending
+// status: passing
 namespace spec.switch.duplicate_case_error
 
 import std.io
