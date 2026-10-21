@@ -60,6 +60,8 @@ commands:
                                  download prebuilt runtimes into ~/.slang/targets
                                  ($SLANG_TARGETS_URL; docs/PLATFORMS.md)
 
+  version                      print the compiler version
+
 build options:
   -o <path>            output file (single package)
   --release            -O2, no -rdynamic, --gc-sections, stripped
@@ -87,6 +89,9 @@ fn main() {
     }
     let rest = &args[2..];
     match args[1].as_str() {
+        "version" | "--version" | "-V" => {
+            println!("slang {} ({})", env!("CARGO_PKG_VERSION"), std::env::consts::ARCH);
+        }
         "parse" => match rest.first() {
             Some(p) => parse(p),
             None => usage_error("parse needs a file"),

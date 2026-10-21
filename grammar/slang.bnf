@@ -71,13 +71,15 @@ qualified_name ::= name_segment (DOT name_segment)*
 // keywords are allowed as path segments (`examples.async`, `@default`)
 name_segment ::= IDENTIFIER | NAMESPACE | IMPORT | AS | STRUCT | INTERFACE | ENUM | FUNC | STATIC | ASYNC | AWAIT | VAR | CONST | IF | ELSE | FOR | IN | SWITCH | CASE | DEFAULT | RETURN | BREAK | CONTINUE | DEFER | TRY | CATCH | NEW | NIL | TRUE | FALSE | MAP | THIS
 
-top_level_decl ::= attribute* (struct_decl | interface_decl | enum_decl | func_decl | extern_func_decl eos | var_decl eos | const_decl eos)
+// A declaration ending in `}` gets an automatic SEMI at the newline after it.
+top_level_decl ::= attribute* ((struct_decl | interface_decl | enum_decl | func_decl) eos? | extern_func_decl eos | var_decl eos | const_decl eos)
 // `extern` is a contextual keyword (an IDENTIFIER spelled "extern"): a runtime
 // (C) function without a body, only in the generated std/**/*_extern.sl files.
 extern_func_decl ::= IDENTIFIER func_signature
 
-// `@json("name")`, `@reflect`, `@deprecated(reason: "...")`, `@allowCycle`
-attribute ::= AT qualified_name attribute_args?
+// `@json("name")`, `@reflect`, `@deprecated(reason: "...")`, `@allowCycle`;
+// an attribute on its own line is followed by an automatic SEMI.
+attribute ::= AT qualified_name attribute_args? eos?
 attribute_args ::= LPAREN (attribute_arg (COMMA attribute_arg)*)? RPAREN
 // `default` may name an argument (and a field): `@cli.flag(default: "8080")`.
 attribute_arg ::= ((IDENTIFIER | DEFAULT) COLON)? expr
@@ -91,7 +93,8 @@ struct_decl ::= STRUCT (IDENTIFIER | DEFAULT) generic_params? implements_clause?
 // `implements` is a contextual keyword (an IDENTIFIER spelled "implements").
 implements_clause ::= IDENTIFIER type (COMMA type)*
 struct_member ::= attribute* (method_decl | field_decl | embed_decl) eos?
-field_decl ::= (IDENTIFIER | DEFAULT) type
+// `Port int = 8080`: a default value (attribute structs, options).
+field_decl ::= (IDENTIFIER | DEFAULT) type (ASSIGN expr)?
 embed_decl ::= type
 method_decl ::= STATIC? func_decl
 
@@ -102,14 +105,14 @@ interface_decl ::= IDENTIFIER? INTERFACE IDENTIFIER generic_params? LBRACE ((att
 
 // Methods (with `this` = the enum value) follow the variants.
 enum_decl ::= ENUM IDENTIFIER generic_params? implements_clause? LBRACE enum_variant ((COMMA | eos) enum_variant)* (COMMA | eos)?
-              (attribute* func_decl eos?)* RBRACE
+              (attribute* method_decl eos?)* RBRACE
 enum_variant ::= attribute* IDENTIFIER (LPAREN param_list? RPAREN)?
 
 func_decl ::= func_signature block
 func_signature ::= ASYNC? FUNC IDENTIFIER generic_params? LPAREN param_list? RPAREN type?
 param_list ::= param_group (COMMA param_group)* COMMA?
-// `a, b int` groups names under one type, like Go
-param_group ::= IDENTIFIER (COMMA IDENTIFIER)* type
+// `a, b int` groups names under one type, like Go; `@body p Point` (parameter attributes)
+param_group ::= attribute* IDENTIFIER (COMMA IDENTIFIER)* type
 
 generic_params ::= LT generic_param (COMMA generic_param)* GT
 generic_param ::= IDENTIFIER (COLON type)?
@@ -129,7 +132,7 @@ named_type ::= qualified_name generic_args?
 generic_args ::= LT type (COMMA type)* GT
 // `weak *T` (weak pointer): `weak` is contextual, an IDENTIFIER spelled
 // "weak" directly before STAR; it is not a reserved word.
-pointer_type ::= STAR prefix_type
+pointer_type ::= IDENTIFIER? STAR prefix_type
 slice_type ::= LBRACKET RBRACKET prefix_type
 // The length is an integer constant expression (`[3]int`, `[N + 1]int`).
 array_type ::= LBRACKET expr RBRACKET prefix_type
@@ -158,7 +161,8 @@ switch_case ::= CASE pattern (COMMA pattern)* COLON statement*
 default_case ::= DEFAULT COLON statement*
 pattern ::= range_pattern | type_bind_pattern | expr
 range_pattern ::= range_expr
-type_bind_pattern ::= type IDENTIFIER
+// `case Circle c:`; the lookahead keeps `case await F(x) > 5:` an expression
+type_bind_pattern ::= type IDENTIFIER &(COLON | COMMA)
 
 // `try { ... } catch err { ... }`: `?` inside the block jumps to catch
 try_stmt ::= TRY block CATCH var_name block
@@ -179,7 +183,8 @@ eos ::= SEMI
 // Expressions (lowest to highest precedence)
 // ---------------------------------------------------------------------------
 
-expr ::= try_expr | lambda_expr | or_expr
+// lambda_expr is a primary_expr, so that it can be called directly: `defer func() { ... }()`
+expr ::= try_expr | or_expr
 try_expr ::= TRY expr (CATCH var_name block | ELSE else_value)
 else_value ::= CONTINUE | BREAK | return_stmt | expr
 // `async` lambdas return Task<T> when called.
@@ -199,7 +204,8 @@ add_expr ::= mul_expr ((PLUS | MINUS | PIPE | CARET) mul_expr)*
 mul_expr ::= unary_expr ((STAR | SLASH | PERCENT | AT | SHL | SHR | AMP) unary_expr)*
 unary_expr ::= (MINUS | BANG | AMP | STAR | AWAIT) unary_expr | postfix_expr
 postfix_expr ::= primary_expr postfix*
-postfix ::= DOT IDENTIFIER
+// keywords are member names after `.` (`tag.default`), as in the lexer's semicolon rule
+postfix ::= DOT name_segment
           | LPAREN arg_list? RPAREN
           | LBRACKET (range_expr | expr) RBRACKET
           | QUESTION (LPAREN expr RPAREN)?
@@ -210,7 +216,8 @@ postfix ::= DOT IDENTIFIER
 arg_list ::= call_arg (COMMA call_arg)* COMMA?
 call_arg ::= (IDENTIFIER COLON)? expr
 
-primary_expr ::= literal | THIS | NIL
+// `_` is the discard target (`_ = f()`) and a wildcard in patterns (`Shape.Rect(w, _)`)
+primary_expr ::= lambda_expr | literal | THIS | NIL | UNDERSCORE
                | struct_literal | slice_literal | map_literal
                | NEW primary_expr
                | LPAREN expr (COMMA expr)* RPAREN
