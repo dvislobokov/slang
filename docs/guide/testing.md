@@ -61,8 +61,11 @@ func Parse(s string) int! {
 `t.Error(msg)` marks it failed and continues, `t.Fatal(msg)` stops it,
 `t.Skip(msg)` skips the rest. Other assertions: `True`, `False`, `Nil`,
 `NotNil`, `EqualSlices`, `Error`, `NoError`, `ErrorIs` and
-`Panics(t, fn)`, which checks that `fn` panics (it re-runs the test in a
-child process up to that call).
+`Panics(t, fn)`, which checks that `fn` panics: `fn` runs on a thread of
+its own whose panic is caught, so the test's code runs once; `defer`s and
+destructors inside the panicking `fn` do not run (on Windows the test is
+re-run in a child process up to that call instead). `PanicsWith(t, fn,
+want)` also checks the panic message, and `PanicMessage()` returns it.
 
 ## Table tests and subtests
 

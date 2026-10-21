@@ -90,8 +90,10 @@
 //! **Reference counting fast paths.** With `Options::inline_rc` (`-O3`)
 //! `call_rt` routes `slang_retain`/`slang_release`/`slang_ptr_*` to internal
 //! `alwaysinline` helpers (`rc.rs`, `rc_inline_fn`) that update the count
-//! inline while the process is single-threaded and call the runtime
-//! otherwise (ABI.md 3.2).
+//! inline while the process is single-threaded, or the owner's 16-bit half
+//! of a biased count owned by this thread (the runtime's thread-local
+//! `slang_rc_owner`, declared `external thread_local`), and call the
+//! runtime otherwise (ABI.md 3.1, 3.2).
 //!
 //! **Fallible results** travel as first-class aggregates between Slang
 //! functions. Stdlib externs follow `slang_rt.h`: `[]T` params as
@@ -163,7 +165,20 @@
 //!
 //! Not released (by design): values reachable from a panicking task (a
 //! panic does not unwind), strong reference cycles (use `weak`; detected by
-//! `--leak-check`), values in the 64-slot defer array beyond a panic.
+//! `--leak-check`; freed by the cycle collector, below), values in the
+//! 64-slot defer array beyond a panic.
+//!
+//! **Cycle collector** ([`cycles`], ABI.md 3.8). Types on a cycle of the
+//! type reference graph ([`crate::sema::cycles`]) are allocated with
+//! `slang_cycles_new_entry(entry, size)` (it sets the flag), where `entry` is a
+//! per-type registry entry (type info, payload visitor, destructor-only and
+//! release-only helpers, the `ti.<*S>` alias) that the runtime registers
+//! on first use; closure environments capturing such cells get a
+//! per-lambda type info and entry (alias: the lambda's function); every
+//! compiled `slang_value_ops` has a third `visit` word (non-NULL for
+//! element types holding references to cyclic objects). Pins of a `*T` of
+//! a cyclic type (`expr.rs` `arg`/`keep`) read `slang_cycles_epoch` and are
+//! released with `slang_ptr_release_noroot` (`FnState::pins`).
 //!
 //! **Leak check.** With [`Options::leak_check`] the C `main` calls
 //! `slang_leak_check_enable` first; after the entry point returns, the
@@ -172,6 +187,7 @@
 
 mod async_;
 mod cleanup;
+mod cycles;
 mod debug;
 mod debug_agent;
 pub use debug::dedup_declares;
@@ -334,6 +350,11 @@ pub(crate) struct FnState<'a, 'ctx> {
     pub coro: Option<Coro<'ctx>>,
     /// Owned temporaries and block scopes, innermost last.
     pub cleanups: Vec<Cleanup<'ctx>>,
+    /// Cleanup entries that are *pins* of a `*T` of a cyclic type (a
+    /// borrowed value retained for a call or a field access): the
+    /// collection epoch read when it was taken, so the paired release can
+    /// skip recording a possible cycle root (`slang_ptr_release_noroot`).
+    pub pins: HashMap<usize, inkwell::values::IntValue<'ctx>>,
     /// Per local: the slot holds a borrowed parameter (never released).
     pub borrowed: Vec<bool>,
     /// Per local: drop flag of a stack value with a destructor (`i1`, set
@@ -395,6 +416,10 @@ pub struct CodeGen<'a, 'ctx> {
     /// Map descriptors by `(key type, value type)` (packed).
     pub(crate) map_descs: HashMap<u64, PointerValue<'ctx>>,
     pub(crate) env_ti: Option<GlobalValue<'ctx>>,
+    /// Types on reference cycles ([`crate::sema::cycles`]).
+    pub(crate) cycles: crate::sema::cycles::Cycles,
+    /// Cycle-collector helpers ([`cycles`]).
+    pub(crate) cyc: cycles::CycState<'ctx>,
     pub(crate) f: Option<FnState<'a, 'ctx>>,
     pub(crate) counter: u32,
     pub(crate) opts: Options,
@@ -500,6 +525,8 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         enum_names: HashMap::new(),
         map_descs: HashMap::new(),
         env_ti: None,
+        cycles: crate::sema::cycles::analyze(program),
+        cyc: Default::default(),
         f: None,
         counter: 0,
         opts,
@@ -543,6 +570,9 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         errors.push(e);
     }
     if let Err(e) = cg.finish_iface_convs() {
+        errors.push(e);
+    }
+    if let Err(e) = cg.finish_cycles() {
         errors.push(e);
     }
     if let Err(e) = cg.finish_any_inline() {
@@ -620,6 +650,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             scoped: Vec::new(),
             coro: None,
             cleanups: Vec::new(),
+            pins: HashMap::new(),
             borrowed: Vec::new(),
             flags: Vec::new(),
             try_targets: Vec::new(),

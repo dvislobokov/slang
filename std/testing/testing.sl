@@ -18,9 +18,10 @@
 // sequential tests (each sequential test runs alone). Results are printed
 // in that order: sequential tests, then parallel ones by declaration.
 //
-// testing.Panics(t, fn) checks that fn panics: the test binary re-runs
-// the current test in a child process up to that Panics call, where the
-// child calls fn (code before the call runs again in the child).
+// testing.Panics(t, fn) checks that fn panics: fn runs on a thread of its
+// own whose panic is caught (no defers run in fn); where that is not
+// possible (Windows) the test binary re-runs the current test in a child
+// process up to that Panics call, where the child calls fn.
 //
 // Assertions (testing.Equal(t, got, want) ...) report through t.Error and
 // keep going; the ...Fatal variants stop the test (testing.EqualFatal).
@@ -350,13 +351,53 @@ func noPanicCode() int {
     return 77
 }
 
-// Reports an error unless fn panics. The test binary runs the current
-// test again in a child process (`--run-one` with a probe of this call);
-// the child calls fn and exits with the panic's status, or with a
-// "no panic" status when fn returns. Code of the test before this call
-// runs again in the child; earlier Panics calls do not run fn there.
+// Reports an error unless fn panics. fn runs on an OS thread of its own
+// inside a panic capture scope (runtime/ABI.md 8): a panic there ends that
+// thread only, without running defers or destructors of fn's frames (what
+// they own is leaked, locks they hold stay held), and Panics returns true;
+// the code of the test runs once. A panic on another thread (a task fn
+// started) still ends the test. Where the runtime cannot capture panics
+// (Windows), the test binary runs the current test again in a child
+// process (`--run-one` with a probe of this call) up to this call, where
+// the child calls fn and exits with the panic's status.
 func Panics(t *T, fn func()) bool {
     t.panicsSeen += 1
+    // SLANG_TEST_PANICS=process forces the child-process fallback.
+    if t.probeName == "" && std.os.Getenv("SLANG_TEST_PANICS") != "process" {
+        var r = rtCapture(fn)
+        if r == 1 {
+            return true
+        }
+        if r == 0 {
+            t.Error("expected a panic, but the function returned")
+            return false
+        }
+    }
+    return panicsInChild(t, fn)
+}
+
+// Like Panics, and the panic message must contain want.
+func PanicsWith(t *T, fn func(), want string) bool {
+    if !Panics(t, fn) {
+        return false
+    }
+    var msg = rtCaptureMessage()
+    if msg != "" && !std.strings.Contains(msg, want) {
+        t.Error("panic message " + std.strconv.Quote(msg) + " does not contain " + std.strconv.Quote(want))
+        return false
+    }
+    return true
+}
+
+// The message of the last panic Panics caught on this thread ("" when it
+// ran the function in a child process).
+func PanicMessage() string {
+    return rtCaptureMessage()
+}
+
+// testing.Panics where panics cannot be captured: re-runs the test in a
+// child process up to the call.
+func panicsInChild(t *T, fn func()) bool {
     var k = t.panicsSeen
     if t.probeName != "" {
         if t.probeName == t.name && t.probe == k {

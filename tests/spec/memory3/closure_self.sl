@@ -1,0 +1,29 @@
+// test: an object whose closure field captures the object itself is a cycle the collector frees (object, environment and captured cell)
+// status: passing
+// run-flags: --leak-check
+// warning: W0001 type Button can form a reference cycle through field OnClick (func())
+namespace spec.memory3.closure_self
+
+import std
+import std.io
+
+struct Button {
+    Label   string
+    OnClick func()
+
+    func Drop() {
+        println("drop button", this.Label)
+    }
+}
+
+func make(label string) {
+    var b = new Button{Label: label}
+    b.OnClick = func() { println("clicked", b.Label) }
+    b.OnClick()
+}
+
+func main() {
+    make("ok")
+    make("cancel")
+    println("collected", runtime.CollectCycles())
+}

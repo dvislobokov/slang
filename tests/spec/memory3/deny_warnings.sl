@@ -1,0 +1,15 @@
+// error: W0001 type Node can form a reference cycle through field Next (*Node)
+// status: passing
+// build-flags: --deny-warnings
+namespace spec.memory3.deny_warnings
+
+import std.io
+
+struct Node {
+    Next *Node
+}
+
+func main() {
+    var n = new Node{}
+    println(n.Next == nil)
+}

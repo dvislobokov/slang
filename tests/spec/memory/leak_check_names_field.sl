@@ -1,6 +1,7 @@
 // test: the leak report names the field that closes the cycle (Type.Field), as a candidate for weak
 // status: passing
 // run-flags: --leak-check
+// env: SLANG_CYCLES=manual
 // exit: 66
 // stderr: Node.Other
 namespace spec.memory.leak_check_names_field

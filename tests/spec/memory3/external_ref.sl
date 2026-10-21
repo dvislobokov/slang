@@ -1,0 +1,36 @@
+// test: a cycle that is still referenced from outside (a global, a local) is not freed; once the reference is gone it is
+// status: passing
+// run-flags: --leak-check
+namespace spec.memory3.external_ref
+
+import std
+import std.io
+
+@allowCycle
+struct Node {
+    Name  string
+    Other *Node
+
+    func Drop() {
+        println("drop", this.Name)
+    }
+}
+
+var keep *Node
+
+func pair(a string, b string) *Node {
+    var x = new Node{Name: a}
+    var y = new Node{Name: b, Other: x}
+    x.Other = y
+    return x
+}
+
+func main() {
+    keep = pair("g1", "g2")
+    var local = pair("l1", "l2")
+    println("held", runtime.CollectCycles(), keep.Other.Name, local.Other.Name)
+    local = nil
+    println("local dropped", runtime.CollectCycles())
+    keep = nil
+    println("global dropped", runtime.CollectCycles())
+}

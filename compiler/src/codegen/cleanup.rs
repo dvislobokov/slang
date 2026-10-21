@@ -41,6 +41,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn hold_raw(&mut self, t: TypeId, x: BasicValueEnum<'ctx>) -> Hold {
         let f = self.f.as_mut()?;
         f.cleanups.push(Cleanup::Temp(t, x));
+        f.pins.remove(&(f.cleanups.len() - 1));
         Some(f.cleanups.len() - 1)
     }
 
@@ -51,6 +52,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if i < f.cleanups.len() {
             f.cleanups[i] = Cleanup::Done;
         }
+        f.pins.remove(&i);
         while matches!(f.cleanups.last(), Some(Cleanup::Done)) {
             f.cleanups.pop();
         }
@@ -64,11 +66,15 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             return;
         }
         let tail: Vec<Cleanup<'ctx>> = f.cleanups.drain(depth..).collect();
+        let pins: Vec<Option<inkwell::values::IntValue<'ctx>>> = (depth..depth + tail.len()).map(|i| f.pins.remove(&i)).collect();
         if self.terminated_block() {
             return;
         }
-        for c in tail.into_iter().rev() {
+        for (c, pin) in tail.into_iter().zip(pins).rev() {
             match c {
+                // A pin's release cannot leave a new cycle behind: no
+                // reference was stored meanwhile (cycles.rs, ABI.md 3.8).
+                Cleanup::Temp(_, x) if pin.is_some() => self.release_pin(x, pin.unwrap()),
                 Cleanup::Temp(t, x) => self.release_val(t, x),
                 Cleanup::Scope(ls) => {
                     for l in ls.into_iter().rev() {
@@ -85,6 +91,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn forget_from(&mut self, depth: usize) {
         if let Some(f) = self.f.as_mut() {
             f.cleanups.truncate(depth.min(f.cleanups.len()));
+            f.pins.retain(|i, _| *i < depth);
         }
     }
 

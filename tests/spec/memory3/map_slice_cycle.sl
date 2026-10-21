@@ -1,0 +1,51 @@
+// test: cycles through a map value and through slice elements are collected
+// status: passing
+// run-flags: --leak-check
+// warning: W0001 type Registry can form a reference cycle through field Items
+// warning: W0001 type Vertex can form a reference cycle through field Edges ([]*Vertex)
+namespace spec.memory3.map_slice_cycle
+
+import std
+import std.io
+
+struct Registry {
+    Name  string
+    Items map[string]*Item
+}
+
+struct Item {
+    Key   string
+    Owner *Registry
+}
+
+struct Vertex {
+    Id    int
+    Edges []*Vertex
+}
+
+func registry() {
+    var r = new Registry{Name: "r", Items: map[string]*Item{}}
+    for k in ["x", "y", "z"] {
+        r.Items[k] = new Item{Key: k, Owner: r}
+    }
+}
+
+func ring(n int) {
+    var first = new Vertex{Id: 0}
+    var prev = first
+    for i in 1..n {
+        var v = new Vertex{Id: i}
+        prev.Edges = append(prev.Edges, v)
+        prev = v
+    }
+    prev.Edges = append(prev.Edges, first)
+}
+
+func main() {
+    registry()
+    // Registry, its map, 3 items.
+    println("map cycle", runtime.CollectCycles())
+    ring(5)
+    // 5 vertices and their 5 edge arrays.
+    println("ring", runtime.CollectCycles())
+}

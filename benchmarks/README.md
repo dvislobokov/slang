@@ -19,6 +19,8 @@ The script builds both with release settings and reports wall time, CPU time
 | `regex` | std.regex: `FindAll` of an e-mail pattern over a 10 MB generated text (lazy DFA with prefix acceleration vs Go's `regexp`) |
 | `gzip` | std.compress.gzip: level-6 compression and decompression of 20 MB of mixed text, round trip checked |
 | `alloc_heavy` | binary trees of small heap nodes (depth 4..16) and 4M rounds of non-escaping temporaries (`new Stats{}`, `&acc` passed to a method) |
+| `heap_churn` | 20 rounds of 40 MB of small strings (two size classes) plus 32 x 256 KB buffers, all dropped each round; prints the RSS after the last round (memory returned to the OS) |
+| `shared_objects` | reference counts across threads: one task builds 200k objects that 8 tasks read 10 times, 8 tasks build objects one task reads, 8 tasks churn task-local objects; prints the ms of each phase |
 
 ## Results, performance pass 2 (2026-10-21, 4 vCPU x86-64, clang/LLVM 18, go 1.24, `--release`)
 
@@ -317,3 +319,178 @@ Hello-world binary sizes (`scripts/bench-size.sh`, stripped release):
 | Go (stripped) | 1404 KB |
 
 Summary: Slang is faster than Go on 9 of 11 CPU/memory benchmarks and on the HTTP/1.1 server, at parity on nbody and struct_map, and slightly behind on HTTP/2 over TLS. Memory use is lower or equal everywhere except regex (lazy DFA cache), gzip and map.
+
+## Cycle collector (2026-10-21, 4 vCPU x86-64, `--release`, 10 alternating runs, wall seconds min / median)
+
+`base` is the previous commit; `off`/`auto` are the same binary with
+`SLANG_CYCLES=off` / the default `auto` (DESIGN.md "Циклы"). `base` vs
+`off` also contains the concurrent allocator/biased-refcount work, so the
+collector's own cost is `auto` vs `off`.
+
+| Benchmark | base | off | auto | auto vs off |
+|---|---:|---:|---:|---:|
+| `json_like` | 0.180 / 0.199 | 0.172 / 0.185 | 0.172 / 0.186 | noise (no cyclic user types) |
+| `http_hello` | 3.006 / 3.123 | 3.051 / 3.207 | 2.975 / 3.168 | noise (std.net.http has a few cyclic types: pools, h2 connections) |
+| `alloc_heavy` | 0.362 / 0.402 | 0.444 / 0.499 | 0.415 / 0.446 | noise; callgrind (depth-12 run) 233M vs 224M instructions, +4 % |
+
+`alloc_heavy`'s `Node {Left, Right *Node}` is a cyclic type (W0001 warns,
+and it is deliberately not `@acyclic`), so all 14.7M nodes are flagged.
+The first version recorded each of them as a possible root (the pin taken
+around `check(n.Left)` is released to a non-zero count) and kept a hidden
+buffer-index word per flagged object: +35..40 % (327M vs 209M
+instructions). Pins of `*T` of cyclic types now remember the collection
+epoch and are released with `slang_ptr_release_noroot`, which records
+nothing unless a collection overlapped the pin (0 candidates in this
+benchmark), the hidden word is gone, and the death of a flagged object
+that was never recorded takes the plain drop + free path. RSS is equal
+(11 MB). Binary size: `hello` 33 KB (15 KB at `base`; none of it is the
+collector, which is linked through weak symbols only when a cyclic type
+is allocated), `http_hello` 1.14 MB vs 1.11 MB.
+
+## Object heap, biased refcounts, io_uring, testing.Panics (2026-10-21, 4 vCPU x86-64 Firecracker VM, Linux 6.18, `--release`)
+
+`old` = the compiler and runtime of commit 5cbb7c9, `new` = this tree.
+The machine was shared with another agent's test runs (load average 2 to
+24 during these measurements), so wall times move by ±10-15% between
+sessions; where they disagree, the callgrind instruction counts
+(deterministic) and CPU time per request decide. `./scripts/bench-perf.sh`
+now takes `RUNS=N` (best of N, Slang and Go alternating) and `NOGO=1`.
+
+**1. Returning memory to the OS** (`runtime/src/heap.c`, ABI.md 3.2).
+RSS (MB, `/proc/self/statm`) of a program that allocates 250 MB in 1 MB
+`[]byte` buffers and 250 MB in 2.2M 80-byte strings (112-byte blocks),
+then drops them and sleeps (the spec test `memory2/heap_release_rss`
+checks the same with a 1 s limit):
+
+| | start | allocated | freed +0 ms | +200 ms | +400 ms | +1000 ms |
+|---|---:|---:|---:|---:|---:|---:|
+| old | 1 | 540 | 271 | 271 | 271 | 271 |
+| new | 1 | 540 | 352 | 352 | 18 | 18 |
+
+(old: the 1 MB buffers came from glibc's mmap and went back; the
+128-byte slab regions never did. new: the freed pages stay as reserve for
+0.3 s, then the scavenger gives everything above 16 MB back;
+`runtime.FreeOSMemory()` does it at once. Allocating the 540 MB took
+1.94 s new vs 2.31 s old.)
+
+Best of 5, alternating, `new` built from this tree (`alloc_heavy` with
+`SLANG_CYCLES=off`, so the cycle collector's own cost is excluded; see the
+previous section), wall s and peak RSS MB:
+
+| bench | old s | new s | old MB | new MB | instructions old → new |
+|---|---:|---:|---:|---:|---|
+| fib | 0.097 | 0.112 | 11.2 | 11.2 | 1.343G → 1.343G (identical code: the wall time is noise) |
+| sieve | 0.286 | 0.303 | 13.1 | 12.9 | 1.829G → 1.822G |
+| map | 0.223 | 0.183 | 52.8 | 52.9 | 615M → 615M |
+| strings | 0.065 | 0.065 | 23.3 | 23.7 | 719M → 711M |
+| json_like | 0.180 | 0.168 | 23.3 | 24.8 | 1.651G → 1.701G (+3%; page faults 17.3k → 6.7k) |
+| struct_map | 0.203 | 0.198 | 12.1 | 12.4 | 914M → 913M |
+| alloc_heavy | 0.387 | 0.435 | 11.5 | 11.5 | 4.158G → 4.751G, of which 0.37G is `slang_cycles_new*` and the rest the collector's codegen; the heap's own alloc + free paths are 2.6G in both |
+| regex | 0.207 | 0.209 | 46.6 | 51.0 | |
+| gzip | 1.694 | 1.752 | 104.7 | 113.3 | |
+| heap_churn (new) | 2.290 | 2.113 | 42.1 | 46.0 | RSS after the last round: 19 MB old (glibc trimmed the 132-byte strings) vs 43 MB new (one round's worth kept until the scavenger runs) |
+
+Design notes and tuning: a first version kept a reserve of max(16 MB,
+in use / 4) and released the rest synchronously; heap_churn then did 6.5k
+`madvise` calls and re-faulted 40 MB per round (2.80 vs 2.34 s). Keeping
+everything up to the recent peak synchronously made gzip's RSS 173 MB (vs
+105): the reserve is now bounded by *peak − in use*, so in use + reserve
+stays within the recent peak, and a background scavenger (a thread that
+never touches objects, so `slang_threaded` stays 0) releases what stayed
+unused for 0.3 s beyond 16 MB. The allocation fast path is inlined into
+`slang_object_new` from `heap.h` (out of line it cost 18% more
+instructions on alloc_heavy). Medium objects (16-128 KB) stay with malloc
+(a mapping per 20 KB string would hit the 65k VMA limit); larger ones get a
+mapping each, grown by `mremap`, with freed mappings cached within the
+reserve.
+
+**2. Biased reference counting** (`runtime/src/rc.c`, ABI.md 3.1).
+`http_hello`, Go's load generator against the Slang server in another
+process, best req/s of 4-5 rounds and the server's CPU time per request
+(user + sys, minimum over the rounds):
+
+| server | load ~5 | | load ~20 | |
+|---|---:|---:|---:|---:|
+| old | 101 536 req/s | 16.4 µs | 74 585 req/s | 15.7 µs |
+| new (biased) | 98 440 req/s | 16.2 µs | 81 996 req/s | 16.2 µs |
+| new, `SLANG_NO_BIAS=1` | 100 272 req/s | 16.4 µs | 84 032 req/s | 15.5 µs |
+
+Before tasks were excluded from biasing (`SLANG_RC_NOBIAS`), the server
+used 19.9 µs per request (vs 18.6 without biasing): with `SLANG_RC_STATS=1`
+the in-process benchmark queued 1.8M objects for a merge (9 per request,
+91% of them `Task` objects, which every await hands to another thread);
+with tasks never biased it is 183k (5.6M -> 2.4M objects biased).
+
+`shared_objects` (new), ms per phase (one builder / 8 readers, 8 builders
+/ one reader, 8 tasks with local churn), minimum of 10 alternating runs:
+
+| | phase 1 | phase 2 | phase 3 |
+|---|---:|---:|---:|
+| old (load ~5) | 426 | 125 | 124 |
+| new (load ~5) | 350 | 104 | 107 |
+| new, `SLANG_NO_BIAS=1` (load ~5) | 451 | 147 | 131 |
+| old (load ~20) | 437 | 137 | 140 |
+| new (load ~20) | 387 | 146 | 132 |
+| new, `SLANG_NO_BIAS=1` (load ~20) | 314 | 144 | 129 |
+| Go | 60-69 | 23-39 | 124-196 |
+
+The quieter session shows biasing 15-30% ahead in every phase, the loaded
+one does not separate them: a win on the churn phase (owner-local counts
+are plain stores) is plausible but not established beyond the noise here.
+Phase 1 is bound by the shared counts of the 200k objects every reader
+touches (cache-line ping-pong; Go has no counts). Single-threaded
+programs never bias (their instruction counts above are unchanged).
+`tcp_echo` (`SLANG_RC_STATS`: 93k biased, 24k queued) is within noise.
+`hello` grew from 15 KB to 33 KB (the heap, the scavenger and rc.c are
+reachable from `slang_release`).
+
+**3. io_uring** (`SLANG_IO_BACKEND=io_uring`): `examples/tcp_echo` gave 0
+wrong outputs in 500 runs before and after the fix (the 2% flake was seen
+under gVisor; the race — a completed poll's file reference dropped just
+after its CQE is posted — remains possible, so a listener is now shut down
+before close, which stops it accepting whatever still holds the file).
+Performance: `tcp_echo` best 0.431 s vs 0.456 s for epoll (median 0.536 vs
+0.558, 12 alternating runs each): parity; `http_hello` 66-73k vs 82-91k
+req/s and 20.6 vs 16.2 µs of server CPU per request: about 20% slower (a
+POLL_ADD submission per wait plus the completion reaped under the ring
+lock; submitting outside the lock did not help). So it stays opt-in.
+
+**4. testing.Panics** runs the function on a thread of its own and catches
+its panic (setjmp/longjmp), so the test's code runs once instead of once
+more per `Panics` call in a child process; `compiler/tests/slang_test_cmd.rs`
+covers both paths (`SLANG_TEST_PANICS=process` forces the old one).
+
+## Memory wave results (2026-10-21, after cycle collector, OS memory return, biased RC)
+
+Best of 3 on an idle machine, `--release`, cycle collector in default `auto` mode.
+
+| bench | Slang s | Go s | Slang/Go | Slang RSS | Go RSS |
+|---|---|---|---|---|---|
+| strings | 0.069 | 0.167 | **0.41x** | 24 MB | 18 MB |
+| regex | 0.234 | 0.588 | **0.40x** | 51 MB | 24 MB |
+| sieve | 0.324 | 0.608 | **0.53x** | 13 MB | 43 MB |
+| fib | 0.115 | 0.213 | **0.54x** | 11 MB | 11 MB |
+| json_like | 0.180 | 0.293 | **0.61x** | 25 MB | 34 MB |
+| map | 0.242 | 0.386 | **0.63x** | 53 MB | 44 MB |
+| alloc_heavy | 0.448 | 0.561 | **0.80x** | 11 MB | 14 MB |
+| struct_map | 0.196 | 0.227 | **0.86x** | 12 MB | 13 MB |
+| tcp_echo | 0.482 | 0.553 | **0.87x** | 56 MB | 117 MB |
+| gzip | 1.910 | 2.101 | **0.91x** | 113 MB | 75 MB |
+| nbody | 0.430 | 0.446 | 0.96x | 11 MB | 11 MB |
+| heap_churn (new) | 2.244 | 0.976 | 2.3x slower | 46 MB | 67 MB |
+| shared_objects (new) | 0.636 | 0.217 | 2.9x slower | 47 MB | 20 MB |
+
+Regressions and open items from this wave:
+
+- `heap_churn` (allocate/free 1 MB buffers and small strings in a loop) and
+  `shared_objects` (objects created on one task, read from 8 workers) are
+  the two benchmarks where Go's allocator and GC beat ARC: large-buffer
+  churn pays mmap/munmap and page-fault costs, and cross-thread reads pay
+  atomic shared counts even with biased RC. Both are new benchmarks added
+  to make this visible; they are the next optimisation targets (large-object
+  cache sizing, read-only borrows without retain across tasks).
+- Release `hello` grew from 14 KB to 32 KB: the segmented heap, the
+  scavenger and `rc.c` are reachable from `slang_release`.
+- `alloc_heavy` with the collector on is within noise of `SLANG_CYCLES=off`
+  after the pin-release optimisation; the W0001 warning it prints is
+  expected (`Node` is a tree, but the type can form a cycle).

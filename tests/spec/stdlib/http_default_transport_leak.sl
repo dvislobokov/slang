@@ -1,0 +1,34 @@
+// test: --leak-check with http.DefaultTransport(): its pooled HTTP/2 connection (and the connection's reader task) to a server in another process is released at shutdown, before the leak report (process-wide singletons are shut down while the scheduler still runs)
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http_default_transport_leak
+
+import std
+import std.io
+import std.net
+
+async func hello(req *http.Request, res *http.Response) void! {
+    res.Text(200, "hi " + req.Path)
+}
+
+// The server half: an h2c test server that lives a little longer than the
+// client needs (the client exits with the connection still open).
+async func serve() void! {
+    var srv = http.test.NewH2CServer(http.Func(hello))?
+    io.Eprintln(srv.URL)
+    await task.Delay(1500)
+    await srv.Close()
+}
+
+async func main() void! {
+    if len(os.Args()) > 1 {
+        await serve()?
+        return
+    }
+    var p = process.Start(os.Args()[0], ["serve"], process.Options{Stdin: 2, Stdout: 2, Stderr: 1})?
+    var url = strings.Trim(strings.FromBytes(await p.Stderr.Read(200)?))
+    http.DefaultTransport().H2C = true
+    var r = await http.Get(url + "/a")?
+    var r2 = await http.Get(url + "/b")?
+    println(r.Status, r.Body, r.Proto, r2.Body, http.DefaultTransport().Stats().HTTP2)
+}

@@ -173,19 +173,25 @@ fn leak_check_reports_live_objects() {
     ensure_runtime();
     let tmp = tmpdir("leak");
     let src = tmp.join("cycle.sl");
-    // A strong cycle: never freed (a `weak` back pointer would fix it).
+    // A strong cycle: never freed by reference counting (a `weak` back
+    // pointer would fix it); the cycle collector frees it at exit unless
+    // it is told not to run (SLANG_CYCLES=manual).
     std::fs::write(&src, "namespace app\n\nstruct Node {\n    next *Node\n}\n\nfunc main() {\n    var a = new Node{}\n    var b = new Node{next: a}\n    a.next = b\n}\n").unwrap();
     let cases: [(&[&str], Option<&str>); 3] = [(&["--leak-check"], Some("  2 x app.Node\n")), (&["--leak-check", "--release"], None), (&[], None)];
     for (flags, names) in cases {
         let exe = tmp.join("cycle");
         let b = Command::new(slang()).arg("build").arg(&src).arg("-o").arg(&exe).args(flags).output().unwrap();
         assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
-        let r = Command::new(&exe).output().unwrap();
+        let r = Command::new(&exe).env("SLANG_CYCLES", "manual").output().unwrap();
         let stderr = String::from_utf8_lossy(&r.stderr);
         if flags.is_empty() {
             assert!(r.status.success() && stderr.is_empty(), "{stderr}");
             continue;
         }
+        // With the collector on (the default), the cycle is freed.
+        let auto = Command::new(&exe).output().unwrap();
+        assert!(auto.status.success() && auto.stderr.is_empty(), "{flags:?}: {}", String::from_utf8_lossy(&auto.stderr));
+        assert!(stderr.contains("2 of them in unreachable reference cycles the cycle collector can free"), "{stderr}");
         assert_eq!(r.status.code(), Some(66), "{flags:?}: {stderr}");
         assert!(stderr.starts_with("leak: 2 objects\n"), "{flags:?}: {stderr}");
         match names {

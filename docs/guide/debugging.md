@@ -95,16 +95,23 @@ by the current task and the tasks it starts.
 
 ## Leaks
 
-Slang has no garbage collector, so a reference cycle without `weak` is a
-leak (see [memory.md](memory.md)). Run with `--leak-check` to find them:
+Reference counting cannot free a reference cycle by itself (see
+[memory.md](memory.md)): the compiler warns about types that can form one
+(W0001), and the cycle collector frees the cycles that remain. Run with
+`--leak-check` to see what is still alive at exit:
 
 ```sh
 slang run --leak-check app.sl
 ```
 
 At exit the program prints `leak: N objects` and, in a debug build, a
-line per type still alive and the field that closes the cycle, and
-exits with status 66. This program leaks two nodes:
+line per type still alive and the field that closes a cycle, and exits
+with status 66. With the cycle collector on (the default,
+`SLANG_CYCLES=auto`) it first collects once more, so what is reported is
+what the collector cannot free either: objects kept by a global, by a
+task that never finished, by a cycle through an `error` or a map shared
+between threads. To see the cycles themselves, turn the collector off or
+to manual. This program leaks two nodes then:
 
 ```slang
 // check-only
@@ -125,14 +132,20 @@ func main() {
 }
 ```
 
-`slang run --leak-check` prints:
+`SLANG_CYCLES=manual slang run --leak-check` prints:
 
 ```text
 b a
 leak: 2 objects
   2 x guide.debugging.leak.Node
   cycle through Node.Next (make one field of the cycle `weak *T` to break it)
+  2 of them in unreachable reference cycles the cycle collector can free (SLANG_CYCLES=auto or runtime.CollectCycles())
 ```
+
+In production, without `--leak-check`, start the program with
+`SLANG_DIAG_HEAP=1` and serve `diag.ServeHeap` at `/debug/heap`: it
+lists the types with the most live objects and how much each grew since
+the previous request; a type that keeps growing is the leak.
 
 ## The debugger
 
@@ -156,7 +169,9 @@ agent (`"type": "slang"` in `launch.json`) and supports breakpoints,
 conditions, logpoints, stepping, variables, tasks as threads, and
 stopping on panics or on errors being created. With lldb or gdb, the
 formatters in `tools/lldb` and `tools/gdb` show strings, slices, maps,
-`T!`, enums and interfaces readably.
+`T!`, enums and interfaces readably, and their `slang-rc <expr>` command
+decodes the reference count of the object a value points at (unowned,
+biased to a thread, cycle-collected, immortal).
 
 ## Looking at what the compiler did
 

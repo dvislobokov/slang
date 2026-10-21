@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { const slang_type_info *type; const slang_leak_field *fields; } reg;
+typedef struct { const slang_type_info *type; const slang_leak_field *fields; const char *acyclic; } reg;
 
 static reg *g_regs;
 static int64_t g_nregs, g_capregs;
@@ -26,8 +26,24 @@ void slang_leak_fields(const slang_type_info *type, const slang_leak_field *fiel
         g_regs = n;
         g_capregs = cap;
     }
-    g_regs[g_nregs++] = (reg){ type, fields };
+    g_regs[g_nregs++] = (reg){ type, fields, NULL };
     slang__plat_mutex_unlock(&g_mu);
+}
+
+/* `@acyclic` types (DESIGN.md "Циклы"): a leaked object of one that lies on
+ * a cycle breaks the promise, and the report says so. */
+void slang_leak_acyclic(const slang_type_info *type, const char *name) {
+    if (!type || !name) return;
+    slang__plat_mutex_lock(&g_mu);
+    for (int64_t i = 0; i < g_nregs; i++)
+        if (g_regs[i].type == type) g_regs[i].acyclic = name;
+    slang__plat_mutex_unlock(&g_mu);
+}
+
+static const char *acyclic_of(const slang_type_info *t) {
+    for (int64_t i = 0; i < g_nregs; i++)
+        if (g_regs[i].type == t) return g_regs[i].acyclic;
+    return NULL;
 }
 
 static const slang_leak_field *fields_of(const slang_type_info *t) {
@@ -102,8 +118,8 @@ void slang__leak_cycles(void) {
     qsort(l.objs, (size_t)l.n, sizeof *l.objs, cmp_ptr);
     unsigned char *seen = malloc((size_t)l.n);
     int64_t *stack = malloc((size_t)l.n * sizeof *stack);
-    const char *names[64];
-    int nnames = 0;
+    const char *names[64], *broken[64];
+    int nnames = 0, nbroken = 0;
     for (int64_t i = 0; seen && stack && i < l.n && nnames < 64; i++) {
         const slang_leak_field *fs = fields_of(l.objs[i]->type);
         for (; fs && fs->offset >= 0 && nnames < 64; fs++) {
@@ -114,6 +130,24 @@ void slang__leak_cycles(void) {
             if (j >= 0 && reaches(&l, j, i, seen, stack)) names[nnames++] = fs->name;
         }
     }
+    /* Leaked objects of @acyclic types on a cycle (any registered field). */
+    for (int64_t i = 0; seen && stack && i < l.n && nbroken < 64; i++) {
+        const char *a = acyclic_of(l.objs[i]->type);
+        if (!a) continue;
+        int dup = 0;
+        for (int k = 0; k < nbroken; k++) dup |= strcmp(broken[k], a) == 0;
+        if (dup) continue;
+        const slang_leak_field *fs = fields_of(l.objs[i]->type);
+        for (; fs && fs->offset >= 0; fs++) {
+            int64_t j = target(&l, i, fs);
+            if (j >= 0 && reaches(&l, j, i, seen, stack)) {
+                broken[nbroken++] = a;
+                break;
+            }
+        }
+    }
+    for (int k = 0; k < nbroken; k++)
+        fprintf(stderr, "  type %s is @acyclic but was found in a cycle\n", broken[k]);
     for (int k = 0; k < nnames; k++)
         fprintf(stderr, "  cycle through %s (make one field of the cycle `weak *T` to break it)\n", names[k]);
     free(seen);

@@ -247,6 +247,8 @@ pub const DOCS: &[(&str, &str, &str)] = &[
     ("std.math.bits.ReverseBytes32", "x", "ReverseBytes32 returns x with its bytes in reverse order."),
     ("std.math.bits.RotateLeft", "x, k", "RotateLeft returns x rotated left by k bits (right for negative k)."),
     ("std.math.bits.RotateLeft32", "x, k", "RotateLeft32 returns x rotated left by k bits (right for negative k)."),
+    // std.runtime
+    ("std.runtime.FreeOSMemory", "", "FreeOSMemory returns as much free heap memory to the operating system as possible: the calling thread's empty pages, the free page reserve and cached large mappings (runtime/ABI.md 3.2)."),
     // std.thread
     ("std.thread.Spawn", "f", "Spawn starts f on a new OS thread outside the task scheduler and returns a handle for Join."),
     ("std.thread.Join", "h", "Join waits for the thread h to finish."),
@@ -419,6 +421,7 @@ pub const NAMESPACE_DOCS: &[(&str, &str)] = &[
     ("std.reflect", "Compile-time and run-time reflection: type information, fields, methods, attributes and dynamic values."),
     ("std.strings", "Functions over UTF-8 strings: searching, splitting, joining, trimming, case mapping, and Builder."),
     ("std.thread", "OS threads outside the task scheduler (for blocking foreign code)."),
+    ("std.runtime", "Control of the runtime itself (memory returned to the OS)."),
     ("std.unicode", "Unicode character classes and case mapping."),
     ("std.unsafe", "Raw memory access and foreign calls without any checks; importing it needs the `unsafe` capability in the manifest."),
     ("std.uuid", "UUIDs: random version 4 values and validation."),

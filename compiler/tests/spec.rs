@@ -14,6 +14,10 @@
 //! | `// args: a b` | program arguments (split on whitespace) |
 //! | `// run-flags: --x` | use `slang run <src> <flags> -- <args>` instead of build + exec |
 //! | `// stderr: <text>` | stderr must contain `<text>` (stderr is otherwise not checked) |
+//! | `// warning: <text>` | the build's stderr must contain `<text>` (repeatable; e.g. a W0001 warning) |
+//! | `// no-warning: <text>` | the build's stderr must not contain `<text>` (repeatable) |
+//! | `// env: K=V` | environment variable of the program run (repeatable) |
+//! | `// build-flags: --x` | extra `slang build` flags (also for compile-fail tests) |
 //!
 //! `SPEC_FILTER=<substring>` restricts the run to tests whose path (relative
 //! to the repository, e.g. `tests/spec/errors/trace_basic.sl`) contains it.
@@ -36,6 +40,7 @@ const AREAS: &[&str] = &[
     "stdlib5",
     "web",
     "data",
+    "memory3",
 ];
 
 /// Per-process timeout for a built program (a pending feature may hang).
@@ -65,6 +70,10 @@ struct Directives {
     args: Vec<String>,
     run_flags: Vec<String>,
     stderr: Option<String>,
+    warnings: Vec<String>,
+    no_warnings: Vec<String>,
+    env: Vec<(String, String)>,
+    build_flags: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -94,6 +103,13 @@ fn parse_directives(file: &Path) -> Result<Directives, String> {
             "args" => d.args = val.split_whitespace().map(String::from).collect(),
             "run-flags" => d.run_flags = val.split_whitespace().map(String::from).collect(),
             "stderr" => d.stderr = Some(val.to_string()),
+            "warning" => d.warnings.push(val.to_string()),
+            "no-warning" => d.no_warnings.push(val.to_string()),
+            "build-flags" => d.build_flags = val.split_whitespace().map(String::from).collect(),
+            "env" => match val.split_once('=') {
+                Some((k, v)) => d.env.push((k.trim().to_string(), v.trim().to_string())),
+                None => return Err(format!("{}: bad env directive `{val}` (expected K=V)", file.display())),
+            },
             _ => {}
         }
     }
@@ -229,7 +245,7 @@ fn check(case: &Case) -> Result<(), String> {
     let result = (|| {
         if let Some(kw) = &case.dirs.error {
             let mut c = Command::new(slang());
-            c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe);
+            c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe).args(&case.dirs.build_flags);
             let o = run_with_timeout(c, Duration::from_secs(60))?;
             if o.code == Some(0) {
                 return Err(format!("expected a compile error containing `{kw}`, but the build succeeded"));
@@ -239,20 +255,42 @@ fn check(case: &Case) -> Result<(), String> {
             }
             return Ok(());
         }
+        let check_warnings = |build_stderr: &str| -> Result<(), String> {
+            for w in &case.dirs.warnings {
+                if !build_stderr.contains(w.as_str()) {
+                    return Err(format!("build stderr does not contain the warning `{w}`:\n{}", build_stderr.trim_end()));
+                }
+            }
+            for w in &case.dirs.no_warnings {
+                if build_stderr.contains(w.as_str()) {
+                    return Err(format!("build stderr contains `{w}`:\n{}", build_stderr.trim_end()));
+                }
+            }
+            Ok(())
+        };
         let out = if case.dirs.run_flags.is_empty() {
             let mut c = Command::new(slang());
-            c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe);
+            c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe).args(&case.dirs.build_flags);
             let b = run_with_timeout(c, Duration::from_secs(60))?;
             if b.code != Some(0) {
                 return Err(format!("build failed:\n{}", b.stderr.trim_end()));
             }
+            check_warnings(&b.stderr)?;
             let mut c = Command::new(&exe);
             c.current_dir(repo()).env("SLANG_NO_BACKTRACE", "1").args(&case.dirs.args);
+            for (k, v) in &case.dirs.env {
+                c.env(k, v);
+            }
             run_with_timeout(c, RUN_TIMEOUT)?
         } else {
             let mut c = Command::new(slang());
             c.current_dir(repo()).env("SLANG_NO_BACKTRACE", "1").arg("run").arg(&rel_src).args(&case.dirs.run_flags).arg("--").args(&case.dirs.args);
-            run_with_timeout(c, RUN_TIMEOUT + Duration::from_secs(60))?
+            for (k, v) in &case.dirs.env {
+                c.env(k, v);
+            }
+            let o = run_with_timeout(c, RUN_TIMEOUT + Duration::from_secs(60))?;
+            check_warnings(&o.stderr)?;
+            o
         };
         let expected = std::fs::read_to_string(case.out.as_ref().unwrap()).unwrap();
         let mut why = Vec::new();
@@ -396,6 +434,7 @@ areas!(
     spec_stdlib5 = "stdlib5",
     spec_web = "web",
     spec_data = "data",
+    spec_memory3 = "memory3",
 );
 
 #[test]

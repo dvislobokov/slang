@@ -141,8 +141,9 @@ The compiler checks dereferences of user pointers itself:
 
 ### 2.5 Thread safety
 
-- Refcount operations are atomic, so objects can be shared between tasks or
-  threads.
+- Refcount operations are thread-safe (atomic, or plain stores by the
+  thread a biased count belongs to, 3.1), so objects can be shared between
+  tasks or threads.
 - Strings and errors are immutable, so they are freely shareable.
 - Slices and maps are **not** internally synchronised, the same as in Go. Concurrent
   mutation needs a `Mutex` or a channel.
@@ -182,14 +183,88 @@ Use `slang_ptr_retain` / `slang_ptr_release` / `slang_ops_ptr` for such
 values; a non-nil `*T` always points at the payload of a whole object (the
 compiler never retains interior pointers, see DESIGN.md "Память").
 
-The refcount word holds the count in its low 62 bits
+The refcount word holds the count in its low 57 bits
 (`SLANG_RC_COUNT_MASK`); bit 62 (`SLANG_RC_WEAK_FLAG`) marks an object that
-has a weak box (3.4). `-1` (`SLANG_RC_IMMORTAL`) is immortal; `-2`
+has a weak box (3.4); bits 57..61 belong to the cycle collector (3.8):
+`SLANG_RC_CYCLIC` (61) marks an object of a potentially cyclic type, and
+only in such a word do `SLANG_RC_BUFFERED` (60), `SLANG_RC_MARKED` (59),
+`SLANG_RC_DIRTY` (58) and `SLANG_RC_ZOMBIE` (57) have their collector
+meaning. `-1` (`SLANG_RC_IMMORTAL`) is immortal; `-2`
 (`SLANG_RC_ARENA`) marks an object owned by an arena (3.6). Retain and release
 ignore these two; a word below `-2` is a string view inside a view block
 (`SLANG_RC_VIEW | block`, 4.1), and retain and release forward to the block.
 Inline fast paths in compiled code therefore treat every negative word as
 "call the runtime" (see `codegen/rc.rs`).
+
+**Biased counts** (`src/rc.c`). A non-negative word without `CYCLIC` is in
+one of two forms, told apart by bit 60 (`SLANG_RC_BIASED`):
+
+```
+unowned  bit 62 WEAK | bit 59 NOBIAS | bits 0..56 count
+biased   bit 62 WEAK | bit 60 BIASED | bit 59 QUEUED | bits 47..58 owner slot
+         | bits 16..46 S + 2^30 (SLANG_RC_S_EXCESS) | bits 0..15 B
+```
+
+A biased object belongs to the thread holding owner slot 1..4095; its
+count is `B + S`. **B** (the owner's part, the 16-bit half-word at the
+object's address on these little-endian targets) is changed only by the
+owner, with plain (relaxed atomic) 16-bit loads and stores; **S** (the shared
+part, signed, stored with an excess of 2^30) is changed by everyone else
+with 64-bit atomic RMW of `±1 << 16`, which never touches B. The thread-local
+`slang_rc_owner` (`int64_t`, exported by the runtime) is the owner's tag
+`(SLANG_RC_BIASED >> 47) | slot` of the calling thread, or
+`SLANG_RC_NO_OWNER` (0x1FFFF); a thread owns a word exactly when
+`((uint64_t)word >> 47) & SLANG_RC_OWNER_MASK (0x16FFF) == slang_rc_owner`
+(the mask keeps the sign, `CYCLIC`, `BIASED` and slot bits).
+
+- Objects are created unowned with count 1. The first retain of an unowned
+  object whose word is exactly 1 (no flags but WEAK) by a thread with a
+  slot (scheduler workers and the thread that called `slang_runtime_init`)
+  while `slang_threaded == 1` biases it to that thread in one CAS
+  (`B = 2, S = 0`). Words with `NOBIAS` (set by the runtime on objects shared
+  by design, such as tasks) and `CYCLIC` words are never biased; neither is
+  anything while `slang_threaded == 0` (one thread: unowned counts are
+  already plain stores) or with `SLANG_NO_BIAS=1`. While threaded, unowned
+  counts change by CAS (another thread may bias the object meanwhile).
+- Owner: retain `B += 1` (at `B == 0xFFFF` one CAS moves 0x8000 from B to S
+  first); release with `B >= 2` is `B -= 1`. Release with `B == 1`: if
+  `S == 0` and neither `QUEUED` nor `WEAK` is set the owner held the only
+  reference and frees the object without an atomic; otherwise a CAS sets
+  `B = 0`, and the object is freed if then `S == 0` and `QUEUED` is clear.
+  An owner release with `B == 0` is a release on S.
+- Others: retain is one atomic add of `1 << 16`. Release is a CAS of
+  `S -= 1` that, when S becomes negative and `B + S` does not reach zero,
+  also sets `QUEUED`: the object then goes on its owner slot's merge queue
+  (`B + S` may later reach zero by a plain store of the owner, which does
+  not look at S). The thread whose CAS makes `B + S` zero frees the object,
+  unless `QUEUED` is set.
+- Merge: the owner, at the slow path of its allocations, before its worker
+  parks and when it exits, or any thread while the owner is parked (an idle
+  worker, a blocking `slang_task_await`) or gone (it takes the slot's lock,
+  which the owner holds while it runs), takes the queue and for each object
+  reads `B + S`: zero means dead (freed there); otherwise one CAS folds a
+  negative S into B (`B += S, S = 0`) and clears `QUEUED`.
+- **Deallocation condition**: exactly one thread frees an object, the one
+  that observes `B + S == 0` in a snapshot its own atomic step produced
+  (the owner's CAS, another thread's CAS, or the merge of a `QUEUED`
+  object, which only the queue frees), or a holder that read
+  `B + S == 1` with neither `QUEUED` nor `WEAK` set (it held the only
+  reference; `slang_weak_get` resurrects by CAS of `S += 1` only while
+  `B + S > 0`).
+- **Owner exit**: the thread merges its queue and gives up its slot (TLS
+  destructor). Its objects stay biased with the free slot: every thread
+  updates them with the atomic S operations (the global *unowned* state),
+  and a thread that queues one merges it at once (it takes the free slot's
+  lock). A new thread that takes the slot later becomes their owner;
+  taking the slot lock waits for a merge in progress, so its plain stores
+  never race with one.
+- `S` must stay within ±2^30 (minus a margin for adds in flight; beyond it
+  the runtime panics with `reference count overflow`). At shutdown
+  `slang_runtime_shutdown` merges every queue before the leak report.
+
+`slang_refcount` decodes both forms. Code outside the runtime must not
+modify a refcount word except as documented here (immortal/arena words of
+its own objects); compiled code only does the inline fast paths below.
 
 ### 3.2 Functions
 
@@ -199,13 +274,15 @@ Inline fast paths in compiled code therefore treat every negative word as
 | `void *slang_realloc(void *p, int64_t size)` | raw `realloc`. New bytes are **not** zeroed. Panics on out of memory |
 | `void slang_free(void *p)` | frees raw memory. NULL is fine |
 | `void *slang_object_new(const slang_type_info *type, int64_t size)` | allocates a zeroed object of `size` bytes, **header included** (so `size >= 16`), sets `refcount = 1` and `type = type`. Returns it +1 |
-| `void slang_retain(void *obj)` | atomic `++refcount`. No-op for NULL and for immortal objects |
-| `void slang_release(void *obj)` | atomic `--refcount`. When it reaches 0: calls `type->drop(obj)` if both are non-NULL, then frees the memory. No-op for NULL and immortal objects |
-| `int64_t slang_refcount(const void *obj)` | current count (debugging and tests), without the weak flag. 0 for NULL, -1 for immortal objects |
+| `void slang_retain(void *obj)` | adds one reference (atomically unless the owner of a biased count or single-threaded, 3.1). No-op for NULL and for immortal objects |
+| `void slang_release(void *obj)` | drops one reference (3.1). When the count reaches 0: calls `type->drop(obj)` if both are non-NULL, then frees the memory. No-op for NULL and immortal objects |
+| `int64_t slang_refcount(const void *obj)` | current count (debugging and tests): the unowned count, or `B + S` of a biased one, without flags. 0 for NULL, -1 for immortal objects |
 | `int64_t slang_live_objects(void)` | number of objects allocated with `slang_object_new` and not yet freed (leak checks in tests). Objects made immortal (`slang_string_literal`, `slang_error_sentinel`) do not count |
 | `void slang_ptr_retain(void *payload)` / `void slang_ptr_release(void *payload)` | retain / release the object whose payload (object + 16) is given: the operations on a `*T`. No-op for NULL |
 | `void slang_leak_check_enable(int32_t mode)` | leak check (3.5); call it before anything else, even before `slang_runtime_init` |
-| `uint8_t slang_threaded` (global) | 0 while the process has a single thread, 1 for good once a second thread was started (`slang__plat_thread_start*` sets it before creating the thread; C code that starts threads of its own that touch Slang objects must set it first). While it is 0 refcount updates may be plain loads and stores |
+| `uint8_t slang_threaded` (global) | 0 while the process has a single thread, 1 for good once a second thread was started (`slang__plat_thread_start*` sets it before creating the thread; C code that starts threads of its own that touch Slang objects must set it first; the heap's scavenger thread, which never touches objects, leaves it alone). While it is 0 refcount updates of unowned words may be plain loads and stores, and nothing is biased |
+| `_Thread_local int64_t slang_rc_owner` | the calling thread's owner tag for biased counts (3.1), `SLANG_RC_NO_OWNER` without a slot. Read by the inline fast paths |
+| `void slang_runtime_free_os_memory(void)` | `std.runtime.FreeOSMemory`: the calling thread's empty heap pages, the free-page reserve and the cached large mappings go back to the OS (below), and `malloc_trim` |
 
 **The `drop` contract.** `drop(obj)` must release every reference the object holds:
 strings, pointers, slices (`slang_slice_release`) and so on. It must **not** free
@@ -214,29 +291,53 @@ strings, pointers, slices (`slang_slice_release`) and so on. It must **not** fre
 are no such fields, `type` may point to a type info whose `drop` is NULL, or
 `type` itself may be NULL.
 
-**Allocation (implementation note, not ABI).** Objects of at most 128 bytes
-(header included) come from a small-object allocator: per-thread free lists
-per 16-byte size class, carved from 4 MB regions that are never returned to
-the OS; a bitmap over the address space identifies region memory on free.
-Larger objects use `malloc`. It is disabled under AddressSanitizer, with leak
-check mode 2 and with `SLANG_NO_SLAB=1`. Nothing outside the runtime may free
-or `realloc` object memory itself. `slang_release` skips the atomic
-decrement when it reads a count of exactly 1 with no weak flag (the caller
-holds the only reference, so no other thread can retain it); otherwise the
-decrement is `acq_rel`, and `slang_retain` is a relaxed increment. While
-`slang_threaded == 0` both use a plain store instead of the RMW. The live and
-total object counts are per-thread counters summed on demand (no shared
-atomic per allocation). The scheduler's worker and timer threads start with
-the first task, not in `slang_runtime_init`, so a program that never starts
-a task stays single-threaded.
+**Allocation (implementation note, not ABI; `src/heap.c`, fast paths in
+`src/heap.h`).** Objects of at most 16 KB (header included) are *small*:
+rounded up to one of 36 size classes (16-byte steps to 128, then four per
+power of two) and carved from 64 KB *pages*, 64 to a 4 MB-aligned
+*segment* whose base holds the page descriptors (a bitmap over the address
+space tells segment memory from the rest on free). A page serves one class
+and is owned by one thread's heap: the owner allocates and frees with plain
+stores and counts its live blocks; other threads push what they free onto
+the page's atomic list, which the owner takes back when it runs out
+(full pages are revisited when a remote free signals them, at the owner's
+next slow path or before its worker parks). A page whose blocks are all
+free is *retired* to a global pool (unless it is the only page of its
+class in the heap); pages of exited threads are adopted or retired when
+they become free. Objects up to 128 KB are *medium* (`malloc` with a
+16-byte prefix), larger ones *large*: a mapping of their own grown with
+`mremap` where available. **Returning memory**: freed pages and large
+mappings stay as a reserve while in use + reserve stays within the recent
+peak of the heap (so rebuilding data does not fault pages in again) and
+16 MB (`SLANG_HEAP_RESERVE=<bytes>[KMG]`); a background *scavenger* thread
+(started the first time the reserve exceeds the minimum; it never touches
+objects, so `slang_threaded` stays 0) gives back, every 0.2 s, what stayed
+unused for 0.3 s beyond the minimum: free pages with
+`slang__plat_mem_release` (Linux `MADV_DONTNEED`, macOS `MADV_FREE`,
+Windows `DiscardVirtualMemory` / `MEM_RESET`; the address range stays
+reserved) and cached mappings with `munmap`. `slang_runtime_free_os_memory`
+releases everything at once. `std.diag.Runtime()` reports `HeapInUse`
+(owned pages, medium and large objects), `HeapRetained` (the reserve) and
+`HeapReleased` (pages given back whose address range is kept). The heap is
+off (plain `malloc`) under AddressSanitizer, with leak check mode 2 and
+with `SLANG_NO_SLAB=1`. Nothing outside the runtime may free or `realloc`
+object memory itself. The live and total object counts are per-thread
+counters summed on demand (no shared atomic per allocation). The
+scheduler's worker and timer threads start with the first task, not in
+`slang_runtime_init`, so a program that never starts a task stays
+single-threaded.
 
 **Inline fast paths (compiler-side, `codegen/rc.rs`).** At `-O3` (or with
 `SLANG_INLINE_RC=1`) compiled code does not call `slang_retain`/`slang_release`
-(or the `slang_ptr_*` variants) for the common single-threaded case: for a
-non-NULL object it loads the count (relaxed) and `slang_threaded`, and if
-the latter is 0 it stores `count + 1` (retain, `count >= 0`) or `count - 1`
-(release, `2 <= count < SLANG_RC_WEAK_FLAG`); every other case calls the
-runtime function, which stays the reference behaviour. Not done at `-O2`:
+(or the `slang_ptr_*` variants) for the common cases: for a non-NULL object
+it loads the word (relaxed) and `slang_threaded`; if the latter is 0 it
+stores `word + 1` (retain, `word >= 0`) or `word - 1` (release,
+`2 <= word < 2^57`, below every flag bit). Otherwise, if the word is a
+biased count owned by this thread (`((uint64_t)word >> 47) & 0x16FFF ==
+slang_rc_owner`, a thread-local load), it stores the 16-bit B `+ 1` (retain,
+`B != 0xFFFF`) or `- 1` (release, `B >= 2`) at the object's address. Every
+other case calls the runtime function, which stays the reference
+behaviour. Not done at `-O2`:
 it grows large programs by up to a third and their optimisation time by
 half for a few percent on refcount-heavy loops (benchmarks/README.md).
 
@@ -245,8 +346,8 @@ freed. Use them for string literals and sentinel errors emitted as LLVM globals.
 
 When the count of an object with a weak box reaches zero, the weak box is
 cleared **before** `drop` runs, so weak references read as NULL from then on
-(including inside the destructor). There is no cycle collector: use weak
-references for back pointers.
+(including inside the destructor). Use weak references for back pointers;
+reference cycles that remain are freed by the cycle collector (3.8).
 
 ### 3.3 Value ops (ownership of inline values in containers)
 
@@ -255,11 +356,19 @@ To know how to retain or release those bytes they take an optional
 `slang_value_ops *`:
 
 ```c
-typedef struct slang_value_ops {   // 16 bytes
+typedef struct slang_value_ops {   // 24 bytes
     void (*retain)(void *slot);    // +0  add the references contained in *slot
     void (*release)(void *slot);   // +8  drop the references contained in *slot
+    void (*visit)(void *slot, slang_cycle_cb cb, void *ctx); // +16 cycle collector (3.8), or NULL
 } slang_value_ops;
 ```
+
+`visit` reports the references in `*slot` that may lie on a reference
+cycle (3.8). A slice backing or map created with ops whose `visit` (key or
+value ops for a map) is non-NULL is flagged `SLANG_RC_CYCLIC`; the
+runtime's own `slang_ops_*` have none. Compiled code emits a non-NULL
+`visit` exactly for element types that hold references to objects of
+cyclic types, so all containers of one element type agree.
 
 - `NULL` ops means plain data (ints, floats, bools, structs with no references).
 - `&slang_ops_ref`: the slot is one 8-byte heap-object pointer (string, map,
@@ -300,9 +409,14 @@ it must be enabled before the first allocation). At the end of
 leak: N objects
   K x TypeName        (mode 2 only, by count, then name)
   cycle through Type.Field (make one field of the cycle `weak *T` to break it)
+  M of them in unreachable reference cycles the cycle collector can free (...)
 ```
 
-to stderr and exits with status `SLANG_LEAK_EXIT_CODE` (66). The compiler
+to stderr and exits with status `SLANG_LEAK_EXIT_CODE` (66). Before the
+count is taken, `slang__cycles_at_exit` runs: in `SLANG_CYCLES=auto` mode a
+final collection (up to four rounds), so only what the collector cannot
+free is reported; in `manual` mode a dry run whose garbage count is the
+`M of them ...` line (omitted when 0, and in `off` mode). The compiler
 enables it for `--leak-check` (mode 2 in debug builds, 1 with `--release`)
 and releases the program's globals before calling the shutdown.
 
@@ -314,7 +428,10 @@ compiler calls it at startup in mode 2 for every struct type info with
 pointer fields, naming them `"Type.Field"`. In mode 2 the report then
 lists, once per field name, every registered field of a leaked object that
 points at another leaked object from which the first is reachable again
-(the field lies on a reference cycle). Only the first 100000 leaked objects
+(the field lies on a reference cycle). `void slang_leak_acyclic(const slang_type_info *type, const
+char *name)` (after `slang_leak_fields` of the type) marks it `@acyclic`
+(DESIGN.md "Циклы"); a leaked object of it on such a cycle adds `type
+<name> is @acyclic but was found in a cycle`. Only the first 100000 leaked objects
 are examined.
 
 ### 3.6 Arenas (`std.arena`)
@@ -362,6 +479,127 @@ word.
 Inside the arm `case T x:` of a type switch on an interface local that is
 never reassigned, method calls through that local use `T`'s vtable (a
 constant global), so LLVM calls (and can inline) the method directly.
+
+### 3.8 Cycle collector (`src/cycles.c`)
+
+Bounded synchronous trial deletion (Bacon–Rajan) over the objects of
+potentially cyclic types only (DESIGN.md "Циклы"). It never scans the
+heap, stacks or globals: only the objects reachable through cyclic-typed
+references from the *possible roots* recorded since the previous run.
+
+**Flags.** `SLANG_RC_CYCLIC` is set at allocation, unless `SLANG_CYCLES=off`,
+by `slang_cycles_new_entry` (compiled code uses it instead of
+`slang_object_new` for boxes, cells and `new T` of a cyclic type, and for
+closure environments that capture a cell of one), `slang_cycles_new` (C
+callers with registered types), `slang_cycles_new_dyn` (a
+dynamic type: flagged when the type info is registered with a visitor;
+`std.reflect` allocation) and by `slice.c`/`map.c` for containers whose ops
+have a `visit` (3.3). A flagged object never takes the biased refcount
+paths or the inline release fast path (its count word is >= 2^57): its
+release goes to `slang__cycles_release`, and in a multi-threaded process
+its retain is an RMW whose result is checked for `MARKED`. Flagged objects
+have the ordinary layout and size.
+
+**Linking.** Outside `cycles.c` the runtime refers to the collector only
+through weak symbols (`slang__cycles_*`, and `slang__diag_heap_*` of
+`diag_heap.c`): a program that never allocates an object of a cyclic type
+does not link it (no flagged object can exist then; the container and
+leak-report hooks test the weak symbol for NULL). Compiled code links it
+by calling `slang_cycles_new_entry`.
+
+| Function | Semantics |
+|---|---|
+| `void *slang_cycles_new_entry(slang_cycle_type *e, int64_t size)` | `slang_cycles_new(e->key, size)`, registering `e` first if its `state` is 0. Compiled code emits one non-constant entry per cyclic boxed type (`cycles.entry.N`) and per environment of a lambda capturing a cyclic cell, so only the types a program allocates are registered and unreachable code is not kept alive |
+| `void slang_cycles_register(const slang_cycle_type *t, int64_t n)` | registers `n` entries `{key, visit, fin, clear, alias, state}` (48 bytes, kept by pointer) at once. With `visit`: objects whose type info is `key`; `visit(obj, cb, ctx)` calls `cb(ctx, ref, tid)` for each reference (an object header) the object holds that may lie on a cycle; `fin(obj)` runs the destructors only (NULL: none); `clear(obj)` releases the references without destructors (NULL: `type->drop`). Without `visit`: `key` is a dynamic type id whose objects are flagged. `alias` (or NULL) is a dynamic type id registered with the entry: `ti.<*S>` (an interface holding a `*S` names the S object) or a lambda's function pointer (a closure's environment). The registry is a lock-free-read table (insertions under a mutex, grown by copying); the runtime registers its backing and map types itself |
+| `void *slang_cycles_new(const slang_type_info *type, int64_t size)` | `slang_object_new` plus the flag; runs a due automatic collection first (a safe point) |
+| `extern int64_t slang_cycles_epoch` / `void slang_ptr_release_noroot(void *payload, int64_t epoch)` | (in `mem.c`) the collection epoch, incremented when a collection starts and when it ends; the release paired with a *pin*: compiled code that retains a borrowed `*T` of a cyclic type for the duration of a call or a field access (`expr.rs` `arg`/`keep`) reads the epoch then and releases with `slang_ptr_release_noroot`, which decrements without recording a possible root when the epoch is unchanged (no collection overlapped the pin) and is `slang_ptr_release` otherwise. Sound because the pin added no reference anywhere: every other reference to the object or its cycle that went away during the pin was an ordinary, recorded decrement, and no collection can have dropped such a root meanwhile. Early exits release pins with the ordinary release |
+| `void *slang_cycles_new_dyn(const slang_type_info *type, int64_t size)` | the same when `type` is registered with a visitor, else `slang_object_new` |
+| `int64_t slang_cycles_collect(void)` | a collection now, on the calling thread (waits for a running one); returns the objects freed. 0 when off |
+| `void slang_cycles_stats(slang_cycle_stats *out)` / `int32_t slang_cycles_mode(void)` / `void slang_cycles_set_mode(int32_t)` | statistics (`runs, collected, candidates, examined, pending, threshold, aborted, mode`), the mode (0 off, 1 manual, 2 auto); `set_mode` switches manual/auto (off only before any object exists) |
+
+`cb`'s `tid` is NULL when the reference is statically to a flagged type
+(`*T` of a cyclic `T`, a slice backing or map whose ops visit), else the
+dynamic type id from an interface's vtable word 0, an `any`'s type word or
+a closure's function pointer: the collector follows the reference only if
+`tid` is registered. A visitor reads its fields with plain word loads
+while mutators may write them.
+
+**Possible roots.** A flagged object whose count is decremented to a
+value other than zero, not `BUFFERED` and not `MARKED`, gets `BUFFERED`
+(in the same RMW) and is appended to its thread's candidate buffer. When a
+`BUFFERED` object's count reaches zero, the weak boxes are cleared and its
+`drop` runs at once; if it is among the last 8 entries of the dying
+thread's buffer it leaves it and is freed, else it gets
+`ZOMBIE` (one RMW decides with the buffer owner's `BUFFERED`-clearing RMW
+who frees the memory) and the buffer owner frees it when it sweeps. A
+full buffer is swept (zombies freed) and grows up to 2^18 entries; it is
+*published* to a global list when it holds a collection's worth of roots,
+when the thread exits, before a manual collection, and when another
+thread requests it (in auto mode, after `threshold` roots were recorded
+process-wide; each thread publishes at its next record). Published roots
+that die become zombies; the list is swept when it doubles.
+
+**Triggers.** `SLANG_CYCLES=auto` (default): once `threshold` published
+roots are pending, the next `slang_cycles_new` on any thread runs a
+collection (one at a time; a thread that finds one running skips).
+`threshold` starts at 4096 and doubles (max 2^22) after a collection that
+freed fewer than 1/8 of its roots, halves (min 1024) after one that freed
+more than half; `SLANG_CYCLES_THRESHOLD=N` fixes it. `manual`: only
+`slang_cycles_collect` (`std.runtime.CollectCycles`) and the leak report.
+`off`: nothing is flagged, recorded or collected.
+
+**A collection.** (0) `g_collecting = 1` with a seq_cst RMW and fence; from
+then on no flagged object's memory is freed until the end (frees are
+deferred; `drop` still runs on time). (1) Take the published roots and
+the own buffer, clearing `BUFFERED` (zombies are freed at the end; dying
+roots are left to their dropper). (2) Discovery: from the live roots,
+follow the visitors' references to flagged objects; each new object gets
+`MARKED` by an RMW whose result is its count snapshot (objects being
+dropped are skipped). More than `SLANG_CYCLES_MAX_SCAN` (default 2^22)
+objects abort the collection. (3) After all are marked, visit them again
+and subtract every internal reference from the target's snapshot. (4)
+Every object with a non-zero remainder, and everything reachable from it
+through internal references, is live (black). (5) Validation: a white
+object whose word shows `DIRTY` or a count different from its snapshot
+becomes black with what it reaches; repeated until stable, and again
+under the weak-table lock, which then clears the weak boxes of the white
+objects. (6) The white objects are garbage: the collector takes a
+reference to each, runs every `fin` (registration order of the roots,
+then discovery order), recounts the references among the white objects
+(a white object with any other reference — a destructor stored it
+somewhere — becomes black and keeps the collector's reference forever,
+so no destructor runs twice), runs every `clear`, and frees each object
+whose count is then 1 (one still in another thread's unpublished buffer
+becomes a zombie instead). (7) Unmark (`MARKED`/`DIRTY` cleared; a member
+that was `DIRTY` is recorded as a possible root again), `g_collecting =
+0`, deferred frees.
+
+**The invariant.** While an object is `MARKED`, every change of its count
+sets `DIRTY`: in a multi-threaded process every retain and release of a
+flagged object (`slang_retain`, `slang__cycles_release`,
+`slang_weak_get`) is an atomic RMW whose result is checked for `MARKED`;
+in a single-threaded process the collector runs alone, so nothing changes
+behind it (destructors only run in step 6). A thread can create or drop a
+reference to an object only by changing its count, and compiled code holds
+a counted reference behind every borrowed one. Hence when validation finds
+a white object's count equal to its snapshot, every reference that count
+stands for is one step 3 read (field reads happen after all marks; a
+reference added or removed after its target was marked dirties it) and
+still exists, and all of them come from white objects. No thread holds
+or can obtain a reference to the white set except through a weak
+reference, and step 5 clears those under the lock `slang_weak_get` takes.
+Memory safety of the concurrent reads: the collector dereferences a
+reference only when its target is statically flagged or its `tid` is
+registered; a flagged object freed after step 0 is deferred (the
+mutator's free path does a seq_cst fence before reading `g_collecting`,
+the collector one after setting it; under ThreadSanitizer both are RMWs
+on `g_collecting`), so every object the collector reached from a live one
+stays readable. Flagged backings never move (`append` resizes in place
+only at a count of exactly 1). Map tables are freed by a resize, so a map
+is walked only while the process is single-threaded; in a threaded
+process its entries count as outside references and cycles through maps
+are not collected. Not walked at all: `error` values, tasks and coroutine
+frames, arena (`-2`) and stack (`-1`) objects.
 
 ---
 
@@ -775,6 +1013,20 @@ A panic in any thread kills the whole process. If two threads panic at the same
 time, only the first message is printed. Out-of-memory in any runtime allocation
 panics with `out of memory (...)`.
 
+**Panic capture** (`src/std_testing.c`, for `std.testing.Panics`; not on
+Windows). `int64_t slang_testing_rt_capture(void *fn, void *env)` runs the
+closure `func()` (its two words) on a new OS thread inside a *capture
+scope* and returns 1 if it panicked, 0 if it returned, -1 where capture is
+not available (`SLANG_PLAT_HAS_PANIC_CAPTURE` is 0; then std.testing
+re-runs the test in a child process). A panic on that thread while the
+scope is active prints nothing and does not exit: the message is saved and
+`longjmp` returns to the scope's start, ending the thread. None of
+the steps above happen, **no `defer` and no destructor of the abandoned
+frames runs** (what they owned is leaked; locks they held stay held), and
+panics on other threads (tasks the function started) still end the process.
+`slang_string *slang_testing_rt_capture_message(void)` returns the message
+of the calling thread's last captured panic (+1, `""` if none).
+
 ---
 
 ## 9. I/O
@@ -1095,12 +1347,17 @@ Rules and guarantees:
   closed listening socket could still accept for a moment. The first arm of a descriptor
   `fstat`s it so that regular files and closed descriptors get the
   synchronous answers of epoll. Raw system calls; no liburing.
-  `slang__plat_poller_backend` reports `io_uring` or `epoll`. It is not
-  the default: it measured no faster than one-shot epoll (one submission
-  per wait instead of one `epoll_ctl`), and the kernel releases a
-  completed poll's file reference lazily, so a listening socket closed
-  right after its poll completed can still accept for a moment (then reset
-  the connection).
+  `slang__plat_poller_backend` reports `io_uring` or `epoll`. A poll that
+  has just completed may still hold its file reference for a moment (the
+  submitting task frees it right after posting the CQE), so close(2) does
+  not always release the socket at once: std.net shuts a listener down
+  (`shutdown(SHUT_RD)`, which stops listening whatever holds the file)
+  before closing it, so a closed listener never accepts again (connected
+  sockets only see their FIN or RST postponed by microseconds);
+  examples/tcp_echo passes 500 runs of 500. It is not the default: at
+  parity with one-shot epoll on tcp_echo but about 20% fewer requests/s on
+  http_hello (one submission per wait instead of one `epoll_ctl`, plus the
+  completion reaped under the ring lock; benchmarks/README.md).
 - **Shutdown with pending waits**: the shard threads are woken and joined;
   waits still pending are released without completing (the scheduler has
   stopped, nobody would run their continuations), like pending timers.
@@ -1201,7 +1458,7 @@ counts it nor what it holds as leaked), and `main` returns 1.
 | Function | Semantics |
 |---|---|
 | `void slang_runtime_init(int argc, char **argv)` | stores the arguments and starts the worker pool and the timer thread. Idempotent. Call it first, on the main thread |
-| `void slang_runtime_shutdown(void)` | waits until the job queue is empty and no job is running, stops the workers and the timer thread (pending timers are dropped without firing), flushes stdio, and frees the argument slice. Call it from the main thread only (calling it from a worker deadlocks). After shutdown the scheduler restarts lazily if used again |
+| `void slang_runtime_shutdown(void)` | releases the process-wide singletons (std.diag's slot map: `http.DefaultTransport()`, the default logger, metrics; 18) while the scheduler still runs the tasks their destructors wake, then waits until the job queue is empty and no job is running, stops the workers and the timer thread (pending timers are dropped without firing), flushes stdio, frees the argument slice, releases singletons registered again meanwhile and merges the refcount queues (3.1) before the leak report. Call it from the main thread only (calling it from a worker deadlocks). After shutdown the scheduler restarts lazily if used again |
 | `void slang_runtime_drain(void)` | the first step of `slang_runtime_shutdown` alone: waits until no job is queued or running and stops the workers and the timer thread. The compiler calls it after `main` returns, then releases the program's globals (their destructors may print or even start tasks again), then calls `slang_runtime_shutdown` |
 | `void slang_os_args(slang_slice *out)` | `os.Args`: an owned `[]string` (`elem_size` 8, ops `slang_ops_ref`) that **shares** the runtime's backing array. Treat it as read-only |
 | `void slang_exit(int32_t code)` | flushes stdout and stderr, then calls `_Exit(code)` immediately (no defers, no shutdown wait). `noreturn` |
@@ -1217,7 +1474,14 @@ output still sitting in buffers may be lost if workers are still printing.
 |---|---|
 | `SLANG_WORKERS=n` | number of worker threads (default: online CPUs, max 256) |
 | `SLANG_NO_BACKTRACE=1` | panic prints only the `panic: ...` line (useful for golden-output tests) |
-| `SLANG_NO_SLAB=1` | objects come straight from `malloc` instead of the small-object allocator (3.2), e.g. so Valgrind memcheck sees each object |
+| `SLANG_CYCLES=auto\|manual\|off` | the cycle collector (3.8): automatic collections (default), only `std.runtime.CollectCycles()`, or none (plain reference counting). `SLANG_CYCLES_THRESHOLD=N` fixes the number of recorded roots that triggers an automatic collection; `SLANG_CYCLES_MAX_SCAN=N` bounds the objects one collection examines (default 2^22) |
+| `SLANG_DIAG_HEAP=1` | per-type live object counters for `std.diag.HeapByType` / `/debug/heap` in any build (18) |
+| `SLANG_NO_SLAB=1` | objects come straight from `malloc` instead of the object heap (3.2), e.g. so Valgrind memcheck sees each object |
+| `SLANG_HEAP_RESERVE=n[K\|M\|G]` | free heap memory the scavenger leaves to the process (3.2; default 16M) |
+| `SLANG_NO_BIAS=1` | no thread owns objects: every refcount stays unowned (3.1), e.g. to compare |
+| `SLANG_RC_STATS=1` | at shutdown, print to stderr how many objects were biased, queued for a merge and merged by another thread (3.1) |
+| `SLANG_TEST_PANICS=process` | `testing.Panics` re-runs the test in a child process instead of catching the panic in-process (8) |
+| `SLANG_IO_BACKEND=io_uring` | the io_uring readiness backend on Linux 6.0+ (10.9; opt-in, falls back to epoll) |
 | `SLANG_DEBUG=[host]:port[,wait]` | programs built with `--debug-agent` (default for debug builds) start the in-process debug agent before `main` (§22); port 0 picks a free port, announced on stderr as `slang-debug: listening on HOST:PORT`; `,wait` (or `SLANG_DEBUG_WAIT=1`) holds `main` until the client sends `configurationDone` |
 
 ---
@@ -1473,13 +1737,13 @@ see `docs/PLATFORMS.md`.
 
 | File | Contents |
 |---|---|
-| `platform/posix.c` | threads (`slang__plat_thread_start[_detached]`, `_join`), `cpu_count`, `yield`, monotonic clock `mono_ns`, entropy `random_bytes` (`getrandom`/`getentropy`, then `/dev/urandom`), `backtrace` (execinfo, or a frame-pointer walk without it, as on musl; frames named from the executable's ELF `.symtab` / Mach-O `LC_SYMTAB`), the `SIGPROF` CPU sampler and the symbolizer, `tz_tzif` (always false: tzdata files) |
+| `platform/posix.c` | threads (`slang__plat_thread_start[_detached]`, `_join`; `_start_background` for runtime threads that never touch objects and so leave `slang_threaded` alone: the heap scavenger), `cpu_count`, `yield`, monotonic clock `mono_ns`, entropy `random_bytes` (`getrandom`/`getentropy`, then `/dev/urandom`), `backtrace` (execinfo, or a frame-pointer walk without it, as on musl; frames named from the executable's ELF `.symtab` / Mach-O `LC_SYMTAB`), the `SIGPROF` CPU sampler and the symbolizer, `tz_tzif` (always false: tzdata files) |
 | `platform/poll_epoll.c` | the readiness poller on Linux: level-triggered one-shot epoll (`EPOLLONESHOT`, re-armed per wait) plus an eventfd for wake-ups (`poller_new/free/arm/remove/wait/wake`; events carry a 64-bit token) |
 | `platform/poll_kqueue.c` | the same poller on macOS and the BSDs: `EVFILT_READ`/`EVFILT_WRITE` with `EV_ONESHOT` (no `EV_CLEAR`), `EVFILT_USER` wake-ups (a self-pipe where it does not exist). Compiles only there; compile-checked on Linux against `runtime/stub-sdk/macos` (`make CROSS=aarch64-apple-darwin`, docs/PLATFORMS.md) |
 | `platform/net_posix.c` | `process_init` (SIGPIPE ignored, open-files soft limit raised to the hard one), socket addresses (`addr_ip/unix/family/parts/format`, `parse_ip`, `format_ip`, interface name/index), non-blocking sockets (`sock_open/connect/error/bind/listen/accept/recv/send/sendv/recvfrom/sendto/shutdown/close/name`), options (`sock_setopt/getopt`: TCP_NODELAY, keep-alive idle/interval/count, SO_RCVBUF/SNDBUF, SO_LINGER, SO_REUSEADDR/PORT, SO_BROADCAST, TCP_CORK/TCP_NOPUSH, IPV6_V6ONLY, TCP_FASTOPEN, multicast loop/TTL/interface; `sock_mcast` join/leave), `sendfile` (sendfile(2) on Linux/FreeBSD/macOS, pread+send elsewhere), `file_open/size/close`, `unlink`, blocking `resolve` (getaddrinfo, RFC 6724 order or IPv4 first), `reverse` (getnameinfo), `lookup_port`, `interfaces` (getifaddrs), `err_class` (errno to the std.net sentinel classes), `strerror` (lower case). Results are `>= 0` or `-errno`; "would block" is `-SLANG_PLAT_EAGAIN` |
 | `platform/certroots.c` | `cert_bundle_path`: the PEM bundle of trusted roots (`$SSL_CERT_FILE`, then the Linux/BSD/macOS bundle paths; Windows: the `ROOT` system store exported once per process to `%LOCALAPPDATA%\slang\roots.pem`), used by `std.crypto.x509.SystemRoots` (section 19) |
 | `platform/platform.h` (inline, POSIX) / `platform/win32.c` | `slang__plat_mutex`/`_cond`/`_once`/`_tls_key` with `SLANG_PLAT_*_INIT` static initialisers (pthreads; SRWLOCK, CONDITION_VARIABLE, INIT_ONCE, FLS); `cond_wait_ns` (relative timeout, CLOCK_MONOTONIC for conds made by `cond_init` where the system allows); `flockfile` wrappers |
-| `platform/posix.c` (more) / `win32.c` | `wall_ns`, `sleep_ns`, `strftime`/`strptime`, `localtime_path`/`zoneinfo_dir`, `aligned_alloc`/`aligned_free`/`alloc_size`, `runtime_init` (Windows: UTF-8 argv from `CommandLineToArgvW`), `stream_write` (Windows console: `WriteConsoleW`), `pid`, `getenv`/`setenv`/`environ` (UTF-8; UTF-16 on Windows), `hostname`, `temp_dir`, `path_sep`, signals (`sig_start/catch/ignore/default/raise`: self-pipe thread / `SetConsoleCtrlHandler`), users (`user_lookup`, `group_lookup`, `uid`) |
+| `platform/posix.c` (more) / `win32.c` | `wall_ns`, `sleep_ns`, `strftime`/`strptime`, `localtime_path`/`zoneinfo_dir`, `aligned_alloc`/`aligned_free`/`alloc_size`, virtual memory for the object heap (`page_size`; `mem_map` an aligned anonymous mapping, `mem_unmap`; `mem_release` gives a range's memory back but keeps it mapped: `MADV_DONTNEED` on Linux, `MADV_FREE` on macOS, `DiscardVirtualMemory` or `MEM_RESET` on Windows; `mem_remap` = `mremap` on Linux, unsupported elsewhere; `malloc_trim`), `SLANG_PLAT_HAS_PANIC_CAPTURE` (testing.Panics' in-process capture, 8; 0 on Windows), `runtime_init` (Windows: UTF-8 argv from `CommandLineToArgvW`), `stream_write` (Windows console: `WriteConsoleW`), `pid`, `getenv`/`setenv`/`environ` (UTF-8; UTF-16 on Windows), `hostname`, `temp_dir`, `path_sep`, signals (`sig_start/catch/ignore/default/raise`: self-pipe thread / `SetConsoleCtrlHandler`), users (`user_lookup`, `group_lookup`, `uid`) |
 | `platform/fs_posix.c` / `fs_win32.c` | files on descriptors (`open` with the std.os flag bits, `read`, `pread`, `write`, `write_all`, `seek`, `close`, `fsync`, `ftruncate`, `fstat`, `stat_path` into `slang__plat_stat`), `isatty`, `mkdir`, `rmdir`, `unlink_file`, `remove`, `rename`, `chmod`, `getcwd`, `chdir`, `is_executable`, directory iteration (`dir_open/next/close`). POSIX errno values on every platform (Win32 errors are mapped). On Windows: `CreateFileW` + `_open_osfhandle`, UTF-16 paths, `/` and `\` |
 | `platform/fs_posix.c` / `proc_win32.c` | child processes: `spawn` (fork/exec, pidfd; `CreateProcessW` with a quoted command line; Windows pipes: overlapped named pipes waited on by the IOCP poller, descriptors `0x400000 + slot`, or with the WSAPoll fallback relayed to pollable loopback sockets), `pipe_read/write/close`, `wait_pid`, `kill` |
 | `platform/poll_iocp.c` | the readiness poller on Windows: a completion port per poller with readiness from one `IOCTL_AFD_POLL` per armed socket (zero-byte overlapped `ReadFile` / write completion for child pipes), `PostQueuedCompletionStatus` wake-ups, `GetQueuedCompletionStatusEx` waits; falls back to `poll_wsapoll.c` (or `SLANG_POLLER=wsapoll`); `poller_backend` names the backend |
@@ -1491,7 +1755,7 @@ see `docs/PLATFORMS.md`.
 | `platform/timefmt.c` | calendar arithmetic for all platforms (`utc_tm`, `timegm`) and the "C"-locale `strftime`/`strptime` used on Windows and musl (`*_portable`, tested against glibc on Linux; `SLANG_PLAT_LIBC_TIMEFMT` marks the C libraries whose own are used) |
 
 Users of the layer: every OS call of the runtime. `task.c`, `task_io.c`,
-`mem.c`, `weak.c`, `leak.c`, `debug.c` and the `std_*.c` modules use the
+`mem.c`, `heap.c` (also virtual memory and the scavenger thread), `rc.c`, `weak.c`, `leak.c`, `debug.c` and the `std_*.c` modules use the
 platform locks; `std_fs.c`, `std_os*.c`, `io.c`, `diag.c` the file
 functions; `std_process.c` the process functions; `std_os_signal.c` the
 signal functions; `std_time*.c` the clocks and time formatting;
@@ -1597,7 +1861,7 @@ Handles are `int64_t` (a `net_sock *`, never 0 or -1). "Would block" is
 | `rtReadInto(h, buf, off) int!` | `slang_net_rt_read_into(int64_t h, const slang_slice *buf, int64_t off, slang_error **err)` | reads into `buf[off..]` (no allocation): bytes read, 0 at end of stream, -1 would block |
 | `rtWrite(h, data, off)` / `rtWriteStr(h, s, off)` / `rtWriteV(h, bufs [][]byte, off) int!` | `slang_net_rt_write`, `_write_str`, `_write_v` | writes from byte `off` (of the concatenation for `WriteV`, one `sendmsg` of up to 64 buffers); bytes written or -1 |
 | `rtShutdown(h, how) void!` | `slang_net_rt_shutdown` | `how`: 1 read, 2 write, 3 both |
-| `rtClose(h)` / `rtFree(h)` / `rtIsClosed(h) bool` / `rtFd(h) int` | `slang_net_rt_close`, `_free`, `_is_closed`, `_fd` | 16.1; `rtFree` only from `Drop`; `rtFd` is -1 once closed |
+| `rtClose(h)` / `rtFree(h)` / `rtIsClosed(h) bool` / `rtFd(h) int` | `slang_net_rt_close`, `_free`, `_is_closed`, `_fd` | 16.1; `rtFree` only from `Drop`; `rtFd` is -1 once closed. A listener is shut down for reading before its descriptor is closed (it stops accepting at once, even while the file is still referenced) |
 | `rtWaitReadable(h, ms)` / `rtWaitWritable` `Task<int>` | `slang_net_rt_wait_readable(int64_t h, int64_t ms)` | `slang_io_wait_*` (codes of 10.9) with `ms <= 0` meaning no timeout; a closed handle gives a completed task with 2 |
 | `rtLocalAddr(h)` / `rtRemoteAddr(h) string`, `rtPort(h) int` | `slang_net_rt_local_addr` ... | `"ip:port"`, `"[ip%zone]:port"` or the Unix path; IPv4-mapped peers of dual-stack sockets as plain IPv4; the remote address is kept from dial/accept (valid after Close) |
 | `rtSetOpt(h, opt, v) void!` / `rtGetOpt(h, opt) int!` | `slang_net_rt_set_opt` / `_get_opt` | `opt` = `SLANG_PLAT_OPT_*` of platform.h: 1 NODELAY, 2 KEEPALIVE, 3 KEEPIDLE, 4 KEEPINTVL, 5 KEEPCNT, 6 RCVBUF, 7 SNDBUF, 8 LINGER (seconds, < 0 default), 9 REUSEADDR, 10 REUSEPORT, 11 BROADCAST, 12 CORK (TCP_NOPUSH on BSD), 13 V6ONLY, 14 FASTOPEN, 15 MCAST_LOOP, 16 MCAST_TTL, 17 MCAST_IF (interface index) |
@@ -1660,7 +1924,9 @@ API list is DESIGN.md, "Сеть и протоколы". In short:
   once when a reused connection turns out stale, speaks to proxies (absolute
   form for http, CONNECT for https; `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`),
   asks for and decodes gzip. The process-wide `DefaultTransport()` lives in
-  the std.diag slot map (released before the leak report).
+  the std.diag slot map, which `slang_runtime_shutdown` releases first,
+  while the scheduler still runs: its pool closes the connections, and the
+  HTTP/2 reader tasks that wakes finish before the leak report (11).
 
 ### 16.5 std.net.http C helpers (`src/std_http.c`)
 
@@ -1799,6 +2065,9 @@ files), `src/profile.c` (pprof profiles) and `src/platform/posix.c`
 | `diag.rtStartCPUProfile(path, hz)` | `void slang_diag_rt_start_cpu_profile(const slang_string *path, int64_t hz, slang_error **err)` | creates `path` (error if it cannot), allocates an 8 MB sample buffer and starts `ITIMER_PROF` at `hz` (default 100). Errors: already running, unsupported platform |
 | `diag.rtStopCPUProfile()` | `int64_t slang_diag_rt_stop_cpu_profile(slang_error **err)` | stops, writes the profile, returns the number of samples. Samples that do not fit the buffer are dropped |
 | `diag.rtHeapText()` | `slang_string *slang_diag_rt_heap_text(void)` | `"<count> <type> <bytes>\n"` per type of the live objects, most frequent first; `""` unless leak tracking with type names is on (`--leak-check` without `--release`) |
+| `diag.rtHeapTypes()` | `slang_string *slang_diag_rt_heap_types(void)` (`src/diag_heap.c`) | `"<live>\t<allocated>\t<bytes>\t<type>\n"` per type, most live first: from the leak-check object list when it is on (`allocated` -1), else from the per-type counters of `SLANG_DIAG_HEAP=1` (read at startup: every allocation and free updates a per-thread table keyed by the type info, summed on demand; `bytes` = live x `type->size`), else `""` |
+| `diag.rtHeapCounting()` | `bool slang_diag_rt_heap_counting(void)` | whether the counters are on |
+| `runtime.rtCollectCycles()` / `runtime.rtCycleStat(i)` | `int64_t slang_runtime_rt_collect_cycles(void)` / `int64_t slang_runtime_rt_cycle_stat(int64_t i)` (`src/cycles.c`) | `std.runtime.CollectCycles` / `CycleStats` (3.8): stat 0 runs, 1 collected, 2 candidates, 3 examined, 4 pending, 5 threshold, 6 aborted, 7 mode |
 | `diag.rtWriteHeapProfile(path)` | `void slang_diag_rt_write_heap_profile(const slang_string *path, slang_error **err)` | the same as a pprof profile (`inuse_objects`, `inuse_space`; one pseudo-function per type); error without tracking |
 | `log.rtOpen(path)` | `int64_t slang_log_rt_open(const slang_string *path, slang_error **err)` | `open(O_WRONLY\|O_CREAT\|O_APPEND\|O_CLOEXEC, 0644)`; error `open <path>: <strerror>` |
 | `log.rtWrite(fd, s)` | `void slang_log_rt_write(int64_t fd, const slang_string *s, slang_error **err)` | writes all of `s` (retries `EINTR`) |

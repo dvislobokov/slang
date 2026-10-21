@@ -718,9 +718,9 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   формате pprof (`profile.proto`), совместим с `go tool pprof`, `pprof`
   (Google) и Speedscope; `slang tool pprof` — своя обёртка с flame graph.
 - **Память**: подсчёт ссылок даёт точные данные без снимков GC: живые
-  объекты по типу и месту аллокации (`/debug/pprof/heap`), аллокации с
-  сэмплированием (`allocs`), детектор утечек (`--leak-check`) и
-  циклов.
+  объекты по типу и месту аллокации (`/debug/pprof/heap`, `/debug/heap`),
+  аллокации с сэмплированием (`allocs`), детектор утечек (`--leak-check`)
+  и циклов, метрики сборщика циклов.
 - **Задачи**: `/debug/pprof/tasks` — все живые async-задачи с их трассами
   ожидания (аналог goroutine dump), блокировки (`mutex`, `block`).
 - **Трассировка выполнения**: `diag.Trace` — события планировщика,
@@ -757,8 +757,15 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   `diag.PrometheusText()` — формат 0.0.4; `diag.ServeMetrics` — функция-
   обработчик для `Router` (`r.Get("/metrics", diag.ServeMetrics)`),
   `diag.MetricsHandler()` — `http.Handler`. Рантайм: `diag.Runtime()`
-  (`LiveObjects`, `Allocations`, `Tasks`, `QueueLength`, `Workers`) и
-  `diag.EnableRuntimeMetrics()` (метрики `slang_*` в `PrometheusText`).
+  (`LiveObjects`, `Allocations`, `Tasks`, `QueueLength`, `Workers`, а также
+  память кучи в байтах: `HeapInUse` — страницы с объектами, средние и
+  большие объекты; `HeapRetained` — свободная, но ещё не отданная ОС память
+  (резерв, входит в RSS); `HeapReleased` — свободные страницы, уже отданные
+  ОС, чьи адреса сохранены; `runtime/ABI.md` §3.2) и
+  `diag.EnableRuntimeMetrics()` (метрики `slang_*` в `PrometheusText`, в
+  том числе `slang_heap_inuse_bytes`, `slang_heap_retained_bytes`,
+  `slang_heap_released_bytes`). `runtime.FreeOSMemory()` отдаёт ОС всю
+  свободную память кучи сразу.
 - **Трассировка**: `diag.StartSpan(name)` / `StartSpanKind(name, kind)` →
   `*diag.Span` (поля OpenTelemetry: `TraceId` 16 байт hex, `SpanId` 8,
   `ParentSpanId`, `Kind`, `StartNanos`/`EndNanos`, `Attributes`, `Status`,
@@ -789,6 +796,26 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   `inuse_space` по типам) и `diag.HeapProfile()` (текст) — из списка живых
   объектов детектора утечек, поэтому только под `slang run --leak-check`
   без `--release`; места аллокаций и сэмплирование `allocs` — нет.
+- **Живые объекты по типам в продакшене**: с `SLANG_DIAG_HEAP=1` в
+  окружении (читается при старте; в любой сборке, в том числе
+  `--release`) каждая аллокация и освобождение обновляют счётчик своего
+  `TypeInfo` в таблице потока (без атомарных операций на общем пути,
+  суммируются по запросу; без переменной — одна предсказуемая проверка).
+  `diag.HeapByType() []diag.HeapType` (`Type`, `Live`, `Allocated`,
+  `Bytes` = живые × размер типа), самые многочисленные первыми; под
+  `--leak-check` — из точного списка живых объектов (`Allocated` = -1);
+  `diag.HeapCounting()` — есть ли данные. `diag.HeapReport(limit)` —
+  текстовая таблица топ-`limit` типов с приростом каждого с прошлого
+  отчёта (состояние общее для процесса); `diag.ServeHeap` — обработчик
+  для `Router` (`r.Get("/debug/heap", diag.ServeHeap)`, топ-50),
+  `diag.HeapHandler()` — `http.Handler`. Растущий от запроса к запросу
+  тип — кандидат в утечку (обычно цикл, который не освободил ни `weak`,
+  ни сборщик циклов).
+- **Сборщик циклов**: `diag.EnableRuntimeMetrics()` добавляет в
+  `PrometheusText` `slang_cycles_collected_total` (объекты, освобождённые
+  сборщиком), `slang_cycle_collections_total`, `slang_cycle_candidates`
+  (возможные корни, ждущие сборки) и `slang_cycle_candidates_total`;
+  подробности — `std.runtime.CycleStats()` (DESIGN.md «Циклы»).
 - **CLI**: `slang tool pprof [флаги] файл` вызывает `go tool pprof` (или
   `pprof`).
 - Нет: эндпоинтов `/debug/pprof/*`, профилей задач/блокировок, `diag.Trace`

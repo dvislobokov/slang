@@ -31,6 +31,7 @@ mod call;
 mod coerce;
 mod collections;
 mod consts;
+pub mod cycles;
 // >>> debugger
 pub mod debug_agent;
 // <<< debugger
@@ -101,6 +102,16 @@ pub fn analyze_with_policy(files: &[ast::File], diags: &mut Diagnostics, policy:
     let program = s.finish();
     if !had_errors {
         ownership::check(&program, diags);
+        had_errors = diags.has_errors();
+    }
+    if !had_errors {
+        cycles::check(&program, diags);
+    }
+    if cycles::deny_warnings() {
+        for d in diags.items.iter_mut().filter(|d| d.severity == crate::diagnostics::Severity::Warning) {
+            d.severity = crate::diagnostics::Severity::Error;
+            d.notes.push(("help: warnings are errors (--deny-warnings)".into(), None));
+        }
         had_errors = diags.has_errors();
     }
     if had_errors {

@@ -59,8 +59,11 @@ Delve интерпретирует: условные точки останова
   children: string, срезы, map, error, `T!`, enum с данными, интерфейсы/
   `any` с динамическим типом по `vtable[0]`, замыкания по имени функции,
   `Task<T>` через `slang_debug_task_layout` (ABI.md §20), `weak`, `char`;
-  точка останова `SlangPanic` на `slang_panic*`; команда `slang-next`)
-  и `tools/gdb/slang_printers.py`. `slang debug --lldb|--gdb file.sl`
+  точка останова `SlangPanic` на `slang_panic*`; команды `slang-next` и
+  `slang-rc <выражение>` — счётчик ссылок объекта, на который указывает
+  значение, с разбором слова: неразделённый, смещённый к слоту потока
+  (B + S), циклический с флагами сборщика, бессмертный, арена, вид строки;
+  ABI.md §3.1) и `tools/gdb/slang_printers.py` (те же `slang-rc`). `slang debug --lldb|--gdb file.sl`
   собирает и запускает отладчик с форматтерами (`--source f --batch` для
   скриптов); `slang debug --formatters lldb` печатает путь к скрипту.
 - **DAP**: `editors/vscode` — тип `slang` (`launch`: `program`/`source`/
@@ -117,6 +120,12 @@ Delve интерпретирует: условные точки останова
 - **Паники и ошибки**: перехват в `slang_panic` и в местах создания
   ошибок (`break on error NotFound`) до раскрутки.
 - **Память**: счётчик ссылок, владельцы, циклы — через рантайм.
+  Детектор утечек (`--leak-check`) уже различает циклы, которые
+  освободил бы сборщик циклов (`SLANG_CYCLES=manual`: строка «M of them in
+  unreachable reference cycles…»), и настоящие утечки; в режиме `auto`
+  он сначала собирает циклы, и в отчёте остаются только последние.
+  Живые объекты по типам без `--leak-check` — `SLANG_DIAG_HEAP=1` и
+  `/debug/heap` (docs/FRAMEWORK.md §5).
 - **Горячая замена функций** в dev-сборке тем же агентом.
 
 ### Чем быстрее Delve

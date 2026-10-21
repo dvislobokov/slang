@@ -223,7 +223,7 @@ slang_string *slang_string_concat(const slang_string *a, const slang_string *b) 
 slang_string *slang_string_append(slang_string *a, const slang_string *b) {
     int64_t la = slen(a), lb = slen(b);
     if (lb == 0) return a;
-    if (!a || __atomic_load_n(&a->hdr.refcount, __ATOMIC_ACQUIRE) != 1 || a->data != (char *)(a + 1)) {
+    if (!a || !slang__rc_unique(&a->hdr) || a->data != (char *)(a + 1)) {
         /* Shared, immortal, a view or empty: copy. */
         slang_string *s = slang_string_concat(a, b);
         slang_release(a);

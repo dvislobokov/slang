@@ -1,0 +1,7 @@
+collected 0
+root 2
+drop root
+drop b
+parent gone true
+drop a
+collected 0

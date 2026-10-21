@@ -22,6 +22,8 @@ pub mod codes {
     pub const UNKNOWN_IDENTIFIER: &str = "E0004";
     /// A syntax error.
     pub const SYNTAX: &str = "E0100";
+    /// A type that can form a strong reference cycle (DESIGN.md "Циклы").
+    pub const REFERENCE_CYCLE: &str = "W0001";
 }
 
 /// A text replacement in the diagnostic's file: `span` (byte offsets in

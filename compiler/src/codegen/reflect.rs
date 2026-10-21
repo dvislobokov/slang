@@ -703,7 +703,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     let off = cg.type_info_field_offset("ptrTo");
                     let pp = cg.byte_gep(t, off);
                     let ptr_to = cg.b.build_load(ptr, pp, "").unwrap().into_pointer_value();
-                    let obj = cg.call_rt_v("slang_object_new", &[t.into(), size.into()]).into_pointer_value();
+                    // A dynamic type: the runtime flags it if it is registered cyclic.
+                    let alloc = if cg.cycles.any() { "slang_cycles_new_dyn" } else { "slang_object_new" };
+                    let obj = cg.call_rt_v(alloc, &[t.into(), size.into()]).into_pointer_value();
                     let pl = cg.payload(obj);
                     let bx = cg.call_rt_v("slang_object_new", &[ptr_to.into(), cg.i64_ty().const_int(24, false).into()]).into_pointer_value();
                     let bp = cg.payload(bx);

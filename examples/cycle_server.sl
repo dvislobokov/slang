@@ -1,0 +1,84 @@
+namespace examples.cycle_server
+
+import std
+import std.io
+import std.net
+
+// A long-running server whose request handling leaves a reference cycle
+// behind every time: each request gets a Session that points at its
+// request context, the context points back, and a cleanup closure stored
+// in the session captures the session itself. Reference counting alone
+// would leak several objects per request (W0001 warns about both types);
+// the cycle collector (SLANG_CYCLES=auto, the default) frees them on the
+// way, so the number of live objects stays bounded however many requests
+// are served, and the program passes --leak-check.
+
+struct Session {
+    Id      int
+    User    string
+    Ctx     *RequestCtx
+    OnClose func()
+}
+
+struct RequestCtx {
+    Path    string
+    Session *Session
+    Tags    []string
+}
+
+var opened = 0
+var closed = 0
+
+func newSession(path string) *Session {
+    var s = new Session{Id: opened, User: fmt.Format("user{0}", opened % 7)}
+    s.Ctx = new RequestCtx{Path: path, Session: s, Tags: ["web", path]}
+    s.OnClose = func() { closed += 1 }
+    opened += 1
+    return s
+}
+
+// Requests come one at a time (the client awaits each), so the handlers
+// never run at the same time.
+async func Handle(req *http.Request, res *http.Response) void! {
+    var s = newSession(req.Path)
+    res.Text(200, s.User + " " + s.Ctx.Path + "\n")
+    s.OnClose()
+    // s goes out of scope: the session, its context and its closure are
+    // now an unreachable cycle.
+}
+
+async func main() void! {
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: http.Func(Handle)}
+    srv.Listen()?
+    var serving = srv.Serve()
+    var base = fmt.Format("http://127.0.0.1:{0}", srv.Port())
+
+    var requests = 10000
+    var firstHalf = 0
+    var secondHalf = 0
+    for i in 0..requests {
+        var r = await http.Get(base + "/item")?
+        if i < 2 {
+            print(r.Body)
+        }
+        if i % 250 == 0 {
+            var live = diag.Runtime().LiveObjects
+            if i < requests / 2 && live > firstHalf {
+                firstHalf = live
+            }
+            if i >= requests / 2 && live > secondHalf {
+                secondHalf = live
+            }
+        }
+    }
+    println("requests", requests, "sessions", opened, "closed", closed)
+    // Without the collector the second half would end with twice as many
+    // live objects as the first.
+    println("live objects stay bounded:", secondHalf <= firstHalf)
+    var st = runtime.CycleStats()
+    println("collector:", st.Mode, "collections ran:", st.Runs > 0, "cycles freed:", st.Collected > 0)
+
+    await srv.Shutdown()
+    await serving?
+    println("server stopped")
+}

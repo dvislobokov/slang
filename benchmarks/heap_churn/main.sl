@@ -1,0 +1,40 @@
+namespace bench.heapchurn
+
+import std
+import std.io
+
+// 20 rounds: build 40 MB of small strings (two size classes) and 32
+// large 256 KB buffers, then drop them all. Exercises page retirement, the
+// free-page reserve and the large-mapping cache; prints the RSS (MB) after
+// the last round (heap memory returned to the OS) next to a checksum.
+
+func rssMB() int {
+    var s = try io.ReadFile("/proc/self/statm") catch err {
+        return -1
+    }
+    var f = strings.Fields(s)
+    var pages = try strconv.Atoi(f[1]) catch err {
+        return -1
+    }
+    return pages * 4096 / (1 << 20)
+}
+
+func main() {
+    var total = 0
+    for round in 0..20 {
+        var small []string = []
+        for i in 0..300000 {
+            if i % 3 == 0 {
+                small = append(small, strings.Repeat("a", 100 + round))
+            } else {
+                small = append(small, strings.Repeat("b", 20 + i % 16))
+            }
+        }
+        var big [][]byte = []
+        for _ in 0..32 {
+            big = append(big, strings.Bytes(strings.Repeat("c", 256 << 10)))
+        }
+        total += len(small) + len(big) + len(small[len(small) - 1])
+    }
+    println(total, "rss_after", rssMB())
+}

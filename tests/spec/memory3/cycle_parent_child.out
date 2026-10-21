@@ -1,0 +1,6 @@
+built
+drop b parent root children 0
+drop a parent root children 0
+drop root parent none children 2
+collected 4
+again 0

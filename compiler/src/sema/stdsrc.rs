@@ -55,7 +55,9 @@ const MODULES: &[(&str, &str, &str)] = &[
     ("std.net.tls", "tls_server.sl", include_str!("stdlib_src/tls_server.sl")),
     ("std.log", "log.sl", include_str!("stdlib_src/log.sl")),
     ("std.diag", "diag.sl", include_str!("stdlib_src/diag.sl")),
+    ("std.diag", "diag_heap.sl", include_str!("stdlib_src/diag_heap.sl")),
     ("std.arena", "arena.sl", include_str!("stdlib_src/arena.sl")),
+    ("std.runtime", "runtime_cycles.sl", include_str!("stdlib_src/runtime_cycles.sl")),
     // >>> debugger (docs/DEBUGGER.md stage 2)
     ("std.debug", "debug.sl", include_str!("stdlib_src/debug.sl")),
     ("std.debug", "debug_dap.sl", include_str!("stdlib_src/debug_dap.sl")),

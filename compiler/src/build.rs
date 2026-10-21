@@ -157,6 +157,7 @@ pub fn parse_args(args: &[String]) -> Result<(BuildOptions, Vec<String>), String
             "--debug-agent" => o.debug_agent = Some(true),
             "--no-debug-agent" => o.debug_agent = Some(false),
             "--leak-check" => o.leak_check = true,
+            "--deny-warnings" => crate::sema::cycles::set_deny_warnings(true),
             "--no-error-trace" => o.no_error_trace = true,
             "--static" => o.static_link = true,
             "--verbose" | "-v" => o.verbose = true,

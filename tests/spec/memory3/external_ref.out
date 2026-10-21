@@ -1,0 +1,7 @@
+held 0 g2 l2
+drop l1
+drop l2
+local dropped 2
+drop g1
+drop g2
+global dropped 2

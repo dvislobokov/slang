@@ -1,4 +1,5 @@
 #include "test.h"
+#include <sched.h>
 
 static int drops;
 static void counting_drop(void *obj) { (void)obj; drops++; }
@@ -15,7 +16,7 @@ TEST(alloc_zeroed) {
 TEST(refcount_basic) {
     int64_t live = slang_live_objects();
     slang_object *o = slang_object_new(&counted, 24);
-    assert(o->refcount == 1 && o->type == &counted);
+    assert(slang_refcount(o) == 1 && o->type == &counted);
     assert(slang_live_objects() == live + 1);
     slang_retain(o);
     assert(slang_refcount(o) == 2);
@@ -59,7 +60,7 @@ TEST(atomic_refcount) {
 TEST(layout) {
     assert(sizeof(slang_object) == 16);
     assert(sizeof(slang_type_info) == 24);
-    assert(sizeof(slang_value_ops) == 16);
+    assert(sizeof(slang_value_ops) == 24);
     assert(sizeof(slang_slice) == 32);
     assert(sizeof(slang_map_desc) == 48);
     assert(sizeof(slang_map_iter) == 32);
@@ -191,6 +192,275 @@ TEST(leak_report) {
     assert(st == 0 && buf[0] == 0);
 }
 
+/* ---- the object heap (heap.c) ---- */
+
+static const slang_type_info plain = { "Plain", 0, NULL };
+
+TEST(heap_sizes) {
+    /* Every size class, medium and large objects: zeroed, writable, freed. */
+    int64_t live = slang_live_objects();
+    static const int64_t sizes[] = { 16, 17, 32, 100, 128, 129, 160, 161, 1000, 1024, 1025, 4096, 16384, 16385,
+                                     65536, 131072, 131073, 1 << 20, 5 << 20 };
+    slang_object *objs[sizeof sizes / sizeof sizes[0]];
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        unsigned char *o = slang_object_new(&plain, sizes[i]);
+        for (int64_t j = 16; j < sizes[i]; j++) assert(o[j] == 0);
+        memset(o + 16, 0xab, (size_t)sizes[i] - 16);
+        objs[i] = (slang_object *)o;
+    }
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        unsigned char *o = (unsigned char *)objs[i];
+        assert((sizes[i] == 16 || o[sizes[i] - 1] == 0xab) && slang_refcount(o) == 1);
+        slang_release(o);
+    }
+    assert(slang_live_objects() == live);
+    /* Reused memory is zeroed again. */
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        unsigned char *o = slang_object_new(&plain, sizes[i]);
+        for (int64_t j = 16; j < sizes[i]; j++) assert(o[j] == 0);
+        slang_release(o);
+    }
+}
+
+TEST(heap_growth) {
+    /* Strings grow in place through every tier (small -> medium -> large). */
+    slang_string *s = NULL;
+    char chunk[1000];
+    memset(chunk, 'x', sizeof chunk);
+    slang_string *piece = slang_string_new(chunk, sizeof chunk);
+    for (int i = 0; i < 3000; i++) s = slang_string_append(s, piece);
+    assert(slang_string_len(s) == 3000000);
+    assert(slang_string_data(s)[2999999] == 'x');
+    slang_release(s);
+    slang_release(piece);
+}
+
+#define HEAP_N 20000
+static void *heap_objs[HEAP_N];
+static void *heap_free_half(void *arg) {
+    /* Frees objects another thread allocated (remote frees). */
+    int start = (int)(intptr_t)arg;
+    for (int i = start; i < HEAP_N; i += 2) slang_release(heap_objs[i]);
+    return NULL;
+}
+
+static void *heap_alloc_and_exit(void *arg) {
+    /* Allocates and leaves objects behind for others: its pages are abandoned. */
+    (void)arg;
+    for (int i = 0; i < HEAP_N; i++) heap_objs[i] = slang_object_new(&plain, 16 + (i % 7) * 16);
+    return NULL;
+}
+
+TEST(heap_threads) {
+    int64_t live = slang_live_objects();
+    for (int round = 0; round < 5; round++) {
+        pthread_t a, b;
+        pthread_create(&a, NULL, heap_alloc_and_exit, NULL);
+        pthread_join(a, NULL);
+        pthread_create(&a, NULL, heap_free_half, (void *)0);
+        pthread_create(&b, NULL, heap_free_half, (void *)1);
+        pthread_join(a, NULL);
+        pthread_join(b, NULL);
+        assert(slang_live_objects() == live);
+        /* This thread allocates and others free. */
+        for (int i = 0; i < HEAP_N; i++) heap_objs[i] = slang_object_new(&plain, 48);
+        pthread_create(&a, NULL, heap_free_half, (void *)0);
+        pthread_create(&b, NULL, heap_free_half, (void *)1);
+        pthread_join(a, NULL);
+        pthread_join(b, NULL);
+        assert(slang_live_objects() == live);
+        /* ...and reuses what came back. */
+        for (int i = 0; i < HEAP_N; i++) heap_objs[i] = slang_object_new(&plain, 48);
+        for (int i = 0; i < HEAP_N; i++) slang_release(heap_objs[i]);
+    }
+}
+
+TEST(heap_release_to_os) {
+    /* 64 MB of small objects freed: FreeOSMemory leaves nothing retained. */
+    enum { N = 64 << 20 >> 6 };
+    void **v = malloc(N * sizeof *v);
+    for (int i = 0; i < N; i++) v[i] = slang_object_new(&plain, 64);
+    int64_t in_use = slang_diag_rt_heap_in_use();
+    if (in_use == 0) {   /* the heap is off (AddressSanitizer, SLANG_NO_SLAB) */
+        for (int i = 0; i < N; i++) slang_release(v[i]);
+        free(v);
+        return;
+    }
+    assert(in_use >= (int64_t)60 << 20);
+    for (int i = 0; i < N; i++) slang_release(v[i]);
+    free(v);
+    assert(slang_diag_rt_heap_in_use() < in_use - ((int64_t)60 << 20));
+    slang_runtime_free_os_memory();
+    assert(slang_diag_rt_heap_retained() == 0);
+    assert(slang_diag_rt_heap_released() >= (int64_t)60 << 20);
+}
+
+/* ---- biased reference counting (rc.c) ---- */
+
+void slang__rc_thread_eligible(void);   /* runtime-internal (rt_internal.h) */
+void slang__rc_poll(void);
+
+static int brc_drops;
+static void brc_drop(void *obj) { (void)obj; __atomic_add_fetch(&brc_drops, 1, __ATOMIC_RELAXED); }
+static const slang_type_info brc_type = { "Brc", 24, brc_drop };
+static slang_object *brc_obj;
+
+static void *brc_reader(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 100000; i++) {
+        slang_retain(brc_obj);
+        slang_retain(brc_obj);
+        slang_release(brc_obj);
+        slang_release(brc_obj);
+    }
+    return NULL;
+}
+
+static slang_object *brc_handoff;
+static void *brc_owner_side(void *arg) {
+    /* Owns objects: biases them, keeps some references, gives one away. */
+    int mode = (int)(intptr_t)arg;
+    slang__rc_thread_eligible();
+    slang_object *o = slang_object_new(&brc_type, 24);
+    slang_retain(o);                          /* biased to this thread: B = 2 */
+    assert(o->refcount & SLANG_RC_BIASED);
+    assert(slang_refcount(o) == 2);
+    for (int i = 0; i < 70000; i++) slang_retain(o);   /* past the 16-bit B: overflow into S */
+    assert(slang_refcount(o) == 70002);
+    for (int i = 0; i < 70000; i++) slang_release(o);
+    assert(slang_refcount(o) == 2);
+    brc_handoff = o;                          /* one reference moves to another thread */
+    if (mode == 0) {
+        slang_release(o);                     /* B = 1: the other thread frees it */
+    }
+    return o;                                 /* mode 1: still holds one, exits holding it */
+}
+
+static void *brc_release_other(void *arg) {
+    slang_release(arg);
+    return NULL;
+}
+
+TEST(brc_owner_and_shared) {
+    int64_t live = slang_live_objects();
+    pthread_t th[9];
+    /* An object biased to thread 0, read by 8 others. */
+    brc_drops = 0;
+    pthread_create(&th[0], NULL, brc_owner_side, (void *)0);
+    pthread_join(th[0], NULL);
+    pthread_create(&th[0], NULL, brc_release_other, brc_handoff);
+    pthread_join(th[0], NULL);
+    assert(brc_drops == 1);
+    /* Owner exits holding a reference (unowned afterwards), others share it. */
+    void *o;
+    pthread_create(&th[0], NULL, brc_owner_side, (void *)1);
+    pthread_join(th[0], &o);
+    brc_obj = o;
+    for (int i = 1; i < 9; i++) pthread_create(&th[i], NULL, brc_reader, NULL);
+    for (int i = 1; i < 9; i++) pthread_join(th[i], NULL);
+    assert(slang_refcount(o) == 2 && brc_drops == 1);
+    slang_release(o);
+    assert(brc_drops == 1);
+    slang_release(o);                         /* the last reference, from a non-owner */
+    assert(brc_drops == 2);
+    assert(slang_live_objects() == live);
+}
+
+static slang_object *brc_q[1000];
+static void *brc_queue_owner(void *arg) {
+    /* Keeps two references to each object, hands one to the main thread,
+     * which releases it (S < 0: queued), then drops its own: the count is
+     * zero but only the queue knows. */
+    (void)arg;
+    slang__rc_thread_eligible();
+    slang_object *mine[1000];
+    for (int i = 0; i < 1000; i++) {
+        mine[i] = slang_object_new(&brc_type, 24);
+        slang_retain(mine[i]);
+        slang_retain(mine[i]);                /* B = 3 */
+        brc_q[i] = mine[i];
+    }
+    __atomic_store_n(&brc_handoff, (slang_object *)1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&brc_handoff, __ATOMIC_ACQUIRE) != (slang_object *)2) sched_yield();
+    for (int i = 0; i < 1000; i++) {
+        slang_release(mine[i]);
+        slang_release(mine[i]);
+    }
+    assert(brc_drops == 0);                   /* dead, not yet merged */
+    slang__rc_poll();
+    assert(brc_drops == 1000);
+    return NULL;
+}
+
+TEST(brc_queue) {
+    int64_t live = slang_live_objects();
+    brc_drops = 0;
+    brc_handoff = NULL;
+    pthread_t t;
+    pthread_create(&t, NULL, brc_queue_owner, NULL);
+    while (__atomic_load_n(&brc_handoff, __ATOMIC_ACQUIRE) != (slang_object *)1) sched_yield();
+    for (int i = 0; i < 1000; i++) slang_release(brc_q[i]);
+    __atomic_store_n(&brc_handoff, (slang_object *)2, __ATOMIC_RELEASE);
+    pthread_join(t, NULL);
+    assert(brc_drops == 1000);
+    assert(slang_live_objects() == live);
+}
+
+static void *brc_exit_with_queue(void *arg) {
+    /* Same, but the owner exits right after dropping: its exit merges. */
+    (void)arg;
+    slang__rc_thread_eligible();
+    slang_object *o = slang_object_new(&brc_type, 24);
+    slang_retain(o);
+    slang_retain(o);
+    brc_q[0] = o;
+    __atomic_store_n(&brc_handoff, (slang_object *)1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&brc_handoff, __ATOMIC_ACQUIRE) != (slang_object *)2) sched_yield();
+    slang_release(o);
+    slang_release(o);
+    return NULL;
+}
+
+TEST(brc_owner_exit) {
+    brc_drops = 0;
+    brc_handoff = NULL;
+    pthread_t t;
+    pthread_create(&t, NULL, brc_exit_with_queue, NULL);
+    while (__atomic_load_n(&brc_handoff, __ATOMIC_ACQUIRE) != (slang_object *)1) sched_yield();
+    slang_release(brc_q[0]);
+    __atomic_store_n(&brc_handoff, (slang_object *)2, __ATOMIC_RELEASE);
+    pthread_join(t, NULL);
+    assert(brc_drops == 1);
+}
+
+static void *brc_weak_owner(void *arg) {
+    slang__rc_thread_eligible();
+    slang_object *o = arg;
+    slang_retain(o);                          /* biased here */
+    void *w = slang_weak_new((char *)o + 16);
+    void *p = slang_weak_get(w);
+    assert(p && slang_refcount(o) == 3);
+    slang_ptr_release(p);
+    slang_release(o);
+    return w;
+}
+
+TEST(brc_weak) {
+    brc_drops = 0;
+    slang_object *o = slang_object_new(&brc_type, 32);
+    pthread_t t;
+    void *w;
+    pthread_create(&t, NULL, brc_weak_owner, o);
+    pthread_join(t, &w);
+    void *p = slang_weak_get(w);
+    assert(p == (char *)o + 16);
+    slang_ptr_release(p);
+    slang_release(o);                          /* last, non-owner: weak cleared, dropped */
+    assert(brc_drops == 1);
+    assert(slang_weak_get(w) == NULL);
+    slang_release(w);
+}
+
 int main(void) {
     printf("test_mem\n");
     RUN(alloc_zeroed);
@@ -202,5 +472,13 @@ int main(void) {
     RUN(weak_refs);
     RUN(weak_threads);
     RUN(leak_report);
+    RUN(heap_sizes);
+    RUN(heap_growth);
+    RUN(heap_threads);
+    RUN(heap_release_to_os);
+    RUN(brc_owner_and_shared);
+    RUN(brc_queue);
+    RUN(brc_owner_exit);
+    RUN(brc_weak);
     return 0;
 }

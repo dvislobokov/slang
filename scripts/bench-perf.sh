@@ -1,35 +1,56 @@
 #!/bin/bash
 # Runs benchmarks/*/main.{sl,go}, prints wall time, user+sys CPU and peak RSS.
 # Usage: ./scripts/bench-perf.sh [bench...]   (default: all)
+# Environment: SLANG=<compiler> (default target/release/slang),
+#   RUNS=N  run each binary N times (alternating Slang and Go) and print the
+#           run with the best wall time (default 1),
+#   NOGO=1  skip the Go programs.
+#   Extra arguments for a benchmark's binary: benchmarks/<b>/args (one line).
 set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
 SLANG=${SLANG:-$root/target/release/slang}
+RUNS=${RUNS:-1}
 out=$(mktemp -d)
 cd "$root/benchmarks"
 benches=${*:-$(ls -d */ | tr -d /)}
 
-measure() { # name binary -> prints "wall user+sys rss_mb"
-    local t0 t1 stats
-    # /proc-based measurement via bash's times is coarse; use python resource module
-    python3 - "$1" <<'PY'
-import resource, subprocess, sys, time
+measure() { # binary [args...] -> prints "wall user+sys rss_mb rc output"
+    python3 - "$@" <<'PY'
+import os, subprocess, sys, time
 t0 = time.perf_counter()
-p = subprocess.run([sys.argv[1]], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+p = subprocess.Popen(sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+outp, _ = p.communicate()
+
 wall = time.perf_counter() - t0
+import resource
 ru = resource.getrusage(resource.RUSAGE_CHILDREN)
-cpu = ru.ru_utime + ru.ru_stime
-rss = ru.ru_maxrss / 1024
-print(f"{wall:.2f} {cpu:.2f} {rss:.1f} {p.returncode} {p.stdout.decode().strip()[:30]!r}")
+print(f"{wall:.3f} {ru.ru_utime + ru.ru_stime:.2f} {ru.ru_maxrss / 1024:.1f} {p.returncode} {outp.decode(errors='replace').strip()[:30]!r}")
 PY
 }
 
-printf '%-9s %-6s %8s %8s %8s  %s\n' bench lang wall_s cpu_s rss_mb output
+langs="sl go"
+[ -n "$NOGO" ] && langs="sl"
+printf '%-12s %-6s %8s %8s %8s  %s\n' bench lang wall_s cpu_s rss_mb output
 for b in $benches; do
+    [ -f "$b/main.sl" ] || continue
     "$SLANG" build "$b/main.sl" --release -o "$out/$b.sl.bin" >/dev/null
-    (cd "$b" && go build -o "$out/$b.go.bin" main.go)
-    for lang in sl go; do
-        read wall cpu rss rc output < <(measure "$out/$b.$lang.bin")
-        printf '%-9s %-6s %8s %8s %8s  %s\n' "$b" "$([ $lang = sl ] && echo slang || echo go)" "$wall" "$cpu" "$rss" "$output"
+    if [ -z "$NOGO" ]; then (cd "$b" && go build -o "$out/$b.go.bin" main.go); fi
+    args=()
+    [ -f "$b/args" ] && read -r -a args < "$b/args"
+    declare -A best=()
+    for ((i = 0; i < RUNS; i++)); do
+        for lang in $langs; do
+            line=$(measure "$out/$b.$lang.bin" "${args[@]}")
+            w=${line%% *}
+            if [ -z "${best[$lang]}" ] || python3 -c "import sys; sys.exit(0 if $w < ${best[$lang]%% *} else 1)"; then
+                best[$lang]=$line
+            fi
+        done
     done
+    for lang in $langs; do
+        read wall cpu rss rc output <<< "${best[$lang]}"
+        printf '%-12s %-6s %8s %8s %8s  %s\n' "$b" "$([ $lang = sl ] && echo slang || echo go)" "$wall" "$cpu" "$rss" "$output"
+    done
+    unset best
 done
 rm -rf "$out"

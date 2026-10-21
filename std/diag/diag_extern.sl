@@ -43,6 +43,18 @@ extern func rtWorkers() int
 extern func rtMonoNanos() int
 
 // Internal runtime primitive (used by the Slang sources of this namespace).
+// C: slang_diag_rt_heap_in_use (runtime/src/std_*.c).
+extern func rtHeapInUse() int
+
+// Internal runtime primitive (used by the Slang sources of this namespace).
+// C: slang_diag_rt_heap_retained (runtime/src/std_*.c).
+extern func rtHeapRetained() int
+
+// Internal runtime primitive (used by the Slang sources of this namespace).
+// C: slang_diag_rt_heap_released (runtime/src/std_*.c).
+extern func rtHeapReleased() int
+
+// Internal runtime primitive (used by the Slang sources of this namespace).
 // C: slang_diag_rt_start_cpu_profile (runtime/src/std_*.c).
 extern func rtStartCPUProfile(a string, b int) void!
 
@@ -53,6 +65,14 @@ extern func rtStopCPUProfile() int!
 // Internal runtime primitive (used by the Slang sources of this namespace).
 // C: slang_diag_rt_heap_text (runtime/src/std_*.c).
 extern func rtHeapText() string
+
+// Internal runtime primitive (used by the Slang sources of this namespace).
+// C: slang_diag_rt_heap_types (runtime/src/std_*.c).
+extern func rtHeapTypes() string
+
+// Internal runtime primitive (used by the Slang sources of this namespace).
+// C: slang_diag_rt_heap_counting (runtime/src/std_*.c).
+extern func rtHeapCounting() bool
 
 // Internal runtime primitive (used by the Slang sources of this namespace).
 // C: slang_diag_rt_write_heap_profile (runtime/src/std_*.c).

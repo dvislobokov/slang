@@ -129,7 +129,7 @@ endif
 $(LIB): $(OBJS)
 	$(AR) rcs $@ $^
 
-$(BUILD)/%.o: src/%.c include/slang_rt.h src/rt_internal.h src/platform/platform.h $(wildcard src/crypto/*.h) | $(BUILD) $(BUILD)/platform $(BUILD)/crypto
+$(BUILD)/%.o: src/%.c include/slang_rt.h src/rt_internal.h src/heap.h src/platform/platform.h $(wildcard src/crypto/*.h) | $(BUILD) $(BUILD)/platform $(BUILD)/crypto
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/tests/%: tests/%.c tests/test.h $(wildcard tests/vectors/*.h) $(LIB) | $(BUILD)/tests
@@ -219,9 +219,9 @@ asan:
 	  TASK_TEST_ENV=SLANG_NO_BACKTRACE=1 test
 
 # ThreadSanitizer run of the concurrency-heavy tests (sharded pollers, socket
-# close races, resolver pool, scheduler) in its own build directory, so it
+# close races, resolver pool, scheduler, cycle collector) in its own build directory, so it
 # does not disturb the normal build.
-TSAN_TESTS ?= test_net test_platform test_task
+TSAN_TESTS ?= test_net test_platform test_task test_cycles test_mem
 tsan:
 	$(MAKE) BUILD=build/tsan CFLAGS_EXTRA="-fsanitize=thread" $(addprefix build/tsan/tests/,$(TSAN_TESTS))
 	@set -e; for t in $(TSAN_TESTS); do \

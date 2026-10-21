@@ -69,6 +69,7 @@ build options:
   --static             fully static executable
   --leak-check         report objects still alive at exit, exit non-zero
   --no-error-trace     do not record error return traces (errors.Trace is empty)
+  --deny-warnings      treat warnings (W0001 reference cycles, ...) as errors
   --emit=exe|obj|llvm-ir
   --workspace          all workspace members
   -p, --package <name> one workspace member (repeatable)

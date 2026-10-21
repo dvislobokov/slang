@@ -1,0 +1,36 @@
+// test: a tree with weak parent pointers is freed by plain reference counting; the collector leaves it alone, weak references keep working, and no W0001 is reported (the weak back pointer shows the ownership direction)
+// status: passing
+// run-flags: --leak-check
+// no-warning: W0001
+namespace spec.memory3.weak_graph
+
+import std
+import std.io
+
+struct Node {
+    Name     string
+    Parent   weak *Node
+    Children []*Node
+
+    func Add(name string) *Node {
+        var c = new Node{Name: name, Parent: this}
+        this.Children = append(this.Children, c)
+        return c
+    }
+
+    func Drop() {
+        println("drop", this.Name)
+    }
+}
+
+func main() {
+    var root = new Node{Name: "root"}
+    var a = root.Add("a")
+    root.Add("b")
+    println("collected", runtime.CollectCycles())
+    println(a.Parent.Name, len(root.Children))
+    root = nil
+    println("parent gone", a.Parent == nil)
+    a = nil
+    println("collected", runtime.CollectCycles())
+}

@@ -1,0 +1,27 @@
+// test: a Drop that breaks the cycle itself is fine under the collector; and without the collector it is not enough (the Drop never runs)
+// status: passing
+// run-flags: --leak-check
+namespace spec.memory3.drop_breaks
+
+import std
+import std.io
+
+@allowCycle
+struct Node {
+    Name  string
+    Other *Node
+
+    func Drop() {
+        println("drop", this.Name)
+        this.Other = nil
+    }
+}
+
+func main() {
+    var a = new Node{Name: "a"}
+    var b = new Node{Name: "b", Other: a}
+    a.Other = b
+    a = nil
+    b = nil
+    println("collected", runtime.CollectCycles())
+}

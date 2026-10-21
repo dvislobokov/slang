@@ -389,6 +389,76 @@ def lookup(v):
     return None
 
 
+# --------------------------------------------------------------------------
+# reference counts (runtime/ABI.md 3.1: the header word at +0)
+# --------------------------------------------------------------------------
+
+RC_WEAK = 1 << 62
+RC_CYCLIC = 1 << 61
+RC_BIASED = 1 << 60
+RC_QUEUED = 1 << 59
+RC_COUNT_MASK = (1 << 57) - 1
+
+
+def decode_refcount(word):
+    """The meaning of an object header's refcount word, as text: immortal,
+    arena, a string view's block, an unowned count, a biased count (owner
+    slot, B + S) or a cycle-collected count with its flags."""
+    w = word & 0xFFFFFFFFFFFFFFFF
+    if w >= 1 << 63:
+        s = w - (1 << 64)
+        if s == -1:
+            return "immortal"
+        if s == -2:
+            return "arena"
+        return "view of block 0x%x" % (w & ~(1 << 63))
+    flags = []
+    if w & RC_WEAK:
+        flags.append("weak box")
+    if w & RC_CYCLIC:
+        names = [(60, "buffered"), (59, "marked"), (58, "dirty"), (57, "zombie")]
+        flags += [n for b, n in names if w & (1 << b)]
+        text = "count %d (cycle-collected)" % (w & RC_COUNT_MASK)
+    elif w & RC_BIASED:
+        b = w & 0xFFFF
+        s = ((w >> 16) & 0x7FFFFFFF) - (1 << 30)
+        slot = (w >> 47) & 0xFFF
+        if w & RC_QUEUED:
+            flags.append("queued for a merge")
+        text = "count %d (biased to thread slot %d: owner %d, shared %d)" % (b + s, slot, b, s)
+    else:
+        if w & RC_QUEUED:
+            flags.append("never biased")
+        text = "count %d (unowned)" % (w & RC_COUNT_MASK)
+    return text + ("" if not flags else ", " + ", ".join(flags))
+
+
+class SlangRc(gdb.Command):
+    """slang-rc EXPR: the reference count of the heap object EXPR points at
+    (a *T points at the payload, 16 bytes after the header)."""
+
+    def __init__(self):
+        super().__init__("slang-rc", gdb.COMMAND_DATA)
+
+    def invoke(self, arg, from_tty):
+        v = gdb.parse_and_eval(arg)
+        t = v.type.strip_typedefs()
+        if t.code == gdb.TYPE_CODE_STRUCT and [f.name for f in t.fields()] == ["ptr"]:
+            addr = _addr(v)                  # a handle: string, map, error, Task, weak
+        elif t.code == gdb.TYPE_CODE_PTR:
+            addr = _addr(v)
+            addr = addr - 16 if addr else 0  # a *T: the payload
+        else:
+            addr = int(v)
+        if addr <= 0:
+            print("nil")
+            return
+        print("0x%x: %s" % (addr, decode_refcount(_u64(addr))))
+
+
+SlangRc()
+
+
 def register(objfile=None):
     target = objfile.pretty_printers if objfile is not None else gdb.pretty_printers
     if lookup not in target:

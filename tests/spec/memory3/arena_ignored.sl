@@ -1,0 +1,26 @@
+// test: objects in an arena never take part in cycle collection: a cycle among them is freed by the arena
+// status: passing
+// run-flags: --leak-check
+namespace spec.memory3.arena_ignored
+
+import std
+import std.io
+
+@allowCycle
+struct Node {
+    Id   int
+    Next *Node
+}
+
+func main() {
+    var a = arena.New()
+    var x = a.New<Node>()
+    var y = a.New<Node>()
+    x.Id = 1
+    y.Id = 2
+    x.Next = y
+    y.Next = x
+    println("collected", runtime.CollectCycles(), x.Next.Id, y.Next.Id, a.Len())
+    a.Free()
+    println("arena freed", a.Len())
+}

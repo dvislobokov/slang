@@ -8,6 +8,11 @@ use inkwell::types::StructType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::IntPredicate;
 
+/// Biased refcount words (runtime/ABI.md 3.1, `slang_rt.h`): the owner tag
+/// is `(word >> SLANG_RC_OWNER_SHIFT) & SLANG_RC_OWNER_MASK`.
+const SLANG_RC_OWNER_SHIFT: u64 = 47;
+const SLANG_RC_OWNER_MASK: u64 = 0x16FFF;
+
 /// How a value of some type holds references.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RcKind {
@@ -162,9 +167,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// symbol when `Options::inline_rc` (runtime/ABI.md 3.2).
     ///
     /// While `slang_threaded == 0`: retain with count >= 0 stores `+1`,
-    /// release with 2 <= count < weak flag stores `-1`; NULL does nothing;
+    /// release with 2 <= count < the lowest flag bit (`SLANG_RC_ZOMBIE`)
+    /// stores `-1`; NULL does nothing;
     /// everything else (other threads exist, immortal/arena/view counts,
     /// the last reference, a weak box) calls the runtime function.
+    /// Otherwise, if the word is a biased count owned by this thread
+    /// (`(word >> 47) & SLANG_RC_OWNER_MASK == slang_rc_owner`, a
+    /// thread-local), retain with B != 0xFFFF and release with B >= 2 store
+    /// the owner's half-word B +- 1 (16 bits at the object's address).
     pub(crate) fn rc_inline_fn(&mut self, name: &str) -> Option<FunctionValue<'ctx>> {
         let (retain, ptr) = match name {
             "slang_retain" => (true, false),
@@ -199,6 +209,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let entry = self.ctx.append_basic_block(f, "entry");
         let chk = self.ctx.append_basic_block(f, "chk");
         let plain = self.ctx.append_basic_block(f, "plain");
+        let chk_own = self.ctx.append_basic_block(f, "chk.own");
+        let plain16 = self.ctx.append_basic_block(f, "plain.own");
         let call_slow = self.ctx.append_basic_block(f, "slow");
         let done = self.ctx.append_basic_block(f, "done");
         b.position_at_end(entry);
@@ -216,17 +228,52 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         ldi.set_alignment(8).unwrap();
         ldi.set_atomic_ordering(inkwell::AtomicOrdering::Monotonic).unwrap();
         let rc = ld.into_int_value();
-        // Fast: one thread and retain: rc >= 0; release: 2 <= rc < WEAK_FLAG.
+        // Fast: one thread and retain: rc >= 0; release: 2 <= rc < 1 << 57.
         let count_ok = if retain {
             b.build_int_compare(IntPredicate::SGE, rc, i64t.const_zero(), "").unwrap()
         } else {
             let m2 = b.build_int_sub(rc, i64t.const_int(2, false), "").unwrap();
-            b.build_int_compare(IntPredicate::ULT, m2, i64t.const_int((1u64 << 62) - 2, false), "").unwrap()
+            // Below the lowest flag bit (SLANG_RC_ZOMBIE, bit 57): objects with
+            // a weak box or a cycle-collector flag take the runtime path.
+            b.build_int_compare(IntPredicate::ULT, m2, i64t.const_int((1u64 << 57) - 2, false), "").unwrap()
         };
         let mt = b.build_load(self.ctx.i8_type(), mt_g.as_pointer_value(), "mt").unwrap().into_int_value();
         let mtz = b.build_int_compare(IntPredicate::EQ, mt, self.ctx.i8_type().const_zero(), "").unwrap();
         let fast = b.build_and(count_ok, mtz, "").unwrap();
-        b.build_conditional_branch(fast, plain, call_slow).unwrap();
+        b.build_conditional_branch(fast, plain, chk_own).unwrap();
+        // Biased count owned by this thread (ABI.md 3.1): the owner's half-word
+        // B (bits 0..15) changes with a plain 16-bit store; retain while
+        // B != 0xFFFF, release while B >= 2.
+        b.position_at_end(chk_own);
+        let owner_g = match self.module.get_global("slang_rc_owner") {
+            Some(g) => g,
+            None => {
+                let g = self.module.add_global(i64t, None, "slang_rc_owner");
+                g.set_linkage(Linkage::External);
+                g.set_thread_local(true);
+                g
+            }
+        };
+        let tag = b.build_load(i64t, owner_g.as_pointer_value(), "owner").unwrap().into_int_value();
+        let hi = b.build_right_shift(rc, i64t.const_int(SLANG_RC_OWNER_SHIFT, false), false, "").unwrap();
+        let hi = b.build_and(hi, i64t.const_int(SLANG_RC_OWNER_MASK, false), "").unwrap();
+        let own = b.build_int_compare(IntPredicate::EQ, hi, tag, "").unwrap();
+        let i16t = self.ctx.i16_type();
+        let bias = b.build_int_truncate(rc, i16t, "b").unwrap();
+        let b_ok = if retain {
+            b.build_int_compare(IntPredicate::NE, bias, i16t.const_all_ones(), "").unwrap()
+        } else {
+            b.build_int_compare(IntPredicate::UGE, bias, i16t.const_int(2, false), "").unwrap()
+        };
+        let fast16 = b.build_and(own, b_ok, "").unwrap();
+        b.build_conditional_branch(fast16, plain16, call_slow).unwrap();
+        b.position_at_end(plain16);
+        let one16 = i16t.const_int(1, false);
+        let nb = if retain { b.build_int_add(bias, one16, "").unwrap() } else { b.build_int_sub(bias, one16, "").unwrap() };
+        let st16 = b.build_store(obj, nb).unwrap();
+        st16.set_alignment(8).unwrap();
+        st16.set_atomic_ordering(inkwell::AtomicOrdering::Monotonic).unwrap();
+        b.build_unconditional_branch(done).unwrap();
         b.position_at_end(plain);
         let one = i64t.const_int(1, false);
         let nv = if retain { b.build_int_add(rc, one, "").unwrap() } else { b.build_int_sub(rc, one, "").unwrap() };
@@ -446,7 +493,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// `slang_value_ops*` for elements of type `t` (NULL for plain data).
     pub(crate) fn value_ops(&mut self, t: TypeId) -> PointerValue<'ctx> {
+        // Element types holding references to cyclic objects get their own
+        // ops with a visitor (`{retain, release, visit}`, ABI.md 3.3/3.8).
+        let cyclic = self.cycles.holds_cyclic(t);
         match self.rc_kind(t) {
+            _ if cyclic => {}
             RcKind::None => return self.ptr_ty().const_null(),
             RcKind::Ref => return self.rt_global("slang_ops_ref"),
             RcKind::Ptr => return self.rt_global("slang_ops_ptr"),
@@ -457,12 +508,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             return *p;
         }
         let (r, rl) = self.rc_helpers(t);
-        let st = self.ctx.struct_type(&[self.ptr_ty().into(), self.ptr_ty().into()], false);
+        let visit = self.ops_visit(t);
+        let st = self.ctx.struct_type(&[self.ptr_ty().into(), self.ptr_ty().into(), self.ptr_ty().into()], false);
         let n = self.fresh();
         let g = self.module.add_global(st, None, &format!("ops.{n}"));
         g.set_linkage(Linkage::Internal);
         g.set_constant(true);
-        g.set_initializer(&st.const_named_struct(&[r.as_global_value().as_pointer_value().into(), rl.as_global_value().as_pointer_value().into()]));
+        g.set_initializer(&st.const_named_struct(&[r.as_global_value().as_pointer_value().into(), rl.as_global_value().as_pointer_value().into(), visit.into()]));
         self.value_ops.insert(t, g.as_pointer_value());
         g.as_pointer_value()
     }
@@ -541,11 +593,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             g.set_linkage(Linkage::Internal);
             g.set_constant(true);
             g.set_initializer(&arr);
-            regs.push((ti, g.as_pointer_value()));
+            let acyclic = crate::sema::cycles::has_attr(&self.prog.structs[d.0 as usize].attrs, "acyclic").then(|| self.cstr(&sname));
+            regs.push((ti, g.as_pointer_value(), acyclic));
         }
         self.with_helper(f, |cg| {
-            for (ti, g) in regs {
+            for (ti, g, acyclic) in regs {
                 cg.call_rt("slang_leak_fields", &[ti.into(), g.into()]);
+                // `@acyclic` promises are checked against the leaked cycles.
+                if let Some(name) = acyclic {
+                    cg.call_rt("slang_leak_acyclic", &[ti.into(), name.into()]);
+                }
             }
             cg.b.build_return(None).unwrap();
             Ok(())
@@ -557,7 +614,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn new_box(&mut self, t: TypeId, v: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
         let ti = self.type_info(t);
         let size = self.i64_ty().const_int(16 + self.size_of(t), false);
-        let obj = self.call_rt_v("slang_object_new", &[ti.into(), size.into()]).into_pointer_value();
+        let obj = self.cyc_alloc(t, ti, size);
         let p = self.payload(obj);
         self.b.build_store(p, v).unwrap();
         obj

@@ -1,11 +1,12 @@
 # Memory without a garbage collector
 
-Slang frees memory deterministically, with no garbage collector and no
-pauses. Most of the time you do not think about it: values are freed
-when nothing refers to them any more. This page explains what happens
-underneath, the two tools you use for special cases (`Drop` and `weak`),
-arenas for bulk allocation, and the one rule the compiler enforces about
-pointers into the middle of objects.
+Slang frees memory deterministically, with no tracing garbage collector.
+Most of the time you do not think about it: values are freed when nothing
+refers to them any more. This page explains what happens underneath, the
+two tools you use for special cases (`Drop` and `weak`), the cycle
+collector that frees reference cycles you did not break, arenas for bulk
+allocation, and the one rule the compiler enforces about pointers into
+the middle of objects.
 
 ## Values and references
 
@@ -167,9 +168,97 @@ func main() {
 // done
 ```
 
-If you forget, `slang run --leak-check` reports the objects still alive
-at exit (and exits with status 66); the test suites of the compiler run
-every example this way.
+## Cycles the compiler warns about, and the cycle collector
+
+The compiler looks at your types and warns when values of a type *can*
+point back to themselves through strong references:
+
+```text
+warning: W0001 type Session can form a reference cycle through field Peer (*Session); consider weak *Session or a Drop that breaks the cycle
+```
+
+It warns once per type, at the first field on the cycle, and counts
+pointers, slices, maps, closures (a `func` field holding a lambda that
+captures the object) and interfaces (the types your program stores in
+them). What to do:
+
+- if the reference points "back" or "up" (a parent, an owner, an
+  observer list), make it `weak *T` — then the compiler stays quiet,
+  because a `weak` reference into the cycle shows the ownership
+  direction;
+- if the data really forms cycles (a graph), put `@allowCycle` on the
+  type to silence the warning; the collector still handles it;
+- if the type is a tree or a list whose shape you control and it never
+  forms a cycle, put `@acyclic` on it: no warning, and its objects skip
+  the cycle collector entirely (plain reference counting). It is a
+  promise: break it and the cycle leaks — `slang run --leak-check` then
+  reports `type Node is @acyclic but was found in a cycle`;
+- `--deny-warnings` turns warnings into errors for CI.
+
+Whatever is left is handled at run time by the **cycle collector**. It
+is not a tracing garbage collector: it only ever looks at objects of the
+types W0001 names, starting from the ones whose reference count recently
+went down without reaching zero, and never scans the rest of the heap.
+When it finds a group of such objects that only reference each other, it
+runs all their `Drop` methods (each one still sees intact fields) and
+frees them:
+
+```slang
+namespace guide.memory.cycles
+
+import std
+import std.io
+
+struct Session {
+    Id   int
+    Peer *Session
+
+    func Drop() {
+        println("drop session", this.Id)
+    }
+}
+
+func pair() {
+    var a = new Session{Id: 1}
+    var b = new Session{Id: 2, Peer: a}
+    a.Peer = b              // a -> b -> a: reference counting alone keeps both
+}
+
+func main() {
+    pair()
+    println("after pair")
+    println("freed", runtime.CollectCycles())
+}
+// Output:
+// after pair
+// drop session 2
+// drop session 1
+// freed 2
+```
+
+When it runs, set with `SLANG_CYCLES` in the environment:
+
+- `auto` (the default): by itself, once enough possible cycle roots were
+  recorded (a few thousand; the number adapts to how much garbage it
+  finds), at the next allocation of such an object. The thread that runs
+  it pauses for as long as the examined objects take; other threads keep
+  going.
+- `manual`: only when you call `runtime.CollectCycles()`.
+- `off`: never — plain reference counting, as if the collector did not
+  exist.
+
+Freeing objects as soon as their count drops to zero stays the rule:
+only objects in unreachable cycles wait for the collector, so a `Drop`
+that must run at a precise moment (closing a file) belongs to a type
+whose cycles you break with `weak`. Cycles through `error` values, tasks
+and (in programs with several threads) maps are not collected.
+`runtime.CycleStats()` reports what the collector did.
+
+`slang run --leak-check` reports the objects still alive at exit (and
+exits with status 66); with the collector in `auto` mode it collects one
+last time first, and in `manual` mode it tells you how many of the leaked
+objects are cycles the collector could have freed. The test suites of the
+compiler run every example this way.
 
 ## Arenas
 
@@ -287,5 +376,11 @@ func main() {
   dereference and out-of-range indexing panic with a message instead of
   corrupting memory; there is no pointer arithmetic (`std.unsafe` is the
   explicit, capability-gated exception).
-- Counts are atomic, so values can be shared between tasks; mutable
-  shared state still needs a `task.Mutex` or a channel.
+- Counts are thread-safe, so values can be shared between tasks; a count
+  used by one worker thread only is updated without atomic instructions
+  (biased counting), and mutable shared state still needs a `task.Mutex`
+  or a channel.
+- Freed memory goes back to the operating system: a reserve up to the
+  recent peak is kept for reuse, the rest is returned within about half a
+  second (`std.runtime.FreeOSMemory()` returns it at once;
+  `std.diag.Runtime()` shows `HeapInUse`, `HeapRetained`, `HeapReleased`).

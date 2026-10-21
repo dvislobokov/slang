@@ -1,0 +1,38 @@
+// test: a parent <-> child cycle is freed by the cycle collector: every Drop runs (in a fixed order) before any field is released
+// status: passing
+// run-flags: --leak-check
+// warning: W0001 type Node can form a reference cycle through field Parent (*Node); consider weak *Node or a Drop that breaks the cycle
+namespace spec.memory3.cycle_parent_child
+
+import std
+import std.io
+
+struct Node {
+    Name     string
+    Parent   *Node
+    Children []*Node
+
+    func Drop() {
+        // Fields are still intact while any Drop of the cycle runs.
+        var p = "none"
+        if this.Parent != nil {
+            p = this.Parent.Name
+        }
+        println("drop", this.Name, "parent", p, "children", len(this.Children))
+    }
+}
+
+func build() {
+    var root = new Node{Name: "root"}
+    var a = new Node{Name: "a", Parent: root}
+    var b = new Node{Name: "b", Parent: root}
+    root.Children = [a, b]
+}
+
+func main() {
+    build()
+    println("built")
+    // 3 nodes and the backing array of root.Children.
+    println("collected", runtime.CollectCycles())
+    println("again", runtime.CollectCycles())
+}

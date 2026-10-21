@@ -61,7 +61,27 @@ static void map_drop(void *obj) {
     slang_free(m->ctrl);
 }
 
-static const slang_type_info map_type = { "map", (int64_t)sizeof(struct slang_map), map_drop };
+const slang_type_info slang__map_type = { "map", (int64_t)sizeof(struct slang_map), map_drop };
+
+/* Cycle collector (ABI.md 3.8): the references of every entry. A resize
+ * frees the old table, so another thread mutating the map could make the
+ * walk read freed memory: once the process has more than one thread the
+ * map's entries are not walked (they count as references from outside,
+ * so cycles through maps are then not collected; ABI.md 3.8 lists it). */
+void slang__map_visit(void *obj, slang_cycle_cb cb, void *ctx) {
+    slang_map *m = obj;
+    if (__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED)) return;
+    const slang_value_ops *ko = m->desc.key_ops, *vo = m->desc.val_ops;
+    ko = ko && ko->visit ? ko : NULL;
+    vo = vo && vo->visit ? vo : NULL;
+    if (!ko && !vo) return;
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->ctrl[i] & 0x80) continue;
+        unsigned char *p = SLOT(m, i);
+        if (ko) ko->visit(p, cb, ctx);
+        if (vo) vo->visit(VAL(m, p), cb, ctx);
+    }
+}
 
 /* ---- builtin hash / eq ---- */
 
@@ -270,8 +290,12 @@ static __attribute__((noinline)) int64_t insert_new(slang_map *m, const void *ke
 slang_map *slang_map_new(const slang_map_desc *desc, int64_t hint) {
     if (!desc || !desc->hash || !desc->eq || desc->key_size <= 0 || desc->val_size < 0)
         slang__panicf("slang_map_new: invalid map descriptor");
-    slang_map *m = slang_object_new(&map_type, (int64_t)sizeof(struct slang_map));
+    int cyclic = (desc->key_ops && desc->key_ops->visit) || (desc->val_ops && desc->val_ops->visit);
+    int64_t bytes = (int64_t)sizeof(struct slang_map);
+    cyclic = cyclic && slang__cycles_flag;   /* weak: the collector is linked */
+    slang_map *m = slang_object_new(&slang__map_type, cyclic ? slang__cycles_extra(bytes) : bytes);
     m->desc = *desc;
+    if (cyclic) slang__cycles_flag(&m->hdr);  /* entries may lie on cycles */
     m->val_off = SLANG_ROUND8(desc->key_size);
     m->slot_size = m->val_off + SLANG_ROUND8(desc->val_size);
     m->kind = KIND_GENERIC;

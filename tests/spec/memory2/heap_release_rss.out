@@ -1,0 +1,8 @@
+in use >= 450 MB: true
+peak rss grew: true
+rss dropped within 1s: true
+in use < 50 MB: true
+retained within the reserve: true
+released > 0: true
+retained after FreeOSMemory: 0
+rss near the start: true

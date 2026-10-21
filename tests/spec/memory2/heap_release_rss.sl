@@ -1,0 +1,65 @@
+// test: freed heap memory goes back to the OS: after 500 MB of small and large objects are freed, the RSS (/proc/self/statm) drops within one second (the scavenger keeps at most 16 MB), and diag.Runtime() reports HeapInUse / HeapRetained / HeapReleased; runtime.FreeOSMemory() releases the reserve
+// status: passing
+namespace spec.memory2.heap_release_rss
+
+import std
+import std.io
+
+// Resident set size in MB, or -1 where /proc/self/statm does not exist
+// (then the RSS checks pass trivially).
+func rssMB() int {
+    var s = try io.ReadFile("/proc/self/statm") catch err {
+        return -1
+    }
+    var f = strings.Fields(s)
+    var pages = try strconv.Atoi(f[1]) catch err {
+        return -1
+    }
+    return pages * 4096 / (1 << 20)
+}
+
+func waitBelow(limit int) bool {
+    var t0 = diag.rtMonoNanos()
+    for diag.rtMonoNanos() - t0 < 1000000000 {
+        var r = rssMB()
+        if r < 0 || r < limit {
+            return true
+        }
+        time.Sleep(10)
+    }
+    return false
+}
+
+func main() {
+    var base = rssMB()
+    // 250 MB in 1 MB buffers (one mapping each) ...
+    var big [][]byte = []
+    for _ in 0..250 {
+        big = append(big, strings.Bytes(strings.Repeat("x", 1 << 20)))
+    }
+    // ... and 250 MB in 2.2M small strings (112-byte heap blocks).
+    var small []string = []
+    for _ in 0..2200000 {
+        small = append(small, strings.Repeat("y", 80))
+    }
+    var peak = rssMB()
+    var inUse = diag.Runtime().HeapInUse
+    println("in use >= 450 MB:", inUse >= 450 * (1 << 20))
+    println("peak rss grew:", base < 0 || peak - base >= 450)
+    big = []
+    small = []
+    println("rss dropped within 1s:", waitBelow(base + 100))
+    // The scavenger gives back free memory 0.2-0.5 s after it was freed.
+    var t0 = diag.rtMonoNanos()
+    for diag.Runtime().HeapRetained > 64 * (1 << 20) && diag.rtMonoNanos() - t0 < 1000000000 {
+        time.Sleep(10)
+    }
+    var r = diag.Runtime()
+    println("in use < 50 MB:", r.HeapInUse < 50 * (1 << 20))
+    println("retained within the reserve:", r.HeapRetained <= 64 * (1 << 20))
+    println("released > 0:", r.HeapReleased > 0)
+    runtime.FreeOSMemory()
+    var after = diag.Runtime()
+    println("retained after FreeOSMemory:", after.HeapRetained)
+    println("rss near the start:", waitBelow(base + 40))
+}

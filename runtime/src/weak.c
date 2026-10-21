@@ -126,9 +126,16 @@ void *slang_weak_get(void *box) {
     if (o) {
         /* Increment only while the object is still alive (count > 0). */
         int64_t old = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
+        if ((old & (SLANG_RC_BIASED | SLANG_RC_CYCLIC)) == SLANG_RC_BIASED) {
+            /* A biased count (rc.c): B + S, retained through S. */
+            if (slang__rc_try_retain_biased(o)) r = (char *)o + sizeof(slang_object);
+            old = 0;
+        }
         while ((old & SLANG_RC_COUNT_MASK) != 0) {
             if (__atomic_compare_exchange_n(&o->refcount, &old, old + 1, 1, __ATOMIC_ACQ_REL,
                                             __ATOMIC_RELAXED)) {
+                /* A collection examining o must see that it was reached. */
+                if (old & SLANG_RC_MARKED) slang__cycles_dirty(o);
                 r = (char *)o + sizeof(slang_object);
                 break;
             }
@@ -146,4 +153,18 @@ void slang__weak_clear(slang_object *o) {
         remove_at(pp);
     }
     slang__plat_mutex_unlock(&g_mu);
+}
+
+/* The cycle collector (cycles.c) validates a garbage set and clears its
+ * boxes under the table lock, so slang_weak_get cannot resurrect a member
+ * in between (ABI.md 3.8). */
+void slang__weak_lock(void) { slang__plat_mutex_lock(&g_mu); }
+void slang__weak_unlock(void) { slang__plat_mutex_unlock(&g_mu); }
+
+void slang__weak_clear_locked(slang_object *o) {
+    entry **pp = find(o);
+    if (pp && *pp) {
+        (*pp)->box->target = NULL;
+        remove_at(pp);
+    }
 }

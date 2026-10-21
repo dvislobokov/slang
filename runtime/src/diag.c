@@ -13,17 +13,28 @@
 /* ---- process-wide slots ----------------------------------------------- */
 
 static slang_object *g_slots; /* map[string]any, owned; NULL until first set */
-static int g_slots_lock;
+static int g_slots_lock;      /* rtLock / rtUnlock (Slang-side critical sections) */
+static int g_ptr_lock;        /* g_slots itself: read+retain vs. exchange */
+
+static void ptr_lock(void) {
+    while (__atomic_exchange_n(&g_ptr_lock, 1, __ATOMIC_ACQUIRE)) slang__plat_yield();
+}
+static void ptr_unlock(void) { __atomic_store_n(&g_ptr_lock, 0, __ATOMIC_RELEASE); }
 
 slang_object *slang_diag_rt_slots(void) {
-    slang_object *m = __atomic_load_n(&g_slots, __ATOMIC_ACQUIRE);
+    ptr_lock();
+    slang_object *m = g_slots;
     slang_retain(m);
+    ptr_unlock();
     return m;
 }
 
 void slang_diag_rt_set_slots(slang_object *m) {
     slang_retain(m);
-    slang_object *old = __atomic_exchange_n(&g_slots, m, __ATOMIC_ACQ_REL);
+    ptr_lock();
+    slang_object *old = g_slots;
+    g_slots = m;
+    ptr_unlock();
     slang_release(old);
 }
 
@@ -33,8 +44,17 @@ void slang_diag_rt_lock(void) {
 
 void slang_diag_rt_unlock(void) { __atomic_store_n(&g_slots_lock, 0, __ATOMIC_RELEASE); }
 
+/* The slot map is the registry of process-wide singletons: the default
+ * http.Transport, the default logger, the metrics registry, the tracer.
+ * slang_runtime_shutdown releases it before it stops the scheduler, so
+ * their destructors (closing pooled connections, flushing sinks) and the
+ * tasks those wake (HTTP/2 readers) finish before the leak report, and
+ * once more after (whatever was registered again meanwhile). */
 void slang__diag_shutdown(void) {
-    slang_object *old = __atomic_exchange_n(&g_slots, (slang_object *)NULL, __ATOMIC_ACQ_REL);
+    ptr_lock();
+    slang_object *old = g_slots;
+    g_slots = NULL;
+    ptr_unlock();
     slang_release(old);
 }
 
@@ -46,6 +66,27 @@ int64_t slang_diag_rt_live_tasks(void) { return slang__live_tasks(); }
 int64_t slang_diag_rt_queue_len(void) { return slang__sched_queue_len(); }
 int64_t slang_diag_rt_workers(void) { return slang_sched_workers(); }
 int64_t slang_diag_rt_mono_nanos(void) { return slang__plat_mono_ns(); }
+
+int64_t slang_diag_rt_heap_in_use(void) {
+    int64_t v;
+    slang__heap_stats(&v, NULL, NULL, NULL);
+    return v;
+}
+
+int64_t slang_diag_rt_heap_retained(void) {
+    int64_t v;
+    slang__heap_stats(NULL, &v, NULL, NULL);
+    return v;
+}
+
+int64_t slang_diag_rt_heap_released(void) {
+    int64_t v;
+    slang__heap_stats(NULL, NULL, &v, NULL);
+    return v;
+}
+
+/* std.runtime.FreeOSMemory */
+void slang_runtime_free_os_memory(void) { slang__heap_collect(1); }
 
 /* ---- log file sink ---------------------------------------------------- */
 

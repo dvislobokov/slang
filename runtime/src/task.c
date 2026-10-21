@@ -57,6 +57,7 @@ static job *pop_locked(void) {
 static void *worker_main(void *spare_flag) {
     int spare = spare_flag != NULL;
     t_is_worker = 1;
+    slang__rc_thread_eligible();     /* biased refcounts (rc.c) */
     slang__plat_thread_stack_init(); /* frame walks of the CPU profiler */
     slang__plat_mutex_lock(&q_mu);
     for (;;) {
@@ -65,13 +66,31 @@ static void *worker_main(void *spare_flag) {
             if (q_stopping) break;
             /* spare threads retire once enough unblocked workers exist again */
             if (spare && q_alive - q_blocked > q_nworkers) break;
+            /* Before sleeping, take back pages other threads freed into
+             * (and retire empty ones), so idle workers do not pin memory. */
+            if (slang__heap_needs_collect()) {
+                slang__plat_mutex_unlock(&q_mu);
+                slang__heap_collect(0);
+                slang__plat_mutex_lock(&q_mu);
+                continue;
+            }
+            /* Merge this thread's refcount queue first (rc.c): destructors
+             * may run, so not under q_mu. While parked, others merge it. */
+            if (slang__rc_pending()) {
+                slang__plat_mutex_unlock(&q_mu);
+                slang__rc_poll();
+                slang__plat_mutex_lock(&q_mu);
+                continue;
+            }
             q_idle++;
+            slang__rc_park(0);
             slang__plat_cond_wait(&q_cv, &q_mu);
             q_idle--;
             continue;
         }
         q_active++;
         slang__plat_mutex_unlock(&q_mu);
+        slang__rc_unpark();   /* after a park above; no-op otherwise */
         slang_resume_fn fn = j->fn;
         void *arg = j->arg;
         slang_object *saved = t_ctx;
@@ -300,6 +319,9 @@ static slang_task *task_new_ex(int64_t result_size, const slang_value_ops *ops, 
     if (result_size < 0) slang__panicf("slang_task_new: negative result size");
     slang_task *t = slang_object_new(&task_type,
                                      (int64_t)sizeof(slang_task) + SLANG_ROUND8(result_size));
+    /* Tasks move between threads all the time (awaiters, continuations,
+     * jobs): biasing them to one thread would only queue merges (rc.c). */
+    t->hdr.refcount |= SLANG_RC_NOBIAS;
     slang__plat_mutex_init(&t->mu);
     slang__plat_cond_init(&t->cv);
     __atomic_add_fetch(&g_live_tasks, 1, __ATOMIC_RELAXED);
@@ -401,7 +423,12 @@ bool slang_task_is_done(const slang_task *t) {
     return __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == TASK_DONE;
 }
 
-static bool add_cont(slang_task *t, slang_resume_fn fn, void *frame) {
+/* `suspend`: the registering coroutine suspends when this succeeds. Its
+ * task's saved caller context is then restored on this thread *before* the
+ * continuation is published: once it is, the continuation may resume on
+ * another thread, whose restore_parent must not race with ours on the
+ * task's ctx_saved/caller_ctx. */
+static bool add_cont(slang_task *t, slang_resume_fn fn, void *frame, bool suspend) {
     if (!t || !fn) slang_panic_nil();
     if (slang_task_is_done(t)) return false;
     cont *c = malloc(sizeof *c);
@@ -418,16 +445,27 @@ static bool add_cont(slang_task *t, slang_resume_fn fn, void *frame) {
     }
     slang_retain(c->ctx);
     slang_retain(c->cur);
+    slang_object *drop_ctx = NULL;
+    slang_task *cur = t_cur;
+    if (suspend && cur && cur->ctx_saved) {
+        /* restore_parent's context step (the continuation holds the task's
+         * context now, so the old t_ctx is released after unlocking). */
+        drop_ctx = t_ctx;
+        t_ctx = cur->caller_ctx;
+        cur->caller_ctx = NULL;
+        cur->ctx_saved = 0;
+    }
     c->next = t->conts;
     t->conts = c;
     slang__plat_mutex_unlock(&t->mu);
+    slang_release(drop_ctx);
     return true;
 }
 
 /* Public: the registering code (a coroutine) suspends when this returns
  * true, so the current task becomes its parent again. */
 bool slang_task_add_continuation(slang_task *t, slang_resume_fn fn, void *frame) {
-    if (!add_cont(t, fn, frame)) return false;
+    if (!add_cont(t, fn, frame, true)) return false;
     if (t_cur) restore_parent(t_cur);
     return true;
 }
@@ -448,9 +486,12 @@ void *slang_task_await(slang_task *t) {
         if (q_idle == 0 && !q_stopping) spawn_worker_locked(1);
         slang__plat_mutex_unlock(&q_mu);
     }
+    int parked = __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) != TASK_DONE;
+    if (parked) slang__rc_park(1);   /* others may merge our refcount queue (rc.c) */
     slang__plat_mutex_lock(&t->mu);
     while (t->state != TASK_DONE) slang__plat_cond_wait(&t->cv, &t->mu);
     slang__plat_mutex_unlock(&t->mu);
+    if (parked) slang__rc_unpark();
     if (t_is_worker) {
         slang__plat_mutex_lock(&q_mu);
         q_blocked--;
@@ -635,7 +676,7 @@ slang_task *slang_task_all(slang_task *const *tasks, int64_t n) {
     st->remaining = n + 1;  /* +1 guard released below */
     for (int64_t i = 0; i < n; i++) {
         if (!tasks[i]) slang_panic_nil();
-        if (!add_cont(tasks[i], all_one_done, st)) all_one_done(st);
+        if (!add_cont(tasks[i], all_one_done, st, false)) all_one_done(st);
     }
     all_one_done(st);
     return r;
@@ -698,7 +739,7 @@ slang_task *slang_task_any(slang_task *const *tasks, int64_t n) {
         if (!nd) slang_panic("out of memory (task_any)");
         nd->st = st;
         nd->index = i;
-        if (!add_cont(tasks[i], any_one_done, nd)) any_one_done(nd);
+        if (!add_cont(tasks[i], any_one_done, nd, false)) any_one_done(nd);
     }
     any_unref(st);
     return r;

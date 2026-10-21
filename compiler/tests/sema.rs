@@ -621,3 +621,71 @@ fn parameter_modes() {
     assert!(facts.owned(id("walk"), 0) && facts.escapes(id("walk"), 0), "a reassigned parameter is owned");
     assert!(facts.owned(id("later"), 0) && facts.escapes(id("later"), 0), "async parameters are owned");
 }
+
+// ---------------------------------------------------------------------------
+// Reference-cycle analysis (W0001, sema::cycles)
+// ---------------------------------------------------------------------------
+
+/// The W0001 warnings of a program (which must compile).
+fn cycle_warnings(src: &str) -> Vec<String> {
+    let files = vec![SourceFile::new("f0.sl".to_string(), src)];
+    let mut diags = Diagnostics::new();
+    let p = driver::check(&files, &mut diags);
+    assert!(p.is_some(), "unexpected errors: {:#?}", diags.items);
+    diags.items.iter().filter(|d| d.code == Some("W0001")).map(|d| d.message.clone()).collect()
+}
+
+fn cyclic(p: &Program, name: &str) -> bool {
+    let sid = p.structs.iter().position(|s| s.name == name).expect("struct");
+    let t = p.types.lookup(&Type::Struct(slang::types::DeclId(sid as u32))).unwrap();
+    slang::sema::cycles::analyze(p).is_cyclic(t)
+}
+
+#[test]
+fn w0001_pointer_self_and_mutual() {
+    let w = cycle_warnings("namespace app\nstruct List {\n    V int\n    Next *List\n}\nstruct A {\n    B *B\n}\nstruct B {\n    A *A\n}\nstruct Leaf {\n    V int\n}\nstruct Tree {\n    L *Leaf\n}\nfunc main() {\n    var l = new List{}\n    var t = new Tree{}\n    var a = new A{}\n    l.V = 1\n    t.L = nil\n    a.B = nil\n}\n");
+    assert_eq!(w.len(), 3, "{w:#?}");
+    assert!(w.iter().any(|m| m == "W0001 type List can form a reference cycle through field Next (*List); consider weak *List or a Drop that breaks the cycle"), "{w:#?}");
+    assert!(w.iter().any(|m| m.starts_with("W0001 type A can form a reference cycle through field B (*B)")), "{w:#?}");
+    assert!(w.iter().any(|m| m.starts_with("W0001 type B can form a reference cycle through field A (*A)")), "{w:#?}");
+}
+
+#[test]
+fn w0001_through_closures_interfaces_and_containers() {
+    let src = "namespace app\nimport std.io\ninterface Handler {\n    func Run()\n}\nstruct Server {\n    H Handler\n}\nstruct App {\n    Srv *Server\n    func Run() { println(\"run\") }\n}\nstruct Button {\n    OnClick func()\n}\nstruct Graph {\n    Nodes map[string][]*Graph\n}\nstruct Plain {\n    F func()\n}\nfunc main() {\n    var app = new App{}\n    app.Srv = new Server{H: app}\n    var b = new Button{}\n    b.OnClick = func() { println(b == nil) }\n    var p = Plain{F: func() { println(1) }}\n    p.F()\n    var g = new Graph{}\n    println(g == nil)\n    defer func() { println(app == nil) }()\n}\n";
+    let w = cycle_warnings(src);
+    assert!(w.iter().any(|m| m.contains("type Server can form a reference cycle through field H (Handler)")), "{w:#?}");
+    assert!(w.iter().any(|m| m.contains("type App can form a reference cycle through field Srv (*Server)")), "{w:#?}");
+    assert!(w.iter().any(|m| m.contains("type Button can form a reference cycle through field OnClick (func())")), "{w:#?}");
+    assert!(w.iter().any(|m| m.contains("type Graph can form a reference cycle through field Nodes (map[string][]*Graph)")), "{w:#?}");
+    assert!(!w.iter().any(|m| m.contains("type Plain")), "{w:#?}");
+    let p = ok(src);
+    assert!(cyclic(&p, "Button") && cyclic(&p, "App") && !cyclic(&p, "Plain"));
+}
+
+#[test]
+fn w0001_silenced_by_weak_allow_cycle_and_std() {
+    let w = cycle_warnings("namespace app\nstruct Node {\n    Parent weak *Node\n    Children []*Node\n}\n@allowCycle\nstruct Ring {\n    Next *Ring\n}\nstruct E {\n    Inner error\n}\nfunc main() {\n    var n = new Node{}\n    var r = new Ring{}\n    var e = E{Inner: error(\"x\")}\n    n.Parent = nil\n    r.Next = r\n    println(e.Inner)\n}\n".replace("println(e.Inner)", "var m = e.Inner.Message()\n    m = m + \"\"").as_str());
+    assert!(w.is_empty(), "{w:#?}");
+    err("namespace app\n@allowCycle\nfunc main() {\n}\n", "@allowCycle can only be applied to a struct or an enum");
+}
+
+#[test]
+fn deny_warnings_turns_w0001_into_an_error() {
+    slang::sema::cycles::set_deny_warnings(true);
+    let (p, errors) = analyze(&["namespace app\nstruct L {\n    N *L\n}\nfunc main() {\n    var l = new L{}\n    l.N = nil\n}\n"]);
+    slang::sema::cycles::set_deny_warnings(false);
+    assert!(p.is_none());
+    assert!(errors.iter().any(|e| e.starts_with("W0001 type L")), "{errors:#?}");
+}
+
+#[test]
+fn acyclic_types_are_not_cyclic_and_not_warned() {
+    let src = "namespace app\n@acyclic\nstruct Tree {\n    L *Tree\n    R *Tree\n}\nstruct Ring {\n    Next *Ring\n}\nfunc main() {\n    var t = new Tree{}\n    var r = new Ring{}\n    t.L = nil\n    r.Next = nil\n}\n";
+    let w = cycle_warnings(src);
+    assert_eq!(w.len(), 1, "{w:#?}");
+    assert!(w[0].contains("type Ring"), "{w:#?}");
+    let p = ok(src);
+    assert!(!cyclic(&p, "Tree") && cyclic(&p, "Ring"));
+    err("namespace app\n@acyclic\nfunc main() {\n}\n", "@acyclic can only be applied to a struct or an enum");
+}

@@ -289,7 +289,7 @@ static void frame_rec_release(void *slot) {
     slang_release(f->ctx);
 }
 
-const slang_value_ops slang_ops_error_frame = { frame_rec_retain, frame_rec_release };
+const slang_value_ops slang_ops_error_frame = { frame_rec_retain, frame_rec_release, NULL };
 
 void slang_error_frames(const slang_error *err, slang_slice *out) {
     int64_t n = err ? err->nframes + (err->created ? 1 : 0) : 0;

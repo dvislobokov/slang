@@ -20,6 +20,10 @@ runtime/ABI.md:
     Task<T>     pending | done: <result>
     weak *T     -> (fields) | <freed> | nil
 
+The command `slang-rc <expr>` decodes the reference count of the object a
+value points at (unowned, biased to a thread slot, cycle-collected,
+immortal..., runtime/ABI.md 3.1).
+
 Everything is read from memory; no code runs in the debuggee, so the
 formatters also work on core dumps.
 """
@@ -741,6 +745,80 @@ def slang_next(debugger, command, result, _dict):
     debugger.HandleCommand("continue")
 
 
+
+# --------------------------------------------------------------------------
+# reference counts (runtime/ABI.md 3.1: the header word at +0)
+# --------------------------------------------------------------------------
+
+RC_WEAK = 1 << 62
+RC_CYCLIC = 1 << 61
+RC_BIASED = 1 << 60
+RC_QUEUED = 1 << 59
+RC_COUNT_MASK = (1 << 57) - 1
+
+
+def decode_refcount(word):
+    """The meaning of an object header's refcount word, as text: immortal,
+    arena, a string view's block, an unowned count, a biased count (owner
+    slot, B + S) or a cycle-collected count with its flags."""
+    w = word & 0xFFFFFFFFFFFFFFFF
+    if w >= 1 << 63:
+        s = w - (1 << 64)
+        if s == -1:
+            return "immortal"
+        if s == -2:
+            return "arena"
+        return "view of block 0x%x" % (w & ~(1 << 63))
+    flags = []
+    if w & RC_WEAK:
+        flags.append("weak box")
+    if w & RC_CYCLIC:
+        names = [(60, "buffered"), (59, "marked"), (58, "dirty"), (57, "zombie")]
+        flags += [n for b, n in names if w & (1 << b)]
+        text = "count %d (cycle-collected)" % (w & RC_COUNT_MASK)
+    elif w & RC_BIASED:
+        b = w & 0xFFFF
+        s = ((w >> 16) & 0x7FFFFFFF) - (1 << 30)
+        slot = (w >> 47) & 0xFFF
+        if w & RC_QUEUED:
+            flags.append("queued for a merge")
+        text = "count %d (biased to thread slot %d: owner %d, shared %d)" % (b + s, slot, b, s)
+    else:
+        if w & RC_QUEUED:
+            flags.append("never biased")
+        text = "count %d (unowned)" % (w & RC_COUNT_MASK)
+    return text + ("" if not flags else ", " + ", ".join(flags))
+
+
+def slang_rc(debugger, command, result, _dict):
+    """slang-rc <expr>: the reference count of the heap object <expr> points
+    at (a *T points at the payload: its header is 16 bytes before; strings,
+    maps, errors and tasks point at the header)."""
+    target = debugger.GetSelectedTarget()
+    frame = target.GetProcess().GetSelectedThread().GetSelectedFrame()
+    v = frame.EvaluateExpression(command.strip())
+    if not v.IsValid() or v.GetError().Fail():
+        result.SetError("cannot evaluate %r" % command)
+        return
+    h = _raw(v).GetChildMemberWithName("ptr")
+    if h.IsValid():
+        addr = h.GetValueAsUnsigned(0)        # a handle: string, map, error, Task, weak
+    elif v.GetType().IsPointerType():
+        addr = v.GetValueAsUnsigned(0)
+        addr = addr - 16 if addr else 0       # a *T: the payload
+    else:
+        addr = v.GetValueAsUnsigned(0)
+    if addr == 0:
+        result.AppendMessage("nil")
+        return
+    err = lldb.SBError()
+    word = target.GetProcess().ReadUnsignedFromMemory(addr, 8, err)
+    if err.Fail():
+        result.SetError("cannot read 0x%x" % addr)
+        return
+    result.AppendMessage("0x%x: %s" % (addr, decode_refcount(word)))
+
+
 # --------------------------------------------------------------------------
 # registration
 # --------------------------------------------------------------------------
@@ -779,5 +857,6 @@ def __lldb_init_module(debugger, _dict):
     for cmd in cmds:
         _run(debugger, cmd)
     _run(debugger, "command script add -o -f %s.slang_next slang-next" % m)
+    _run(debugger, "command script add -o -f %s.slang_rc slang-rc" % m)
     # A panic stops in the debugger at the panic site.
     _run(debugger, "breakpoint set -r '^slang_panic' -N SlangPanic")

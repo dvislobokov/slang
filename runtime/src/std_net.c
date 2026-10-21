@@ -89,6 +89,7 @@ typedef struct net_sock {
     int32_t family;         /* SLANG_PLAT_AF_* */
     int32_t type;           /* SLANG_PLAT_STREAM / DGRAM */
     int32_t has_peer;
+    int32_t listening;      /* a listener: shut down before close */
     slang__plat_addr peer;  /* remote address known at dial/accept */
     char *unlink_path;      /* Unix listener: socket file removed on close */
 } net_sock;
@@ -113,6 +114,12 @@ static void final_close(net_sock *s) {
     if (__atomic_exchange_n(&s->released, 1, __ATOMIC_ACQ_REL)) return;
     /* A wait registered while an operation was in flight is released too. */
     slang_io_forget(s->fd);
+    /* A listener stops accepting now, even if the descriptor is still
+     * referenced elsewhere (an io_uring request completed a moment ago
+     * whose file reference the kernel drops lazily, a thread inside
+     * accept): close(2) alone would leave it listening until the last
+     * reference goes, and a dial could still be accepted, then reset. */
+    if (s->listening) slang__plat_sock_shutdown(s->fd, SLANG_PLAT_READ);
     slang__plat_sock_close(s->fd);
     if (s->unlink_path) slang__plat_unlink(s->unlink_path);
 }
@@ -403,7 +410,9 @@ int64_t slang_net_rt_listen(const slang_string *ip, int64_t port, int64_t backlo
     if (flags & LF_FASTOPEN) slang__plat_sock_setopt(fd, SLANG_PLAT_OPT_FASTOPEN, 256);
     int64_t rc = slang__plat_sock_listen(fd, backlog > 0 ? (int)backlog : 4096);
     if (rc < 0) { slang__plat_sock_close(fd); set_code(err, rc); return -1; }
-    return sock_new(fd, family_of(&a), SLANG_PLAT_STREAM);
+    int64_t h = sock_new(fd, family_of(&a), SLANG_PLAT_STREAM);
+    sock_of(h)->listening = 1;
+    return h;
 }
 
 int64_t slang_net_rt_listen_unix(const slang_string *path, int64_t backlog, slang_error **err) {
@@ -419,6 +428,7 @@ int64_t slang_net_rt_listen_unix(const slang_string *path, int64_t backlog, slan
     if (rc >= 0) rc = slang__plat_sock_listen(fd, backlog > 0 ? (int)backlog : 4096);
     if (rc < 0) { slang__plat_sock_close(fd); set_code(err, rc); return -1; }
     int64_t h = sock_new(fd, SLANG_PLAT_AF_UNIX, SLANG_PLAT_STREAM);
+    sock_of(h)->listening = 1;
     if (p[0] != '@') {
         sock_of(h)->unlink_path = strdup(p);
         if (!sock_of(h)->unlink_path) slang_panic("out of memory (socket)");

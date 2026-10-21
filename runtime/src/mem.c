@@ -1,5 +1,5 @@
 /* mem.c - raw allocation, refcounted object header, value ops, leak check. */
-#include "rt_internal.h"
+#include "heap.h"
 #include "platform/platform.h"
 
 #include <stdio.h>
@@ -129,212 +129,21 @@ void *slang_realloc(void *p, int64_t size) {
 
 void slang_free(void *p) { free(p); }
 
-/* ---- small-object allocator ----
- * Objects of at most SLAB_MAX bytes (most strings, error and weak boxes,
- * small backing arrays) come from per-thread free lists instead of malloc.
- * Memory is carved from 4 MB regions, each dedicated to one size class
- * (multiples of 16 bytes); a two-level bitmap over the address space tells
- * whether a pointer lies in a region, so freeing needs no per-object header.
- * Freed slots go to the freeing thread's list; lists longer than SLAB_BATCH
- * slots and the lists of exiting threads are handed to a global per-class
- * pool so memory moves between producer and consumer threads. Regions are
- * never returned to the OS. Disabled under AddressSanitizer (so it still sees
- * every object), in leak-check mode 2 (objects carry a tracking prefix) and
- * with SLANG_NO_SLAB=1 in the environment (e.g. for Valgrind memcheck). */
-
-#if defined(__SANITIZE_ADDRESS__)
-#define SLAB_ENABLED 0
-#elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
-#define SLAB_ENABLED 0
-#endif
-#endif
-#ifndef SLAB_ENABLED
-#define SLAB_ENABLED 1
-#endif
-
-#define SLAB_MAX 128
-#define SLAB_CLASSES (SLAB_MAX / 16)
-#define SLAB_REGION_SHIFT 22                 /* 4 MB regions */
-#define SLAB_REGION ((size_t)1 << SLAB_REGION_SHIFT)
-#define SLAB_SPAN ((size_t)64 << 10)         /* bump chunk handed to a thread */
-#define SLAB_BATCH 4096                      /* local list length before spilling */
-#define SLAB_ADDR_BITS 48
-#define SLAB_LEAF_BITS 16                    /* regions per leaf (bits) */
-#define SLAB_TOP (1u << (SLAB_ADDR_BITS - SLAB_REGION_SHIFT - SLAB_LEAF_BITS))
-
-typedef struct slab_node { struct slab_node *next, *next_batch; } slab_node;
-
-_Static_assert(sizeof(struct { int64_t a; void *b; }) <= 16, "region header fits a slot");
-typedef struct slab_region {                 /* at the region base (first slot) */
-    int64_t cls;
-    struct slab_region *next;                /* all regions, so leak checkers see them as reachable */
-} slab_region;
-
-static uint64_t *g_slab_map[SLAB_TOP];       /* leaf bitmaps, set once */
-static slang__plat_mutex g_slab_mu = SLANG_PLAT_MUTEX_INIT;
-static struct {
-    char *cur, *end;                         /* uncarved part of the current region */
-    slab_node *batches;                      /* spilled free lists (linked by next_batch) */
-} g_slab[SLAB_CLASSES];
-static slab_region *g_slab_regions;
-static int g_slab_off;                       /* SLANG_NO_SLAB set, or no TLS key */
-static slang__plat_once g_slab_once = SLANG_PLAT_ONCE_INIT;
-static slang__plat_tls_key g_slab_key;
-
-typedef struct {
-    slab_node *free;                         /* free slots */
-    int64_t nfree;
-    char *cur, *end;                         /* thread's bump span */
-    int registered;
-} slab_local;
-static _Thread_local slab_local t_slab[SLAB_CLASSES];
-
-static inline int slab_is(const void *p) {
-    uintptr_t a = (uintptr_t)p;
-    if (a >> SLAB_ADDR_BITS) return 0;
-    uintptr_t r = a >> SLAB_REGION_SHIFT;
-    uint64_t *leaf = __atomic_load_n(&g_slab_map[r >> SLAB_LEAF_BITS], __ATOMIC_ACQUIRE);
-    if (!leaf) return 0;
-    uintptr_t bit = r & ((1u << SLAB_LEAF_BITS) - 1);
-    return (int)((__atomic_load_n(&leaf[bit >> 6], __ATOMIC_RELAXED) >> (bit & 63)) & 1);
-}
-
-static inline int64_t slab_cls_of(const void *p) {
-    return ((const slab_region *)((uintptr_t)p & ~(uintptr_t)(SLAB_REGION - 1)))->cls;
-}
-
-static inline int64_t slab_size(int64_t cls) { return (cls + 1) * 16; }
-
-/* Flush a thread's free lists into the global pools (thread exit). */
-static void slab_thread_exit(void *arg) {
-    (void)arg;
-    slang__plat_mutex_lock(&g_slab_mu);
-    for (int c = 0; c < SLAB_CLASSES; c++) {
-        slab_local *l = &t_slab[c];
-        if (l->free) {
-            l->free->next_batch = g_slab[c].batches;
-            g_slab[c].batches = l->free;
-        }
-        l->free = NULL;
-        l->nfree = 0;
-        l->cur = l->end = NULL;  /* the rest of the span is abandoned */
-    }
-    slang__plat_mutex_unlock(&g_slab_mu);
-}
-
-static void slab_init_key(void) {
-    const char *e = getenv("SLANG_NO_SLAB");
-    if ((e && *e && *e != '0') || !slang__plat_tls_new(&g_slab_key, slab_thread_exit))
-        __atomic_store_n(&g_slab_off, 1, __ATOMIC_RELAXED);
-}
-
-/* Marks [base, base + SLAB_REGION) as a slab region (g_slab_mu held). */
-static int slab_mark(char *base) {
-    uintptr_t r = (uintptr_t)base >> SLAB_REGION_SHIFT;
-    if ((uintptr_t)base >> SLAB_ADDR_BITS) return 0;
-    uint64_t **slot = &g_slab_map[r >> SLAB_LEAF_BITS];
-    uint64_t *leaf = *slot;
-    if (!leaf) {
-        leaf = calloc((1u << SLAB_LEAF_BITS) / 64, sizeof(uint64_t));
-        if (!leaf) return 0;
-        __atomic_store_n(slot, leaf, __ATOMIC_RELEASE);
-    }
-    uintptr_t bit = r & ((1u << SLAB_LEAF_BITS) - 1);
-    __atomic_or_fetch(&leaf[bit >> 6], (uint64_t)1 << (bit & 63), __ATOMIC_RELEASE);
-    return 1;
-}
-
-/* Slow path: refill the thread's list or span for class c. NULL = use malloc. */
-__attribute__((noinline)) static void *slab_refill(int64_t c) {
-    slab_local *l = &t_slab[c];
-    if (!l->registered) {
-        slang__plat_once_run(&g_slab_once, slab_init_key);
-        if (__atomic_load_n(&g_slab_off, __ATOMIC_RELAXED)) return NULL;
-        slang__plat_tls_set(g_slab_key, (void *)1);
-        l->registered = 1;
-    }
-    int64_t sz = slab_size(c);
-    slang__plat_mutex_lock(&g_slab_mu);
-    slab_node *batch = g_slab[c].batches;
-    if (batch) {
-        g_slab[c].batches = batch->next_batch;
-        slang__plat_mutex_unlock(&g_slab_mu);
-        l->free = batch->next;
-        l->nfree = 0;  /* unknown length; only bounds spilling */
-        return batch;
-    }
-    if (g_slab[c].end - g_slab[c].cur < (ptrdiff_t)SLAB_SPAN) {
-        char *base = slang__plat_aligned_alloc(SLAB_REGION, SLAB_REGION);
-        if (!base || !slab_mark(base)) {
-            slang__plat_mutex_unlock(&g_slab_mu);
-            if (base) slang__plat_aligned_free(base);
-            return NULL;
-        }
-        slab_region *rg = (slab_region *)base;
-        rg->cls = c;
-        rg->next = g_slab_regions;
-        g_slab_regions = rg;
-        /* The first slot holds the region header (16 bytes, the smallest class). */
-        g_slab[c].cur = base + sz;
-        g_slab[c].end = base + SLAB_REGION;
-    }
-    char *span = g_slab[c].cur;
-    size_t n = SLAB_SPAN - SLAB_SPAN % (size_t)sz;
-    if ((size_t)(g_slab[c].end - span) < n) n = (size_t)(g_slab[c].end - span) / (size_t)sz * (size_t)sz;
-    g_slab[c].cur = span + n;
-    slang__plat_mutex_unlock(&g_slab_mu);
-    l->cur = span + sz;
-    l->end = span + n;
-    return span;
-}
-
-/* A slot of the class for `size` bytes, contents undefined; NULL = use malloc. */
-static inline void *slab_alloc(int64_t size) {
-    int64_t c = (size - 1) >> 4;
-    slab_local *l = &t_slab[c];
-    slab_node *n = l->free;
-    if (n) {
-        l->free = n->next;
-        l->nfree--;
-        return n;
-    }
-    if (l->cur < l->end) {
-        void *p = l->cur;
-        l->cur += slab_size(c);
-        return p;
-    }
-    return slab_refill(c);
-}
-
-static inline void slab_free(void *p) {
-    int64_t c = slab_cls_of(p);
-    slab_local *l = &t_slab[c];
-    slab_node *n = p;
-    if (l->nfree >= SLAB_BATCH) {
-        /* Hand the whole list to the global pool and start a new one. */
-        slang__plat_mutex_lock(&g_slab_mu);
-        l->free->next_batch = g_slab[c].batches;
-        g_slab[c].batches = l->free;
-        slang__plat_mutex_unlock(&g_slab_mu);
-        l->free = NULL;
-        l->nfree = 0;
-    }
-    n->next = l->free;
-    l->free = n;
-    l->nfree++;
-}
-
 /* ---- objects ---- */
 
 /* Allocates an object of `size` bytes (header included) with the header set
- * and the payload NOT zeroed. */
-static inline slang_object *object_alloc(const slang_type_info *type, int64_t size) {
+ * and the payload zeroed when `zero`. Objects come from the object heap
+ * (heap.c) unless it is off or leak check mode 2 tracks them. */
+static inline __attribute__((always_inline)) slang_object *object_alloc(const slang_type_info *type, int64_t size, int zero) {
     if (size < (int64_t)sizeof(slang_object))
         slang__panicf("slang_object_new: size %lld smaller than header", (long long)size);
     slang_object *o = NULL;
-    if (SLAB_ENABLED && size <= SLAB_MAX && !g_track &&
-        !__atomic_load_n(&g_slab_off, __ATOMIC_RELAXED)) o = slab_alloc(size);
+    if (!g_track) {
+        /* Small blocks: zero only the payload; fresh large mappings are zero. */
+        int small = size <= SLANG__HP_SMALL_MAX;
+        o = slang__heap_alloc(size, zero && !small);
+        if (o && zero && small) memset(o + 1, 0, (size_t)size - sizeof(slang_object));
+    }
     if (!o) {
         if (g_track) {
             o = (slang_object *)((track *)slang_alloc(size + (int64_t)sizeof(track)) + 1);
@@ -342,28 +151,33 @@ static inline slang_object *object_alloc(const slang_type_info *type, int64_t si
         } else {
             o = malloc((size_t)size);
             if (!o) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
+            if (zero) memset(o + 1, 0, (size_t)size - sizeof(slang_object));
         }
     }
     o->refcount = 1;
     o->type = type;
     stats_add(1, 1);
+    if (SLANG_DIAG_HEAP_ON()) slang__diag_heap_count(type, 1);  /* SLANG_DIAG_HEAP */
     return o;
 }
 
 void *slang_object_new(const slang_type_info *type, int64_t size) {
-    slang_object *o = object_alloc(type, size);
-    memset(o + 1, 0, (size_t)size - sizeof(slang_object));
-    return o;
+    return object_alloc(type, size, 1);
 }
 
 slang_object *slang__object_new_uninit(const slang_type_info *type, int64_t size) {
-    return object_alloc(type, size);
+    return object_alloc(type, size, 0);
 }
 
-static void object_free(slang_object *o) {
+/* Memory of a heap object comes from the object heap when it is on and
+ * leak tracking is off (both fixed before the first object exists). */
+static inline int from_heap(void) { return !g_track && slang__heap_on; }
+
+static inline __attribute__((always_inline)) void object_free(slang_object *o) {
     stats_add(-1, 0);
-    if (SLAB_ENABLED && slab_is(o)) {
-        slab_free(o);
+    if (SLANG_DIAG_HEAP_ON()) slang__diag_heap_count(o->type, -1);  /* SLANG_DIAG_HEAP */
+    if (from_heap()) {
+        slang__heap_free(o);
     } else if (g_track) {
         track_remove(o);
         free((track *)o - 1);
@@ -373,22 +187,13 @@ static void object_free(slang_object *o) {
 }
 
 int64_t slang__object_capacity(slang_object *o) {
-    if (SLAB_ENABLED && slab_is(o)) return slab_size(slab_cls_of(o));
+    if (from_heap()) return slang__heap_capacity(o);
     if (g_track) return (int64_t)slang__plat_alloc_size((track *)o - 1) - (int64_t)sizeof(track);
     return (int64_t)slang__plat_alloc_size(o);
 }
 
 slang_object *slang__object_resize(slang_object *o, int64_t size) {
-    if (SLAB_ENABLED && slab_is(o)) {
-        int64_t have = slab_size(slab_cls_of(o));
-        if (size <= have) return o;
-        /* Move out of the slab (slab objects are never tracked). */
-        slang_object *n = malloc((size_t)size);
-        if (!n) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
-        memcpy(n, o, (size_t)have);
-        slab_free(o);
-        return n;
-    }
+    if (from_heap()) return slang__hp_resize(o, size);
     if (!g_track) return slang_realloc(o, size);
     slang__plat_mutex_lock(&g_track_mu);
     track *t = (track *)o - 1;
@@ -407,6 +212,7 @@ void slang__object_immortalize(slang_object *o) {
     if (o->refcount < 0) return;
     o->refcount = SLANG_RC_IMMORTAL;
     stats_add(-1, 0);
+    if (SLANG_DIAG_HEAP_ON()) slang__diag_heap_count(o->type, -1);
     if (g_track) track_remove(o);
 }
 
@@ -425,9 +231,13 @@ void slang_retain(void *obj) {
         n = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
     }
     if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED))
-        __atomic_store_n(&o->refcount, n + 1, __ATOMIC_RELAXED);   /* one thread: no RMW */
-    else
-        __atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED);
+        __atomic_store_n(&o->refcount, n + 1, __ATOMIC_RELAXED);   /* one thread: no RMW (and nothing is biased) */
+    else if ((n & (SLANG_RC_BIASED | SLANG_RC_CYCLIC)) == SLANG_RC_BIASED)
+        slang__rc_retain_biased(o, n);    /* biased counts (rc.c, ABI.md 3.1) */
+    else if (!(n & SLANG_RC_CYCLIC))
+        slang__rc_retain_unowned(o, n);   /* may bias it (rc.c) */
+    else if (__atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED) & SLANG_RC_MARKED)
+        slang__cycles_dirty(o);   /* examined by the cycle collector (ABI.md 3.8) */
 }
 
 
@@ -441,12 +251,32 @@ void slang_release(void *obj) {
         n = __atomic_load_n(&o->refcount, __ATOMIC_ACQUIRE);
     }
     if (n != 1) {
+        /* One thread, a plain count of at least 2 below every flag bit: a
+         * plain store (nothing is biased while single-threaded). */
+        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && (uint64_t)(n - 2) < ((uint64_t)1 << 57) - 2) {
+            __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
+            return;
+        }
+        if ((n & (SLANG_RC_BIASED | SLANG_RC_CYCLIC)) == SLANG_RC_BIASED) {
+            slang__rc_release_biased(o, n);   /* rc.c, ABI.md 3.1 */
+            return;
+        }
+        /* Objects of cyclic types record possible cycle roots (ABI.md 3.8). */
+        if (__builtin_expect(n & SLANG_RC_CYCLIC, 0)) {
+            slang__cycles_release(o);
+            return;
+        }
         /* Shared (or has a weak box): the decrement must be atomic unless
          * the process has one thread. A count of exactly 1 with no weak
          * flag means the caller holds the only reference and nobody else
          * can retain it, so the RMW is skipped. */
-        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && n > 1 && !(n & SLANG_RC_WEAK_FLAG)) {
+        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && n > 1 && !(n & (SLANG_RC_WEAK_FLAG | SLANG_RC_NOBIAS))) {
             __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
+            return;
+        }
+        /* Unowned and threaded: a CAS, since another thread may bias it. */
+        if (__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED)) {
+            slang__rc_release_unowned(o, n);
             return;
         }
         n = __atomic_sub_fetch(&o->refcount, 1, __ATOMIC_ACQ_REL);
@@ -464,7 +294,7 @@ int64_t slang_refcount(const void *obj) {
     if (!obj) return 0;
     int64_t rc = __atomic_load_n(&((const slang_object *)obj)->refcount, __ATOMIC_RELAXED);
     if (slang_rc_is_view(rc)) rc = __atomic_load_n(&view_block(rc)->refcount, __ATOMIC_RELAXED);
-    return rc < 0 ? rc : (rc & SLANG_RC_COUNT_MASK);
+    return slang__rc_count(rc);
 }
 
 int64_t slang_live_objects(void) { return stats_sum(0); }
@@ -517,6 +347,9 @@ void slang__leak_report(void) {
 
 static void leak_report(void) {
     if (!g_leak_mode) return;
+    /* The cycle collector's last word: a final collection (auto mode) or a
+     * count of the cyclic garbage it could free (manual mode). */
+    int64_t collectable = slang__cycles_at_exit ? slang__cycles_at_exit() : -1;
     int64_t live = slang_live_objects();
     if (live <= 0) return;
     fflush(stdout);
@@ -552,6 +385,9 @@ static void leak_report(void) {
         }
         slang__leak_cycles();
     }
+    if (collectable > 0)
+        fprintf(stderr, "  %lld of them in unreachable reference cycles the cycle collector can free (SLANG_CYCLES=auto or runtime.CollectCycles())\n",
+                (long long)collectable);
     fflush(stderr);
     _Exit(SLANG_LEAK_EXIT_CODE);
 }
@@ -560,12 +396,43 @@ static void leak_report(void) {
 
 static void ops_ref_retain(void *slot) { slang_retain(*(void **)slot); }
 static void ops_ref_release(void *slot) { slang_release(*(void **)slot); }
-const slang_value_ops slang_ops_ref = { ops_ref_retain, ops_ref_release };
+const slang_value_ops slang_ops_ref = { ops_ref_retain, ops_ref_release, NULL };
 
 static void ops_ptr_retain(void *slot) { slang_ptr_retain(*(void **)slot); }
 static void ops_ptr_release(void *slot) { slang_ptr_release(*(void **)slot); }
-const slang_value_ops slang_ops_ptr = { ops_ptr_retain, ops_ptr_release };
+const slang_value_ops slang_ops_ptr = { ops_ptr_retain, ops_ptr_release, NULL };
 
 static void ops_slice_retain(void *slot) { slang_slice_retain((slang_slice *)slot); }
 static void ops_slice_release(void *slot) { slang_slice_release((slang_slice *)slot); }
-const slang_value_ops slang_ops_slice = { ops_slice_retain, ops_slice_release };
+const slang_value_ops slang_ops_slice = { ops_slice_retain, ops_slice_release, NULL };
+
+/* ---- for the cycle collector (cycles.c) ---- */
+
+void slang__object_free(slang_object *o) { object_free(o); }
+void slang__object_uncount(void) { stats_add(-1, 0); }
+void slang__object_recount(void) { stats_add(1, 0); }
+
+/* Collection epoch (ABI.md 3.8): bumped when a cycle collection starts and
+ * when it ends. Compiled code reads it when it pins a `*T` of a cyclic type
+ * for a call and passes it back on the paired release: if no collection
+ * overlapped the pin, that release cannot leave an unrecorded garbage
+ * cycle behind (every other reference dropped meanwhile was a recorded
+ * decrement), so it skips recording a possible root. */
+int64_t slang_cycles_epoch;
+
+void slang_ptr_release_noroot(void *payload, int64_t epoch) {
+    if (!payload) return;
+    slang_object *o = (slang_object *)((char *)payload - sizeof(slang_object));
+    int64_t n = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
+    if (n >= 0 && (n & SLANG_RC_CYCLIC) && epoch == __atomic_load_n(&slang_cycles_epoch, __ATOMIC_ACQUIRE)) {
+        /* One thread and not the last reference: a plain decrement (no
+         * collection runs concurrently, so DIRTY is not needed). */
+        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && (n & SLANG_RC_COUNT_MASK) > 1) {
+            __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
+            return;
+        }
+        slang__cycles_release_noroot(o);
+        return;
+    }
+    slang_release(o);
+}

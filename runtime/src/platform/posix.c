@@ -24,6 +24,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__FreeBSD__) || defined(__DragonFly__)
@@ -48,16 +49,20 @@ bool slang__plat_thread_start(slang__plat_thread *t, slang__plat_thread_fn fn, v
     return true;
 }
 
-bool slang__plat_thread_start_detached(slang__plat_thread_fn fn, void *arg) {
+static bool start_detached(slang__plat_thread_fn fn, void *arg, int threaded) {
     pthread_t th;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
+    if (threaded) __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
     int rc = pthread_create(&th, &attr, fn, arg);
     pthread_attr_destroy(&attr);
     return rc == 0;
 }
+
+bool slang__plat_thread_start_detached(slang__plat_thread_fn fn, void *arg) { return start_detached(fn, arg, 1); }
+
+bool slang__plat_thread_start_background(slang__plat_thread_fn fn, void *arg) { return start_detached(fn, arg, 0); }
 
 void slang__plat_thread_join(slang__plat_thread t) {
     pthread_join((pthread_t)t.handle, NULL);
@@ -119,6 +124,63 @@ size_t slang__plat_alloc_size(void *p) {
     return malloc_size(p);
 #else
     return malloc_usable_size(p);
+#endif
+}
+
+size_t slang__plat_page_size(void) {
+    static size_t ps;
+    size_t v = __atomic_load_n(&ps, __ATOMIC_RELAXED);
+    if (!v) {
+        long n = sysconf(_SC_PAGESIZE);
+        v = n > 0 ? (size_t)n : 4096;
+        __atomic_store_n(&ps, v, __ATOMIC_RELAXED);
+    }
+    return v;
+}
+
+void *slang__plat_mem_map(size_t len, size_t align) {
+    size_t ps = slang__plat_page_size();
+    if (align < ps) align = ps;
+    size_t over = align > ps ? len + align : len;
+    if (over < len) return NULL;
+    char *p = mmap(NULL, over, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) return NULL;
+    if (over == len) return p;
+    /* Trim the over-allocation to an aligned range. */
+    char *a = (char *)(((uintptr_t)p + align - 1) & ~(uintptr_t)(align - 1));
+    if (a > p) munmap(p, (size_t)(a - p));
+    size_t tail = (size_t)((p + over) - (a + len));
+    if (tail) munmap(a + len, tail);
+    return a;
+}
+
+void slang__plat_mem_unmap(void *p, size_t len) {
+    if (p) munmap(p, len);
+}
+
+void slang__plat_mem_release(void *p, size_t len) {
+#if defined(__APPLE__) && defined(MADV_FREE)
+    madvise(p, len, MADV_FREE);
+#else
+    madvise(p, len, MADV_DONTNEED);
+#endif
+}
+
+void *slang__plat_mem_remap(void *p, size_t old_len, size_t new_len) {
+#if defined(__linux__) && defined(MREMAP_MAYMOVE)
+    void *q = mremap(p, old_len, new_len, MREMAP_MAYMOVE);
+    return q == MAP_FAILED ? NULL : q;
+#else
+    (void)p;
+    (void)old_len;
+    (void)new_len;
+    return NULL;
+#endif
+}
+
+void slang__plat_malloc_trim(void) {
+#if defined(__GLIBC__)
+    malloc_trim(0);
 #endif
 }
 

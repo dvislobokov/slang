@@ -123,7 +123,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             self.hold(e.ty, v);
         } else if pin && self.needs_rc(e.ty) && !self.is_stable(e) {
             self.retain_val(e.ty, v.get());
-            self.hold_raw(e.ty, v.get());
+            let h = self.hold_raw(e.ty, v.get());
+            self.mark_pin(h, e.ty);
         }
     }
 
@@ -181,16 +182,21 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// during the call is retained (pinned); owned values are held.
     pub(crate) fn arg(&mut self, a: &Expr, moved: bool, borrowed: bool, later: bool) -> R<(Val<'ctx>, super::cleanup::Hold)> {
         let v = self.expr(a)?;
+        let mut pinned = false;
         let v = if v.v.is_none() {
             v
         } else if moved {
             Val::owned(self.to_owned(a.ty, v))
         } else if (borrowed || later) && !v.owned && self.needs_rc(a.ty) && !self.is_stable(a) {
+            pinned = true;
             Val::owned(self.to_owned(a.ty, v))
         } else {
             v
         };
         let h = self.hold(a.ty, v);
+        if pinned {
+            self.mark_pin(h, a.ty);
+        }
         Ok((v, h))
     }
 

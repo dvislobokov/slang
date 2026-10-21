@@ -1,0 +1,75 @@
+// test: testing.Panics catches a panic on a thread of its own: the test's code runs once (in this process), defers of the panicking function are skipped, the message is available (PanicsWith, PanicMessage), a missing panic fails the test, several Panics calls per test and in subtests work
+// status: passing
+// exit: 1
+// args: --no-time
+namespace spec.stdlib2.testing_panics
+
+import std
+import std.io
+
+var before = 0
+var pidSeen = 0
+var deferRan = false
+
+func testOnce(t *testing.T) {
+    before += 1
+    testing.True(t, testing.Panics(t, func() {
+        pidSeen = os.Pid()
+        var xs []int = []
+        println(xs[2])
+    }), "index out of range")
+    testing.True(t, testing.Panics(t, func() {
+        panic("second")
+    }), "second panic")
+    // The function ran here, not in a child process, and the code before
+    // the calls ran once.
+    testing.Equal(t, pidSeen, os.Pid())
+    testing.Equal(t, before, 1)
+    testing.Equal(t, testing.PanicMessage(), "second")
+}
+
+func testDefers(t *testing.T) {
+    testing.True(t, testing.Panics(t, func() {
+        defer func() { deferRan = true }()
+        panic("no defers")
+    }), "panics")
+    testing.False(t, deferRan, "defers of the panicking function are skipped")
+}
+
+func testMessage(t *testing.T) {
+    testing.PanicsWith(t, func() {
+        var m map[string]int = nil
+        var p *Box = nil
+        println(m["a"], p.N)
+    }, "nil pointer")
+    testing.PanicsWith(t, func() { panic("actual") }, "expected")
+}
+
+struct Box {
+    N int
+}
+
+func testMissing(t *testing.T) {
+    testing.Panics(t, func() { _ = 1 + 1 })
+    t.Log("the test goes on")
+}
+
+func testSubtests(t *testing.T) {
+    for n in [1, 2] {
+        t.Run(fmt.Format("n{0}", n), func(t *testing.T) {
+            testing.True(t, testing.Panics(t, func() { panic(fmt.Format("sub {0}", n)) }), "sub")
+            testing.Equal(t, testing.PanicMessage(), fmt.Format("sub {0}", n))
+        })
+    }
+}
+
+async func main() {
+    var cases = [
+        testing.Case{Name: "TestOnce", Run: testOnce},
+        testing.Case{Name: "TestDefers", Run: testDefers},
+        testing.Case{Name: "TestMessage", Run: testMessage},
+        testing.Case{Name: "TestMissing", Run: testMissing},
+        testing.Case{Name: "TestSubtests", Run: testSubtests},
+    ]
+    os.Exit(await testing.Main(cases))
+}

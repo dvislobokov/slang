@@ -1,0 +1,21 @@
+// test: --leak-check (debug build) checks the @acyclic promise: a leaked cycle of an @acyclic type is reported by name
+// status: passing
+// run-flags: --leak-check
+// exit: 66
+// stderr: type Node is @acyclic but was found in a cycle
+namespace spec.memory3.acyclic_broken
+
+import std.io
+
+@acyclic
+struct Node {
+    Name string
+    Next *Node
+}
+
+func main() {
+    var a = new Node{Name: "a"}
+    var b = new Node{Name: "b", Next: a}
+    a.Next = b              // breaks the promise: never freed
+    println(a.Next.Name, b.Next.Name)
+}

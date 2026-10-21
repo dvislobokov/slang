@@ -48,9 +48,49 @@ extern "C" {
  * 3.6): retain/release are no-ops, the arena frees it. */
 #define SLANG_RC_ARENA ((int64_t)-2)
 /* Bit 62 of a (non-immortal) refcount word: the object has a weak box.
- * The count itself is refcount & SLANG_RC_COUNT_MASK. */
+ * Bits 57..61 belong to the cycle collector (ABI.md 3.8): CYCLIC marks an
+ * object of a potentially cyclic type (set at allocation while the
+ * collector is on; such objects always take the runtime's retain/release
+ * paths), BUFFERED one recorded as a possible cycle root, MARKED one in the
+ * set a running collection examines, DIRTY one whose count changed while
+ * MARKED, ZOMBIE one whose count reached zero while BUFFERED (dropped; its
+ * memory is freed by the buffer's owner). The count itself is
+ * refcount & SLANG_RC_COUNT_MASK (the low 57 bits). */
 #define SLANG_RC_WEAK_FLAG ((int64_t)1 << 62)
-#define SLANG_RC_COUNT_MASK (SLANG_RC_WEAK_FLAG - 1)
+#define SLANG_RC_CYCLIC ((int64_t)1 << 61)
+#define SLANG_RC_BUFFERED ((int64_t)1 << 60)
+#define SLANG_RC_MARKED ((int64_t)1 << 59)
+#define SLANG_RC_DIRTY ((int64_t)1 << 58)
+#define SLANG_RC_ZOMBIE ((int64_t)1 << 57)
+#define SLANG_RC_COUNT_MASK (SLANG_RC_ZOMBIE - 1)
+/* Biased reference counting (ABI.md 3.1): an object without CYCLIC whose
+ * word has BIASED is owned by one thread. Its word is then
+ *   bits 0..15  B: the owner's count (plain 16-bit loads/stores by the owner)
+ *   bits 16..46 S: the shared count, signed, stored + SLANG_RC_S_EXCESS
+ *               (atomic 64-bit RMW of +-1 << 16 by other threads)
+ *   bits 47..58 the owner's thread slot (1..4095)
+ *   bit 59      QUEUED: S went negative; the object waits in its owner's queue
+ *   bit 60      BIASED, bit 62 WEAK_FLAG
+ * and the count is B + S. A word without BIASED (and without CYCLIC) is an
+ * unowned count in the low 57 bits, as above. Bits 47..60 have these
+ * meanings only in BIASED words; CYCLIC words keep the cycle collector's. */
+#define SLANG_RC_BIASED ((int64_t)1 << 60)
+#define SLANG_RC_QUEUED ((int64_t)1 << 59)
+/* The same bit in an unowned (not BIASED, not CYCLIC) word: never bias this
+ * object (the runtime sets it on objects that are shared between threads
+ * by design, such as tasks). Not part of the count. */
+#define SLANG_RC_NOBIAS SLANG_RC_QUEUED
+#define SLANG_RC_B_MASK ((int64_t)0xFFFF)
+#define SLANG_RC_S_SHIFT 16
+#define SLANG_RC_S_FIELD ((int64_t)0x7FFFFFFF)     /* after >> SLANG_RC_S_SHIFT */
+#define SLANG_RC_S_EXCESS ((int64_t)1 << 30)
+#define SLANG_RC_OWNER_SHIFT 47
+#define SLANG_RC_OWNER_SLOTS 4096
+/* ((uint64_t)word >> SLANG_RC_OWNER_SHIFT) & SLANG_RC_OWNER_MASK equals the
+ * calling thread's slang_rc_owner exactly when that thread owns the
+ * (biased, non-cyclic, non-special) object. */
+#define SLANG_RC_OWNER_MASK ((int64_t)0x16FFF)
+#define SLANG_RC_NO_OWNER ((int64_t)0x1FFFF)          /* never matches */
 /* Exit status of a program whose leak check found live objects. */
 #define SLANG_LEAK_EXIT_CODE 66
 
@@ -68,10 +108,19 @@ typedef struct slang_object {
 /* Ownership hooks for a value stored inline in a container slot
  * (slice element, map key/value, task result, channel element).
  * NULL ops pointer == plain data, nothing to retain/release. */
+/* Cycle-collector visitor callback (ABI.md 3.8): `obj` is the header of a
+ * referenced object; `tid` is NULL when the object is statically of a
+ * cyclic type, else a dynamic type id (interface/any type word, closure
+ * function pointer) the collector checks against its registry first. */
+typedef void (*slang_cycle_cb)(void *ctx, void *obj, const void *tid);
 typedef struct slang_value_ops {
     void (*retain)(void *slot);    /* +0 add the references held by *slot */
     void (*release)(void *slot);   /* +8 drop the references held by *slot */
-} slang_value_ops;                 /* 16 bytes */
+    /* +16 cycle collector: cb(ctx, obj, tid) for each reference in *slot
+     * that may lie on a cycle, or NULL. Containers created with ops whose
+     * visit is non-NULL are flagged SLANG_RC_CYCLIC (ABI.md 3.8). */
+    void (*visit)(void *slot, slang_cycle_cb cb, void *ctx);
+} slang_value_ops;                 /* 24 bytes */
 
 /* Slot holds exactly one heap-object pointer (string, *T, map, error, task...). */
 extern const slang_value_ops slang_ops_ref;
@@ -90,8 +139,72 @@ void  slang_release(void *obj);               /* NULL / immortal: no-op; at 0: d
 /* 0 while the process has only one thread (refcounts may then be updated
  * without atomic RMW); set for good before the second thread starts. */
 extern uint8_t slang_threaded;
+/* The calling thread's owner tag for biased words: (BIASED >> 47) | slot,
+ * or SLANG_RC_NO_OWNER for a thread without a slot (ABI.md 3.1). */
+#ifdef __cplusplus
+extern thread_local int64_t slang_rc_owner;
+#else
+extern _Thread_local int64_t slang_rc_owner;
+#endif
 int64_t slang_refcount(const void *obj);      /* debugging / tests; 0 for NULL */
 int64_t slang_live_objects(void);             /* number of live slang_object_new objects */
+
+/* Cycle collector (ABI.md 3.8). A registry entry describes objects whose
+ * type info is `key` (visit/fin/clear take the object header; fin runs the
+ * destructors only, clear releases the references without them; NULL
+ * clear means type->drop), or, with visit == NULL, is a dynamic type id
+ * (key only) whose referenced objects may be flagged. `alias` is a
+ * dynamic type id (ti.<*S> of a type S, a closure's function pointer for
+ * its environment) registered with the entry, or NULL; `state` is the
+ * runtime's (0 until slang_cycles_new_entry registered it). */
+typedef struct slang_cycle_type {
+    const void *key;                                        /* +0  */
+    void (*visit)(void *obj, slang_cycle_cb cb, void *ctx); /* +8  */
+    void (*fin)(void *obj);                                 /* +16 */
+    void (*clear)(void *obj);                               /* +24 */
+    const void *alias;                                      /* +32 */
+    int64_t state;                                          /* +40 */
+} slang_cycle_type;                                         /* 48 bytes */
+typedef struct slang_cycle_stats {
+    int64_t runs;          /* collections run (dry runs included) */
+    int64_t collected;     /* objects freed by the collector so far */
+    int64_t candidates;    /* possible roots recorded so far */
+    int64_t examined;      /* objects examined by all collections */
+    int64_t pending;       /* published possible roots waiting for a collection */
+    int64_t threshold;     /* auto mode: published roots that trigger one */
+    int64_t aborted;       /* collections abandoned (set over SLANG_CYCLES_MAX_SCAN) */
+    int64_t mode;          /* 0 off, 1 manual, 2 auto */
+} slang_cycle_stats;
+#define SLANG_CYCLES_OFF 0
+#define SLANG_CYCLES_MANUAL 1
+#define SLANG_CYCLES_AUTO 2
+/* Registers `n` entries (kept by pointer; call before objects of those types exist). */
+void slang_cycles_register(const slang_cycle_type *types, int64_t n);
+/* slang_object_new for a cyclic type: sets SLANG_RC_CYCLIC unless the
+ * collector is off; may run a pending automatic collection first. */
+void *slang_cycles_new(const slang_type_info *type, int64_t size);
+/* The same for the entry's type (e->key), registering the entry (and its
+ * alias) first if needed: what compiled code calls. */
+void *slang_cycles_new_entry(slang_cycle_type *e, int64_t size);
+/* The same for a dynamic type: flagged when `type` is a registered object type. */
+void *slang_cycles_new_dyn(const slang_type_info *type, int64_t size);
+/* Runs a collection now on the calling thread; returns the objects freed. */
+int64_t slang_cycles_collect(void);
+void slang_cycles_stats(slang_cycle_stats *out);
+int32_t slang_cycles_mode(void);
+/* SLANG_CYCLES_MANUAL <-> SLANG_CYCLES_AUTO (tests); OFF only before the first flagged object. */
+void slang_cycles_set_mode(int32_t mode);
+/* std.runtime.CollectCycles / CycleStats (stdlib_src/runtime_cycles.sl):
+ * stat 0 runs, 1 collected, 2 candidates, 3 examined, 4 pending,
+ * 5 threshold, 6 aborted, 7 mode. */
+int64_t slang_runtime_rt_collect_cycles(void);
+/* The collection epoch and the release paired with a pin (ABI.md 3.8). */
+extern int64_t slang_cycles_epoch;
+void slang_ptr_release_noroot(void *payload, int64_t epoch);
+/* std.diag.HeapByType (diag_heap.c): "live\ttotal\tbytes\ttype" lines. */
+struct slang_string *slang_diag_rt_heap_types(void);
+bool slang_diag_rt_heap_counting(void);
+int64_t slang_runtime_rt_cycle_stat(int64_t which);
 
 /* Leak check (ABI.md 3.5): pointer fields of a struct type, so the report can
  * name the fields that close a cycle. `fields` ends with offset -1. */
@@ -99,6 +212,9 @@ typedef struct slang_leak_field {
     int64_t offset;            /* +0 byte offset of a `*T` field in the payload */
     const char *name;          /* +8 "Type.Field" */
 } slang_leak_field;
+/* Leak check mode 2: `type` is @acyclic (`name` its short name); a leaked
+ * object of it on a cycle is reported (ABI.md 3.5). */
+void slang_leak_acyclic(const slang_type_info *type, const char *name);
 void slang_leak_fields(const slang_type_info *type, const slang_leak_field *fields);
 
 /* Arenas (std.arena, ABI.md 3.6). Handles are raw pointers passed as int64. */
@@ -843,6 +959,15 @@ int64_t       slang_diag_rt_live_tasks(void);
 int64_t       slang_diag_rt_queue_len(void);
 int64_t       slang_diag_rt_workers(void);
 int64_t       slang_diag_rt_mono_nanos(void);
+int64_t       slang_diag_rt_heap_in_use(void);              /* object heap bytes (heap.c, ABI.md 3.2) */
+int64_t       slang_diag_rt_heap_retained(void);
+int64_t       slang_diag_rt_heap_released(void);
+void          slang_runtime_free_os_memory(void);           /* std.runtime.FreeOSMemory */
+/* std.testing.Panics: runs the closure on a thread in a panic capture
+ * scope; 1 panicked, 0 returned, -1 unsupported (std_testing.c); the
+ * message of the last caught panic of the calling thread (+1). */
+int64_t       slang_testing_rt_capture(void *fn, void *env);
+slang_string *slang_testing_rt_capture_message(void);
 void          slang_diag_rt_start_cpu_profile(const slang_string *path, int64_t hz, slang_error **err);
 int64_t       slang_diag_rt_stop_cpu_profile(slang_error **err);
 slang_string *slang_diag_rt_heap_text(void);

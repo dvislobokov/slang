@@ -76,7 +76,7 @@ top_level_decl ::= attribute* (struct_decl | interface_decl | enum_decl | func_d
 // (C) function without a body, only in the generated std/**/*_extern.sl files.
 extern_func_decl ::= IDENTIFIER func_signature
 
-// `@json("name")`, `@reflect`, `@deprecated(reason: "...")`
+// `@json("name")`, `@reflect`, `@deprecated(reason: "...")`, `@allowCycle`
 attribute ::= AT qualified_name attribute_args?
 attribute_args ::= LPAREN (attribute_arg (COMMA attribute_arg)*)? RPAREN
 // `default` may name an argument (and a field): `@cli.flag(default: "8080")`.

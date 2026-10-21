@@ -18,6 +18,7 @@ void slang_runtime_init(int argc, char **argv) {
     g_argc = argc;
     g_argv = argv;
     slang__process_init();   /* the scheduler starts with the first task (task.c) */
+    slang__rc_thread_eligible();   /* biased refcounts once threaded (rc.c) */
 }
 
 void slang_runtime_drain(void) {
@@ -25,11 +26,17 @@ void slang_runtime_drain(void) {
 }
 
 void slang_runtime_shutdown(void) {
+    /* Orderly shutdown: process-wide singletons first (std.diag's slot
+     * map, diag.c), while the scheduler still runs the tasks their
+     * destructors wake; then the scheduler, I/O and resolver threads;
+     * then what was registered again meanwhile. */
+    slang__diag_shutdown();
     slang__sched_stop();
     slang__io_flush_all();
     if (g_args_free) g_args_free();
     slang__diag_shutdown();
     g_initialized = 0;
+    slang__rc_drain_all();   /* objects waiting in refcount merge queues (rc.c) */
     slang__leak_report();
 }
 

@@ -11,6 +11,18 @@
 static int g_panicking;
 
 static SLANG_NORETURN void die(const char *msg, int64_t len) {
+    /* testing.Panics: a capture scope on this thread takes the panic. */
+    slang__panic_capture *cap = slang__panic_capture_tls;
+    if (cap) {
+        slang__panic_capture_tls = NULL;
+        cap->msg = malloc((size_t)len + 1);
+        if (cap->msg) {
+            memcpy(cap->msg, msg, (size_t)len);
+            cap->msg[len] = 0;
+            cap->len = len;
+        }
+        longjmp(cap->jb, 1);
+    }
     /* The debug agent stops here first (exception breakpoint "panic"). */
     if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED) && slang__dbg_panic_fn) slang__dbg_panic_fn(msg, len);
     /* A second panic (e.g. inside a destructor run during the first) aborts quietly. */

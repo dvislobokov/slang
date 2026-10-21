@@ -1,0 +1,7 @@
+    panic message "actual" does not contain "expected"
+--- FAIL: TestMessage
+    expected a panic, but the function returned
+    the test goes on
+--- FAIL: TestMissing
+FAIL
+FAIL	3 passed, 2 failed, 0 skipped

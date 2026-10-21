@@ -94,16 +94,18 @@ static DWORD WINAPI thread_entry(LPVOID p) {
 /* mem.c: refcounts switch to atomic RMW for good before a second thread runs. */
 extern uint8_t slang_threaded;
 
-static HANDLE start(slang__plat_thread_fn fn, void *arg) {
+static HANDLE start_ex(slang__plat_thread_fn fn, void *arg, int threaded) {
     trampoline *t = malloc(sizeof *t);
     if (!t) return NULL;
-    __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
+    if (threaded) __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
     t->fn = fn;
     t->arg = arg;
     HANDLE h = CreateThread(NULL, 0, thread_entry, t, 0, NULL);
     if (!h) free(t);
     return h;
 }
+
+static HANDLE start(slang__plat_thread_fn fn, void *arg) { return start_ex(fn, arg, 1); }
 
 bool slang__plat_thread_start(slang__plat_thread *t, slang__plat_thread_fn fn, void *arg) {
     HANDLE h = start(fn, arg);
@@ -114,6 +116,13 @@ bool slang__plat_thread_start(slang__plat_thread *t, slang__plat_thread_fn fn, v
 
 bool slang__plat_thread_start_detached(slang__plat_thread_fn fn, void *arg) {
     HANDLE h = start(fn, arg);
+    if (!h) return false;
+    CloseHandle(h);
+    return true;
+}
+
+bool slang__plat_thread_start_background(slang__plat_thread_fn fn, void *arg) {
+    HANDLE h = start_ex(fn, arg, 0);
     if (!h) return false;
     CloseHandle(h);
     return true;
@@ -210,6 +219,55 @@ void slang__plat_tls_set(slang__plat_tls_key k, void *v) { FlsSetValue(k.idx, v)
 void *slang__plat_aligned_alloc(size_t align, size_t size) { return _aligned_malloc(size, align); }
 void slang__plat_aligned_free(void *p) { _aligned_free(p); }
 size_t slang__plat_alloc_size(void *p) { return _msize(p); }
+
+size_t slang__plat_page_size(void) { return 4096; }
+
+void *slang__plat_mem_map(size_t len, size_t align) {
+    if (align <= 65536) return VirtualAlloc(NULL, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    /* Reserve an over-sized range to find an aligned address, release it
+     * and map exactly there (another thread may take it: retry). */
+    for (int i = 0; i < 16; i++) {
+        char *r = VirtualAlloc(NULL, len + align, MEM_RESERVE, PAGE_NOACCESS);
+        if (!r) return NULL;
+        char *a = (char *)(((uintptr_t)r + align - 1) & ~(uintptr_t)(align - 1));
+        VirtualFree(r, 0, MEM_RELEASE);
+        void *p = VirtualAlloc(a, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (p) return p;
+    }
+    return NULL;
+}
+
+void slang__plat_mem_unmap(void *p, size_t len) {
+    (void)len;
+    if (p) VirtualFree(p, 0, MEM_RELEASE);
+}
+
+/* DiscardVirtualMemory (Windows 8.1+) drops the pages' contents and their
+ * physical memory but keeps them committed, so the range needs no
+ * re-commit before reuse (MEM_DECOMMIT would). Older systems: MEM_RESET. */
+typedef DWORD(WINAPI *discard_fn)(PVOID, SIZE_T);
+void slang__plat_mem_release(void *p, size_t len) {
+    static discard_fn fn;
+    static int looked;
+    if (!__atomic_load_n(&looked, __ATOMIC_ACQUIRE)) {
+        HMODULE k = GetModuleHandleW(L"kernel32.dll");
+        discard_fn f = k ? (discard_fn)(void (*)(void))GetProcAddress(k, "DiscardVirtualMemory") : NULL;
+        __atomic_store_n(&fn, f, __ATOMIC_RELAXED);
+        __atomic_store_n(&looked, 1, __ATOMIC_RELEASE);
+    }
+    discard_fn f = __atomic_load_n(&fn, __ATOMIC_RELAXED);
+    if (f && f(p, len) == 0) return;
+    VirtualAlloc(p, len, MEM_RESET, PAGE_READWRITE);
+}
+
+void *slang__plat_mem_remap(void *p, size_t old_len, size_t new_len) {
+    (void)p;
+    (void)old_len;
+    (void)new_len;
+    return NULL;
+}
+
+void slang__plat_malloc_trim(void) { _heapmin(); }
 
 /* ---- time and entropy ----------------------------------------------------------- */
 

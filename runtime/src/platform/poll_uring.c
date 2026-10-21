@@ -18,13 +18,28 @@
  *
  * Selection: opt-in with SLANG_IO_BACKEND=io_uring, and only when the
  * kernel supports it (io_uring_setup can be refused by seccomp or sysctl
- * kernel.io_uring_disabled; then epoll is used). Not the default: it is
- * not faster than one-shot epoll on benchmarks/tcp_echo and http_hello
- * (one submission per wait, like one epoll_ctl), and closing a descriptor
- * right after its poll completed can leave the file referenced by the
- * ring for a moment (the kernel frees completed requests lazily): a
- * listening socket closed that way may still accept and then reset a
- * connection (seen in ~2% of runs of examples/tcp_echo). */
+ * kernel.io_uring_disabled; then epoll is used).
+ *
+ * Close timing: a pending poll is cancelled synchronously before close
+ * (slang__uring_remove), but a poll that has just completed may still hold
+ * its file reference for a moment (the submitting task frees completed
+ * requests right after posting their CQEs, so the waiter can see the CQE
+ * and close first). Then close(2) does not release the socket yet, and a
+ * listener closed that way could still accept and reset a connection (2%
+ * of examples/tcp_echo runs under gVisor). std.net therefore shuts a
+ * listener down (shutdown(SHUT_RD), which stops listening whatever holds
+ * the file) before closing it; for connected sockets the delay only
+ * postpones the FIN by microseconds. examples/tcp_echo: 0 of 500 runs
+ * differ (Linux 6.18).
+ *
+ * Not the default (benchmarks/README.md, 2026-10-21): on tcp_echo it is at
+ * parity with one-shot epoll (best 0.431 vs 0.456 s, median 0.536 vs
+ * 0.558 s over 12 runs each), but http_hello serves 20% fewer requests
+ * (67-73k vs 87-91k req/s with Go's load generator): every wait costs one
+ * POLL_ADD submission (an io_uring_enter, like one epoll_ctl) plus a
+ * completion reaped under the ring lock, and keep-alive connections
+ * re-arm after every request. Submitting outside the lock made no
+ * difference. Multishot polls / receives would be the next step. */
 #include "platform.h"
 
 #if defined(__linux__)

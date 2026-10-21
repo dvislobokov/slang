@@ -1,7 +1,7 @@
 //! Attribute resolution and checking.
 //!
 //! An attribute is either a builtin (`@attribute`, `@reflect`,
-//! `@deprecated`, `@inline`, `@test`, `@json`, `@log`) or a struct declared with
+//! `@deprecated`, `@inline`, `@test`, `@json`, `@log`, `@allowCycle`, `@acyclic`) or a struct declared with
 //! `@attribute`, whose fields are its parameters. Arguments are positional
 //! (in field order) or named, must be compile-time constants, and are stored
 //! evaluated in [`hir::Attr`].
@@ -191,6 +191,9 @@ impl<'a> Sema<'a> {
             if let AttrKind::Builtin(n) = &kind {
                 if n == "attribute" && target != "Struct" {
                     self.err("@attribute can only be applied to a struct", a.span);
+                }
+                if (n == "allowCycle" || n == "acyclic") && target != "Struct" && target != "Enum" {
+                    self.err(format!("@{n} can only be applied to a struct or an enum"), a.span);
                 }
             }
             if let Some(ts) = targets {

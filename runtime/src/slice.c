@@ -24,7 +24,17 @@ static void backing_drop(void *obj) {
     for (int64_t i = 0; i < b->cap; i++) b->ops->release(b->data + i * b->elem_size);
 }
 
-static const slang_type_info backing_type = { "[]backing", 0, backing_drop };
+const slang_type_info slang__backing_type = { "[]backing", 0, backing_drop };
+
+/* Cycle collector (ABI.md 3.8): the references of every element slot. A
+ * flagged backing never moves (its count is never exactly 1, so append
+ * does not resize it in place), and its elements are read word by word. */
+void slang__backing_visit(void *obj, slang_cycle_cb cb, void *ctx) {
+    slang_backing *b = obj;
+    const slang_value_ops *ops = b->ops;
+    if (!ops || !ops->visit) return;
+    for (int64_t i = 0; i < b->cap; i++) ops->visit(b->data + i * b->elem_size, cb, ctx);
+}
 
 static void check_size(int64_t elem_size, int64_t n) {
     if (elem_size < 0 || n < 0) slang__panicf("invalid slice size (elem %lld, n %lld)",
@@ -36,11 +46,15 @@ static void check_size(int64_t elem_size, int64_t n) {
 
 static slang_backing *backing_new(int64_t elem_size, int64_t cap, const slang_value_ops *ops) {
     check_size(elem_size, cap);
-    slang_backing *b = slang_object_new(&backing_type,
-                                        (int64_t)sizeof(slang_backing) + elem_size * cap);
+    int64_t bytes = (int64_t)sizeof(slang_backing) + elem_size * cap;
+    /* Elements that may lie on cycles: room for the collector's word. */
+    int cyclic = ops && ops->visit && slang__cycles_flag;   /* weak: the collector is linked */
+    if (cyclic) bytes = slang__cycles_extra(bytes);
+    slang_backing *b = slang_object_new(&slang__backing_type, bytes);
     b->elem_size = elem_size;
     b->cap = cap;
     b->ops = ops;
+    if (cyclic) slang__cycles_flag(&b->hdr);  /* elements may lie on cycles */
     return b;
 }
 
@@ -103,7 +117,7 @@ static void grow(slang_slice *s, int64_t elem_size, const slang_value_ops *ops, 
     }
     slang_backing *ob = (slang_backing *)s->backing;
     if (ob && s->data == (void *)ob->data && ob->elem_size == elem_size && ob->ops == ops &&
-        __atomic_load_n(&ob->hdr.refcount, __ATOMIC_ACQUIRE) == 1) {
+        slang__rc_unique(&ob->hdr)) {
         /* Only this slice references the backing: grow it in place; the
          * elements keep their references (no retain/release per element). */
         check_size(elem_size, ncap);

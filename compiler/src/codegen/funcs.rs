@@ -383,9 +383,15 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let env = if captures.is_empty() {
             self.ptr_ty().const_null()
         } else {
-            let ti = self.env_type_info();
+            let shared = self.env_type_info();
+            // Environments holding cells of cyclic types are flagged for
+            // the cycle collector and carry their own type info (codegen/cycles.rs).
             let size = self.i64_ty().const_int(24 + 8 * captures.len() as u64, false);
-            let obj = self.call_rt_v("slang_object_new", &[ti.into(), size.into()]).into_pointer_value();
+            let obj = match self.cyc_env_entry(func) {
+                Some(e) => self.call_rt_v("slang_cycles_new_entry", &[e.into(), size.into()]),
+                None => self.call_rt_v("slang_object_new", &[shared.into(), size.into()]),
+            }
+            .into_pointer_value();
             let np = self.byte_gep(obj, 16);
             self.b.build_store(np, self.i64_ty().const_int(captures.len() as u64, false)).unwrap();
             for (i, c) in captures.iter().enumerate() {

@@ -367,6 +367,15 @@ struct RuntimeStats {
     QueueLength int
     // Worker threads of the scheduler.
     Workers int
+    // Bytes of the object heap in use: pages holding small objects, and
+    // medium and large objects (runtime/ABI.md 3.2).
+    HeapInUse int
+    // Bytes of free heap memory kept for reuse (the reserve: free pages
+    // and cached large mappings), still counted in the process's RSS.
+    HeapRetained int
+    // Bytes of free heap pages returned to the OS whose address range is
+    // kept for reuse (not in the RSS).
+    HeapReleased int
 }
 
 // Runtime returns the current runtime statistics.
@@ -377,12 +386,16 @@ func Runtime() RuntimeStats {
         Tasks: rtLiveTasks(),
         QueueLength: rtQueueLen(),
         Workers: rtWorkers(),
+        HeapInUse: rtHeapInUse(),
+        HeapRetained: rtHeapRetained(),
+        HeapReleased: rtHeapReleased(),
     }
 }
 
 // Adds the runtime metrics (slang_live_objects, slang_allocations_total,
-// slang_tasks, slang_scheduler_queue_length, slang_scheduler_workers) to
-// PrometheusText.
+// slang_tasks, slang_scheduler_queue_length, slang_scheduler_workers,
+// slang_heap_inuse_bytes, slang_heap_retained_bytes,
+// slang_heap_released_bytes) to PrometheusText.
 func EnableRuntimeMetrics() {
     rtLock()
     var m = slots()
@@ -428,6 +441,22 @@ func runtimeText() string {
             std.fmt.Format("{0}", r.Workers) +
             "\n",
     )
+    b.Write(
+        "# HELP slang_heap_inuse_bytes Object heap bytes in use.\n# TYPE slang_heap_inuse_bytes gauge\nslang_heap_inuse_bytes " +
+            std.fmt.Format("{0}", r.HeapInUse) +
+            "\n",
+    )
+    b.Write(
+        "# HELP slang_heap_retained_bytes Free object heap bytes kept for reuse.\n# TYPE slang_heap_retained_bytes gauge\nslang_heap_retained_bytes " +
+            std.fmt.Format("{0}", r.HeapRetained) +
+            "\n",
+    )
+    b.Write(
+        "# HELP slang_heap_released_bytes Free object heap bytes returned to the OS.\n# TYPE slang_heap_released_bytes gauge\nslang_heap_released_bytes " +
+            std.fmt.Format("{0}", r.HeapReleased) +
+            "\n",
+    )
+    b.Write(cycleMetricsText())   // diag_heap.sl
     return b.String()
 }
 

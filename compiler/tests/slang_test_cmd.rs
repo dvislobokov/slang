@@ -8,6 +8,10 @@ fn repo() -> PathBuf {
 }
 
 fn slang_test(args: &[&str]) -> (i32, String) {
+    slang_test_env(args, &[])
+}
+
+fn slang_test_env(args: &[&str], env: &[(&str, &str)]) -> (i32, String) {
     let lib = repo().join("runtime/libslang_rt.a");
     if !lib.is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
@@ -19,6 +23,7 @@ fn slang_test(args: &[&str]) -> (i32, String) {
         .args(args)
         .current_dir(repo())
         .env("SLANG_NO_BACKTRACE", "1")
+        .envs(env.iter().copied())
         .output()
         .expect("cannot run slang");
     (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
@@ -68,8 +73,18 @@ fn benchmarks() {
 }
 
 #[test]
-fn panics_probe_runs_in_a_child() {
+fn panics_are_caught_in_process() {
     let (code, out) = slang_test(&["-v", "--filter", "TestPanicsOK"]);
+    assert_eq!(code, 0, "{out}");
+    // the function panics on a thread of its own; the test runs once
+    assert_eq!(out.matches("after the probes").count(), 1, "{out}");
+    assert!(out.contains("--- PASS: TestPanicsOK ("), "{out}");
+}
+
+#[test]
+fn panics_probe_runs_in_a_child() {
+    // The fallback where panics cannot be caught (Windows), forced here.
+    let (code, out) = slang_test_env(&["-v", "--filter", "TestPanicsOK"], &[("SLANG_TEST_PANICS", "process")]);
     assert_eq!(code, 0, "{out}");
     // the test's own output appears once: the probe children are silent
     assert_eq!(out.matches("after the probes").count(), 1, "{out}");

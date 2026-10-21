@@ -54,8 +54,11 @@ warning-free and the runtime `-Werror` clean.
 - **Output format** follows `examples/README.md`: `println` separates with
   one space; floats print like Go `%v` (fixed unless exp < -4 or >= 6);
   slices print `[1 2 3]`; errors print `Message()`.
-- **Memory**: no GC. ARC per `DESIGN.md` "Память"; never introduce a
-  tracing collector. Double frees are bugs; leaks are tracked by
+- **Memory**: ARC per `DESIGN.md` "Память"; no tracing GC — the bounded
+  cycle collector in `DESIGN.md` "Циклы" (trial deletion over objects of
+  cyclic types only, `runtime/src/cycles.c`, ABI.md 3.8) is the only
+  collection; never make it scan ordinary objects, roots or the whole
+  heap. Double frees are bugs; leaks are tracked by
   `slang run --leak-check` and must not grow.
 - **Go semantics are the default** wherever `DESIGN.md` is silent
   (integer division, terminating statements, defer, switch, maps), then
@@ -85,7 +88,8 @@ stdlib, `slang build/run/check`, package manifests/workspaces/lock,
 LSP + VS Code client, examples and benchmarks.
 
 Next (see `DESIGN.md` stages and `tests/spec` pending counts): memory
-management (`Drop`, `weak`, ownership elision), generics, block `try`,
+management (ownership elision; the cycle collector's gaps: cycles
+through maps in threaded processes, tasks, errors), generics, block `try`,
 error traces, reflection + attributes as values, `slang fmt`, stdlib
 (`collections`, `net`, `http`, `encoding.json`), framework packages
 (`docs/FRAMEWORK.md`), platforms (`docs/PLATFORMS.md`).

@@ -48,6 +48,11 @@ typedef struct slang__plat_thread { uintptr_t handle; } slang__plat_thread;
 SLANG_PLAT_HIDDEN bool slang__plat_thread_start(slang__plat_thread *t, slang__plat_thread_fn fn, void *arg);
 /* Starts a detached thread; returns false on failure. */
 SLANG_PLAT_HIDDEN bool slang__plat_thread_start_detached(slang__plat_thread_fn fn, void *arg);
+/* A detached runtime-internal thread that never touches Slang objects (the
+ * heap's scavenger): unlike the two above it leaves slang_threaded alone,
+ * so a program whose only other thread is this one keeps the
+ * single-threaded refcount paths. */
+SLANG_PLAT_HIDDEN bool slang__plat_thread_start_background(slang__plat_thread_fn fn, void *arg);
 SLANG_PLAT_HIDDEN void slang__plat_thread_join(slang__plat_thread t);
 /* Number of online CPUs (at least 1). */
 SLANG_PLAT_HIDDEN int64_t slang__plat_cpu_count(void);
@@ -138,6 +143,15 @@ static inline void slang__plat_tls_set(slang__plat_tls_key k, void *v) { pthread
 #define slang__plat_funlockfile(f) funlockfile(f)
 #endif
 
+/* Whether a panic can be caught on its own thread with setjmp / longjmp
+ * (testing.Panics, std_testing.c). Windows: no (mingw's longjmp unwinds
+ * with SEH through frames whose unwind data the runtime does not control). */
+#if defined(_WIN32)
+#define SLANG_PLAT_HAS_PANIC_CAPTURE 0
+#else
+#define SLANG_PLAT_HAS_PANIC_CAPTURE 1
+#endif
+
 /* ---- memory ------------------------------------------------------------- */
 
 /* Aligned allocation (align a power of two, size a multiple of it); must
@@ -146,6 +160,25 @@ SLANG_PLAT_HIDDEN void *slang__plat_aligned_alloc(size_t align, size_t size);
 SLANG_PLAT_HIDDEN void slang__plat_aligned_free(void *p);
 /* Usable size of a malloc'd block (malloc_usable_size / malloc_size / _msize). */
 SLANG_PLAT_HIDDEN size_t slang__plat_alloc_size(void *p);
+
+/* Virtual memory for the object heap (heap.c). Lengths are multiples of
+ * slang__plat_page_size(). slang__plat_mem_map: a fresh zeroed read-write
+ * mapping of len bytes aligned to `align` (a power of two, >= the page
+ * size), NULL on failure; slang__plat_mem_unmap frees a whole mapping.
+ * slang__plat_mem_release returns the physical memory of [p, p + len)
+ * (page-aligned, inside a mapping) to the OS while keeping the address
+ * range usable: the next touch gets a zero page (Linux MADV_DONTNEED) or
+ * the old contents or zeros (macOS MADV_FREE, Windows DiscardVirtualMemory
+ * / MEM_RESET); callers must not rely on the contents. slang__plat_mem_remap
+ * grows or shrinks a mapping, possibly moving it (Linux mremap); NULL means
+ * unsupported or failed, and the old mapping is untouched.
+ * slang__plat_malloc_trim gives free malloc memory back (glibc malloc_trim). */
+SLANG_PLAT_HIDDEN size_t slang__plat_page_size(void);
+SLANG_PLAT_HIDDEN void *slang__plat_mem_map(size_t len, size_t align);
+SLANG_PLAT_HIDDEN void slang__plat_mem_unmap(void *p, size_t len);
+SLANG_PLAT_HIDDEN void slang__plat_mem_release(void *p, size_t len);
+SLANG_PLAT_HIDDEN void *slang__plat_mem_remap(void *p, size_t old_len, size_t new_len);
+SLANG_PLAT_HIDDEN void slang__plat_malloc_trim(void);
 
 /* ---- time and entropy ------------------------------------------------- */
 

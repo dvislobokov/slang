@@ -87,8 +87,9 @@ func BenchMul(b *testing.B) {
     }
 }
 
-// testing.Panics runs the function in a child process (the second call
-// checks that each Panics call gets its own probe).
+// testing.Panics catches the panic on a thread of its own (with
+// SLANG_TEST_PANICS=process: in a child process; the second call checks
+// that each Panics call gets its own probe).
 @test
 func TestPanicsOK(t *testing.T) {
     testing.True(t, testing.Panics(t, func() {
