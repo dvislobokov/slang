@@ -7,7 +7,7 @@ namespace spec.stdlib2.testing_main
 import std
 
 struct sq {
-    In int
+    In   int
     Want int
 }
 

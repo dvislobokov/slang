@@ -1,0 +1,20 @@
+masters 2 reloads 1
+hello -> true foo -> true
+1 2 [SET hello GET hello] [SET foo GET foo]
+slot {hello} 866 true
+after MOVED: moved true
+ask miss: true
+stays on-b map unchanged: true
+B saw: [SET foo GET foo SET {hello}x GET {hello}x GET {bar}new SET {bar}new GET {bar}new]
+cross slot: true
+"moved" (nil)
+pipeline 1 1 1 moved
+tx across slots: true
+master is m1: true
+read from replica: from-replica
+written to m1: =v1
+switched to m2: true failovers 1
+m2 has =v2 m1 still =v1
+READONLY -> asked the sentinel: true =v3 failovers 2
+no sentinel: true
+unknown master: true

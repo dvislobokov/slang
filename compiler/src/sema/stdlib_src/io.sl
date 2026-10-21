@@ -210,7 +210,7 @@ async func ReadAllAsync(src std.io.AsyncReader) []byte! {
 
 // Reads from a string (implements Reader, Seeker, ByteReader).
 struct StringReader {
-    s string
+    s   string
     off int
 
     func Read(buf []byte) int! {
@@ -260,7 +260,7 @@ func NewStringReader(s string) *StringReader {
 
 // Reads from a byte slice (shares it; implements Reader, Seeker).
 struct BytesReader {
-    b []byte
+    b   []byte
     off int
 
     func Read(buf []byte) int! {
@@ -440,20 +440,39 @@ func TeeReader(r std.io.Reader, w std.io.Writer) std.io.Reader {
 
 // ---- Pipe ------------------------------------------------------------------------
 
-// The shared state of a Pipe: an unbounded byte queue.
+// The shared state of a Pipe: a byte queue, unbounded or (BoundedPipe)
+// holding at most max bytes.
 struct pipeState {
-    guard int
-    buf []byte
-    closed bool
+    guard   int
+    buf     []byte
+    closed  bool
     waiters []Task<void>
+    // BoundedPipe: the capacity (0: unbounded) and the writers waiting
+    // for room (Send)
+    max      int
+    wwaiters []Task<void>
 
+    // Unlocks the guard and wakes the readers and the writers.
     func wake() {
         var ws = this.waiters
         this.waiters = nil
+        var wws = this.wwaiters
+        this.wwaiters = nil
         rtUnlockPipe(&this.guard)
         for w in ws {
             std.task.rtFire(w)
         }
+        for w in wws {
+            std.task.rtFire(w)
+        }
+    }
+
+    // Room left for a write (-1: unbounded).
+    func room() int {
+        if this.max <= 0 {
+            return -1
+        }
+        return this.max - len(this.buf)
     }
 }
 
@@ -477,7 +496,11 @@ struct PipeReader {
         }
         s.buf = s.buf[n..]
         var empty = n == 0 && len(buf) > 0 && !s.closed
-        std.task.rtUnlock(&s.guard)
+        if n > 0 && s.max > 0 {
+            s.wake()
+        } else {
+            std.task.rtUnlock(&s.guard)
+        }
         if empty {
             return error("io: pipe empty")
         }
@@ -491,7 +514,10 @@ struct PipeReader {
     }
 }
 
-// The write half of a Pipe (never blocks: the buffer grows).
+// The write half of a Pipe. Write never blocks: on an unbounded pipe the
+// buffer grows; on a BoundedPipe a write that does not fit fails with
+// "io: pipe full" (nothing written) - in async code use Send, which waits
+// for room.
 struct PipeWriter {
     st *pipeState
 
@@ -502,11 +528,22 @@ struct PipeWriter {
             std.task.rtUnlock(&s.guard)
             return error("io: write on closed pipe")
         }
+        var room = s.room()
+        if room >= 0 && len(p) > room {
+            std.task.rtUnlock(&s.guard)
+            return error("io: pipe full")
+        }
         for c in p {
             s.buf = append(s.buf, c)
         }
         s.wake()
         return len(p)
+    }
+
+    // Writes all of p, waiting for room on a BoundedPipe as the reader
+    // consumes (implements AsyncWriter as Write would on a socket).
+    func Send(p []byte) Task<int!> {
+        return pipeWriterSend(*this, p)
     }
 
     func WriteString(t string) int! {
@@ -534,15 +571,26 @@ func Pipe() PipeEnds {
     return PipeEnds{Reader: PipeReader{st: st}, Writer: PipeWriter{st: st}}
 }
 
+// A pipe that buffers at most max bytes (max >= 1): Writer.Send waits for
+// the reader to make room (back-pressure), Writer.Write fails when the
+// data does not fit.
+func BoundedPipe(max int) PipeEnds {
+    if max < 1 {
+        panic("io.BoundedPipe: capacity must be at least 1")
+    }
+    var st = new pipeState{max: max}
+    return PipeEnds{Reader: PipeReader{st: st}, Writer: PipeWriter{st: st}}
+}
+
 // ---- buffered I/O (bufio) ------------------------------------------------------------
 
 // Reads from R through a buffer (Go's bufio.Reader).
 struct BufferedReader {
-    r std.io.Reader
-    buf []byte
+    r     std.io.Reader
+    buf   []byte
     start int
-    end int
-    eof bool
+    end   int
+    eof   bool
 
     func fill() void! {
         if this.start > 0 {
@@ -707,9 +755,9 @@ func NewBufferedReaderSize(r std.io.Reader, size int) *BufferedReader {
 
 // Writes to W through a buffer; call Flush at the end (Go's bufio.Writer).
 struct BufferedWriter {
-    w std.io.Writer
+    w   std.io.Writer
     buf []byte
-    n int
+    n   int
 
     func Write(p []byte) int! {
         if len(p) >= len(this.buf) {
@@ -772,8 +820,8 @@ func NewBufferedWriterSize(w std.io.Writer, size int) *BufferedWriter {
 // emit Token. Advance 0 with !Ok asks for more data.
 struct SplitResult {
     Advance int
-    Token []byte
-    Ok bool
+    Token   []byte
+    Ok      bool
 }
 
 // Splits into lines without "\n" / "\r\n" (the last line may lack one).
@@ -844,16 +892,16 @@ func ScanRunes(data []byte, atEOF bool) SplitResult {
 // Reads tokens (lines by default) from R (Go's bufio.Scanner):
 // `for sc.Scan() { use(sc.Text()) }`, then check sc.Err().
 struct Scanner {
-    r std.io.Reader
+    r     std.io.Reader
     split func([]byte, bool) SplitResult
-    buf []byte
+    buf   []byte
     start int
-    end int
-    eof bool
-    tok []byte
-    err error
-    done bool
-    max int
+    end   int
+    eof   bool
+    tok   []byte
+    err   error
+    done  bool
+    max   int
 
     // Sets the split function (before the first Scan).
     func Split(f func([]byte, bool) SplitResult) {
@@ -981,7 +1029,11 @@ async func pipeReaderRecv(self PipeReader, n int) []byte! {
                 out = append(out, c)
             }
             s.buf = s.buf[k..]
-            std.task.rtUnlock(&s.guard)
+            if k > 0 && s.max > 0 {
+                s.wake()
+            } else {
+                std.task.rtUnlock(&s.guard)
+            }
             return out
         }
         var w = std.task.rtWaker()
@@ -989,4 +1041,34 @@ async func pipeReaderRecv(self PipeReader, n int) []byte! {
         std.task.rtUnlock(&s.guard)
         await w
     }
+}
+
+async func pipeWriterSend(self PipeWriter, p []byte) int! {
+    var s = self.st
+    var off = 0
+    for off < len(p) {
+        std.task.rtLock(&s.guard)
+        if s.closed {
+            std.task.rtUnlock(&s.guard)
+            return error("io: write on closed pipe")
+        }
+        var room = s.room()
+        if room == 0 {
+            var w = std.task.rtWaker()
+            s.wwaiters = append(s.wwaiters, w)
+            std.task.rtUnlock(&s.guard)
+            await w
+            continue
+        }
+        var k = len(p) - off
+        if room > 0 && k > room {
+            k = room
+        }
+        for c in p[off..off + k] {
+            s.buf = append(s.buf, c)
+        }
+        off += k
+        s.wake()
+    }
+    return len(p)
 }

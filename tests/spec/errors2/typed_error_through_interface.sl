@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors2.typed_error_through_interface
 
-import std.io
 import std
+import std.io
 
 struct NotFound {
     Key string
@@ -34,7 +34,8 @@ func main() {
     try s.Get("b") catch err {
         switch err {
             case NotFound nf: println("direct", nf.Key)
-            default: println("other")
+            default:
+                println("other")
         }
     }
     try Lookup(s, "c") catch err {

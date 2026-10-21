@@ -22,17 +22,21 @@ namespace std.text.template
 // attribute name, 5 before value, 6 attribute value, 7 script, 8 style,
 // 9 rcdata, 10 comment. attr: 0 normal, 1 URL, 2 JS, 3 CSS.
 struct hctx {
-    state int
-    quote int
-    attr int
-    valLen int
-    jsq int
-    tagName string
+    state    int
+    quote    int
+    attr     int
+    valLen   int
+    jsq      int
+    tagName  string
     attrName string
-    endTag bool
+    endTag   bool
 
     func same(o hctx) bool {
-        return this.state == o.state && this.quote == o.quote && this.attr == o.attr && this.jsq == o.jsq && this.tagName == o.tagName
+        return this.state == o.state &&
+            this.quote == o.quote &&
+            this.attr == o.attr &&
+            this.jsq == o.jsq &&
+            this.tagName == o.tagName
     }
 }
 
@@ -78,7 +82,10 @@ func escList(t *tmpl, list []int, c0 hctx) hctx! {
                 b = escList(t, n.elseList, c)?
             }
             if !a.same(b) || (n.kind == 4 && !a.same(c)) {
-                return t.fail(n.line, "{{if}}/{{with}}/{{range}} branches end in different HTML contexts")
+                return t.fail(
+                    n.line,
+                    "{{if}}/{{with}}/{{range}} branches end in different HTML contexts",
+                )
             }
             c = a
             c.valLen = std.math.IMax(a.valLen, b.valLen)
@@ -98,7 +105,25 @@ func attrKind(name string) int {
     if name == "style" {
         return 3
     }
-    for u in ["href", "src", "action", "formaction", "cite", "data", "poster", "background", "codebase", "longdesc", "profile", "usemap", "manifest", "icon", "srcset", "xmlns", "ping"] {
+    for u in [
+        "href",
+        "src",
+        "action",
+        "formaction",
+        "cite",
+        "data",
+        "poster",
+        "background",
+        "codebase",
+        "longdesc",
+        "profile",
+        "usemap",
+        "manifest",
+        "icon",
+        "srcset",
+        "xmlns",
+        "ping",
+    ] {
         if name == u {
             return 1
         }
@@ -153,7 +178,7 @@ func closeTag(c0 hctx) hctx {
 }
 
 struct advanced {
-    c hctx
+    c    hctx
     text string
 }
 
@@ -542,7 +567,32 @@ func normalizeURL(s string) string {
     var b = std.strings.Builder{}
     for i in 0..len(s) {
         var c = int(s[i])
-        var ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 || c == 33 || c == 35 || c == 36 || c == 38 || c == 39 || c == 40 || c == 41 || c == 42 || c == 43 || c == 44 || c == 47 || c == 58 || c == 59 || c == 61 || c == 63 || c == 64 || c == 91 || c == 93 || c == 37
+        var ok = (c >= 48 && c <= 57) ||
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122) ||
+            c == 45 ||
+            c == 95 ||
+            c == 46 ||
+            c == 126 ||
+            c == 33 ||
+            c == 35 ||
+            c == 36 ||
+            c == 38 ||
+            c == 39 ||
+            c == 40 ||
+            c == 41 ||
+            c == 42 ||
+            c == 43 ||
+            c == 44 ||
+            c == 47 ||
+            c == 58 ||
+            c == 59 ||
+            c == 61 ||
+            c == 63 ||
+            c == 64 ||
+            c == 91 ||
+            c == 93 ||
+            c == 37
         if ok {
             b.Write(s[i..i + 1])
         } else {
@@ -606,7 +656,10 @@ func jsonString(s string) string {
             e = "\\t"
         } else if c < 32 {
             e = "\\u00" + std.strings.ToLower(hex2(c))
-        } else if c == 226 && i + 2 < len(s) && int(s[i + 1]) == 128 && (int(s[i + 2]) == 168 || int(s[i + 2]) == 169) {
+        } else if c == 226 &&
+            i + 2 < len(s) &&
+            int(s[i + 1]) == 128 &&
+            (int(s[i + 2]) == 168 || int(s[i + 2]) == 169) {
             // U+2028 / U+2029 end JS lines
             b.Write(s[start..i])
             if int(s[i + 2]) == 168 {
@@ -683,7 +736,13 @@ func urlPartEscape(s string) string {
     var b = std.strings.Builder{}
     for i in 0..len(s) {
         var c = int(s[i])
-        if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 {
+        if (c >= 48 && c <= 57) ||
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122) ||
+            c == 45 ||
+            c == 95 ||
+            c == 46 ||
+            c == 126 {
             b.Write(s[i..i + 1])
         } else {
             b.Write("%" + std.strings.ToLower(hex2(c)))
@@ -695,7 +754,15 @@ func urlPartEscape(s string) string {
 func safeCSS(s string) bool {
     for i in 0..len(s) {
         var c = int(s[i])
-        if !(isLetter(c) || (c >= 48 && c <= 57) || c == 32 || c == 35 || c == 37 || c == 46 || c == 44 || c == 45 || c == 95) {
+        if !(isLetter(c) ||
+            (c >= 48 && c <= 57) ||
+            c == 32 ||
+            c == 35 ||
+            c == 37 ||
+            c == 46 ||
+            c == 44 ||
+            c == 45 ||
+            c == 95) {
             return false
         }
     }

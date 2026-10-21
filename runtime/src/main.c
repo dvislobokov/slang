@@ -1,5 +1,6 @@
 /* main.c - runtime entry points, process arguments, exit. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
 #include <stdlib.h>
 
@@ -9,6 +10,7 @@ static int g_initialized;
 void slang_runtime_init(int argc, char **argv) {
     if (g_initialized) return;
     g_initialized = 1;
+    slang__plat_runtime_init(&argc, &argv);  /* Windows: UTF-8 argv, console */
     slang_slice_new_ops(&g_args, (int64_t)sizeof(slang_string *), 0, argc > 0 ? argc : 0,
                         &slang_ops_ref);
     for (int i = 0; i < argc; i++) {

@@ -2,10 +2,15 @@
 // status: passing
 namespace spec.async2.ping_pong_unbuffered
 
-import std.io
 import std
+import std.io
 
-async func Player(name string, inbox task.Channel<int>, outbox task.Channel<int>, log task.Channel<string>) {
+async func Player(
+    name string,
+    inbox task.Channel<int>,
+    outbox task.Channel<int>,
+    log task.Channel<string>,
+) {
     for {
         var n = try await inbox.Recv() else break
         await log.Send(fmt.Format("{0} {1}", name, n))

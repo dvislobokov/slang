@@ -9,7 +9,7 @@ import std.sync
 
 struct Counter {
     mu RwMutex
-    n int
+    n  int
 }
 
 async func reader(c *Counter, seen *AtomicInt) {
@@ -80,7 +80,15 @@ async func main() {
     for t in ls {
         await t
     }
-    println("semaphore peak:", peak.Load(), "available:", sem.Available(), sem.TryAcquire(), sem.TryAcquire(), sem.TryAcquire())
+    println(
+        "semaphore peak:",
+        peak.Load(),
+        "available:",
+        sem.Available(),
+        sem.TryAcquire(),
+        sem.TryAcquire(),
+        sem.TryAcquire(),
+    )
 
     var b = Barrier(3)
     var hits = new AtomicInt{}
@@ -101,12 +109,25 @@ async func main() {
 
     var ai = AtomicInt{}
     ai.Store(5)
-    println(ai.Add(3), ai.Swap(1), ai.Load(), ai.CompareAndSwap(1, 7), ai.CompareAndSwap(1, 9), ai.Load())
+    println(
+        ai.Add(3),
+        ai.Swap(1),
+        ai.Load(),
+        ai.CompareAndSwap(1, 7),
+        ai.CompareAndSwap(1, 9),
+        ai.Load(),
+    )
     var ab = AtomicBool{}
     println(ab.Load(), ab.Swap(true), ab.Load(), ab.CompareAndSwap(true, false), ab.Load())
     var at = Atomic<string>{}
     at.Store("a")
-    println(at.Load(), at.Swap("b"), at.CompareAndSwap("b", "c"), at.CompareAndSwap("b", "d"), at.Load())
+    println(
+        at.Load(),
+        at.Swap("b"),
+        at.CompareAndSwap("b", "c"),
+        at.CompareAndSwap("b", "d"),
+        at.Load(),
+    )
 
     var made = 0
     var pool = Pool<[]byte>(func() []byte {

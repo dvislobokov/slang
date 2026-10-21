@@ -10,7 +10,7 @@ namespace std.net.mail
 
 // A mailbox: "Name <user@example.com>".
 struct Address {
-    Name string
+    Name    string
     Address string
 
     // The RFC 5322 form: the name quoted or encoded (RFC 2047) when needed.
@@ -23,7 +23,28 @@ struct Address {
 }
 
 func isAtext(c int) bool {
-    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 33 || c == 35 || c == 36 || c == 37 || c == 38 || c == 39 || c == 42 || c == 43 || c == 45 || c == 47 || c == 61 || c == 63 || c == 94 || c == 95 || c == 96 || c == 123 || c == 124 || c == 125 || c == 126
+    return (c >= 48 && c <= 57) ||
+        (c >= 65 && c <= 90) ||
+        (c >= 97 && c <= 122) ||
+        c == 33 ||
+        c == 35 ||
+        c == 36 ||
+        c == 37 ||
+        c == 38 ||
+        c == 39 ||
+        c == 42 ||
+        c == 43 ||
+        c == 45 ||
+        c == 47 ||
+        c == 61 ||
+        c == 63 ||
+        c == 94 ||
+        c == 95 ||
+        c == 96 ||
+        c == 123 ||
+        c == 124 ||
+        c == 125 ||
+        c == 126
 }
 
 func displayName(name string) string {
@@ -69,7 +90,9 @@ func validAddr(a string) bool {
         }
     }
     var domain = a[at + 1..]
-    return !std.strings.HasPrefix(domain, ".") && !std.strings.HasSuffix(domain, ".") && !std.strings.Contains(domain, "..")
+    return !std.strings.HasPrefix(domain, ".") &&
+        !std.strings.HasSuffix(domain, ".") &&
+        !std.strings.Contains(domain, "..")
 }
 
 // Parses one address: "user@host", "<user@host>", "Name <user@host>",
@@ -229,7 +252,14 @@ func encodeWords(s string) string {
             var b = int(s[j])
             if b == 32 {
                 enc.Write("_")
-            } else if (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 33 || b == 42 || b == 43 || b == 45 || b == 47 {
+            } else if (b >= 48 && b <= 57) ||
+                (b >= 65 && b <= 90) ||
+                (b >= 97 && b <= 122) ||
+                b == 33 ||
+                b == 42 ||
+                b == 43 ||
+                b == 45 ||
+                b == 47 {
                 enc.Write(s[j..j + 1])
             } else {
                 var d = "0123456789ABCDEF"
@@ -301,9 +331,9 @@ struct Attachment {
     Filename string
     // Default: by the file extension (std.mime), else application/octet-stream.
     ContentType string
-    Data []byte
-    Inline bool
-    ContentID string
+    Data        []byte
+    Inline      bool
+    ContentID   string
 }
 
 // An email message. Build produces the RFC 5322 text: multipart/mixed
@@ -312,14 +342,14 @@ struct Attachment {
 // attachments base64.
 struct Message {
     From Address
-    To []Address
-    Cc []Address
+    To   []Address
+    Cc   []Address
     // Envelope recipients only (no header).
-    Bcc []Address
-    ReplyTo []Address
-    Subject string
-    Text string
-    HTML string
+    Bcc         []Address
+    ReplyTo     []Address
+    Subject     string
+    Text        string
+    HTML        string
     Attachments []Attachment
     // Extra headers ("X-Mailer", "List-Unsubscribe", ...).
     Headers map[string]string
@@ -376,7 +406,11 @@ struct Message {
         var mid = this.MessageID
         if mid == "" {
             var at = std.strings.LastIndex(this.From.Address, "@")
-            mid = "<" + std.encoding.hex.Encode(std.crypto.rand.Bytes(12)?) + "@" + this.From.Address[at + 1..] + ">"
+            mid = "<" +
+                std.encoding.hex.Encode(std.crypto.rand.Bytes(12)?) +
+                "@" +
+                this.From.Address[at + 1..] +
+                ">"
         }
         b.Write("Message-ID: " + mid + "\r\n")
         if this.Headers != nil {
@@ -500,9 +534,15 @@ func textPart(ctype string, body string) string {
         }
     }
     if plain && !longLine {
-        return "Content-Type: " + ctype + "; charset=us-ascii\r\nContent-Transfer-Encoding: 7bit\r\n\r\n" + crlf(body)
+        return "Content-Type: " +
+            ctype +
+            "; charset=us-ascii\r\nContent-Transfer-Encoding: 7bit\r\n\r\n" +
+            crlf(body)
     }
-    return "Content-Type: " + ctype + "; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + std.mime.quotedprintable.Encode(body)
+    return "Content-Type: " +
+        ctype +
+        "; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" +
+        std.mime.quotedprintable.Encode(body)
 }
 
 func crlf(s string) string {
@@ -555,8 +595,8 @@ func attachmentPart(a Attachment) string {
 // LOGIN among those the server offers (PLAIN/LOGIN only over TLS unless
 // AllowInsecureAuth).
 struct Auth {
-    Username string
-    Password string
+    Username  string
+    Password  string
     Mechanism string
 }
 
@@ -591,7 +631,7 @@ struct Config {
 // An SMTP error reply (code >= 400).
 struct SMTPError {
     Code int
-    Msg string
+    Msg  string
 
     func Message() string {
         return "smtp: " + std.fmt.Format("{0}", this.Code) + " " + this.Msg
@@ -612,7 +652,7 @@ interface stream {
 
 // A reply: code and its lines.
 struct Reply {
-    Code int
+    Code  int
     Lines []string
 
     func Text() string {
@@ -623,13 +663,13 @@ struct Reply {
 // An SMTP client session (Dial). Methods follow the protocol order:
 // Hello (done by Dial), StartTLS, Authenticate, Mail, Rcpt, Data, Quit.
 struct Client {
-    s stream
-    raw std.net.Conn
-    buf string
+    s    stream
+    raw  std.net.Conn
+    buf  string
     host string
-    cfg Config
-    ext map[string]string
-    tls bool
+    cfg  Config
+    ext  map[string]string
+    tls  bool
 
     async func line() string! {
         for {
@@ -764,8 +804,12 @@ struct Client {
             _ = await this.Cmd(std.encoding.base64.EncodeString(a.Password), 235)?
         } else if mech == "CRAM-MD5" {
             var r = await this.Cmd("AUTH CRAM-MD5", 334)?
-            var challenge = std.encoding.base64.DecodeString(std.strings.Trim(r.Lines[0]))?("smtp: CRAM-MD5 challenge")
-            var digest = std.encoding.hex.Encode(HmacMD5(std.strings.Bytes(a.Password), std.strings.Bytes(challenge)))
+            var challenge = std.encoding.base64.DecodeString(
+                std.strings.Trim(r.Lines[0]),
+            )?("smtp: CRAM-MD5 challenge")
+            var digest = std.encoding.hex.Encode(
+                HmacMD5(std.strings.Bytes(a.Password), std.strings.Bytes(challenge)),
+            )
             _ = await this.Cmd(std.encoding.base64.EncodeString(a.Username + " " + digest), 235)?
         } else {
             return error("smtp: unsupported AUTH mechanism " + mech)

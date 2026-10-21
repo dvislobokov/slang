@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_dialer
 
-import std.io
 import std
+import std.io
 
 async func main() void! {
     var lc = net.ListenConfig{Backlog: 16}
@@ -14,11 +14,22 @@ async func main() void! {
     var probe = net.Listen("127.0.0.1:0")?
     var localPort = probe.Port()
     probe.Close()
-    var d = net.Dialer{Timeout: 2000, KeepAlive: 15, LocalAddr: fmt.Format("127.0.0.1:{0}", localPort), NoDelay: false}
+    var d = net.Dialer{
+        Timeout: 2000,
+        KeepAlive: 15,
+        LocalAddr: fmt.Format("127.0.0.1:{0}", localPort),
+        NoDelay: false,
+    }
     var c = await d.Dial(l.Addr())?
     var s = await l.Accept()?
     println("local port used:", c.Local().Port == localPort, s.Remote().Port == localPort)
-    println("addresses:", c.Remote().String() == l.Addr(), c.LocalAddr() == s.RemoteAddr(), c.Fd() >= 0, l.Fd() >= 0)
+    println(
+        "addresses:",
+        c.Remote().String() == l.Addr(),
+        c.LocalAddr() == s.RemoteAddr(),
+        c.Fd() >= 0,
+        l.Fd() >= 0,
+    )
     c.Close()
     println("fd after close:", c.Fd(), c.IsClosed(), !s.IsClosed())
     s.Close()

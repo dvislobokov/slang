@@ -8,6 +8,7 @@ func main() {
     var n = 1
     switch {
         case 1..5: println("small")
-        default: println(n)
+        default:
+            println(n)
     }
 }

@@ -18,10 +18,20 @@ func dump(text string) {
         }
         var attrs []string = []
         for a in t.Attrs {
-            attrs = append(attrs, "{" + a.Name.Space + "}" + a.Name.Local + "=" + encoding.json.Quote(a.Value))
+            attrs = append(
+                attrs,
+                "{" + a.Name.Space + "}" + a.Name.Local + "=" + encoding.json.Quote(a.Value),
+            )
         }
         if t.Kind == encoding.xml.Kind.StartElement || t.Kind == encoding.xml.Kind.EndElement {
-            println(" ", t.Line, t.Kind, "{" + t.Name.Space + "}" + t.Name.Local, t.Name.String(), attrs)
+            println(
+                " ",
+                t.Line,
+                t.Kind,
+                "{" + t.Name.Space + "}" + t.Name.Local,
+                t.Name.String(),
+                attrs,
+            )
         } else {
             println(" ", t.Line, t.Kind, t.Name.Local, encoding.json.Quote(t.Text))
         }
@@ -30,13 +40,32 @@ func dump(text string) {
 
 func main() {
     println("namespaces:")
-    dump("<root xmlns=\"urn:default\" xmlns:a=\"urn:a\"><a:item a:id=\"1\" plain=\"x\"/><inner xmlns=\"urn:inner\"><leaf/></inner><b:u xml:lang=\"en\"/></root>")
+    dump(
+        "<root xmlns=\"urn:default\" xmlns:a=\"urn:a\"><a:item a:id=\"1\" plain=\"x\"/><inner xmlns=\"urn:inner\"><leaf/></inner><b:u xml:lang=\"en\"/></root>",
+    )
     println("text:")
-    dump("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<!-- note -->\r\n<t a=\"x&#9;y\n z\" b='&lt;&amp;&gt;&quot;&apos;'>1 &lt; 2 &#x263A; &#65;<![CDATA[ <not> &markup; ]]>end\r\nline</t>")
+    dump(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<!-- note -->\r\n<t a=\"x&#9;y\n z\" b='&lt;&amp;&gt;&quot;&apos;'>1 &lt; 2 &#x263A; &#65;<![CDATA[ <not> &markup; ]]>end\r\nline</t>",
+    )
     println("doctype:")
-    dump("<!DOCTYPE bomb [<!ENTITY a \"aaaaaaaaaa\"><!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;\">]><bomb>&b;</bomb>")
+    dump(
+        "<!DOCTYPE bomb [<!ENTITY a \"aaaaaaaaaa\"><!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;\">]><bomb>&b;</bomb>",
+    )
     println("errors:")
-    for bad in ["<a><b></a>", "<a>", "</a>", "<a x=\"1\" x=\"2\"/>", "<a x=1/>", "<a x=\"<\"/>", "<a>&nbsp;</a>", "<a>x &amp y</a>", "<a><!-- open</a>", "<a>\n\n<b>\n</c></a>", "<1a/>", "<a>&#0;</a>"] {
+    for bad in [
+        "<a><b></a>",
+        "<a>",
+        "</a>",
+        "<a x=\"1\" x=\"2\"/>",
+        "<a x=1/>",
+        "<a x=\"<\"/>",
+        "<a>&nbsp;</a>",
+        "<a>x &amp y</a>",
+        "<a><!-- open</a>",
+        "<a>\n\n<b>\n</c></a>",
+        "<1a/>",
+        "<a>&#0;</a>",
+    ] {
         dump(bad)
     }
     println("lenient:")

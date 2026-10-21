@@ -25,7 +25,6 @@
 #include "rt_internal.h"
 #include "platform/platform.h"
 
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -50,7 +49,7 @@ typedef struct io_fd {
 } io_fd;
 
 typedef struct io_shard {
-    pthread_mutex_t mu;
+    slang__plat_mutex mu;
     slang__plat_poller *poller;
     slang__plat_thread thread;
     io_wait **heap;
@@ -71,7 +70,7 @@ typedef struct io_done {
 #define IO_MAX_CHUNKS 4096   /* descriptors up to 16M */
 
 static io_fd *io_chunks[IO_MAX_CHUNKS];  /* atomic pointers, never moved */
-static pthread_mutex_t io_start_mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex io_start_mu = SLANG_PLAT_MUTEX_INIT;
 static io_shard *io_shards;
 static int32_t io_nshards;
 static int32_t io_running;               /* atomic */
@@ -127,9 +126,9 @@ static io_shard *shard_lock(io_fd *e, bool assign) {
             s = pick;
         }
         io_shard *sh = &io_shards[s];
-        pthread_mutex_lock(&sh->mu);
+        slang__plat_mutex_lock(&sh->mu);
         if (__atomic_load_n(&e->shard, __ATOMIC_ACQUIRE) == s) return sh;
-        pthread_mutex_unlock(&sh->mu);
+        slang__plat_mutex_unlock(&sh->mu);
     }
 }
 
@@ -269,7 +268,7 @@ static void *io_main(void *arg) {
     slang__plat_event evs[256];
     done_buf d;
     done_init(&d);
-    pthread_mutex_lock(&sh->mu);
+    slang__plat_mutex_lock(&sh->mu);
     for (;;) {
         if (sh->stopping) break;
         int64_t timeout = -1;
@@ -280,9 +279,9 @@ static void *io_main(void *arg) {
             int64_t left = next - slang__plat_mono_ns();
             timeout = left <= 0 ? 0 : (left + 999999) / 1000000;
         }
-        pthread_mutex_unlock(&sh->mu);
+        slang__plat_mutex_unlock(&sh->mu);
         int n = slang__plat_poller_wait(sh->poller, evs, 256, timeout);
-        pthread_mutex_lock(&sh->mu);
+        slang__plat_mutex_lock(&sh->mu);
         for (int i = 0; i < n; i++) {
             if (evs[i].token == SLANG_PLAT_WAKE_TOKEN) continue;
             int64_t fd = (int64_t)(uint32_t)evs[i].token;
@@ -305,12 +304,12 @@ static void *io_main(void *arg) {
             free(w);
         }
         if (d.n) {
-            pthread_mutex_unlock(&sh->mu);
+            slang__plat_mutex_unlock(&sh->mu);
             done_finish(&d);
-            pthread_mutex_lock(&sh->mu);
+            slang__plat_mutex_lock(&sh->mu);
         }
     }
-    pthread_mutex_unlock(&sh->mu);
+    slang__plat_mutex_unlock(&sh->mu);
     done_free(&d);
     return NULL;
 }
@@ -328,12 +327,12 @@ static int32_t shard_count(void) {
 static void io_start(void) {
     if (__atomic_load_n(&io_running, __ATOMIC_ACQUIRE)) return;
     int32_t n = shard_count();  /* may start the scheduler: outside io_start_mu */
-    pthread_mutex_lock(&io_start_mu);
+    slang__plat_mutex_lock(&io_start_mu);
     if (!io_running) {
         io_shard *s = calloc((size_t)n, sizeof *s);
         if (!s) slang_panic("out of memory (io)");
         for (int32_t i = 0; i < n; i++) {
-            pthread_mutex_init(&s[i].mu, NULL);
+            slang__plat_mutex_init(&s[i].mu);
             s[i].index = i;
             s[i].sleep_until = INT64_MAX;
             s[i].poller = slang__plat_poller_new();
@@ -345,7 +344,7 @@ static void io_start(void) {
             if (!slang__plat_thread_start(&s[i].thread, io_main, &s[i])) slang_panic("cannot create an I/O poller thread");
         __atomic_store_n(&io_running, 1, __ATOMIC_RELEASE);
     }
-    pthread_mutex_unlock(&io_start_mu);
+    slang__plat_mutex_unlock(&io_start_mu);
 }
 
 /* ---- waits ---- */
@@ -368,7 +367,7 @@ static void io_cancelled(slang_task *t, uintptr_t data) {
         }
     }
     if (found) heap_remove(sh, found);
-    pthread_mutex_unlock(&sh->mu);
+    slang__plat_mutex_unlock(&sh->mu);
     if (found) {
         int64_t code = IO_CANCELLED;
         slang_task_complete(found->task, &code);
@@ -415,7 +414,7 @@ static slang_task *io_wait_for(int64_t fd, bool write, int64_t timeout_ms) {
         if (wake) sh->sleep_until = w->deadline;
     }
     slang__plat_poller *p = sh->poller;
-    pthread_mutex_unlock(&sh->mu);
+    slang__plat_mutex_unlock(&sh->mu);
     if (wake) slang__plat_poller_wake(p);
     if (immediate >= 0) {
         slang_task_complete(t, &immediate);
@@ -434,7 +433,7 @@ void slang_io_register(int64_t fd) {
     if (fd < 0) return;
     io_start();
     io_shard *sh = shard_lock(entry(fd, true), true);
-    pthread_mutex_unlock(&sh->mu);
+    slang__plat_mutex_unlock(&sh->mu);
 }
 
 void slang_io_forget(int64_t fd) {
@@ -452,7 +451,7 @@ void slang_io_forget(int64_t fd) {
     e->gen++;
     __atomic_store_n(&e->shard, -1, __ATOMIC_RELEASE);
     __atomic_sub_fetch(&sh->nfds, 1, __ATOMIC_RELAXED);
-    pthread_mutex_unlock(&sh->mu);
+    slang__plat_mutex_unlock(&sh->mu);
     done_finish(&d);
     done_free(&d);
 }
@@ -466,12 +465,12 @@ int64_t slang__io_shards(void) { return __atomic_load_n(&io_running, __ATOMIC_AC
 
 void slang__io_stop(void) {
     slang__net_stop();
-    pthread_mutex_lock(&io_start_mu);
-    if (!io_running) { pthread_mutex_unlock(&io_start_mu); return; }
+    slang__plat_mutex_lock(&io_start_mu);
+    if (!io_running) { slang__plat_mutex_unlock(&io_start_mu); return; }
     for (int32_t i = 0; i < io_nshards; i++) {
-        pthread_mutex_lock(&io_shards[i].mu);
+        slang__plat_mutex_lock(&io_shards[i].mu);
         io_shards[i].stopping = 1;
-        pthread_mutex_unlock(&io_shards[i].mu);
+        slang__plat_mutex_unlock(&io_shards[i].mu);
         slang__plat_poller_wake(io_shards[i].poller);
     }
     for (int32_t i = 0; i < io_nshards; i++) slang__plat_thread_join(io_shards[i].thread);
@@ -497,11 +496,11 @@ void slang__io_stop(void) {
     for (int32_t i = 0; i < io_nshards; i++) {
         slang__plat_poller_free(io_shards[i].poller);
         free(io_shards[i].heap);
-        pthread_mutex_destroy(&io_shards[i].mu);
+        slang__plat_mutex_destroy(&io_shards[i].mu);
     }
     free(io_shards);
     io_shards = NULL;
     io_nshards = 0;
     __atomic_store_n(&io_running, 0, __ATOMIC_RELEASE);
-    pthread_mutex_unlock(&io_start_mu);
+    slang__plat_mutex_unlock(&io_start_mu);
 }

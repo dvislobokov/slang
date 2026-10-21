@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_servefile
 
-import std.io
 import std
+import std.io
 import std.net
 
 func show(label string, r http.Response) {
@@ -12,7 +12,13 @@ func show(label string, r http.Response) {
     if len(body) > 40 {
         body = fmt.Format("<{0} bytes>", len(body))
     }
-    println(label + ":", r.Status, r.Header("Content-Type"), "[" + r.Header("Content-Range") + "]", body)
+    println(
+        label + ":",
+        r.Status,
+        r.Header("Content-Type"),
+        "[" + r.Header("Content-Range") + "]",
+        body,
+    )
 }
 
 async func main() void! {
@@ -37,25 +43,82 @@ async func main() void! {
     var a = await c.Get(base + "/hello.txt")?
     show("full", a)
     var etag = a.Header("Etag")
-    println("validators:", strings.HasPrefix(etag, "\""), a.Header("Last-Modified") != "", a.Header("Accept-Ranges"))
+    println(
+        "validators:",
+        strings.HasPrefix(etag, "\""),
+        a.Header("Last-Modified") != "",
+        a.Header("Accept-Ranges"),
+    )
     show("html", await c.Get(base + "/page.html")?)
     show("css", await c.Get(base + "/docs/a.css")?)
-    show("If-None-Match", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-None-Match", etag))?)
-    show("If-Modified-Since", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-Modified-Since", a.Header("Last-Modified")))?)
-    show("If-Match mismatch", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-Match", "\"other\""))?)
-    show("range 0-4", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4"))?)
-    show("range 15-", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=15-"))?)
-    show("suffix -3", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=-3"))?)
-    var mr = await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-1,5-6"))?
-    println("multi:", mr.Status, strings.HasPrefix(mr.Header("Content-Type"), "multipart/byteranges; boundary="), strings.Contains(mr.Body, "Content-Range: bytes 0-1/20\r\n\r\n01"), strings.Contains(mr.Body, "Content-Range: bytes 5-6/20\r\n\r\n56"))
-    show("unsatisfiable", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=50-60"))?)
-    show("If-Range stale", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4").Header("If-Range", "\"old\""))?)
-    show("If-Range fresh", await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4").Header("If-Range", etag))?)
+    show(
+        "If-None-Match",
+        await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-None-Match", etag))?,
+    )
+    show(
+        "If-Modified-Since",
+        await c.Send(
+            http.NewRequest("GET", base + "/hello.txt").Header(
+                "If-Modified-Since",
+                a.Header("Last-Modified"),
+            ),
+        )?,
+    )
+    show(
+        "If-Match mismatch",
+        await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("If-Match", "\"other\""))?,
+    )
+    show(
+        "range 0-4",
+        await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4"))?,
+    )
+    show(
+        "range 15-",
+        await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=15-"))?,
+    )
+    show(
+        "suffix -3",
+        await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=-3"))?,
+    )
+    var mr = await c.Send(
+        http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-1,5-6"),
+    )?
+    println(
+        "multi:",
+        mr.Status,
+        strings.HasPrefix(mr.Header("Content-Type"), "multipart/byteranges; boundary="),
+        strings.Contains(mr.Body, "Content-Range: bytes 0-1/20\r\n\r\n01"),
+        strings.Contains(mr.Body, "Content-Range: bytes 5-6/20\r\n\r\n56"),
+    )
+    show(
+        "unsatisfiable",
+        await c.Send(http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=50-60"))?,
+    )
+    show(
+        "If-Range stale",
+        await c.Send(
+            http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4").Header(
+                "If-Range",
+                "\"old\"",
+            ),
+        )?,
+    )
+    show(
+        "If-Range fresh",
+        await c.Send(
+            http.NewRequest("GET", base + "/hello.txt").Header("Range", "bytes=0-4").Header(
+                "If-Range",
+                etag,
+            ),
+        )?,
+    )
     var h = await c.Send(http.NewRequest("HEAD", base + "/big.bin"))?
     println("HEAD:", h.Status, h.Header("Content-Length"), len(h.Body), h.Header("Content-Type"))
     var big = await c.Get(base + "/big.bin")?
     println("big:", big.Status, len(big.Body))
-    var br = await c.Send(http.NewRequest("GET", base + "/big.bin").Header("Range", "bytes=100000-100009"))?
+    var br = await c.Send(
+        http.NewRequest("GET", base + "/big.bin").Header("Range", "bytes=100000-100009"),
+    )?
     println("big range:", br.Status, br.Body, br.Header("Content-Length"))
 
     var noRedirect = http.Client{Transport: ts.Transport, MaxRedirects: -1}
@@ -63,7 +126,12 @@ async func main() void! {
     println("dir redirect:", d.Status, d.Header("Location"))
     show("dir index", await c.Get(base + "/sub/")?)
     var l = await c.Get(base + "/docs/")?
-    println("listing:", l.Status, l.Header("Content-Type"), strings.Contains(l.Body, "<a href=\"a.css\">a.css</a>"))
+    println(
+        "listing:",
+        l.Status,
+        l.Header("Content-Type"),
+        strings.Contains(l.Body, "<a href=\"a.css\">a.css</a>"),
+    )
     show("missing", await c.Get(base + "/nope.txt")?)
     show("dotdot", await c.Get(base + "/../../etc/passwd")?)
     show("ServeFile", await c.Get(ts.URL + "/one")?)
@@ -73,7 +141,9 @@ async func main() void! {
     var tls2 = http.test.NewTLSServer(r)?
     var tb = await tls2.Client.Get(tls2.URL + "/static/big.bin")?
     println("tls big:", tb.Status, tb.Proto, len(tb.Body))
-    var tr = await tls2.Client.Send(http.NewRequest("GET", tls2.URL + "/static/hello.txt").Header("Range", "bytes=2-5"))?
+    var tr = await tls2.Client.Send(
+        http.NewRequest("GET", tls2.URL + "/static/hello.txt").Header("Range", "bytes=2-5"),
+    )?
     println("tls range:", tr.Status, tr.Proto, tr.Body, tr.Header("Content-Range"))
     await tls2.Close()
     fs.RemoveAll(root)?

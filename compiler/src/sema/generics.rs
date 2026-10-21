@@ -145,6 +145,10 @@ pub(crate) struct GenState<'a> {
     /// requirements of a stdlib method, e.g. `List<T>.Contains` with a
     /// non-comparable `T`; calls are rejected instead).
     pub skip_body: HashSet<u32>,
+    /// Expected type of the generic call being checked (`return
+    /// web.NotFound()` infers `T` from the function's result type); set by
+    /// `call_res`, taken by `generic_call`.
+    pub ret_hint: Option<TypeId>,
 }
 
 /// Saved analyser context around an instantiation.

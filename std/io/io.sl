@@ -1,0 +1,1074 @@
+namespace std.io
+
+// std.io stream interfaces and helpers (Go's io and bufio). The older
+// functions of std.io (println, ReadFile, ReadAll() from stdin, ...) are
+// runtime externs and unchanged; the Go names that clash are:
+//   io.ReadAll(r)  ->  io.ReadAllFrom(r)
+//
+// Conventions (Go's, with T! results): Read fills up to len(buf) bytes
+// and returns the count; 0 means end of stream (for len(buf) > 0). Write
+// writes everything or fails. Errors are ordinary errors; io.EOF is the
+// sentinel for "end of stream" where a function must report it
+// (ReadFull, ReadByte, BufferedReader.ReadLine ...).
+
+interface Reader {
+    func Read(buf []byte) int!
+}
+
+interface Writer {
+    func Write(buf []byte) int!
+}
+
+interface Closer {
+    func Close() void!
+}
+
+// Seek sets the offset for the next Read/Write: whence 0 (SeekStart),
+// 1 (SeekCurrent) or 2 (SeekEnd); returns the new offset.
+interface Seeker {
+    func Seek(offset int, whence int) int!
+}
+
+interface ReadWriter {
+    func Read(buf []byte) int!
+    func Write(buf []byte) int!
+}
+
+interface ReadCloser {
+    func Read(buf []byte) int!
+    func Close() void!
+}
+
+interface WriteCloser {
+    func Write(buf []byte) int!
+    func Close() void!
+}
+
+interface ReadWriteCloser {
+    func Read(buf []byte) int!
+    func Write(buf []byte) int!
+    func Close() void!
+}
+
+interface ReadSeeker {
+    func Read(buf []byte) int!
+    func Seek(offset int, whence int) int!
+}
+
+interface StringWriter {
+    func WriteString(s string) int!
+}
+
+interface ByteReader {
+    func ReadByte() byte!
+}
+
+// Asynchronous streams (std.net.Conn implements both): Read(n) yields up
+// to n bytes, an empty slice at the end of the stream.
+interface AsyncReader {
+    func Read(n int) Task<[]byte!>
+}
+
+interface AsyncWriter {
+    func Write(data []byte) Task<int!>
+}
+
+// ---- helpers ------------------------------------------------------------------
+
+// A zeroed buffer of n bytes.
+func makeBuf(n int) []byte {
+    var b []byte = []
+    for _ in 0..n {
+        b = append(b, 0)
+    }
+    return b
+}
+
+// Writes all of b to w.
+func WriteAll(w std.io.Writer, b []byte) int! {
+    var done = 0
+    for done < len(b) {
+        var n = w.Write(b[done..])?
+        if n <= 0 {
+            return error("io: short write")
+        }
+        done += n
+    }
+    return done
+}
+
+// Writes s to w.
+func WriteString(w std.io.Writer, s string) int! {
+    return WriteAll(w, std.strings.Bytes(s))?
+}
+
+// Reads exactly len(buf) bytes; EOF if none were read, "unexpected EOF"
+// if some were.
+func ReadFull(r std.io.Reader, buf []byte) int! {
+    var done = 0
+    for done < len(buf) {
+        var n = r.Read(buf[done..])?
+        if n == 0 {
+            if done == 0 {
+                return EOF
+            }
+            return error("io: unexpected EOF")
+        }
+        done += n
+    }
+    return done
+}
+
+// Reads exactly n bytes (ReadFull into a new buffer).
+func ReadN(r std.io.Reader, n int) []byte! {
+    var buf = makeBuf(n)
+    _ = ReadFull(r, buf)?
+    return buf
+}
+
+// Reads until the end of the stream.
+func ReadAllFrom(r std.io.Reader) []byte! {
+    var out []byte = []
+    var buf = makeBuf(8192)
+    for {
+        var n = r.Read(buf)?
+        if n == 0 {
+            return out
+        }
+        for c in buf[..n] {
+            out = append(out, c)
+        }
+    }
+}
+
+// ReadAllFrom as a string.
+func ReadAllString(r std.io.Reader) string! {
+    return std.strings.FromBytes(ReadAllFrom(r)?)
+}
+
+// Copies src to dst until the end of src; returns the byte count.
+func Copy(dst std.io.Writer, src std.io.Reader) int! {
+    var buf = makeBuf(32768)
+    var total = 0
+    for {
+        var n = src.Read(buf)?
+        if n == 0 {
+            return total
+        }
+        _ = WriteAll(dst, buf[..n])?
+        total += n
+    }
+}
+
+// Copies exactly n bytes (EOF error if src ends first).
+func CopyN(dst std.io.Writer, src std.io.Reader, n int) int! {
+    var buf = makeBuf(32768)
+    var total = 0
+    for total < n {
+        var want = n - total
+        if want > len(buf) {
+            want = len(buf)
+        }
+        var k = src.Read(buf[..want])?
+        if k == 0 {
+            return EOF
+        }
+        _ = WriteAll(dst, buf[..k])?
+        total += k
+    }
+    return total
+}
+
+// Reads src to its end and writes everything to dst, asynchronously.
+async func CopyAsync(dst std.io.AsyncWriter, src std.io.AsyncReader) int! {
+    var total = 0
+    for {
+        var chunk = await src.Read(32768)?
+        if len(chunk) == 0 {
+            return total
+        }
+        _ = await dst.Write(chunk)?
+        total += len(chunk)
+    }
+}
+
+// Reads an AsyncReader to its end.
+async func ReadAllAsync(src std.io.AsyncReader) []byte! {
+    var out []byte = []
+    for {
+        var chunk = await src.Read(32768)?
+        if len(chunk) == 0 {
+            return out
+        }
+        for c in chunk {
+            out = append(out, c)
+        }
+    }
+}
+
+// ---- readers and writers --------------------------------------------------------
+
+// Reads from a string (implements Reader, Seeker, ByteReader).
+struct StringReader {
+    s   string
+    off int
+
+    func Read(buf []byte) int! {
+        var n = 0
+        for n < len(buf) && this.off < len(this.s) {
+            buf[n] = this.s[this.off]
+            n += 1
+            this.off += 1
+        }
+        return n
+    }
+
+    func ReadByte() byte! {
+        if this.off >= len(this.s) {
+            return EOF
+        }
+        this.off += 1
+        return this.s[this.off - 1]
+    }
+
+    func Seek(offset int, whence int) int! {
+        var base = 0
+        if whence == 1 {
+            base = this.off
+        } else if whence == 2 {
+            base = len(this.s)
+        }
+        if base + offset < 0 {
+            return error("io: negative position")
+        }
+        this.off = base + offset
+        return this.off
+    }
+
+    // Unread bytes.
+    func Len() int {
+        if this.off >= len(this.s) {
+            return 0
+        }
+        return len(this.s) - this.off
+    }
+}
+
+func NewStringReader(s string) *StringReader {
+    return new StringReader{s: s}
+}
+
+// Reads from a byte slice (shares it; implements Reader, Seeker).
+struct BytesReader {
+    b   []byte
+    off int
+
+    func Read(buf []byte) int! {
+        var n = 0
+        for n < len(buf) && this.off < len(this.b) {
+            buf[n] = this.b[this.off]
+            n += 1
+            this.off += 1
+        }
+        return n
+    }
+
+    func ReadByte() byte! {
+        if this.off >= len(this.b) {
+            return EOF
+        }
+        this.off += 1
+        return this.b[this.off - 1]
+    }
+
+    func Seek(offset int, whence int) int! {
+        var base = 0
+        if whence == 1 {
+            base = this.off
+        } else if whence == 2 {
+            base = len(this.b)
+        }
+        if base + offset < 0 {
+            return error("io: negative position")
+        }
+        this.off = base + offset
+        return this.off
+    }
+
+    func Len() int {
+        if this.off >= len(this.b) {
+            return 0
+        }
+        return len(this.b) - this.off
+    }
+}
+
+func NewBytesReader(b []byte) *BytesReader {
+    return new BytesReader{b: b}
+}
+
+// Collects written bytes (implements Writer, StringWriter).
+struct BytesWriter {
+    buf []byte
+
+    func Write(p []byte) int! {
+        for c in p {
+            this.buf = append(this.buf, c)
+        }
+        return len(p)
+    }
+
+    func WriteString(s string) int! {
+        for i in 0..len(s) {
+            this.buf = append(this.buf, s[i])
+        }
+        return len(s)
+    }
+
+    func Bytes() []byte {
+        return this.buf
+    }
+
+    func String() string {
+        return std.strings.FromBytes(this.buf)
+    }
+
+    func Len() int {
+        return len(this.buf)
+    }
+
+    func Reset() {
+        this.buf = nil
+    }
+}
+
+func NewBytesWriter() *BytesWriter {
+    return new BytesWriter{}
+}
+
+struct discard {
+    func Write(p []byte) int! {
+        return len(p)
+    }
+
+    func WriteString(s string) int! {
+        return len(s)
+    }
+}
+
+// A Writer that accepts and drops everything (Go's io.Discard).
+func Discard() std.io.Writer {
+    return discard{}
+}
+
+// Reads at most N bytes from R (Go's LimitedReader; N counts down).
+struct LimitedReader {
+    R std.io.Reader
+    N int
+
+    func Read(buf []byte) int! {
+        if this.N <= 0 {
+            return 0
+        }
+        var p = buf
+        if len(p) > this.N {
+            p = p[..this.N]
+        }
+        var n = this.R.Read(p)?
+        this.N -= n
+        return n
+    }
+}
+
+func LimitReader(r std.io.Reader, n int) *LimitedReader {
+    return new LimitedReader{R: r, N: n}
+}
+
+// The concatenation of several readers.
+struct multiReader {
+    rs []std.io.Reader
+
+    func Read(buf []byte) int! {
+        for len(this.rs) > 0 {
+            var n = this.rs[0].Read(buf)?
+            if n > 0 || len(buf) == 0 {
+                return n
+            }
+            this.rs = this.rs[1..]
+        }
+        return 0
+    }
+}
+
+func MultiReader(rs []std.io.Reader) std.io.Reader {
+    return new multiReader{rs: rs}
+}
+
+// Duplicates writes to every writer (stops at the first error).
+struct multiWriter {
+    ws []std.io.Writer
+
+    func Write(p []byte) int! {
+        for w in this.ws {
+            _ = WriteAll(w, p)?
+        }
+        return len(p)
+    }
+}
+
+func MultiWriter(ws []std.io.Writer) std.io.Writer {
+    return multiWriter{ws: ws}
+}
+
+// Writes to w everything read from r.
+struct teeReader {
+    r std.io.Reader
+    w std.io.Writer
+
+    func Read(buf []byte) int! {
+        var n = this.r.Read(buf)?
+        if n > 0 {
+            _ = WriteAll(this.w, buf[..n])?
+        }
+        return n
+    }
+}
+
+func TeeReader(r std.io.Reader, w std.io.Writer) std.io.Reader {
+    return new teeReader{r: r, w: w}
+}
+
+// ---- Pipe ------------------------------------------------------------------------
+
+// The shared state of a Pipe: a byte queue, unbounded or (BoundedPipe)
+// holding at most max bytes.
+struct pipeState {
+    guard   int
+    buf     []byte
+    closed  bool
+    waiters []Task<void>
+    // BoundedPipe: the capacity (0: unbounded) and the writers waiting
+    // for room (Send)
+    max      int
+    wwaiters []Task<void>
+
+    // Unlocks the guard and wakes the readers and the writers.
+    func wake() {
+        var ws = this.waiters
+        this.waiters = nil
+        var wws = this.wwaiters
+        this.wwaiters = nil
+        rtUnlockPipe(&this.guard)
+        for w in ws {
+            std.task.rtFire(w)
+        }
+        for w in wws {
+            std.task.rtFire(w)
+        }
+    }
+
+    // Room left for a write (-1: unbounded).
+    func room() int {
+        if this.max <= 0 {
+            return -1
+        }
+        return this.max - len(this.buf)
+    }
+}
+
+func rtUnlockPipe(g *int) {
+    std.task.rtUnlock(g)
+}
+
+// The read half of a Pipe. Read returns what is buffered (0 once the
+// writer closed and the buffer is empty); on an empty open pipe it fails
+// with "io: pipe empty" - in async code use Recv, which waits.
+struct PipeReader {
+    st *pipeState
+
+    func Read(buf []byte) int! {
+        var s = this.st
+        std.task.rtLock(&s.guard)
+        var n = 0
+        for n < len(buf) && n < len(s.buf) {
+            buf[n] = s.buf[n]
+            n += 1
+        }
+        s.buf = s.buf[n..]
+        var empty = n == 0 && len(buf) > 0 && !s.closed
+        if n > 0 && s.max > 0 {
+            s.wake()
+        } else {
+            std.task.rtUnlock(&s.guard)
+        }
+        if empty {
+            return error("io: pipe empty")
+        }
+        return n
+    }
+
+    // Waits for data: up to n bytes, empty at the end of the stream
+    // (implements AsyncReader).
+    func Recv(n int) Task<[]byte!> {
+        return pipeReaderRecv(*this, n)
+    }
+}
+
+// The write half of a Pipe. Write never blocks: on an unbounded pipe the
+// buffer grows; on a BoundedPipe a write that does not fit fails with
+// "io: pipe full" (nothing written) - in async code use Send, which waits
+// for room.
+struct PipeWriter {
+    st *pipeState
+
+    func Write(p []byte) int! {
+        var s = this.st
+        std.task.rtLock(&s.guard)
+        if s.closed {
+            std.task.rtUnlock(&s.guard)
+            return error("io: write on closed pipe")
+        }
+        var room = s.room()
+        if room >= 0 && len(p) > room {
+            std.task.rtUnlock(&s.guard)
+            return error("io: pipe full")
+        }
+        for c in p {
+            s.buf = append(s.buf, c)
+        }
+        s.wake()
+        return len(p)
+    }
+
+    // Writes all of p, waiting for room on a BoundedPipe as the reader
+    // consumes (implements AsyncWriter as Write would on a socket).
+    func Send(p []byte) Task<int!> {
+        return pipeWriterSend(*this, p)
+    }
+
+    func WriteString(t string) int! {
+        return this.Write(std.strings.Bytes(t))?
+    }
+
+    // Ends the stream: readers see EOF after the buffered data.
+    func Close() void! {
+        var s = this.st
+        std.task.rtLock(&s.guard)
+        s.closed = true
+        s.wake()
+    }
+}
+
+// Both ends of a Pipe.
+struct PipeEnds {
+    Reader PipeReader
+    Writer PipeWriter
+}
+
+// An in-memory pipe: bytes written to Writer are read from Reader.
+func Pipe() PipeEnds {
+    var st = new pipeState{}
+    return PipeEnds{Reader: PipeReader{st: st}, Writer: PipeWriter{st: st}}
+}
+
+// A pipe that buffers at most max bytes (max >= 1): Writer.Send waits for
+// the reader to make room (back-pressure), Writer.Write fails when the
+// data does not fit.
+func BoundedPipe(max int) PipeEnds {
+    if max < 1 {
+        panic("io.BoundedPipe: capacity must be at least 1")
+    }
+    var st = new pipeState{max: max}
+    return PipeEnds{Reader: PipeReader{st: st}, Writer: PipeWriter{st: st}}
+}
+
+// ---- buffered I/O (bufio) ------------------------------------------------------------
+
+// Reads from R through a buffer (Go's bufio.Reader).
+struct BufferedReader {
+    r     std.io.Reader
+    buf   []byte
+    start int
+    end   int
+    eof   bool
+
+    func fill() void! {
+        if this.start > 0 {
+            var k = 0
+            for i in this.start..this.end {
+                this.buf[k] = this.buf[i]
+                k += 1
+            }
+            this.end -= this.start
+            this.start = 0
+        }
+        if this.eof || this.end == len(this.buf) {
+            return
+        }
+        var n = this.r.Read(this.buf[this.end..])?
+        if n == 0 {
+            this.eof = true
+        }
+        this.end += n
+    }
+
+    // Bytes in the buffer.
+    func Buffered() int {
+        return this.end - this.start
+    }
+
+    func Read(p []byte) int! {
+        if len(p) == 0 {
+            return 0
+        }
+        if this.start == this.end {
+            if this.eof {
+                return 0
+            }
+            // large reads bypass the buffer
+            if len(p) >= len(this.buf) {
+                var n = this.r.Read(p)?
+                if n == 0 {
+                    this.eof = true
+                }
+                return n
+            }
+            this.fill()?
+        }
+        var n = 0
+        for n < len(p) && this.start < this.end {
+            p[n] = this.buf[this.start]
+            n += 1
+            this.start += 1
+        }
+        return n
+    }
+
+    func ReadByte() byte! {
+        for this.start == this.end {
+            if this.eof {
+                return EOF
+            }
+            this.fill()?
+        }
+        this.start += 1
+        return this.buf[this.start - 1]
+    }
+
+    // The next n bytes without consuming them (fewer at the end of the
+    // stream, with EOF if none). n must not exceed the buffer size.
+    func Peek(n int) []byte! {
+        if n > len(this.buf) {
+            return error("bufio: buffer full")
+        }
+        for this.end - this.start < n && !this.eof {
+            this.fill()?
+        }
+        var k = n
+        if this.end - this.start < k {
+            k = this.end - this.start
+        }
+        if k == 0 && n > 0 {
+            return EOF
+        }
+        return this.buf[this.start..this.start + k]
+    }
+
+    // Skips n bytes; returns how many were skipped.
+    func Discard(n int) int! {
+        var done = 0
+        for done < n {
+            if this.start == this.end {
+                if this.eof {
+                    return done
+                }
+                this.fill()?
+                continue
+            }
+            this.start += 1
+            done += 1
+        }
+        return done
+    }
+
+    // Reads up to and including delim. At the end of the stream: the
+    // remaining bytes without delim, or EOF if there are none.
+    func ReadBytes(delim byte) []byte! {
+        var out []byte = []
+        for {
+            for this.start < this.end {
+                var c = this.buf[this.start]
+                this.start += 1
+                out = append(out, c)
+                if c == delim {
+                    return out
+                }
+            }
+            if this.eof {
+                if len(out) == 0 {
+                    return EOF
+                }
+                return out
+            }
+            this.fill()?
+        }
+    }
+
+    func ReadString(delim byte) string! {
+        return std.strings.FromBytes(this.ReadBytes(delim)?)
+    }
+
+    // One line without its "\n" or "\r\n"; EOF at the end of the stream.
+    func ReadLine() string! {
+        var b = this.ReadBytes(10)?
+        var n = len(b)
+        if n > 0 && b[n - 1] == 10 {
+            n -= 1
+            if n > 0 && b[n - 1] == 13 {
+                n -= 1
+            }
+        }
+        return std.strings.FromBytes(b[..n])
+    }
+
+    // The next UTF-8 rune (U+FFFD for invalid input); EOF at the end.
+    func ReadRune() char! {
+        var head = this.Peek(4)?
+        var (r, size) = std.unicode.utf8.DecodeRune(head)
+        this.start += size
+        return r
+    }
+}
+
+// A BufferedReader with a 4096-byte buffer.
+func NewBufferedReader(r std.io.Reader) *BufferedReader {
+    return NewBufferedReaderSize(r, 4096)
+}
+
+func NewBufferedReaderSize(r std.io.Reader, size int) *BufferedReader {
+    var n = size
+    if n < 16 {
+        n = 16
+    }
+    return new BufferedReader{r: r, buf: makeBuf(n)}
+}
+
+// Writes to W through a buffer; call Flush at the end (Go's bufio.Writer).
+struct BufferedWriter {
+    w   std.io.Writer
+    buf []byte
+    n   int
+
+    func Write(p []byte) int! {
+        if len(p) >= len(this.buf) {
+            this.Flush()?
+            return WriteAll(this.w, p)?
+        }
+        if this.n + len(p) > len(this.buf) {
+            this.Flush()?
+        }
+        for c in p {
+            this.buf[this.n] = c
+            this.n += 1
+        }
+        return len(p)
+    }
+
+    func WriteString(s string) int! {
+        return this.Write(std.strings.Bytes(s))?
+    }
+
+    func WriteByte(c byte) void! {
+        if this.n == len(this.buf) {
+            this.Flush()?
+        }
+        this.buf[this.n] = c
+        this.n += 1
+    }
+
+    // Writes the buffered bytes to the underlying writer.
+    func Flush() void! {
+        if this.n > 0 {
+            var k = this.n
+            this.n = 0
+            _ = WriteAll(this.w, this.buf[..k])?
+        }
+    }
+
+    func Buffered() int {
+        return this.n
+    }
+
+    func Available() int {
+        return len(this.buf) - this.n
+    }
+}
+
+func NewBufferedWriter(w std.io.Writer) *BufferedWriter {
+    return NewBufferedWriterSize(w, 4096)
+}
+
+func NewBufferedWriterSize(w std.io.Writer, size int) *BufferedWriter {
+    var n = size
+    if n < 16 {
+        n = 16
+    }
+    return new BufferedWriter{w: w, buf: makeBuf(n)}
+}
+
+// The result of a split function: consume Advance bytes and, if Ok,
+// emit Token. Advance 0 with !Ok asks for more data.
+struct SplitResult {
+    Advance int
+    Token   []byte
+    Ok      bool
+}
+
+// Splits into lines without "\n" / "\r\n" (the last line may lack one).
+func ScanLines(data []byte, atEOF bool) SplitResult {
+    for i, c in data {
+        if c == 10 {
+            var end = i
+            if end > 0 && data[end - 1] == 13 {
+                end -= 1
+            }
+            return SplitResult{Advance: i + 1, Token: data[..end], Ok: true}
+        }
+    }
+    if atEOF && len(data) > 0 {
+        var end = len(data)
+        if data[end - 1] == 13 {
+            end -= 1
+        }
+        return SplitResult{Advance: len(data), Token: data[..end], Ok: true}
+    }
+    return SplitResult{}
+}
+
+func isSpaceByte(c byte) bool {
+    return c == 32 || (c >= 9 && c <= 13)
+}
+
+// Splits into words separated by white space (ASCII and Latin-1 spaces).
+func ScanWords(data []byte, atEOF bool) SplitResult {
+    var start = 0
+    for start < len(data) && isSpaceByte(data[start]) {
+        start += 1
+    }
+    for i in start..len(data) {
+        if isSpaceByte(data[i]) {
+            return SplitResult{Advance: i + 1, Token: data[start..i], Ok: true}
+        }
+    }
+    if atEOF && len(data) > start {
+        return SplitResult{Advance: len(data), Token: data[start..], Ok: true}
+    }
+    return SplitResult{Advance: start}
+}
+
+// Splits into single bytes.
+func ScanBytes(data []byte, atEOF bool) SplitResult {
+    if len(data) == 0 {
+        return SplitResult{}
+    }
+    return SplitResult{Advance: 1, Token: data[..1], Ok: true}
+}
+
+// Splits into UTF-8 runes (invalid bytes become U+FFFD).
+func ScanRunes(data []byte, atEOF bool) SplitResult {
+    if len(data) == 0 {
+        return SplitResult{}
+    }
+    if !atEOF && !std.unicode.utf8.FullRune(data) {
+        return SplitResult{}
+    }
+    var (r, size) = std.unicode.utf8.DecodeRune(data)
+    if int(r) == 0xFFFD && size == 1 {
+        return SplitResult{Advance: 1, Token: std.unicode.utf8.EncodeRune(r), Ok: true}
+    }
+    return SplitResult{Advance: size, Token: data[..size], Ok: true}
+}
+
+// Reads tokens (lines by default) from R (Go's bufio.Scanner):
+// `for sc.Scan() { use(sc.Text()) }`, then check sc.Err().
+struct Scanner {
+    r     std.io.Reader
+    split func([]byte, bool) SplitResult
+    buf   []byte
+    start int
+    end   int
+    eof   bool
+    tok   []byte
+    err   error
+    done  bool
+    max   int
+
+    // Sets the split function (before the first Scan).
+    func Split(f func([]byte, bool) SplitResult) {
+        this.split = f
+    }
+
+    // Sets the maximum token size (default 64 KiB).
+    func MaxTokenSize(n int) {
+        this.max = n
+    }
+
+    // Advances to the next token; false at the end or on error.
+    func Scan() bool {
+        if this.done {
+            return false
+        }
+        for {
+            if this.end > this.start || this.eof {
+                var res = this.split(this.buf[this.start..this.end], this.eof)
+                if res.Advance > 0 || res.Ok {
+                    this.start += res.Advance
+                    if res.Ok {
+                        this.tok = res.Token
+                        return true
+                    }
+                    continue
+                }
+                if this.eof {
+                    this.done = true
+                    return false
+                }
+            }
+            // need more data: compact, grow, read
+            if this.start > 0 {
+                var k = 0
+                for i in this.start..this.end {
+                    this.buf[k] = this.buf[i]
+                    k += 1
+                }
+                this.end -= this.start
+                this.start = 0
+            }
+            if this.end == len(this.buf) {
+                if len(this.buf) >= this.max {
+                    this.err = error("bufio.Scanner: token too long")
+                    this.done = true
+                    return false
+                }
+                var more = makeBuf(len(this.buf))
+                for c in more {
+                    this.buf = append(this.buf, c)
+                }
+            }
+            var n = try this.r.Read(this.buf[this.end..]) catch err {
+                this.err = err
+                this.done = true
+                return false
+            }
+            if n == 0 {
+                this.eof = true
+            }
+            this.end += n
+        }
+    }
+
+    // The current token (a copy).
+    func Text() string {
+        return std.strings.FromBytes(this.tok)
+    }
+
+    // The current token (valid until the next Scan).
+    func Bytes() []byte {
+        return this.tok
+    }
+
+    // The first read error (nil at a clean end).
+    func Err() error {
+        return this.err
+    }
+}
+
+// A Scanner splitting r into lines.
+func NewScanner(r std.io.Reader) *Scanner {
+    return new Scanner{r: r, split: ScanLines, buf: makeBuf(4096), max: 65536}
+}
+
+// All lines of r (without line endings).
+func Lines(r std.io.Reader) []string! {
+    var sc = NewScanner(r)
+    var out []string = []
+    for sc.Scan() {
+        out = append(out, sc.Text())
+    }
+    if sc.Err() != nil {
+        return sc.Err()
+    }
+    return out
+}
+
+// All white-space separated words of r.
+func Words(r std.io.Reader) []string! {
+    var sc = NewScanner(r)
+    sc.Split(ScanWords)
+    var out []string = []
+    for sc.Scan() {
+        out = append(out, sc.Text())
+    }
+    if sc.Err() != nil {
+        return sc.Err()
+    }
+    return out
+}
+
+async func pipeReaderRecv(self PipeReader, n int) []byte! {
+    var s = self.st
+    for {
+        std.task.rtLock(&s.guard)
+        if len(s.buf) > 0 || s.closed {
+            var k = n
+            if k > len(s.buf) {
+                k = len(s.buf)
+            }
+            var out []byte = []
+            for c in s.buf[..k] {
+                out = append(out, c)
+            }
+            s.buf = s.buf[k..]
+            if k > 0 && s.max > 0 {
+                s.wake()
+            } else {
+                std.task.rtUnlock(&s.guard)
+            }
+            return out
+        }
+        var w = std.task.rtWaker()
+        s.waiters = append(s.waiters, w)
+        std.task.rtUnlock(&s.guard)
+        await w
+    }
+}
+
+async func pipeWriterSend(self PipeWriter, p []byte) int! {
+    var s = self.st
+    var off = 0
+    for off < len(p) {
+        std.task.rtLock(&s.guard)
+        if s.closed {
+            std.task.rtUnlock(&s.guard)
+            return error("io: write on closed pipe")
+        }
+        var room = s.room()
+        if room == 0 {
+            var w = std.task.rtWaker()
+            s.wwaiters = append(s.wwaiters, w)
+            std.task.rtUnlock(&s.guard)
+            await w
+            continue
+        }
+        var k = len(p) - off
+        if room > 0 && k > room {
+            k = room
+        }
+        for c in p[off..off + k] {
+            s.buf = append(s.buf, c)
+        }
+        off += k
+        s.wake()
+    }
+    return len(p)
+}

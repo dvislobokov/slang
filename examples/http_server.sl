@@ -1,7 +1,7 @@
 namespace examples.http_server
 
-import std.io
 import std
+import std.io
 import std.net
 
 // An HTTP server with a router, queried by the client in the same program.

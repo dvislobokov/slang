@@ -7,7 +7,7 @@ import std.io
 
 struct Money {
     Cents int
-    Tags []string
+    Tags  []string
     func Add(o Money) Money { return Money{Cents: this.Cents + o.Cents, Tags: this.Tags} }
 }
 

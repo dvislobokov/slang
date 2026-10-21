@@ -8,7 +8,7 @@ import std.io
 // std.collections types (Heap, OrderedMap, LRU, Deque).
 
 struct WordCount {
-    Word string
+    Word  string
     Count int
 }
 
@@ -20,13 +20,27 @@ func main() {
         counts[w] += 1
     }
     // map -> slice of structs, sorted by count (desc) then word: SortFunc is stable
-    var stats = slices.Map(maps.SortedKeys(counts), (w string) => WordCount{Word: w, Count: counts[w]})
+    var stats = slices.Map(
+        maps.SortedKeys(counts),
+        (w string) => WordCount{Word: w, Count: counts[w]},
+    )
     slices.SortFunc(stats, (a WordCount, b WordCount) => a.Count > b.Count)
     for s in stats[..4] {
         println(strings.PadRight(s.Word, 6, " "), s.Count)
     }
-    println("distinct:", len(slices.Unique(words)), "longest:", slices.MaxFunc(words, (a string, b string) => len(a) < len(b)))
-    println("lengths:", slices.Map(slices.Chunk(words, 4), (c []string) => slices.Sum(slices.Map(c, (w string) => len(w)))))
+    println(
+        "distinct:",
+        len(slices.Unique(words)),
+        "longest:",
+        slices.MaxFunc(words, (a string, b string) => len(a) < len(b)),
+    )
+    println(
+        "lengths:",
+        slices.Map(
+            slices.Chunk(words, 4),
+            (c []string) => slices.Sum(slices.Map(c, (w string) => len(w))),
+        ),
+    )
     var (i, found) = slices.BinarySearch(maps.SortedKeys(counts), "fox")
     println("fox at", i, found, "| clamp:", cmp.Clamp(150, 0, 100), cmp.Compare("a", "b"))
 

@@ -6,7 +6,6 @@
 #include "platform/platform.h"
 
 #include <stdlib.h>
-#include <time.h>
 
 typedef void (*closure0)(void *env);
 
@@ -50,6 +49,5 @@ void slang_thread_join(int64_t h) {
 /* Blocks the calling OS thread for ms milliseconds. */
 void slang_thread_sleep(int64_t ms) {
     if (ms <= 0) return;
-    struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
-    while (nanosleep(&ts, &ts) != 0) {}
+    slang__plat_sleep_ns(ms * 1000000);
 }

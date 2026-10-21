@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.interfaces2.default_method_this_is_interface
 
-import std.io
 import std
+import std.io
 
 interface Shape {
     func Area() int

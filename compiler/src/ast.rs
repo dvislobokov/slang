@@ -171,6 +171,10 @@ pub struct FuncDecl {
     pub body: Option<Block>,
     pub is_async: bool,
     pub is_static: bool,
+    /// `extern func Name(params) ret`: a declaration of a runtime (C)
+    /// function without a body; only in the generated stdlib declaration
+    /// files `std/**/*_extern.sl` (sema/stdfs.rs).
+    pub is_extern: bool,
     pub span: Span,
 }
 

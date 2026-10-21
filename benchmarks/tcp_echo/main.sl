@@ -1,7 +1,7 @@
 namespace bench.tcp_echo
 
-import std.io
 import std
+import std.io
 
 // 1000 concurrent TCP connections through loopback, each sending 1 MB in
 // 64 KB writes and reading the echo back; the server echoes with
@@ -70,6 +70,13 @@ async func main() void! {
     await acc?
     var secs = float(time.NowNanos() - t0) / 1e9
     l.Close()
-    io.Eprintln(fmt.Format("tcp_echo slang: {0} MB echoed in {1} s ({2} MB/s)", total / size, secs, float(total / size) / secs))
+    io.Eprintln(
+        fmt.Format(
+            "tcp_echo slang: {0} MB echoed in {1} s ({2} MB/s)",
+            total / size,
+            secs,
+            float(total / size) / secs,
+        ),
+    )
     println("echoed", total / size, "MB")
 }

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async.channel_send_recv
 
-import std.io
 import std
+import std.io
 
 async func Produce(ch task.Channel<int>, n int) {
     for i in 0..n {

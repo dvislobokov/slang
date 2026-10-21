@@ -3,12 +3,12 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_pool_proxy
 
-import std.io
 import std
+import std.io
 import std.net
 
 struct Log {
-    mu task.Mutex
+    mu    task.Mutex
     lines []string
 }
 
@@ -56,7 +56,13 @@ async func serveProxy(c net.Conn, log *Log) void! {
         return
     }
     var body = "proxied " + line[1]
-    _ = await c.WriteString(fmt.Format("HTTP/1.1 200 OK\r\nContent-Length: {0}\r\nConnection: close\r\n\r\n{1}", len(body), body))?
+    _ = await c.WriteString(
+        fmt.Format(
+            "HTTP/1.1 200 OK\r\nContent-Length: {0}\r\nConnection: close\r\n\r\n{1}",
+            len(body),
+            body,
+        ),
+    )?
     c.Close()
 }
 

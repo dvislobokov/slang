@@ -26,6 +26,7 @@ and every change must match it or update it.
 ```sh
 ./scripts/setup.sh                 # once: llvm-18-dev, clang, lld (Ubuntu)
 make -C runtime && make -C runtime test     # C runtime (-Werror), `make asan` for sanitizers
+make -C runtime CROSS=x86_64-w64-mingw32 test-wine  # Windows runtime (mingw-w64, -Werror) + C tests under wine
 cd compiler && cargo build && cargo test    # unit, parser, sema, package, run_examples, spec
 cargo build --release && ./target/release/slang run examples/hello.sl
 ./target/release/slang check --dump-hir file.sl   # inspect typed HIR

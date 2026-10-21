@@ -12,8 +12,8 @@
  * with a sync flush (empty stored block), so the outputs of successive
  * calls concatenate into one stream. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,7 +22,7 @@
 /* ---------------------------------------------------------------------- */
 
 static uint32_t crc_tab[8][256];
-static pthread_once_t crc_once = PTHREAD_ONCE_INIT;
+static slang__plat_once crc_once = SLANG_PLAT_ONCE_INIT;
 
 static void crc_init(void) {
     for (uint32_t i = 0; i < 256; i++) {
@@ -35,7 +35,7 @@ static void crc_init(void) {
 }
 
 static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n) {
-    pthread_once(&crc_once, crc_init);
+    slang__plat_once_run(&crc_once, crc_init);
     uint32_t c = ~crc;
     while (n >= 8) {
         uint32_t a = c ^ ((uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24);

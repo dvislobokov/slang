@@ -47,9 +47,14 @@ mod ownership;
 mod reflect;
 mod resolve;
 mod stmt;
+pub mod stdfs;
 mod stdsrc;
 mod suggest;
 pub mod stdlib;
+// >>> std.web (docs/FRAMEWORK.md section 2)
+mod web;
+// <<< std.web
+pub mod stdlib_docs;
 
 use crate::ast;
 use crate::diagnostics::{codes, Diagnostic, Diagnostics, Fix};
@@ -311,6 +316,8 @@ pub(crate) struct Sema<'a> {
     pub(crate) gen: generics::GenState<'a>,
     /// Reflection state (lazily loaded library sources, compile-time fields).
     pub(crate) refl: reflect::ReflState,
+    /// std.web compile-time expansion (route tables, DI factories).
+    pub(crate) web: web::WebState,
 }
 
 impl<'a> Sema<'a> {
@@ -354,6 +361,7 @@ impl<'a> Sema<'a> {
             ide: None,
             gen: generics::GenState::default(),
             refl: reflect::ReflState::default(),
+            web: web::WebState::default(),
         }
     }
 
@@ -381,6 +389,7 @@ impl<'a> Sema<'a> {
             self.check_function_body(FuncId(f as u32));
             f += 1;
         }
+        self.web_finish();
         self.check_unused_imports();
         if let Some(main) = self.find_entry() {
             let sig = &self.sigs[main.0 as usize];

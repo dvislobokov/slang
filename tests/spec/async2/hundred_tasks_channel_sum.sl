@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async2.hundred_tasks_channel_sum
 
-import std.io
 import std
+import std.io
 
 async func Worker(id int, out task.Channel<int>) {
     await task.Delay(id % 7)

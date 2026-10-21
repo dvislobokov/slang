@@ -3,11 +3,11 @@
 // run-flags: --leak-check
 namespace spec.memory2.arena_many_objects
 
-import std.io
 import std
+import std.io
 
 struct Node {
-    V int
+    V    int
     Next *Node
 }
 

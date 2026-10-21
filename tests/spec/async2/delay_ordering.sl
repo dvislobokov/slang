@@ -2,11 +2,11 @@
 // status: passing
 namespace spec.async2.delay_ordering
 
-import std.io
 import std
+import std.io
 
 struct Log {
-    Mu task.Mutex
+    Mu    task.Mutex
     Order []string
 }
 

@@ -13,7 +13,7 @@ struct Table {
     Style int
     // spaces between columns in Plain style, inside borders otherwise
     Padding int
-    rows [][]string
+    rows    [][]string
 
     func AddRow(cells []string) {
         var r []string = []
@@ -279,10 +279,32 @@ func RuneWidth(r int) int {
         return 0
     }
     // combining marks, zero-width space/joiners, variation selectors
-    if (r >= 0x300 && r <= 0x36F) || (r >= 0x200B && r <= 0x200F) || (r >= 0xFE00 && r <= 0xFE0F) || (r >= 0x1AB0 && r <= 0x1AFF) || (r >= 0x1DC0 && r <= 0x1DFF) || (r >= 0x20D0 && r <= 0x20FF) || (r >= 0xFE20 && r <= 0xFE2F) {
+    if (r >= 0x300 && r <= 0x36F) ||
+        (r >= 0x200B && r <= 0x200F) ||
+        (r >= 0xFE00 && r <= 0xFE0F) ||
+        (r >= 0x1AB0 && r <= 0x1AFF) ||
+        (r >= 0x1DC0 && r <= 0x1DFF) ||
+        (r >= 0x20D0 && r <= 0x20FF) ||
+        (r >= 0xFE20 && r <= 0xFE2F) {
         return 0
     }
-    if (r >= 0x1100 && r <= 0x115F) || r == 0x2329 || r == 0x232A || (r >= 0x2E80 && r <= 0x303E) || (r >= 0x3041 && r <= 0x33FF) || (r >= 0x3400 && r <= 0x4DBF) || (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0xA000 && r <= 0xA4CF) || (r >= 0xAC00 && r <= 0xD7A3) || (r >= 0xF900 && r <= 0xFAFF) || (r >= 0xFE30 && r <= 0xFE4F) || (r >= 0xFF00 && r <= 0xFF60) || (r >= 0xFFE0 && r <= 0xFFE6) || (r >= 0x1F300 && r <= 0x1F64F) || (r >= 0x1F900 && r <= 0x1F9FF) || (r >= 0x1F680 && r <= 0x1F6FF) || (r >= 0x20000 && r <= 0x3FFFD) {
+    if (r >= 0x1100 && r <= 0x115F) ||
+        r == 0x2329 ||
+        r == 0x232A ||
+        (r >= 0x2E80 && r <= 0x303E) ||
+        (r >= 0x3041 && r <= 0x33FF) ||
+        (r >= 0x3400 && r <= 0x4DBF) ||
+        (r >= 0x4E00 && r <= 0x9FFF) ||
+        (r >= 0xA000 && r <= 0xA4CF) ||
+        (r >= 0xAC00 && r <= 0xD7A3) ||
+        (r >= 0xF900 && r <= 0xFAFF) ||
+        (r >= 0xFE30 && r <= 0xFE4F) ||
+        (r >= 0xFF00 && r <= 0xFF60) ||
+        (r >= 0xFFE0 && r <= 0xFFE6) ||
+        (r >= 0x1F300 && r <= 0x1F64F) ||
+        (r >= 0x1F900 && r <= 0x1F9FF) ||
+        (r >= 0x1F680 && r <= 0x1F6FF) ||
+        (r >= 0x20000 && r <= 0x3FFFD) {
         return 2
     }
     return 1

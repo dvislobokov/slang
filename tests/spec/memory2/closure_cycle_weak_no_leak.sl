@@ -6,7 +6,7 @@ namespace spec.memory2.closure_cycle_weak_no_leak
 import std.io
 
 struct Button {
-    Label string
+    Label   string
     OnClick func()
     func Drop() { println("drop", this.Label) }
 }

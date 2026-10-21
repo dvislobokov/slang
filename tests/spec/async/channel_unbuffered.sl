@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.async.channel_unbuffered
 
-import std.io
 import std
+import std.io
 
 async func Send(ch task.Channel<string>, words []string) {
     for w in words {

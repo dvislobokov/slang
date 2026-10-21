@@ -1,7 +1,7 @@
 namespace bench.http_hello
 
-import std.io
 import std
+import std.io
 import std.net
 
 // HTTP/1.1 "hello" throughput: the std.net.http server answering a
@@ -65,7 +65,15 @@ async func load(addr string, conns int, total int) void! {
         n += await t?
     }
     var secs = float(time.NowNanos() - t0) / 1e9
-    io.Eprintln(fmt.Format("http_hello slang load: {0} requests over {1} connections in {2} s: {3} req/s", n, conns, secs, float(n) / secs))
+    io.Eprintln(
+        fmt.Format(
+            "http_hello slang load: {0} requests over {1} connections in {2} s: {3} req/s",
+            n,
+            conns,
+            secs,
+            float(n) / secs,
+        ),
+    )
     println("requests", n)
 }
 
@@ -93,7 +101,7 @@ async func main() void! {
     srv.Listen()?
     var serving = srv.Serve()
     if len(args) > 1 && args[1] == "--server" {
-        io.Eprintln(fmt.Format("{0}", srv.Port()))   // stderr: unbuffered
+        io.Eprintln(fmt.Format("{0}", srv.Port())) // stderr: unbuffered
         await serving?
         return
     }

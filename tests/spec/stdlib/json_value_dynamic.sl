@@ -2,11 +2,13 @@
 // status: passing
 namespace spec.stdlib.json_value_dynamic
 
-import std.io
 import std.encoding
+import std.io
 
 func Run() void! {
-    var v = json.ParseValue("{\"name\": \"x\", \"nums\": [1, 2.5, 3], \"ok\": true, \"none\": null}")?
+    var v = json.ParseValue(
+        "{\"name\": \"x\", \"nums\": [1, 2.5, 3], \"ok\": true, \"none\": null}",
+    )?
     println(v.Get("name").String()?, v.Get("nums").Len(), v.Get("nums").Index(1).Float()?)
     println(v.Get("ok").Bool()?, v.Get("none").IsNull(), v.Has("missing"))
     try json.ParseValue("{bad") catch err {

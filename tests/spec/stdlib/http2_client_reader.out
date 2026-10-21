@@ -1,0 +1,8 @@
+response: 200 HTTP/2.0 hi
+preface ok: true
+settings ack from the client
+ping ack: true pingpong
+goaway from the client: code 0
+client closed the connection
+goaway from the server: code 0 idle timeout
+server closed the connection

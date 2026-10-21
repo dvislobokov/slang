@@ -1,0 +1,10 @@
+// error: has parameter {id} but the handler has no route parameter named id
+// status: passing
+namespace spec.web.err_route_param_unbound
+
+import std.web
+
+func main() {
+    var app = NewApp()
+    app.MapGet("/users/{id}", (userId int) => "user")
+}

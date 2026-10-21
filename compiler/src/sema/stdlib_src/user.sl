@@ -5,16 +5,16 @@ namespace std.os.user
 // as in Go, so the API also fits non-numeric platforms.
 
 struct User {
-    Uid string
-    Gid string
+    Uid      string
+    Gid      string
     Username string
     // The full name (first GECOS field), may be empty.
-    Name string
+    Name    string
     HomeDir string
 }
 
 struct Group {
-    Gid string
+    Gid  string
     Name string
 }
 

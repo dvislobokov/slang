@@ -8,7 +8,7 @@ import std.io
 
 struct Job {
     Name string
-    Pri int
+    Pri  int
 }
 
 func main() {
@@ -32,7 +32,15 @@ func main() {
         d.PushBack(i)
         d.PushFront(-i)
     }
-    println(d.Len(), d.Get(0), d.Get(19), try d.PopFront() else 0, try d.PopBack() else 0, try d.Front() else 0, try d.Back() else 0)
+    println(
+        d.Len(),
+        d.Get(0),
+        d.Get(19),
+        try d.PopFront() else 0,
+        try d.PopBack() else 0,
+        try d.Front() else 0,
+        try d.Back() else 0,
+    )
     d.Set(0, 100)
     println(d.Items())
 
@@ -66,8 +74,19 @@ func main() {
     om.Set("fig", 2)
     om.Set("apple", 10)
     println(om.Keys(), om.Values(), om.Get("fig"), om.Get("nope"), om.Has("pear"), om.Len())
-    println(om.Remove("fig"), om.Remove("fig"), om.Keys(), try om.Min() else "", try om.Max() else "")
-    println(try om.Ceiling("b") else "", try om.Floor("b") else "", try om.Floor("a") else "none", om.Range("a", "p"))
+    println(
+        om.Remove("fig"),
+        om.Remove("fig"),
+        om.Keys(),
+        try om.Min() else "",
+        try om.Max() else "",
+    )
+    println(
+        try om.Ceiling("b") else "",
+        try om.Floor("b") else "",
+        try om.Floor("a") else "none",
+        om.Range("a", "p"),
+    )
 
     var c = LRU<string, int>(2)
     _ = c.Set("a", 1)
@@ -88,7 +107,16 @@ func main() {
     var other = BitSet{}
     other.Set(1)
     other.Set(2)
-    println(bs.Items(), bs.Count(), bs.Len(), bs.Has(64), bs.Has(63), bs.Union(other).Items(), bs.Intersect(other).Items(), bs.Difference(other).Items())
+    println(
+        bs.Items(),
+        bs.Count(),
+        bs.Len(),
+        bs.Has(64),
+        bs.Has(63),
+        bs.Union(other).Items(),
+        bs.Intersect(other).Items(),
+        bs.Difference(other).Items(),
+    )
     bs.Clear(64)
     bs.Toggle(3)
     println(bs.Items(), bs.Equals(bs.Union(BitSet{})), bs.Equals(other))

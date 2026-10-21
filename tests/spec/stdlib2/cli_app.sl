@@ -7,9 +7,9 @@ import std
 import std.io
 
 struct ServeFlags {
-    @cli.flag(name: "port", short: "p", env: "SLANG_CLI_TEST_PORT", help: "listen port") Port int = 8080
-    @cli.flag(help: "log every request") Verbose bool
-    @cli.flag(help: "allowed origin (repeatable)") Origin []string
+    @cli.flag(name: "port", short: "p", env: "SLANG_CLI_TEST_PORT", help: "listen port") Port    int = 8080
+    @cli.flag(help: "log every request")                                                 Verbose bool
+    @cli.flag(help: "allowed origin (repeatable)")                                       Origin  []string
     MaxConns int = 100
     @cli.flag(skip: true) internal string
     Ratio float = 0.5
@@ -20,22 +20,66 @@ struct GlobalFlags {
 }
 
 func app() cli.App {
-    var serve = cli.Command{Name: "serve", Aliases: ["s"], Help: "start the server", Args: "[dir]", Flags: cli.FlagsOf<ServeFlags>(),
+    var serve = cli.Command{
+        Name: "serve",
+        Aliases: ["s"],
+        Help: "start the server",
+        Args: "[dir]",
+        Flags: cli.FlagsOf<ServeFlags>(),
         Run: func(c *cli.Context) void! {
             var f = cli.Bind<ServeFlags>(c)?
             var g = cli.Bind<GlobalFlags>(c)?
-            println("serve port", f.Port, "verbose", f.Verbose, "origins", f.Origin, "max", f.MaxConns, "ratio", f.Ratio, "quiet", g.Quiet, "args", c.Args, "path", c.Path)
-            println("ctx:", c.String("port"), c.IsSet("port"), c.Bool("verbose"), try c.Int("max-conns") else -1)
-        }}
+            println(
+                "serve port",
+                f.Port,
+                "verbose",
+                f.Verbose,
+                "origins",
+                f.Origin,
+                "max",
+                f.MaxConns,
+                "ratio",
+                f.Ratio,
+                "quiet",
+                g.Quiet,
+                "args",
+                c.Args,
+                "path",
+                c.Path,
+            )
+            println(
+                "ctx:",
+                c.String("port"),
+                c.IsSet("port"),
+                c.Bool("verbose"),
+                try c.Int("max-conns") else -1,
+            )
+        },
+    }
     var fail = cli.Command{Name: "fail", Help: "always fails", Run: func(c *cli.Context) void! {
         return error("it broke")
     }}
-    var db = cli.Command{Name: "db", Help: "database tools", Commands: [
-        cli.Command{Name: "migrate", Help: "run migrations", Flags: [cli.Flag{Name: "dry-run", Kind: "bool", Help: "only print"}], Run: func(c *cli.Context) void! {
-            println("migrate dry:", c.Bool("dry-run"))
-        }},
-    ]}
-    return cli.App{Name: "tool", Version: "1.2.0", Help: "tool does things", Flags: cli.FlagsOf<GlobalFlags>(), Commands: [serve, fail, db]}
+    var db = cli.Command{
+        Name: "db",
+        Help: "database tools",
+        Commands: [
+            cli.Command{
+                Name: "migrate",
+                Help: "run migrations",
+                Flags: [cli.Flag{Name: "dry-run", Kind: "bool", Help: "only print"}],
+                Run: func(c *cli.Context) void! {
+                    println("migrate dry:", c.Bool("dry-run"))
+                },
+            },
+        ],
+    }
+    return cli.App{
+        Name: "tool",
+        Version: "1.2.0",
+        Help: "tool does things",
+        Flags: cli.FlagsOf<GlobalFlags>(),
+        Commands: [serve, fail, db],
+    }
 }
 
 func run(args []string) {
@@ -47,7 +91,18 @@ func run(args []string) {
 }
 
 func main() {
-    run(["serve", "-p", "9000", "--verbose", "--origin", "a", "--origin=b", "-q", "www", "--ratio=1.25"])
+    run([
+        "serve",
+        "-p",
+        "9000",
+        "--verbose",
+        "--origin",
+        "a",
+        "--origin=b",
+        "-q",
+        "www",
+        "--ratio=1.25",
+    ])
     run(["s", "--port=1", "--max-conns", "0x10", "--", "--not-a-flag"])
     run(["serve", "--prot", "1"])
     run(["serv"])
@@ -61,14 +116,20 @@ func main() {
     run(["serve", "--help"])
     run([])
     run(["help", "db"])
-    try os.Setenv("SLANG_CLI_TEST_PORT", "7777") catch err {
-    }
+    try os.Setenv("SLANG_CLI_TEST_PORT", "7777") catch err {}
     run(["serve"])
     var a = app()
     var bash = try a.Completion("bash") else ""
-    println(strings.Contains(bash, "complete -F _tool_complete tool"), strings.Contains(bash, "db) words=\"migrate"), strings.Contains(bash, "serve) words=\"--port --verbose"))
+    println(
+        strings.Contains(bash, "complete -F _tool_complete tool"),
+        strings.Contains(bash, "db) words=\"migrate"),
+        strings.Contains(bash, "serve) words=\"--port --verbose"),
+    )
     var fish = try a.Completion("fish") else ""
-    println(strings.Contains(fish, "-a serve -d \"start the server\""), strings.Contains(fish, "-l port -s p -r"))
+    println(
+        strings.Contains(fish, "-a serve -d \"start the server\""),
+        strings.Contains(fish, "-l port -s p -r"),
+    )
     try {
         _ = a.Completion("tcsh")?
     } catch err {

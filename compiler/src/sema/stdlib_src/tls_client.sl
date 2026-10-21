@@ -8,7 +8,9 @@ namespace std.net.tls
 
 // SHA-256("HelloRetryRequest"), the ServerHello.random of a HelloRetryRequest.
 func hrrRandom() []byte {
-    return try std.encoding.hex.Decode("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c") else []
+    return try std.encoding.hex.Decode(
+        "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c",
+    ) else []
 }
 
 // "DOWNGRD" + 01: the last 8 bytes of ServerHello.random when a TLS 1.3
@@ -100,28 +102,34 @@ func verifyServer(c *conn) void! {
     for i in 1..len(c.peerCerts) {
         inter = append(inter, c.peerCerts[i])
     }
-    var chain = try std.crypto.x509.Verify(c.peerCerts[0], std.crypto.x509.VerifyOptions{DNSName: c.serverName,
-        Roots: c.cfg.RootCAs, Intermediates: inter}) catch err {
-        return c.fail(certAlert(err.Message()), "server certificate: " + std.strings.TrimPrefix(err.Message(), "x509: "))
+    var chain = try std.crypto.x509.Verify(c.peerCerts[0], std.crypto.x509.VerifyOptions{
+        DNSName: c.serverName,
+        Roots: c.cfg.RootCAs,
+        Intermediates: inter,
+    }) catch err {
+        return c.fail(
+            certAlert(err.Message()),
+            "server certificate: " + std.strings.TrimPrefix(err.Message(), "x509: "),
+        )
     }
     c.verified = chain
 }
 
 // The state of one client handshake.
 struct clientHS {
-    c *conn
-    minV int
-    maxV int
-    random []byte
+    c         *conn
+    minV      int
+    maxV      int
+    random    []byte
     sessionID []byte
-    share keyShare
-    cookie []byte
-    sess *session
+    share     keyShare
+    cookie    []byte
+    sess      *session
     // session hash compatible with the PSK offered (TLS 1.3)
-    pskHash string
+    pskHash   string
     offered12 []int
     offered13 []int
-    sentCCS bool
+    sentCCS   bool
 
     // The ClientHello body; binder placeholders are zero.
     func helloBody(withPSK bool) []byte {
@@ -273,22 +281,22 @@ struct clientHS {
 
 // Parsed ServerHello.
 struct serverHello {
-    version int
-    random []byte
-    sessionID []byte
-    suite int
+    version         int
+    random          []byte
+    sessionID       []byte
+    suite           int
     selectedVersion int
-    keyShareGroup int
-    keyShare []byte
-    hasPSK bool
-    pskIdentity int
-    cookie []byte
-    alpn string
-    hasALPN bool
-    ems bool
-    ticketExt bool
-    reneg bool
-    renegOK bool
+    keyShareGroup   int
+    keyShare        []byte
+    hasPSK          bool
+    pskIdentity     int
+    cookie          []byte
+    alpn            string
+    hasALPN         bool
+    ems             bool
+    ticketExt       bool
+    reneg           bool
+    renegOK         bool
 }
 
 func parseServerHello(c *conn, body []byte) serverHello! {
@@ -415,7 +423,8 @@ async func runClient(c *conn) void! {
             return c.fail(47, "HelloRetryRequest changes nothing")
         }
         if sh.keyShareGroup != 0 {
-            if (sh.keyShareGroup != 29 && sh.keyShareGroup != 23 && sh.keyShareGroup != 24) || sh.keyShareGroup == h.share.group {
+            if (sh.keyShareGroup != 29 && sh.keyShareGroup != 23 && sh.keyShareGroup != 24) ||
+                sh.keyShareGroup == h.share.group {
                 return c.fail(47, "HelloRetryRequest asks for an unsupported group")
             }
             h.share = newKeyShare(sh.keyShareGroup)?
@@ -455,7 +464,10 @@ async func runClient(c *conn) void! {
         return c.fail(47, "TLS 1.2 ServerHello after a HelloRetryRequest")
     }
     if vers < h.minV || vers > h.maxV {
-        return c.fail(70, "server selected " + versionName(vers) + ", outside the configured versions")
+        return c.fail(
+            70,
+            "server selected " + versionName(vers) + ", outside the configured versions",
+        )
     }
     c.addTranscript(m)
     if vers == 772 {
@@ -638,9 +650,21 @@ func handleTicket13(c *conn, m hsMsg) void! {
     }
     var hh = c.suite.hash
     var psk = ExpandLabel(hh, c.resMaster, "resumption", nonce, hashLen(hh))?
-    c.cfg.Sessions.put(c.sessionKey, new session{version: 772, suite: c.suite.id, ticket: ticket, secret: psk,
-        ageAdd: ageAdd, received: std.time.Now(), lifetime: lifetime, alpn: c.alpn, peerCerts: c.peerCerts,
-        verified: c.verified})
+    c.cfg.Sessions.put(
+        c.sessionKey,
+        new session{
+            version: 772,
+            suite: c.suite.id,
+            ticket: ticket,
+            secret: psk,
+            ageAdd: ageAdd,
+            received: std.time.Now(),
+            lifetime: lifetime,
+            alpn: c.alpn,
+            peerCerts: c.peerCerts,
+            verified: c.verified,
+        },
+    )
 }
 
 // TLS 1.2 traffic keys from the master secret: (client, server) cipher states.
@@ -654,7 +678,13 @@ func deriveKeys12(s suiteInfo, master []byte, clientRandom []byte, serverRandom 
     if s.aead == 2 {
         ivLen = 12
     }
-    var kb = prf12(s.hash, master, "key expansion", cat(serverRandom, clientRandom), 2 * s.keyLen + 2 * ivLen)?
+    var kb = prf12(
+        s.hash,
+        master,
+        "key expansion",
+        cat(serverRandom, clientRandom),
+        2 * s.keyLen + 2 * ivLen,
+    )?
     var k = s.keyLen
     var ck = kb[..k]
     var sk = kb[k..2 * k]
@@ -680,7 +710,10 @@ async func client12(h *clientHS, sh serverHello) void! {
     var s = suiteByID(sh.suite)
     c.suite = s
     if !sh.ems {
-        return c.fail(40, "server does not support extended_master_secret (RFC 7627), which is required")
+        return c.fail(
+            40,
+            "server does not support extended_master_secret (RFC 7627), which is required",
+        )
     }
     if sh.reneg && !sh.renegOK {
         return c.fail(40, "invalid renegotiation_info")
@@ -688,7 +721,10 @@ async func client12(h *clientHS, sh serverHello) void! {
     checkALPN(c, sh.hasALPN, sh.alpn)?
     c.clientRandom = h.random
     c.serverRandom = sh.random
-    if h.sess != nil && h.sess.version == 771 && len(sh.sessionID) > 0 && same(sh.sessionID, h.sessionID) {
+    if h.sess != nil &&
+        h.sess.version == 771 &&
+        len(sh.sessionID) > 0 &&
+        same(sh.sessionID, h.sessionID) {
         // abbreviated handshake (RFC 5077 3.1)
         if h.sess.suite != sh.suite {
             return c.fail(47, "resumed session with a different cipher suite")
@@ -843,6 +879,18 @@ func store12Ticket(c *conn, m hsMsg) void! {
     if lifetime == 0 || lifetime > 604800 {
         lifetime = 604800
     }
-    c.cfg.Sessions.put(c.sessionKey, new session{version: 771, suite: c.suite.id, ticket: ticket, secret: c.master,
-        received: std.time.Now(), lifetime: lifetime, alpn: c.alpn, peerCerts: c.peerCerts, verified: c.verified})
+    c.cfg.Sessions.put(
+        c.sessionKey,
+        new session{
+            version: 771,
+            suite: c.suite.id,
+            ticket: ticket,
+            secret: c.master,
+            received: std.time.Now(),
+            lifetime: lifetime,
+            alpn: c.alpn,
+            peerCerts: c.peerCerts,
+            verified: c.verified,
+        },
+    )
 }

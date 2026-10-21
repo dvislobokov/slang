@@ -24,7 +24,8 @@ struct Minus {
 func Classify(t Token) string {
     switch t {
         case Num n: return "number"
-        default: return "operator " + t.Text()
+        default:
+            return "operator " + t.Text()
     }
 }
 

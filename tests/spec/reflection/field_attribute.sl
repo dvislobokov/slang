@@ -2,13 +2,13 @@
 // status: passing
 namespace spec.reflection.field_attribute
 
-import std.io
 import std
+import std.io
 
 struct User {
-    @json(name: "id") Id int
+    @json(name: "id")      Id    int
     @json(omitEmpty: true) Email string
-    @json(skip: true) cache string
+    @json(skip: true)      cache string
     Plain int
 }
 

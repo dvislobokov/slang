@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib4.tls_p384
 
-import std.io
 import std
+import std.io
 
 const CertPEM = "-----BEGIN CERTIFICATE-----\nMIIB0TCCAVigAwIBAgIUBmd9159FqN+PS96/cJnLhy9UkBkwCgYIKoZIzj0EAwIw\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAyMDIyMzIyOFoYDzIxMjYwOTI2\nMjIzMjI4WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwdjAQBgcqhkjOPQIBBgUrgQQA\nIgNiAAT8P5ahXc6Q2MZyInunFgNxkrOccSUsHE5J1FqrtdGQ1+gcK13phReGl+zb\nI2nLLGBQGIg0FI5YIqDMg/Sqxpqq4QpmsQiDM6QoSKJcGBQx5FELNg+W+WGKm0XP\nXbwy/rmjaTBnMB0GA1UdDgQWBBT1YksILY4X9uknBlHYd1pSnm08ljAfBgNVHSME\nGDAWgBT1YksILY4X9uknBlHYd1pSnm08ljAPBgNVHRMBAf8EBTADAQH/MBQGA1Ud\nEQQNMAuCCWxvY2FsaG9zdDAKBggqhkjOPQQDAgNnADBkAjAPGKX2vhPeunfFdaFz\nD9vBde/yANbjOwxJWWyXuecpmAFFvUFBnMckl1yK37pda+sCMD51VoWJAFtHkbVS\nO+qXgNJ63R8/J7iutUMT6WrF1YeIWiP5vZQi15P7lzRB6wmH/g==\n-----END CERTIFICATE-----\n"
 const KeyPEM = "-----BEGIN PRIVATE KEY-----\nMIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDBI+c9z+owoRW69EyOo\nS9v+E2S2icHK7EgZJwL/z0JfGGn0Eq6v+/QGKdC31tlvWPmhZANiAAT8P5ahXc6Q\n2MZyInunFgNxkrOccSUsHE5J1FqrtdGQ1+gcK13phReGl+zbI2nLLGBQGIg0FI5Y\nIqDMg/Sqxpqq4QpmsQiDM6QoSKJcGBQx5FELNg+W+WGKm0XPXbwy/rk=\n-----END PRIVATE KEY-----\n"
@@ -28,7 +28,11 @@ async func main() void! {
     pool.AddCert(certs[0])
     for v in [net.tls.V13, net.tls.V12] {
         var srv = serveOne(l)
-        var c = await net.tls.Dial(fmt.Format("localhost:{0}", l.Port()), net.tls.Config{RootCAs: pool, MinVersion: v, MaxVersion: v})?
+        var c = await net.tls.Dial(fmt.Format("localhost:{0}", l.Port()), net.tls.Config{
+            RootCAs: pool,
+            MinVersion: v,
+            MaxVersion: v,
+        })?
         _ = await c.WriteString("ping")?
         var got = ""
         for len(got) < 9 {

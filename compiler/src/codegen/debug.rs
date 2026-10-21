@@ -146,9 +146,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let ver = llc::LLVMValueAsMetadata(i32t.const_int(di::LLVMDebugMetadataVersion() as u64, false).as_value_ref());
             let k = "Debug Info Version";
             llc::LLVMAddModuleFlag(m, llvm_sys::LLVMModuleFlagBehavior::LLVMModuleFlagBehaviorWarning, k.as_ptr() as *const _, k.len(), ver);
-            let dv = llc::LLVMValueAsMetadata(i32t.const_int(DWARF_VERSION, false).as_value_ref());
-            let k = "Dwarf Version";
-            llc::LLVMAddModuleFlag(m, llvm_sys::LLVMModuleFlagBehavior::LLVMModuleFlagBehaviorWarning, k.as_ptr() as *const _, k.len(), dv);
+            if crate::target::current().is_msvc() {
+                // MSVC ABI: CodeView (PDB via lld-link /debug), for Visual Studio and WinDbg.
+                let one = llc::LLVMValueAsMetadata(i32t.const_int(1, false).as_value_ref());
+                let k = "CodeView";
+                llc::LLVMAddModuleFlag(m, llvm_sys::LLVMModuleFlagBehavior::LLVMModuleFlagBehaviorWarning, k.as_ptr() as *const _, k.len(), one);
+            } else {
+                // DWARF everywhere else, MinGW included (gdb, lldb).
+                let dv = llc::LLVMValueAsMetadata(i32t.const_int(DWARF_VERSION, false).as_value_ref());
+                let k = "Dwarf Version";
+                llc::LLVMAddModuleFlag(m, llvm_sys::LLVMModuleFlagBehavior::LLVMModuleFlagBehaviorWarning, k.as_ptr() as *const _, k.len(), dv);
+            }
         }
         self.dbg = Some(Box::new(DebugInfo { units, types: HashMap::new(), named: HashMap::new(), stack: Vec::new() }));
     }

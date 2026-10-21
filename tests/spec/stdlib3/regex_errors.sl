@@ -8,7 +8,21 @@ import std
 import std.io
 
 func main() {
-    var bad = ["(abc", "a)", "[a-", "x**", "+x", "x{2,1}", `(a)\1`, "(?=x)", "(?<!x)", `\p{Klingon}`, "(?z)", `\k`, `a\`]
+    var bad = [
+        "(abc",
+        "a)",
+        "[a-",
+        "x**",
+        "+x",
+        "x{2,1}",
+        `(a)\1`,
+        "(?=x)",
+        "(?<!x)",
+        `\p{Klingon}`,
+        "(?z)",
+        `\k`,
+        `a\`,
+    ]
     for p in bad {
         try regex.Compile(p) catch err {
             println(err.Message())

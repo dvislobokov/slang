@@ -9,18 +9,71 @@ import std.io
 func main() {
     var t = time.Date(2024, 2, 29, 13, 4, 5, 123456789, time.UTC())
     println(t.String())
-    println(t.Format(time.RFC3339), t.Format(time.RFC3339Nano), t.Format(time.Kitchen), t.Format(time.ANSIC))
-    println(t.Format("Mon Monday Jan January 01 1 02 _2 2 002 06 2006 15 03 3 04 4 05 5 PM pm .000 .999 ,000000 MST -07:00 Z07:00"))
-    println(t.Strftime("%Y-%m-%d %H:%M:%S.%L %a %A %b %B %j %e %I %p %Z %z %s %F %T %D %% %u %w %N"))
+    println(
+        t.Format(time.RFC3339),
+        t.Format(time.RFC3339Nano),
+        t.Format(time.Kitchen),
+        t.Format(time.ANSIC),
+    )
+    println(
+        t.Format(
+            "Mon Monday Jan January 01 1 02 _2 2 002 06 2006 15 03 3 04 4 05 5 PM pm .000 .999 ,000000 MST -07:00 Z07:00",
+        ),
+    )
+    println(
+        t.Strftime("%Y-%m-%d %H:%M:%S.%L %a %A %b %B %j %e %I %p %Z %z %s %F %T %D %% %u %w %N"),
+    )
     var (y, m, d) = t.Date()
     var (h, mi, s) = t.Clock()
     var (wy, wk) = t.ISOWeek()
-    println(y, m, d, h, mi, s, t.Year(), t.Month(), t.MonthName(), t.Day(), t.Weekday(), t.WeekdayName(), t.YearDay(), wy, wk, t.Nanosecond())
-    println(t.Unix(), t.UnixMilli(), t.UnixMicro(), t.UnixNano(), time.Unix(t.Unix(), 0).Format(time.DateTime), time.UnixMilli(-1).Format(time.RFC3339Nano))
+    println(
+        y,
+        m,
+        d,
+        h,
+        mi,
+        s,
+        t.Year(),
+        t.Month(),
+        t.MonthName(),
+        t.Day(),
+        t.Weekday(),
+        t.WeekdayName(),
+        t.YearDay(),
+        wy,
+        wk,
+        t.Nanosecond(),
+    )
+    println(
+        t.Unix(),
+        t.UnixMilli(),
+        t.UnixMicro(),
+        t.UnixNano(),
+        time.Unix(t.Unix(), 0).Format(time.DateTime),
+        time.UnixMilli(-1).Format(time.RFC3339Nano),
+    )
     var later = t + time.Hours(36)
-    println(later.Format(time.DateTime), (later - t).String(), (t - later).String(), later > t, later < t, t.Equal(t.In(time.FixedZone("X", 3600))), t.Compare(later))
-    println(t.AddDate(0, 1, 0).Format(time.DateOnly), t.AddDate(1, 0, 0).Format(time.DateOnly), time.Date(2023, 10, 31, 0, 0, 0, 0, nil).AddDate(0, 1, 0).Format(time.DateOnly), time.Date(2024, 13, 1, 25, 0, 0, 0, nil).Format(time.DateTime))
-    println(t.Truncate(time.Hours(1)).Format(time.RFC3339Nano), t.Round(time.Minutes(1)).Format(time.RFC3339Nano), t.Truncate(time.Hours(24 * 7)).Format(time.DateOnly), t.Round(time.Milliseconds(1)).Nanosecond())
+    println(
+        later.Format(time.DateTime),
+        (later - t).String(),
+        (t - later).String(),
+        later > t,
+        later < t,
+        t.Equal(t.In(time.FixedZone("X", 3600))),
+        t.Compare(later),
+    )
+    println(
+        t.AddDate(0, 1, 0).Format(time.DateOnly),
+        t.AddDate(1, 0, 0).Format(time.DateOnly),
+        time.Date(2023, 10, 31, 0, 0, 0, 0, nil).AddDate(0, 1, 0).Format(time.DateOnly),
+        time.Date(2024, 13, 1, 25, 0, 0, 0, nil).Format(time.DateTime),
+    )
+    println(
+        t.Truncate(time.Hours(1)).Format(time.RFC3339Nano),
+        t.Round(time.Minutes(1)).Format(time.RFC3339Nano),
+        t.Truncate(time.Hours(24 * 7)).Format(time.DateOnly),
+        t.Round(time.Milliseconds(1)).Nanosecond(),
+    )
     var zero time.Time
     println(zero.IsZero(), zero.Format(time.RFC3339), t.IsZero(), zero.Year())
 
@@ -39,12 +92,18 @@ func main() {
     var (zn, zo) = summer.In(berlin).Zone()
     println(zn, zo)
     // spring-forward gap: 2:30 does not exist on 2024-03-31 in Berlin
-    println(time.Date(2024, 3, 31, 2, 30, 0, 0, berlin).Format(time.RFC3339), time.Date(2024, 10, 27, 2, 30, 0, 0, berlin).Format(time.RFC3339))
+    println(
+        time.Date(2024, 3, 31, 2, 30, 0, 0, berlin).Format(time.RFC3339),
+        time.Date(2024, 10, 27, 2, 30, 0, 0, berlin).Format(time.RFC3339),
+    )
     var kolkata = try time.LoadLocation("Asia/Kolkata") else time.UTC()
     println(t.In(kolkata).Format(time.RFC3339), t.In(kolkata).Format("-0700 -07 Z0700"))
     try {
         _ = time.LoadLocation("Nowhere/City")?
     } catch err {
-        println("load error:", strings.HasPrefix(err.Message(), "time: unknown time zone Nowhere/City"))
+        println(
+            "load error:",
+            strings.HasPrefix(err.Message(), "time: unknown time zone Nowhere/City"),
+        )
     }
 }

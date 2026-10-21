@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.collections_drop_pointer_ok
 
-import std.io
 import std.collections
+import std.io
 
 struct Handle {
     Id int

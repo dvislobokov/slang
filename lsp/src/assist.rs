@@ -584,6 +584,8 @@ pub(crate) fn workspace_symbols(a: &Analysis, query: &str, uri_of: impl Fn(usize
         let f = &a.files[loc.file];
         let container_name = s.container.map(|c| a.index.symbol(c).full_name.clone());
         let exact = if s.name.eq_ignore_ascii_case(query) { 0 } else if s.name.to_lowercase().starts_with(&query.to_lowercase()) { 1 } else { 2 };
+        // Project symbols before library (std, dependency) ones.
+        let exact = exact * 2 + usize::from(a.is_read_only(loc.file));
         out.push((
             exact,
             SymbolInformation {

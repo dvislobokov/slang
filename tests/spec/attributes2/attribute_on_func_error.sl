@@ -5,8 +5,7 @@ namespace spec.attributes2.attribute_on_func_error
 import std.io
 
 @attribute
-func Helper() {
-}
+func Helper() {}
 
 func main() {
     Helper()

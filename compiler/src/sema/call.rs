@@ -19,6 +19,18 @@ impl<'a> Sema<'a> {
             if let Some(ty) = self.type_args_type(base) {
                 return self.type_member_call(ty, name, args, span);
             }
+            // `T.New(...)` with `T` a type parameter bound to a concrete
+            // struct (instances of stdlib templates, e.g. generated std.web
+            // factories): a static method of that struct.
+            if let ast::ExprKind::Ident(id) = &expr::strip_parens(base).kind {
+                if self.lookup_local(&id.name, false).is_none() {
+                    if let Some(ty) = self.gen.tenv.iter().rev().find(|(n, _)| *n == id.name).map(|x| x.1) {
+                        if !self.has_param(ty) && matches!(self.tt.get(ty), Type::Struct(_)) {
+                            return self.type_member_call(ty, name, args, span);
+                        }
+                    }
+                }
+            }
         }
         if let Some(segs) = Self::flatten_path(target) {
             let last = *segs.last().unwrap();
@@ -129,6 +141,7 @@ impl<'a> Sema<'a> {
                 if let Some(e) = self.log_func_call(t, args, span) {
                     return e;
                 }
+                self.gen.ret_hint = expected;
                 self.generic_call(t, None, None, args, span)
             }
         }
@@ -172,6 +185,11 @@ impl<'a> Sema<'a> {
         };
         // std.log level methods: compiled message templates (logtmpl.rs).
         let base = match self.log_method_call(base, name, targs, args, span) {
+            Ok(e) => return e,
+            Err(b) => b,
+        };
+        // std.web: route tables and DI factories generated at compile time (web.rs).
+        let base = match self.web_method_call(base, name, targs, args, span) {
             Ok(e) => return e,
             Err(b) => b,
         };

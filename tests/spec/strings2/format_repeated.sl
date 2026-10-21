@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.format_repeated
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(fmt.Format("{0}-{1}-{0}-{0}", "a", 2))

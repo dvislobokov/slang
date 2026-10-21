@@ -4,14 +4,21 @@
 // stderr: EROR HTTP GET /fail failed: secret detail
 namespace spec.stdlib.http_middleware
 
-import std.io
 import std
+import std.io
 import std.net
 
 // A std.log sink that prints the request-log properties (not the timing).
 struct PrintSink {
     func Emit(e *log.Event) {
-        println("log:", e.Level, e.Get("RequestMethod"), e.Get("RequestPath"), e.Get("StatusCode"), e.Error != nil)
+        println(
+            "log:",
+            e.Level,
+            e.Get("RequestMethod"),
+            e.Get("RequestPath"),
+            e.Get("StatusCode"),
+            e.Error != nil,
+        )
     }
 
     func Close() Task<void> {
@@ -62,7 +69,17 @@ async func main() void! {
     pre.Headers["Access-Control-Request-Method"] = "PUT"
     pre.Headers["Access-Control-Request-Headers"] = "X-Token"
     rec = await http.test.Serve(r, pre)
-    println("preflight:", rec.Status, rec.Header("Access-Control-Allow-Origin"), "|", rec.Header("Access-Control-Allow-Methods"), "|", rec.Header("Access-Control-Allow-Headers"), "|", rec.Header("Access-Control-Max-Age"))
+    println(
+        "preflight:",
+        rec.Status,
+        rec.Header("Access-Control-Allow-Origin"),
+        "|",
+        rec.Header("Access-Control-Allow-Methods"),
+        "|",
+        rec.Header("Access-Control-Allow-Headers"),
+        "|",
+        rec.Header("Access-Control-Max-Age"),
+    )
     var simple = http.test.NewRequest("GET", "/ok", "")
     simple.Headers["Origin"] = "https://app.example"
     rec = await http.test.Serve(r, simple)
@@ -87,9 +104,15 @@ async func main() void! {
     var fast = http.Func(async func(req *http.Request, res *http.Response) void! {
         res.Text(201, "in time")
     })
-    rec = await http.test.Serve(http.TimeoutHandler(slow, 30, "timed out\n"), http.test.NewRequest("GET", "/", ""))
+    rec = await http.test.Serve(
+        http.TimeoutHandler(slow, 30, "timed out\n"),
+        http.test.NewRequest("GET", "/", ""),
+    )
     print("timeout: ", rec.Status, " ", rec.Body)
-    rec = await http.test.Serve(http.TimeoutHandler(fast, 1000, "timed out\n"), http.test.NewRequest("GET", "/", ""))
+    rec = await http.test.Serve(
+        http.TimeoutHandler(fast, 1000, "timed out\n"),
+        http.test.NewRequest("GET", "/", ""),
+    )
     println("in time:", rec.Status, rec.Body)
 
     // over the network, with a server body limit

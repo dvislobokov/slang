@@ -30,6 +30,9 @@ func ParseNamed<T>(name string, src string) std.text.template.Template<T>! {
     return std.text.template.parseHTML<T>(name, src, none)?
 }
 
-func ParseWith<T>(src string, funcs map[string]func([]std.text.template.Value) std.text.template.Value!) std.text.template.Template<T>! {
+func ParseWith<T>(
+    src string,
+    funcs map[string]func([]std.text.template.Value) std.text.template.Value!,
+) std.text.template.Template<T>! {
     return std.text.template.parseHTML<T>("template", src, funcs)?
 }

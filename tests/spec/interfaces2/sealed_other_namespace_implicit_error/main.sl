@@ -3,6 +3,7 @@
 namespace spec.interfaces2.sealed_other_namespace_implicit_error
 
 import std.io
+
 import spec.interfaces2.sealed_other_namespace_implicit_error.shapes
 
 struct Hexagon {

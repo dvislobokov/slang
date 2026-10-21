@@ -3,10 +3,10 @@
 // run-flags: --leak-check
 namespace spec.stdlib.crypto_primitives
 
-import std.io
 import std
 import std.crypto
 import std.encoding
+import std.io
 
 const rsaKey = `-----BEGIN PRIVATE KEY-----
 MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBALzZl/Ab03QU0LKE
@@ -31,11 +31,23 @@ func h(s string) []byte {
 
 func main() void! {
     // NIST GCM test case 2 and 4
-    println("gcm:", hex.Encode(aes.GcmSeal(h("00000000000000000000000000000000"), h("000000000000000000000000"), h("00000000000000000000000000000000"), [])?))
+    println("gcm:", hex.Encode(aes.GcmSeal(
+        h("00000000000000000000000000000000"),
+        h("000000000000000000000000"),
+        h("00000000000000000000000000000000"),
+        [],
+    )?))
     var k = h("feffe9928665731c6d6a8f9467308308")
     var iv = h("cafebabefacedbaddecaf888")
     var aad = h("feedfacedeadbeeffeedfacedeadbeefabaddad2")
-    var ct = aes.GcmSeal(k, iv, h("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"), aad)?
+    var ct = aes.GcmSeal(
+        k,
+        iv,
+        h(
+            "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
+        ),
+        aad,
+    )?
     println("gcm tag:", hex.Encode(ct[len(ct) - 16..]))
     var pt = aes.GcmOpen(k, iv, ct, aad)?
     println("gcm open:", len(pt))
@@ -46,23 +58,43 @@ func main() void! {
     try aes.GcmSeal(h("00"), iv, [], []) catch err {
         println("bad key:", err)
     }
-    println("block:", hex.Encode(aes.EncryptBlock(h("000102030405060708090a0b0c0d0e0f"), h("00112233445566778899aabbccddeeff"))?))
+    println(
+        "block:",
+        hex.Encode(
+            aes.EncryptBlock(
+                h("000102030405060708090a0b0c0d0e0f"),
+                h("00112233445566778899aabbccddeeff"),
+            )?,
+        ),
+    )
     // RFC 8439 2.8.2
     var ck = h("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
-    var sun = strings.Bytes("Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.")
+    var sun = strings.Bytes(
+        "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.",
+    )
     var sealed = chacha.Seal(ck, h("070000004041424344454647"), sun, h("50515253c0c1c2c3c4c5c6c7"))?
     println("chacha tag:", hex.Encode(sealed[len(sealed) - 16..]))
-    println("chacha open:", strings.FromBytes(chacha.Open(ck, h("070000004041424344454647"), sealed, h("50515253c0c1c2c3c4c5c6c7"))?)[..8])
+    println(
+        "chacha open:",
+        strings.FromBytes(
+            chacha.Open(ck, h("070000004041424344454647"), sealed, h("50515253c0c1c2c3c4c5c6c7"))?,
+        )[..8],
+    )
     // RFC 7748 6.1
     var a = h("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
     var b = h("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb")
     println("x25519:", hex.Encode(x25519.SharedSecret(a, x25519.PublicKey(b)?)?))
-    try x25519.SharedSecret(a, h("0000000000000000000000000000000000000000000000000000000000000000")) catch err {
+    try x25519.SharedSecret(
+        a,
+        h("0000000000000000000000000000000000000000000000000000000000000000"),
+    ) catch err {
         println("low order:", err)
     }
     // NIST CAVS ECC CDH P-256
     var d = h("7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ed80badb62bc1a534")
-    var peer = h("04700c48f77f56584c5cc632ca65640db91b6bacce3a4df6b42ce7cc838833d287db71e509e3fd9b060ddb20ba5c51dcc5948d46fbf640dfe0441782cab85fa4ac")
+    var peer = h(
+        "04700c48f77f56584c5cc632ca65640db91b6bacce3a4df6b42ce7cc838833d287db71e509e3fd9b060ddb20ba5c51dcc5948d46fbf640dfe0441782cab85fa4ac",
+    )
     println("p256 ecdh:", hex.Encode(ecdh.SharedSecret(d, peer)?))
     // ECDSA (hedged RFC 6979 nonces: signatures differ, both verify)
     var priv = h("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721")
@@ -71,15 +103,27 @@ func main() void! {
     var digest = crypto.hash.Sum("sha256", strings.Bytes("sample"))?
     var s1 = ecdsa.Sign(priv, digest)?
     var s2 = ecdsa.Sign(priv, digest)?
-    println("ecdsa:", ecdsa.Verify(pub, digest, s1), ecdsa.Verify(pub, digest, s2), hex.Encode(s1) != hex.Encode(s2))
-    println("ecdsa wrong digest:", ecdsa.Verify(pub, crypto.hash.Sum("sha256", strings.Bytes("other"))?, s1))
+    println(
+        "ecdsa:",
+        ecdsa.Verify(pub, digest, s1),
+        ecdsa.Verify(pub, digest, s2),
+        hex.Encode(s1) != hex.Encode(s2),
+    )
+    println(
+        "ecdsa wrong digest:",
+        ecdsa.Verify(pub, crypto.hash.Sum("sha256", strings.Bytes("other"))?, s1),
+    )
     // RFC 8032 7.1 test 1
     var seed = h("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
     var epub = ed25519.PublicKey(seed)?
     var esig = ed25519.Sign(seed, [])?
     println("ed25519 pub:", hex.Encode(epub))
     println("ed25519 sig:", hex.Encode(esig)[..32])
-    println("ed25519 verify:", ed25519.Verify(epub, [], esig), ed25519.Verify(epub, strings.Bytes("x"), esig))
+    println(
+        "ed25519 verify:",
+        ed25519.Verify(epub, [], esig),
+        ed25519.Verify(epub, strings.Bytes("x"), esig),
+    )
     // RSA PKCS#1 v1.5 (deterministic) and PSS with a parsed key
     var key = x509.ParsePrivateKeyPEM(rsaKey)?
     var rd = crypto.hash.Sum("sha256", strings.Bytes("abc"))?
@@ -87,15 +131,36 @@ func main() void! {
     var p2 = rsa.SignPKCS1v15(key.Bytes, "sha256", rd)?
     var ps = rsa.SignPSS(key.Bytes, "sha256", rd)?
     println("rsa:", key.Algorithm, len(p1), hex.Encode(p1) == hex.Encode(p2))
-    println("rsa verify:", rsa.VerifyPKCS1v15(key.Public, key.RSAExponent, "sha256", rd, p1), rsa.VerifyPSS(key.Public, key.RSAExponent, "sha256", rd, ps))
-    println("rsa wrong hash:", rsa.VerifyPKCS1v15(key.Public, key.RSAExponent, "sha384", rd, p1), rsa.VerifyPSS(key.Public, key.RSAExponent, "sha256", rd, p1))
+    println(
+        "rsa verify:",
+        rsa.VerifyPKCS1v15(key.Public, key.RSAExponent, "sha256", rd, p1),
+        rsa.VerifyPSS(key.Public, key.RSAExponent, "sha256", rd, ps),
+    )
+    println(
+        "rsa wrong hash:",
+        rsa.VerifyPKCS1v15(key.Public, key.RSAExponent, "sha384", rd, p1),
+        rsa.VerifyPSS(key.Public, key.RSAExponent, "sha256", rd, p1),
+    )
     // RFC 5869 test case 1
-    var prk = hkdf.Extract("sha256", h("000102030405060708090a0b0c"), h("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"))?
+    var prk = hkdf.Extract(
+        "sha256",
+        h("000102030405060708090a0b0c"),
+        h("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"),
+    )?
     println("hkdf prk:", hex.Encode(prk))
     println("hkdf okm:", hex.Encode(hkdf.Expand("sha256", prk, h("f0f1f2f3f4f5f6f7f8f9"), 42)?))
     // FIPS 180-4, RFC 4231
     println("sha384:", crypto.hash.Sha384Hex("abc")[..32])
-    println("hmac-sha512:", hex.Encode(hmac.Sum("sha512", h("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), strings.Bytes("Hi There"))?)[..32])
+    println(
+        "hmac-sha512:",
+        hex.Encode(
+            hmac.Sum(
+                "sha512",
+                h("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"),
+                strings.Bytes("Hi There"),
+            )?,
+        )[..32],
+    )
     try crypto.hash.Sum("md4", []) catch err {
         println("unknown hash:", err)
     }

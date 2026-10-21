@@ -15,17 +15,52 @@ func b(x string) []byte {
 }
 
 func main() {
-    println(bytes.Equal(b("abc"), b("abc")), bytes.Equal(b("abc"), b("abd")), bytes.Compare(b("a"), b("b")), bytes.Compare(b("ab"), b("a")))
-    println(bytes.Index(b("chicken"), b("ken")), bytes.Index(b("chicken"), b("dmr")), bytes.LastIndex(b("go gopher"), b("go")), bytes.IndexByte(b("abc"), 99))
-    println(bytes.Contains(b("seafood"), b("foo")), bytes.Count(b("cheese"), b("e")), bytes.Count(b("five"), b("")))
-    println(bytes.HasPrefix(b("golang"), b("go")), bytes.HasSuffix(b("golang"), b("ng")), bytes.HasPrefix(b("g"), b("go")))
+    println(
+        bytes.Equal(b("abc"), b("abc")),
+        bytes.Equal(b("abc"), b("abd")),
+        bytes.Compare(b("a"), b("b")),
+        bytes.Compare(b("ab"), b("a")),
+    )
+    println(
+        bytes.Index(b("chicken"), b("ken")),
+        bytes.Index(b("chicken"), b("dmr")),
+        bytes.LastIndex(b("go gopher"), b("go")),
+        bytes.IndexByte(b("abc"), 99),
+    )
+    println(
+        bytes.Contains(b("seafood"), b("foo")),
+        bytes.Count(b("cheese"), b("e")),
+        bytes.Count(b("five"), b("")),
+    )
+    println(
+        bytes.HasPrefix(b("golang"), b("go")),
+        bytes.HasSuffix(b("golang"), b("ng")),
+        bytes.HasPrefix(b("g"), b("go")),
+    )
     var parts = bytes.Split(b("a,b,,c"), b(","))
     println(len(parts), s(parts[0]), s(parts[3]), s(bytes.Join(parts, b("|"))))
     println(len(bytes.Split(b("héllo"), b(""))), len(bytes.Fields(b("  a b   c "))))
-    println(s(bytes.Repeat(b("ab"), 3)), s(bytes.Replace(b("oink oink"), b("k"), b("ky"))), s(bytes.Replace(b("ab"), b(""), b("-"))))
-    println("[" + s(bytes.Trim(b("  hi \n"))) + "]", s(bytes.TrimLeft(b("xxhix"), "x")), s(bytes.TrimRight(b("xxhix"), "x")))
-    println(s(bytes.TrimPrefix(b("prefix-body"), b("prefix-"))), s(bytes.TrimSuffix(b("a.go"), b(".go"))), s(bytes.TrimSuffix(b("a.go"), b(".sl"))))
-    println(s(bytes.ToUpper(b("héllo"))), s(bytes.ToLower(b("HÉLLO"))), bytes.EqualFold(b("Go"), b("GO")), bytes.Runes(b("hé")))
+    println(
+        s(bytes.Repeat(b("ab"), 3)),
+        s(bytes.Replace(b("oink oink"), b("k"), b("ky"))),
+        s(bytes.Replace(b("ab"), b(""), b("-"))),
+    )
+    println(
+        "[" + s(bytes.Trim(b("  hi \n"))) + "]",
+        s(bytes.TrimLeft(b("xxhix"), "x")),
+        s(bytes.TrimRight(b("xxhix"), "x")),
+    )
+    println(
+        s(bytes.TrimPrefix(b("prefix-body"), b("prefix-"))),
+        s(bytes.TrimSuffix(b("a.go"), b(".go"))),
+        s(bytes.TrimSuffix(b("a.go"), b(".sl"))),
+    )
+    println(
+        s(bytes.ToUpper(b("héllo"))),
+        s(bytes.ToLower(b("HÉLLO"))),
+        bytes.EqualFold(b("Go"), b("GO")),
+        bytes.Runes(b("hé")),
+    )
 
     var buf = bytes.Buffer{}
     _ = buf.WriteString("hello ")

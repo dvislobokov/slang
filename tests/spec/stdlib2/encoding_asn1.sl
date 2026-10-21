@@ -4,8 +4,8 @@
 namespace spec.stdlib2.encoding_asn1
 
 import std
-import std.io
 import std.encoding
+import std.io
 import std.math
 
 func main() void! {
@@ -54,7 +54,13 @@ func main() void! {
     var ex = seq.ReadExplicit(3)?
     println(ex.ReadInt()?, seq.More(), r.More())
     var raw = asn1.NewReader(der).Next()?
-    println(raw.Tag, raw.Class(), raw.Constructed(), raw.Number() == asn1.TagSequence, len(raw.FullBytes) == len(der))
+    println(
+        raw.Tag,
+        raw.Class(),
+        raw.Constructed(),
+        raw.Number() == asn1.TagSequence,
+        len(raw.FullBytes) == len(der),
+    )
     try {
         _ = asn1.NewReader([byte(2), 2, 0, 1]).ReadInt()?
     } catch err {

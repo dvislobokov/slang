@@ -1,7 +1,7 @@
 namespace examples.log
 
-import std.io
 import std
+import std.io
 
 // std.log: Serilog-style structured logging. Message templates are parsed
 // at compile time; `{@X}` destructures X through compile-time reflection
@@ -15,7 +15,7 @@ struct Item {
 }
 
 struct Order {
-    Id int
+    Id    int
     Total float
     Items []Item
     @log(skip: true) CardNumber string
@@ -44,17 +44,22 @@ func charge(amount float) void! {
 
 async func main() {
     var levels = log.NewLevelSwitch(log.Level.Debug)
-    var logger = log.New().
-        MinimumLevelControlledBy(levels).
-        MinimumLevelOverride("examples.log.noisy", log.Level.Warning).
-        Enrich.WithProperty("App", "shop").
-        Enrich.FromContext().
-        Clock(fixedClock).
-        WriteTo.Console(log.ConsoleOptions{Template: "{Timestamp:HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}", Stdout: true}).
-        Filter.ByExcluding((e *log.Event) => e.Template == "health check").
-        CreateLogger()
+    var logger = log.New().MinimumLevelControlledBy(levels).MinimumLevelOverride(
+        "examples.log.noisy",
+        log.Level.Warning,
+    ).Enrich.WithProperty("App", "shop").Enrich.FromContext().Clock(fixedClock).WriteTo.Console(
+        log.ConsoleOptions{
+            Template: "{Timestamp:HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}",
+            Stdout: true,
+        },
+    ).Filter.ByExcluding((e *log.Event) => e.Template == "health check").CreateLogger()
 
-    var order = Order{Id: 7, Total: 99.5, Items: [Item{Sku: "A-1", Qty: 2}], CardNumber: "4111-1111"}
+    var order = Order{
+        Id: 7,
+        Total: 99.5,
+        Items: [Item{Sku: "A-1", Qty: 2}],
+        CardNumber: "4111-1111",
+    }
     logger.Info("user {UserId} bought {@Order} for {Amount:0.00}", 42, order, order.Total)
     logger.Debug("{Name} is written as is by {{Message:lj}}", "alice")
     logger.Info("health check")
@@ -68,7 +73,10 @@ async func main() {
 
     // Context properties follow the task (and tasks it starts).
     var scope = log.Context.Push("RequestId", "req-1")
-    var props = log.New().Enrich.FromContext().Clock(fixedClock).WriteTo.Console(log.ConsoleOptions{Template: "{Message} {Properties}{NewLine}", Stdout: true}).CreateLogger()
+    var props = log.New().Enrich.FromContext().Clock(fixedClock).WriteTo.Console(log.ConsoleOptions{
+        Template: "{Message} {Properties}{NewLine}",
+        Stdout: true,
+    }).CreateLogger()
     props.Info("cart has {Count} items", 3)
     await task.Go(async func() {
         props.Warning("in a child task {Flag}", true)
@@ -84,20 +92,28 @@ async func main() {
     log.For<PaymentService>().Info("ready with {Retries} retries", 3)
 
     // Errors: the message and the error trace become properties.
-    var errors = log.New().Clock(fixedClock).WriteTo.Console(log.ConsoleOptions{Template: "[{Level:u3}] {Message} ({ErrorMessage}){NewLine}", Stdout: true}).CreateLogger()
+    var errors = log.New().Clock(fixedClock).WriteTo.Console(log.ConsoleOptions{
+        Template: "[{Level:u3}] {Message} ({ErrorMessage}){NewLine}",
+        Stdout: true,
+    }).CreateLogger()
     try charge(order.Total) catch err {
         errors.Error(err, "payment of {Amount:F2} failed for {UserId}", order.Total, 42)
     }
 
     // Compact JSON (CLEF) lines.
-    var json = log.New().Clock(fixedClock).Enrich.WithProperty("App", "shop").WriteTo.Json(log.JsonOptions{Stdout: true}).CreateLogger()
+    var json = log.New().Clock(fixedClock).Enrich.WithProperty("App", "shop").WriteTo.Json(
+        log.JsonOptions{Stdout: true},
+    ).CreateLogger()
     json.Warning("disk {Disk} at {Used:0.0}%", "/var", 91.27)
     json.Info("order {@Order}", order)
 
     // A rolling file behind an asynchronous queue.
     var dir = fs.Join(fs.TempDir(), "slang-example-log")
     _ = fs.RemoveAll(dir)
-    var file = log.New().Clock(fixedClock).WriteTo.Async(log.NewFileSink(fs.Join(dir, "app-.log"), log.FileOptions{RollingInterval: log.RollingInterval.Day, Retain: 7}), 64).CreateLogger()
+    var file = log.New().Clock(fixedClock).WriteTo.Async(log.NewFileSink(
+        fs.Join(dir, "app-.log"),
+        log.FileOptions{RollingInterval: log.RollingInterval.Day, Retain: 7},
+    ), 64).CreateLogger()
     file.Info("written by {Who}", "the file sink")
     file.Error("and flushed on {Event}", "Close")
     await file.Close()

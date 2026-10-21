@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.interfaces2.embedding_default_inherited
 
-import std.io
 import std
+import std.io
 
 interface Named {
     func Name() string

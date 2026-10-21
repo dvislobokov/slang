@@ -12,7 +12,7 @@ struct label {
 
 enum Status {
     @label("in progress") Active
-    @label("finished")    Done
+    @label("finished") Done
 }
 
 func Show(@label("the status") s Status) {

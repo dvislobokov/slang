@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http2_hpack
 
-import std.io
 import std
+import std.io
 import std.net.http
 
 func unhex(s string) []byte {

@@ -3,11 +3,11 @@
 // run-flags: --leak-check
 namespace spec.async.waitgroup
 
-import std.io
 import std
+import std.io
 
 struct Results {
-    Mu task.Mutex
+    Mu  task.Mutex
     Sum int
 }
 

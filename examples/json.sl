@@ -2,30 +2,30 @@
 // @json attributes, error paths, and the dynamic json.Value tree.
 namespace examples.json
 
-import std.io
 import std.encoding
+import std.io
 
 enum Role { Guest, Member, Admin }
 
 struct Address {
     City string
-    Zip string
+    Zip  string
 }
 
 struct User {
     @json(name: "id") Id int
     Name string
     @json(omitEmpty: true) Email string
-    Role Role
-    Score float
-    Tags []string
-    Home *Address
+    Role   Role
+    Score  float
+    Tags   []string
+    Home   *Address
     Limits map[string]int
     @json(skip: true) password string
 }
 
 struct Team {
-    Name string
+    Name  string
     Users []User
 }
 

@@ -148,7 +148,11 @@ struct Duration {
             var s = secs % 60
             var stext = fracText(s * 1000000000 + frac, 9) + "s"
             if h > 0 {
-                out = std.strconv.FormatUint(h, 10) + "h" + std.strconv.FormatUint(m, 10) + "m" + stext
+                out = std.strconv.FormatUint(h, 10) +
+                    "h" +
+                    std.strconv.FormatUint(m, 10) +
+                    "m" +
+                    stext
             } else if m > 0 {
                 out = std.strconv.FormatUint(m, 10) + "m" + stext
             } else {
@@ -263,7 +267,12 @@ func ParseDuration(s string) Duration! {
         }
         var mult = unitNanos(unit)
         if mult == 0 {
-            return error("time: unknown unit " + std.strconv.Quote(unit) + " in duration " + std.strconv.Quote(orig))
+            return error(
+                "time: unknown unit " +
+                    std.strconv.Quote(unit) +
+                    " in duration " +
+                    std.strconv.Quote(orig),
+            )
         }
         if std.strings.Contains(num, ".") {
             var f = try std.strconv.ParseFloat(num) catch err {
@@ -363,35 +372,35 @@ func floorMod(a int, b int) int {
 // ---- Location ---------------------------------------------------------------
 
 struct zone {
-    name string
+    name   string
     offset int
-    isDST bool
+    isDST  bool
 }
 
 // POSIX TZ rule date: kind 0 = Jn (Julian, no Feb 29), 1 = n (0-based
 // day of year), 2 = Mm.w.d; time = seconds after local midnight.
 struct tzRule {
     kind int
-    day int
+    day  int
     week int
-    mon int
+    mon  int
     time int
 }
 
 // A time zone: a set of zones and the instants when they change (TZif
 // data from the system tzdata), plus the POSIX rule for later years.
 struct Location {
-    name string
+    name  string
     zones []zone
     trans []int
-    idx []int
+    idx   []int
     // POSIX TZ footer: std/dst zones and rules; hasRule false = none.
     hasRule bool
-    hasDST bool
-    std zone
-    dst zone
-    start tzRule
-    end tzRule
+    hasDST  bool
+    std     zone
+    dst     zone
+    start   tzRule
+    end     tzRule
     // Local: loaded on first use.
     lazy bool
 
@@ -644,8 +653,8 @@ func parseTZif(name string, data string) Location! {
 // ---- POSIX TZ strings ("CET-1CEST,M3.5.0,M10.5.0/3") ---------------------------
 
 struct tzScan {
-    s string
-    i int
+    s  string
+    i  int
     ok bool
 
     func more() bool {
@@ -671,7 +680,9 @@ struct tzScan {
             return this.s[start..start + j]
         }
         var start = this.i
-        for this.more() && ((this.peek() >= 65 && this.peek() <= 90) || (this.peek() >= 97 && this.peek() <= 122)) {
+        for this.more() &&
+            ((this.peek() >= 65 && this.peek() <= 90) ||
+                (this.peek() >= 97 && this.peek() <= 122)) {
             this.i += 1
         }
         if this.i - start < 3 {
@@ -788,14 +799,18 @@ func parseTZRule(loc *Location, s string) {
 
 // An instant with nanosecond precision and a location for display.
 struct Time {
-    sec int
+    sec  int
     nsec int
-    loc *Location
+    loc  *Location
 
     // The current time in the local zone.
     static func Now() Time {
         var n = NowNanos()
-        return Time{sec: floorDiv(n, 1000000000) + unixToInternal(), nsec: floorMod(n, 1000000000), loc: Local()}
+        return Time{
+            sec: floorDiv(n, 1000000000) + unixToInternal(),
+            nsec: floorMod(n, 1000000000),
+            loc: Local(),
+        }
     }
 
     // Seconds since the Unix epoch.
@@ -1186,8 +1201,8 @@ struct Ticker {
 }
 
 struct tickState {
-    period int
-    next int
+    period  int
+    next    int
     stopped bool
 }
 
@@ -1239,7 +1254,20 @@ async func After(d Duration) Time {
 // ---- formatting ----------------------------------------------------------------
 
 func monthNames() []string {
-    return ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    return [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ]
 }
 
 func dayNames() []string {
@@ -1442,7 +1470,12 @@ func formatTime(t Time, layout string) string {
                 if zoff == 0 {
                     out += "Z"
                 } else {
-                    out += offsetText(zoff, std.strings.Contains(tok, ":"), tok == "Z07", len(tok) > 6 && tok != "Z07:00")
+                    out += offsetText(
+                        zoff,
+                        std.strings.Contains(tok, ":"),
+                        tok == "Z07",
+                        len(tok) > 6 && tok != "Z07:00",
+                    )
                 }
             default:
                 // fractional seconds .000 / .999 (or ,000)
@@ -1526,7 +1559,8 @@ func strftime(t Time, layout string) string {
             case 110: out += "\n"
             case 116: out += "\t"
             case 37: out += "%"
-            default: out += "%" + layout[i - 1..i]
+            default:
+                out += "%" + layout[i - 1..i]
         }
     }
     return out
@@ -1541,7 +1575,10 @@ struct parser {
     func digits(min int, max int) int! {
         var start = this.i
         var n = 0
-        for this.i < len(this.v) && this.i - start < max && this.v[this.i] >= 48 && this.v[this.i] <= 57 {
+        for this.i < len(this.v) &&
+            this.i - start < max &&
+            this.v[this.i] >= 48 &&
+            this.v[this.i] <= 57 {
             n = n * 10 + int(this.v[this.i]) - 48
             this.i += 1
         }
@@ -1553,7 +1590,14 @@ struct parser {
 }
 
 func parseErr(layout string, value string, what string) error {
-    return error("time: parsing time " + std.strconv.Quote(value) + " as " + std.strconv.Quote(layout) + ": " + what)
+    return error(
+        "time: parsing time " +
+            std.strconv.Quote(value) +
+            " as " +
+            std.strconv.Quote(layout) +
+            ": " +
+            what,
+    )
 }
 
 func lookupName(names []string, v string, i int, short bool) int {
@@ -1650,14 +1694,21 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
                 }
                 day = try p.digits(1, 2) else return parseErr(layout, value, "bad day")
             case "2": day = try p.digits(1, 2) else return parseErr(layout, value, "bad day")
-            case "002": yday = try p.digits(3, 3) else return parseErr(layout, value, "bad day of year")
+            case "002":
+                yday = try p.digits(3, 3) else return parseErr(layout, value, "bad day of year")
             case "15": hour = try p.digits(1, 2) else return parseErr(layout, value, "bad hour")
-            case "03", "3": hour = try p.digits(1, 2) else return parseErr(layout, value, "bad hour")
-            case "04", "4": min = try p.digits(1, 2) else return parseErr(layout, value, "bad minute")
+            case "03", "3":
+                hour = try p.digits(1, 2) else return parseErr(layout, value, "bad hour")
+            case "04", "4":
+                min = try p.digits(1, 2) else return parseErr(layout, value, "bad minute")
             case "05", "5":
                 sec = try p.digits(1, 2) else return parseErr(layout, value, "bad second")
                 // a fractional second may follow even if the layout has none
-                if p.i + 1 < len(value) && value[p.i] == 46 && (li >= len(layout) || layout[li] != 46) && value[p.i + 1] >= 48 && value[p.i + 1] <= 57 {
+                if p.i + 1 < len(value) &&
+                    value[p.i] == 46 &&
+                    (li >= len(layout) || layout[li] != 46) &&
+                    value[p.i + 1] >= 48 &&
+                    value[p.i + 1] <= 57 {
                     p.i += 1
                     var start = p.i
                     var f = try p.digits(1, 9) else 0
@@ -1685,7 +1736,9 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
                 p.i += 2
             case "MST":
                 var start = p.i
-                for p.i < len(value) && ((value[p.i] >= 65 && value[p.i] <= 90) || (value[p.i] >= 97 && value[p.i] <= 122)) {
+                for p.i < len(value) &&
+                    ((value[p.i] >= 65 && value[p.i] <= 90) ||
+                        (value[p.i] >= 97 && value[p.i] <= 122)) {
                     p.i += 1
                 }
                 if p.i - start < 3 {
@@ -1702,7 +1755,11 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
                     }
                     p.i += 1
                     var start = p.i
-                    var f = try p.digits(1, 9) else return parseErr(layout, value, "bad fractional second")
+                    var f = try p.digits(1, 9) else return parseErr(
+                        layout,
+                        value,
+                        "bad fractional second",
+                    )
                     var nd = p.i - start
                     for _ in nd..9 {
                         f = f * 10
@@ -1738,7 +1795,11 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
                         if p.i < len(value) && value[p.i] == 58 {
                             p.i += 1
                         }
-                        ss = try p.digits(2, 2) else return parseErr(layout, value, "bad zone offset")
+                        ss = try p.digits(2, 2) else return parseErr(
+                            layout,
+                            value,
+                            "bad zone offset",
+                        )
                     }
                 }
                 hasOff = true
@@ -1769,7 +1830,9 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
         return parseErr(layout, value, "clock out of range")
     }
     if hasOff {
-        var t = Date(year, month, day, hour, min, sec, nsec, nil).Add(Duration{ns: -off * 1000000000})
+        var t = Date(year, month, day, hour, min, sec, nsec, nil).Add(Duration{
+            ns: -off * 1000000000,
+        })
         if off == 0 && (zname == "UTC" || zname == "") {
             return t
         }

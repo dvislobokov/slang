@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.errors_as_bad_target
 
-import std.io
 import std
+import std.io
 
 func main() {
     var e = error("x")

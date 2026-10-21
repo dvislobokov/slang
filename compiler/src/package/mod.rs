@@ -1,7 +1,13 @@
-//! The package manager, stage 1 (docs/PACKAGES.md): manifests in TOML,
-//! JSON or YAML with one schema ([`manifest`]), project discovery,
-//! workspaces and `path` dependencies ([`graph`]), `slang.lock` ([`lock`]),
-//! `slang init` ([`init`]) and the package-aware front end ([`check`]).
+//! The package manager (docs/PACKAGES.md): manifests in TOML, JSON or
+//! YAML with one schema ([`manifest`]), project discovery, workspaces and
+//! `path` dependencies ([`graph`]), module dependencies by path
+//! (`"github.com/org/pkg" = "^1.2"`, git pins and aliases) selected by MVS
+//! ([`resolve`], [`semver`]) and fetched through proxies or git
+//! ([`fetch`], [`git`], [`http`]) with `h1:` checksums and the checksum
+//! log ([`sum`]), the content-addressable store ([`store`]),
+//! `slang vendor` ([`vendor`]), the module proxy server ([`proxy`]),
+//! `slang.lock` ([`lock`]), `slang init` ([`init`]), the package commands
+//! ([`cli`]) and the package-aware front end ([`check`]).
 //!
 //! Rules enforced for package builds:
 //!
@@ -11,10 +17,20 @@
 //!   roots of its package's declared dependencies (enforced inside sema by
 //!   [`crate::sema::ImportPolicy`]).
 
+pub mod cli;
+pub mod fetch;
+pub mod git;
 pub mod graph;
+pub mod http;
 pub mod init;
 pub mod lock;
 pub mod manifest;
+pub mod proxy;
+pub mod resolve;
+pub mod semver;
+pub mod store;
+pub mod sum;
+pub mod vendor;
 
 pub use graph::{PackageNode, PkgId, Project, Source};
 pub use manifest::{Format, LoadedManifest, Manifest};
@@ -37,7 +53,7 @@ pub struct Checked {
 }
 
 /// Display path of `p`: relative to the current directory when inside it.
-fn display_path(p: &Path) -> String {
+pub(crate) fn display_path(p: &Path) -> String {
     let cwd = std::env::current_dir().ok().and_then(|c| c.canonicalize().ok());
     match cwd.as_ref().and_then(|c| p.strip_prefix(c).ok()) {
         Some(r) => r.display().to_string(),

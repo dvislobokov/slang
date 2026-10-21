@@ -1,0 +1,140 @@
+// test: HTTP/2 connection management at the frame level: the client's background reader answers a server PING between requests, the client closes an idle connection after IdleConnTimeout with GOAWAY(NO_ERROR), and the server sends GOAWAY(NO_ERROR) before closing an idle connection
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http2_client_reader
+
+import std
+import std.io
+import std.net
+
+func frame(typ int, flags int, sid int, payload []byte) []byte {
+    var n = len(payload)
+    var out []byte = [
+        byte(n >> 16),
+        byte((n >> 8) & 255),
+        byte(n & 255),
+        byte(typ),
+        byte(flags),
+        byte((sid >> 24) & 127),
+        byte((sid >> 16) & 255),
+        byte((sid >> 8) & 255),
+        byte(sid & 255),
+    ]
+    for b in payload {
+        out = append(out, b)
+    }
+    return out
+}
+
+struct Frame {
+    Type    int
+    Flags   int
+    Stream  int
+    Payload []byte
+}
+
+async func readFrame(r net.BufferedReader) Frame! {
+    var h = await r.ReadExact(9)?
+    var n = (int(h[0]) << 16) | (int(h[1]) << 8) | int(h[2])
+    var f = Frame{
+        Type: int(h[3]),
+        Flags: int(h[4]),
+        Stream: ((int(h[5]) & 127) << 24) | (int(h[6]) << 16) | (int(h[7]) << 8) | int(h[8]),
+    }
+    if n > 0 {
+        f.Payload = await r.ReadExact(n)?
+    }
+    return f
+}
+
+func code(p []byte) int {
+    return (int(p[4]) << 24) | (int(p[5]) << 16) | (int(p[6]) << 8) | int(p[7])
+}
+
+// A hand-written h2c server for one connection: answers one GET, PINGs
+// the idle client and reports what the client sends until it hangs up.
+async func fakeServer(l net.Listener) []string! {
+    var log []string = []
+    var c = await l.Accept()?
+    var rd = net.NewBufferedReader(c, 65536)
+    var pre = await rd.ReadExact(24)?
+    log = append(
+        log,
+        fmt.Format("preface ok: {0}", strings.FromBytes(pre) == "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"),
+    )
+    _ = await c.Write(frame(4, 0, 0, []))?
+    var enc = http.hpack.NewEncoder(4096)
+    var acked = false
+    for {
+        var f = try await readFrame(rd) catch err {
+            log = append(log, "client closed the connection")
+            break
+        }
+        switch f.Type {
+            case 1:
+                var block = enc.Encode([http.hpack.HeaderField{Name: ":status", Value: "200"}])
+                _ = await c.Write(frame(1, 4, f.Stream, block))?
+                _ = await c.Write(frame(0, 1, f.Stream, strings.Bytes("hi")))?
+                // the client is idle now: only its reader can answer
+                await task.Delay(50)
+                _ = await c.Write(frame(6, 0, 0, strings.Bytes("pingpong")))?
+            case 4:
+                if f.Flags == 1 && !acked {
+                    log = append(log, "settings ack from the client")
+                    acked = true
+                }
+            case 6:
+                log = append(
+                    log,
+                    fmt.Format("ping ack: {0} {1}", f.Flags == 1, strings.FromBytes(f.Payload)),
+                )
+            case 7:
+                log = append(log, fmt.Format("goaway from the client: code {0}", code(f.Payload)))
+        }
+    }
+    c.Close()
+    return log
+}
+
+async func main() void! {
+    var l = net.Listen("127.0.0.1:0")?
+    var server = fakeServer(l)
+    var t = http.Transport{H2C: true, IdleConnTimeout: 1000}
+    var cl = http.Client{Transport: &t}
+    var res = await cl.Get("http://" + l.Addr() + "/")?
+    println("response:", res.Status, res.Proto, res.Body)
+    for line in await server? {
+        println(line)
+    }
+    l.Close()
+
+    // the server side: an idle connection gets GOAWAY(NO_ERROR) first
+    var srv = http.Server{
+        Addr: "127.0.0.1:0",
+        Handler: http.NewRouter(),
+        H2C: true,
+        IdleTimeout: 200,
+    }
+    srv.Listen()?
+    var serving = srv.Serve()
+    var c = await net.Dial(fmt.Format("127.0.0.1:{0}", srv.Port()))?
+    var rd = net.NewBufferedReader(c, 65536)
+    _ = await c.WriteString("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")?
+    _ = await c.Write(frame(4, 0, 0, []))?
+    for {
+        var f = try await readFrame(rd) catch err {
+            println("server closed the connection")
+            break
+        }
+        if f.Type == 7 {
+            println(
+                "goaway from the server: code",
+                code(f.Payload),
+                strings.FromBytes(f.Payload[8..]),
+            )
+        }
+    }
+    c.Close()
+    await srv.Shutdown()
+    await serving?
+}

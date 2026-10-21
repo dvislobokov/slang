@@ -3,14 +3,14 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_pool_reuse
 
-import std.io
 import std
+import std.io
 import std.net
 
 struct Stats {
-    mu task.Mutex
-    peers map[string]int
-    inFlight int
+    mu          task.Mutex
+    peers       map[string]int
+    inFlight    int
     maxInFlight int
 }
 
@@ -55,7 +55,16 @@ async func main() void! {
         }
     }
     var st = t1.Stats()
-    println("sequential: dials", st.Dials, "reused", st.Reused, "idle", st.Idle, "server peers", len(s.peers))
+    println(
+        "sequential: dials",
+        st.Dials,
+        "reused",
+        st.Reused,
+        "idle",
+        st.Idle,
+        "server peers",
+        len(s.peers),
+    )
 
     // 2. MaxConnsPerHost: 6 concurrent slow requests over at most 2 connections
     s.peers = map[string]int{}

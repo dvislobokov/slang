@@ -62,6 +62,8 @@ pub struct BuildOptions {
     pub verbose: bool,
     /// Fail instead of updating `slang.lock`.
     pub locked: bool,
+    /// `--offline`: module dependencies only from `slang.lock` and the store.
+    pub offline: bool,
     /// Build every workspace member.
     pub workspace: bool,
     /// Build these members (`-p name`).
@@ -97,6 +99,7 @@ impl BuildOptions {
             static_link: false,
             verbose: false,
             locked: false,
+            offline: false,
             workspace: false,
             packages: Vec::new(),
             leak_check: false,
@@ -158,6 +161,7 @@ pub fn parse_args(args: &[String]) -> Result<(BuildOptions, Vec<String>), String
             "--static" => o.static_link = true,
             "--verbose" | "-v" => o.verbose = true,
             "--locked" => o.locked = true,
+            "--offline" => o.offline = true,
             "--workspace" => o.workspace = true,
             "--emit=llvm-ir" => o.emit = Emit::LlvmIr,
             "--emit=obj" => o.emit = Emit::Obj,
@@ -228,7 +232,10 @@ fn default_output(input: &Path, emit: Emit) -> PathBuf {
 
 fn with_emit_ext(mut p: PathBuf, emit: Emit) -> PathBuf {
     match emit {
-        Emit::Exe => {}
+        Emit::Exe => {
+            // `hello.exe` for Windows (an explicit `-o` is kept as given)
+            p.as_mut_os_string().push(crate::target::current().exe_suffix());
+        }
         Emit::LlvmIr => {
             p.set_extension("ll");
         }
@@ -265,6 +272,7 @@ enum Plan {
 }
 
 fn plan(opts: &BuildOptions) -> Result<Plan, String> {
+    package::resolve::set_options(package::resolve::Options { offline: opts.offline, update: package::resolve::Update::None });
     let project = match &opts.input {
         Some(p) if p.is_file() => return Ok(Plan::Plain(p.clone())),
         Some(p) if p.is_dir() => {
@@ -331,18 +339,12 @@ fn sync_lock(project: &Project, opts: &BuildOptions) -> Result<(), String> {
 
 // -- commands -------------------------------------------------------------------
 
-/// Makes `--target` the process-wide target ([`crate::target::set_current`]).
-/// Code generation only exists for the host so far, so `codegen` refuses
-/// any other target.
+/// Makes `--target` the process-wide target ([`crate::target::set_current`]):
+/// `@cfg`, `os.Name`, the LLVM triple and data layout of code generation,
+/// and the runtime and linker (`crate::crosslink`) all follow it.
 fn use_target(opts: &BuildOptions, codegen: bool) -> Result<(), String> {
+    let _ = codegen;
     let Some(t) = &opts.target else { return Ok(()) };
-    let host = crate::target::Target::host();
-    if codegen && (t.os != host.os || t.arch != host.arch) {
-        return Err(format!(
-            "cross-compilation to {} is not supported yet (host: {}); `slang check --target {}` checks the code for it",
-            t.triple, host.triple, t.triple
-        ));
-    }
     crate::target::set_current(t.clone());
     Ok(())
 }
@@ -372,7 +374,7 @@ pub fn run(mut opts: BuildOptions, args: &[String]) -> Result<i32, String> {
         Plan::Plain(input) => {
             let dir = std::env::temp_dir().join(format!("slang-run-{}", std::process::id()));
             std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-            opts.output = Some(dir.join("prog"));
+            opts.output = Some(dir.join(format!("prog{}", crate::target::current().exe_suffix())));
             match build_plain(&input, &opts) {
                 Ok(exe) => (exe, Some(dir)),
                 Err(e) => {
@@ -396,13 +398,25 @@ pub fn run(mut opts: BuildOptions, args: &[String]) -> Result<i32, String> {
             (exe, None)
         }
     };
-    let status = Command::new(&exe).args(args).status().map_err(|e| format!("cannot run {}: {e}", exe.display()));
+    let target = crate::target::current();
+    let Some(mut runner) = crate::crosslink::run_command(&target, &exe) else {
+        if let Some(d) = tmp {
+            let _ = std::fs::remove_dir_all(d);
+        }
+        return Err(format!("cannot run a {} executable on this machine (use `slang build --target {}`)", target.triple, target.triple));
+    };
+    let status = runner.args(args).status().map_err(|e| format!("cannot run {}: {e}", exe.display()));
     if let Some(d) = tmp {
         let _ = std::fs::remove_dir_all(d);
     }
     let status = status?;
-    use std::os::unix::process::ExitStatusExt;
-    Ok(status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        Ok(status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
+    }
+    #[cfg(not(unix))]
+    Ok(status.code().unwrap_or(1))
 }
 
 /// `slang check` (`dev`: `slang test`, dev-dependencies visible): runs the
@@ -582,6 +596,22 @@ fn module_link_libs(module: &Module) -> Vec<&'static str> {
 /// Links `objs` with the runtime (and the system libraries `libs`) into
 /// the executable `output`.
 fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> Result<(), String> {
+    let target = crate::target::current();
+    if !target.is_host() || target.os == "windows" {
+        // Cross link (docs/PLATFORMS.md): the target's runtime and toolchain
+        // (on a Windows host too: the MinGW runtime and clang driver).
+        crate::crosslink::preflight(&target)?;
+        let rt = crate::crosslink::find_runtime(&target)?;
+        let clang = find_clang()?;
+        let lo = crate::crosslink::LinkOpts { release: opts.release, strip: opts.strip || (opts.release && !opts.debug_info), static_link: opts.static_link, clang: &clang };
+        let mut cmd = crate::crosslink::link_command(&target, objs, &rt, output, libs, &lo)?;
+        log(opts, format!("linking {} for {} ({} object(s))", output.display(), target.triple, objs.len()));
+        let out = cmd.output().map_err(|e| format!("cannot run {clang}: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("linking failed:\n{}", String::from_utf8_lossy(&out.stderr)));
+        }
+        return Ok(());
+    }
     let rt = find_runtime()?;
     let clang = find_clang()?;
     let mut cmd = Command::new(&clang);
@@ -738,7 +768,9 @@ fn split_module<'ctx>(module: &Module<'ctx>, program: &Program, file_pkg: &[usiz
         }
         gv.set_linkage(Linkage::LinkOnceODR);
         gv.set_visibility(GlobalVisibility::Hidden);
-        gv.set_comdat(part.get_or_insert_comdat(&n));
+        if crate::target::current().object_format() != crate::target::ObjectFormat::MachO {
+            gv.set_comdat(part.get_or_insert_comdat(&n));  /* Mach-O has no comdats: weak definitions suffice */
+        }
     };
     for f in part.get_functions() {
         make_shared(f.as_global_value());
@@ -759,6 +791,9 @@ fn split_module<'ctx>(module: &Module<'ctx>, program: &Program, file_pkg: &[usiz
 /// like clang's `-ffunction-sections -fdata-sections`, so the linker's
 /// `--gc-sections` can drop unused code and data.
 fn set_sections(module: &Module) {
+    if crate::target::current().object_format() == crate::target::ObjectFormat::MachO {
+        return;  /* Mach-O names sections "segment,section"; ld64 -dead_strip works per symbol (subsections) */
+    }
     for f in module.get_functions() {
         if f.count_basic_blocks() > 0 {
             let n = f.get_name().to_string_lossy().to_string();

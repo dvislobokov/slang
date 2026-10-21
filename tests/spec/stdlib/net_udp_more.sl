@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_udp_more
 
-import std.io
 import std
+import std.io
 
 async func main() void! {
     var a = net.ListenUDP("127.0.0.1:0")?
@@ -68,7 +68,10 @@ async func main() void! {
     println("multicast:", strings.FromBytes(mp.Data))
     m.LeaveGroup("239.1.2.3", lo)?
     try m.JoinGroup("not-an-ip", "") catch err {
-        println(strings.HasPrefix(err.Message(), "join udp 0.0.0.0:"), strings.HasSuffix(err.Message(), ": invalid multicast group"))
+        println(
+            strings.HasPrefix(err.Message(), "join udp 0.0.0.0:"),
+            strings.HasSuffix(err.Message(), ": invalid multicast group"),
+        )
     }
 
     // deadline in the past

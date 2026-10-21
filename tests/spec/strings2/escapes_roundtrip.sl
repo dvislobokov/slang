@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.escapes_roundtrip
 
-import std.io
 import std
+import std.io
 
 func main() {
     var s = "a\tb\n\"c\"\\"

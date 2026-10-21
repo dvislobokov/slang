@@ -1,0 +1,534 @@
+namespace std.mime
+
+// MIME types (Go's mime package): extension <-> type lookup (built-in
+// table in runtime/src/std_mime.c, extendable at run time), media type
+// parsing and formatting with RFC 2231 parameter continuations and
+// charsets, and RFC 2047 encoded words in headers. Multipart bodies are
+// std.mime.multipart, quoted-printable std.mime.quotedprintable.
+
+// The media type for a file extension (".html" -> "text/html;
+// charset=utf-8"); "" if unknown. The lookup is case-insensitive.
+func TypeByExtension(ext string) string {
+    return rtType(ext)
+}
+
+// Associates ext (with its leading dot) with a media type.
+func AddExtensionType(ext string, typ string) void! {
+    if !std.strings.HasPrefix(ext, ".") {
+        return error("mime: extension " + std.encoding.json.Quote(ext) + " missing leading dot")
+    }
+    var m = ParseMediaType(typ)?
+    _ = m
+    rtAdd(ext, typ)
+}
+
+// The extensions known for a media type (parameters ignored), sorted.
+func ExtensionsByType(typ string) []string! {
+    var m = ParseMediaType(typ)?
+    return rtExts(m.Type)
+}
+
+// A parsed media type: Type is lower case ("text/html"), Params keys too.
+struct MediaType {
+    Type   string
+    Params map[string]string
+
+    func Param(name string) string {
+        return this.Params[std.strings.ToLower(name)]
+    }
+}
+
+func isToken(c int) bool {
+    if c <= 32 || c >= 127 {
+        return false
+    }
+    // tspecials of RFC 1521 / 2045
+    return !(c == 40 ||
+        c == 41 ||
+        c == 60 ||
+        c == 62 ||
+        c == 64 ||
+        c == 44 ||
+        c == 59 ||
+        c == 58 ||
+        c == 92 ||
+        c == 34 ||
+        c == 47 ||
+        c == 91 ||
+        c == 93 ||
+        c == 63 ||
+        c == 61)
+}
+
+func tokenLen(s string, from int) int {
+    var i = from
+    for i < len(s) && isToken(int(s[i])) {
+        i += 1
+    }
+    return i - from
+}
+
+// Parses "type/subtype; key=value; ..." (also a Content-Disposition
+// value like "attachment; filename=a.txt").
+func ParseMediaType(v string) MediaType! {
+    var semi = std.strings.Index(v, ";")
+    var base = v
+    if semi >= 0 {
+        base = v[..semi]
+    }
+    var mt = std.strings.ToLower(std.strings.Trim(base))
+    // token or token/token
+    var t1 = tokenLen(mt, 0)
+    if t1 == 0 {
+        return error("mime: no media type")
+    }
+    if t1 < len(mt) {
+        if int(mt[t1]) != 47 {
+            return error("mime: expected slash after first token")
+        }
+        var t2 = tokenLen(mt, t1 + 1)
+        if t2 == 0 {
+            return error("mime: expected token after slash")
+        }
+        if t1 + 1 + t2 != len(mt) {
+            return error("mime: unexpected content after media subtype")
+        }
+    }
+    var params = map[string]string{}
+    // RFC 2231 continuations: name -> pieces by index
+    var contNames []string = []
+    var contKeys []string = []
+    var contVals []string = []
+    var rest = ""
+    if semi >= 0 {
+        rest = v[semi..]
+    }
+    var i = 0
+    for {
+        // skip white space
+        for i < len(rest) && (int(rest[i]) == 32 || int(rest[i]) == 9) {
+            i += 1
+        }
+        if i >= len(rest) {
+            break
+        }
+        if int(rest[i]) != 59 {
+            return error("mime: invalid media parameter")
+        }
+        i += 1
+        for i < len(rest) && (int(rest[i]) == 32 || int(rest[i]) == 9) {
+            i += 1
+        }
+        if i >= len(rest) {
+            // a trailing ';' is accepted
+            break
+        }
+        var kl = tokenLen(rest, i)
+        if kl == 0 && !(i < len(rest) && int(rest[i]) == 42) {
+            return error("mime: invalid media parameter")
+        }
+        var key = std.strings.ToLower(rest[i..i + kl])
+        i += kl
+        // RFC 2231 allows '*' in keys (name*0*=)
+        for i < len(rest) && (int(rest[i]) == 42 || (int(rest[i]) >= 48 && int(rest[i]) <= 57)) {
+            key += rest[i..i + 1]
+            i += 1
+        }
+        for i < len(rest) && (int(rest[i]) == 32 || int(rest[i]) == 9) {
+            i += 1
+        }
+        if i >= len(rest) || int(rest[i]) != 61 {
+            return error("mime: invalid media parameter")
+        }
+        i += 1
+        for i < len(rest) && (int(rest[i]) == 32 || int(rest[i]) == 9) {
+            i += 1
+        }
+        var value = ""
+        if i < len(rest) && int(rest[i]) == 34 {
+            // quoted-string
+            i += 1
+            var b = std.strings.Builder{}
+            var closed = false
+            for i < len(rest) {
+                var c = int(rest[i])
+                if c == 34 {
+                    i += 1
+                    closed = true
+                    break
+                }
+                if c == 92 && i + 1 < len(rest) {
+                    b.Write(rest[i + 1..i + 2])
+                    i += 2
+                    continue
+                }
+                b.Write(rest[i..i + 1])
+                i += 1
+            }
+            if !closed {
+                return error("mime: invalid media parameter")
+            }
+            value = b.String()
+        } else {
+            var vl = tokenLen(rest, i)
+            if vl == 0 {
+                return error("mime: invalid media parameter")
+            }
+            value = rest[i..i + vl]
+            i += vl
+        }
+        var star = std.strings.Index(key, "*")
+        if star >= 0 {
+            var name = key[..star]
+            for c in contKeys {
+                if c == key {
+                    return error("mime: duplicate parameter name")
+                }
+            }
+            contNames = append(contNames, name)
+            contKeys = append(contKeys, key)
+            contVals = append(contVals, value)
+            continue
+        }
+        if hasKey(params, key) {
+            return error("mime: duplicate parameter name")
+        }
+        params[key] = value
+    }
+    // assemble continuations: name*=enc, name*0[*]=, name*1[*]=, ...
+    var done []string = []
+    for name in contNames {
+        var seen = false
+        for d in done {
+            if d == name {
+                seen = true
+            }
+        }
+        if seen {
+            continue
+        }
+        done = append(done, name)
+        var single = lookup(contKeys, contVals, name + "*")
+        if single.found {
+            var dec = decode2231(single.value, true)
+            if dec.ok {
+                params[name] = dec.value
+            }
+            continue
+        }
+        var b = std.strings.Builder{}
+        var charsetOK = true
+        var first = true
+        for n in 0..1000 {
+            var simple = lookup(contKeys, contVals, name + "*" + std.fmt.Format("{0}", n))
+            var enc = lookup(contKeys, contVals, name + "*" + std.fmt.Format("{0}", n) + "*")
+            if !simple.found && !enc.found {
+                break
+            }
+            if enc.found {
+                var dec = decode2231(enc.value, first)
+                if !dec.ok {
+                    charsetOK = false
+                }
+                b.Write(dec.value)
+            } else {
+                b.Write(simple.value)
+            }
+            first = false
+        }
+        if charsetOK && !first {
+            params[name] = b.String()
+        }
+    }
+    return MediaType{Type: mt, Params: params}
+}
+
+func hasKey(m map[string]string, k string) bool {
+    for key, _ in m {
+        if key == k {
+            return true
+        }
+    }
+    return false
+}
+
+struct found {
+    found bool
+    value string
+}
+
+func lookup(keys []string, vals []string, k string) found {
+    for i, x in keys {
+        if x == k {
+            return found{found: true, value: vals[i]}
+        }
+    }
+    return found{}
+}
+
+struct decoded {
+    ok    bool
+    value string
+}
+
+// charset'lang'percent-encoded (the charset prefix only on the first piece).
+func decode2231(s string, first bool) decoded {
+    var text = s
+    var charset = "utf-8"
+    if first {
+        var parts = std.strings.SplitN(s, "'", 3)
+        if len(parts) != 3 {
+            return decoded{}
+        }
+        charset = std.strings.ToLower(parts[0])
+        text = parts[2]
+    }
+    var raw []byte = []
+    var i = 0
+    for i < len(text) {
+        var c = int(text[i])
+        if c == 37 &&
+            i + 2 < len(text) + 0 &&
+            hexv(int(text[i + 1])) >= 0 &&
+            hexv(int(text[i + 2])) >= 0 {
+            raw = append(raw, byte(hexv(int(text[i + 1])) * 16 + hexv(int(text[i + 2]))))
+            i += 3
+            continue
+        }
+        raw = append(raw, text[i])
+        i += 1
+    }
+    if charset == "utf-8" || charset == "us-ascii" || charset == "" {
+        return decoded{ok: true, value: std.strings.FromBytes(raw)}
+    }
+    if charset == "iso-8859-1" || charset == "latin1" {
+        var b = std.strings.Builder{}
+        for x in raw {
+            b.Write(string(char(int(x))))
+        }
+        return decoded{ok: true, value: b.String()}
+    }
+    return decoded{}
+}
+
+func hexv(c int) int {
+    if c >= 48 && c <= 57 {
+        return c - 48
+    }
+    if c >= 97 && c <= 102 {
+        return c - 87
+    }
+    if c >= 65 && c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+// "type/subtype; k=v" with keys sorted, values quoted when needed and
+// non-ASCII values in RFC 2231 form (k*=utf-8''...); "" if typ is invalid.
+func FormatMediaType(typ string, params map[string]string) string {
+    var b = std.strings.Builder{}
+    var slash = std.strings.Index(typ, "/")
+    if slash < 0 {
+        if tokenLen(typ, 0) != len(typ) || typ == "" {
+            return ""
+        }
+        b.Write(std.strings.ToLower(typ))
+    } else {
+        var major = typ[..slash]
+        var sub = typ[slash + 1..]
+        if major == "" ||
+            sub == "" ||
+            tokenLen(major, 0) != len(major) ||
+            tokenLen(sub, 0) != len(sub) {
+            return ""
+        }
+        b.Write(std.strings.ToLower(major))
+        b.Write("/")
+        b.Write(std.strings.ToLower(sub))
+    }
+    var keys []string = []
+    for k, _ in params {
+        keys = append(keys, k)
+    }
+    sortStrings(keys)
+    for k in keys {
+        var v = params[k]
+        if k == "" || tokenLen(k, 0) != len(k) {
+            return ""
+        }
+        b.Write("; ")
+        b.Write(std.strings.ToLower(k))
+        var ascii = true
+        for i in 0..len(v) {
+            if int(v[i]) >= 128 || int(v[i]) < 32 && int(v[i]) != 9 {
+                ascii = false
+            }
+        }
+        if !ascii {
+            b.Write("*=utf-8''")
+            for i in 0..len(v) {
+                var c = int(v[i])
+                if isToken(c) && c != 42 && c != 39 && c != 37 {
+                    b.Write(v[i..i + 1])
+                } else {
+                    b.Write("%" + hex2(c))
+                }
+            }
+            continue
+        }
+        b.Write("=")
+        if v != "" && tokenLen(v, 0) == len(v) {
+            b.Write(v)
+        } else {
+            b.Write("\"")
+            for i in 0..len(v) {
+                var c = int(v[i])
+                if c == 34 || c == 92 {
+                    b.Write("\\")
+                }
+                b.Write(v[i..i + 1])
+            }
+            b.Write("\"")
+        }
+    }
+    return b.String()
+}
+
+func hex2(c int) string {
+    var d = "0123456789ABCDEF"
+    return d[c >> 4..(c >> 4) + 1] + d[c & 15..(c & 15) + 1]
+}
+
+func sortStrings(a []string) {
+    for i in 1..len(a) {
+        var j = i
+        for j > 0 && a[j - 1] > a[j] {
+            var t = a[j]
+            a[j] = a[j - 1]
+            a[j - 1] = t
+            j -= 1
+        }
+    }
+}
+
+// -- RFC 2047 encoded words ------------------------------------------------------
+
+// Encodes s as one Q-encoded word ("=?utf-8?q?...?=") when it is not
+// printable ASCII, else returns it unchanged.
+func EncodeWord(s string) string {
+    var plain = true
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if c >= 128 || (c < 32 && c != 9) {
+            plain = false
+        }
+    }
+    if plain {
+        return s
+    }
+    var b = std.strings.Builder{}
+    b.Write("=?utf-8?q?")
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if c == 32 {
+            b.Write("_")
+        } else if (c >= 48 && c <= 57) ||
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122) ||
+            c == 33 ||
+            c == 42 ||
+            c == 43 ||
+            c == 45 ||
+            c == 47 {
+            b.Write(s[i..i + 1])
+        } else {
+            b.Write("=" + hex2(c))
+        }
+    }
+    b.Write("?=")
+    return b.String()
+}
+
+// Decodes the encoded words of a header value (Q and B encodings,
+// charsets utf-8, us-ascii, iso-8859-1); white space between adjacent
+// encoded words is dropped. Unknown charsets are an error.
+func DecodeHeader(s string) string! {
+    var b = std.strings.Builder{}
+    var i = 0
+    var pendingSpace = ""
+    var lastWasWord = false
+    for i < len(s) {
+        var start = std.regex.rtIndex(s, "=?", i)
+        if start < 0 {
+            b.Write(pendingSpace)
+            b.Write(s[i..])
+            break
+        }
+        var between = s[i..start]
+        // an encoded word: =?charset?enc?text?=
+        var q1 = std.regex.rtIndex(s, "?", start + 2)
+        var q2 = -1
+        var end = -1
+        if q1 >= 0 {
+            q2 = std.regex.rtIndex(s, "?", q1 + 1)
+        }
+        if q2 >= 0 {
+            end = std.regex.rtIndex(s, "?=", q2 + 1)
+        }
+        if q1 < 0 || q2 != q1 + 2 || end < 0 {
+            b.Write(pendingSpace)
+            b.Write(between)
+            b.Write("=?")
+            pendingSpace = ""
+            lastWasWord = false
+            i = start + 2
+            continue
+        }
+        if lastWasWord && std.strings.Trim(between) == "" {
+            // white space between encoded words is dropped
+        } else {
+            b.Write(between)
+        }
+        var charset = std.strings.ToLower(s[start + 2..q1])
+        var enc = std.strings.ToLower(s[q1 + 1..q2])
+        var text = s[q2 + 1..end]
+        var raw []byte = []
+        if enc == "q" {
+            var k = 0
+            for k < len(text) {
+                var c = int(text[k])
+                if c == 95 {
+                    raw = append(raw, byte(32))
+                    k += 1
+                } else if c == 61 &&
+                    k + 2 < len(text) + 0 &&
+                    hexv(int(text[k + 1])) >= 0 &&
+                    hexv(int(text[k + 2])) >= 0 {
+                    raw = append(raw, byte(hexv(int(text[k + 1])) * 16 + hexv(int(text[k + 2]))))
+                    k += 3
+                } else {
+                    raw = append(raw, text[k])
+                    k += 1
+                }
+            }
+        } else if enc == "b" {
+            raw = std.encoding.base64.Decode(text)?
+        } else {
+            return error("mime: invalid RFC 2047 encoded-word")
+        }
+        if charset == "utf-8" || charset == "us-ascii" {
+            b.Write(std.strings.FromBytes(raw))
+        } else if charset == "iso-8859-1" || charset == "latin1" {
+            for x in raw {
+                b.Write(string(char(int(x))))
+            }
+        } else {
+            return error("mime: unhandled charset " + std.encoding.json.Quote(charset))
+        }
+        lastWasWord = true
+        pendingSpace = ""
+        i = end + 2
+    }
+    return b.String()
+}

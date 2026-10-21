@@ -8,7 +8,7 @@ namespace std.encoding.base32
 // An alphabet of 32 distinct ASCII characters and a padding choice.
 struct Encoding {
     alphabet string
-    pad bool
+    pad      bool
 
     // The same alphabet with (true) or without (false) '=' padding.
     func WithPadding(pad bool) Encoding {

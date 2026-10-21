@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_halfclose
 
-import std.io
 import std
+import std.io
 
 async func main() void! {
     var l = net.Listen("127.0.0.1:0")?
@@ -22,7 +22,10 @@ async func main() void! {
     var resp = await c.ReadAll()?
     println("client got:", strings.FromBytes(resp))
     try await c.WriteString("more") catch err {
-        println("write after CloseWrite fails:", strings.HasPrefix(err.Message(), "write tcp 127.0.0.1:"))
+        println(
+            "write after CloseWrite fails:",
+            strings.HasPrefix(err.Message(), "write tcp 127.0.0.1:"),
+        )
     }
     // ReadExact: exactly n bytes, or ErrEOF when the stream ends first
     var c2 = await net.Dial(l.Addr())?
@@ -33,7 +36,7 @@ async func main() void! {
     try await s2.ReadExact(4) catch err {
         println("short read:", errors.Is(err, net.ErrEOF))
     }
-    println("after EOF Read:", len(await s2.Read(10)?), await s2.ReadInto(strings.Bytes("....")) ?)
+    println("after EOF Read:", len(await s2.Read(10)?), await s2.ReadInto(strings.Bytes("...."))?)
     // CloseRead: our reads end at once
     s2.CloseRead()?
     println("after CloseRead:", len(await s2.Read(10)?))

@@ -2,12 +2,12 @@
 // status: passing
 namespace spec.reflection.reflect_retention
 
-import std.io
 import std
+import std.io
 
 @reflect
 struct Plugin {
-    Name string
+    Name    string
     Version int
 
     func Run() string {

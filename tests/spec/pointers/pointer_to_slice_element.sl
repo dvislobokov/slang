@@ -1,5 +1,6 @@
 // test: a pointer to a slice element can be kept in a variable (Go semantics); writes are visible in the slice
-// status: pending
+// status: passing
+// run-flags: --leak-check
 namespace spec.pointers.pointer_to_slice_element
 
 import std.io

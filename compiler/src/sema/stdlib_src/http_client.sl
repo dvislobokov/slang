@@ -11,11 +11,11 @@ namespace std.net.http
 // ClientRequest is an outgoing request: http.NewRequest(method, url) and
 // chained setters, then client.Send(req) / client.Stream(req) / req.Send().
 struct ClientRequest {
-    Method string
-    URL string
+    Method  string
+    URL     string
     headers map[string]string
-    query []string
-    body string
+    query   []string
+    body    string
     hasBody bool
     timeout int
 
@@ -94,7 +94,10 @@ struct ClientRequest {
 
     // Basic authentication.
     func BasicAuth(user string, password string) *ClientRequest {
-        return this.Header("Authorization", "Basic " + std.encoding.base64.EncodeString(user + ":" + password))
+        return this.Header(
+            "Authorization",
+            "Basic " + std.encoding.base64.EncodeString(user + ":" + password),
+        )
     }
 
     // A total time limit in milliseconds (connect, request, response
@@ -137,16 +140,16 @@ func NewRequest(method string, url string) *ClientRequest {
 // pooled by the Transport (the process-wide default one when nil); Jar
 // stores and sends cookies.
 struct Client {
-    Timeout int
+    Timeout      int
     TotalTimeout int
     MaxRedirects int
     // Extra headers sent with every request.
     Headers map[string]string
     // TLS settings for https URLs (nil: system roots, SNI and host name
     // from the URL); overrides Transport.TLS.
-    TLS *std.net.tls.Config
+    TLS       *std.net.tls.Config
     Transport *Transport
-    Jar *CookieJar
+    Jar       *CookieJar
 
     func Get(url string) Task<Response!> {
         return this.Do("GET", url, "", nil)
@@ -270,7 +273,15 @@ async func send(cl Client, req *ClientRequest, stream bool) Response! {
                 h["Cookie"] = line
             }
         }
-        var res = try await t.roundTrip(cl, method, u, h, body, hasBody, stream || (limit >= 0)) catch err {
+        var res = try await t.roundTrip(
+            cl,
+            method,
+            u,
+            h,
+            body,
+            hasBody,
+            stream || (limit >= 0),
+        ) catch err {
             return std.errors.Wrap(err, method + " " + u.String())
         }
         if cl.Jar != nil && res.Headers["Set-Cookie"] != "" {
@@ -351,22 +362,30 @@ struct Transport {
     // Proxy URL ("http://host:port", user:password@ allowed) for every
     // request; "" with ProxyFromEnvironment reads HTTP_PROXY, HTTPS_PROXY
     // and NO_PROXY (and their lower-case forms).
-    Proxy string
+    Proxy                string
     ProxyFromEnvironment bool
-    DisableKeepAlives bool
+    DisableKeepAlives    bool
     // Do not ask for gzip (Accept-Encoding) nor decode it.
     DisableCompression bool
     // Do not offer h2 over TLS.
     DisableHTTP2 bool
     // Speak HTTP/2 with prior knowledge to http:// URLs (h2c).
     H2C bool
-    p *pool
+    p   *pool
 
     func state() *pool {
+        // Created on first use; concurrent first requests must share one
+        // pool (a second one would be dropped, closing its connections).
+        std.diag.rtLock()
         if this.p == nil {
-            this.p = new pool{hosts: map[string]*hostPool{}, sessions: std.net.tls.NewSessionCache()}
+            this.p = new pool{
+                hosts: map[string]*hostPool{},
+                sessions: std.net.tls.NewSessionCache(),
+            }
         }
-        return this.p
+        var p = this.p
+        std.diag.rtUnlock()
+        return p
     }
 
     // Closes the idle connections.
@@ -374,16 +393,26 @@ struct Transport {
         var p = this.state()
         std.task.rtLock(&p.guard)
         var all []*pconn = []
+        var idleH2 []*h2conn = []
         for _, hp in p.hosts {
             for pc in hp.idle {
                 all = append(all, pc)
                 hp.active -= 1
             }
             hp.idle = []
+            // an HTTP/2 connection without streams is idle too
+            if hp.h2 != nil && h2Idle(hp.h2) {
+                idleH2 = append(idleH2, hp.h2)
+                hp.h2 = nil
+                hp.active -= 1
+            }
         }
         std.task.rtUnlock(&p.guard)
         for pc in all {
             pc.c.close()
+        }
+        for h in idleH2 {
+            h2CloseIdle(h)
         }
     }
 
@@ -405,18 +434,26 @@ struct Transport {
         return s
     }
 
-    func roundTrip(cl Client, method string, u URL, h map[string]string, body string, hasBody bool, buffered bool) Task<Response!> {
+    func roundTrip(
+        cl Client,
+        method string,
+        u URL,
+        h map[string]string,
+        body string,
+        hasBody bool,
+        buffered bool,
+    ) Task<Response!> {
         return transportRoundTrip(this, cl, method, u, h, body, hasBody, buffered)
     }
 }
 
 // Pool counters (Transport.Stats).
 struct PoolStats {
-    Idle int
-    Open int
+    Idle  int
+    Open  int
     HTTP2 int
     // Connections dialed and requests sent on a reused connection.
-    Dials int
+    Dials  int
     Reused int
 }
 
@@ -444,17 +481,21 @@ func DefaultTransport() *Transport {
 }
 
 struct pool {
-    guard int
-    hosts map[string]*hostPool
+    guard    int
+    hosts    map[string]*hostPool
     sessions *std.net.tls.SessionCache
-    dials int
-    reused int
+    dials    int
+    reused   int
+
+    func Drop() {
+        closePool(this)
+    }
 }
 
 struct hostPool {
     idle []*pconn
     // connections open for this key (idle or in use)
-    active int
+    active  int
     waiters []Task<void>
     // the shared HTTP/2 connection, when the host speaks h2
     h2 *h2conn
@@ -466,14 +507,36 @@ struct hostPool {
 
 // A pooled connection.
 struct pconn {
-    c *conn
-    b *rbuf
-    key string
+    c         *conn
+    b         *rbuf
+    key       string
     idleSince int
-    reused bool
+    reused    bool
     // the request goes in absolute form to an HTTP proxy
     viaProxy bool
-    h2 *h2conn
+    h2       *h2conn
+}
+
+// A pool going away (its Transport was dropped) closes its connections,
+// which also ends the readers of its HTTP/2 connections.
+func closePool(p *pool) {
+    for _, hp in p.hosts {
+        for pc in hp.idle {
+            pc.c.close()
+        }
+        if hp.h2 != nil {
+            // streams still running finish first (h2forget closes it)
+            h2CloseWhenIdle(hp.h2)
+        }
+    }
+}
+
+// Milliseconds an idle connection is kept (Transport.IdleConnTimeout).
+func idleTimeoutOf(t *Transport) int {
+    if t.IdleConnTimeout <= 0 {
+        return 90000
+    }
+    return t.IdleConnTimeout
 }
 
 func poolKey(u URL, proxy string) string {
@@ -762,7 +825,7 @@ async func dialConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
         var c = plainConn(raw)
         var pc = new pconn{c: c, b: newRbuf(4096), viaProxy: viaProxy}
         if t.H2C && !viaProxy {
-            pc.h2 = await startH2Client(c, newRbuf(16384))?
+            pc.h2 = await startH2Client(c, newRbuf(16384), idleTimeoutOf(t))?
         }
         return pc
     }
@@ -801,7 +864,7 @@ async func dialConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
     var c = tlsConn(tc)
     var pc = new pconn{c: c, b: newRbuf(4096)}
     if tc.ConnectionState().ALPN == "h2" {
-        pc.h2 = await startH2Client(c, newRbuf(16384))?
+        pc.h2 = await startH2Client(c, newRbuf(16384), idleTimeoutOf(t))?
     }
     return pc
 }
@@ -811,7 +874,9 @@ async func connectTunnel(raw std.net.Conn, pu URL, u URL, ms int) void! {
     var addr = u.Addr()
     var req = "CONNECT " + addr + " HTTP/1.1\r\nHost: " + addr + "\r\n"
     if pu.User != "" {
-        req += "Proxy-Authorization: Basic " + std.encoding.base64.EncodeString(unescape(pu.User)) + "\r\n"
+        req += "Proxy-Authorization: Basic " +
+            std.encoding.base64.EncodeString(unescape(pu.User)) +
+            "\r\n"
     }
     req += "\r\n"
     raw.SetTimeout(ms)
@@ -827,7 +892,9 @@ async func connectTunnel(raw std.net.Conn, pu URL, u URL, ms int) void! {
     }
     if res.Status != 200 {
         raw.Close()
-        return error("proxy CONNECT " + addr + ": " + itoa(res.Status) + " " + StatusText(res.Status))
+        return error(
+            "proxy CONNECT " + addr + ": " + itoa(res.Status) + " " + StatusText(res.Status),
+        )
     }
     if b.buffered() > 0 {
         raw.Close()
@@ -837,11 +904,27 @@ async func connectTunnel(raw std.net.Conn, pu URL, u URL, ms int) void! {
 }
 
 func idempotent(method string, h map[string]string) bool {
-    return method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" || method == "PUT" || method == "DELETE" || h["Idempotency-Key"] != ""
+    return method == "GET" ||
+        method == "HEAD" ||
+        method == "OPTIONS" ||
+        method == "TRACE" ||
+        method == "PUT" ||
+        method == "DELETE" ||
+        h["Idempotency-Key"] != ""
 }
 
 // The request head (and body) of an HTTP/1.1 exchange.
-func formatRequest(method string, u URL, viaProxy bool, h map[string]string, body string, hasBody bool, t *Transport, gz bool, proxy string) string {
+func formatRequest(
+    method string,
+    u URL,
+    viaProxy bool,
+    h map[string]string,
+    body string,
+    hasBody bool,
+    t *Transport,
+    gz bool,
+    proxy string,
+) string {
     var target = u.RequestURI()
     if viaProxy {
         target = u.String()
@@ -864,7 +947,8 @@ func formatRequest(method string, u URL, viaProxy bool, h map[string]string, bod
     if viaProxy && proxy != "" {
         var pu = try ParseURL(proxy) else URL{}
         if pu.User != "" {
-            line += "\r\nProxy-Authorization: Basic " + std.encoding.base64.EncodeString(unescape(pu.User))
+            line += "\r\nProxy-Authorization: Basic " +
+                std.encoding.base64.EncodeString(unescape(pu.User))
         }
     }
     var flags = 128
@@ -887,12 +971,24 @@ func formatRequest(method string, u URL, viaProxy bool, h map[string]string, bod
     return rtFormatHead(0, line, hh, len(body), flags, body)
 }
 
-async func transportRoundTrip(t *Transport, cl Client, method string, u URL, h map[string]string, body string, hasBody bool, buffered bool) Response! {
+async func transportRoundTrip(
+    t *Transport,
+    cl Client,
+    method string,
+    u URL,
+    h map[string]string,
+    body string,
+    hasBody bool,
+    buffered bool,
+) Response! {
     if u.Scheme != "http" && u.Scheme != "https" {
         return error("unsupported URL scheme \"" + u.Scheme + "\"")
     }
     var proxy = proxyFor(t, u)
-    var gz = !t.DisableCompression && h["Accept-Encoding"] == "" && h["Range"] == "" && method != "HEAD"
+    var gz = !t.DisableCompression &&
+        h["Accept-Encoding"] == "" &&
+        h["Range"] == "" &&
+        method != "HEAD"
     var attempt = 0
     for {
         attempt += 1
@@ -976,11 +1072,14 @@ async func transportRoundTrip(t *Transport, cl Client, method string, u URL, h m
 
 // Errors that mean "the server closed this idle connection" (retry).
 func staleError(err error) bool {
-    if std.errors.Is(err, std.net.ErrReset) || std.errors.Is(err, std.net.ErrEOF) || std.errors.Is(err, std.net.ErrClosed) {
+    if std.errors.Is(err, std.net.ErrReset) ||
+        std.errors.Is(err, std.net.ErrEOF) ||
+        std.errors.Is(err, std.net.ErrClosed) {
         return true
     }
     var m = err.Message()
-    return std.strings.Contains(m, "closed the connection without a response") || std.strings.Contains(m, "unexpected end of stream")
+    return std.strings.Contains(m, "closed the connection without a response") ||
+        std.strings.Contains(m, "unexpected end of stream")
 }
 
 // Reads the next response head (1xx responses other than 101 skipped).
@@ -1017,15 +1116,15 @@ async func readHead(c *conn, b *rbuf) Response! {
 // an io.AsyncReader. Reading it to the end returns the connection to the
 // pool; Close before the end closes the connection.
 struct BodyReader {
-    t *Transport
+    t  *Transport
     pc *pconn
     // 0 Content-Length, 1 chunked, 2 until the connection closes, 3 done
-    mode int
-    left int
-    keep bool
-    gz *std.compress.gzip.Reader
+    mode    int
+    left    int
+    keep    bool
+    gz      *std.compress.gzip.Reader
     pending []byte
-    closed bool
+    closed  bool
     // HTTP/2: the stream's data channel
     h2 *h2stream
 
@@ -1267,7 +1366,7 @@ async func DialRaw(u URL, cfg *std.net.tls.Config, timeoutMs int) RawConn! {
 // host-only and domain cookies, paths, expiry, Secure). Safe for
 // concurrent use.
 struct CookieJar {
-    guard int
+    guard   int
     entries []jarEntry
 
     // Stores the cookies of a response from u.
@@ -1347,7 +1446,7 @@ struct CookieJar {
 }
 
 struct jarEntry {
-    c Cookie
+    c        Cookie
     hostOnly bool
 }
 

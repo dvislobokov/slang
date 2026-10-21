@@ -61,6 +61,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match &s.kind {
             StmtKind::Let { local, init } => {
                 match init {
+                    Some(e) if self.is_interior_local(*local) => self.store_interior(*local, e, true)?,
                     Some(e) => {
                         let v = self.expr(e)?;
                         self.assign_local(*local, v, true)?;
@@ -238,6 +239,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             return Ok(());
         }
         if let ExprKind::Local(l) = &target.kind {
+            if self.is_interior_local(*l) {
+                return self.store_interior(*l, value, false);
+            }
             if self.is_stable(target) {
                 // `s = s + x` and `xs = append(xs, x)` move the old value
                 // into the operation (in place when uniquely referenced).

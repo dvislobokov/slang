@@ -1,7 +1,7 @@
 namespace examples.cancel
 
-import std.io
 import std
+import std.io
 
 // Cancellation through the task context: a cancel handle, timeouts,
 // task.Any cancelling the loser, and cancellation reaching child tasks.
@@ -10,7 +10,12 @@ async func Consume(ch task.Channel<int>) string {
     var n = 0
     for {
         var v = try await ch.Recv() catch err {
-            return fmt.Format("consumer stopped after {0} values: {1} (cancelled: {2})", n, err, errors.Is(err, task.ErrCancelled))
+            return fmt.Format(
+                "consumer stopped after {0} values: {1} (cancelled: {2})",
+                n,
+                err,
+                errors.Is(err, task.ErrCancelled),
+            )
         }
         n += v
     }

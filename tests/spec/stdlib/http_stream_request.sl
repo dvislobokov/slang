@@ -1,0 +1,108 @@
+// test: Server{StreamBodies}: request bodies are read by the handler from req.Reader as they arrive (Content-Length and chunked over HTTP/1.1, DATA over HTTP/2) with MaxBodyBytes still enforced (413), unread bodies are skipped so keep-alive goes on
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.http_stream_request
+
+import std
+import std.io
+import std.net
+
+async func count(req *http.Request, res *http.Response) void! {
+    var total = 0
+    var pieces = 0
+    for {
+        var p = await req.Reader.Read(16384)?
+        if len(p) == 0 {
+            break
+        }
+        total += len(p)
+        pieces += 1
+    }
+    res.Text(
+        200,
+        fmt.Format(
+            "{0} bytes in pieces: {1}, buffered body: {2}",
+            total,
+            pieces > 1,
+            len(req.Body),
+        ),
+    )
+}
+
+async func main() void! {
+    var r = http.NewRouter()
+    r.Post("/count", count)
+    r.Post("/all", async func(req *http.Request, res *http.Response) void! {
+        var s = await req.Reader.ReadAll()?
+        res.Text(200, fmt.Format("all {0}, ends with {1}", len(s), s[len(s) - 3..]))
+    })
+    r.Post("/ignore", async func(req *http.Request, res *http.Response) void! {
+        res.Text(200, "not read")
+    })
+    var srv = http.Server{
+        Addr: "127.0.0.1:0",
+        Handler: r,
+        H2C: true,
+        StreamBodies: true,
+        MaxBodyBytes: 150000,
+    }
+    srv.Listen()?
+    var serving = srv.Serve()
+    var base = srv.URL()
+    var body = strings.Repeat("x", 100000) + "end"
+
+    // HTTP/1.1
+    var t1 = http.Transport{}
+    var c1 = http.Client{Transport: &t1}
+    var a = await c1.Post(base + "/count", body, "text/plain")?
+    println("h1 count:", a.Status, a.Body)
+    var b = await c1.Post(base + "/all", body, "text/plain")?
+    println("h1 all:", b.Status, b.Body)
+    var ig = await c1.Post(base + "/ignore", strings.Repeat("y", 1000), "text/plain")?
+    var after = await c1.Post(base + "/all", "after", "text/plain")?
+    println("h1 unread body skipped:", ig.Body, "|", after.Body, "| dials:", t1.Stats().Dials)
+    var big = await c1.Post(base + "/all", strings.Repeat("z", 200000), "text/plain")?
+    println("h1 too large:", big.Status)
+
+    // HTTP/1.1 chunked upload, by hand
+    var conn = await net.Dial(fmt.Format("127.0.0.1:{0}", srv.Port()))?
+    var rd = net.NewBufferedReader(conn, 0)
+    _ = await conn.WriteString(
+        "POST /all HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n",
+    )?
+    var status = await rd.ReadLine()?
+    var rest = ""
+    for {
+        var line = try await rd.ReadLine() catch err {
+            break
+        }
+        rest += line + "\n"
+    }
+    println("h1 chunked:", status, strings.Contains(rest, "all 11, ends with rld"))
+    conn.Close()
+
+    // HTTP/2 (h2c)
+    var t2 = http.Transport{H2C: true}
+    var c2 = http.Client{Transport: &t2}
+    var d = await c2.Post(base + "/count", body, "text/plain")?
+    println("h2 count:", d.Status, d.Proto, d.Body)
+    var e = await c2.Post(base + "/all", body, "text/plain")?
+    println("h2 all:", e.Status, e.Body)
+    var g = await c2.Post(base + "/all", strings.Repeat("z", 200000), "text/plain")?
+    println("h2 too large:", g.Status)
+    var h = await c2.Post(base + "/ignore", strings.Repeat("y", 300000), "text/plain")?
+    var h2after = await c2.Post(base + "/all", "after", "text/plain")?
+    println(
+        "h2 unread body:",
+        h.Status,
+        h.Body,
+        "|",
+        h2after.Body,
+        "| http2 conns:",
+        t2.Stats().HTTP2,
+    )
+
+    await srv.Shutdown()
+    await serving?
+    println("stopped")
+}

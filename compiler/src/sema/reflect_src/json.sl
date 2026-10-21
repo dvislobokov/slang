@@ -8,12 +8,12 @@ namespace std.encoding.json
 
 // A dynamic JSON value (json.ParseValue).
 struct Value {
-    kind int
-    b bool
-    n float
-    s string
+    kind  int
+    b     bool
+    n     float
+    s     string
     items []Value
-    keys []string
+    keys  []string
 
     func IsNull() bool {
         return this.kind == 0
@@ -212,7 +212,7 @@ func ParseValue(text string) Value! {
 
 struct parser {
     toks []string
-    pos int
+    pos  int
 
     func next() string! {
         if this.pos >= len(this.toks) {
@@ -384,7 +384,9 @@ func decode<T>(v Value, path string, out *T) void! {
         *out = v
         return
     }
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
         if v.kind == 0 {
             *out = nil
             return
@@ -466,7 +468,12 @@ func decode<T>(v Value, path string, out *T) void! {
             }
             decodeMap(v, path, out)?
         } else {
-            return error(prefix(path) + "cannot decode into " + std.reflect.TypeOf<T>().Name + " (map keys must be strings)")
+            return error(
+                prefix(path) +
+                    "cannot decode into " +
+                    std.reflect.TypeOf<T>().Name +
+                    " (map keys must be strings)",
+            )
         }
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
         decodePtr(v, path, out)?
@@ -550,9 +557,17 @@ func write<T>(b *std.strings.Builder, v T) {
         } else {
             b.Write("false")
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         writeFloat(b, float(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         b.Write(std.fmt.Format("{0}", v))
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
         b.Write(Quote(string(v)))
@@ -646,9 +661,19 @@ func isEmpty<F>(x F) bool {
         return x == ""
     } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool {
         return !x
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
         return x == 0
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Map {
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Map {
         return len(x) == 0
     } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {
         return x == nil

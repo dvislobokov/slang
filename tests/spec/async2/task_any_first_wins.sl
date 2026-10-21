@@ -2,11 +2,11 @@
 // status: passing
 namespace spec.async2.task_any_first_wins
 
-import std.io
 import std
+import std.io
 
 struct Log {
-    Mu task.Mutex
+    Mu   task.Mutex
     Done int
 }
 

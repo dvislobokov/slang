@@ -8,9 +8,9 @@ namespace std.encoding.pem
 struct Block {
     Type string
     // Headers in order of appearance (RFC 1421 "Proc-Type: 4,ENCRYPTED").
-    HeaderKeys []string
+    HeaderKeys   []string
     HeaderValues []string
-    Bytes []byte
+    Bytes        []byte
 
     // The value of header key, or "".
     func Header(key string) string {

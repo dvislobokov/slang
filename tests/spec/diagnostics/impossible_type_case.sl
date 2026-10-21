@@ -8,12 +8,15 @@ interface Shape {
     func Area() float
 }
 
-struct Rock { W int }
+struct Rock {
+    W int
+}
 
 func Show(s Shape) {
     switch s {
         case Rock r: println(r.W)
-        default: println("other")
+        default:
+            println("other")
     }
 }
 

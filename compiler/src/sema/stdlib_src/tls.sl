@@ -146,7 +146,7 @@ func newBuilder() *builder {
 
 // Reader of wire messages with a sticky failure flag (check ok() once).
 struct parser {
-    b []byte
+    b   []byte
     off int
     bad bool
 
@@ -270,28 +270,100 @@ func alertText(d int) string {
 
 // What a cipher suite needs.
 struct suiteInfo {
-    id int
-    name string
-    hash string
+    id     int
+    name   string
+    hash   string
     keyLen int
     // 1 AES-GCM, 2 ChaCha20-Poly1305
     aead int
-    v13 bool
+    v13  bool
     // TLS 1.2 authentication: "ECDSA" or "RSA"
     auth string
 }
 
 func suiteByID(id int) suiteInfo {
     switch id {
-        case 4865: return suiteInfo{id: id, name: "TLS_AES_128_GCM_SHA256", hash: "sha256", keyLen: 16, aead: 1, v13: true}
-        case 4866: return suiteInfo{id: id, name: "TLS_AES_256_GCM_SHA384", hash: "sha384", keyLen: 32, aead: 1, v13: true}
-        case 4867: return suiteInfo{id: id, name: "TLS_CHACHA20_POLY1305_SHA256", hash: "sha256", keyLen: 32, aead: 2, v13: true}
-        case 49195: return suiteInfo{id: id, name: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", hash: "sha256", keyLen: 16, aead: 1, auth: "ECDSA"}
-        case 49196: return suiteInfo{id: id, name: "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", hash: "sha384", keyLen: 32, aead: 1, auth: "ECDSA"}
-        case 49199: return suiteInfo{id: id, name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", hash: "sha256", keyLen: 16, aead: 1, auth: "RSA"}
-        case 49200: return suiteInfo{id: id, name: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", hash: "sha384", keyLen: 32, aead: 1, auth: "RSA"}
-        case 52393: return suiteInfo{id: id, name: "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", hash: "sha256", keyLen: 32, aead: 2, auth: "ECDSA"}
-        case 52392: return suiteInfo{id: id, name: "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256", hash: "sha256", keyLen: 32, aead: 2, auth: "RSA"}
+        case 4865:
+            return suiteInfo{
+                id: id,
+                name: "TLS_AES_128_GCM_SHA256",
+                hash: "sha256",
+                keyLen: 16,
+                aead: 1,
+                v13: true,
+            }
+        case 4866:
+            return suiteInfo{
+                id: id,
+                name: "TLS_AES_256_GCM_SHA384",
+                hash: "sha384",
+                keyLen: 32,
+                aead: 1,
+                v13: true,
+            }
+        case 4867:
+            return suiteInfo{
+                id: id,
+                name: "TLS_CHACHA20_POLY1305_SHA256",
+                hash: "sha256",
+                keyLen: 32,
+                aead: 2,
+                v13: true,
+            }
+        case 49195:
+            return suiteInfo{
+                id: id,
+                name: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+                hash: "sha256",
+                keyLen: 16,
+                aead: 1,
+                auth: "ECDSA",
+            }
+        case 49196:
+            return suiteInfo{
+                id: id,
+                name: "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+                hash: "sha384",
+                keyLen: 32,
+                aead: 1,
+                auth: "ECDSA",
+            }
+        case 49199:
+            return suiteInfo{
+                id: id,
+                name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+                hash: "sha256",
+                keyLen: 16,
+                aead: 1,
+                auth: "RSA",
+            }
+        case 49200:
+            return suiteInfo{
+                id: id,
+                name: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+                hash: "sha384",
+                keyLen: 32,
+                aead: 1,
+                auth: "RSA",
+            }
+        case 52393:
+            return suiteInfo{
+                id: id,
+                name: "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+                hash: "sha256",
+                keyLen: 32,
+                aead: 2,
+                auth: "ECDSA",
+            }
+        case 52392:
+            return suiteInfo{
+                id: id,
+                name: "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+                hash: "sha256",
+                keyLen: 32,
+                aead: 2,
+                auth: "RSA",
+            }
     }
     return suiteInfo{id: 0}
 }
@@ -408,7 +480,13 @@ func signWith(key std.crypto.x509.PrivateKey, scheme int, content []byte) []byte
     return std.crypto.rsa.SignPKCS1v15(key.Bytes, h, digest)?
 }
 
-func verifyWith(cert *std.crypto.x509.Certificate, scheme int, content []byte, sig []byte, v13 bool) void! {
+func verifyWith(
+    cert *std.crypto.x509.Certificate,
+    scheme int,
+    content []byte,
+    sig []byte,
+    v13 bool,
+) void! {
     var alg = cert.PublicKeyAlgorithm
     if scheme == 2055 {
         if alg != "Ed25519" || !std.crypto.ed25519.Verify(cert.PublicKey, content, sig) {
@@ -418,7 +496,9 @@ func verifyWith(cert *std.crypto.x509.Certificate, scheme int, content []byte, s
     }
     var h = schemeHash(scheme)
     if h == "" || (v13 && scheme >= 1025 && scheme <= 1537 && scheme % 256 == 1) {
-        return error(std.fmt.Sprintf("tls: peer used an unsupported signature scheme 0x%04x", scheme))
+        return error(
+            std.fmt.Sprintf("tls: peer used an unsupported signature scheme 0x%04x", scheme),
+        )
     }
     var digest = hashOf(h, content)?
     if scheme == 1027 || scheme == 1283 {
@@ -456,8 +536,8 @@ func verifyWith(cert *std.crypto.x509.Certificate, scheme int, content []byte, s
 // secp384r1.
 struct keyShare {
     group int
-    priv []byte
-    pub []byte
+    priv  []byte
+    pub   []byte
 }
 
 func newKeyShare(group int) keyShare! {
@@ -554,12 +634,12 @@ struct cipherState {
     // AEAD context (empty: plaintext records)
     ctx []byte
     // 12-byte IV (TLS 1.3, ChaCha20 in 1.2) or 4-byte salt (AES-GCM in 1.2)
-    iv []byte
+    iv  []byte
     seq int
     v13 bool
     // TLS 1.3 traffic secret (for KeyUpdate) and its hash
     secret []byte
-    suite suiteInfo
+    suite  suiteInfo
 
     func active() bool {
         return len(this.ctx) > 0
@@ -631,7 +711,7 @@ func sealRecord(cs *cipherState, typ int, data []byte) []byte {
 
 // A record after removing the protection.
 struct record {
-    typ int
+    typ  int
     data []byte
 }
 
@@ -713,7 +793,7 @@ func OpenRecord(suite int, key []byte, iv []byte, seq int, rec []byte) []byte! {
 // Certificate is a certificate chain (leaf first) with its private key.
 struct Certificate {
     Chain []*std.crypto.x509.Certificate
-    Key std.crypto.x509.PrivateKey
+    Key   std.crypto.x509.PrivateKey
 }
 
 // LoadKeyPair parses a PEM certificate chain and a PEM private key and
@@ -762,7 +842,7 @@ struct ServerConfig {
     // VerifyClientCertIfGiven or RequireAndVerifyClientCert.
     ClientAuth int
     // Roots for verifying client certificates (nil: system roots).
-    ClientCAs *std.crypto.x509.CertPool
+    ClientCAs  *std.crypto.x509.CertPool
     MinVersion int
     MaxVersion int
     // Application protocols the server supports, in preference order.
@@ -776,18 +856,18 @@ struct ServerConfig {
 // ConnectionState describes an established connection.
 struct ConnectionState {
     // V12 or V13.
-    Version int
-    CipherSuite int
+    Version         int
+    CipherSuite     int
     CipherSuiteName string
     // Negotiated application protocol ("" if none).
-    ALPN string
+    ALPN       string
     ServerName string
     // Leaf first, as sent by the peer.
     PeerCertificates []*std.crypto.x509.Certificate
     // The verified chain (empty when not verified).
     VerifiedChain []*std.crypto.x509.Certificate
     // The handshake resumed an earlier session.
-    Resumed bool
+    Resumed           bool
     HandshakeComplete bool
 
     func VersionName() string {
@@ -798,23 +878,23 @@ struct ConnectionState {
 // A resumable session as remembered by a client.
 struct session {
     version int
-    suite int
-    ticket []byte
+    suite   int
+    ticket  []byte
     // TLS 1.3: the PSK; TLS 1.2: the master secret
-    secret []byte
-    ageAdd int
-    received int
-    lifetime int
-    alpn string
+    secret    []byte
+    ageAdd    int
+    received  int
+    lifetime  int
+    alpn      string
     peerCerts []*std.crypto.x509.Certificate
-    verified []*std.crypto.x509.Certificate
+    verified  []*std.crypto.x509.Certificate
 }
 
 // SessionCache keeps the latest session ticket per server for clients
 // (Config.Sessions). Safe to share between connections.
 struct SessionCache {
     guard int
-    m map[string]*session
+    m     map[string]*session
 
     func get(key string) *session {
         std.task.rtLock(&this.guard)
@@ -931,51 +1011,59 @@ struct Conn {
 
 // The shared state of a connection.
 struct conn {
-    raw std.net.Conn
+    raw      std.net.Conn
     isClient bool
-    cfg Config
-    srv *serverState
+    cfg      Config
+    srv      *serverState
     // record layer
     inbuf []byte
-    rd cipherState
-    wr cipherState
+    rd    cipherState
+    wr    cipherState
     // TLS 1.2: keys that take effect at the next change_cipher_spec
-    pendRd cipherState
-    hsData []byte
-    appData []byte
-    out []byte
+    pendRd     cipherState
+    hsData     []byte
+    appData    []byte
+    out        []byte
     transcript []byte
-    vers int
+    vers       int
     // state
-    started bool
-    done bool
-    hsErr error
-    rdErr error
-    closed bool
+    started   bool
+    done      bool
+    hsErr     error
+    rdErr     error
+    closed    bool
     sentClose bool
-    gotClose bool
-    alert int
-    hsMu std.task.Mutex
-    wMu std.task.Mutex
+    gotClose  bool
+    alert     int
+    hsMu      std.task.Mutex
+    wMu       std.task.Mutex
     // results
-    suite suiteInfo
-    alpn string
+    suite      suiteInfo
+    alpn       string
     serverName string
-    peerCerts []*std.crypto.x509.Certificate
-    verified []*std.crypto.x509.Certificate
-    resumed bool
+    peerCerts  []*std.crypto.x509.Certificate
+    verified   []*std.crypto.x509.Certificate
+    resumed    bool
     // TLS 1.3 secrets kept after the handshake
     resMaster []byte
     // TLS 1.2
-    master []byte
+    master       []byte
     clientRandom []byte
     serverRandom []byte
-    sessionKey string
+    sessionKey   string
 
     func state() ConnectionState {
-        return ConnectionState{Version: this.vers, CipherSuite: this.suite.id, CipherSuiteName: this.suite.name,
-            ALPN: this.alpn, ServerName: this.serverName, PeerCertificates: this.peerCerts,
-            VerifiedChain: this.verified, Resumed: this.resumed, HandshakeComplete: this.done}
+        return ConnectionState{
+            Version: this.vers,
+            CipherSuite: this.suite.id,
+            CipherSuiteName: this.suite.name,
+            ALPN: this.alpn,
+            ServerName: this.serverName,
+            PeerCertificates: this.peerCerts,
+            VerifiedChain: this.verified,
+            Resumed: this.resumed,
+            HandshakeComplete: this.done,
+        }
     }
 
     // Records the alert to send for err and returns err.
@@ -1080,7 +1168,10 @@ struct conn {
     async func expect(want int, what string) hsMsg! {
         var m = await this.readHandshake()?
         if m.typ != want {
-            return this.fail(10, std.fmt.Format("unexpected handshake message {0} (want {1})", m.typ, what))
+            return this.fail(
+                10,
+                std.fmt.Format("unexpected handshake message {0} (want {1})", m.typ, what),
+            )
         }
         return m
     }
@@ -1275,13 +1366,22 @@ struct conn {
                     if !p.ok() || !p.empty() || req > 1 {
                         return this.fail(50, "malformed KeyUpdate")
                     }
-                    var next = ExpandLabel(this.rd.suite.hash, this.rd.secret, "traffic upd", [], hashLen(this.rd.suite.hash))?
+                    var next = ExpandLabel(
+                        this.rd.suite.hash,
+                        this.rd.secret,
+                        "traffic upd",
+                        [],
+                        hashLen(this.rd.suite.hash),
+                    )?
                     this.rd = cipher13(this.rd.suite, next)?
                     if req == 1 {
                         await this.keyUpdate(false)?
                     }
                 } else {
-                    return this.fail(10, std.fmt.Format("unexpected post-handshake message {0}", m.typ))
+                    return this.fail(
+                        10,
+                        std.fmt.Format("unexpected post-handshake message {0}", m.typ),
+                    )
                 }
             } else if m.typ == 0 && this.isClient {
                 // TLS 1.2 HelloRequest: renegotiation is refused with a warning
@@ -1308,7 +1408,13 @@ struct conn {
         b.u24(1)
         b.u8(req)
         this.queue(22, b.bytes())
-        var next = try ExpandLabel(this.wr.suite.hash, this.wr.secret, "traffic upd", [], hashLen(this.wr.suite.hash)) catch err {
+        var next = try ExpandLabel(
+            this.wr.suite.hash,
+            this.wr.secret,
+            "traffic upd",
+            [],
+            hashLen(this.wr.suite.hash),
+        ) catch err {
             this.wMu.Unlock()
             return err
         }
@@ -1363,9 +1469,9 @@ struct conn {
 
 // A handshake message.
 struct hsMsg {
-    typ int
+    typ  int
     body []byte
-    raw []byte
+    raw  []byte
 }
 
 func newConn(raw std.net.Conn, client bool) *conn {
@@ -1408,7 +1514,7 @@ async func DialTimeout(addr string, cfg Config, ms int) Conn! {
 
 // Server-side configuration shared by the connections of a Listener.
 struct serverState {
-    cfg ServerConfig
+    cfg       ServerConfig
     ticketKey []byte
 }
 
@@ -1430,7 +1536,7 @@ func ServerConn(raw std.net.Conn, cfg ServerConfig) Conn! {
 
 // Listener accepts TLS connections from a TCP listener.
 struct Listener {
-    l std.net.Listener
+    l  std.net.Listener
     st *serverState
 
     // Waits for the next TCP connection; its handshake runs on first use.

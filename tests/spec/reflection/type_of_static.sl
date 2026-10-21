@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.reflection.type_of_static
 
-import std.io
 import std
+import std.io
 
 struct User {
     Name string

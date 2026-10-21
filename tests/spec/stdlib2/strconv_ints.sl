@@ -29,7 +29,11 @@ func main() {
     show("", 10)
     show("1_0", 10)
     show("z", 36)
-    println(try strconv.ParseIntBits("127", 10, 8) else 0, try strconv.ParseIntBits("-128", 10, 8) else 0, try strconv.ParseIntBits("128", 10, 8) else 0)
+    println(
+        try strconv.ParseIntBits("127", 10, 8) else 0,
+        try strconv.ParseIntBits("-128", 10, 8) else 0,
+        try strconv.ParseIntBits("128", 10, 8) else 0,
+    )
     println(try strconv.ParseUint("18446744073709551615", 10) else 0)
     println(try strconv.ParseUint("18446744073709551616", 10) else 1)
     println(try strconv.Atoi("123") else 0, try strconv.Atoi("12 ") else -1)

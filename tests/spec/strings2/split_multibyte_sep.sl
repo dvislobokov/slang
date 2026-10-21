@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.split_multibyte_sep
 
-import std.io
 import std
+import std.io
 
 func main() {
     var parts = strings.Split("a→bb→→c", "→")

@@ -1,0 +1,471 @@
+// test: std.data.redis client against an in-process RESP server: RESP3 HELLO with AUTH/SETNAME and the RESP2 fallback (AUTH + SELECT), typed commands and Nil, server errors as redis.Error, pipelining in one write, MULTI/EXEC, WATCH conflicts (ErrTxFailed), EVALSHA falling back to EVAL on NOSCRIPT, pub/sub with patterns and a reconnect, LOADING retries, pool limits (ErrPoolTimeout), task-context timeouts, Close
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib5.redis_mock
+
+import std
+import std.data
+import std.io
+
+// ---- a tiny RESP server -----------------------------------------------------
+
+func bulk(s string) string {
+    return "$" + strconv.Itoa(len(s)) + "\r\n" + s + "\r\n"
+}
+
+func arr(items []string) string {
+    return "*" + strconv.Itoa(len(items)) + "\r\n" + strings.Join(items, "")
+}
+
+func num(n int) string {
+    return ":" + strconv.Itoa(n) + "\r\n"
+}
+
+struct server {
+    l        net.Listener
+    data     map[string]string
+    hello    bool
+    password string
+    // commands seen, in order
+    log     []string
+    loading int
+    subs    []*session
+    scripts map[string]string
+    version int
+    // per connection: the most commands parsed from one read
+    maxBatch int
+    sessions []*session
+
+    func port() int {
+        return this.l.Port()
+    }
+}
+
+struct session {
+    c            net.Conn
+    srv          *server
+    buf          string
+    multi        bool
+    queued       [][]string
+    watchVersion int
+    watching     bool
+    channels     []string
+    patterns     []string
+    proto        int
+    db           int
+
+    // Parses one command from buf: (args, ok).
+    func next() ([]string, bool) {
+        var b = this.buf
+        if len(b) == 0 || b[0] != 42 {
+            return ([], false)
+        }
+        var nl = strings.Index(b, "\r\n")
+        if nl < 0 {
+            return ([], false)
+        }
+        var n = try strconv.Atoi(b[1..nl]) else 0
+        var p = nl + 2
+        var args []string = []
+        for _ in 0..n {
+            var rest = b[p..]
+            var e = strings.Index(rest, "\r\n")
+            if e < 0 {
+                return ([], false)
+            }
+            var l = try strconv.Atoi(rest[1..e]) else 0
+            if len(rest) < e + 2 + l + 2 {
+                return ([], false)
+            }
+            args = append(args, rest[e + 2..e + 2 + l])
+            p += e + 2 + l + 2
+        }
+        this.buf = b[p..]
+        return (args, true)
+    }
+
+    async func write(s string) void! {
+        _ = await this.c.Write(strings.Bytes(s))?
+    }
+}
+
+func matches(pattern string, s string) bool {
+    if strings.HasSuffix(pattern, "*") {
+        return strings.HasPrefix(s, pattern[..len(pattern) - 1])
+    }
+    return pattern == s
+}
+
+async func publish(srv *server, ch string, msg string) int {
+    var n = 0
+    for s in srv.subs {
+        for c in s.channels {
+            if c == ch {
+                n += 1
+                try await s.write(arr([bulk("message"), bulk(ch), bulk(msg)])) catch _ {}
+            }
+        }
+        for p in s.patterns {
+            if matches(p, ch) {
+                n += 1
+                try await s.write(arr([bulk("pmessage"), bulk(p), bulk(ch), bulk(msg)])) catch _ {}
+            }
+        }
+    }
+    return n
+}
+
+// The reply to one command (RESP text).
+async func exec(s *session, a []string) string {
+    var srv = s.srv
+    var cmd = strings.ToUpper(a[0])
+    if s.multi && cmd != "EXEC" && cmd != "DISCARD" && cmd != "MULTI" {
+        s.queued = append(s.queued, a)
+        return "+QUEUED\r\n"
+    }
+    if cmd == "HELLO" {
+        if !srv.hello {
+            return "-ERR unknown command 'HELLO'\r\n"
+        }
+        if len(a) >= 5 && strings.ToUpper(a[2]) == "AUTH" && a[4] != srv.password {
+            return "-WRONGPASS invalid username-password pair or user is disabled.\r\n"
+        }
+        s.proto = 3
+        return "%2\r\n+server\r\n+mock\r\n+proto\r\n:3\r\n"
+    }
+    if cmd == "AUTH" {
+        if a[len(a) - 1] != srv.password {
+            return "-WRONGPASS invalid username-password pair\r\n"
+        }
+        return "+OK\r\n"
+    }
+    if srv.loading > 0 && cmd == "GET" {
+        srv.loading -= 1
+        return "-LOADING Redis is loading the dataset in memory\r\n"
+    }
+    switch cmd {
+        case "PING":
+            return "+PONG\r\n"
+        case "SELECT":
+            s.db = try strconv.Atoi(a[1]) else 0
+            return "+OK\r\n"
+        case "CLIENT":
+            return "+OK\r\n"
+        case "SET":
+            srv.data[a[1]] = "=" + a[2]
+            srv.version += 1
+            return "+OK\r\n"
+        case "GET":
+            if srv.data[a[1]] == "" {
+                if s.proto == 3 {
+                    return "_\r\n"
+                }
+                return "$-1\r\n"
+            }
+            return bulk(srv.data[a[1]][1..])
+        case "INCR":
+            var cur = ""
+            if srv.data[a[1]] != "" {
+                cur = srv.data[a[1]][1..]
+            }
+            var v = try strconv.Atoi(cur) else 0
+            if cur != "" && strconv.Itoa(v) != cur {
+                return "-ERR value is not an integer or out of range\r\n"
+            }
+            srv.data[a[1]] = "=" + strconv.Itoa(v + 1)
+            srv.version += 1
+            return num(v + 1)
+        case "DEL":
+            var n = 0
+            for k in a[1..] {
+                if srv.data[k] != "" {
+                    delete(srv.data, k)
+                    n += 1
+                }
+            }
+            srv.version += 1
+            return num(n)
+        case "LPUSH":
+            return "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
+        case "MULTI":
+            s.multi = true
+            s.queued = []
+            return "+OK\r\n"
+        case "WATCH":
+            s.watching = true
+            s.watchVersion = srv.version
+            return "+OK\r\n"
+        case "UNWATCH":
+            s.watching = false
+            return "+OK\r\n"
+        case "EXEC":
+            s.multi = false
+            if s.watching && s.watchVersion != srv.version {
+                s.watching = false
+                return "*-1\r\n"
+            }
+            s.watching = false
+            var parts []string = []
+            for q in s.queued {
+                parts = append(parts, await exec(s, q))
+            }
+            return arr(parts)
+        case "EVALSHA":
+            if srv.scripts[a[1]] == "" {
+                return "-NOSCRIPT No matching script. Please use EVAL.\r\n"
+            }
+            return bulk("ran " + srv.scripts[a[1]] + " keys=" + a[2])
+        case "EVAL":
+            srv.scripts[crypto.hash.Sha1Hex(a[1])] = a[1]
+            return bulk("ran " + a[1] + " keys=" + a[2])
+        case "SUBSCRIBE", "PSUBSCRIBE":
+            var out = ""
+            for x in a[1..] {
+                if cmd == "SUBSCRIBE" {
+                    s.channels = append(s.channels, x)
+                } else {
+                    s.patterns = append(s.patterns, x)
+                }
+                out += arr([
+                    bulk(strings.ToLower(cmd)),
+                    bulk(x),
+                    num(len(s.channels) + len(s.patterns)),
+                ])
+            }
+            var known = false
+            for x in srv.subs {
+                if x == s {
+                    known = true
+                }
+            }
+            if !known {
+                srv.subs = append(srv.subs, s)
+            }
+            return out
+        case "PUBLISH":
+            return num(await publish(srv, a[1], a[2]))
+        case "KILLSUBS":
+            // test hook: drop every subscriber connection
+            for x in srv.subs {
+                x.c.Close()
+            }
+            srv.subs = []
+            return "+OK\r\n"
+        case "BLPOP":
+            await task.Delay(300)
+            return arr([bulk(a[1]), bulk("item")])
+    }
+    return "-ERR unknown command '" + a[0] + "'\r\n"
+}
+
+async func serve(srv *server, c net.Conn) {
+    var s = new session{c: c, srv: srv, proto: 2}
+    srv.sessions = append(srv.sessions, s)
+    for {
+        var chunk = try await c.Read(65536) catch _ {
+            break
+        }
+        if len(chunk) == 0 {
+            break
+        }
+        s.buf += strings.FromBytes(chunk)
+        var batch = 0
+        var out = ""
+        for {
+            var (args, ok) = s.next()
+            if !ok {
+                break
+            }
+            batch += 1
+            srv.log = append(srv.log, strings.Join(args, " "))
+            out += await exec(s, args)
+        }
+        if batch > srv.maxBatch {
+            srv.maxBatch = batch
+        }
+        if out != "" {
+            try await s.write(out) catch _ {
+                break
+            }
+        }
+    }
+    c.Close()
+}
+
+async func acceptLoop(srv *server) {
+    for {
+        var c = try await srv.l.Accept() catch _ {
+            return
+        }
+        _ = serve(srv, c)
+    }
+}
+
+func newServer(hello bool, password string) *server! {
+    var l = net.Listen("127.0.0.1:0")?
+    var srv = new server{
+        l: l,
+        data: map[string]string{},
+        hello: hello,
+        password: password,
+        scripts: map[string]string{},
+    }
+    _ = acceptLoop(srv)
+    return srv
+}
+
+func stop(srv *server) {
+    srv.l.Close()
+    for s in srv.sessions {
+        s.c.Close()
+        s.srv = nil
+    }
+    srv.sessions = []
+    srv.subs = []
+}
+
+func addr(srv *server) string {
+    return "127.0.0.1:" + strconv.Itoa(srv.port())
+}
+
+async func main() void! {
+    // ---- RESP3 with HELLO AUTH SETNAME, then typed commands ----
+    var s3 = newServer(true, "pw")?
+    var c = await redis.Connect("redis://app:pw@" + addr(s3) + "?client_name=spec")?
+    println(s3.log[0])
+    await c.Set("greeting", "hello")?
+    println(await c.Get("greeting")?)
+    try await c.Get("missing") catch err {
+        println("missing:", errors.Is(err, redis.Nil))
+    }
+    println(await c.Incr("n")?, await c.Incr("n")?)
+    try await c.Incr("greeting") catch err {
+        println("server error:", redis.ErrorCode(err), "|", err)
+    }
+    try await c.LPush("greeting", ["x"]) catch err {
+        var e redis.Error
+        println(errors.As(err, &e), e.Code)
+    }
+    println(await c.Del(["n", "nope"])?)
+
+    // ---- pipelining: one write, replies per command ----
+    var p = c.Pipeline()
+    var a = p.Incr("p")
+    var b = p.Incr("p")
+    var g = p.Get("greeting")
+    var bad = p.LPush("x", [1])
+    println("queued", p.Len())
+    var replies = await p.Exec()?
+    println(len(replies), replies[3].String())
+    println(await a?, await b?, await g?)
+    try await bad catch err {
+        println("pipeline error:", redis.ErrorCode(err))
+    }
+    println("max commands per read:", s3.maxBatch)
+
+    // ---- MULTI/EXEC and WATCH ----
+    var t = c.TxPipeline()
+    var t1 = t.Incr("tx")
+    var t2 = t.Incr("tx")
+    _ = await t.Exec()?
+    println("tx", await t1?, await t2?)
+    var tries = 0
+    await c.Watch(
+        ["w"],
+        async func(tx *redis.Tx) void! {
+            tries += 1
+            // another client changes a watched key between WATCH and EXEC
+            await c.Set("w", "changed")?
+            var tp = tx.TxPipeline()
+            _ = tp.Set("w", "mine")
+            try await tp.Exec() catch err {
+                println("watch:", errors.Is(err, redis.ErrTxFailed))
+            }
+        },
+    )?
+    println("tries", tries, await c.Get("w")?)
+
+    // ---- scripts: EVALSHA, NOSCRIPT -> EVAL, then EVALSHA hits ----
+    var sc = redis.NewScript("return 1")
+    println(sc.Hash)
+    println((await c.Run(sc, ["k1", "k2"], ["a"])?).String())
+    println((await sc.Run(c, ["k1"], [])?).String())
+    for l in s3.log {
+        if strings.HasPrefix(l, "EVAL") {
+            println(" ", strings.Fields(l)[0])
+        }
+    }
+
+    // ---- pub/sub ----
+    var sub = await c.Subscribe(["news"])?
+    await sub.PSubscribe(["user.*"])?
+    println("subscribed", sub.Channels(), sub.Patterns())
+    println(await c.Publish("news", "first")?)
+    println(await c.Publish("user.42", "second")?)
+    var got = 0
+    for m in sub {
+        println(m.Kind, m.Channel, m.Pattern, m.Payload)
+        got += 1
+        if got == 2 {
+            break
+        }
+    }
+    // the server drops the subscriber: the subscription redials and
+    // subscribes again
+    _ = await c.Do(["KILLSUBS"])?
+    for _ in 0..200 {
+        if sub.Reconnects() > 0 && len(s3.subs) > 0 {
+            break
+        }
+        await task.Delay(10)
+    }
+    await task.Delay(50)
+    println("after reconnect:", await c.Publish("news", "third")?)
+    var m3 = await sub.Receive()?
+    println(m3.Channel, m3.Payload, "reconnects", sub.Reconnects())
+    await sub.Close()
+    try await sub.Receive() catch err {
+        println("closed subscription:", err)
+    }
+
+    // ---- retries of LOADING ----
+    s3.loading = 2
+    println("after LOADING:", await c.Get("greeting")?)
+
+    // ---- task-context timeout on a blocking command ----
+    var start = time.Now()
+    try await task.WithTimeout(100, func() Task<[]string!> {
+        return c.BLPop(5, ["q"])
+    }) catch err {
+        println("timeout:", errors.Is(err, task.ErrCancelled), time.Now() - start < 1500)
+    }
+    println(await c.Ping()?)
+    await c.Close()
+    try await c.Ping() catch err {
+        println("after close:", errors.Is(err, redis.ErrClosed))
+    }
+    stop(s3)
+
+    // ---- RESP2 fallback: AUTH and SELECT pipelined, pool limits ----
+    var s2 = newServer(false, "old")?
+    var o = redis.ParseURL("redis://:old@" + addr(s2) + "/7")?
+    o.PoolSize = 1
+    o.PoolTimeout = 100
+    var c2 = await redis.ConnectWith(o)?
+    println(s2.log[0], "|", s2.log[1], "|", s2.log[2])
+    try await c2.Get("absent") catch err {
+        println("resp2 nil:", errors.Is(err, redis.Nil))
+    }
+    var slow = c2.BLPop(0, ["q"])
+    try await c2.Ping() catch err {
+        println("pool:", errors.Is(err, redis.ErrPoolTimeout))
+    }
+    _ = await slow?
+    var st = c2.PoolStats()
+    println("stats", st.TotalConns, st.Timeouts)
+    try await redis.Connect("redis://:wrong@" + addr(s2)) catch err {
+        println("auth:", redis.ErrorCode(err))
+    }
+    await c2.Close()
+    stop(s2)
+}

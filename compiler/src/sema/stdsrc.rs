@@ -11,7 +11,9 @@
 //! `os` files, `os.signal`, `os.user`, `process`, more `collections`, `sync`,
 //! `cli`, `testing`, `embed`), and the tier 3 modules (`std.database.sql`
 //! with the `postgres` and `sqlite` drivers, `std.net.mail`,
-//! `std.crypto.kdf/password`, RSA key generation). The sources live in `sema/stdlib_src/*.sl`; like
+//! `std.crypto.kdf/password`, RSA key generation), and the tier 3b
+//! infrastructure clients (`std.data.redis`, `std.data.kafka`, `std.cloud.s3`,
+//! `std.cloud.blob`; C helpers in `runtime/src/std_infra.c`). The sources live in `sema/stdlib_src/*.sl`; like
 //! `std.collections` ([`super::collections`]) they are parsed once per
 //! process and registered as stdlib templates, so only what a program uses
 //! is instantiated, checked and compiled.
@@ -99,6 +101,28 @@ const MODULES: &[(&str, &str, &str)] = &[
     ("std.net.mail", "mail.sl", include_str!("stdlib_src/mail.sl")),
     ("std.compress.brotli", "brotli.sl", include_str!("stdlib_src/brotli.sl")),
     // <<< tier 3 stdlib
+    // >>> tier 3b stdlib (docs/STDLIB.md level 3b: infrastructure clients)
+    ("std.data.redis", "redis.sl", include_str!("stdlib_src/redis.sl")),
+    ("std.data.redis", "redis_route.sl", include_str!("stdlib_src/redis_route.sl")),
+    ("std.data.redis", "redis_client.sl", include_str!("stdlib_src/redis_client.sl")),
+    ("std.data.kafka", "kafka.sl", include_str!("stdlib_src/kafka.sl")),
+    ("std.data.kafka", "kafka_producer.sl", include_str!("stdlib_src/kafka_producer.sl")),
+    ("std.data.kafka", "kafka_consumer.sl", include_str!("stdlib_src/kafka_consumer.sl")),
+    ("std.data.kafka", "kafka_admin.sl", include_str!("stdlib_src/kafka_admin.sl")),
+    ("std.cloud.s3", "s3.sl", include_str!("stdlib_src/s3.sl")),
+    ("std.cloud.s3", "s3_multi.sl", include_str!("stdlib_src/s3_multi.sl")),
+    ("std.cloud.blob", "blob.sl", include_str!("stdlib_src/blob.sl")),
+    // <<< tier 3b stdlib
+    // >>> std.web (docs/FRAMEWORK.md section 2)
+    ("std.web", "web_app.sl", include_str!("stdlib_src/web_app.sl")),
+    ("std.web", "web_di.sl", include_str!("stdlib_src/web_di.sl")),
+    ("std.web", "web_bind.sl", include_str!("stdlib_src/web_bind.sl")),
+    ("std.web", "web_mw.sl", include_str!("stdlib_src/web_mw.sl")),
+    ("std.web", "web_openapi.sl", include_str!("stdlib_src/web_openapi.sl")),
+    ("std.web.config", "web_config.sl", include_str!("stdlib_src/web_config.sl")),
+    ("std.web.auth.jwt", "web_jwt.sl", include_str!("stdlib_src/web_jwt.sl")),
+    ("std.encoding.json", "web_schema.sl", include_str!("stdlib_src/web_schema.sl")),
+    // <<< std.web
     // tier 0/1 stdlib (docs/STDLIB.md)
     ("std.slices", "slices.sl", include_str!("stdlib_src/slices.sl")),
     ("std.maps", "maps.sl", include_str!("stdlib_src/maps.sl")),
@@ -139,7 +163,10 @@ fn module_asts() -> &'static [ast::File] {
     ASTS.get_or_init(|| {
         MODULES
             .iter()
-            .map(|(ns, name, src)| {
+            .map(|(ns, name, embedded)| {
+                // From `std/` on disk when installed (sema/stdfs.rs).
+                let text = super::stdfs::load(ns, name, embedded);
+                let src: &str = &text;
                 let mut diags = crate::diagnostics::Diagnostics::new();
                 let tokens = crate::lexer::lex(src, &mut diags);
                 let file = crate::parser::parse(tokens, &mut diags);

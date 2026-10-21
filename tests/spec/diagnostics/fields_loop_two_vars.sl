@@ -2,10 +2,12 @@
 // status: passing
 namespace spec.diagnostics.fields_loop_two_vars
 
-import std.io
 import std
+import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 func Show<T>(x T) {
     for i, f in reflect.Fields<T>() {

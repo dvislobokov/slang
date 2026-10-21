@@ -11,7 +11,8 @@ interface Stringer {
 }
 
 enum Color implements Stringer {
-    Red, Green
+    Red
+    Green
 
     func String() string {
         switch this {

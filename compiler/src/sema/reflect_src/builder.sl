@@ -3,7 +3,7 @@ namespace std.strings
 // strings.Builder: accumulates text; String() joins the pieces once.
 struct Builder {
     parts []string
-    n int
+    n     int
 
     func Write(s string) {
         this.parts = append(this.parts, s)

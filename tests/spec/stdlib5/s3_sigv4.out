@@ -1,0 +1,82 @@
+== get-vanilla
+GET
+/
+
+host:example.amazonaws.com
+x-amz-date:20150830T123600Z
+
+host;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+--
+AWS4-HMAC-SHA256
+20150830T123600Z
+20150830/us-east-1/service/aws4_request
+bb579772317eb040ac9ed261061d46c1f17a8133879d6129b6e1c25292927e63
+--
+5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31
+== get-vanilla-query-order-key-case
+GET
+/
+Param1=value1&Param2=value2
+host:example.amazonaws.com
+x-amz-date:20150830T123600Z
+
+host;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+--
+AWS4-HMAC-SHA256
+20150830T123600Z
+20150830/us-east-1/service/aws4_request
+816cd5b414d056048ba4f7c5386d6e0533120fb1fcfa93762cf0fc39e2cf19e0
+--
+b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500
+== post-x-www-form-urlencoded
+POST
+/
+
+content-type:application/x-www-form-urlencoded
+host:example.amazonaws.com
+x-amz-date:20150830T123600Z
+
+content-type;host;x-amz-date
+9095672bbd1f56dfc5b65f3e153adc8731a4a654192329106275f4c7b24d0b6e
+--
+AWS4-HMAC-SHA256
+20150830T123600Z
+20150830/us-east-1/service/aws4_request
+42a5e5bb34198acb3e84da4f085bb7927f2bc277ca766e6d19c73c2154021281
+--
+ff11897932ad3f4e8b18135d722051e5ac45fc38421b1da7b9d196a0fe09473a
+signing key (iam) c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9
+== s3-get-object
+GET
+/test.txt
+
+host:examplebucket.s3.amazonaws.com
+range:bytes=0-9
+x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+x-amz-date:20130524T000000Z
+
+host;range;x-amz-content-sha256;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+--
+AWS4-HMAC-SHA256
+20130524T000000Z
+20130524/us-east-1/s3/aws4_request
+7344ae5b7ee6c3e7e6b0fe0640412a37625d1fbfff95c48bbb2dc43964946972
+--
+f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41
+AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41
+https://examplebucket.s3.amazonaws.com/test.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404
+http://localhost:9000/my%20bucket/a%20b/c%2Bd.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=3600&X-Amz-Security-Token=tok%2Fen%2B&X-Amz-SignedHeaders=host&X-Amz-Signature=9d950228ad6dca356e53a60d1c80a0b201aa9e973db6abbd9defa195328347a5
+s3: presigned URLs expire after 1 to 604800 seconds
+a%20b/c%2Bd~e_f.g-h%25%C3%BC a%2Fb
+a=1&a=2&delete=&list-type=2&prefix=photos%2F2024%20
+AKENV envsecret env
+AKCI cisecret citoken file:ci
+AKDEFAULT file:default
+true
+env client presign has AKENV: true
+s3: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not set
+s3: endpoint must be http:// or https://
+s3: UnsignedPayload needs an https endpoint

@@ -12,19 +12,19 @@ namespace std.archive.zip
 
 // One entry of an archive.
 struct File {
-    Name string
+    Name    string
     Comment string
-    Method int
+    Method  int
     // Unix seconds, UTC.
     Modified int
     // Unix permission bits (0 when the archive does not say).
-    Mode int
-    CRC32 int
+    Mode           int
+    CRC32          int
     CompressedSize int
-    Size int
-    offset int
-    flags int
-    data []byte
+    Size           int
+    offset         int
+    flags          int
+    data           []byte
 
     func IsDir() bool {
         return std.strings.HasSuffix(this.Name, "/")
@@ -42,7 +42,7 @@ struct File {
 
 // An opened archive.
 struct Reader {
-    Files []File
+    Files   []File
     Comment string
 
     // The entry named name, or nil.
@@ -95,7 +95,10 @@ func Open(data []byte) Reader! {
     var i = n - 22
     var stop = std.math.IMax(0, n - 65557)
     for i >= stop {
-        if int(data[i]) == 80 && int(data[i + 1]) == 75 && int(data[i + 2]) == 5 && int(data[i + 3]) == 6 {
+        if int(data[i]) == 80 &&
+            int(data[i + 1]) == 75 &&
+            int(data[i + 2]) == 5 &&
+            int(data[i + 3]) == 6 {
             eocd = i
             break
         }
@@ -150,7 +153,9 @@ func Open(data []byte) Reader! {
             return error("zip: invalid central directory entry")
         }
         f.Name = std.strings.FromBytes(std.compress.rtCopy(data, p + 46, p + 46 + nlen))
-        f.Comment = std.strings.FromBytes(std.compress.rtCopy(data, p + 46 + nlen + elen, p + 46 + nlen + elen + flen))
+        f.Comment = std.strings.FromBytes(
+            std.compress.rtCopy(data, p + 46 + nlen + elen, p + 46 + nlen + elen + flen),
+        )
         if made == 3 {
             f.Mode = (ext >> 16) & 4095
         }
@@ -213,7 +218,12 @@ func readEntry(data []byte, f File) []byte! {
             return error("zip: " + f.Name + ": " + err.Message())
         }
     } else {
-        return error("zip: " + f.Name + ": unsupported compression method " + std.fmt.Format("{0}", f.Method))
+        return error(
+            "zip: " +
+                f.Name +
+                ": unsupported compression method " +
+                std.fmt.Format("{0}", f.Method),
+        )
     }
     if len(out) != f.Size {
         return error("zip: " + f.Name + ": size mismatch")
@@ -228,11 +238,11 @@ func readEntry(data []byte, f File) []byte! {
 
 // What to record for an entry added with Writer.AddHeader.
 struct Header {
-    Name string
-    Comment string
-    Method int = 8
+    Name     string
+    Comment  string
+    Method   int = 8
     Modified int
-    Mode int = 420
+    Mode     int = 420
 }
 
 // Builds an archive in memory: Add entries, then Close() returns the bytes.
@@ -240,12 +250,12 @@ struct Writer {
     // Level for deflated entries (-1: default).
     Level int = -1
     // Write Zip64 records even for small archives.
-    Zip64 bool
+    Zip64   bool
     Comment string
-    buf []byte
+    buf     []byte
     entries []File
-    names map[string]bool
-    closed bool
+    names   map[string]bool
+    closed  bool
 
     // Adds a file with the defaults (deflate, mode 0644, time 0).
     func Add(name string, data []byte) void! {
@@ -287,8 +297,21 @@ struct Writer {
         if h.Method == 8 {
             comp = std.compress.deflate.Compress(data, this.Level)
         }
-        var f = File{Name: h.Name, Comment: h.Comment, Method: h.Method, Modified: h.Modified, Mode: h.Mode, CRC32: std.compress.Crc32(0, data), CompressedSize: len(comp), Size: len(data), offset: len(this.buf)}
-        var big = this.Zip64 || len(comp) >= 4294967295 || len(data) >= 4294967295 || f.offset >= 4294967295
+        var f = File{
+            Name: h.Name,
+            Comment: h.Comment,
+            Method: h.Method,
+            Modified: h.Modified,
+            Mode: h.Mode,
+            CRC32: std.compress.Crc32(0, data),
+            CompressedSize: len(comp),
+            Size: len(data),
+            offset: len(this.buf),
+        }
+        var big = this.Zip64 ||
+            len(comp) >= 4294967295 ||
+            len(data) >= 4294967295 ||
+            f.offset >= 4294967295
         // local file header
         var b = this.buf
         b = put32(b, 67324752)
@@ -339,7 +362,10 @@ struct Writer {
         var cdOff = len(b)
         var any64 = this.Zip64 || len(this.entries) >= 65535
         for f in this.entries {
-            var big = this.Zip64 || f.Size >= 4294967295 || f.CompressedSize >= 4294967295 || f.offset >= 4294967295
+            var big = this.Zip64 ||
+                f.Size >= 4294967295 ||
+                f.CompressedSize >= 4294967295 ||
+                f.offset >= 4294967295
             if big {
                 any64 = true
             }
@@ -545,7 +571,10 @@ func toDos(t int) []int {
 
 // Reports whether an entry name is safe to extract (relative, no "..").
 func safeName(name string) bool {
-    if name == "" || std.strings.HasPrefix(name, "/") || std.strings.HasPrefix(name, "\\") || std.strings.Contains(name, ":") {
+    if name == "" ||
+        std.strings.HasPrefix(name, "/") ||
+        std.strings.HasPrefix(name, "\\") ||
+        std.strings.Contains(name, ":") {
         return false
     }
     for part in std.strings.Split(std.strings.Replace(name, "\\", "/"), "/") {

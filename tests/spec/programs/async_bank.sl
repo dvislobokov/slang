@@ -2,13 +2,13 @@
 // status: passing
 namespace spec.programs.async_bank
 
-import std.io
 import std
+import std.io
 
 const ErrNoAccount = error("no such account")
 
 struct Insufficient {
-    Id string
+    Id   string
     Need int
     Have int
     func Message() string {
@@ -17,15 +17,15 @@ struct Insufficient {
 }
 
 struct Account {
-    Id string
-    Mu task.Mutex
+    Id      string
+    Mu      task.Mutex
     Balance int
 }
 
 struct Bank {
-    accounts map[string]*Account
-    order []string
-    Mu task.Mutex
+    accounts  map[string]*Account
+    order     []string
+    Mu        task.Mutex
     transfers int
 
     func Open(id string, balance int) {

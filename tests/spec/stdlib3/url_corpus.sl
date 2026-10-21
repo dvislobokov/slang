@@ -14,7 +14,26 @@ func show(u net.url.URL) string {
     if u.User != nil {
         user = u.User.Username + "/" + u.User.Password + "/" + fmt.Format("{0}", u.User.HasPassword)
     }
-    return "s=" + q(u.Scheme) + " o=" + q(u.Opaque) + " u=" + user + " h=" + q(u.Host) + " p=" + q(u.Port) + " path=" + q(u.Path) + " raw=" + q(u.RawPath) + " q=" + q(u.RawQuery) + " f=" + q(u.Fragment) + " str=" + q(u.String())
+    return "s=" +
+        q(u.Scheme) +
+        " o=" +
+        q(u.Opaque) +
+        " u=" +
+        user +
+        " h=" +
+        q(u.Host) +
+        " p=" +
+        q(u.Port) +
+        " path=" +
+        q(u.Path) +
+        " raw=" +
+        q(u.RawPath) +
+        " q=" +
+        q(u.RawQuery) +
+        " f=" +
+        q(u.Fragment) +
+        " str=" +
+        q(u.String())
 }
 
 func queryTest(s string) {
@@ -27,7 +46,69 @@ func queryTest(s string) {
 }
 
 func main() {
-    var us = ["http://www.google.com", "http://www.google.com/", "http://www.google.com/file%20one%26two", "http://www.google.com/#file%20one%26two", "ftp://webmaster@www.google.com/", "ftp://john%20doe@www.google.com/", "http://www.google.com/?", "http://www.google.com/?foo=bar?", "http://www.google.com/?q=go+language", "http://www.google.com/?q=go%20language", "http://www.google.com/a%20b?q=c+d", "http:www.google.com/?q=go+language", "http:%2f%2fwww.google.com/?q=go+language", "mailto:/webmaster@golang.org", "mailto:webmaster@golang.org", "/foo?query=http://bad", "//foo", "//user@foo/path?a=b", "///threeslashes", "http://user:password@google.com", "http://j@ne:password@google.com", "http://jane:p@ssword@google.com", "http://j@ne:password@google.com/p@th?q=@go", "http://www.google.com/?q=go+language#foo", "http://www.google.com/?q=go+language#foo&bar", "http://www.google.com/?q=go+language#foo%26bar", "file:///home/adg/rabbits", "file:///C:/FooBar/Baz.txt", "MaIlTo:webmaster@golang.org", "a/b/c", "http://%3Fam:pa%3Fsword@google.com", "http://192.168.0.1/", "http://192.168.0.1:8080/", "http://[fe80::1]/", "http://[fe80::1]:8080/", "http://[fe80::1%25en0]/", "http://rest.rsc.io/foo%2fbar/baz%2Fquux?alt=media", "mysql://a,b,c/bar", "scheme://!$&'()*+,;=hello!:1/path", "http://host/!$&'()*+,;=:@[hello]", "http://example.com/oid/[order_id]", "http://192.168.0.2:8080/foo", "http://[2b01:e34:ef40:7730:8e70:5aff:fefe:edac]:8080/foo", "http://hello.世界.com/foo", "http://example.com//foo", "myscheme://authority<\"hi\">/foo", "tcp://[2020::2020:20:2020:2020%25Windows%20Loves%20Spaces]:2020", "magnet:?xt=urn:btih:c12fe1c06bba254a9dc9f519b335aa7c1367a88a&dn", "mailto:?subject=hi", "http://[::1", "http://a b.com/", "http://host:port/", "%gh&%ij", "http://example.com/%zz", "1http://foo", ":foo", "cache_object:foo/bar", "http://x.com/a\u{7F}b", "", "*", "https://user@host:8443/p/a/t/h?query=1&other=%20#frag ment"]
+    var us = [
+        "http://www.google.com",
+        "http://www.google.com/",
+        "http://www.google.com/file%20one%26two",
+        "http://www.google.com/#file%20one%26two",
+        "ftp://webmaster@www.google.com/",
+        "ftp://john%20doe@www.google.com/",
+        "http://www.google.com/?",
+        "http://www.google.com/?foo=bar?",
+        "http://www.google.com/?q=go+language",
+        "http://www.google.com/?q=go%20language",
+        "http://www.google.com/a%20b?q=c+d",
+        "http:www.google.com/?q=go+language",
+        "http:%2f%2fwww.google.com/?q=go+language",
+        "mailto:/webmaster@golang.org",
+        "mailto:webmaster@golang.org",
+        "/foo?query=http://bad",
+        "//foo",
+        "//user@foo/path?a=b",
+        "///threeslashes",
+        "http://user:password@google.com",
+        "http://j@ne:password@google.com",
+        "http://jane:p@ssword@google.com",
+        "http://j@ne:password@google.com/p@th?q=@go",
+        "http://www.google.com/?q=go+language#foo",
+        "http://www.google.com/?q=go+language#foo&bar",
+        "http://www.google.com/?q=go+language#foo%26bar",
+        "file:///home/adg/rabbits",
+        "file:///C:/FooBar/Baz.txt",
+        "MaIlTo:webmaster@golang.org",
+        "a/b/c",
+        "http://%3Fam:pa%3Fsword@google.com",
+        "http://192.168.0.1/",
+        "http://192.168.0.1:8080/",
+        "http://[fe80::1]/",
+        "http://[fe80::1]:8080/",
+        "http://[fe80::1%25en0]/",
+        "http://rest.rsc.io/foo%2fbar/baz%2Fquux?alt=media",
+        "mysql://a,b,c/bar",
+        "scheme://!$&'()*+,;=hello!:1/path",
+        "http://host/!$&'()*+,;=:@[hello]",
+        "http://example.com/oid/[order_id]",
+        "http://192.168.0.2:8080/foo",
+        "http://[2b01:e34:ef40:7730:8e70:5aff:fefe:edac]:8080/foo",
+        "http://hello.世界.com/foo",
+        "http://example.com//foo",
+        "myscheme://authority<\"hi\">/foo",
+        "tcp://[2020::2020:20:2020:2020%25Windows%20Loves%20Spaces]:2020",
+        "magnet:?xt=urn:btih:c12fe1c06bba254a9dc9f519b335aa7c1367a88a&dn",
+        "mailto:?subject=hi",
+        "http://[::1",
+        "http://a b.com/",
+        "http://host:port/",
+        "%gh&%ij",
+        "http://example.com/%zz",
+        "1http://foo",
+        ":foo",
+        "cache_object:foo/bar",
+        "http://x.com/a\u{7F}b",
+        "",
+        "*",
+        "https://user@host:8443/p/a/t/h?query=1&other=%20#frag ment",
+    ]
     for i, s in us {
         var u = try net.url.Parse(s) catch err {
             println(i, "error", err.Message())

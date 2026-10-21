@@ -13,8 +13,12 @@ arm64. Это требование к компилятору, рантайму, 
 | 3 | wasm32-wasi, android-arm64, ios-arm64 | компилируется, тесты по возможности |
 
 Имена целей — LLVM target triples: `x86_64-unknown-linux-gnu`,
-`aarch64-apple-darwin`, `x86_64-pc-windows-msvc` и т. д., с короткими
-псевдонимами `linux-amd64`, `macos-arm64`, `windows-amd64`.
+`aarch64-apple-darwin`, `x86_64-pc-windows-gnu` и т. д., с короткими
+псевдонимами `linux-amd64`, `macos-arm64`, `windows-amd64`. Сейчас
+`windows-amd64` — это ABI MinGW (`x86_64-pc-windows-gnu`: рантайм собран с
+заголовками mingw-w64, линковка с его CRT и импорт-библиотеками); ABI MSVC
+(`x86_64-pc-windows-msvc`, CodeView/PDB, библиотеки Windows SDK) — позже,
+пока только `check` и `--emit=obj`.
 
 ## Кросс-компиляция
 
@@ -93,28 +97,113 @@ arm64. Это требование к компилятору, рантайму, 
 
 ## Текущее состояние
 
-- Реализовано: linux-amd64 (компилятор, рантайм на POSIX, все тесты).
-- Слой `runtime/src/platform/` начат (интерфейс `platform/platform.h`,
-  `runtime/ABI.md` §15): `posix.c` — потоки, число CPU, монотонные часы,
-  случайные байты (`getrandom`/`getentropy`), backtrace; `poll_epoll.c` —
-  поллер готовности на epoll (level-triggered, one-shot) + eventfd;
-  `poll_kqueue.c` — тот же поллер на kqueue для macOS/BSD
-  (`EVFILT_READ`/`EVFILT_WRITE` с `EV_ONESHOT`, пробуждение через
-  `EVFILT_USER`, где его нет — self-pipe); `net_posix.c` — неблокирующие
-  TCP/UDP/Unix-сокеты, опции, sendfile, `getaddrinfo`/`getnameinfo`,
-  `getifaddrs`, игнорирование SIGPIPE и подъём лимита открытых файлов.
-  Через слой идут планировщик (потоки воркеров и таймера), шардированные
-  поллеры `task_io.c` (§10.9), паника (backtrace),
-  `std.crypto.rand`/`std.random` (энтропия) и `std.net` (§16).
-- **kqueue не запускался**: здесь нет macOS/BSD. `poll_kqueue.c` и
-  BSD/macOS-ветки `net_posix.c` проверены `clang -fsyntax-only -Wall
-  -Wextra -Werror -D__APPLE__` (и `-D__OpenBSD__` без `EVFILT_USER`) на
-  Linux с заглушкой `<sys/event.h>` (struct kevent, EV_*/EVFILT_*,
-  kqueue/kevent); `-target arm64-apple-macos12` без SDK невозможен. Остаётся
-  прогнать `make -C runtime test` (test_net, test_platform) на macOS в CI.
-- Ещё вне слоя: мьютексы и условные переменные (pthreads прямо в `task.c`),
-  `std_time.c`, `std_fs.c`, `std_os.c`, `io.c` (POSIX) — переносятся вместе с
-  портом на Windows; IOCP для Windows не написан (план ниже).
+- **linux-amd64**: компилятор, рантайм, все тесты (`make -C runtime test`,
+  `cargo test --workspace`).
+- **Слой `runtime/src/platform/` завершён**: вне `platform/` в рантайме нет
+  ни одного `#ifdef` ОС и ни одного прямого вызова POSIX/Win32
+  (`runtime/ABI.md` §15). Через слой идут потоки, мьютексы/условные
+  переменные/once/TLS (`slang__plat_mutex` и т. д.: pthreads inline в
+  `platform.h`; SRWLOCK/CONDITION_VARIABLE/INIT_ONCE/FLS в `win32.c`; имени
+  `slang_mutex` нет — оно занято ABI-типом `Mutex`), часы (`mono_ns`,
+  `wall_ns`, `sleep_ns`), календарь (`utc_tm`/`timegm` на чистом C),
+  `strftime`/`strptime`, файлы и каталоги (`fs_posix.c`/`fs_win32.c`),
+  процессы (`fs_posix.c`/`proc_win32.c`), сигналы, пользователи,
+  окружение, консоль, aligned-память, сокеты, поллер, backtrace, `dlopen`.
+- **windows-amd64 (MinGW ABI) — кросс-сборка с Linux и запуск под Wine**:
+  - `make -C runtime CROSS=x86_64-w64-mingw32` собирает
+    `runtime/build/win64/libslang_rt.a` (копия в
+    `runtime/build/x86_64-pc-windows-gnu/`) через `clang -target
+    x86_64-w64-mingw32` с `-Wall -Wextra -Werror`; без clang —
+    `x86_64-w64-mingw32-gcc`. clang предпочтителен: тот же native TLS, что
+    у кода LLVM (gcc для mingw использует emutls).
+  - `slang build --target windows-amd64 x.sl` → `x.exe` (PE32+, COFF-объект
+    от LLVM с datalayout и соглашением вызовов Win64 из triple; на границе
+    ABI только скаляры и указатели, так что структуры по значению и varargs
+    Win64 не участвуют). Линковка: `clang -target x86_64-w64-mingw32
+    -fuse-ld=lld` + рантайм + ws2_32, iphlpapi, bcrypt, shell32, advapi32.
+    Рантайм цели ищется в `~/.slang/targets/<triple>/libslang_rt.a`
+    (`$SLANG_TARGETS`), затем `runtime/build/<triple>/`.
+    `slang run --target windows-amd64` запускает через Wine (`$SLANG_WINE`).
+    Отладочная информация — DWARF (gdb/lldb); для MSVC ABI выставляется
+    флаг модуля CodeView.
+  - Под Wine 9.0 работают байт-в-байт с Linux-ными `.out` (без
+    нормализации CRLF: `println` пишет `\n`, stdout/stderr в двоичном
+    режиме): 37 примеров в отладочной сборке с `--leak-check` (hello,
+    arith, control, functions, structs, switch, enums, slices_maps, strings,
+    interfaces, errors, errors_trace, defer, bank, async, cancel, channels,
+    drop, generics, weak, json, reflection, regex, sealed_shapes, try_block,
+    task_context, tracing, log, metrics, cli_tool, stdlib_* ×6, multi),
+    7 в `--release` и сетевые tcp_echo, http_server, tls_echo, redis,
+    http_realtime (Winsock2 + поллер, loopback; http_realtime — HTTP/2,
+    WebSocket, SSE — один раз упал с connection reset в самом первом
+    запуске на свежем префиксе Wine, в следующих 16 прошёл) —
+    `compiler/tests/cross.rs`. Не
+    применимы: cfg (Windows-вариант ссылается на несуществующий `winapi`),
+    stdlib_time_os_fs (пути `\` и буквы дисков против Unix-путей в `.out`),
+    sql (нет libsqlite3 для mingw — `std.database.sqlite` на Windows
+    опционален: нужна своя сборка sqlite3 под mingw), cpuprofile (нет
+    сэмплера).
+  - C-тесты рантайма под Wine (`make -C runtime CROSS=x86_64-w64-mingw32
+    test-wine`): проходят 18 из 19 — arena, crypto, error, http, infra, io,
+    json, map, mem, panic, platform (потоки, локи, once/TLS, файлы с
+    не-ASCII именами, `strftime`/`strptime`, поллер, ожидания
+    готовности, сокеты), slice, std, std2, std3, std4, string, task;
+    `test_net` написан на POSIX-сокетах и `fork`/сигналах и под Windows не
+    собирается. Тестовый код (не рантайм) использует winpthreads и
+    POSIX-шимы из `tests/test.h`; `run_child` вместо `fork` перезапускает
+    тест с `SLANG_TEST_CHILD`. Wine нужен UTF-8-локаль (`LC_ALL=C.UTF-8`)
+    для не-ASCII имён файлов.
+  - Что сделано в Windows-слое: потоки `CreateThread`; часы
+    `QueryPerformanceCounter` и `GetSystemTimePreciseAsFileTime`; энтропия
+    `BCryptGenRandom`; backtrace `CaptureStackBackTrace` (модуль+смещение;
+    символов нет: DbgHelp не читает DWARF); `LoadLibraryW`; argv в UTF-8
+    из `CommandLineToArgvW`; консоль — `WriteConsoleW` с переносом
+    неполных UTF-8-последовательностей между вызовами, `CP_UTF8` и
+    `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (ANSI-цвета); файлы через
+    `CreateFileW` + `_open_osfhandle` (0/1/2 остаются стандартными
+    потоками), UTF-16 и оба разделителя, `pread` без сдвига позиции;
+    `std.fs` на Windows разбирает `/` и `\`, буквы дисков и отдаёт `\`;
+    процессы `CreateProcessW` (кавычки по правилам `CommandLineToArgvW`,
+    UTF-16-окружение), каналы ребёнка ретранслируются потоком в loopback-
+    сокет, чтобы их видел поллер; сигналы — `SetConsoleCtrlHandler`
+    (Ctrl+C/Break → SIGINT, close/logoff/shutdown → SIGTERM); часовой пояс —
+    UTC, либо TZif из `$TZ` (абсолютный путь или имя в `$ZONEINFO`);
+    пользователи — только текущий (`GetUserNameW`, `USERPROFILE`), групп
+    нет; корневые сертификаты — только `$SSL_CERT_FILE`; профилировщик CPU
+    — «не поддерживается».
+  - Сеть (`net_win32.c`): `WSASocketW` (overlapped, не наследуется),
+    `FIONBIO`, `getaddrinfo`/`getnameinfo`, `GetAdaptersAddresses`, опции
+    (SO_REUSEADDR в смысле POSIX — поведение Windows по умолчанию, плюс
+    `SO_EXCLUSIVEADDRUSE`; REUSEPORT и CORK — ENOPROTOOPT), AF_UNIX
+    (Windows 10 1803+, без абстрактных имён), сообщения об ошибках как на
+    Linux. `sendfile` — `pread`+`send`: `TransmitFile` на неблокирующем
+    сокете требует OVERLAPPED-завершения и придёт вместе с IOCP.
+  - Поллер v1 — `poll_wsapoll.c`: `WSAPoll` по взведённым сокетам и
+    UDP-сокет пробуждения; one-shot — снятием взвода при отчёте; взвод
+    во время ожидания будит ожидающий поток. Это O(взведённых сокетов) на
+    ожидание — нормально для клиентов и умеренных серверов; IOCP-бэкенд
+    (ниже) — для тысяч соединений, интерфейс тот же.
+  - Размер hello world (`scripts/bench-size.sh`): `--release` для Windows —
+    79 КБ (msvcrt.dll динамически, рантайм и CRT mingw статически), для
+    Linux — 34 КБ; C hello через mingw — 14 КБ.
+- **macos-arm64/amd64 — только объектные файлы**: `slang build --target
+  macos-arm64 --emit=obj` даёт Mach-O arm64 (`-target`-машина LLVM с CPU
+  `apple-m1`; явные секции и comdat для Mach-O не ставятся, мёртвый код
+  убирает `ld64 -dead_strip`). Линковка требует macOS SDK (`$SDKROOT` или
+  `xcrun`) и рантайм, собранный с ним (`make -C runtime` на Mac), — без них
+  `slang build` объясняет, чего не хватает. **kqueue не запускался**: здесь
+  нет macOS/BSD. `poll_kqueue.c` и BSD/macOS-ветки `net_posix.c`
+  проверены только синтаксически (`-D__APPLE__` со стаб-заголовками), а
+  macOS-ветки `posix.c`/`fs_posix.c` (`malloc_size`, `st_mtimespec`, поиск
+  в `PATH` вместо `execvpe`) не компилировались вовсе; CI на macOS
+  (`.github/workflows/ci.yml`) это закроет.
+- Другие цели: `--target linux-arm64 --emit=obj` (ELF aarch64), линковка
+  через `clang --target=<triple> -fuse-ld=lld` с `$SLANG_SYSROOT`.
+- CI: `.github/workflows/ci.yml` — Linux amd64/arm64, macOS arm64/amd64,
+  Windows (MSYS2 MINGW64: рантайм и C-тесты нативно, компилятор с LLVM 18),
+  кросс-джоб на Linux (рантайм для Windows с `-Werror`, `test-wine`,
+  `cargo test --test cross -- --include-ignored`, размер hello.exe).
+  Здесь он не запускался.
 
 ### Асинхронный ввод-вывод: интерфейс поллера и план для IOCP
 
@@ -155,24 +244,32 @@ READ|WRITE, token)` просит одно уведомление, `poller_wait` 
    `SIGPIPE` на Windows не существует; Unix-сокеты — `AF_UNIX` (Windows
    10 1803+), без абстрактного пространства имён.
 
-- `lld` ещё не вшит; линковка через системный `clang`.
-- Условная компиляция реализована (`compiler/src/cfg.rs`, `target.rs`):
-  `@cfg` с `os`/`arch`/`feature`/`not`/`any`/`all` на объявлениях, членах и
-  файлах, суффиксы имён файлов (в `driver::collect_files`, то есть и в
-  пакетах, и в LSP), константы `os.Name`/`Arch`/`PathSeparator`/
-  `LineSeparator`. Цель — хост или `--target <triple|alias>`; другая цель
-  пока только для `slang check` (генерация кода и линковка — для хоста),
-  так что `slang check --target windows-amd64` проверяет Windows-варианты
-  кода на Linux.
+- `lld` ещё не вшит: линковка через системный `clang` (драйвер находит
+  CRT цели) и `ld.lld`/`lld-link`, если установлены.
+- Условная компиляция (`compiler/src/cfg.rs`, `target.rs`): `@cfg` с
+  `os`/`arch`/`feature`/`not`/`any`/`all` на объявлениях, членах и файлах,
+  суффиксы имён файлов (в `driver::collect_files`, то есть и в пакетах, и
+  в LSP), константы `os.Name`/`Arch`/`PathSeparator`/`LineSeparator` —
+  все следуют `--target` и в `check`, и в `build`/`run`.
+
+**Пробелы**: IOCP-поллер (шаги 1–4 выше), `TransmitFile`, сэмплер CPU для
+Windows (`SuspendThread`/`GetThreadContext`), символы в backtrace
+(DbgHelp + PDB для MSVC ABI), ABI MSVC целиком (рантайм под MSVC, Windows
+SDK, `lld-link`, PDB), часовые пояса Windows (`GetDynamicTimeZoneInformation`
+→ IANA), хранилище сертификатов Windows/keychain macOS, `test_net` для
+Windows, macOS SDK для линковки и запуск на настоящих macOS/Windows.
 
 ## Этапы
 
-1. Выделить `runtime/src/platform/` (posix.c), убрать прямые вызовы из
-   остального рантайма; ✅ `@cfg` и файловые суффиксы в компиляторе;
-   ✅ `os.Name/Arch`.
+1. ✅ Выделить `runtime/src/platform/` (posix.c, fs_posix.c), убрать прямые
+   вызовы из остального рантайма; ✅ `@cfg` и файловые суффиксы в
+   компиляторе; ✅ `os.Name/Arch`.
 2. macOS arm64/amd64: kqueue-бэкенд планировщика, CI на macOS.
-3. Windows amd64: win32.c (потоки, файлы, консоль UTF-8, Winsock, IOCP),
-   PE/COFF через lld, CodeView, CI на Windows.
-4. Кросс-компиляция `--target`, `slang target add`, прекомпилированные
-   рантаймы, релизные сборки под все tier-1.
+3. Windows amd64: ✅ win32.c (потоки, файлы, консоль UTF-8, Winsock,
+   процессы, сигналы), ✅ PE/COFF через lld (MinGW ABI), поллер v1 на
+   WSAPoll; IOCP, CodeView/MSVC ABI, CI на Windows — дальше.
+4. Кросс-компиляция: ✅ `--target` в `build`/`run` (Windows через Wine,
+   macOS — объектники), ✅ поиск рантайма `~/.slang/targets/<triple>/`;
+   `slang target add`, прекомпилированные рантаймы, релизные сборки под
+   все tier-1 — дальше.
 5. linux-arm64, musl, FreeBSD; позже wasm32-wasi.

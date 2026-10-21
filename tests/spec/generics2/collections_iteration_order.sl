@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.collections_iteration_order
 
-import std.io
 import std.collections
+import std.io
 
 func main() {
     var m = Map<string, int>{}

@@ -1,7 +1,7 @@
 namespace examples.metrics
 
-import std.io
 import std
+import std.io
 import std.net
 
 // std.diag metrics: counters, gauges and histograms with labels, exposed
@@ -45,7 +45,17 @@ async func main() void! {
 
     // Runtime figures (also in PrometheusText after EnableRuntimeMetrics).
     var rt = diag.Runtime()
-    println("live objects:", rt.LiveObjects > 0, "allocations:", rt.Allocations >= rt.LiveObjects, "workers:", rt.Workers > 0)
+    println(
+        "live objects:",
+        rt.LiveObjects > 0,
+        "allocations:",
+        rt.Allocations >= rt.LiveObjects,
+        "workers:",
+        rt.Workers > 0,
+    )
     diag.EnableRuntimeMetrics()
-    println("runtime metrics:", strings.Contains(diag.PrometheusText(), "# TYPE slang_scheduler_queue_length gauge"))
+    println(
+        "runtime metrics:",
+        strings.Contains(diag.PrometheusText(), "# TYPE slang_scheduler_queue_length gauge"),
+    )
 }

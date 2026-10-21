@@ -3,6 +3,7 @@
 namespace spec.interfaces2.sealed_other_namespace_error
 
 import std.io
+
 import spec.interfaces2.sealed_other_namespace_error.shapes
 
 struct Hexagon implements shapes.Shape {

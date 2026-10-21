@@ -12,7 +12,7 @@ import std.io
 
 @binary.binary(endian: "big")
 struct Record {
-    Id uint32
+    Id    uint32
     Score int16
     Flags byte
 }
@@ -23,7 +23,9 @@ func main() void! {
     var ws []io.Writer = [sink, &h]
     var bw = io.NewBufferedWriter(io.MultiWriter(ws))
     for i in 1..4 {
-        _ = bw.WriteString(fmt.Format("item {0}: {1}\n", i, strconv.Quote(strings.Repeat("ab", i))))?
+        _ = bw.WriteString(
+            fmt.Format("item {0}: {1}\n", i, strconv.Quote(strings.Repeat("ab", i))),
+        )?
     }
     bw.Flush()?
     println(sink.Len(), "bytes, fnv64a", strconv.FormatUint(h.Sum64(), 16))
@@ -43,7 +45,10 @@ func main() void! {
         }
     }
     println("records:", hex.Encode(recs), "size", binary.Size<Record>())
-    var second = binary.Decode<Record>(recs[binary.Size<Record>()..], binary.ByteOrder.LittleEndian)?
+    var second = binary.Decode<Record>(
+        recs[binary.Size<Record>()..],
+        binary.ByteOrder.LittleEndian,
+    )?
     println("second:", second.Id, second.Score, second.Flags)
     var v []byte = []
     v = binary.AppendUvarint(v, 300)
@@ -56,7 +61,12 @@ func main() void! {
     print(text)
     var back = pem.Decode(text)
     if back.Block != nil {
-        println(back.Block.Header("Count"), slices.Equal(back.Block.Bytes, recs), "crc32", crc32.ChecksumIEEE(back.Block.Bytes))
+        println(
+            back.Block.Header("Count"),
+            slices.Equal(back.Block.Bytes, recs),
+            "crc32",
+            crc32.ChecksumIEEE(back.Block.Bytes),
+        )
     }
     println(base32.Encode(recs[..5]), strings.ToLower(base32.EncodeHex(strings.Bytes("slang"))))
     var letters = 0

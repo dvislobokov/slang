@@ -1,5 +1,6 @@
 #include "test.h"
 #include <pthread.h>
+#include <sched.h>
 #include <time.h>
 
 static int64_t now_ms(void) {
@@ -268,6 +269,48 @@ static void early_result(void) {
     slang_task_result(t);
 }
 
+/* ---- a destructor run by a worker's release of the job's task starts a
+ * task (regression: the worker's current-task slot still named the dying
+ * task, which the new task took as its parent: resurrected, double free) ---- */
+
+static int64_t drop_job_go, drop_ran;
+
+static void guard_drop(void *obj) {
+    (void)obj;
+    slang_task *n = slang_task_new(0, NULL);   /* parent = the current task */
+    slang_task_complete(n, NULL);
+    slang_release(n);
+    __atomic_store_n(&drop_ran, 1, __ATOMIC_RELEASE);
+}
+
+static const slang_type_info guard_type = { "Guard", 0, guard_drop };
+
+static void wait_flag(void *arg) {
+    (void)arg;
+    while (!__atomic_load_n(&drop_job_go, __ATOMIC_ACQUIRE)) sched_yield();
+}
+
+TEST(drop_in_job_teardown_starts_task) {
+    for (int round = 0; round < 50; round++) {
+        drop_job_go = drop_ran = 0;
+        slang_task *t = slang_task_new_plain(8, &slang_ops_ref);
+        void *g = slang_object_new(&guard_type, 16);
+        slang_task_complete(t, &g);              /* the result holds the guard */
+        slang_release(g);
+        slang_task *prev = slang_task_enter_scope(t);
+        slang_sched_post(wait_flag, NULL);       /* the job runs as task t */
+        slang_task_leave_scope(prev);
+        slang_release(prev);
+        slang_release(t);                        /* the job's is the last reference */
+        __atomic_store_n(&drop_job_go, 1, __ATOMIC_RELEASE);
+        int64_t t0 = now_ms();
+        while (!__atomic_load_n(&drop_ran, __ATOMIC_ACQUIRE)) {
+            assert(now_ms() - t0 < 5000);
+            sched_yield();
+        }
+    }
+}
+
 TEST(misuse_panics) {
     char buf[8192];
     assert(run_child(double_complete, buf, sizeof buf) == 2);
@@ -300,6 +343,7 @@ int main(int argc, char **argv) {
     RUN(channel_unbuffered);
     RUN(channel_buffered);
     RUN(channel_async_and_strings);
+    RUN(drop_in_job_teardown_starts_task);
 
     slang_runtime_shutdown();
     assert(slang_live_objects() == live);

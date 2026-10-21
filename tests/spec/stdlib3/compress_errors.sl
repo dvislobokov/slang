@@ -90,10 +90,14 @@ func main() void! {
         return compress.zstd.Decompress(cut(zs, 12))?
     })
     show(func() []byte! {
-        return compress.zstd.Decompress(encoding.hex.Decode("28b52ffd2101000a5100006672616d652074776f0a")?)?
+        return compress.zstd.Decompress(
+            encoding.hex.Decode("28b52ffd2101000a5100006672616d652074776f0a")?,
+        )?
     })
     show(func() []byte! {
-        return compress.zstd.Decompress(encoding.hex.Decode("28b52ffd240a510000aaaaaaaaaaaaaaaaaaaa00000000")?)?
+        return compress.zstd.Decompress(
+            encoding.hex.Decode("28b52ffd240a510000aaaaaaaaaaaaaaaaaaaa00000000")?,
+        )?
     })
     // streaming readers report errors when fed and when closed early
     var r = compress.gzip.NewReader()

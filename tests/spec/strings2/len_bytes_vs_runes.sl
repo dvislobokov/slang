@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.len_bytes_vs_runes
 
-import std.io
 import std
+import std.io
 
 func main() {
     for s in ["abc", "héllo", "привет", "日本語", "🙂👍", ""] {

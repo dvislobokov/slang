@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.collection_private_member
 
-import std.io
 import std.collections
+import std.io
 
 func main() {
     var l = List<int>{}

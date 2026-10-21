@@ -26,9 +26,9 @@ struct Options {
     Env []string
     // Start from an empty environment instead of inheriting this one.
     ClearEnv bool
-    Stdin int
-    Stdout int
-    Stderr int
+    Stdin    int
+    Stdout   int
+    Stderr   int
     // Kill the child if it runs longer (zero: no limit).
     Timeout std.time.Duration
 }
@@ -96,10 +96,10 @@ func makeBuf(n int) []byte {
 }
 
 struct procState {
-    pid int
+    pid   int
     pidfd int
-    done bool
-    code int
+    done  bool
+    code  int
 
     func Drop() {
         if this.pidfd >= 0 {
@@ -112,9 +112,9 @@ struct procState {
 struct Process {
     st *procState
     // Pipes for the streams started with Pipe (otherwise closed/empty).
-    Stdin WritePipe
-    Stdout ReadPipe
-    Stderr ReadPipe
+    Stdin   WritePipe
+    Stdout  ReadPipe
+    Stderr  ReadPipe
     timeout std.time.Duration
 
     func Pid() int {
@@ -135,8 +135,7 @@ struct Process {
     func killQuietly() {
         try {
             this.Signal(9)?
-        } catch err {
-        }
+        } catch err {}
     }
 
     // Sends signal sig (std.os.signal.SIGTERM ...).
@@ -149,7 +148,16 @@ struct Process {
 
 // Starts cmd (looked up in PATH unless it contains "/") with args.
 func Start(cmd string, args []string, opts Options) Process! {
-    var v = rtSpawn(cmd, args, opts.Env, !opts.ClearEnv, opts.Dir, opts.Stdin, opts.Stdout, opts.Stderr)?
+    var v = rtSpawn(
+        cmd,
+        args,
+        opts.Env,
+        !opts.ClearEnv,
+        opts.Dir,
+        opts.Stdin,
+        opts.Stdout,
+        opts.Stderr,
+    )?
     return Process{
         st: new procState{pid: v[0], pidfd: v[1]},
         Stdin: WritePipe{st: new pipeFd{fd: v[2]}},
@@ -162,8 +170,8 @@ func Start(cmd string, args []string, opts Options) Process! {
 // The outcome of Run.
 struct Result {
     ExitCode int
-    Stdout string
-    Stderr string
+    Stdout   string
+    Stderr   string
 
     // True if the exit code is 0.
     func Success() bool {
@@ -193,7 +201,11 @@ async func RunWith(cmd string, args []string, opts Options) Result! {
     var code = await p.Wait()?
     var ob = await out
     var eb = await errs
-    return Result{ExitCode: code, Stdout: std.strings.FromBytes(ob), Stderr: std.strings.FromBytes(eb)}
+    return Result{
+        ExitCode: code,
+        Stdout: std.strings.FromBytes(ob),
+        Stderr: std.strings.FromBytes(eb),
+    }
 }
 
 // The stdout of cmd; an error (with stderr) if it exits non-zero.

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.attributes2.repeated_field_order
 
-import std.io
 import std
+import std.io
 
 @attribute(repeatable: true)
 struct rule {
@@ -12,7 +12,7 @@ struct rule {
 
 struct Signup {
     @rule("required") @rule("email") @rule("max:64") Email string
-    @rule("optional") Nick string
+    @rule("optional")                                Nick  string
 }
 
 func main() {

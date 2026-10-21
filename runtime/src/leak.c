@@ -4,8 +4,8 @@
  * registered fields that point at another leaked object are edges, and an
  * edge that lies on a cycle is reported as a candidate for `weak`. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,20 +14,20 @@ typedef struct { const slang_type_info *type; const slang_leak_field *fields; } 
 
 static reg *g_regs;
 static int64_t g_nregs, g_capregs;
-static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex g_mu = SLANG_PLAT_MUTEX_INIT;
 
 void slang_leak_fields(const slang_type_info *type, const slang_leak_field *fields) {
     if (!type || !fields) return;
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     if (g_nregs == g_capregs) {
         int64_t cap = g_capregs ? g_capregs * 2 : 32;
         reg *n = realloc(g_regs, (size_t)cap * sizeof *n);
-        if (!n) { pthread_mutex_unlock(&g_mu); return; }
+        if (!n) { slang__plat_mutex_unlock(&g_mu); return; }
         g_regs = n;
         g_capregs = cap;
     }
     g_regs[g_nregs++] = (reg){ type, fields };
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }
 
 static const slang_leak_field *fields_of(const slang_type_info *t) {

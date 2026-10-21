@@ -21,11 +21,11 @@ struct Reader {
     TrimLeadingSpace bool
     // Fields per record: > 0 required count, 0 set by the first record, < 0 any.
     FieldsPerRecord int
-    text string
-    pos int
-    numLine int
-    recordLine int
-    eof bool
+    text            string
+    pos             int
+    numLine         int
+    recordLine      int
+    eof             bool
 
     // The next record, or nil at the end of the text.
     func Read() []string! {
@@ -35,7 +35,9 @@ struct Reader {
         }
         if this.FieldsPerRecord > 0 {
             if len(rec) != this.FieldsPerRecord {
-                return error(std.fmt.Format("record on line {0}: wrong number of fields", this.recordLine))
+                return error(
+                    std.fmt.Format("record on line {0}: wrong number of fields", this.recordLine),
+                )
             }
         } else if this.FieldsPerRecord == 0 {
             this.FieldsPerRecord = len(rec)
@@ -132,7 +134,14 @@ struct Reader {
                 if !this.LazyQuotes {
                     var q = std.strings.Index(field, "\"")
                     if q >= 0 {
-                        return error(parseError(recLine, this.numLine, col + q, "bare \" in non-quoted-field"))
+                        return error(
+                            parseError(
+                                recLine,
+                                this.numLine,
+                                col + q,
+                                "bare \" in non-quoted-field",
+                            ),
+                        )
                     }
                 }
                 fields = append(fields, field)
@@ -169,7 +178,14 @@ struct Reader {
                     } else if this.LazyQuotes {
                         b.Write("\"")
                     } else {
-                        return error(parseError(recLine, this.numLine, col - 1, "extraneous or missing \" in quoted-field"))
+                        return error(
+                            parseError(
+                                recLine,
+                                this.numLine,
+                                col - 1,
+                                "extraneous or missing \" in quoted-field",
+                            ),
+                        )
                     }
                 } else if len(line) > 0 {
                     b.Write(line)
@@ -181,7 +197,14 @@ struct Reader {
                     }
                 } else {
                     if !this.LazyQuotes {
-                        return error(parseError(recLine, lineNo, col, "extraneous or missing \" in quoted-field"))
+                        return error(
+                            parseError(
+                                recLine,
+                                lineNo,
+                                col,
+                                "extraneous or missing \" in quoted-field",
+                            ),
+                        )
                     }
                     fields = append(fields, b.String())
                     return fields
@@ -198,7 +221,13 @@ func isSpace(c int) bool {
 
 func parseError(start int, line int, col int, msg string) string {
     if start != line {
-        return std.fmt.Format("record on line {0}; parse error on line {1}, column {2}: {3}", start, line, col, msg)
+        return std.fmt.Format(
+            "record on line {0}; parse error on line {1}, column {2}: {3}",
+            start,
+            line,
+            col,
+            msg,
+        )
     }
     return std.fmt.Format("parse error on line {0}, column {1}: {2}", line, col, msg)
 }
@@ -217,7 +246,7 @@ struct Writer {
     Comma char = ','
     // End lines with \r\n instead of \n.
     UseCRLF bool
-    b std.strings.Builder
+    b       std.strings.Builder
 
     func Write(record []string) {
         var comma = string(this.Comma)
@@ -287,7 +316,10 @@ func needsQuotes(f string, comma string) bool {
     if f == "\\." {
         return true
     }
-    if std.strings.Contains(f, comma) || std.strings.Contains(f, "\"") || std.strings.Contains(f, "\n") || std.strings.Contains(f, "\r") {
+    if std.strings.Contains(f, comma) ||
+        std.strings.Contains(f, "\"") ||
+        std.strings.Contains(f, "\n") ||
+        std.strings.Contains(f, "\r") {
         return true
     }
     var c = int(f[0])
@@ -361,18 +393,33 @@ func fillRow<T>(row *T, rec []string, cols map[string]int, byName bool, line int
         } else if byName {
             col = cols[name] - 1
             if col < 0 {
-                return error(std.fmt.Format("csv: line {0}: no column {1}", line, std.encoding.json.Quote(name)))
+                return error(
+                    std.fmt.Format(
+                        "csv: line {0}: no column {1}",
+                        line,
+                        std.encoding.json.Quote(name),
+                    ),
+                )
             }
         }
         if col >= len(rec) {
-            return error(std.fmt.Format("csv: line {0}: no column {1} (the record has {2} fields)", line, col, len(rec)))
+            return error(
+                std.fmt.Format(
+                    "csv: line {0}: no column {1} (the record has {2} fields)",
+                    line,
+                    col,
+                    len(rec),
+                ),
+            )
         }
         setCell(&f.Get(*row), rec[col], line, name)?
     }
 }
 
 func cellError(line int, name string, msg string) error {
-    return error(std.fmt.Format("csv: line {0}, column {1}: {2}", line, std.encoding.json.Quote(name), msg))
+    return error(
+        std.fmt.Format("csv: line {0}, column {1}: {2}", line, std.encoding.json.Quote(name), msg),
+    )
 }
 
 func setCell<F>(p *F, s string, line int, name string) void! {
@@ -387,7 +434,14 @@ func setCell<F>(p *F, s string, line int, name string) void! {
         } else {
             return cellError(line, name, "invalid bool " + std.encoding.json.Quote(s))
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
         var t = std.strings.Trim(s)
         if t == "" {
             *p = 0
@@ -399,7 +453,8 @@ func setCell<F>(p *F, s string, line int, name string) void! {
         *p = try std.encoding.intAs<F>(v) catch err {
             return cellError(line, name, err.Message())
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
         var t = std.strings.Trim(s)
         if t == "" {
             *p = 0
@@ -413,7 +468,11 @@ func setCell<F>(p *F, s string, line int, name string) void! {
         var ty = std.reflect.TypeOf<F>()
         var variant = ty.Variant(std.strings.Trim(s))
         if variant == nil || len(variant.Fields) > 0 {
-            return cellError(line, name, "unknown " + ty.Name + " value " + std.encoding.json.Quote(s))
+            return cellError(
+                line,
+                name,
+                "unknown " + ty.Name + " value " + std.encoding.json.Quote(s),
+            )
         }
         std.reflect.storeTag(p, variant.Index)
     } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {

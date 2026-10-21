@@ -9,8 +9,8 @@
  * the weak reference yield NULL. When the last weak reference goes away the
  * box removes itself from the table and clears the flag. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <pthread.h>
 #include <stdint.h>
 
 typedef struct weak_box {
@@ -24,7 +24,7 @@ typedef struct entry {
     struct entry *next;
 } entry;
 
-static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex g_mu = SLANG_PLAT_MUTEX_INIT;
 static entry **g_buckets;
 static int64_t g_nbuckets, g_count;
 
@@ -84,14 +84,14 @@ static void remove_at(entry **pp) {
 
 static void weak_box_drop(void *obj) {
     weak_box *b = obj;
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     if (b->target) {
         entry **pp = find(b->target);
         if (pp && *pp) remove_at(pp);
         __atomic_and_fetch(&b->target->refcount, ~SLANG_RC_WEAK_FLAG, __ATOMIC_ACQ_REL);
         b->target = NULL;
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }
 
 static const slang_type_info weak_box_type = { "weak", (int64_t)sizeof(weak_box), weak_box_drop };
@@ -101,7 +101,7 @@ void *slang_weak_new(void *payload) {
     slang_object *o = (slang_object *)((char *)payload - sizeof(slang_object));
     if (__atomic_load_n(&o->refcount, __ATOMIC_RELAXED) < 0)
         slang__panicf("weak reference to an immortal object");
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     weak_box *b = NULL;
     entry **pp = find(o);
     if (pp && *pp) {
@@ -113,7 +113,7 @@ void *slang_weak_new(void *payload) {
         insert(o, b);
         __atomic_or_fetch(&o->refcount, SLANG_RC_WEAK_FLAG, __ATOMIC_ACQ_REL);
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     return b;
 }
 
@@ -121,7 +121,7 @@ void *slang_weak_get(void *box) {
     weak_box *b = box;
     if (!b) return NULL;
     void *r = NULL;
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     slang_object *o = b->target;
     if (o) {
         /* Increment only while the object is still alive (count > 0). */
@@ -134,16 +134,16 @@ void *slang_weak_get(void *box) {
             }
         }
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     return r;
 }
 
 void slang__weak_clear(slang_object *o) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     entry **pp = find(o);
     if (pp && *pp) {
         (*pp)->box->target = NULL;
         remove_at(pp);
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }

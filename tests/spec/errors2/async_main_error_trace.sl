@@ -4,8 +4,8 @@
 // stderr: created at   tests/spec/errors2/async_main_error_trace.sl:12  Fetch
 namespace spec.errors2.async_main_error_trace
 
-import std.io
 import std
+import std.io
 
 async func Fetch() int! {
     await task.Delay(1)

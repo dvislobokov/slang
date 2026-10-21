@@ -38,6 +38,15 @@ func main() {
     var (n, o) = mst.Zone()
     println(mst.Format(time.UnixDate), n, o)
     var now = time.Current()
-    var t2 = try time.ParseTime(time.RFC3339Nano, now.UTC().Format(time.RFC3339Nano)) else time.Time{}
-    println(t2.Equal(now), time.Time.Now().After(now) || time.Time.Now().Equal(now), now.Location().String(), time.Elapsed(now).Nanoseconds() >= 0, time.Until(now).Nanoseconds() <= 0)
+    var t2 = try time.ParseTime(
+        time.RFC3339Nano,
+        now.UTC().Format(time.RFC3339Nano),
+    ) else time.Time{}
+    println(
+        t2.Equal(now),
+        time.Time.Now().After(now) || time.Time.Now().Equal(now),
+        now.Location().String(),
+        time.Elapsed(now).Nanoseconds() >= 0,
+        time.Until(now).Nanoseconds() <= 0,
+    )
 }

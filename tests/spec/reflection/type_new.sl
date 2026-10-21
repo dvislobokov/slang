@@ -2,12 +2,12 @@
 // status: passing
 namespace spec.reflection.type_new
 
-import std.io
 import std
+import std.io
 
 struct User {
     Name string
-    Age int
+    Age  int
 }
 
 func main() {

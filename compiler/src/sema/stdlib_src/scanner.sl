@@ -9,9 +9,9 @@ namespace std.text.scanner
 
 struct Position {
     Filename string
-    Offset int
-    Line int
-    Column int
+    Offset   int
+    Line     int
+    Column   int
 
     func IsValid() bool {
         return this.Line > 0
@@ -35,23 +35,23 @@ struct Position {
 struct Scanner {
     src string
     // offset of the next character
-    off int
+    off  int
     line int
-    col int
+    col  int
     // last read character (for Pos) and its width
     lastLineLen int
-    ch int
-    tokStart int
-    tokEnd int
-    invalid int
+    ch          int
+    tokStart    int
+    tokEnd      int
+    invalid     int
 
     Mode int
     // bit c set: character c (< 64) is skipped
     Whitespace int
-    Filename string
+    Filename   string
     // The position of the most recent token (set by Scan).
-    Pos Position
-    Errors []string
+    Pos        Position
+    Errors     []string
     ErrorCount int
 
     // Resets the scanner to the start of src (keeps Mode/Whitespace).
@@ -109,7 +109,12 @@ struct Scanner {
     // Reads and returns the next character (EOF at the end).
     func Next() int {
         this.tokStart = -1
-        this.Pos = Position{Filename: this.Filename, Offset: this.off, Line: this.line, Column: this.col}
+        this.Pos = Position{
+            Filename: this.Filename,
+            Offset: this.off,
+            Line: this.line,
+            Column: this.col,
+        }
         return this.next()
     }
 
@@ -152,7 +157,12 @@ struct Scanner {
                 c = this.peekc()
             }
             this.tokStart = this.off
-            this.Pos = Position{Filename: this.Filename, Offset: this.off, Line: this.line, Column: this.col}
+            this.Pos = Position{
+                Filename: this.Filename,
+                Offset: this.off,
+                Line: this.line,
+                Column: this.col,
+            }
             if c < 0 {
                 this.tokEnd = this.off
                 return EOF
@@ -185,7 +195,9 @@ struct Scanner {
                 this.next()
                 this.rawString()
                 tok = RawString
-            } else if c == 47 && (this.Mode & ScanComments) != 0 && (this.second() == 47 || this.second() == 42) {
+            } else if c == 47 &&
+                (this.Mode & ScanComments) != 0 &&
+                (this.second() == 47 || this.second() == 42) {
                 this.next()
                 this.comment()
                 if (this.Mode & SkipComments) != 0 {
@@ -315,7 +327,15 @@ struct Scanner {
 
     func escape(quote int) {
         var c = this.peekc()
-        if c == quote || c == 97 || c == 98 || c == 102 || c == 110 || c == 114 || c == 116 || c == 118 || c == 92 {
+        if c == quote ||
+            c == 97 ||
+            c == 98 ||
+            c == 102 ||
+            c == 110 ||
+            c == 114 ||
+            c == 116 ||
+            c == 118 ||
+            c == 92 {
             this.next()
             return
         }
@@ -436,7 +456,12 @@ struct Scanner {
 
     // The position just after the last read character or token.
     func Position() Position {
-        return Position{Filename: this.Filename, Offset: this.off, Line: this.line, Column: this.col}
+        return Position{
+            Filename: this.Filename,
+            Offset: this.off,
+            Line: this.line,
+            Column: this.col,
+        }
     }
 }
 

@@ -1,0 +1,398 @@
+namespace std.bytes
+
+// std.bytes: the std.strings functions over []byte, and Buffer.
+// Functions returning []byte return a new slice unless they say they
+// share storage (sub-slices of the argument). Case mapping and white
+// space follow std.strings (they round-trip through it).
+
+// A growable byte buffer: write at the end, read from the front. The
+// zero value is an empty buffer ready to use. Implements std.io.Reader
+// and std.io.Writer.
+struct Buffer {
+    buf []byte
+    off int
+
+    // Appends p; returns len(p).
+    func Write(p []byte) int! {
+        for c in p {
+            this.buf = append(this.buf, c)
+        }
+        return len(p)
+    }
+
+    // Appends the bytes of s.
+    func WriteString(s string) int! {
+        for i in 0..len(s) {
+            this.buf = append(this.buf, s[i])
+        }
+        return len(s)
+    }
+
+    // Appends one byte.
+    func WriteByte(c byte) {
+        this.buf = append(this.buf, c)
+    }
+
+    // Appends the UTF-8 encoding of r.
+    func WriteRune(r char) {
+        var s = std.strings.FromRunes([r])
+        for i in 0..len(s) {
+            this.buf = append(this.buf, s[i])
+        }
+    }
+
+    // The unread bytes (shares the buffer's storage until the next write).
+    func Bytes() []byte {
+        return this.buf[this.off..]
+    }
+
+    // The unread bytes as a string.
+    func String() string {
+        return std.strings.FromBytes(this.buf[this.off..])
+    }
+
+    // Number of unread bytes.
+    func Len() int {
+        return len(this.buf) - this.off
+    }
+
+    // Empties the buffer.
+    func Reset() {
+        this.buf = nil
+        this.off = 0
+    }
+
+    // Keeps only the first n unread bytes.
+    func Truncate(n int) {
+        if n < 0 || n > this.Len() {
+            panic("bytes.Buffer: truncation out of range")
+        }
+        this.buf = this.buf[..this.off + n]
+    }
+
+    // Reads up to len(p) bytes into p; 0 at the end (io.Reader contract).
+    func Read(p []byte) int! {
+        var n = 0
+        for n < len(p) && this.off < len(this.buf) {
+            p[n] = this.buf[this.off]
+            n += 1
+            this.off += 1
+        }
+        if this.off == len(this.buf) {
+            this.buf = nil
+            this.off = 0
+        }
+        return n
+    }
+
+    // The next n unread bytes (fewer at the end), consumed.
+    func Next(n int) []byte {
+        var end = this.off + n
+        if end > len(this.buf) {
+            end = len(this.buf)
+        }
+        var out = Clone(this.buf[this.off..end])
+        this.off = end
+        return out
+    }
+
+    // Reads one byte; an error at the end.
+    func ReadByte() byte! {
+        if this.off >= len(this.buf) {
+            return error("EOF")
+        }
+        var c = this.buf[this.off]
+        this.off += 1
+        return c
+    }
+
+    // Reads up to and including delim (or to the end, with an error if
+    // delim was not found).
+    func ReadString(delim byte) string! {
+        var start = this.off
+        for this.off < len(this.buf) {
+            var c = this.buf[this.off]
+            this.off += 1
+            if c == delim {
+                return std.strings.FromBytes(this.buf[start..this.off])
+            }
+        }
+        if start == this.off {
+            return error("EOF")
+        }
+        return std.strings.FromBytes(this.buf[start..this.off])
+    }
+}
+
+// A new Buffer holding a copy of b.
+func NewBuffer(b []byte) Buffer {
+    return Buffer{buf: Clone(b)}
+}
+
+// A new Buffer holding the bytes of s.
+func NewBufferString(s string) Buffer {
+    return Buffer{buf: std.strings.Bytes(s)}
+}
+
+// A copy of b.
+func Clone(b []byte) []byte {
+    var out []byte = []
+    for c in b {
+        out = append(out, c)
+    }
+    return out
+}
+
+// True if a and b hold the same bytes.
+func Equal(a []byte, b []byte) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i, c in a {
+        if c != b[i] {
+            return false
+        }
+    }
+    return true
+}
+
+// Lexicographic comparison: -1, 0 or +1.
+func Compare(a []byte, b []byte) int {
+    var n = len(a)
+    if len(b) < n {
+        n = len(b)
+    }
+    for i in 0..n {
+        if a[i] != b[i] {
+            if a[i] < b[i] {
+                return -1
+            }
+            return 1
+        }
+    }
+    if len(a) < len(b) {
+        return -1
+    }
+    if len(a) > len(b) {
+        return 1
+    }
+    return 0
+}
+
+func matchAt(s []byte, sep []byte, i int) bool {
+    for j in 0..len(sep) {
+        if s[i + j] != sep[j] {
+            return false
+        }
+    }
+    return true
+}
+
+// Index of the first occurrence of sep in s, or -1 (0 for empty sep).
+func Index(s []byte, sep []byte) int {
+    var n = len(sep)
+    if n == 0 {
+        return 0
+    }
+    var i = 0
+    for i + n <= len(s) {
+        if s[i] == sep[0] && matchAt(s, sep, i) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+// Index of the last occurrence of sep in s, or -1 (len(s) for empty sep).
+func LastIndex(s []byte, sep []byte) int {
+    var i = len(s) - len(sep)
+    for i >= 0 {
+        if matchAt(s, sep, i) {
+            return i
+        }
+        i -= 1
+    }
+    return -1
+}
+
+// Index of the first c in s, or -1.
+func IndexByte(s []byte, c byte) int {
+    for i, x in s {
+        if x == c {
+            return i
+        }
+    }
+    return -1
+}
+
+// True if sep occurs in s.
+func Contains(s []byte, sep []byte) bool {
+    return Index(s, sep) >= 0
+}
+
+// Number of non-overlapping occurrences of sep (rune count + 1 for empty sep).
+func Count(s []byte, sep []byte) int {
+    if len(sep) == 0 {
+        return std.strings.Count(std.strings.FromBytes(s), "")
+    }
+    var n = 0
+    var i = 0
+    for i + len(sep) <= len(s) {
+        if matchAt(s, sep, i) {
+            n += 1
+            i += len(sep)
+        } else {
+            i += 1
+        }
+    }
+    return n
+}
+
+// True if s starts with prefix.
+func HasPrefix(s []byte, prefix []byte) bool {
+    return len(s) >= len(prefix) && matchAt(s, prefix, 0)
+}
+
+// True if s ends with suffix.
+func HasSuffix(s []byte, suffix []byte) bool {
+    return len(s) >= len(suffix) && matchAt(s, suffix, len(s) - len(suffix))
+}
+
+// The pieces of s between the occurrences of sep (copies). Empty sep
+// splits into UTF-8 sequences.
+func Split(s []byte, sep []byte) [][]byte {
+    var out [][]byte = []
+    if len(sep) == 0 {
+        for p in std.strings.Split(std.strings.FromBytes(s), "") {
+            out = append(out, std.strings.Bytes(p))
+        }
+        return out
+    }
+    var start = 0
+    var i = 0
+    for i + len(sep) <= len(s) {
+        if matchAt(s, sep, i) {
+            out = append(out, Clone(s[start..i]))
+            i += len(sep)
+            start = i
+        } else {
+            i += 1
+        }
+    }
+    out = append(out, Clone(s[start..]))
+    return out
+}
+
+// Pieces separated by runs of white space.
+func Fields(s []byte) [][]byte {
+    var out [][]byte = []
+    for p in std.strings.Fields(std.strings.FromBytes(s)) {
+        out = append(out, std.strings.Bytes(p))
+    }
+    return out
+}
+
+// The parts joined with sep.
+func Join(parts [][]byte, sep []byte) []byte {
+    var out []byte = []
+    for i, p in parts {
+        if i > 0 {
+            for c in sep {
+                out = append(out, c)
+            }
+        }
+        for c in p {
+            out = append(out, c)
+        }
+    }
+    return out
+}
+
+// s repeated n times. Panics if n < 0.
+func Repeat(s []byte, n int) []byte {
+    if n < 0 {
+        panic("bytes: negative Repeat count")
+    }
+    var out []byte = []
+    for _ in 0..n {
+        for c in s {
+            out = append(out, c)
+        }
+    }
+    return out
+}
+
+// s with every non-overlapping old replaced by new.
+func Replace(s []byte, old []byte, repl []byte) []byte {
+    if len(old) == 0 {
+        return std.strings.Bytes(
+            std.strings.Replace(std.strings.FromBytes(s), "", std.strings.FromBytes(repl)),
+        )
+    }
+    var out []byte = []
+    var i = 0
+    for i < len(s) {
+        if i + len(old) <= len(s) && matchAt(s, old, i) {
+            for c in repl {
+                out = append(out, c)
+            }
+            i += len(old)
+        } else {
+            out = append(out, s[i])
+            i += 1
+        }
+    }
+    return out
+}
+
+// s with leading and trailing Unicode white space removed.
+func Trim(s []byte) []byte {
+    return std.strings.Bytes(std.strings.Trim(std.strings.FromBytes(s)))
+}
+
+// s with leading bytes in cutset removed (ASCII cutset; see strings.TrimLeft).
+func TrimLeft(s []byte, cutset string) []byte {
+    return std.strings.Bytes(std.strings.TrimLeft(std.strings.FromBytes(s), cutset))
+}
+
+// s with trailing characters in cutset removed.
+func TrimRight(s []byte, cutset string) []byte {
+    return std.strings.Bytes(std.strings.TrimRight(std.strings.FromBytes(s), cutset))
+}
+
+// s without prefix (if present); a copy.
+func TrimPrefix(s []byte, prefix []byte) []byte {
+    if HasPrefix(s, prefix) {
+        return Clone(s[len(prefix)..])
+    }
+    return Clone(s)
+}
+
+// s without suffix (if present); a copy.
+func TrimSuffix(s []byte, suffix []byte) []byte {
+    if HasSuffix(s, suffix) {
+        return Clone(s[..len(s) - len(suffix)])
+    }
+    return Clone(s)
+}
+
+// Upper-case copy (std.strings.ToUpper rules).
+func ToUpper(s []byte) []byte {
+    return std.strings.Bytes(std.strings.ToUpper(std.strings.FromBytes(s)))
+}
+
+// Lower-case copy (std.strings.ToLower rules).
+func ToLower(s []byte) []byte {
+    return std.strings.Bytes(std.strings.ToLower(std.strings.FromBytes(s)))
+}
+
+// True if s and t are equal under simple Unicode case folding.
+func EqualFold(s []byte, t []byte) bool {
+    return std.strings.EqualFold(std.strings.FromBytes(s), std.strings.FromBytes(t))
+}
+
+// The UTF-8 decoded code points of s.
+func Runes(s []byte) []char {
+    return std.strings.Runes(std.strings.FromBytes(s))
+}

@@ -6,7 +6,7 @@ namespace spec.operators.index_struct
 import std.io
 
 struct Grid {
-    W int
+    W     int
     cells []int
 
     func Index(p (int, int)) int {

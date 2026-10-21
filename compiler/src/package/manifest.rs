@@ -267,8 +267,15 @@ impl Manifest {
         }
         for (name, deps) in [("dependencies", &self.dependencies), ("dev-dependencies", &self.dev_dependencies)] {
             for (k, d) in deps {
-                if !valid_package_name(k) {
+                let module_key = super::resolve::is_module_key(k);
+                if module_key && !super::store::valid_module_path(k) {
+                    return Err(format!("invalid module path `{k}` in [{name}]"));
+                }
+                if !module_key && !valid_package_name(k) {
                     return Err(format!("invalid package name `{k}` in [{name}]"));
+                }
+                if module_key && d.path().is_some() {
+                    return Err(format!("dependency `{k}` in [{name}]: a `path` dependency is keyed by its package name"));
                 }
                 if let Dependency::Detailed(dd) = d {
                     let sources = [dd.path.is_some(), dd.git.is_some()].iter().filter(|b| **b).count();
@@ -286,7 +293,7 @@ impl Manifest {
         }
         for (f, items) in &self.features {
             for it in items {
-                match it.split_once('/') {
+                match split_feature_ref(it, &self.dependencies) {
                     Some((dep, _)) => {
                         if !self.dependencies.contains_key(dep) {
                             return Err(format!("feature `{f}` refers to `{it}`, but `{dep}` is not in [dependencies]"));
@@ -302,6 +309,20 @@ impl Manifest {
         }
         Ok(())
     }
+}
+
+/// Splits a `dep/feature` reference of a `[features]` entry; `dep` may be
+/// a module path (`github.com/org/pkg/tls`), matched against the keys of
+/// `deps` first. `None` for a plain feature name.
+pub fn split_feature_ref<'a, V>(item: &'a str, deps: &IndexMap<String, V>) -> Option<(&'a str, &'a str)> {
+    for k in deps.keys() {
+        if let Some(f) = item.strip_prefix(k.as_str()).and_then(|r| r.strip_prefix('/')) {
+            if !f.contains('/') {
+                return Some((&item[..k.len()], f));
+            }
+        }
+    }
+    item.rsplit_once('/')
 }
 
 impl Package {

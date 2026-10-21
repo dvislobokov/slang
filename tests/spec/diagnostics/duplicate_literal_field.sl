@@ -4,7 +4,9 @@ namespace spec.diagnostics.duplicate_literal_field
 
 import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 func main() {
     var p = P{X: 1, X: 2}

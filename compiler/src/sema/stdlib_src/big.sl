@@ -525,7 +525,10 @@ struct Rat {
     }
 
     func Add(y Rat) Rat {
-        return RatFromInts(this.num.Mul(y.Denom()).Add(y.num.Mul(this.Denom())), this.Denom().Mul(y.Denom()))
+        return RatFromInts(
+            this.num.Mul(y.Denom()).Add(y.num.Mul(this.Denom())),
+            this.Denom().Mul(y.Denom()),
+        )
     }
 
     func Sub(y Rat) Rat {
@@ -687,7 +690,7 @@ func pow10(n int) Int {
 // String keeps the scale ("1.50" stays "1.50").
 struct Decimal {
     unscaled Int
-    scale int
+    scale    int
 
     // Digits after the point.
     func Scale() int {
@@ -917,7 +920,8 @@ func ParseDecimal(s string) Decimal! {
     var exp = 0
     var e = std.strings.Index(std.strings.ToLower(body), "e")
     if e >= 0 {
-        exp = std.strconv.ParseInt(body[e + 1..], 10)?("big: parsing decimal " + std.encoding.json.Quote(s))
+        exp = std.strconv.ParseInt(body[e + 1..], 10)?("big: parsing decimal " +
+            std.encoding.json.Quote(s))
         body = body[..e]
     }
     var neg = false

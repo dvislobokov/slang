@@ -7,11 +7,8 @@
 #include "platform/platform.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 /* ---- process-wide slots ----------------------------------------------- */
 
@@ -60,9 +57,9 @@ static void file_err(slang_error **err, const char *op, const slang_string *path
 }
 
 int64_t slang_log_rt_open(const slang_string *path, slang_error **err) {
-    int fd = open(slang_string_data(path), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    int64_t fd = slang__plat_open(slang_string_data(path), SLANG_PLAT_O_WRONLY | SLANG_PLAT_O_CREATE | SLANG_PLAT_O_APPEND, 0644);
     if (fd < 0) {
-        file_err(err, "open", path, errno);
+        file_err(err, "open", path, (int)-fd);
         return -1;
     }
     if (err) *err = NULL;
@@ -72,25 +69,20 @@ int64_t slang_log_rt_open(const slang_string *path, slang_error **err) {
 void slang_log_rt_write(int64_t fd, const slang_string *s, slang_error **err) {
     const char *p = slang_string_data(s);
     int64_t n = slang_string_len(s);
-    while (n > 0) {
-        ssize_t w = write((int)fd, p, (size_t)n);
-        if (w < 0) {
-            if (errno == EINTR) continue;
-            if (err) {
-                char buf[128];
-                snprintf(buf, sizeof buf, "write log file: %s", strerror(errno));
-                *err = slang_error_new_cstr(buf);
-            }
-            return;
+    int e = slang__plat_write_all(fd, p, n);
+    if (e) {
+        if (err) {
+            char buf[128];
+            snprintf(buf, sizeof buf, "write log file: %s", strerror(e));
+            *err = slang_error_new_cstr(buf);
         }
-        p += w;
-        n -= w;
+        return;
     }
     if (err) *err = NULL;
 }
 
 void slang_log_rt_close(int64_t fd) {
-    if (fd >= 0) close((int)fd);
+    if (fd >= 0) slang__plat_close(fd);
 }
 
-bool slang_log_rt_isatty(int64_t fd) { return isatty((int)fd) == 1; }
+bool slang_log_rt_isatty(int64_t fd) { return slang__plat_isatty(fd); }

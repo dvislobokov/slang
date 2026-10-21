@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.programs.json_printer
 
-import std.io
 import std
+import std.io
 
 enum Json {
     Null
@@ -22,7 +22,8 @@ func Quote(s string) string {
             case '\\': out += "\\\\"
             case '\n': out += "\\n"
             case '\t': out += "\\t"
-            default: out += string(c)
+            default:
+                out += string(c)
         }
     }
     return out + "\""
@@ -32,7 +33,8 @@ func IsScalar(j Json) bool {
     switch j {
         case Json.Arr(_): return false
         case Json.Obj(_, _): return false
-        default: return true
+        default:
+            return true
     }
 }
 
@@ -52,7 +54,8 @@ func Compact(j Json) string {
             var parts []string = []
             for i, k in keys { parts = append(parts, Quote(k) + ": " + Compact(vals[i])) }
             return "{" + strings.Join(parts, ", ") + "}"
-        default: return "?"
+        default:
+            return "?"
     }
 }
 
@@ -82,7 +85,8 @@ func Pretty(j Json, ind int) string {
                 b += "\n"
             }
             return b + pad + "}"
-        default: return Compact(j)
+        default:
+            return Compact(j)
     }
 }
 
@@ -99,9 +103,12 @@ func Get(doc Json, path string) Json! {
                 cur = vals[found]
             case Json.Arr(items):
                 var i = try strings.ToInt(seg) else -1
-                if i < 0 || i >= len(items) { return error(fmt.Format("index {0} out of range", i)) }
+                if i < 0 || i >= len(items) {
+                    return error(fmt.Format("index {0} out of range", i))
+                }
                 cur = items[i]
-            default: return error("not a container at " + seg)
+            default:
+                return error("not a container at " + seg)
         }
     }
     return cur
@@ -117,7 +124,8 @@ func Count(j Json) int {
             var n = 1
             for v in vals { n += Count(v) }
             return n
-        default: return 1
+        default:
+            return 1
     }
 }
 
@@ -128,15 +136,30 @@ func Author(name string, commits int) Json {
 func main() {
     var noKeys []string = []
     var noVals []Json = []
-    var doc = Json.Obj(
-        ["name", "version", "tags", "deps", "authors", "meta"],
-        [Json.Str("slang"), Json.Num(0.1), Json.Arr([Json.Str("fast"), Json.Str("simple")]), Json.Obj(noKeys, noVals),
-         Json.Arr([Author("ann", 3), Author("bo", 1)]),
-         Json.Obj(["stable", "owner", "quote"], [Json.Bool(false), Json.Null, Json.Str("say \"hi\"\n")])])
+    var doc = Json.Obj(["name", "version", "tags", "deps", "authors", "meta"], [
+        Json.Str("slang"),
+        Json.Num(0.1),
+        Json.Arr([Json.Str("fast"), Json.Str("simple")]),
+        Json.Obj(noKeys, noVals),
+        Json.Arr([Author("ann", 3), Author("bo", 1)]),
+        Json.Obj(["stable", "owner", "quote"], [
+            Json.Bool(false),
+            Json.Null,
+            Json.Str("say \"hi\"\n"),
+        ]),
+    ])
     println(Pretty(doc, 0))
     println(Compact(doc))
     println("nodes", Count(doc))
-    for q in ["authors.1.name", "meta.stable", "authors.0", "tags.5", "name.x", "meta.missing", "tags.first"] {
+    for q in [
+        "authors.1.name",
+        "meta.stable",
+        "authors.0",
+        "tags.5",
+        "name.x",
+        "meta.missing",
+        "tags.first",
+    ] {
         var v = try Get(doc, q) catch err {
             println(q, "error:", err)
             continue

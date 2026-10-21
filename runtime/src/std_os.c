@@ -1,13 +1,12 @@
 /* std_os.c - std.os (slang_os_*). Args is slang_os_args (main.c). Failing
  * calls report "<op> <arg>: <strerror>" errors through the `T!` out-param. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
 #include <errno.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 static void set_err(slang_error **err, const char *op, const char *arg, int e) {
     if (!err) return;
@@ -23,8 +22,10 @@ static bool has_nul(const slang_string *s) {
 }
 
 slang_string *slang_os_getenv(const slang_string *name) {
-    const char *v = has_nul(name) ? NULL : getenv(slang_string_data(name));
-    return slang_string_from_cstr(v ? v : "");
+    char *v = has_nul(name) ? NULL : slang__plat_getenv(slang_string_data(name));
+    slang_string *r = slang_string_from_cstr(v ? v : "");
+    free(v);
+    return r;
 }
 
 void slang_os_setenv(const slang_string *name, const slang_string *value, slang_error **err) {
@@ -33,27 +34,29 @@ void slang_os_setenv(const slang_string *name, const slang_string *value, slang_
         set_err(err, "setenv", n, EINVAL);
         return;
     }
-    if (setenv(n, slang_string_data(value), 1) != 0) set_err(err, "setenv", n, errno);
+    int e = slang__plat_setenv(n, slang_string_data(value));
+    if (e) set_err(err, "setenv", n, e);
 }
 
 void slang_os_exit(int64_t code) { slang_exit((int32_t)code); }
 
 slang_string *slang_os_hostname(slang_error **err) {
-    char buf[HOST_NAME_MAX + 2];
-    if (gethostname(buf, sizeof buf) != 0) {
-        set_err(err, "hostname", NULL, errno);
+    char buf[300];
+    int e = slang__plat_hostname(buf, sizeof buf);
+    if (e) {
+        set_err(err, "hostname", NULL, e);
         return NULL;
     }
-    buf[sizeof buf - 1] = 0;
     return slang_string_from_cstr(buf);
 }
 
-int64_t slang_os_pid(void) { return (int64_t)getpid(); }
+int64_t slang_os_pid(void) { return slang__plat_pid(); }
 
 slang_string *slang_os_cwd(slang_error **err) {
-    char *p = getcwd(NULL, 0);
+    int e = 0;
+    char *p = slang__plat_getcwd(&e);
     if (!p) {
-        set_err(err, "getwd", NULL, errno);
+        set_err(err, "getwd", NULL, e);
         return NULL;
     }
     slang_string *r = slang_string_from_cstr(p);
@@ -63,5 +66,6 @@ slang_string *slang_os_cwd(slang_error **err) {
 
 void slang_os_chdir(const slang_string *path, slang_error **err) {
     if (has_nul(path)) { set_err(err, "chdir", slang_string_data(path), EINVAL); return; }
-    if (chdir(slang_string_data(path)) != 0) set_err(err, "chdir", slang_string_data(path), errno);
+    int e = slang__plat_chdir(slang_string_data(path));
+    if (e) set_err(err, "chdir", slang_string_data(path), e);
 }

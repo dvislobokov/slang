@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.generic_fallible
 
-import std.io
 import std
+import std.io
 
 func ParseAll<T>(xs []string, parse func(string) T!) []T! {
     var out []T = []
@@ -27,7 +27,10 @@ func ParseBool(s string) bool! {
 }
 
 func main() {
-    var ns = try ParseAll(["1", "22", "333"], func(s string) int! { return strings.ToInt(s)? }) catch err {
+    var ns = try ParseAll(
+        ["1", "22", "333"],
+        func(s string) int! { return strings.ToInt(s)? },
+    ) catch err {
         println("unexpected", err)
         return
     }

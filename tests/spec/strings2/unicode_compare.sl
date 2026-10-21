@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.unicode_compare
 
-import std.io
 import std
+import std.io
 
 func main() {
     println("а" < "б", "я" > "а", "z" < "а", "é" > "e", "ё" > "я")

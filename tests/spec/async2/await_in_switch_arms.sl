@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async2.await_in_switch_arms
 
-import std.io
 import std
+import std.io
 
 async func Double(n int) int {
     await task.Delay(1)
@@ -20,14 +20,16 @@ async func Apply(op Op) int {
     switch op {
         case Op.Inc(n): return n + 1
         case Op.Dbl(n): return await Double(n)
-        default: return 0
+        default:
+            return 0
     }
 }
 
 async func main() {
     switch await Double(2) {
         case 4: println("four")
-        default: println("other")
+        default:
+            println("other")
     }
     var ops = [Op.Inc(1), Op.Dbl(5), Op.Nop]
     for op in ops {
@@ -36,6 +38,7 @@ async func main() {
     var x = 3
     switch {
         case await Double(x) > 5: println("big", await Double(x))
-        default: println("small")
+        default:
+            println("small")
     }
 }

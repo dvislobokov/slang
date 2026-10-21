@@ -11,13 +11,13 @@ namespace std.regex
 // ranges), so both engines consume bytes.
 
 struct prog {
-    op []int
-    arg []int
-    out []int
-    out1 []int
-    sets []bool
+    op      []int
+    arg     []int
+    out     []int
+    out1    []int
+    sets    []bool
     setKeys map[string]int
-    start int
+    start   int
 
     func emit(op int, arg int) int {
         this.op = append(this.op, op)
@@ -61,9 +61,9 @@ struct frag {
 }
 
 struct compiler {
-    p *prog
-    nodes []node
-    rev bool
+    p         *prog
+    nodes     []node
+    rev       bool
     lastStart int
 
     func patch(holes []int, target int) {
@@ -282,7 +282,10 @@ struct compiler {
             var lo = seqs[s * 9 + 1 + depth * 2]
             var hi = seqs[s * 9 + 2 + depth * 2]
             var group []int = []
-            for i < len(idx) && seqs[idx[i] * 9] > depth + 1 && seqs[idx[i] * 9 + 1 + depth * 2] == lo && seqs[idx[i] * 9 + 2 + depth * 2] == hi {
+            for i < len(idx) &&
+                seqs[idx[i] * 9] > depth + 1 &&
+                seqs[idx[i] * 9 + 1 + depth * 2] == lo &&
+                seqs[idx[i] * 9 + 2 + depth * 2] == hi {
                 group = append(group, idx[i])
                 i += 1
             }
@@ -501,7 +504,7 @@ func flagsOf(s string, pos int) int {
 struct sparse {
     dense []int
     index []int
-    n int
+    n     int
 
     func init(size int) {
         this.dense = rtInts(size)
@@ -526,16 +529,16 @@ struct sparse {
 // -- Pike VM ----------------------------------------------------------------------
 
 struct pike {
-    p *prog
-    ncap int
-    q0 *sparse
-    q1 *sparse
+    p     *prog
+    ncap  int
+    q0    *sparse
+    q1    *sparse
     caps0 []int
     caps1 []int
     stack []int
-    vals []int
-    tmp []int
-    best []int
+    vals  []int
+    tmp   []int
+    best  []int
 
     func init(p *prog, ncap int) {
         var n = p.size()
@@ -678,27 +681,27 @@ struct pike {
 // cached in `trans` (next*2 + 1 if a match ends before the byte, -1 if not
 // computed yet); class `ncls` is the end of the text. State 0 is dead.
 struct dfa {
-    p *prog
-    rev bool
-    longest bool
+    p          *prog
+    rev        bool
+    longest    bool
     unanchored bool
-    cls []int
-    rep []int
-    ncls int
-    stride int
-    soff []int
-    slen []int
-    sctx []int
-    sstart []bool
-    pool []int
-    keys map[string]int
-    trans []int
-    starts []int
-    v1 *sparse
-    v2 *sparse
-    list []int
-    stack []int
-    key []byte
+    cls        []int
+    rep        []int
+    ncls       int
+    stride     int
+    soff       []int
+    slen       []int
+    sctx       []int
+    sstart     []bool
+    pool       []int
+    keys       map[string]int
+    trans      []int
+    starts     []int
+    v1         *sparse
+    v2         *sparse
+    list       []int
+    stack      []int
+    key        []byte
 
     func init(p *prog, rev bool, longest bool, unanchored bool, cls []int, ncls int) {
         this.p = p

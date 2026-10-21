@@ -12,12 +12,12 @@ enum Level {
 
 struct Person {
     @csv(name: "full_name") Name string
-    Age int8
-    Score float
+    Age    int8
+    Score  float
     Active bool
-    Level Level
-    @csv(skip: true) cache string
-    @serde(name: "nick") Nick *string
+    Level  Level
+    @csv(skip: true)     cache string
+    @serde(name: "nick") Nick  *string
 }
 
 struct Point {
@@ -44,7 +44,15 @@ func main() void! {
     }
     print(encoding.csv.Write(pts))
 
-    var bad = ["full_name,Age,Score,Active,Level,nick\nX,old,1,true,Low,\n", "full_name,Age,Score,Active,Level,nick\nX,300,1,true,Low,\n", "full_name,Age,Score,Active,Level,nick\nX,1,1,maybe,Low,\n", "full_name,Age,Score,Active,Level,nick\nX,1,1,true,Medium,\n", "full_name,Age,Score,Active,nick\nX,1,1,true,\n", "", "full_name,Age\n\"x,1\n"]
+    var bad = [
+        "full_name,Age,Score,Active,Level,nick\nX,old,1,true,Low,\n",
+        "full_name,Age,Score,Active,Level,nick\nX,300,1,true,Low,\n",
+        "full_name,Age,Score,Active,Level,nick\nX,1,1,maybe,Low,\n",
+        "full_name,Age,Score,Active,Level,nick\nX,1,1,true,Medium,\n",
+        "full_name,Age,Score,Active,nick\nX,1,1,true,\n",
+        "",
+        "full_name,Age\n\"x,1\n",
+    ]
     for b in bad {
         try encoding.csv.Read<Person>(b) catch err {
             println(err.Message())

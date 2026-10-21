@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_router
 
-import std.io
 import std
+import std.io
 import std.net
 
 async func User(req *http.Request, res *http.Response) void! {

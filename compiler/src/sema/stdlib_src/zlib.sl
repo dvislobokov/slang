@@ -38,11 +38,11 @@ func header(level int) []byte {
 
 // A streaming zlib compressor (see deflate.Writer).
 struct Writer {
-    d *std.compress.deflate.Writer
-    adler int
-    out []byte
+    d       *std.compress.deflate.Writer
+    adler   int
+    out     []byte
     started bool
-    closed bool
+    closed  bool
 
     func Write(p []byte) {
         this.start()
@@ -96,11 +96,11 @@ func NewWriter(level int) *Writer {
 // verified when the stream ends.
 struct Reader {
     state int
-    buf []byte
-    d *std.compress.deflate.Reader
+    buf   []byte
+    d     *std.compress.deflate.Reader
     adler int
-    out []byte
-    rest []byte
+    out   []byte
+    rest  []byte
 
     func Feed(chunk []byte) void! {
         if this.state == 3 {

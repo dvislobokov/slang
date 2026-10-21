@@ -147,7 +147,23 @@ func tokenByte(c int) bool {
         return false
     }
     // separators of RFC 7230 tokens
-    return !(c == 40 || c == 41 || c == 60 || c == 62 || c == 64 || c == 44 || c == 59 || c == 58 || c == 92 || c == 34 || c == 47 || c == 91 || c == 93 || c == 63 || c == 61 || c == 123 || c == 125)
+    return !(c == 40 ||
+        c == 41 ||
+        c == 60 ||
+        c == 62 ||
+        c == 64 ||
+        c == 44 ||
+        c == 59 ||
+        c == 58 ||
+        c == 92 ||
+        c == 34 ||
+        c == 47 ||
+        c == 91 ||
+        c == 93 ||
+        c == 63 ||
+        c == 61 ||
+        c == 123 ||
+        c == 125)
 }
 
 // A parsed header and where it ended.
@@ -183,7 +199,12 @@ func ReadHeader(text string, from int) HeaderResult! {
         var c0 = int(line[0])
         if c0 == 32 || c0 == 9 {
             if len(h.keys) == 0 {
-                return error(std.fmt.Format("textproto: malformed MIME header initial line: {0}", std.encoding.json.Quote(line)))
+                return error(
+                    std.fmt.Format(
+                        "textproto: malformed MIME header initial line: {0}",
+                        std.encoding.json.Quote(line),
+                    ),
+                )
             }
             // continuation of the last value
             var k = len(h.keys) - 1
@@ -194,11 +215,21 @@ func ReadHeader(text string, from int) HeaderResult! {
         }
         var colon = std.strings.Index(line, ":")
         if colon <= 0 {
-            return error(std.fmt.Format("textproto: malformed MIME header line: {0}", std.encoding.json.Quote(line)))
+            return error(
+                std.fmt.Format(
+                    "textproto: malformed MIME header line: {0}",
+                    std.encoding.json.Quote(line),
+                ),
+            )
         }
         var key = line[..colon]
         if std.strings.HasSuffix(key, " ") || std.strings.HasSuffix(key, "\t") {
-            return error(std.fmt.Format("textproto: malformed MIME header line: {0}", std.encoding.json.Quote(line)))
+            return error(
+                std.fmt.Format(
+                    "textproto: malformed MIME header line: {0}",
+                    std.encoding.json.Quote(line),
+                ),
+            )
         }
         h.Add(key, std.strings.Trim(line[colon + 1..]))
         i = next
@@ -231,7 +262,7 @@ func DotEncode(body string) string {
 // ends) and the offset after the terminator. Fails if there is none.
 struct DotResult {
     Body string
-    End int
+    End  int
 }
 
 func DotDecode(text string) DotResult! {
@@ -262,7 +293,7 @@ func DotDecode(text string) DotResult! {
 
 // A numeric response: code and the message (lines joined with \n).
 struct Response {
-    Code int
+    Code    int
     Message string
     // Offset after the response.
     End int

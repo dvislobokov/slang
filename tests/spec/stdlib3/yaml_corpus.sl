@@ -78,7 +78,7 @@ func main() {
         "x: '- not a seq'\ny: '[not, flow]'\n",
         "k: v\n...\n",
         "---\n- 1\n---\n- 2\n",
-        "dash-key: 1\n-neg: 2\nunder_score: 3\n"
+        "dash-key: 1\n-neg: 2\nunder_score: 3\n",
     ]
     for i, c in cases {
         var docs = try encoding.yaml.ParseAll(c) catch err {

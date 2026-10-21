@@ -2,13 +2,13 @@
 // status: passing
 namespace spec.platform.cfg_any_all_members
 
-import std.io
 import std
+import std.io
 
 struct Paths {
     @cfg(os: "windows")
     Drive string
-    Root string
+    Root  string
 
     @cfg(os: "windows")
     func Sep() string { return "\\" }
@@ -30,6 +30,7 @@ func main() {
     switch os.Name {
         case "linux", "macos": println("unix")
         case "windows": println("windows")
-        default: println("other")
+        default:
+            println("other")
     }
 }

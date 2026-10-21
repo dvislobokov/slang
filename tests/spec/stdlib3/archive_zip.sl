@@ -13,7 +13,9 @@ func short(name string) string {
 }
 
 func main() void! {
-    var data = encoding.base64.Decode("UEsDBAoAAAAAAKMgQ1jI5k+PEgAAABIAAAAJAAAAaGVsbG8udHh0aGVsbG8gZnJvbSB6aXAoMSkKUEsDBAoAAAAAAKMgQ1gAAAAAAAAAAAAAAAAFAAAAZG9jcy9QSwMECgAAAAAAoyBDWFB4hXEFAAAABQAAAHcAAABkb2NzL2xsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsLnR4dGxvbmcKUEsDBBQAAAAIAKMgQ1gxabbbIgAAAGAJAAAMAAAAZG9jcy9yZXAudHh0K0otSE0sUcjJzEvlKhplj7JH2aPsUfYoe5Q9yh5lU8wGAFBLAQIeAwoAAAAAAKMgQ1jI5k+PEgAAABIAAAAJAAAAAAAAAAEAAACkgQAAAABoZWxsby50eHRQSwECHgMKAAAAAACjIENYAAAAAAAAAAAAAAAABQAAAAAAAAAAABAA7UE5AAAAZG9jcy9QSwECHgMKAAAAAACjIENYUHiFcQUAAAAFAAAAdwAAAAAAAAABAAAApIFcAAAAZG9jcy9sbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbC50eHRQSwECHgMUAAAACACjIENYMWm22yIAAABgCQAADAAAAAAAAAABAAAApIH2AAAAZG9jcy9yZXAudHh0UEsFBgAAAAAEAAQASQEAAEIBAAAAAA==")?
+    var data = encoding.base64.Decode(
+        "UEsDBAoAAAAAAKMgQ1jI5k+PEgAAABIAAAAJAAAAaGVsbG8udHh0aGVsbG8gZnJvbSB6aXAoMSkKUEsDBAoAAAAAAKMgQ1gAAAAAAAAAAAAAAAAFAAAAZG9jcy9QSwMECgAAAAAAoyBDWFB4hXEFAAAABQAAAHcAAABkb2NzL2xsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsLnR4dGxvbmcKUEsDBBQAAAAIAKMgQ1gxabbbIgAAAGAJAAAMAAAAZG9jcy9yZXAudHh0K0otSE0sUcjJzEvlKhplj7JH2aPsUfYoe5Q9yh5lU8wGAFBLAQIeAwoAAAAAAKMgQ1jI5k+PEgAAABIAAAAJAAAAAAAAAAEAAACkgQAAAABoZWxsby50eHRQSwECHgMKAAAAAACjIENYAAAAAAAAAAAAAAAABQAAAAAAAAAAABAA7UE5AAAAZG9jcy9QSwECHgMKAAAAAACjIENYUHiFcQUAAAAFAAAAdwAAAAAAAAABAAAApIFcAAAAZG9jcy9sbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbC50eHRQSwECHgMUAAAACACjIENYMWm22yIAAABgCQAADAAAAAAAAAABAAAApIH2AAAAZG9jcy9yZXAudHh0UEsFBgAAAAAEAAQASQEAAEIBAAAAAA==",
+    )?
     var r = archive.zip.Open(data)?
     for f in r.Files {
         println(short(f.Name), f.Method, f.Size, f.Modified, f.IsDir())
@@ -28,7 +30,16 @@ func main() void! {
     w.Comment = "made by slang"
     w.AddString("a.txt", "alpha")?
     w.AddDir("dir", 1700000000)?
-    w.AddHeader(archive.zip.Header{Name: "dir/b.bin", Method: archive.zip.Store, Modified: 1700000001, Mode: 384, Comment: "raw"}, [byte(0), byte(1), byte(2)])?
+    w.AddHeader(
+        archive.zip.Header{
+            Name: "dir/b.bin",
+            Method: archive.zip.Store,
+            Modified: 1700000001,
+            Mode: 384,
+            Comment: "raw",
+        },
+        [byte(0), byte(1), byte(2)],
+    )?
     w.Add("dir/big.txt", strings.Bytes(strings.Repeat("compressible ", 1000)))?
     try w.AddString("a.txt", "again") catch err {
         println(err.Message())

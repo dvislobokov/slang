@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.format_needs_template
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(fmt.Format())

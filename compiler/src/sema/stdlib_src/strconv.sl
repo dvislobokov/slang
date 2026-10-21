@@ -58,7 +58,10 @@ func parseUint(fn string, s0 string, base0 int) uint! {
             }
         }
     } else if base < 2 || base > 36 {
-        return std.errors.Wrap(error("invalid base " + Itoa(base0)), "strconv." + fn + ": parsing " + Quote(s0))
+        return std.errors.Wrap(
+            error("invalid base " + Itoa(base0)),
+            "strconv." + fn + ": parsing " + Quote(s0),
+        )
     }
     var max uint = 18446744073709551615
     var ubase = uint(base)
@@ -265,7 +268,11 @@ func escapeRune(r char, quote char, ascii bool) string {
         return string(r)
     }
     if c < 65536 {
-        return "\\u" + hexDigit(c / 4096 % 16) + hexDigit(c / 256 % 16) + hexDigit(c / 16 % 16) + hexDigit(c % 16)
+        return "\\u" +
+            hexDigit(c / 4096 % 16) +
+            hexDigit(c / 256 % 16) +
+            hexDigit(c / 16 % 16) +
+            hexDigit(c % 16)
     }
     var out = "\\U"
     var shift = 28
@@ -482,11 +489,18 @@ func Format<T>(v T) string {
         return v
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
         return FormatBool(v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 {
         return FormatInt(int(v), 10)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         return FormatUint(uint(v), 10)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         return FormatFloat(float(v), 'g', -1)
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
         return string(v)

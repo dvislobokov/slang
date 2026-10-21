@@ -12,15 +12,15 @@ namespace std.collections
 
 struct listNode<T> {
     value T
-    next *listNode<T>
-    prev weak *listNode<T>
+    next  *listNode<T>
+    prev  weak *listNode<T>
 }
 
 // A doubly linked list (Go's container/list): O(1) push/pop at both ends.
 struct LinkedList<T> {
     head *listNode<T>
     tail *listNode<T>
-    n int
+    n    int
 
     static func New() LinkedList<T> {
         return LinkedList<T>{}
@@ -205,9 +205,9 @@ struct listIter<T> {
 // A double-ended queue on a growable ring buffer: amortized O(1) at both
 // ends and O(1) indexing.
 struct Deque<T> {
-    buf []T
+    buf  []T
     head int
-    n int
+    n    int
 
     static func New() Deque<T> {
         return Deque<T>{}
@@ -322,9 +322,9 @@ struct Deque<T> {
 // A fixed-capacity circular buffer: Push overwrites the oldest element
 // when full (e.g. the last N log lines).
 struct Ring<T> {
-    buf []T
+    buf  []T
     head int
-    n int
+    n    int
 
     // A ring holding at most capacity elements (> 0).
     static func New(capacity int) Ring<T> {
@@ -495,9 +495,9 @@ struct Heap<T: Ordered> {
 // insertion order breaks ties, so equal priorities are FIFO).
 struct PriorityQueue<T> {
     items []T
-    seqs []int
-    next int
-    less func(T, T) bool
+    seqs  []int
+    next  int
+    less  func(T, T) bool
 
     // A queue ordered by less (e.g. (a Job, b Job) => a.Priority > b.Priority
     // for a max-queue).
@@ -737,7 +737,7 @@ struct OrderedMap<K: Ordered, V> {
 struct orderedIter<K, V> {
     keys []K
     vals []V
-    i int
+    i    int
 
     func Next() (K, V, bool) {
         if this.i >= len(this.keys) {
@@ -752,7 +752,7 @@ struct orderedIter<K, V> {
 }
 
 struct lruNode<K, V> {
-    key K
+    key   K
     value V
     newer *lruNode<K, V>
     older weak *lruNode<K, V>
@@ -762,10 +762,10 @@ struct lruNode<K, V> {
 // mark an entry as used; Set on a full cache evicts the least recently
 // used one. O(1) operations (map + doubly linked list).
 struct LRU<K: Comparable, V> {
-    cap int
-    index map[K]*lruNode<K, V>
-    newest *lruNode<K, V>
-    oldest *lruNode<K, V>
+    cap       int
+    index     map[K]*lruNode<K, V>
+    newest    *lruNode<K, V>
+    oldest    *lruNode<K, V>
     evictions int
 
     // A cache of at most capacity entries (> 0).

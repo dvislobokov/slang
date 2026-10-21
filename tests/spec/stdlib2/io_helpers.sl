@@ -4,8 +4,8 @@
 namespace spec.stdlib2.io_helpers
 
 import std
-import std.io
 import std.encoding
+import std.io
 
 struct Point {
     X int32
@@ -54,7 +54,11 @@ async func main() void! {
     _ = sr.Seek(0, io.SeekStart)?
     var lr = io.LimitReader(sr, 7)
     println(io.ReadAllString(lr)?, lr.N)
-    var parts []io.Reader = [io.NewStringReader("ab"), io.NewStringReader(""), io.NewBytesReader(strings.Bytes("cd"))]
+    var parts []io.Reader = [
+        io.NewStringReader("ab"),
+        io.NewStringReader(""),
+        io.NewBytesReader(strings.Bytes("cd")),
+    ]
     var mr = io.MultiReader(parts)
     println(io.ReadAllString(mr)?)
     var log = io.NewBytesWriter()
@@ -82,7 +86,17 @@ async func main() void! {
 
     var br = io.NewBufferedReaderSize(io.NewStringReader("line one\r\nline two\nlast"), 16)
     println(strings.FromBytes(br.Peek(4)?), br.Buffered())
-    println(br.ReadLine()?, "|", br.ReadString(32)?, "|", br.ReadLine()?, "|", try br.ReadLine() else "EOF?", "|", try br.ReadLine() else "EOF")
+    println(
+        br.ReadLine()?,
+        "|",
+        br.ReadString(32)?,
+        "|",
+        br.ReadLine()?,
+        "|",
+        try br.ReadLine() else "EOF?",
+        "|",
+        try br.ReadLine() else "EOF",
+    )
     var rr = io.NewBufferedReader(io.NewStringReader("é!"))
     println(string(rr.ReadRune()?), string(rr.ReadRune()?), try rr.ReadByte() else 0)
 

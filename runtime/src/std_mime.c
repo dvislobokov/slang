@@ -3,9 +3,9 @@
  * web, document, archive, font, audio and video types) and the entries
  * added at run time with AddExtensionType, under a lock. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
 #include <ctype.h>
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -37,7 +37,7 @@ typedef struct {
     char *type;
 } added_t;
 
-static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex mu = SLANG_PLAT_MUTEX_INIT;
 static added_t *added;
 static size_t nadded, capadded;
 
@@ -55,14 +55,14 @@ slang_string *slang_mime_rt_type(const slang_string *ext) {
     if (n == 0 || n >= sizeof low) return slang__string_alloc(0);
     lower(low, e, n);
     const char *found = NULL;
-    pthread_mutex_lock(&mu);
+    slang__plat_mutex_lock(&mu);
     for (size_t i = nadded; i-- > 0;)
         if (strcmp(added[i].ext, e) == 0) { found = added[i].type; break; }
     if (!found)
         for (size_t i = nadded; i-- > 0;)
             if (strcmp(added[i].ext, low) == 0) { found = added[i].type; break; }
     slang_string *r = found ? slang_string_from_cstr(found) : NULL;
-    pthread_mutex_unlock(&mu);
+    slang__plat_mutex_unlock(&mu);
     if (r) return r;
     for (size_t i = 0; i < sizeof builtin / sizeof builtin[0]; i++)
         if (strcmp(builtin[i][0], low) == 0) return slang_string_from_cstr(builtin[i][1]);
@@ -71,7 +71,7 @@ slang_string *slang_mime_rt_type(const slang_string *ext) {
 
 /* Records ext -> type (copies; kept for the life of the process). */
 void slang_mime_rt_add(const slang_string *ext, const slang_string *type) {
-    pthread_mutex_lock(&mu);
+    slang__plat_mutex_lock(&mu);
     if (nadded == capadded) {
         capadded = capadded ? capadded * 2 : 8;
         added = realloc(added, capadded * sizeof *added);
@@ -82,7 +82,7 @@ void slang_mime_rt_add(const slang_string *ext, const slang_string *type) {
     lower(added[nadded].ext, slang_string_data(ext), n);
     added[nadded].type = strdup(slang_string_data(type));
     nadded++;
-    pthread_mutex_unlock(&mu);
+    slang__plat_mutex_unlock(&mu);
 }
 
 static int same_type(const char *t, const char *want, size_t wn) {
@@ -102,7 +102,7 @@ void slang_mime_rt_exts(const slang_string *type, slang_slice *out) {
     size_t k = 0;
     for (size_t i = 0; i < sizeof builtin / sizeof builtin[0] && k < 128; i++)
         if (same_type(builtin[i][1], w, wn)) list[k++] = builtin[i][0];
-    pthread_mutex_lock(&mu);
+    slang__plat_mutex_lock(&mu);
     for (size_t i = 0; i < nadded && k < 128; i++)
         if (same_type(added[i].type, w, wn)) {
             int dup = 0;
@@ -121,5 +121,5 @@ void slang_mime_rt_exts(const slang_string *type, slang_slice *out) {
         slang_slice_append(out, 8, &slang_ops_ref, &s);
         slang_release(s);
     }
-    pthread_mutex_unlock(&mu);
+    slang__plat_mutex_unlock(&mu);
 }

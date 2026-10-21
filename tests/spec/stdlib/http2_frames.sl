@@ -3,13 +3,23 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http2_frames
 
-import std.io
 import std
+import std.io
 import std.net
 
 func frame(typ int, flags int, sid int, payload []byte) []byte {
     var n = len(payload)
-    var out []byte = [byte(n >> 16), byte((n >> 8) & 255), byte(n & 255), byte(typ), byte(flags), byte((sid >> 24) & 127), byte((sid >> 16) & 255), byte((sid >> 8) & 255), byte(sid & 255)]
+    var out []byte = [
+        byte(n >> 16),
+        byte((n >> 8) & 255),
+        byte(n & 255),
+        byte(typ),
+        byte(flags),
+        byte((sid >> 24) & 127),
+        byte((sid >> 16) & 255),
+        byte((sid >> 8) & 255),
+        byte(sid & 255),
+    ]
     for b in payload {
         out = append(out, b)
     }
@@ -17,16 +27,20 @@ func frame(typ int, flags int, sid int, payload []byte) []byte {
 }
 
 struct Frame {
-    Type int
-    Flags int
-    Stream int
+    Type    int
+    Flags   int
+    Stream  int
     Payload []byte
 }
 
 async func readFrame(r net.BufferedReader) Frame! {
     var h = await r.ReadExact(9)?
     var n = (int(h[0]) << 16) | (int(h[1]) << 8) | int(h[2])
-    var f = Frame{Type: int(h[3]), Flags: int(h[4]), Stream: ((int(h[5]) & 127) << 24) | (int(h[6]) << 16) | (int(h[7]) << 8) | int(h[8])}
+    var f = Frame{
+        Type: int(h[3]),
+        Flags: int(h[4]),
+        Stream: ((int(h[5]) & 127) << 24) | (int(h[6]) << 16) | (int(h[7]) << 8) | int(h[8]),
+    }
     if n > 0 {
         f.Payload = await r.ReadExact(n)?
     }
@@ -38,7 +52,18 @@ func u32(v int) []byte {
 }
 
 func name(t int) string {
-    var names = ["DATA", "HEADERS", "PRIORITY", "RST_STREAM", "SETTINGS", "PUSH_PROMISE", "PING", "GOAWAY", "WINDOW_UPDATE", "CONTINUATION"]
+    var names = [
+        "DATA",
+        "HEADERS",
+        "PRIORITY",
+        "RST_STREAM",
+        "SETTINGS",
+        "PUSH_PROMISE",
+        "PING",
+        "GOAWAY",
+        "WINDOW_UPDATE",
+        "CONTINUATION",
+    ]
     return names[t]
 }
 
@@ -73,7 +98,12 @@ async func main() void! {
     println("ping:", name(f.Type), "ack", f.Flags == 1, strings.FromBytes(f.Payload))
     // GET /data with a 10-byte stream window
     var enc = http.hpack.NewEncoder(4096)
-    var block = enc.Encode([http.hpack.HeaderField{Name: ":method", Value: "GET"}, http.hpack.HeaderField{Name: ":scheme", Value: "http"}, http.hpack.HeaderField{Name: ":authority", Value: "x"}, http.hpack.HeaderField{Name: ":path", Value: "/data"}])
+    var block = enc.Encode([
+        http.hpack.HeaderField{Name: ":method", Value: "GET"},
+        http.hpack.HeaderField{Name: ":scheme", Value: "http"},
+        http.hpack.HeaderField{Name: ":authority", Value: "x"},
+        http.hpack.HeaderField{Name: ":path", Value: "/data"},
+    ])
     _ = await c.Write(frame(1, 5, 1, block))?
     var dec = http.hpack.NewDecoder(4096)
     var body = ""
@@ -101,7 +131,10 @@ async func main() void! {
     // a HEADERS frame on stream 2 (even: client streams are odd)
     _ = await c.Write(frame(1, 5, 2, block))?
     f = await readFrame(rd)?
-    var code = (int(f.Payload[4]) << 24) | (int(f.Payload[5]) << 16) | (int(f.Payload[6]) << 8) | int(f.Payload[7])
+    var code = (int(f.Payload[4]) << 24) |
+        (int(f.Payload[5]) << 16) |
+        (int(f.Payload[6]) << 8) |
+        int(f.Payload[7])
     println("bad stream id:", name(f.Type), "error code", code)
     var eof = await c.Read(10)?
     println("connection closed:", len(eof) == 0)

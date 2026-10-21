@@ -1,6 +1,8 @@
 //! Project discovery and the package graph: workspace members, `path`
 //! dependencies (resolved recursively, deduplicated by canonical path),
-//! cycle detection and namespace-root ownership.
+//! module dependencies (selected by [`super::resolve`], materialised in
+//! `.slang/deps/` from the [`super::store`]), cycle detection and
+//! namespace-root ownership.
 
 use super::manifest::{self, Dependency, LoadedManifest};
 use crate::sema::{ImportPolicy, PackageScope};
@@ -10,13 +12,15 @@ use std::path::{Path, PathBuf};
 /// Index of a package in [`Project::packages`].
 pub type PkgId = usize;
 
-/// Where a package comes from. Stage 1 knows only local paths; registry
-/// and git sources slot in here (and in [`Source::lock_id`]).
+/// Where a package comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     /// A local directory, relative to the workspace root (`/`-separated;
     /// `.` for the root itself; absolute if outside the root).
     Path(String),
+    /// A module version (`slang.lock` `source`: `module`, or
+    /// `git+<url>?<ref>#<commit>` for a git pin).
+    Module { path: String, version: String, h1: String, lock_source: String },
 }
 
 impl Source {
@@ -24,6 +28,15 @@ impl Source {
     pub fn lock_id(&self) -> String {
         match self {
             Source::Path(p) => format!("path:{p}"),
+            Source::Module { lock_source, .. } => lock_source.clone(),
+        }
+    }
+
+    /// The module path of a module package.
+    pub fn module(&self) -> Option<&str> {
+        match self {
+            Source::Module { path, .. } => Some(path),
+            Source::Path(_) => None,
         }
     }
 }
@@ -41,6 +54,8 @@ pub struct PackageNode {
     pub source: Source,
     /// Direct `[dependencies]`.
     pub deps: Vec<PkgId>,
+    /// The `[dependencies]` key of each of `deps` (module path or alias).
+    pub dep_keys: Vec<String>,
     /// Direct `[dev-dependencies]` (resolved for workspace members only).
     pub dev_deps: Vec<PkgId>,
     /// A workspace member (or the single root package).
@@ -123,7 +138,7 @@ impl Project {
     /// Loads the graph rooted at manifest `root`.
     pub fn load(root: LoadedManifest) -> Result<Project, String> {
         let root_dir = root.dir().to_path_buf();
-        let mut b = Builder { root: root_dir.clone(), packages: Vec::new(), by_dir: HashMap::new(), stack: Vec::new() };
+        let mut b = Builder { root: root_dir.clone(), packages: Vec::new(), by_dir: HashMap::new(), stack: Vec::new(), pending: Vec::new() };
         let mut members = Vec::new();
         let mut root_package = None;
         if root.manifest.package.is_some() {
@@ -144,10 +159,13 @@ impl Project {
         for &m in &members {
             let deps = b.packages[m].manifest.manifest.dev_dependencies.clone();
             let mut ids = Vec::new();
-            for (name, dep) in &deps {
-                ids.push(b.dep(m, name, dep, "dev-dependencies")?);
+            for (i, (name, dep)) in deps.iter().enumerate() {
+                ids.push(b.dep(m, name, dep, "dev-dependencies", (true, i))?);
             }
             b.packages[m].dev_deps = ids;
+        }
+        if !b.pending.is_empty() {
+            b.attach_modules()?;
         }
         let packages = b.packages;
         // Namespace roots and names are unique in the graph.
@@ -227,7 +245,12 @@ impl Project {
     /// dependency) and, transitively, what enabled features enable (plain
     /// names in the package itself, `dep/feature` in a dependency).
     pub fn enabled_features(&self, closure: &[PkgId]) -> Vec<std::collections::HashSet<String>> {
-        let local = |name: &str| closure.iter().position(|&c| self.packages[c].name == name);
+        // Position in `closure` of dependency `key` of package `id`.
+        let local = |id: PkgId, key: &str| {
+            let p = &self.packages[id];
+            let dep = p.dep_keys.iter().position(|k| k == key).and_then(|i| p.deps.get(i).copied());
+            dep.and_then(|d| closure.iter().position(|&c| c == d))
+        };
         let mut on: Vec<std::collections::HashSet<String>> = vec![Default::default(); closure.len()];
         let mut work: Vec<(usize, String)> = Vec::new();
         for (i, &id) in closure.iter().enumerate() {
@@ -236,7 +259,7 @@ impl Project {
                 work.push((i, "default".into()));
             }
             for (name, dep) in &m.dependencies {
-                if let Some(d) = local(name) {
+                if let Some(d) = local(id, name) {
                     work.extend(dep.features().iter().map(|f| (d, f.clone())));
                 }
             }
@@ -247,9 +270,9 @@ impl Project {
             }
             let m = &self.packages[closure[i]].manifest.manifest;
             for item in m.features.get(&f).into_iter().flatten() {
-                match item.split_once('/') {
+                match manifest::split_feature_ref(item, &m.dependencies) {
                     Some((dep, df)) => {
-                        if let Some(d) = local(dep) {
+                        if let Some(d) = local(closure[i], dep) {
                             work.push((d, df.to_string()));
                         }
                     }
@@ -267,6 +290,16 @@ impl Project {
 
     pub fn lock_path(&self) -> PathBuf {
         self.root.join("slang.lock")
+    }
+
+    /// `.slang/deps/` of the project (materialised module dependencies).
+    pub fn deps_dir(&self) -> PathBuf {
+        self.root.join(".slang").join("deps")
+    }
+
+    /// The package of module `path`, if it is in the graph.
+    pub fn find_module(&self, path: &str) -> Option<PkgId> {
+        self.packages.iter().position(|p| p.source.module() == Some(path))
     }
 }
 
@@ -325,6 +358,17 @@ struct Builder {
     by_dir: HashMap<PathBuf, PkgId>,
     /// Packages whose dependencies are being resolved (cycle detection).
     stack: Vec<PkgId>,
+    /// Module dependencies of workspace packages, resolved at the end.
+    pending: Vec<Pending>,
+}
+
+/// A module dependency waiting for version selection.
+struct Pending {
+    from: PkgId,
+    dev: bool,
+    pos: usize,
+    req: super::resolve::Requirement,
+    features: Vec<String>,
 }
 
 impl Builder {
@@ -354,30 +398,31 @@ impl Builder {
             manifest: lm.clone(),
             source: Source::Path(rel),
             deps: Vec::new(),
+            dep_keys: lm.manifest.dependencies.keys().cloned().collect(),
             dev_deps: Vec::new(),
             member,
         });
         self.by_dir.insert(dir, id);
         self.stack.push(id);
         let mut deps = Vec::new();
-        for (name, dep) in &lm.manifest.dependencies {
-            deps.push(self.dep(id, name, dep, "dependencies")?);
+        for (i, (name, dep)) in lm.manifest.dependencies.iter().enumerate() {
+            deps.push(self.dep(id, name, dep, "dependencies", (false, i))?);
         }
         self.stack.pop();
         self.packages[id].deps = deps;
         Ok(id)
     }
 
-    /// Resolves dependency `name` of package `from`.
-    fn dep(&mut self, from: PkgId, name: &str, dep: &Dependency, section: &str) -> Result<PkgId, String> {
+    /// Resolves dependency `name` of package `from`. Module dependencies
+    /// get a placeholder id, filled in by [`Builder::attach_modules`];
+    /// `slot` is (dev, position) of the dependency in its section.
+    fn dep(&mut self, from: PkgId, name: &str, dep: &Dependency, section: &str, slot: (bool, usize)) -> Result<PkgId, String> {
         let owner = self.packages[from].name.clone();
         let mpath = self.packages[from].manifest.path.clone();
         let Some(path) = dep.path() else {
-            let kind = match dep {
-                Dependency::Detailed(d) if d.git.is_some() => "git dependencies",
-                _ => "registry dependencies",
-            };
-            return Err(format!("{}: [{section}] {name}: {kind} are not supported yet (stage 1 supports only `path` dependencies)", mpath.display()));
+            let req = super::resolve::requirement(&owner, name, dep).map_err(|e| format!("{}: [{section}] {e}", mpath.display()))?.expect("not a path dependency");
+            self.pending.push(Pending { from, dev: slot.0, pos: slot.1, req, features: dep.features().to_vec() });
+            return Ok(usize::MAX);
         };
         let dir = self.packages[from].dir.join(path);
         if !dir.is_dir() {
@@ -398,9 +443,10 @@ impl Builder {
             }
         }
         // `dep/feature` entries of our own [features] table.
-        for (feat, items) in &self.packages[from].manifest.manifest.features {
+        let m = &self.packages[from].manifest.manifest;
+        for (feat, items) in &m.features {
             for it in items {
-                if let Some((d, f)) = it.split_once('/') {
+                if let Some((d, f)) = manifest::split_feature_ref(it, &m.dependencies) {
                     if d == name && !have.contains_key(f) {
                         return Err(format!("{}: feature `{feat}` enables `{it}`, but package `{name}` has no feature `{f}`", mpath.display()));
                     }
@@ -408,5 +454,91 @@ impl Builder {
             }
         }
         Ok(id)
+    }
+}
+
+/// Directory of a materialised module under `.slang/deps/`.
+pub fn module_dir(root: &Path, module: &str, version: &str) -> PathBuf {
+    root.join(".slang").join("deps").join(format!("{}@{version}", super::store::escape_path(module)))
+}
+
+impl Builder {
+    /// Selects versions for the pending module dependencies (MVS, or the
+    /// `vendor/` copy), materialises them in `.slang/deps/` and adds them
+    /// to the graph.
+    fn attach_modules(&mut self) -> Result<(), String> {
+        use super::resolve;
+        let opts = resolve::options();
+        let lock = std::fs::read_to_string(self.root.join("slang.lock")).ok().and_then(|t| super::lock::LockFile::parse(&t).ok());
+        let roots: Vec<resolve::Requirement> = self.pending.iter().map(|p| p.req.clone()).collect();
+        let vendor = self.root.join("vendor");
+        let selected = if vendor.join(super::vendor::MODULES_FILE).is_file() && opts.update == resolve::Update::None {
+            let lock = lock.as_ref().ok_or("vendor/ exists but slang.lock does not; run `slang vendor` again")?;
+            resolve::from_vendor(&vendor, lock, &roots)?
+        } else {
+            let fetcher = super::fetch::Fetcher::new(opts.offline);
+            let mut sel = resolve::resolve(roots, lock.as_ref(), &fetcher, &opts.update)?;
+            for s in &mut sel {
+                let dir = module_dir(&self.root, &s.module, &s.version);
+                fetcher.store.materialize(s.index.as_ref().unwrap(), &dir)?;
+                s.dir = Some(dir);
+            }
+            fetcher.store.register_project(&self.root);
+            sel
+        };
+        let mut by_module: HashMap<String, PkgId> = HashMap::new();
+        for s in &selected {
+            let dir = s.dir.clone().unwrap();
+            let dir = dir.canonicalize().map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+            let lm = manifest::load_dir(&dir).map_err(|e| format!("{}@{}: {e}", s.module, s.version))?;
+            let pkg = lm.manifest.package.clone().ok_or_else(|| format!("{}@{}: the manifest has no [package] section", s.module, s.version))?;
+            let id = self.packages.len();
+            self.packages.push(PackageNode {
+                name: pkg.name.clone(),
+                version: s.version.trim_start_matches('v').to_string(),
+                namespace: pkg.namespace_root(),
+                dir: dir.clone(),
+                manifest: lm.clone(),
+                source: Source::Module { path: s.module.clone(), version: s.version.clone(), h1: s.h1.clone(), lock_source: s.source.clone() },
+                deps: Vec::new(),
+                dep_keys: s.deps.iter().map(|r| r.key.clone()).collect(),
+                dev_deps: Vec::new(),
+                member: false,
+            });
+            self.by_dir.insert(dir, id);
+            by_module.insert(s.module.clone(), id);
+        }
+        for s in &selected {
+            let id = by_module[&s.module];
+            let deps: Vec<PkgId> = s.deps.iter().map(|r| by_module[&r.module]).collect();
+            // Features requested by the module of its dependencies.
+            let m = self.packages[id].manifest.manifest.clone();
+            for (r, &d) in s.deps.iter().zip(&deps) {
+                let have = &self.packages[d].manifest.manifest.features;
+                if let Some(dep) = m.dependencies.get(&r.key) {
+                    for f in dep.features() {
+                        if !have.contains_key(f.as_str()) {
+                            return Err(format!("{}@{}: dependency `{}` has no feature `{f}`", s.module, s.version, r.key));
+                        }
+                    }
+                }
+            }
+            self.packages[id].deps = deps;
+        }
+        for p in std::mem::take(&mut self.pending) {
+            let id = by_module[&p.req.module];
+            let have = &self.packages[id].manifest.manifest.features;
+            let mpath = self.packages[p.from].manifest.path.clone();
+            for f in &p.features {
+                if !have.contains_key(f.as_str()) {
+                    return Err(format!("{}: dependency `{}` ({}) has no feature `{f}`", mpath.display(), p.req.key, p.req.module));
+                }
+            }
+            let list = if p.dev { &mut self.packages[p.from].dev_deps } else { &mut self.packages[p.from].deps };
+            if p.pos < list.len() {
+                list[p.pos] = id;
+            }
+        }
+        Ok(())
     }
 }

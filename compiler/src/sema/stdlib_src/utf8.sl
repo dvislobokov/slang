@@ -91,7 +91,9 @@ func decode(b0 int, b1 int, b2 int, b3 int, n int) (char, int) {
         if !cont1 || !cont2 || !cont3 || (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
             return bad
         }
-        return (char(((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)), 4)
+        return (char(
+            ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F),
+        ), 4)
     }
     return bad
 }

@@ -10,12 +10,12 @@ namespace std.sync
 // A reader/writer lock: many readers or one writer. Writers are
 // preferred: once a writer waits, new readers queue behind it.
 struct RwMutex {
-    guard int
-    readers int
-    writer bool
+    guard          int
+    readers        int
+    writer         bool
     waitingWriters int
-    rq []Task<void>
-    wq []Task<void>
+    rq             []Task<void>
+    wq             []Task<void>
 
     // Waits for shared (read) access.
     func RLock() Task<void> {
@@ -116,8 +116,8 @@ struct RwMutex {
 
 // A counting semaphore: at most n holders at a time.
 struct Semaphore {
-    guard int
-    avail int
+    guard   int
+    avail   int
     waiters []Task<void>
 
     // A semaphore with n permits.
@@ -202,10 +202,10 @@ struct Barrier {
 }
 
 struct barrierState {
-    guard int
-    n int
-    count int
-    round int
+    guard   int
+    n       int
+    count   int
+    round   int
     waiters []Task<void>
 }
 
@@ -292,7 +292,7 @@ func b2i(b bool) int {
 // guarded by a spin lock; use AtomicInt/AtomicBool for lock-free ints.
 struct Atomic<T: Comparable> {
     guard int
-    v T
+    v     T
 
     func Load() T {
         std.task.rtLock(&this.guard)
@@ -332,7 +332,7 @@ struct Pool<T> {
     guard int
     items []T
     newFn func() T
-    max int
+    max   int
 
     // A pool creating values with newFn, keeping at most 64 idle values.
     static func New(newFn func() T) Pool<T> {

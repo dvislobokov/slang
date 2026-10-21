@@ -24,7 +24,8 @@ func main() {
     println(a.X, a.Y)
     var f = Vec2<float>{X: 0.5, Y: 1} + Vec2<float>{X: 0.25, Y: 1}
     println(f.X, f.Y)
-    var m = Vec2<Money>{X: Money{Cents: 1}, Y: Money{Cents: 2}} + Vec2<Money>{X: Money{Cents: 3}, Y: Money{Cents: 4}}
+    var m = Vec2<Money>{X: Money{Cents: 1}, Y: Money{Cents: 2}} +
+        Vec2<Money>{X: Money{Cents: 3}, Y: Money{Cents: 4}}
     println(m.X.Cents, m.Y.Cents)
     // inference through the operator method: Total<Vec2<int>>
     var t = Total(a, a, Vec2<int>{X: 100, Y: 200})

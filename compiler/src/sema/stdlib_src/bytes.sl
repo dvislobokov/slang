@@ -326,7 +326,9 @@ func Repeat(s []byte, n int) []byte {
 // s with every non-overlapping old replaced by new.
 func Replace(s []byte, old []byte, repl []byte) []byte {
     if len(old) == 0 {
-        return std.strings.Bytes(std.strings.Replace(std.strings.FromBytes(s), "", std.strings.FromBytes(repl)))
+        return std.strings.Bytes(
+            std.strings.Replace(std.strings.FromBytes(s), "", std.strings.FromBytes(repl)),
+        )
     }
     var out []byte = []
     var i = 0

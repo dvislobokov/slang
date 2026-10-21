@@ -1,0 +1,14 @@
+// error: cannot keep interior pointer variable `p` elsewhere
+// status: passing
+namespace spec.memory2.interior_pointer_local_return_error
+
+import std.io
+
+func first(xs []int) *int {
+    var p = &xs[0]
+    return p
+}
+
+func main() {
+    println(*first([1, 2]))
+}

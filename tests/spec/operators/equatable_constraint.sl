@@ -2,12 +2,12 @@
 // status: passing
 namespace spec.operators.equatable_constraint
 
-import std.io
 import std.collections
+import std.io
 
 struct Key {
     Name string
-    Id int
+    Id   int
     // equal by Id only
     func Equals(o Key) bool { return this.Id == o.Id }
 }

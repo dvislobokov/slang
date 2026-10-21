@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.async.task_spawn_yield
 
-import std.io
 import std
+import std.io
 
 async func Twice(n int) int {
     await task.Yield()

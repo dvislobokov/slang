@@ -1,9 +1,9 @@
 namespace examples.tls_echo
 
-import std.io
 import std
-import std.net
 import std.crypto
+import std.io
+import std.net
 
 // A TLS echo server and its clients in one program (std.net.tls): TLS 1.3
 // and TLS 1.2, ALPN, a large message spread over many records, KeyUpdate,
@@ -95,8 +95,12 @@ async func main() void! {
     var cliCert = tls.LoadKeyPair(clientCert, clientKey)?
     var clientCAs = x509.NewCertPool()
     clientCAs.AddCert(cliCert.Chain[0])
-    var l = tls.Listen("127.0.0.1:0", tls.ServerConfig{Certificates: [srvCert], ALPN: ["echo/1"],
-        ClientAuth: tls.VerifyClientCertIfGiven, ClientCAs: clientCAs})?
+    var l = tls.Listen("127.0.0.1:0", tls.ServerConfig{
+        Certificates: [srvCert],
+        ALPN: ["echo/1"],
+        ClientAuth: tls.VerifyClientCertIfGiven,
+        ClientCAs: clientCAs,
+    })?
     var addr = fmt.Format("127.0.0.1:{0}", l.Port())
     var serving = serve(l)
 
@@ -104,7 +108,14 @@ async func main() void! {
     // this local self-signed test server, never for real servers.
     var a = await tls.Dial(addr, tls.Config{InsecureSkipVerify: true, ALPN: ["echo/1"]})?
     var st = a.ConnectionState()
-    println("version:", st.VersionName(), "alpn:", st.ALPN, "peer:", st.PeerCertificates[0].Subject.CommonName)
+    println(
+        "version:",
+        st.VersionName(),
+        "alpn:",
+        st.ALPN,
+        "peer:",
+        st.PeerCertificates[0].Subject.CommonName,
+    )
     println("echo:", await roundTrip(a, "hello over TLS")?)
     var big = strings.Repeat("0123456789", 10000)
     println("big echo ok:", await roundTrip(a, big)? == big)
@@ -118,11 +129,27 @@ async func main() void! {
     var roots = x509.NewCertPool()
     roots.AddCert(srvCert.Chain[0])
     var cache = tls.NewSessionCache()
-    var cfg = tls.Config{ServerName: "localhost", RootCAs: roots, MaxVersion: tls.V12, ClientCert: &cliCert, Sessions: cache}
+    var cfg = tls.Config{
+        ServerName: "localhost",
+        RootCAs: roots,
+        MaxVersion: tls.V12,
+        ClientCert: &cliCert,
+        Sessions: cache,
+    }
     for i in 0..2 {
         var b = await tls.Dial(addr, cfg)?
         var bs = b.ConnectionState()
-        println("dial", i + 1, bs.VersionName(), "verified:", len(bs.VerifiedChain), "resumed:", bs.Resumed, "who:", await roundTrip(b, "who")?)
+        println(
+            "dial",
+            i + 1,
+            bs.VersionName(),
+            "verified:",
+            len(bs.VerifiedChain),
+            "resumed:",
+            bs.Resumed,
+            "who:",
+            await roundTrip(b, "who")?,
+        )
         b.Close()
     }
 
@@ -130,7 +157,14 @@ async func main() void! {
     var c13 = tls.Config{ServerName: "localhost", RootCAs: roots, Sessions: tls.NewSessionCache()}
     for i in 0..2 {
         var c = await tls.Dial(addr, c13)?
-        println("dial", i + 1, c.ConnectionState().VersionName(), "resumed:", c.ConnectionState().Resumed, await roundTrip(c, "ok")?)
+        println(
+            "dial",
+            i + 1,
+            c.ConnectionState().VersionName(),
+            "resumed:",
+            c.ConnectionState().Resumed,
+            await roundTrip(c, "ok")?,
+        )
         c.Close()
     }
 

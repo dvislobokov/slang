@@ -2,11 +2,11 @@
 // status: passing
 namespace spec.async2.async_method_pointer
 
-import std.io
 import std
+import std.io
 
 struct Account {
-    Name string
+    Name    string
     Balance int
 
     async func Deposit(n int, ms int) int {

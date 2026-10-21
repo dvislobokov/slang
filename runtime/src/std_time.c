@@ -2,28 +2,22 @@
  * Unix epoch; calendar functions use UTC. Format/Parse layouts are strftime /
  * strptime patterns (plus `%L` = 3-digit milliseconds in Format). */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 int64_t slang_time_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    int64_t ns = slang__plat_wall_ns();
+    return ns / 1000000 - (ns % 1000000 < 0);
 }
 
-int64_t slang_time_now_nanos(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
-}
+int64_t slang_time_now_nanos(void) { return slang__plat_wall_ns(); }
 
 void slang_time_sleep(int64_t ms) {
     if (ms <= 0) return;
-    struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
-    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+    slang__plat_sleep_ns(ms * 1000000);
 }
 
 int64_t slang_time_since(int64_t start_ms) { return slang_time_now() - start_ms; }
@@ -32,10 +26,9 @@ int64_t slang_time_since(int64_t start_ms) { return slang_time_now() - start_ms;
 static int64_t fdiv(int64_t a, int64_t b) { return a / b - ((a % b != 0) && ((a < 0) != (b < 0))); }
 
 static struct tm utc(int64_t ms) {
-    time_t t = (time_t)fdiv(ms, 1000);
     struct tm tm;
     memset(&tm, 0, sizeof tm);
-    if (!gmtime_r(&t, &tm)) memset(&tm, 0, sizeof tm);
+    slang__plat_utc_tm(fdiv(ms, 1000), &tm);
     return tm;
 }
 
@@ -73,7 +66,7 @@ slang_string *slang_time_format(int64_t ms, const slang_string *layout) {
     size_t cap = (size_t)k * 4 + 64;
     for (;;) {
         char *buf = slang_alloc((int64_t)cap);
-        size_t n = strftime(buf, cap, pat, &tm);
+        size_t n = slang__plat_strftime(buf, cap, pat, &tm);
         if (n > 0) {
             slang_string *r = slang_string_new(buf + 1, (int64_t)n - 1);
             slang_free(buf);
@@ -94,7 +87,8 @@ int64_t slang_time_parse(const slang_string *s, const slang_string *layout, slan
     tm.tm_mday = 1;
     tm.tm_year = 70;
     const char *p = slang_string_data(s);
-    const char *end = strptime(p, slang_string_data(layout), &tm);
+    long off = 0;   /* set by %z, 0 otherwise */
+    const char *end = slang__plat_strptime(p, slang_string_data(layout), &tm, &off);
     if (!end || *end != 0 || (int64_t)strlen(p) != slang_string_len(s)) {
         if (err) {
             char buf[256];
@@ -104,9 +98,8 @@ int64_t slang_time_parse(const slang_string *s, const slang_string *layout, slan
         }
         return 0;
     }
-    long off = tm.tm_gmtoff;   /* set by %z (glibc), 0 otherwise */
     tm.tm_isdst = 0;
-    time_t t = timegm(&tm);
+    int64_t t = slang__plat_timegm(&tm);
     if (err) *err = NULL;
-    return ((int64_t)t - off) * 1000;
+    return (t - off) * 1000;
 }

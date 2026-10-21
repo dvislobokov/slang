@@ -4,21 +4,29 @@
 // with the `defer tx.Rollback()` idiom, and ErrNoRows.
 namespace examples.sql
 
-import std.io
 import std
 import std.database
+import std.io
 
 struct Book {
-    Id int
-    Title string
+    Id     int
+    Title  string
     Author string
     @sql.column("published") Year int
-    Rating *float
+    Rating  *float
     AddedAt time.Time
 }
 
 async func addBook(db *sql.DB, title string, author string, year int) int! {
-    var r = await db.Exec("insert into books (title, author, published, added_at) values (:t, :a, :y, :at)", [sql.Named("t", title), sql.Named("a", author), sql.Named("y", year), sql.Named("at", time.Date(2024, 1, 15, 9, 30, 0, 0, time.UTC()))])?
+    var r = await db.Exec(
+        "insert into books (title, author, published, added_at) values (:t, :a, :y, :at)",
+        [
+            sql.Named("t", title),
+            sql.Named("a", author),
+            sql.Named("y", year),
+            sql.Named("at", time.Date(2024, 1, 15, 9, 30, 0, 0, time.UTC())),
+        ],
+    )?
     return r.LastInsertId
 }
 
@@ -35,7 +43,10 @@ async func rate(db *sql.DB, id int, stars float) void! {
 async func main() void! {
     var db = sqlite.Open(":memory:")
     defer db.Close()
-    _ = await db.Exec("create table books (id integer primary key, title text not null, author text not null, published integer, rating real, added_at datetime)", [])?
+    _ = await db.Exec(
+        "create table books (id integer primary key, title text not null, author text not null, published integer, rating real, added_at datetime)",
+        [],
+    )?
     var dune = await addBook(db, "Dune", "Frank Herbert", 1965)?
     _ = await addBook(db, "Neuromancer", "William Gibson", 1984)?
     _ = await addBook(db, "Hyperion", "Dan Simmons", 1989)?
@@ -44,7 +55,9 @@ async func main() void! {
         println("rate:", err)
     }
 
-    var books = await db.Query<Book>("select * from books where published < ? order by published", [1988])?
+    var books = await db.Query<Book>("select * from books where published < ? order by published", [
+        1988,
+    ])?
     for b in books {
         var rating = "unrated"
         if b.Rating != nil {

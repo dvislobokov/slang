@@ -1,0 +1,24 @@
+brokers true
+create again: 36 true
+partitions 3 true
+listed true
+producer id true
+partitioned by murmur2 true 30
+batched true 0
+closed: true
+gzip 0 true
+zstd 0 true
+acks none offset -1
+member assignment 3
+consumed 34 compressed bytes 52010 header trace=abc ts=1700000000123
+committed 34
+rebalanced 3 true true
+after rebalance [after0 after1 after2 after3 after4 after5 after6 after7 after8]
+tail 0 x newest
+sasl PLAIN true
+sasl PLAIN wrong password: true
+sasl SCRAM-SHA-256 true
+sasl SCRAM-SHA-256 wrong password: true
+sasl SCRAM-SHA-512 true
+sasl SCRAM-SHA-512 wrong password: true
+deleted

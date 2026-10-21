@@ -246,22 +246,26 @@ struct core {
         return p
     }
 
-    func close() {
-        this.lock()
-        if this.closed {
-            this.unlock()
-            return
-        }
-        this.closed = true
-        var w = this.watcher
-        this.watcher = nil
-        this.unlock()
-        if w != nil {
-            w.Close()
-        }
-        for p in this.allPools() {
-            p.close()
-        }
+    func close() Task<void> {
+        return closeCore(this)
+    }
+}
+
+async func closeCore(c *core) {
+    c.lock()
+    if c.closed {
+        c.unlock()
+        return
+    }
+    c.closed = true
+    var w = c.watcher
+    c.watcher = nil
+    c.unlock()
+    for p in c.allPools() {
+        p.close()
+    }
+    if w != nil {
+        await w.Close()
     }
 }
 
@@ -881,7 +885,10 @@ async func watchSentinels(c *core) void! {
         return refreshWeak(w)
     }
     var sub = await startSubscription(st)?
-    await sub.PSubscribe(["+switch-master", "+slave", "+sdown", "-sdown"])?
+    try await sub.Subscribe(["+switch-master", "+slave", "+sdown", "-sdown"]) catch err {
+        await sub.Close()
+        return err
+    }
     c.lock()
     c.watcher = sub
     c.unlock()

@@ -1,0 +1,608 @@
+namespace std.net.ws
+
+// WebSockets (RFC 6455) over std.net.http: the server side upgrades a
+// request inside an http.Handler (`await ws.Upgrade(req, res)?`), the
+// client dials ws:// or wss:// URLs (`await ws.Dial(url)?`). Text and
+// binary messages, fragmentation (received messages are reassembled;
+// SendFragments sends one), ping/pong (pings are answered automatically),
+// the closing handshake with status codes, client masking (C helper
+// std.net.http.rtMask). permessage-deflate (RFC 7692) is not implemented:
+// no extension is negotiated. Sends are serialized by a mutex, so several
+// tasks may send on one Conn; one task at a time should receive.
+
+// A received or sent message (Type: TextMessage or BinaryMessage).
+struct Message {
+    Type int
+    Data []byte
+
+    func Text() string {
+        return std.strings.FromBytes(this.Data)
+    }
+
+    func IsText() bool {
+        return this.Type == 1
+    }
+}
+
+// A text message.
+func Text(s string) Message {
+    return Message{Type: 1, Data: std.strings.Bytes(s)}
+}
+
+// A binary message.
+func Binary(b []byte) Message {
+    return Message{Type: 2, Data: b}
+}
+
+// CloseError is the error of Recv once the connection is closed: the
+// peer's close code (CloseNoStatus if it sent none, CloseAbnormal if the
+// TCP connection ended without a close frame) and reason.
+struct CloseError {
+    Code   int
+    Reason string
+
+    func Message() string {
+        var s = "websocket: close " + std.fmt.Format("{0}", this.Code)
+        if this.Reason != "" {
+            s += " " + this.Reason
+        }
+        return s
+    }
+
+    func Unwrap() error {
+        return ErrClosed
+    }
+}
+
+// Whether err is a CloseError with one of the codes.
+func IsCloseError(err error, codes []int) bool {
+    var ce CloseError
+    if !std.errors.As(err, &ce) {
+        return false
+    }
+    if len(codes) == 0 {
+        return true
+    }
+    for c in codes {
+        if c == ce.Code {
+            return true
+        }
+    }
+    return false
+}
+
+struct connState {
+    rc          std.net.http.RawConn
+    client      bool
+    wmu         std.task.Mutex
+    guard       int
+    sentClose   bool
+    gotClose    bool
+    closeCode   int
+    closeReason string
+    tcpClosed   bool
+    // reassembly of a fragmented message
+    fragType int
+    frag     []byte
+    fragging bool
+    maxSize  int
+    pongs    int
+}
+
+// Conn is one WebSocket connection (copies share it).
+struct Conn {
+    st *connState
+    // the subprotocol chosen in the handshake ("" if none)
+    Subprotocol string
+
+    // Sends a message (one frame).
+    func Send(m Message) Task<void!> {
+        return writeFrame(this.st, m.Type, m.Data, true)
+    }
+
+    func SendText(s string) Task<void!> {
+        return writeFrame(this.st, 1, std.strings.Bytes(s), true)
+    }
+
+    func SendBinary(b []byte) Task<void!> {
+        return writeFrame(this.st, 2, b, true)
+    }
+
+    // Sends one message split into frames (a first frame of type typ,
+    // then continuation frames), atomically with respect to other senders.
+    func SendFragments(typ int, parts [][]byte) Task<void!> {
+        return writeFragments(this.st, typ, parts)
+    }
+
+    // Sends a ping (the peer answers with a pong carrying data).
+    func Ping(data []byte) Task<void!> {
+        return writeFrame(this.st, 9, data, true)
+    }
+
+    // The next data message; pings are answered and pongs counted on the
+    // way. Fails with a CloseError (wrapping ErrClosed) once closed.
+    func Recv() Task<Message!> {
+        return recv(this.st)
+    }
+
+    // `for msg in conn`: messages until the connection is closed.
+    async func Next() (Message, bool) {
+        var m = try await recv(this.st) catch err {
+            return (Message{}, false)
+        }
+        return (m, true)
+    }
+
+    // The closing handshake with CloseNormal.
+    func Close() Task<void!> {
+        return closeConn(this.st, 1000, "")
+    }
+
+    // The closing handshake with a code and reason: sends a close frame,
+    // waits (at most 2 s) for the peer's, then closes the connection.
+    func CloseWith(code int, reason string) Task<void!> {
+        return closeConn(this.st, code, reason)
+    }
+
+    // Pongs received so far.
+    func Pongs() int {
+        return this.st.pongs
+    }
+
+    // The largest message Recv accepts (default 32 MB; larger ones close
+    // the connection with CloseMessageTooBig).
+    func SetMaxMessageSize(n int) {
+        this.st.maxSize = n
+    }
+
+    // Timeout in ms of each network wait (0: none).
+    func SetTimeout(ms int) {
+        this.st.rc.SetTimeout(ms)
+    }
+
+    func RemoteAddr() string {
+        return this.st.rc.RemoteAddr()
+    }
+
+    func IsClosed() bool {
+        return this.st.tcpClosed || this.st.rc.IsClosed()
+    }
+}
+
+func newConn(rc std.net.http.RawConn, client bool, proto string) Conn {
+    return Conn{st: new connState{rc: rc, client: client, maxSize: 32 << 20}, Subprotocol: proto}
+}
+
+// ---- framing ------------------------------------------------------------------
+
+// The frame header (and masked copy of the payload for clients).
+func encodeFrame(st *connState, op int, data []byte, fin bool) []byte {
+    var h []byte = []
+    var b0 = op
+    if fin {
+        b0 = b0 | 128
+    }
+    h = append(h, byte(b0))
+    var maskBit = 0
+    if st.client {
+        maskBit = 128
+    }
+    var n = len(data)
+    if n < 126 {
+        h = append(h, byte(maskBit | n))
+    } else if n < 65536 {
+        h = append(h, byte(maskBit | 126))
+        h = append(h, byte(n >> 8))
+        h = append(h, byte(n & 255))
+    } else {
+        h = append(h, byte(maskBit | 127))
+        var shift = 56
+        for shift >= 0 {
+            h = append(h, byte((n >> shift) & 255))
+            shift -= 8
+        }
+    }
+    if !st.client {
+        return std.net.rtJoin(h, data, n)
+    }
+    var key = std.random.Int() & 4294967295
+    h = append(h, byte((key >> 24) & 255))
+    h = append(h, byte((key >> 16) & 255))
+    h = append(h, byte((key >> 8) & 255))
+    h = append(h, byte(key & 255))
+    var off = len(h)
+    var out = std.net.rtJoin(h, data, n)
+    std.net.http.rtMask(out, off, n, key, 0)
+    return out
+}
+
+async func sendRaw(st *connState, bytes []byte) void! {
+    await st.wmu.Lock()
+    var failed error
+    try {
+        _ = await st.rc.Write(bytes)?
+    } catch err {
+        failed = err
+    }
+    st.wmu.Unlock()
+    if failed != nil {
+        return failed
+    }
+}
+
+async func writeFrame(st *connState, op int, data []byte, fin bool) void! {
+    if st.sentClose {
+        return ErrClosed
+    }
+    if op >= 8 && len(data) > 125 {
+        return error("websocket: control frame payload over 125 bytes")
+    }
+    await sendRaw(st, encodeFrame(st, op, data, fin))?
+}
+
+async func writeFragments(st *connState, typ int, parts [][]byte) void! {
+    if st.sentClose {
+        return ErrClosed
+    }
+    var out []byte = []
+    for i, p in parts {
+        var op = 0
+        if i == 0 {
+            op = typ
+        }
+        var f = encodeFrame(st, op, p, i == len(parts) - 1)
+        out = std.net.rtJoin(out, f, len(f))
+    }
+    if len(parts) == 0 {
+        out = encodeFrame(st, typ, [], true)
+    }
+    await sendRaw(st, out)?
+}
+
+func closePayload(code int, reason string) []byte {
+    if code == 1005 || code == 0 {
+        return []
+    }
+    var p []byte = [byte(code >> 8), byte(code & 255)]
+    return std.net.rtJoin(p, std.strings.Bytes(reason), len(reason))
+}
+
+func validCloseCode(c int) bool {
+    return (c >= 1000 && c <= 1003) || (c >= 1007 && c <= 1014) || (c >= 3000 && c <= 4999)
+}
+
+// Fails the connection: a close frame with code (best effort), then TCP close.
+async func failConn(st *connState, code int, reason string) error {
+    if !st.sentClose {
+        st.sentClose = true
+        try await sendRaw(st, encodeFrame(st, 8, closePayload(code, reason), true)) catch err {}
+    }
+    st.tcpClosed = true
+    st.rc.Close()
+    st.gotClose = true
+    st.closeCode = code
+    st.closeReason = reason
+    return CloseError{Code: code, Reason: reason}
+}
+
+async func recv(st *connState) Message! {
+    if st.gotClose {
+        return CloseError{Code: st.closeCode, Reason: st.closeReason}
+    }
+    for {
+        var hdr = try await st.rc.ReadExact(2) catch err {
+            st.gotClose = true
+            st.closeCode = 1006
+            st.tcpClosed = true
+            st.rc.Close()
+            return CloseError{Code: 1006}
+        }
+        var b0 = int(hdr[0])
+        var b1 = int(hdr[1])
+        var fin = (b0 & 128) != 0
+        var op = b0 & 15
+        var masked = (b1 & 128) != 0
+        var n = b1 & 127
+        if (b0 & 112) != 0 {
+            return await failConn(st, 1002, "reserved bits set")
+        }
+        if masked == st.client {
+            if st.client {
+                return await failConn(st, 1002, "masked frame from the server")
+            }
+            return await failConn(st, 1002, "unmasked frame from the client")
+        }
+        if n == 126 {
+            var ext = await st.rc.ReadExact(2)?
+            n = (int(ext[0]) << 8) | int(ext[1])
+        } else if n == 127 {
+            var ext = await st.rc.ReadExact(8)?
+            n = 0
+            for i in 0..8 {
+                n = (n << 8) | int(ext[i])
+            }
+            if n < 0 {
+                return await failConn(st, 1009, "frame too large")
+            }
+        }
+        var key = 0
+        if masked {
+            var k = await st.rc.ReadExact(4)?
+            key = (int(k[0]) << 24) | (int(k[1]) << 16) | (int(k[2]) << 8) | int(k[3])
+        }
+        if op >= 8 && (n > 125 || !fin) {
+            return await failConn(st, 1002, "invalid control frame")
+        }
+        if n > st.maxSize || len(st.frag) + n > st.maxSize {
+            return await failConn(st, 1009, "message too big")
+        }
+        var payload []byte = []
+        if n > 0 {
+            payload = await st.rc.ReadExact(n)?
+            if masked {
+                std.net.http.rtMask(payload, 0, n, key, 0)
+            }
+        }
+        switch op {
+            case 8:
+                var code = 1005
+                var reason = ""
+                if n == 1 {
+                    return await failConn(st, 1002, "close payload of 1 byte")
+                }
+                if n >= 2 {
+                    code = (int(payload[0]) << 8) | int(payload[1])
+                    if !validCloseCode(code) {
+                        return await failConn(st, 1002, "invalid close code")
+                    }
+                    reason = std.strings.FromBytes(payload[2..])
+                    if !std.unicode.utf8.ValidString(reason) {
+                        return await failConn(st, 1007, "invalid UTF-8 in the close reason")
+                    }
+                }
+                st.gotClose = true
+                st.closeCode = code
+                st.closeReason = reason
+                if !st.sentClose {
+                    st.sentClose = true
+                    var echo = code
+                    if code == 1005 {
+                        echo = 0
+                    }
+                    try await sendRaw(
+                        st,
+                        encodeFrame(st, 8, closePayload(echo, ""), true),
+                    ) catch err {}
+                }
+                if !st.client {
+                    st.tcpClosed = true
+                    st.rc.Close()
+                }
+                return CloseError{Code: code, Reason: reason}
+            case 9:
+                if !st.sentClose {
+                    try await sendRaw(st, encodeFrame(st, 10, payload, true)) catch err {}
+                }
+                continue
+            case 10:
+                st.pongs += 1
+                continue
+            case 0:
+                if !st.fragging {
+                    return await failConn(st, 1002, "continuation without a message")
+                }
+                st.frag = std.net.rtJoin(st.frag, payload, n)
+                if !fin {
+                    continue
+                }
+                var m = Message{Type: st.fragType, Data: st.frag}
+                st.frag = []
+                st.fragging = false
+                if m.Type == 1 && !std.unicode.utf8.Valid(m.Data) {
+                    return await failConn(st, 1007, "invalid UTF-8 in a text message")
+                }
+                return m
+            case 1, 2:
+                if st.fragging {
+                    return await failConn(st, 1002, "new message inside a fragmented one")
+                }
+                if !fin {
+                    st.fragging = true
+                    st.fragType = op
+                    st.frag = payload
+                    continue
+                }
+                if op == 1 && !std.unicode.utf8.Valid(payload) {
+                    return await failConn(st, 1007, "invalid UTF-8 in a text message")
+                }
+                return Message{Type: op, Data: payload}
+            default:
+                return await failConn(st, 1002, "unknown opcode")
+        }
+    }
+}
+
+async func closeConn(st *connState, code int, reason string) void! {
+    if st.tcpClosed {
+        return
+    }
+    if !st.sentClose {
+        st.sentClose = true
+        try await sendRaw(st, encodeFrame(st, 8, closePayload(code, reason), true)) catch err {
+            st.tcpClosed = true
+            st.rc.Close()
+            return
+        }
+    }
+    if !st.gotClose {
+        // wait for the peer's close frame (data messages are dropped)
+        st.rc.SetTimeout(2000)
+        for !st.gotClose {
+            try await recv(st) catch err {
+                break
+            }
+        }
+    }
+    st.tcpClosed = true
+    st.rc.Close()
+}
+
+// ---- handshake ----------------------------------------------------------------
+
+func acceptKey(key string) string {
+    return std.encoding.base64.Encode(
+        std.crypto.hash.Sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"),
+    )
+}
+
+// Server handshake options (UpgradeWith).
+struct UpgradeOptions {
+    // Subprotocols the server speaks, in its order of preference.
+    Subprotocols []string
+    // Accept only these Origin values (empty: any origin).
+    Origins []string
+    // Extra response headers of the 101.
+    Headers map[string]string
+}
+
+// Upgrade answers a WebSocket handshake request inside an HTTP handler
+// (HTTP/1.1 only) and returns the connection; a request that is not a
+// valid handshake gets 400 (426 for a wrong version) and ErrBadHandshake.
+func Upgrade(req *std.net.http.Request, res *std.net.http.Response) Task<Conn!> {
+    return UpgradeWith(req, res, UpgradeOptions{})
+}
+
+async func UpgradeWith(
+    req *std.net.http.Request,
+    res *std.net.http.Response,
+    opts UpgradeOptions,
+) Conn! {
+    var h = req.Headers
+    if req.Method != "GET" ||
+        !std.net.http.HasToken(h["Connection"], "upgrade") ||
+        !std.net.http.HasToken(h["Upgrade"], "websocket") {
+        res.Text(400, "400 Bad Request: not a WebSocket handshake\n")
+        return ErrBadHandshake
+    }
+    if h["Sec-Websocket-Version"] != "13" {
+        res.SetHeader("Sec-WebSocket-Version", "13")
+        res.Text(426, "426 Upgrade Required: WebSocket version 13\n")
+        return ErrBadHandshake
+    }
+    var key = h["Sec-Websocket-Key"]
+    var raw = try std.encoding.base64.Decode(key) else []
+    if len(raw) != 16 {
+        res.Text(400, "400 Bad Request: invalid Sec-WebSocket-Key\n")
+        return ErrBadHandshake
+    }
+    if len(opts.Origins) > 0 {
+        var ok = false
+        for o in opts.Origins {
+            if o == h["Origin"] {
+                ok = true
+            }
+        }
+        if !ok {
+            res.Text(403, "403 Forbidden: origin not allowed\n")
+            return ErrBadHandshake
+        }
+    }
+    var proto = ""
+    if h["Sec-Websocket-Protocol"] != "" {
+        for p in opts.Subprotocols {
+            if proto == "" && std.net.http.HasToken(h["Sec-Websocket-Protocol"], p) {
+                proto = p
+            }
+        }
+    }
+    var rc = res.Hijack()?
+    var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " +
+        acceptKey(key) +
+        "\r\n"
+    if proto != "" {
+        head += "Sec-WebSocket-Protocol: " + proto + "\r\n"
+    }
+    for k, v in opts.Headers {
+        head += std.net.http.CanonicalHeader(k) + ": " + v + "\r\n"
+    }
+    head += "\r\n"
+    rc.SetTimeout(0)
+    _ = try await rc.WriteString(head) catch err {
+        rc.Close()
+        return err
+    }
+    return newConn(rc, false, proto)
+}
+
+// Client handshake options (DialWith).
+struct DialOptions {
+    Headers      map[string]string
+    Subprotocols []string
+    TLS          *std.net.tls.Config
+    // Milliseconds for the connect and the handshake (default 30000).
+    Timeout int
+}
+
+// Dials a ws:// or wss:// URL.
+func Dial(url string) Task<Conn!> {
+    return DialWith(url, DialOptions{})
+}
+
+async func DialWith(url string, opts DialOptions) Conn! {
+    var u = std.net.http.ParseURL(url)?
+    if u.Scheme != "ws" && u.Scheme != "wss" && u.Scheme != "http" && u.Scheme != "https" {
+        return error("websocket: unsupported URL scheme \"" + u.Scheme + "\"")
+    }
+    var ms = opts.Timeout
+    if ms <= 0 {
+        ms = 30000
+    }
+    var rc = await std.net.http.DialRaw(u, opts.TLS, ms)?
+    rc.SetTimeout(ms)
+    var key = std.encoding.base64.Encode(std.random.Bytes(16))
+    var req = "GET " +
+        u.RequestURI() +
+        " HTTP/1.1\r\nHost: " +
+        u.Host +
+        "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " +
+        key +
+        "\r\nSec-WebSocket-Version: 13\r\n"
+    if len(opts.Subprotocols) > 0 {
+        req += "Sec-WebSocket-Protocol: " + std.strings.Join(opts.Subprotocols, ", ") + "\r\n"
+    }
+    for k, v in opts.Headers {
+        req += std.net.http.CanonicalHeader(k) + ": " + v + "\r\n"
+    }
+    req += "\r\n"
+    try {
+        _ = await rc.WriteString(req)?
+        var res = await rc.ReadResponseHead()?
+        if res.Status != 101 {
+            rc.Close()
+            return std.errors.Wrap(
+                ErrBadHandshake,
+                "websocket: " + url + ": status " + std.fmt.Format("{0}", res.Status),
+            )
+        }
+        if !std.net.http.HasToken(res.Headers["Upgrade"], "websocket") ||
+            !std.net.http.HasToken(res.Headers["Connection"], "upgrade") {
+            rc.Close()
+            return std.errors.Wrap(
+                ErrBadHandshake,
+                "websocket: " + url + ": missing Upgrade headers",
+            )
+        }
+        if res.Headers["Sec-Websocket-Accept"] != acceptKey(key) {
+            rc.Close()
+            return std.errors.Wrap(
+                ErrBadHandshake,
+                "websocket: " + url + ": wrong Sec-WebSocket-Accept",
+            )
+        }
+        rc.SetTimeout(0)
+        return newConn(rc, true, res.Headers["Sec-Websocket-Protocol"])
+    } catch err {
+        rc.Close()
+        return err
+    }
+}

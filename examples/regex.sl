@@ -11,7 +11,9 @@ func main() void! {
         "2024-05-17 12:01:30 ERROR user=alice action=pay ip=10.0.0.7",
     ]
     // Pattern: the literal is validated at compile time (a typo is a build error).
-    var entry = regex.Pattern(`^(?P<date>\d{4}-\d\d-\d\d) (?P<time>[\d:]+) (?P<level>[A-Z]+)\s+(?P<rest>.*)$`)
+    var entry = regex.Pattern(
+        `^(?P<date>\d{4}-\d\d-\d\d) (?P<time>[\d:]+) (?P<level>[A-Z]+)\s+(?P<rest>.*)$`,
+    )
     var kv = regex.Pattern(`(\w+)=(\S+)`)
     for line in lines {
         var g = entry.Groups(line)

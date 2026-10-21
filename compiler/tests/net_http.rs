@@ -160,8 +160,18 @@ fn have(tool: &str) -> bool {
     Command::new("sh").arg("-c").arg(format!("command -v {tool}")).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
-/// Builds a fixture program (with `--leak-check`) into a fresh directory.
+/// Builds a fixture program (with `--leak-check`) into a fresh directory,
+/// once per test process: the curl and Go tests both run `server`, in
+/// parallel, and rebuilding it in place while the other test executes it
+/// failed the spawn ("text file busy") under load.
 fn build_fixture(name: &str) -> PathBuf {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static BUILT: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+    let mut built = BUILT.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(exe) = built.get(name) {
+        return exe.clone();
+    }
     ensure_runtime();
     let src = repo().join("compiler/tests/fixtures/h2").join(format!("{name}.sl"));
     let dir = std::env::temp_dir().join(format!("slang-h2-{}-{name}", std::process::id()));
@@ -169,6 +179,7 @@ fn build_fixture(name: &str) -> PathBuf {
     let exe = dir.join(name);
     let b = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
     assert!(b.status.success(), "build of {name} failed:\n{}", String::from_utf8_lossy(&b.stderr));
+    built.insert(name.to_string(), exe.clone());
     exe
 }
 

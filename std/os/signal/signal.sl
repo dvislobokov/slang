@@ -1,0 +1,122 @@
+namespace std.os.signal
+
+// std.os.signal: POSIX signals as async events (Go's os/signal):
+//   await signal.Wait(signal.SIGTERM)          // one delivery
+//   var ch = signal.Notify([signal.SIGINT, signal.SIGTERM])
+//   var sig = await ch.Recv()?                  // each delivery, forever
+// Signals are plain ints (signal.SIGINT ...); Name(sig) gives "SIGINT".
+// Once a signal is waited for (or notified), its default action (e.g.
+// terminating on SIGINT) is replaced until Reset. Deliveries that arrive
+// while nobody waits are remembered (counted) and satisfy the next Wait.
+// Runtime: runtime/src/std_os_signal.c (self-pipe + a dedicated thread).
+
+// Waits for the next delivery of sig.
+func Wait(sig int) Task<void> {
+    return rtWait(sig)
+}
+
+// Waits for the first of sigs; yields which one arrived.
+async func WaitAny(sigs []int) int {
+    if len(sigs) == 0 {
+        panic("signal.WaitAny: no signals")
+    }
+    for s in sigs {
+        if rtPending(s) > 0 {
+            await rtWait(s)
+            return s
+        }
+    }
+    var ch = std.task.Channel<int>(len(sigs))
+    for s in sigs {
+        rtCatch(s)
+        std.task.Go(forwardOnce(s, ch))
+    }
+    var got = try await ch.Recv() else sigs[0]
+    return got
+}
+
+func forwardOnce(sig int, ch std.task.Channel<int>) func() Task<void> {
+    return async () => {
+        await rtWait(sig)
+        await ch.Send(sig)
+    }
+}
+
+async func waitOne(sig int) int {
+    await rtWait(sig)
+    return sig
+}
+
+// A channel receiving every delivery of the given signals (buffer of
+// 16: deliveries beyond it wait in the channel's sender).
+func Notify(sigs []int) std.task.Channel<int> {
+    var ch = std.task.Channel<int>(16)
+    for s in sigs {
+        rtCatch(s)
+        std.task.Go(forward(s, ch))
+    }
+    return ch
+}
+
+func forward(sig int, ch std.task.Channel<int>) func() Task<void> {
+    return async () => {
+        for !ch.IsClosed() {
+            await rtWait(sig)
+            if ch.IsClosed() {
+                return
+            }
+            await ch.Send(sig)
+        }
+    }
+}
+
+// Catches sigs without waiting yet: their default action is replaced
+// and deliveries are counted until a Wait takes them.
+func Catch(sigs []int) {
+    for s in sigs {
+        rtCatch(s)
+    }
+}
+
+// Ignores sigs (SIG_IGN) and forgets pending deliveries.
+func Ignore(sigs []int) {
+    for s in sigs {
+        rtIgnore(s)
+    }
+}
+
+// Restores the default action of sigs.
+func Reset(sigs []int) {
+    for s in sigs {
+        rtReset(s)
+    }
+}
+
+// Sends sig to this process (for tests and self-signalling).
+func Raise(sig int) {
+    rtRaise(sig)
+}
+
+// Deliveries of sig received but not yet waited for.
+func Pending(sig int) int {
+    return rtPending(sig)
+}
+
+// "SIGINT" for 2, ... ("signal N" for others).
+func Name(sig int) string {
+    switch sig {
+        case 1: return "SIGHUP"
+        case 2: return "SIGINT"
+        case 3: return "SIGQUIT"
+        case 6: return "SIGABRT"
+        case 9: return "SIGKILL"
+        case 10: return "SIGUSR1"
+        case 12: return "SIGUSR2"
+        case 13: return "SIGPIPE"
+        case 14: return "SIGALRM"
+        case 15: return "SIGTERM"
+        case 17: return "SIGCHLD"
+        case 28: return "SIGWINCH"
+    }
+    return "signal " + std.strconv.Itoa(sig)
+}

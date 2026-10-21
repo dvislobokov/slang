@@ -3,18 +3,51 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_addr
 
-import std.io
 import std
+import std.io
 
 func show(s string) void! {
     var ip = net.ParseIP(s)?
-    println(s, "->", ip.String(), "v4", ip.Is4(), "v6", ip.Is6(), "lo", ip.IsLoopback(), "priv", ip.IsPrivate(),
-        "mc", ip.IsMulticast(), "ll", ip.IsLinkLocal(), "unspec", ip.IsUnspecified())
+    println(
+        s,
+        "->",
+        ip.String(),
+        "v4",
+        ip.Is4(),
+        "v6",
+        ip.Is6(),
+        "lo",
+        ip.IsLoopback(),
+        "priv",
+        ip.IsPrivate(),
+        "mc",
+        ip.IsMulticast(),
+        "ll",
+        ip.IsLinkLocal(),
+        "unspec",
+        ip.IsUnspecified(),
+    )
 }
 
 async func main() void! {
-    for s in ["127.0.0.1", "10.1.2.3", "172.16.0.1", "172.32.0.1", "192.168.0.7", "8.8.8.8", "224.0.0.251",
-              "169.254.1.1", "0.0.0.0", "::1", "::", "fd00::1", "fe80::1", "ff02::1", "2001:db8::1", "::ffff:10.0.0.1"] {
+    for s in [
+        "127.0.0.1",
+        "10.1.2.3",
+        "172.16.0.1",
+        "172.32.0.1",
+        "192.168.0.7",
+        "8.8.8.8",
+        "224.0.0.251",
+        "169.254.1.1",
+        "0.0.0.0",
+        "::1",
+        "::",
+        "fd00::1",
+        "fe80::1",
+        "ff02::1",
+        "2001:db8::1",
+        "::ffff:10.0.0.1",
+    ] {
         show(s)?
     }
     for bad in ["1.2.3", "256.1.1.1", "::g", "", "1.2.3.4%eth0", "[::1]"] {
@@ -23,8 +56,18 @@ async func main() void! {
         }
     }
     var m = net.ParseIP("::ffff:192.168.1.1")?
-    println(m.To4().String(), len(m.Bytes()), len(m.To4().Bytes()), m.Equal(net.IPv4(192, 168, 1, 1)))
-    println(net.IPv4(1, 2, 3, 4).String(), net.IPv6Loopback().String(), net.IPv4Zero().String(), net.IPv6Zero().String())
+    println(
+        m.To4().String(),
+        len(m.Bytes()),
+        len(m.To4().Bytes()),
+        m.Equal(net.IPv4(192, 168, 1, 1)),
+    )
+    println(
+        net.IPv4(1, 2, 3, 4).String(),
+        net.IPv6Loopback().String(),
+        net.IPv4Zero().String(),
+        net.IPv6Zero().String(),
+    )
     var zero net.IP
     println(zero.IsValid(), zero.String(), zero.IsLoopback())
 

@@ -14,8 +14,8 @@ struct Packet {
 // The result of UDPConn.ReadFrom: N bytes were stored; Truncated is set
 // when the datagram was longer than the buffer (the rest is dropped).
 struct Datagram {
-    N int
-    From Addr
+    N         int
+    From      Addr
     Truncated bool
 }
 
@@ -243,10 +243,10 @@ async func DialUDP(addr string) UDPConn! {
 // ---- buffered I/O ----
 
 struct rbuf {
-    c Conn
+    c   Conn
     buf []byte
-    r int
-    w int
+    r   int
+    w   int
 
     async func fill() int! {
         if this.r > 0 {
@@ -424,9 +424,9 @@ func NewBufferedReader(c Conn, size int) BufferedReader {
 }
 
 struct wbuf {
-    c Conn
+    c   Conn
     buf []byte
-    n int
+    n   int
 
     async func flush() void! {
         if this.n > 0 {
@@ -486,7 +486,7 @@ func NewBufferedWriter(c Conn, size int) BufferedWriter {
 
 // An address of a network interface with its prefix length.
 struct IPNet {
-    IP IP
+    IP   IP
     Bits int
 
     func String() string {
@@ -496,14 +496,14 @@ struct IPNet {
 
 // A network interface.
 struct Interface {
-    Name string
-    Index int
-    Up bool
-    Loopback bool
-    Multicast bool
-    Broadcast bool
+    Name         string
+    Index        int
+    Up           bool
+    Loopback     bool
+    Multicast    bool
+    Broadcast    bool
     PointToPoint bool
-    Addrs []IPNet
+    Addrs        []IPNet
 }
 
 // Interfaces lists the system's network interfaces and their addresses.
@@ -535,7 +535,10 @@ func Interfaces() []Interface! {
                 }
                 var ip = try ParseIP(a[..slash]) else IP{}
                 if ip.IsValid() {
-                    it.Addrs = append(it.Addrs, IPNet{IP: ip, Bits: try std.strings.ToInt(a[slash + 1..]) else 0})
+                    it.Addrs = append(it.Addrs, IPNet{
+                        IP: ip,
+                        Bits: try std.strings.ToInt(a[slash + 1..]) else 0,
+                    })
                 }
             }
         }

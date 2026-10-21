@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.attributes2.defaults_positional_reflect
 
-import std.io
 import std
+import std.io
 
 @attribute(targets: [reflect.Target.Field])
 struct check {
@@ -13,9 +13,9 @@ struct check {
 }
 
 struct Form {
-    @check(min: 0, max: 150)       Age   int
-    @check(1)                      Size  int
-    @check(2, 3, "custom message") Level int
+    @check(min: 0, max: 150)         Age   int
+    @check(1)                        Size  int
+    @check(2, 3, "custom message")   Level int
     @check(message: "named", min: 5) Count int
     Plain int
 }

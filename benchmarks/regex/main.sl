@@ -5,7 +5,28 @@ import std.io
 
 // Finds all e-mail addresses in a generated 10 MB text (same text as main.go).
 func main() {
-    var words = ["lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua", "x@y"]
+    var words = [
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "consectetur",
+        "adipiscing",
+        "elit",
+        "sed",
+        "do",
+        "eiusmod",
+        "tempor",
+        "incididunt",
+        "ut",
+        "labore",
+        "et",
+        "dolore",
+        "magna",
+        "aliqua",
+        "x@y",
+    ]
     var names = ["john.smith", "alice", "bob_42", "carol+news", "dave-ops"]
     var hosts = ["example.com", "mail.example.org", "test.io", "uni.edu", "corp.co.uk"]
     var b = strings.Builder{}

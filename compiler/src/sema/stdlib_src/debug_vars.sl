@@ -308,7 +308,7 @@ func dynamic(addr int, ti int) child {
 // Whether a value of type ti at addr has children to expand.
 func hasChildren(addr int, ti int) bool {
     var k = tiKind(ti)
-    if k == kStruct() {
+    if k == kStruct() || k == kTuple() {
         return tiNFields(ti) > 0
     }
     if k == kPointer() {
@@ -389,7 +389,7 @@ func weakTarget(addr int) int {
 func children(addr int, ti int, start int, count int) []child {
     var out []child = []
     var k = tiKind(ti)
-    if k == kStruct() {
+    if k == kStruct() || k == kTuple() {
         for i in 0..tiNFields(ti) {
             var f = tiField(ti, i)
             out = append(out, child{
@@ -620,6 +620,17 @@ func format(addr int, ti int, depth int) string {
             )
         }
         return tiName(ti) + "{" + std.strings.Join(parts, ", ") + "}"
+    }
+    if k == kTuple() {
+        if depth <= 0 {
+            return "(...)"
+        }
+        var parts []string = []
+        for i in 0..tiNFields(ti) {
+            var f = tiField(ti, i)
+            parts = append(parts, format(addr + fieldOffset(f), fieldType(f), depth - 1))
+        }
+        return "(" + std.strings.Join(parts, ", ") + ")"
     }
     if k == kEnum() {
         var tag = rd32(addr)

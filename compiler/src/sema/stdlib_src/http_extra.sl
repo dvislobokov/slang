@@ -30,7 +30,13 @@ async func recoverServe(next Handler, req *Request, res *Response) void! {
         if std.errors.Is(err, ErrAbortHandler) {
             return err
         }
-        std.log.Error(err, "HTTP {RequestMethod} {RequestPath} failed: {ErrorMessage}", req.Method, req.Path, err.Message())
+        std.log.Error(
+            err,
+            "HTTP {RequestMethod} {RequestPath} failed: {ErrorMessage}",
+            req.Method,
+            req.Path,
+            err.Message(),
+        )
         if res.Started() {
             return ErrAbortHandler
         }
@@ -50,7 +56,7 @@ func Logging(logger std.log.Logger) func(Handler) Handler {
 
 struct logHandler {
     next Handler
-    l std.log.Logger
+    l    std.log.Logger
 
     func Serve(req *Request, res *Response) Task<void!> {
         return logServe(this.next, this.l, req, res)
@@ -76,11 +82,30 @@ async func logServe(next Handler, l std.log.Logger, req *Request, res *Response)
         lg = std.log.Global()
     }
     if failure != nil {
-        lg.Error(failure, "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed} ms", req.Method, req.Path, status, ms)
+        lg.Error(
+            failure,
+            "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed} ms",
+            req.Method,
+            req.Path,
+            status,
+            ms,
+        )
     } else if status >= 500 {
-        lg.Error("HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed} ms", req.Method, req.Path, status, ms)
+        lg.Error(
+            "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed} ms",
+            req.Method,
+            req.Path,
+            status,
+            ms,
+        )
     } else {
-        lg.Information("HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed} ms", req.Method, req.Path, status, ms)
+        lg.Information(
+            "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed} ms",
+            req.Method,
+            req.Path,
+            status,
+            ms,
+        )
     }
     if failure != nil {
         return failure
@@ -93,8 +118,8 @@ struct CORSOptions {
     // default GET, HEAD, POST, PUT, PATCH, DELETE
     AllowedMethods []string
     // default: whatever the preflight asks for
-    AllowedHeaders []string
-    ExposedHeaders []string
+    AllowedHeaders   []string
+    ExposedHeaders   []string
     AllowCredentials bool
     // seconds a preflight may be cached (0: not sent)
     MaxAge int
@@ -111,7 +136,7 @@ func CORS(opts CORSOptions) func(Handler) Handler {
 
 struct corsHandler {
     next Handler
-    o CORSOptions
+    o    CORSOptions
 
     func Serve(req *Request, res *Response) Task<void!> {
         return corsServe(this.next, this.o, req, res)
@@ -152,9 +177,15 @@ async func corsServe(next Handler, o CORSOptions, req *Request, res *Response) v
             }
             res.SetHeader("Access-Control-Allow-Methods", std.strings.Join(methods, ", "))
             if len(o.AllowedHeaders) > 0 {
-                res.SetHeader("Access-Control-Allow-Headers", std.strings.Join(o.AllowedHeaders, ", "))
+                res.SetHeader(
+                    "Access-Control-Allow-Headers",
+                    std.strings.Join(o.AllowedHeaders, ", "),
+                )
             } else if req.Headers["Access-Control-Request-Headers"] != "" {
-                res.SetHeader("Access-Control-Allow-Headers", req.Headers["Access-Control-Request-Headers"])
+                res.SetHeader(
+                    "Access-Control-Allow-Headers",
+                    req.Headers["Access-Control-Request-Headers"],
+                )
             }
             if o.AllowCredentials {
                 res.SetHeader("Access-Control-Allow-Credentials", "true")
@@ -196,7 +227,7 @@ func Gzip(level int) func(Handler) Handler {
 }
 
 struct gzipHandler {
-    next Handler
+    next  Handler
     level int
 
     func Serve(req *Request, res *Response) Task<void!> {
@@ -206,13 +237,20 @@ struct gzipHandler {
 
 func compressible(ct string) bool {
     var t = std.strings.ToLower(ct)
-    return std.strings.HasPrefix(t, "text/") || std.strings.Contains(t, "json") || std.strings.Contains(t, "javascript") || std.strings.Contains(t, "xml") || std.strings.Contains(t, "svg")
+    return std.strings.HasPrefix(t, "text/") ||
+        std.strings.Contains(t, "json") ||
+        std.strings.Contains(t, "javascript") ||
+        std.strings.Contains(t, "xml") ||
+        std.strings.Contains(t, "svg")
 }
 
 async func gzipServe(next Handler, level int, req *Request, res *Response) void! {
     await next.Serve(req, res)?
     res.AddHeader("Vary", "Accept-Encoding")
-    if !rtHasToken(req.Headers["Accept-Encoding"], "gzip") || res.Started() || res.file != "" || len(res.Body) < 1024 {
+    if !rtHasToken(req.Headers["Accept-Encoding"], "gzip") ||
+        res.Started() ||
+        res.file != "" ||
+        len(res.Body) < 1024 {
         return
     }
     if res.Header("Content-Encoding") != "" {
@@ -247,7 +285,7 @@ func BodyLimit(n int) func(Handler) Handler {
 
 struct limitHandler {
     next Handler
-    n int
+    n    int
 
     func Serve(req *Request, res *Response) Task<void!> {
         if len(req.Body) > this.n {
@@ -268,8 +306,8 @@ func TimeoutHandler(h Handler, ms int, msg string) Handler {
 
 struct timeoutHandler {
     next Handler
-    ms int
-    msg string
+    ms   int
+    msg  string
 
     func Serve(req *Request, res *Response) Task<void!> {
         return timeoutServe(this.next, this.ms, this.msg, req, res)
@@ -346,7 +384,7 @@ func etagMatch(list string, etag string, weak bool) bool {
 }
 
 struct byteRange {
-    start int
+    start  int
     length int
 }
 
@@ -512,7 +550,10 @@ async func serveRegular(req *Request, res *Response, path string, info std.os.Fi
     if len(ranges) == 1 {
         var r = ranges[0]
         res.Status = 206
-        res.SetHeader("Content-Range", "bytes " + itoa(r.start) + "-" + itoa(r.start + r.length - 1) + "/" + itoa(size))
+        res.SetHeader(
+            "Content-Range",
+            "bytes " + itoa(r.start) + "-" + itoa(r.start + r.length - 1) + "/" + itoa(size),
+        )
         res.SendFile(path, r.start, r.length)?
         return
     }
@@ -526,7 +567,19 @@ async func serveRegular(req *Request, res *Response, path string, info std.os.Fi
             _ = f.Close()
             return err
         }
-        body.Write("\r\n--" + boundary + "\r\nContent-Type: " + ctype + "\r\nContent-Range: bytes " + itoa(r.start) + "-" + itoa(r.start + r.length - 1) + "/" + itoa(size) + "\r\n\r\n")
+        body.Write(
+            "\r\n--" +
+                boundary +
+                "\r\nContent-Type: " +
+                ctype +
+                "\r\nContent-Range: bytes " +
+                itoa(r.start) +
+                "-" +
+                itoa(r.start + r.length - 1) +
+                "/" +
+                itoa(size) +
+                "\r\n\r\n",
+        )
         body.Write(std.strings.FromBytes(buf[..k]))
     }
     _ = f.Close()
@@ -602,7 +655,11 @@ async func serveDir(root string, listing bool, req *Request, res *Response) void
             }
         }
         var b = std.strings.Builder{}
-        b.Write("<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<title>" + std.html.Escape(clean) + "</title>\n<pre>\n")
+        b.Write(
+            "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<title>" +
+                std.html.Escape(clean) +
+                "</title>\n<pre>\n",
+        )
         for n in names {
             b.Write("<a href=\"" + std.html.Escape(n) + "\">" + std.html.Escape(n) + "</a>\n")
         }
@@ -620,7 +677,7 @@ struct SSEEvent {
     ID string
     // the event type ("" = "message")
     Event string
-    Data string
+    Data  string
     // reconnection time in ms (0: not sent)
     Retry int
 }
@@ -680,17 +737,17 @@ func ServerSentEvents(res *Response) *EventWriter {
 // Last-Event-ID, up to MaxRetries times in a row (default 3, negative =
 // never reconnect). Close stops it.
 struct EventSource {
-    URL string
-    Client Client
-    Headers map[string]string
+    URL        string
+    Client     Client
+    Headers    map[string]string
     MaxRetries int
     // the last event id received (sent back as Last-Event-ID)
     LastEventID string
-    retry int
-    body *BodyReader
-    buf string
-    closed bool
-    failures int
+    retry       int
+    body        *BodyReader
+    buf         string
+    closed      bool
+    failures    int
 
     async func Next() (SSEEvent, bool) {
         var ev = try await this.next() catch err {
@@ -723,7 +780,10 @@ func NewEventSource(url string) *EventSource {
 }
 
 async func esConnect(es *EventSource) void! {
-    var req = NewRequest("GET", es.URL).Header("Accept", "text/event-stream").Header("Cache-Control", "no-cache")
+    var req = NewRequest("GET", es.URL).Header("Accept", "text/event-stream").Header(
+        "Cache-Control",
+        "no-cache",
+    )
     for k, v in es.Headers {
         req.Header(k, v)
     }

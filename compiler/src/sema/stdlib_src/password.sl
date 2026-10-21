@@ -12,9 +12,9 @@ namespace std.crypto.password
 struct Params {
     Time int = 3
     // KiB.
-    Memory int = 65536
+    Memory  int = 65536
     Threads int = 4
-    KeyLen int = 32
+    KeyLen  int = 32
     SaltLen int = 16
 }
 
@@ -34,8 +34,24 @@ func HashWith(pw string, p Params) string! {
         return error("password: salt length must be at least 8")
     }
     var salt = std.crypto.rand.Bytes(p.SaltLen)?
-    var key = std.crypto.kdf.Argon2id(std.strings.Bytes(pw), salt, p.Time, p.Memory, p.Threads, p.KeyLen)?
-    return "$argon2id$v=19$m=" + std.fmt.Format("{0}", p.Memory) + ",t=" + std.fmt.Format("{0}", p.Time) + ",p=" + std.fmt.Format("{0}", p.Threads) + "$" + b64(salt) + "$" + b64(key)
+    var key = std.crypto.kdf.Argon2id(
+        std.strings.Bytes(pw),
+        salt,
+        p.Time,
+        p.Memory,
+        p.Threads,
+        p.KeyLen,
+    )?
+    return "$argon2id$v=19$m=" +
+        std.fmt.Format("{0}", p.Memory) +
+        ",t=" +
+        std.fmt.Format("{0}", p.Time) +
+        ",p=" +
+        std.fmt.Format("{0}", p.Threads) +
+        "$" +
+        b64(salt) +
+        "$" +
+        b64(key)
 }
 
 func b64(b []byte) string {
@@ -59,9 +75,9 @@ struct Info {
     // "argon2id", "argon2i" or "argon2d".
     Variant string
     Version int
-    Params Params
-    Salt []byte
-    Key []byte
+    Params  Params
+    Salt    []byte
+    Key     []byte
 }
 
 // Parses a PHC-format Argon2 hash.
@@ -118,7 +134,13 @@ func Verify(pw string, hash string) bool {
     var info = try Parse(hash) catch err {
         return false
     }
-    var kp = std.crypto.kdf.Argon2Params{Variant: info.Variant, Time: info.Params.Time, Memory: info.Params.Memory, Threads: info.Params.Threads, KeyLen: len(info.Key)}
+    var kp = std.crypto.kdf.Argon2Params{
+        Variant: info.Variant,
+        Time: info.Params.Time,
+        Memory: info.Params.Memory,
+        Threads: info.Params.Threads,
+        KeyLen: len(info.Key),
+    }
     var key = try std.crypto.kdf.Argon2(std.strings.Bytes(pw), info.Salt, kp) catch err {
         return false
     }
@@ -136,5 +158,10 @@ func NeedsRehashWith(hash string, p Params) bool {
         return true
     }
     var q = info.Params
-    return info.Variant != "argon2id" || q.Time != p.Time || q.Memory != p.Memory || q.Threads != p.Threads || q.KeyLen != p.KeyLen || q.SaltLen < p.SaltLen
+    return info.Variant != "argon2id" ||
+        q.Time != p.Time ||
+        q.Memory != p.Memory ||
+        q.Threads != p.Threads ||
+        q.KeyLen != p.KeyLen ||
+        q.SaltLen < p.SaltLen
 }

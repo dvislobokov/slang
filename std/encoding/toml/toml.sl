@@ -1,0 +1,1864 @@
+namespace std.encoding.toml
+
+// TOML 1.0: parsing to a dynamic Value tree with the full set of value
+// types (strings in all four forms, integers in all bases, floats with
+// inf/nan, booleans, offset/local datetimes, local dates and times,
+// arrays, inline tables), tables, arrays of tables, dotted keys and the
+// redefinition rules; Format<T>/Parse<T> through compile-time reflection
+// with @toml(name:, omitEmpty:, skip:, inline:) and @serde; and Document,
+// a parsed file that keeps comments, order and layout for in-place edits
+// (Set / Delete change only the affected lines).
+
+// A TOML value. Datetimes keep their text (DateKind tells which form).
+struct Value {
+    kind   int
+    s      string
+    i      int
+    f      float
+    b      bool
+    items  []Value
+    keys   []string
+    dt     int
+    inline bool
+
+    func IsString() bool {
+        return this.kind == 1
+    }
+
+    func IsInt() bool {
+        return this.kind == 2
+    }
+
+    func IsFloat() bool {
+        return this.kind == 3
+    }
+
+    func IsBool() bool {
+        return this.kind == 4
+    }
+
+    func IsDateTime() bool {
+        return this.kind == 5
+    }
+
+    func IsArray() bool {
+        return this.kind == 6
+    }
+
+    func IsTable() bool {
+        return this.kind == 7
+    }
+
+    // "string", "int", "float", "bool", "datetime", "array", "table" ("none" for the zero Value).
+    func Type() string {
+        return kindName(this.kind)
+    }
+
+    // For datetimes: "offset-datetime", "local-datetime", "local-date" or "local-time".
+    func DateKind() string {
+        if this.kind != 5 {
+            return ""
+        }
+        if this.dt == 1 {
+            return "offset-datetime"
+        }
+        if this.dt == 2 {
+            return "local-datetime"
+        }
+        if this.dt == 3 {
+            return "local-date"
+        }
+        return "local-time"
+    }
+
+    func String() string! {
+        if this.kind != 1 {
+            return error("toml: " + kindName(this.kind) + " is not a string")
+        }
+        return this.s
+    }
+
+    func Int() int! {
+        if this.kind != 2 {
+            return error("toml: " + kindName(this.kind) + " is not an integer")
+        }
+        return this.i
+    }
+
+    func Float() float! {
+        if this.kind == 2 {
+            return float(this.i)
+        }
+        if this.kind != 3 {
+            return error("toml: " + kindName(this.kind) + " is not a float")
+        }
+        return this.f
+    }
+
+    func Bool() bool! {
+        if this.kind != 4 {
+            return error("toml: " + kindName(this.kind) + " is not a bool")
+        }
+        return this.b
+    }
+
+    // The text of a datetime as written (normalized: T separator, Z upper case).
+    func DateTime() string! {
+        if this.kind != 5 {
+            return error("toml: " + kindName(this.kind) + " is not a datetime")
+        }
+        return this.s
+    }
+
+    func Len() int {
+        if this.kind == 6 || this.kind == 7 {
+            return len(this.items)
+        }
+        return 0
+    }
+
+    func Index(i int) Value {
+        if this.kind == 6 && i >= 0 && i < len(this.items) {
+            return this.items[i]
+        }
+        return Value{}
+    }
+
+    // The value at key (a single key, not a dotted path), or the zero Value.
+    func Get(key string) Value {
+        var i = this.find(key)
+        if i < 0 {
+            return Value{}
+        }
+        return this.items[i]
+    }
+
+    // The value at a dotted path like "server.ports" or "a.\"b.c\"".
+    func At(path string) Value {
+        var segs = try parseKeyText(path) else []
+        var v = *this
+        for s in segs {
+            v = v.Get(s)
+        }
+        return v
+    }
+
+    func Has(key string) bool {
+        return this.find(key) >= 0
+    }
+
+    func find(key string) int {
+        if this.kind == 7 {
+            for i, k in this.keys {
+                if k == key {
+                    return i
+                }
+            }
+        }
+        return -1
+    }
+
+    func Keys() []string {
+        var out []string = []
+        for k in this.keys {
+            out = append(out, k)
+        }
+        return out
+    }
+
+    func Items() []Value {
+        var out []Value = []
+        for x in this.items {
+            out = append(out, x)
+        }
+        return out
+    }
+
+    // TOML text of a table (a document), or the inline form of another value.
+    func Format() string {
+        if this.kind == 7 && !this.inline {
+            var b = std.strings.Builder{}
+            emitTable(&b, [], *this)
+            return b.String()
+        }
+        return inlineText(*this)
+    }
+}
+
+func NewString(s string) Value {
+    return Value{kind: 1, s: s}
+}
+
+func NewInt(i int) Value {
+    return Value{kind: 2, i: i}
+}
+
+func NewFloat(f float) Value {
+    return Value{kind: 3, f: f}
+}
+
+func NewBool(b bool) Value {
+    return Value{kind: 4, b: b}
+}
+
+func NewArray(items []Value) Value {
+    var c []Value = []
+    for x in items {
+        c = append(c, x)
+    }
+    return Value{kind: 6, items: c}
+}
+
+// A table; inline tables are written as {k = v} when formatted.
+func NewTable(keys []string, values []Value, inline bool) Value! {
+    if len(keys) != len(values) {
+        return error("toml.NewTable: keys and values differ in length")
+    }
+    var ks []string = []
+    var vs []Value = []
+    for i, k in keys {
+        ks = append(ks, k)
+        vs = append(vs, values[i])
+    }
+    return Value{kind: 7, keys: ks, items: vs, inline: inline}
+}
+
+// A datetime value from its TOML text (validated).
+func NewDateTime(text string) Value! {
+    var dt = dateKind(text)
+    if dt == 0 {
+        return error("toml: invalid datetime " + std.encoding.json.Quote(text))
+    }
+    return Value{kind: 5, s: normalizeDate(text), dt: dt}
+}
+
+func kindName(k int) string {
+    if k == 1 {
+        return "string"
+    }
+    if k == 2 {
+        return "int"
+    }
+    if k == 3 {
+        return "float"
+    }
+    if k == 4 {
+        return "bool"
+    }
+    if k == 5 {
+        return "datetime"
+    }
+    if k == 6 {
+        return "array"
+    }
+    if k == 7 {
+        return "table"
+    }
+    return "none"
+}
+
+// -- parsing ----------------------------------------------------------------------
+
+// Parses a TOML document into its root table.
+func ParseValue(text string) Value! {
+    var p = newParser(text)
+    p.run()?
+    return assemble(p.entries)?
+}
+
+// A key=value or a table definition, by path ("\u{1e}N" segments index
+// arrays of tables).
+struct entry {
+    path []string
+    v    Value
+}
+
+// A key/value line of the document: byte offsets of the key, the value
+// and the line.
+struct kvPos {
+    path      string
+    table     string
+    keyStart  int
+    valStart  int
+    valEnd    int
+    lineStart int
+    lineEnd   int
+}
+
+struct hdrPos {
+    path  string
+    start int
+    end   int
+    aot   bool
+}
+
+struct parser {
+    s       string
+    i       int
+    line    int
+    entries []entry
+    defs    map[string]int
+    aot     map[string]int
+    cur     []string
+    kvs     []kvPos
+    hdrs    []hdrPos
+
+    func fail(msg string) error {
+        return error(std.fmt.Format("toml: line {0}: {1}", this.line, msg))
+    }
+
+    func more() bool {
+        return this.i < len(this.s)
+    }
+
+    func c() int {
+        if this.i < len(this.s) {
+            return int(this.s[this.i])
+        }
+        return -1
+    }
+
+    func at(k int) int {
+        if this.i + k < len(this.s) {
+            return int(this.s[this.i + k])
+        }
+        return -1
+    }
+
+    func ws() {
+        for this.c() == 32 || this.c() == 9 {
+            this.i += 1
+        }
+    }
+
+    // White space, comments and newlines.
+    func wsnl() void! {
+        for this.more() {
+            var c = this.c()
+            if c == 32 || c == 9 {
+                this.i += 1
+            } else if c == 10 {
+                this.i += 1
+                this.line += 1
+            } else if c == 13 && this.at(1) == 10 {
+                this.i += 2
+                this.line += 1
+            } else if c == 35 {
+                this.comment()?
+            } else {
+                return
+            }
+        }
+    }
+
+    func comment() void! {
+        for this.more() && this.c() != 10 {
+            var c = this.c()
+            if c == 13 && this.at(1) == 10 {
+                return
+            }
+            if (c < 32 && c != 9) || c == 127 {
+                return this.fail("control character in a comment")
+            }
+            this.i += 1
+        }
+    }
+
+    // After a value or header: white space, an optional comment, then a newline or the end.
+    func endOfLine() void! {
+        this.ws()
+        if this.c() == 35 {
+            this.comment()?
+        }
+        if !this.more() {
+            return
+        }
+        if this.c() == 10 {
+            this.i += 1
+            this.line += 1
+            return
+        }
+        if this.c() == 13 && this.at(1) == 10 {
+            this.i += 2
+            this.line += 1
+            return
+        }
+        return this.fail(
+            "expected the end of the line, found " +
+                std.encoding.json.Quote(this.s[this.i..std.math.IMin(this.i + 10, len(this.s))]),
+        )
+    }
+
+    func run() void! {
+        // a UTF-8 BOM is skipped
+        if std.strings.HasPrefix(this.s, "\u{FEFF}") {
+            this.i = 3
+        }
+        for {
+            this.wsnl()?
+            if !this.more() {
+                return
+            }
+            if this.c() == 91 {
+                this.header()?
+            } else {
+                this.keyValue()?
+            }
+        }
+    }
+
+    func header() void! {
+        var start = this.i
+        var isAot = this.at(1) == 91
+        if isAot {
+            this.i += 2
+        } else {
+            this.i += 1
+        }
+        this.ws()
+        var key = this.key()?
+        this.ws()
+        if isAot {
+            if this.c() != 93 || this.at(1) != 93 {
+                return this.fail("expected ]] after an array-of-tables header")
+            }
+            this.i += 2
+        } else {
+            if this.c() != 93 {
+                return this.fail("expected ] after a table header")
+            }
+            this.i += 1
+        }
+        // navigate the prefix
+        var path []string = []
+        for k in 0..(len(key) - 1) {
+            path = append(path, key[k])
+            var j = join(path)
+            var d = this.defs[j]
+            if d == 0 {
+                this.defs[j] = 2
+                this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
+            } else if d == 4 {
+                path = append(path, "\u{1e}" + std.fmt.Format("{0}", this.aot[j] - 1))
+            } else if d == 5 || d == 6 {
+                return this.fail(
+                    "key " + std.encoding.json.Quote(dotted(key, k + 1)) + " is not a table",
+                )
+            }
+        }
+        path = append(path, key[len(key) - 1])
+        var full = join(path)
+        var d = this.defs[full]
+        if isAot {
+            if d == 0 {
+                this.defs[full] = 4
+                this.aot[full] = 1
+            } else if d == 4 {
+                this.aot[full] = this.aot[full] + 1
+            } else {
+                return this.fail(
+                    "cannot define " +
+                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        " as an array of tables (already defined)",
+                )
+            }
+            path = append(path, "\u{1e}" + std.fmt.Format("{0}", this.aot[full] - 1))
+            this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
+        } else {
+            if d == 2 {
+                this.defs[full] = 1
+            } else if d == 0 {
+                this.defs[full] = 1
+                this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
+            } else {
+                return this.fail(
+                    "table " +
+                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        " defined more than once",
+                )
+            }
+        }
+        this.cur = path
+        this.endOfLine()?
+        this.hdrs = append(this.hdrs, hdrPos{
+            path: join(path),
+            start: start,
+            end: this.i,
+            aot: isAot,
+        })
+    }
+
+    func keyValue() void! {
+        var lineStart = this.i
+        var keyStart = this.i
+        var key = this.key()?
+        this.ws()
+        if this.c() != 61 {
+            return this.fail("expected = after a key")
+        }
+        this.i += 1
+        this.ws()
+        var valStart = this.i
+        var v = this.value(0)?
+        var valEnd = this.i
+        var path = copyPath(this.cur)
+        for k in 0..(len(key) - 1) {
+            path = append(path, key[k])
+            var j = join(path)
+            var d = this.defs[j]
+            if d == 0 {
+                this.defs[j] = 3
+                this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
+            } else if d != 3 {
+                return this.fail(
+                    "cannot add to " +
+                        std.encoding.json.Quote(dotted(key, k + 1)) +
+                        " with a dotted key",
+                )
+            }
+        }
+        path = append(path, key[len(key) - 1])
+        var full = join(path)
+        if this.defs[full] != 0 {
+            return this.fail("duplicate key " + std.encoding.json.Quote(dotted(key, len(key))))
+        }
+        if v.kind == 6 || v.kind == 7 {
+            this.defs[full] = 6
+        } else {
+            this.defs[full] = 5
+        }
+        this.entries = append(this.entries, entry{path: path, v: v})
+        this.endOfLine()?
+        this.kvs = append(this.kvs, kvPos{
+            path: full,
+            table: join(this.cur),
+            keyStart: keyStart,
+            valStart: valStart,
+            valEnd: valEnd,
+            lineStart: lineStart,
+            lineEnd: this.i,
+        })
+    }
+
+    // A dotted key: simple keys separated by '.'.
+    func key() []string! {
+        var segs []string = []
+        for {
+            this.ws()
+            var c = this.c()
+            if c == 34 {
+                if this.at(1) == 34 && this.at(2) == 34 {
+                    return this.fail("multi-line strings are not allowed as keys")
+                }
+                var v = this.basic()?
+                segs = append(segs, v.s)
+            } else if c == 39 {
+                if this.at(1) == 39 && this.at(2) == 39 {
+                    return this.fail("multi-line strings are not allowed as keys")
+                }
+                var v = this.literal()?
+                segs = append(segs, v.s)
+            } else {
+                var start = this.i
+                for this.more() && isBare(this.c()) {
+                    this.i += 1
+                }
+                if this.i == start {
+                    return this.fail("expected a key")
+                }
+                segs = append(segs, this.s[start..this.i])
+            }
+            this.ws()
+            if this.c() == 46 {
+                this.i += 1
+                continue
+            }
+            return segs
+        }
+    }
+
+    func value(depth int) Value! {
+        if depth > 100 {
+            return this.fail("nesting too deep")
+        }
+        var c = this.c()
+        if c == 34 {
+            if this.at(1) == 34 && this.at(2) == 34 {
+                return this.mlBasic()?
+            }
+            return this.basic()?
+        }
+        if c == 39 {
+            if this.at(1) == 39 && this.at(2) == 39 {
+                return this.mlLiteral()?
+            }
+            return this.literal()?
+        }
+        if c == 91 {
+            return this.array(depth)?
+        }
+        if c == 123 {
+            return this.inlineTable(depth)?
+        }
+        if this.lookingAt("true") && !isBare(this.at(4)) {
+            this.i += 4
+            return Value{kind: 4, b: true}
+        }
+        if this.lookingAt("false") && !isBare(this.at(5)) {
+            this.i += 5
+            return Value{kind: 4, b: false}
+        }
+        // number or datetime
+        var start = this.i
+        for this.more() {
+            var d = this.c()
+            if isBare(d) || d == 43 || d == 46 || d == 58 {
+                this.i += 1
+            } else if d == 32 &&
+                this.i - start == 10 &&
+                isDigit(this.at(1)) &&
+                isDigit(this.at(2)) &&
+                this.at(3) == 58 {
+                // "1979-05-27 07:32:00": date, space, time
+                this.i += 1
+            } else {
+                break
+            }
+        }
+        var tok = this.s[start..this.i]
+        if tok == "" {
+            return this.fail("expected a value")
+        }
+        var dt = dateKind(tok)
+        if dt > 0 {
+            return Value{kind: 5, s: normalizeDate(tok), dt: dt}
+        }
+        return this.number(tok)?
+    }
+
+    func lookingAt(t string) bool {
+        return this.i + len(t) <= len(this.s) && this.s[this.i..this.i + len(t)] == t
+    }
+
+    func number(tok string) Value! {
+        if tok == "inf" || tok == "+inf" {
+            return Value{kind: 3, f: std.math.Inf(1)}
+        }
+        if tok == "-inf" {
+            return Value{kind: 3, f: std.math.Inf(-1)}
+        }
+        if tok == "nan" || tok == "+nan" || tok == "-nan" {
+            return Value{kind: 3, f: std.math.NaN()}
+        }
+        if std.strings.HasPrefix(tok, "0x") ||
+            std.strings.HasPrefix(tok, "0o") ||
+            std.strings.HasPrefix(tok, "0b") {
+            var base = 16
+            if tok[1..2] == "o" {
+                base = 8
+            } else if tok[1..2] == "b" {
+                base = 2
+            }
+            var digits = tok[2..]
+            if !underscoresOK(digits) {
+                return this.fail("invalid number " + std.encoding.json.Quote(tok))
+            }
+            var v = 0
+            for k in 0..len(digits) {
+                var c = int(digits[k])
+                if c == 95 {
+                    continue
+                }
+                var h = hexVal(c)
+                if h < 0 || h >= base {
+                    return this.fail("invalid number " + std.encoding.json.Quote(tok))
+                }
+                if v > (std.math.MaxInt - h) / base {
+                    return this.fail("integer out of range " + std.encoding.json.Quote(tok))
+                }
+                v = v * base + h
+            }
+            return Value{kind: 2, i: v}
+        }
+        // decimal integer or float
+        var body = tok
+        if std.strings.HasPrefix(body, "+") || std.strings.HasPrefix(body, "-") {
+            body = body[1..]
+        }
+        var isF = std.strings.Contains(body, ".") ||
+            std.strings.Contains(body, "e") ||
+            std.strings.Contains(body, "E")
+        if !isF {
+            if !underscoresOK(body) || !allDigits(body) {
+                return this.fail("invalid value " + std.encoding.json.Quote(tok))
+            }
+            if len(body) > 1 && int(body[0]) == 48 {
+                return this.fail("leading zeros are not allowed: " + std.encoding.json.Quote(tok))
+            }
+            var clean = std.strings.Replace(tok, "_", "")
+            var v = try std.strings.ToInt(clean) catch err {
+                return this.fail("integer out of range " + std.encoding.json.Quote(tok))
+            }
+            return Value{kind: 2, i: v}
+        }
+        // float: int part, then .frac and/or exponent
+        var ePos = std.strings.Index(std.strings.ToLower(body), "e")
+        var mant = body
+        var exp = ""
+        if ePos >= 0 {
+            mant = body[..ePos]
+            exp = body[ePos + 1..]
+            if std.strings.HasPrefix(exp, "+") || std.strings.HasPrefix(exp, "-") {
+                exp = exp[1..]
+            }
+            if exp == "" || !underscoresOK(exp) || !allDigits(exp) {
+                return this.fail("invalid float " + std.encoding.json.Quote(tok))
+            }
+        }
+        var dot = std.strings.Index(mant, ".")
+        var ip = mant
+        var fp = ""
+        if dot >= 0 {
+            ip = mant[..dot]
+            fp = mant[dot + 1..]
+            if fp == "" || !underscoresOK(fp) || !allDigits(fp) {
+                return this.fail("invalid float " + std.encoding.json.Quote(tok))
+            }
+        }
+        if ip == "" || !underscoresOK(ip) || !allDigits(ip) || (len(ip) > 1 && int(ip[0]) == 48) {
+            return this.fail("invalid float " + std.encoding.json.Quote(tok))
+        }
+        var f = try std.strings.ToFloat(std.strings.Replace(tok, "_", "")) catch err {
+            return this.fail("invalid float " + std.encoding.json.Quote(tok))
+        }
+        return Value{kind: 3, f: f}
+    }
+
+    func basic() Value! {
+        this.i += 1
+        var b = std.strings.Builder{}
+        var start = this.i
+        for {
+            if !this.more() || this.c() == 10 {
+                return this.fail("unterminated string")
+            }
+            var c = this.c()
+            if c == 34 {
+                b.Write(this.s[start..this.i])
+                this.i += 1
+                return Value{kind: 1, s: b.String()}
+            }
+            if c == 92 {
+                b.Write(this.s[start..this.i])
+                this.escape(&b)?
+                start = this.i
+                continue
+            }
+            if (c < 32 && c != 9) || c == 127 {
+                return this.fail("control character in a string")
+            }
+            this.i += 1
+        }
+    }
+
+    func escape(b *std.strings.Builder) void! {
+        var e = this.at(1)
+        this.i += 2
+        if e == 98 {
+            b.Write(string(char(8)))
+        } else if e == 116 {
+            b.Write("\t")
+        } else if e == 110 {
+            b.Write("\n")
+        } else if e == 102 {
+            b.Write(string(char(12)))
+        } else if e == 114 {
+            b.Write("\r")
+        } else if e == 34 {
+            b.Write("\"")
+        } else if e == 92 {
+            b.Write("\\")
+        } else if e == 117 || e == 85 {
+            var n = 4
+            if e == 85 {
+                n = 8
+            }
+            if this.i + n > len(this.s) {
+                return this.fail("invalid unicode escape")
+            }
+            var v = 0
+            for k in 0..n {
+                var h = hexVal(int(this.s[this.i + k]))
+                if h < 0 {
+                    return this.fail("invalid unicode escape")
+                }
+                v = v * 16 + h
+            }
+            if v > 1114111 || (v >= 55296 && v < 57344) {
+                return this.fail("invalid unicode escape (not a scalar value)")
+            }
+            this.i += n
+            b.Write(string(char(v)))
+        } else {
+            return this.fail("invalid escape sequence")
+        }
+    }
+
+    func mlBasic() Value! {
+        this.i += 3
+        if this.c() == 10 {
+            this.i += 1
+            this.line += 1
+        } else if this.c() == 13 && this.at(1) == 10 {
+            this.i += 2
+            this.line += 1
+        }
+        var b = std.strings.Builder{}
+        var start = this.i
+        for {
+            if !this.more() {
+                return this.fail("unterminated multi-line string")
+            }
+            var c = this.c()
+            if c == 34 && this.at(1) == 34 && this.at(2) == 34 {
+                // up to two extra quotes belong to the content
+                var q = 3
+                for q < 5 && this.at(q) == 34 {
+                    q += 1
+                }
+                b.Write(this.s[start..this.i + q - 3])
+                this.i += q
+                return Value{kind: 1, s: b.String()}
+            }
+            if c == 92 {
+                b.Write(this.s[start..this.i])
+                // line-ending backslash: trims white space and newlines
+                var k = this.i + 1
+                for k < len(this.s) && (int(this.s[k]) == 32 || int(this.s[k]) == 9) {
+                    k += 1
+                }
+                if k < len(this.s) &&
+                    (int(this.s[k]) == 10 ||
+                        (int(this.s[k]) == 13 && k + 1 < len(this.s) && int(this.s[k + 1]) == 10)) {
+                    this.i = k
+                    for this.more() &&
+                        (this.c() == 32 || this.c() == 9 || this.c() == 10 || this.c() == 13) {
+                        if this.c() == 10 {
+                            this.line += 1
+                        }
+                        this.i += 1
+                    }
+                } else {
+                    this.escape(&b)?
+                }
+                start = this.i
+                continue
+            }
+            if c == 10 {
+                this.line += 1
+            } else if c == 13 && this.at(1) == 10 {
+                // CRLF becomes LF
+                b.Write(this.s[start..this.i])
+                this.i += 1
+                start = this.i
+                continue
+            } else if (c < 32 && c != 9) || c == 127 {
+                return this.fail("control character in a string")
+            }
+            this.i += 1
+        }
+    }
+
+    func literal() Value! {
+        this.i += 1
+        var start = this.i
+        for {
+            if !this.more() || this.c() == 10 {
+                return this.fail("unterminated string")
+            }
+            var c = this.c()
+            if c == 39 {
+                var v = this.s[start..this.i]
+                this.i += 1
+                return Value{kind: 1, s: v}
+            }
+            if (c < 32 && c != 9) || c == 127 {
+                return this.fail("control character in a string")
+            }
+            this.i += 1
+        }
+    }
+
+    func mlLiteral() Value! {
+        this.i += 3
+        if this.c() == 10 {
+            this.i += 1
+            this.line += 1
+        } else if this.c() == 13 && this.at(1) == 10 {
+            this.i += 2
+            this.line += 1
+        }
+        var b = std.strings.Builder{}
+        var start = this.i
+        for {
+            if !this.more() {
+                return this.fail("unterminated multi-line string")
+            }
+            var c = this.c()
+            if c == 39 && this.at(1) == 39 && this.at(2) == 39 {
+                var q = 3
+                for q < 5 && this.at(q) == 39 {
+                    q += 1
+                }
+                b.Write(this.s[start..this.i + q - 3])
+                this.i += q
+                return Value{kind: 1, s: b.String()}
+            }
+            if c == 10 {
+                this.line += 1
+            } else if c == 13 && this.at(1) == 10 {
+                b.Write(this.s[start..this.i])
+                this.i += 1
+                start = this.i
+                continue
+            } else if (c < 32 && c != 9) || c == 127 {
+                return this.fail("control character in a string")
+            }
+            this.i += 1
+        }
+    }
+
+    func array(depth int) Value! {
+        this.i += 1
+        var items []Value = []
+        for {
+            this.wsnl()?
+            if this.c() == 93 {
+                this.i += 1
+                return Value{kind: 6, items: items}
+            }
+            if !this.more() {
+                return this.fail("unterminated array")
+            }
+            var v = this.value(depth + 1)?
+            items = append(items, v)
+            this.wsnl()?
+            if this.c() == 44 {
+                this.i += 1
+                continue
+            }
+            if this.c() == 93 {
+                this.i += 1
+                return Value{kind: 6, items: items}
+            }
+            return this.fail("expected , or ] in an array")
+        }
+    }
+
+    func inlineTable(depth int) Value! {
+        this.i += 1
+        var sub = newParser(this.s)
+        var es []entry = []
+        this.ws()
+        if this.c() == 125 {
+            this.i += 1
+            return Value{kind: 7, inline: true}
+        }
+        for {
+            this.ws()
+            var key = this.key()?
+            this.ws()
+            if this.c() != 61 {
+                return this.fail("expected = in an inline table")
+            }
+            this.i += 1
+            this.ws()
+            var v = this.value(depth + 1)?
+            var path []string = []
+            for k in 0..(len(key) - 1) {
+                path = append(path, key[k])
+                var j = join(path)
+                var d = sub.defs[j]
+                if d == 0 {
+                    sub.defs[j] = 3
+                    es = append(es, entry{path: copyPath(path), v: Value{kind: 7}})
+                } else if d != 3 {
+                    return this.fail(
+                        "cannot add to " +
+                            std.encoding.json.Quote(dotted(key, k + 1)) +
+                            " in an inline table",
+                    )
+                }
+            }
+            path = append(path, key[len(key) - 1])
+            if sub.defs[join(path)] != 0 {
+                return this.fail(
+                    "duplicate key " +
+                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        " in an inline table",
+                )
+            }
+            sub.defs[join(path)] = 5
+            es = append(es, entry{path: path, v: v})
+            this.ws()
+            if this.c() == 44 {
+                this.i += 1
+                this.ws()
+                if this.c() == 125 {
+                    return this.fail("trailing comma in an inline table")
+                }
+                continue
+            }
+            if this.c() == 125 {
+                this.i += 1
+                break
+            }
+            return this.fail("expected , or } in an inline table")
+        }
+        var t = assemble(es)?
+        t.inline = true
+        return t
+    }
+}
+
+func newParser(text string) *parser {
+    return &parser{s: text, line: 1, defs: map[string]int{}, aot: map[string]int{}}
+}
+
+func isBare(c int) bool {
+    return (c >= 65 && c <= 90) ||
+        (c >= 97 && c <= 122) ||
+        (c >= 48 && c <= 57) ||
+        c == 95 ||
+        c == 45
+}
+
+func isDigit(c int) bool {
+    return c >= 48 && c <= 57
+}
+
+func hexVal(c int) int {
+    if c >= 48 && c <= 57 {
+        return c - 48
+    }
+    if c >= 97 && c <= 102 {
+        return c - 87
+    }
+    if c >= 65 && c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+func allDigits(s string) bool {
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if c != 95 && (c < 48 || c > 57) {
+            return false
+        }
+    }
+    return s != ""
+}
+
+// Underscores only between digits.
+func underscoresOK(s string) bool {
+    if s == "" || std.strings.HasPrefix(s, "_") || std.strings.HasSuffix(s, "_") {
+        return false
+    }
+    return !std.strings.Contains(s, "__")
+}
+
+func join(path []string) string {
+    return std.strings.Join(path, "\u{1f}")
+}
+
+func copyPath(p []string) []string {
+    var out []string = []
+    for x in p {
+        out = append(out, x)
+    }
+    return out
+}
+
+func dotted(key []string, n int) string {
+    var parts []string = []
+    for k in 0..n {
+        parts = append(parts, keyText(key[k]))
+    }
+    return std.strings.Join(parts, ".")
+}
+
+// The 0 if s is no TOML datetime, else 1 offset datetime, 2 local
+// datetime, 3 local date, 4 local time.
+func dateKind(s string) int {
+    if len(s) >= 8 && int(s[2]) == 58 {
+        return if1(timeOK(s, 0) == len(s), 4)
+    }
+    if len(s) < 10 || int(s[4]) != 45 || int(s[7]) != 45 {
+        return 0
+    }
+    if !dateOK(s) {
+        return 0
+    }
+    if len(s) == 10 {
+        return 3
+    }
+    var sep = int(s[10])
+    if sep != 84 && sep != 116 && sep != 32 {
+        return 0
+    }
+    var end = timeOK(s, 11)
+    if end < 0 {
+        return 0
+    }
+    if end == len(s) {
+        return 2
+    }
+    var z = int(s[end])
+    if (z == 90 || z == 122) && end + 1 == len(s) {
+        return 1
+    }
+    if (z == 43 || z == 45) &&
+        end + 6 == len(s) &&
+        digits(s, end + 1, 2) &&
+        int(s[end + 3]) == 58 &&
+        digits(s, end + 4, 2) {
+        var oh = num(s, end + 1, 2)
+        var om = num(s, end + 4, 2)
+        if oh < 24 && om < 60 {
+            return 1
+        }
+    }
+    return 0
+}
+
+func if1(c bool, v int) int {
+    if c {
+        return v
+    }
+    return 0
+}
+
+func digits(s string, at int, n int) bool {
+    if at + n > len(s) {
+        return false
+    }
+    for k in 0..n {
+        if !isDigit(int(s[at + k])) {
+            return false
+        }
+    }
+    return true
+}
+
+func num(s string, at int, n int) int {
+    var v = 0
+    for k in 0..n {
+        v = v * 10 + int(s[at + k]) - 48
+    }
+    return v
+}
+
+func dateOK(s string) bool {
+    if !digits(s, 0, 4) || !digits(s, 5, 2) || !digits(s, 8, 2) {
+        return false
+    }
+    var y = num(s, 0, 4)
+    var m = num(s, 5, 2)
+    var d = num(s, 8, 2)
+    if m < 1 || m > 12 || d < 1 {
+        return false
+    }
+    var dim = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    var maxd = dim[m - 1]
+    if m == 2 && (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) {
+        maxd = 29
+    }
+    return d <= maxd
+}
+
+// HH:MM:SS(.frac)? at s[at..]; the end offset or -1.
+func timeOK(s string, at int) int {
+    if !digits(s, at, 2) ||
+        at + 8 > len(s) ||
+        int(s[at + 2]) != 58 ||
+        !digits(s, at + 3, 2) ||
+        int(s[at + 5]) != 58 ||
+        !digits(s, at + 6, 2) {
+        return -1
+    }
+    if num(s, at, 2) > 23 || num(s, at + 3, 2) > 59 || num(s, at + 6, 2) > 59 {
+        return -1
+    }
+    var end = at + 8
+    if end < len(s) && int(s[end]) == 46 {
+        var k = end + 1
+        for k < len(s) && isDigit(int(s[k])) {
+            k += 1
+        }
+        if k == end + 1 {
+            return -1
+        }
+        end = k
+    }
+    return end
+}
+
+func normalizeDate(s string) string {
+    var b []byte = []
+    for i in 0..len(s) {
+        var c = s[i]
+        if i == 10 && (int(c) == 32 || int(c) == 116) {
+            c = byte(84)
+        }
+        if int(c) == 122 {
+            c = byte(90)
+        }
+        b = append(b, c)
+    }
+    return std.strings.FromBytes(b)
+}
+
+// Builds the tree of entries (tables get their keys in definition order).
+func assemble(es []entry) Value! {
+    var root = Value{kind: 7}
+    for e in es {
+        insert(&root, e.path, 0, e.v)
+    }
+    return root
+}
+
+func insert(t *Value, path []string, k int, v Value) {
+    var seg = path[k]
+    if std.strings.HasPrefix(seg, "\u{1e}") {
+        // element of an array of tables
+        var n = try std.strings.ToInt(seg[1..]) else 0
+        for len(t.items) <= n {
+            t.items = append(t.items, Value{kind: 7})
+        }
+        if k == len(path) - 1 {
+            return
+        }
+        insert(&t.items[n], path, k + 1, v)
+        return
+    }
+    var i = t.find(seg)
+    if k == len(path) - 1 {
+        if i < 0 {
+            t.keys = append(t.keys, seg)
+            t.items = append(t.items, v)
+        }
+        return
+    }
+    if i < 0 {
+        var kind = 7
+        if std.strings.HasPrefix(path[k + 1], "\u{1e}") {
+            kind = 6
+        }
+        t.keys = append(t.keys, seg)
+        t.items = append(t.items, Value{kind: kind})
+        i = len(t.items) - 1
+    }
+    insert(&t.items[i], path, k + 1, v)
+}
+
+// Parses key syntax (bare, quoted, dotted) outside a document.
+func parseKeyText(text string) []string! {
+    var p = newParser(text)
+    var k = p.key()?
+    if p.more() {
+        return error("toml: invalid key " + std.encoding.json.Quote(text))
+    }
+    return k
+}
+
+// -- formatting ---------------------------------------------------------------------
+
+// A key as written: bare if possible, else a basic string.
+func keyText(k string) string {
+    if k == "" {
+        return "\"\""
+    }
+    for i in 0..len(k) {
+        if !isBare(int(k[i])) {
+            return quote(k)
+        }
+    }
+    return k
+}
+
+func quote(s string) string {
+    var b = std.strings.Builder{}
+    b.Write("\"")
+    var start = 0
+    for i in 0..len(s) {
+        var c = int(s[i])
+        var esc = ""
+        if c == 34 {
+            esc = "\\\""
+        } else if c == 92 {
+            esc = "\\\\"
+        } else if c == 10 {
+            esc = "\\n"
+        } else if c == 9 {
+            esc = "\\t"
+        } else if c == 13 {
+            esc = "\\r"
+        } else if c == 8 {
+            esc = "\\b"
+        } else if c == 12 {
+            esc = "\\f"
+        } else if c < 32 || c == 127 {
+            esc = "\\u00" + hex2(c)
+        } else {
+            continue
+        }
+        b.Write(s[start..i])
+        b.Write(esc)
+        start = i + 1
+    }
+    b.Write(s[start..])
+    b.Write("\"")
+    return b.String()
+}
+
+func hex2(c int) string {
+    var d = "0123456789ABCDEF"
+    return d[c >> 4..(c >> 4) + 1] + d[c & 15..(c & 15) + 1]
+}
+
+func floatText(f float) string {
+    if std.math.IsNaN(f) {
+        return "nan"
+    }
+    if std.math.IsInf(f, 1) {
+        return "inf"
+    }
+    if std.math.IsInf(f, -1) {
+        return "-inf"
+    }
+    var s = std.fmt.Format("{0}", f)
+    if !std.strings.Contains(s, ".") &&
+        !std.strings.Contains(s, "e") &&
+        !std.strings.Contains(s, "E") {
+        s += ".0"
+    }
+    return s
+}
+
+// The inline TOML text of a value.
+func inlineText(v Value) string {
+    if v.kind == 1 {
+        return quote(v.s)
+    }
+    if v.kind == 2 {
+        return std.fmt.Format("{0}", v.i)
+    }
+    if v.kind == 3 {
+        return floatText(v.f)
+    }
+    if v.kind == 4 {
+        if v.b {
+            return "true"
+        }
+        return "false"
+    }
+    if v.kind == 5 {
+        return v.s
+    }
+    if v.kind == 6 {
+        var parts []string = []
+        for x in v.items {
+            parts = append(parts, inlineText(x))
+        }
+        return "[" + std.strings.Join(parts, ", ") + "]"
+    }
+    if v.kind == 7 {
+        if len(v.keys) == 0 {
+            return "{}"
+        }
+        var parts []string = []
+        for i, k in v.keys {
+            parts = append(parts, keyText(k) + " = " + inlineText(v.items[i]))
+        }
+        return "{ " + std.strings.Join(parts, ", ") + " }"
+    }
+    return "\"\""
+}
+
+func isAot(v Value) bool {
+    if v.kind != 6 || len(v.items) == 0 {
+        return false
+    }
+    for x in v.items {
+        if x.kind != 7 || x.inline {
+            return false
+        }
+    }
+    return true
+}
+
+func headerText(path []string) string {
+    var parts []string = []
+    for p in path {
+        parts = append(parts, keyText(p))
+    }
+    return std.strings.Join(parts, ".")
+}
+
+// Writes a table: its plain keys, then sub-tables and arrays of tables.
+func emitTable(b *std.strings.Builder, path []string, t Value) {
+    for i, k in t.keys {
+        var x = t.items[i]
+        if (x.kind == 7 && !x.inline) || isAot(x) {
+            continue
+        }
+        b.Write(keyText(k))
+        b.Write(" = ")
+        b.Write(inlineText(x))
+        b.Write("\n")
+    }
+    for i, k in t.keys {
+        var x = t.items[i]
+        var sub = copyPath(path)
+        sub = append(sub, k)
+        if x.kind == 7 && !x.inline {
+            // a table holding only tables needs no header of its own
+            var plain = false
+            for j in 0..len(x.items) {
+                var y = x.items[j]
+                if !((y.kind == 7 && !y.inline) || isAot(y)) {
+                    plain = true
+                }
+            }
+            if plain || len(x.items) == 0 {
+                if b.Len() > 0 {
+                    b.Write("\n")
+                }
+                b.Write("[" + headerText(sub) + "]\n")
+            }
+            emitTable(b, sub, x)
+        } else if isAot(x) {
+            for y in x.items {
+                if b.Len() > 0 {
+                    b.Write("\n")
+                }
+                b.Write("[[" + headerText(sub) + "]]\n")
+                emitTable(b, sub, y)
+            }
+        }
+    }
+}
+
+// -- typed ------------------------------------------------------------------------
+
+// Parses a document into a T (tables to structs by @toml(name:) /
+// @serde(name:) / field name, maps with string keys, slices from arrays
+// and arrays of tables, scalars, datetimes into strings).
+func Parse<T>(text string) T! {
+    var v = ParseValue(text)?
+    var out T
+    decode(v, "", &out)?
+    return out
+}
+
+func Decode<T>(v Value) T! {
+    var out T
+    decode(v, "", &out)?
+    return out
+}
+
+func prefix(path string) string {
+    if path == "" {
+        return "toml: "
+    }
+    return "toml: " + path + ": "
+}
+
+func joinPath(path string, name string) string {
+    if path == "" {
+        return name
+    }
+    return path + "." + name
+}
+
+func mismatch(path string, want string, v Value) error {
+    return error(prefix(path) + "expected " + want + ", found " + kindName(v.kind))
+}
+
+func decode<T>(v Value, path string, out *T) void! {
+    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+        *out = v
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+        if v.kind != 7 {
+            return mismatch(path, "table", v)
+        }
+        for f in std.reflect.Fields<T>() {
+            var tag = f.Attribute<std.reflect.tomlAttr>()
+            var sd = f.Attribute<std.reflect.serde>()
+            if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
+                continue
+            }
+            var name = f.Name
+            if sd != nil && sd.name != "" {
+                name = sd.name
+            }
+            if tag != nil && tag.name != "" {
+                name = tag.name
+            }
+            var i = v.find(name)
+            if i >= 0 {
+                decode(v.items[i], joinPath(path, name), &f.Get(*out))?
+            }
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+        if v.kind == 1 || v.kind == 5 {
+            *out = v.s
+        } else {
+            return mismatch(path, "string", v)
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+        if v.kind != 4 {
+            return mismatch(path, "bool", v)
+        }
+        *out = v.b
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+        if v.kind != 2 {
+            return mismatch(path, "integer", v)
+        }
+        *out = try std.encoding.intAs<T>(v.i) catch err {
+            return error(prefix(path) + err.Message())
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+        if v.kind == 2 {
+            *out = std.encoding.floatAs<T>(float(v.i))
+        } else if v.kind == 3 {
+            *out = std.encoding.floatAs<T>(v.f)
+        } else {
+            return mismatch(path, "float", v)
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
+        if v.kind != 1 {
+            return mismatch(path, "string", v)
+        }
+        var t = std.reflect.TypeOf<T>()
+        var variant = t.Variant(v.s)
+        if variant == nil || len(variant.Fields) > 0 {
+            return error(
+                prefix(path) + "unknown " + t.Name + " value " + std.encoding.json.Quote(v.s),
+            )
+        }
+        std.reflect.storeTag(out, variant.Index)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice {
+        if v.kind != 6 {
+            return mismatch(path, "array", v)
+        }
+        decodeSlice(v.items, path, out)?
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+        if std.reflect.TypeOf<T>().Key.Kind == std.reflect.Kind.String {
+            if v.kind != 7 {
+                return mismatch(path, "table", v)
+            }
+            decodeMap(v, path, out)?
+        } else {
+            return error(
+                prefix(path) +
+                    "cannot decode into " +
+                    std.reflect.TypeOf<T>().Name +
+                    " (map keys must be strings)",
+            )
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+        decodePtr(v, path, out)?
+    } else {
+        return error(prefix(path) + "cannot decode into " + std.reflect.TypeOf<T>().Name)
+    }
+}
+
+func decodeSlice<E>(items []Value, path string, out *[]E) void! {
+    var res []E = []
+    for i, x in items {
+        var e E
+        decode(x, path + "[" + std.fmt.Format("{0}", i) + "]", &e)?
+        res = append(res, e)
+    }
+    *out = res
+}
+
+func decodeMap<V>(v Value, path string, out *map[string]V) void! {
+    var m = map[string]V{}
+    for i, k in v.keys {
+        var e V
+        decode(v.items[i], joinPath(path, k), &e)?
+        m[k] = e
+    }
+    *out = m
+}
+
+func decodePtr<E>(v Value, path string, out **E) void! {
+    var e E
+    decode(v, path, &e)?
+    *out = &e
+}
+
+// The TOML document of v (a struct or map: keys first, then tables and
+// arrays of tables; map keys sorted). Nil pointers and slices are left
+// out (TOML has no null).
+func Format<T>(v T) string {
+    var b = std.strings.Builder{}
+    var t = ToValue(v)
+    emitTable(&b, [], t)
+    return b.String()
+}
+
+// The dynamic Value of v (kind 0 for nil pointers, which tables skip).
+func ToValue<T>(v T) Value {
+    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+        return v
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+        var keys []string = []
+        var vals []Value = []
+        for f in std.reflect.Fields<T>() {
+            var tag = f.Attribute<std.reflect.tomlAttr>()
+            var sd = f.Attribute<std.reflect.serde>()
+            if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
+                continue
+            }
+            var omit = (tag != nil && tag.omitEmpty) || (sd != nil && sd.omitEmpty)
+            if omit && std.encoding.isEmpty(f.Get(v)) {
+                continue
+            }
+            var name = f.Name
+            if sd != nil && sd.name != "" {
+                name = sd.name
+            }
+            if tag != nil && tag.name != "" {
+                name = tag.name
+            }
+            var x = ToValue(f.Get(v))
+            if x.kind == 0 {
+                continue
+            }
+            if tag != nil && tag.inline && x.kind == 7 {
+                x.inline = true
+            }
+            keys = append(keys, name)
+            vals = append(vals, x)
+        }
+        return Value{kind: 7, keys: keys, items: vals}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+        return Value{kind: 1, s: v}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+        return Value{kind: 4, b: v}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+        return Value{kind: 2, i: int(v)}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+        return Value{kind: 3, f: float(v)}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
+        return Value{kind: 1, s: std.fmt.Format("{0}", v)}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+        if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice && v == nil {
+            return Value{}
+        }
+        var items []Value = []
+        for x in v {
+            var e = ToValue(x)
+            if e.kind != 0 {
+                items = append(items, e)
+            }
+        }
+        return Value{kind: 6, items: items}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+        var keys []string = []
+        for k, _ in v {
+            keys = append(keys, std.fmt.Format("{0}", k))
+        }
+        sortStrings(keys)
+        var vals []Value = []
+        for k in keys {
+            vals = append(vals, mapValue(v, k))
+        }
+        return Value{kind: 7, keys: keys, items: vals}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+        if v == nil {
+            return Value{}
+        }
+        return ToValue(*v)
+    } else {
+        return Value{}
+    }
+}
+
+func mapValue<K, V>(m map[K]V, key string) Value {
+    for k, x in m {
+        if std.fmt.Format("{0}", k) == key {
+            return ToValue(x)
+        }
+    }
+    return Value{}
+}
+
+func sortStrings(a []string) {
+    for i in 1..len(a) {
+        var j = i
+        for j > 0 && a[j - 1] > a[j] {
+            var t = a[j]
+            a[j] = a[j - 1]
+            a[j - 1] = t
+            j -= 1
+        }
+    }
+}
+
+// -- documents for round-trip editing ------------------------------------------------
+
+// A TOML file that keeps its text: Set and Delete splice the affected
+// lines only, so comments, order and layout survive.
+struct Document {
+    text string
+    p    *parser
+
+    // The text of the document.
+    func String() string {
+        return this.text
+    }
+
+    // The parsed tree.
+    func Tree() Value! {
+        return ParseValue(this.text)?
+    }
+
+    // The value at a dotted path ("package.name", "deps.\"a.b\""); the
+    // zero Value if absent.
+    func Get(path string) Value {
+        var v = try ParseValue(this.text) else Value{}
+        return v.At(path)
+    }
+
+    func Has(path string) bool {
+        var segs = try parseKeyText(path) else []
+        if len(segs) == 0 {
+            return false
+        }
+        var v = try ParseValue(this.text) else Value{}
+        for k in 0..(len(segs) - 1) {
+            v = v.Get(segs[k])
+        }
+        return v.Has(segs[len(segs) - 1])
+    }
+
+    // Sets the value at path: replaces an existing value in place (its
+    // comment stays), or adds `key = value` at the end of the key's table,
+    // creating a [table] section at the end of the file if needed.
+    func Set(path string, v Value) void! {
+        var segs = parseKeyText(path)?
+        var full = join(segs)
+        var val = inlineText(v)
+        if v.kind == 7 && !v.inline {
+            val = inlineText(Value{kind: 7, keys: v.keys, items: v.items, inline: true})
+        }
+        for kv in this.p.kvs {
+            if kv.path == full {
+                this.splice(kv.valStart, kv.valEnd, val)?
+                return
+            }
+        }
+        var table = copyPath(segs[..len(segs) - 1])
+        var last = segs[len(segs) - 1]
+        var tj = join(table)
+        // the end of the last key of that table, or of its header
+        var at = -1
+        for kv in this.p.kvs {
+            if kv.table == tj {
+                at = kv.lineEnd
+            }
+        }
+        if at < 0 {
+            for h in this.p.hdrs {
+                if h.path == tj && !h.aot {
+                    at = h.end
+                }
+            }
+        }
+        if at < 0 && len(table) == 0 {
+            // a root key goes before the first table
+            at = 0
+            var gap = ""
+            if len(this.p.hdrs) > 0 {
+                at = this.p.hdrs[0].start
+                gap = "\n"
+            }
+            this.insertLine(at, keyText(last) + " = " + val + "\n" + gap)?
+            return
+        }
+        if at < 0 {
+            var sep = ""
+            if this.text != "" && !std.strings.HasSuffix(this.text, "\n") {
+                sep = "\n"
+            }
+            if this.text != "" {
+                sep += "\n"
+            }
+            this.splice(
+                len(this.text),
+                len(this.text),
+                sep + "[" + headerText(table) + "]\n" + keyText(last) + " = " + val + "\n",
+            )?
+            return
+        }
+        this.insertLine(at, keyText(last) + " = " + val + "\n")?
+    }
+
+    // Removes the key at path (its whole line); false if it was absent.
+    func Delete(path string) bool! {
+        var segs = parseKeyText(path)?
+        var full = join(segs)
+        for kv in this.p.kvs {
+            if kv.path == full {
+                this.splice(kv.lineStart, kv.lineEnd, "")?
+                return true
+            }
+        }
+        return false
+    }
+
+    func insertLine(at int, line string) void! {
+        var pre = ""
+        if at > 0 && int(this.text[at - 1]) != 10 {
+            pre = "\n"
+        }
+        this.splice(at, at, pre + line)?
+    }
+
+    func splice(a int, b int, s string) void! {
+        var t = this.text[..a] + s + this.text[b..]
+        var p = newParser(t)
+        p.run()?
+        this.text = t
+        this.p = p
+    }
+}
+
+// Parses a document for editing.
+func ParseDocument(text string) Document! {
+    var p = newParser(text)
+    p.run()?
+    return Document{text: text, p: p}
+}

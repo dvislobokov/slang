@@ -3,18 +3,21 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_ipv6
 
-import std.io
 import std
+import std.io
 
 async func tcp6() bool! {
     var l = try net.Listen("[::1]:0") catch err {
-        return false   // no IPv6 on this host
+        return false // no IPv6 on this host
     }
     var c = await net.Dial(l.Addr())?
     var s = await l.Accept()?
     _ = await c.WriteString("six")?
     var got = strings.FromBytes(await s.ReadExact(3)?)
-    var ok = got == "six" && strings.HasPrefix(l.Addr(), "[::1]:") && s.Remote().IP.IsLoopback() && s.Remote().IP.Is6()
+    var ok = got == "six" &&
+        strings.HasPrefix(l.Addr(), "[::1]:") &&
+        s.Remote().IP.IsLoopback() &&
+        s.Remote().IP.Is6()
     c.Close()
     s.Close()
     l.Close()
@@ -40,7 +43,11 @@ async func dual() void! {
     var l = net.Listen(":0")?
     var c = await net.Dial(fmt.Format("127.0.0.1:{0}", l.Port()))?
     var s = await l.Accept()?
-    println("dual-stack accepts IPv4:", s.Remote().IP.Is4(), strings.HasPrefix(s.RemoteAddr(), "127.0.0.1:"))
+    println(
+        "dual-stack accepts IPv4:",
+        s.Remote().IP.Is4(),
+        strings.HasPrefix(s.RemoteAddr(), "127.0.0.1:"),
+    )
     c.Close()
     s.Close()
     var c6 = try await net.Dial(fmt.Format("[::1]:{0}", l.Port())) catch err {

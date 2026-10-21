@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.queue_stack_errors
 
-import std.io
 import std.collections
+import std.io
 
 func Drain(q *Queue<int>) int! {
     var sum = 0

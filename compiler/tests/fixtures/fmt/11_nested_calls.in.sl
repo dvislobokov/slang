@@ -1,0 +1,16 @@
+namespace fmt.nested
+
+func main() {
+    var ticket = sealTicket(c.srv, encodeTicket(ticketData{version: 772, suite: s.id, created: std.time.Now(),
+        ageAdd: ageAdd, secret: tpsk, alpn: c.alpn, certs: c.peerCerts}))?
+    outer(innerFunctionName(argumentNumberOne, argumentNumberTwo, argumentNumberThree), anotherInner(someLongArgumentValue, anotherLongArgumentValue, yetAnotherOne))
+    var r = mock.Expect(db.Query(sql.Text("SELECT id, name FROM users WHERE id = $1 AND active"), sql.Args(userIdentifier, true, "x")), mock.Rows(columns("id", "name"), row(1, "alice"), row(2, "bob")))
+    var borrowOut = (((x ^ 18446744073709551615) & y) | (((x ^ y) ^ 18446744073709551615) & diff)) >> 63
+    var big = alphaBetaGammaDelta + epsilonZetaEtaTheta + iotaKappaLambdaMu + nuXiOmicronPi > rhoSigmaTau
+    switch layout {
+    case "002": yday = try p.digits(3, 3) else return parseErr(layout, value, "bad day of year, really bad")
+    case "03", "3": hour = try p.digits(1, 2) else return parseErr(layout, value, "bad hour") // why
+    case 4865: return suiteInfo{id: id, name: "TLS_AES_128_GCM_SHA256", hash: "sha256", keyLen: 16, aead: 1, v13: true}
+    case "1": return "one"
+    }
+}

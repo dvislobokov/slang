@@ -17,7 +17,6 @@
 #include "rt_internal.h"
 #include "platform/platform.h"
 
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -460,17 +459,17 @@ bool slang_net_rt_again(void) { return t_again; }
  * Read(n) that gets 100 bytes costs 100 bytes, not a zeroed 16 KB). */
 #define SCRATCH 65536
 static _Thread_local unsigned char *t_scratch;
-static pthread_key_t scratch_key;  /* frees a thread's buffer when it exits */
-static pthread_once_t scratch_once = PTHREAD_ONCE_INIT;
+static slang__plat_tls_key scratch_key;  /* frees a thread's buffer when it exits */
+static slang__plat_once scratch_once = SLANG_PLAT_ONCE_INIT;
 
-static void scratch_key_init(void) { pthread_key_create(&scratch_key, free); }
+static void scratch_key_init(void) { slang__plat_tls_new(&scratch_key, free); }
 
 static unsigned char *scratch(void) {
     if (!t_scratch) {
         t_scratch = malloc(SCRATCH);
         if (!t_scratch) slang_panic("out of memory (net read)");
-        pthread_once(&scratch_once, scratch_key_init);
-        pthread_setspecific(scratch_key, t_scratch);
+        slang__plat_once_run(&scratch_once, scratch_key_init);
+        slang__plat_tls_set(scratch_key, t_scratch);
     }
     return t_scratch;
 }
@@ -830,8 +829,8 @@ typedef struct resolve_req {
     struct resolve_req *next;
 } resolve_req;
 
-static pthread_mutex_t rs_mu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t rs_cv = PTHREAD_COND_INITIALIZER;
+static slang__plat_mutex rs_mu = SLANG_PLAT_MUTEX_INIT;
+static slang__plat_cond rs_cv = SLANG_PLAT_COND_INIT;
 static resolve_req *rs_head, *rs_tail;
 static int rs_threads, rs_idle;
 static uint64_t rs_gen;
@@ -850,19 +849,16 @@ static void req_run(resolve_req *r) {
 
 static void *resolver_main(void *arg) {
     uint64_t gen = (uint64_t)(uintptr_t)arg;
-    pthread_mutex_lock(&rs_mu);
+    slang__plat_mutex_lock(&rs_mu);
     for (;;) {
         if (rs_gen != gen) break;
         resolve_req *r = rs_head;
         if (!r) {
             rs_idle++;
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += 30;
-            int rc = pthread_cond_timedwait(&rs_cv, &rs_mu, &ts);
+            bool woke = slang__plat_cond_wait_ns(&rs_cv, &rs_mu, (int64_t)30 * 1000000000);
             if (rs_gen != gen) break;
             rs_idle--;
-            if (rc != 0 && !rs_head) {
+            if (!woke && !rs_head) {
                 rs_threads--;
                 break;
             }
@@ -870,24 +866,24 @@ static void *resolver_main(void *arg) {
         }
         rs_head = r->next;
         if (!rs_head) rs_tail = NULL;
-        pthread_mutex_unlock(&rs_mu);
+        slang__plat_mutex_unlock(&rs_mu);
         req_run(r);
-        pthread_mutex_lock(&rs_mu);
+        slang__plat_mutex_lock(&rs_mu);
         if (r->gen != rs_gen) {
             /* shut down meanwhile: nobody runs continuations any more */
             slang_release(r->task);
             req_free(r);
             continue;
         }
-        pthread_mutex_unlock(&rs_mu);
+        slang__plat_mutex_unlock(&rs_mu);
         int64_t hnd = (int64_t)(intptr_t)r;
         slang_task *t = r->task;
         r->task = NULL;
         slang_task_complete(t, &hnd);
         slang_release(t);
-        pthread_mutex_lock(&rs_mu);
+        slang__plat_mutex_lock(&rs_mu);
     }
-    pthread_mutex_unlock(&rs_mu);
+    slang__plat_mutex_unlock(&rs_mu);
     return NULL;
 }
 
@@ -925,7 +921,7 @@ static slang_task *submit(int kind, const slang_string *host, int64_t flags) {
     }
     slang_retain(t);
     r->task = t;
-    pthread_mutex_lock(&rs_mu);
+    slang__plat_mutex_lock(&rs_mu);
     r->gen = rs_gen;
     if (rs_tail) rs_tail->next = r; else rs_head = r;
     rs_tail = r;
@@ -934,7 +930,7 @@ static slang_task *submit(int kind, const slang_string *host, int64_t flags) {
         else if (rs_threads == 0) {
             /* no thread at all: fail the lookup now */
             rs_head = rs_tail = NULL;
-            pthread_mutex_unlock(&rs_mu);
+            slang__plat_mutex_unlock(&rs_mu);
             r->errmsg = "cannot start a resolver thread";
             r->task = NULL;
             int64_t h = (int64_t)(intptr_t)r;
@@ -943,8 +939,8 @@ static slang_task *submit(int kind, const slang_string *host, int64_t flags) {
             return t;
         }
     }
-    pthread_cond_broadcast(&rs_cv);
-    pthread_mutex_unlock(&rs_mu);
+    slang__plat_cond_broadcast(&rs_cv);
+    slang__plat_mutex_unlock(&rs_mu);
     return t;
 }
 
@@ -992,7 +988,7 @@ void slang_net_rt_resolve_sync(const slang_string *host, int64_t flags, slang_sl
 }
 
 void slang__net_stop(void) {
-    pthread_mutex_lock(&rs_mu);
+    slang__plat_mutex_lock(&rs_mu);
     rs_gen++;
     resolve_req *r = rs_head;
     rs_head = rs_tail = NULL;
@@ -1003,7 +999,7 @@ void slang__net_stop(void) {
      * exits right after shutdown does not race glibc's per-thread
      * resolver state teardown. submit() broadcasts, so an old thread
      * taking a wake-up meant for a new one cannot lose it. */
-    pthread_mutex_unlock(&rs_mu);
+    slang__plat_mutex_unlock(&rs_mu);
     while (r) {
         resolve_req *n = r->next;
         slang_release(r->task);
@@ -1036,8 +1032,24 @@ int64_t slang_net_rt_connect_check(int64_t h, slang_error **err) {
     int e = slang__plat_sock_error(s->fd);
     slang__plat_addr a;
     bool connected = !e && slang__plat_sock_name(s->fd, true, &a);
+    /* A TCP self-connect (the kernel picked the dialled loopback port as
+     * the ephemeral source port: simultaneous open with itself) succeeds
+     * although nothing listens there. Like Go, treat it as "connection
+     * refused" (a listener's port is never chosen as a source port). */
+    bool self = false;
+    slang__plat_addr la;
+    if (connected && slang__plat_addr_family(&a) != SLANG_PLAT_AF_UNIX && slang__plat_sock_name(s->fd, false, &la)) {
+        unsigned char ip1[16], ip2[16];
+        int n1 = 0, n2 = 0;
+        int64_t p1 = 0, p2 = 0;
+        uint32_t z1 = 0, z2 = 0;
+        slang__plat_addr_parts(&a, ip1, &n1, &p1, &z1);
+        slang__plat_addr_parts(&la, ip2, &n2, &p2, &z2);
+        self = n1 > 0 && n1 == n2 && p1 == p2 && memcmp(ip1, ip2, (size_t)n1) == 0;
+    }
     release_op(s);
     if (e) { set_code(err, e); return 0; }
+    if (self) { if (err) *err = &refused_err; return 0; }
     return connected ? 1 : 0;
 }
 

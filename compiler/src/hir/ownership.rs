@@ -11,7 +11,9 @@
 //! * An *interior pointer* (`&s.f`, `&a[i]`, `&slice[i]`, `&global`) has no
 //!   header of its own. It may only be read through (dereferenced, compared,
 //!   field access) or passed to a parameter that does not escape. The caller
-//!   keeps the owner alive for the call.
+//!   keeps the owner alive for the call. Stored in a local variable
+//!   (`var p = &xs[i]`, an *interior pointer variable*) it pins its owner
+//!   ([`Pin`]) and is then subject to the same read-only rule.
 //! * A parameter *escapes* when the callee stores it anywhere (variable,
 //!   field, element, closure capture, interface, `weak`), returns it,
 //!   reassigns it, takes its address, passes it to an escaping parameter or
@@ -69,6 +71,18 @@ pub fn has_dtor(p: &Program, t: TypeId) -> bool {
     }
 }
 
+/// The local whose own storage the place `e` is part of: `x`, `x.f`,
+/// `x.arr[i]` (fields of struct values and elements of arrays, not through
+/// a pointer or a slice).
+pub fn value_place_root(p: &Program, e: &Expr) -> Option<LocalId> {
+    match &e.kind {
+        ExprKind::Local(l) => Some(*l),
+        ExprKind::Field { base, .. } if matches!(p.types.get(base.ty), Type::Struct(_) | Type::Tuple(_)) => value_place_root(p, base),
+        ExprKind::Index { base, .. } if matches!(p.types.get(base.ty), Type::Array(..)) => value_place_root(p, base),
+        _ => None,
+    }
+}
+
 /// True for an `&x` whose result is an interior pointer (no header).
 pub fn is_interior_addr(e: &Expr) -> bool {
     let ExprKind::AddrOf(inner) = &e.kind else { return false };
@@ -79,22 +93,184 @@ pub fn is_interior_addr(e: &Expr) -> bool {
     }
 }
 
+/// What keeps the target of a pointer stored in an *interior pointer
+/// variable* alive (DESIGN.md "Память", interior pointers in locals): the
+/// variable holds a hidden strong reference to it, its *pin*.
+#[derive(Clone, Copy, Debug)]
+pub enum Pin<'e> {
+    /// Nothing needed: static storage (a global), or a pointer parameter
+    /// that does not escape (the caller keeps its target alive for the
+    /// call, which the variable cannot outlive).
+    None,
+    /// The heap cell of this local or upvalue (`&s.f` of a variable `s`,
+    /// which lives in a cell because its address is taken).
+    Root(&'e Expr),
+    /// A copy of this (side-effect-free) owner expression: the slice of
+    /// `&slice[i]` (its backing array), the pointer of `&p.f`.
+    Value(&'e Expr),
+    /// The pins of this other interior pointer variable (`&q.f`, `q`).
+    Interior(LocalId),
+    /// The value stored itself, evaluated once and kept (`p = new T{}`, a
+    /// call result, a plain pointer variable).
+    Owned,
+}
+
+/// True for an owner expression that can be evaluated twice (once for the
+/// pin, once for the address) with the same result: a path of variables,
+/// fields, dereferences and indexes, without calls.
+pub fn simple_path(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Local(_) | ExprKind::Upvalue(_) | ExprKind::Global(_) | ExprKind::Const(_) => true,
+        ExprKind::Field { base, .. } => simple_path(base),
+        ExprKind::Deref(x) => simple_path(x),
+        ExprKind::Index { base, index } => simple_path(base) && simple_path(index),
+        _ => false,
+    }
+}
+
+/// The pin of `&place` (an interior place) stored in a variable of
+/// function `fid`, or `None` if it cannot be kept (the owner is a
+/// temporary or is computed by a call). `interior(l)` tells whether local
+/// `l` is itself an interior pointer variable.
+pub fn interior_pin<'e>(p: &Program, fid: FuncId, f: &Function, facts: &ParamFacts, place: &'e Expr, interior: &dyn Fn(LocalId) -> bool) -> Option<Pin<'e>> {
+    match &place.kind {
+        ExprKind::Field { base, .. } => interior_pin(p, fid, f, facts, base, interior),
+        ExprKind::Index { base, .. } => match p.types.get(base.ty) {
+            Type::Array(..) => interior_pin(p, fid, f, facts, base, interior),
+            Type::Slice(_) if simple_path(base) => Some(Pin::Value(base)),
+            _ => None,
+        },
+        ExprKind::Deref(ptr) => pointer_pin(fid, f, facts, ptr, interior).filter(|k| !matches!(k, Pin::Owned)).or_else(|| simple_path(ptr).then_some(Pin::Value(ptr))),
+        ExprKind::Local(_) | ExprKind::Upvalue(_) => Some(Pin::Root(place)),
+        ExprKind::Global(_) => Some(Pin::None),
+        _ => None,
+    }
+}
+
+/// The pin of a pointer value `e` (not an interior address) stored in an
+/// interior pointer variable: another interior variable shares its pins,
+/// a non-escaping pointer parameter needs none, anything else is kept
+/// itself ([`Pin::Owned`]).
+pub fn pointer_pin<'e>(fid: FuncId, f: &Function, facts: &ParamFacts, e: &'e Expr, interior: &dyn Fn(LocalId) -> bool) -> Option<Pin<'e>> {
+    match &e.kind {
+        ExprKind::Nil | ExprKind::Zero => Some(Pin::None),
+        ExprKind::Local(l) if interior(*l) => Some(Pin::Interior(*l)),
+        ExprKind::Local(l) => match f.params.iter().position(|x| x == l) {
+            Some(k) if !facts.escapes(fid, k) && !f.locals[l.0 as usize].address_taken && !f.locals[l.0 as usize].captured => Some(Pin::None),
+            _ => Some(Pin::Owned),
+        },
+        _ => Some(Pin::Owned),
+    }
+}
+
 /// Calls `f(expr, position)` for every expression of `func`'s body, parents
 /// before children.
 pub fn walk_function(p: &Program, func: &Function, f: &mut dyn FnMut(&Expr, Pos)) {
-    let mut w = Walker { p, f };
+    let mut w = Walker { p, f, s: None };
+    w.block(&func.body);
+}
+
+/// Calls `f` for every statement of `func`'s body (also those nested in
+/// blocks and in expressions such as `try ... catch`), outer first.
+pub fn walk_function_stmts(p: &Program, func: &Function, f: &mut dyn FnMut(&Stmt)) {
+    let mut w = Walker { p, f: &mut |_, _| {}, s: Some(f) };
     w.block(&func.body);
 }
 
 /// Calls `f` for `e` (in position `pos`) and all its subexpressions.
 pub fn walk_expr(p: &Program, e: &Expr, pos: Pos, f: &mut dyn FnMut(&Expr, Pos)) {
-    let mut w = Walker { p, f };
+    let mut w = Walker { p, f, s: None };
     w.expr(e, pos);
 }
 
 struct Walker<'p, 'f> {
     p: &'p Program,
     f: &'f mut dyn FnMut(&Expr, Pos),
+    s: Option<&'f mut dyn FnMut(&Stmt)>,
+}
+
+/// The interior pointer variables of a function and the statements that
+/// store into them (DESIGN.md "Память"): a `var` initialised with an
+/// interior address (`var p = &xs[i]`) is one; every `Let`/`Assign` of it
+/// is a *site* whose value is pinned.
+#[derive(Debug, Default)]
+pub struct InteriorVars<'e> {
+    /// Per local: is it an interior pointer variable.
+    pub is: Vec<bool>,
+    /// (local, stored value) in source order.
+    pub sites: Vec<(LocalId, &'e Expr)>,
+}
+
+/// Collects [`InteriorVars`] of `func`.
+pub fn interior_vars<'e>(p: &Program, func: &'e Function) -> InteriorVars<'e> {
+    let mut is = vec![false; func.locals.len()];
+    walk_function_stmts(p, func, &mut |s| {
+        if let StmtKind::Let { local, init: Some(e) } = &s.kind {
+            if is_interior_addr(e) && func.locals[local.0 as usize].kind == LocalKind::Var {
+                is[local.0 as usize] = true;
+            }
+        }
+    });
+    let mut sites = Vec::new();
+    // Re-walk with the same lifetime as `func` for the site references.
+    fn collect<'e>(b: &'e Block, is: &[bool], out: &mut Vec<(LocalId, &'e Expr)>) {
+        for s in &b.stmts {
+            collect_stmt(s, is, out);
+        }
+    }
+    fn collect_expr<'e>(e: &'e Expr, is: &[bool], out: &mut Vec<(LocalId, &'e Expr)>) {
+        // Blocks inside expressions (try/catch handlers, try-else values).
+        match &e.kind {
+            ExprKind::TryCatch { value, handler, .. } => {
+                collect_expr(value, is, out);
+                collect(handler, is, out);
+            }
+            ExprKind::TryElse { value, .. } => collect_expr(value, is, out),
+            _ => {}
+        }
+    }
+    fn collect_stmt<'e>(s: &'e Stmt, is: &[bool], out: &mut Vec<(LocalId, &'e Expr)>) {
+        match &s.kind {
+            StmtKind::Let { local, init: Some(e) } => {
+                if is[local.0 as usize] {
+                    out.push((*local, e));
+                }
+                collect_expr(e, is, out);
+            }
+            StmtKind::Assign { target, value } => {
+                if let ExprKind::Local(l) = &target.kind {
+                    if is[l.0 as usize] {
+                        out.push((*l, value));
+                    }
+                }
+                collect_expr(value, is, out);
+            }
+            StmtKind::Expr(e) | StmtKind::Discard(e) => collect_expr(e, is, out),
+            StmtKind::If { then, else_, .. } => {
+                collect(then, is, out);
+                if let Some(e) = else_ {
+                    collect(e, is, out);
+                }
+            }
+            StmtKind::Loop { body, .. } | StmtKind::ForRange { body, .. } | StmtKind::ForSlice { body, .. } | StmtKind::ForString { body, .. } | StmtKind::ForMap { body, .. } => collect(body, is, out),
+            StmtKind::Switch(sw) => {
+                for c in &sw.cases {
+                    collect(&c.body, is, out);
+                }
+                if let Some(d) = &sw.default {
+                    collect(d, is, out);
+                }
+            }
+            StmtKind::Block(b) => collect(b, is, out),
+            StmtKind::TryBlock { body, handler, .. } => {
+                collect(body, is, out);
+                collect(handler, is, out);
+            }
+            _ => {}
+        }
+    }
+    collect(&func.body, &is, &mut sites);
+    InteriorVars { is, sites }
 }
 
 impl Walker<'_, '_> {
@@ -113,6 +289,9 @@ impl Walker<'_, '_> {
 
     fn stmt(&mut self, s: &Stmt) {
         use Pos::*;
+        if let Some(h) = self.s.as_mut() {
+            h(s);
+        }
         match &s.kind {
             StmtKind::Let { init, .. } => {
                 if let Some(e) = init {
@@ -359,9 +538,13 @@ pub fn param_facts(p: &Program) -> ParamFacts {
         let mut owned: Vec<bool> = f.params.iter().map(|_| f.is_async).collect();
         let po = &param_of[fi];
         walk_function(p, f, &mut |e, pos| {
-            if let ExprKind::Local(l) = &e.kind {
-                if let Some(k) = po[l.0 as usize] {
-                    if pos == Pos::Target {
+            // `n = v`, and also `n.f = v` / `n.arr[i] = v` on a by-value
+            // parameter: the callee writes its own copy, so it must own it
+            // (writing into a borrowed copy released the caller's field
+            // value and leaked the new one).
+            if pos == Pos::Target {
+                if let Some(l) = value_place_root(p, e) {
+                    if let Some(k) = po[l.0 as usize] {
                         owned[k] = true;
                     }
                 }

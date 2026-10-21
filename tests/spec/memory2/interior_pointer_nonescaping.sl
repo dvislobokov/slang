@@ -5,13 +5,13 @@ namespace spec.memory2.interior_pointer_nonescaping
 import std.io
 
 struct Stats {
-    Hits int
+    Hits   int
     Misses int
 }
 
 struct Server {
     Name string
-    St Stats
+    St   Stats
 }
 
 func Inc(p *int, by int) {

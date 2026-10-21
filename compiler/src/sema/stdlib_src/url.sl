@@ -7,8 +7,8 @@ namespace std.net.url
 
 // User name and optional password of a URL.
 struct Userinfo {
-    Username string
-    Password string
+    Username    string
+    Password    string
     HasPassword bool
 
     func String() string {
@@ -32,17 +32,17 @@ func UserPassword(name string, password string) *Userinfo {
 // or scheme:opaque[?query][#fragment]. Path and Fragment are unescaped;
 // RawPath / RawFragment keep a non-default escaping of them.
 struct URL {
-    Scheme string
-    Opaque string
-    User *Userinfo
-    Host string
-    Port string
-    Path string
-    RawPath string
-    OmitHost bool
-    ForceQuery bool
-    RawQuery string
-    Fragment string
+    Scheme      string
+    Opaque      string
+    User        *Userinfo
+    Host        string
+    Port        string
+    Path        string
+    RawPath     string
+    OmitHost    bool
+    ForceQuery  bool
+    RawQuery    string
+    Fragment    string
     RawFragment string
 
     // host[:port], with brackets around an IPv6 host.
@@ -393,7 +393,8 @@ func parse(raw string, viaRequest bool) URL! {
             return error("first path segment in URL cannot contain colon")
         }
     }
-    if (url.Scheme != "" || (!viaRequest && !std.strings.HasPrefix(rest, "///"))) && std.strings.HasPrefix(rest, "//") {
+    if (url.Scheme != "" || (!viaRequest && !std.strings.HasPrefix(rest, "///"))) &&
+        std.strings.HasPrefix(rest, "//") {
         var authority = rest[2..]
         rest = ""
         var slash = std.strings.Index(authority, "/")
@@ -428,7 +429,10 @@ func parseAuthority(url *URL, authority string) void! {
         if colon < 0 {
             url.User = User(unescape(userinfo, 4)?)
         } else {
-            url.User = UserPassword(unescape(userinfo[..colon], 4)?, unescape(userinfo[colon + 1..], 4)?)
+            url.User = UserPassword(
+                unescape(userinfo[..colon], 4)?,
+                unescape(userinfo[colon + 1..], 4)?,
+            )
         }
     }
     // host, port
@@ -490,7 +494,24 @@ func validUserinfo(s string) bool {
         if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) {
             continue
         }
-        if c == 45 || c == 46 || c == 95 || c == 58 || c == 126 || c == 33 || c == 36 || c == 38 || c == 39 || c == 40 || c == 41 || c == 42 || c == 43 || c == 44 || c == 59 || c == 61 || c == 37 || c == 64 {
+        if c == 45 ||
+            c == 46 ||
+            c == 95 ||
+            c == 58 ||
+            c == 126 ||
+            c == 33 ||
+            c == 36 ||
+            c == 38 ||
+            c == 39 ||
+            c == 40 ||
+            c == 41 ||
+            c == 42 ||
+            c == 43 ||
+            c == 44 ||
+            c == 59 ||
+            c == 61 ||
+            c == 37 ||
+            c == 64 {
             continue
         }
         return false
@@ -507,14 +528,39 @@ func shouldEscape(c int, mode int) bool {
         return false
     }
     if mode == 3 || mode == 7 {
-        if c == 33 || c == 36 || c == 38 || c == 39 || c == 40 || c == 41 || c == 42 || c == 43 || c == 44 || c == 59 || c == 61 || c == 58 || c == 91 || c == 93 || c == 60 || c == 62 || c == 34 {
+        if c == 33 ||
+            c == 36 ||
+            c == 38 ||
+            c == 39 ||
+            c == 40 ||
+            c == 41 ||
+            c == 42 ||
+            c == 43 ||
+            c == 44 ||
+            c == 59 ||
+            c == 61 ||
+            c == 58 ||
+            c == 91 ||
+            c == 93 ||
+            c == 60 ||
+            c == 62 ||
+            c == 34 {
             return false
         }
     }
     if c == 45 || c == 95 || c == 46 || c == 126 {
         return false
     }
-    if c == 36 || c == 38 || c == 43 || c == 44 || c == 47 || c == 58 || c == 59 || c == 61 || c == 63 || c == 64 {
+    if c == 36 ||
+        c == 38 ||
+        c == 43 ||
+        c == 44 ||
+        c == 47 ||
+        c == 58 ||
+        c == 59 ||
+        c == 61 ||
+        c == 63 ||
+        c == 64 {
         if mode == 1 {
             return c == 63
         }
@@ -594,7 +640,10 @@ func unescape(s string, mode int) string! {
         if c == 37 {
             hasPct = true
             if i + 2 >= len(s) || hexVal(int(s[i + 1])) < 0 || hexVal(int(s[i + 2])) < 0 {
-                return error("invalid URL escape " + std.encoding.json.Quote(s[i..std.math.IMin(i + 3, len(s))]))
+                return error(
+                    "invalid URL escape " +
+                        std.encoding.json.Quote(s[i..std.math.IMin(i + 3, len(s))]),
+                )
             }
             // in a host, %-encoding is only for non-ASCII bytes (and %25 in IPv6 zones)
             if mode == 3 && hexVal(int(s[i + 1])) < 8 && s[i..i + 3] != "%25" {
@@ -612,7 +661,9 @@ func unescape(s string, mode int) string! {
         if c == 43 {
             hasPlus = mode == 5
         } else if (mode == 3 || mode == 7) && c < 128 && shouldEscape(c, 3) {
-            return error("invalid character " + std.encoding.json.Quote(s[i..i + 1]) + " in host name")
+            return error(
+                "invalid character " + std.encoding.json.Quote(s[i..i + 1]) + " in host name",
+            )
         }
         i += 1
     }
@@ -640,7 +691,21 @@ func unescape(s string, mode int) string! {
 func validEncoded(s string, mode int) bool {
     for i in 0..len(s) {
         var c = int(s[i])
-        if c == 33 || c == 36 || c == 38 || c == 39 || c == 40 || c == 41 || c == 42 || c == 43 || c == 44 || c == 59 || c == 61 || c == 58 || c == 64 || c == 91 || c == 93 {
+        if c == 33 ||
+            c == 36 ||
+            c == 38 ||
+            c == 39 ||
+            c == 40 ||
+            c == 41 ||
+            c == 42 ||
+            c == 43 ||
+            c == 44 ||
+            c == 59 ||
+            c == 61 ||
+            c == 58 ||
+            c == 64 ||
+            c == 91 ||
+            c == 93 {
             continue
         }
         if c == 37 {
@@ -781,7 +846,7 @@ func ParseQuery(q string) Values! {
 }
 
 struct queryResult {
-    v Values
+    v   Values
     err string
 }
 

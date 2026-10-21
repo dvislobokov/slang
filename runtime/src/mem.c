@@ -1,8 +1,7 @@
 /* mem.c - raw allocation, refcounted object header, value ops, leak check. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <malloc.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +20,7 @@ typedef struct track {
 static int g_leak_mode;
 static int g_track; /* prefix in use (fixed before the first allocation) */
 static track g_track_head = { &g_track_head, &g_track_head };
-static pthread_mutex_t g_track_mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex g_track_mu = SLANG_PLAT_MUTEX_INIT;
 
 void slang_leak_check_enable(int32_t mode) {
     g_leak_mode = mode;
@@ -31,21 +30,21 @@ void slang_leak_check_enable(int32_t mode) {
 
 static void track_add(slang_object *o) {
     track *t = (track *)o - 1;
-    pthread_mutex_lock(&g_track_mu);
+    slang__plat_mutex_lock(&g_track_mu);
     t->next = g_track_head.next;
     t->prev = &g_track_head;
     g_track_head.next->prev = t;
     g_track_head.next = t;
-    pthread_mutex_unlock(&g_track_mu);
+    slang__plat_mutex_unlock(&g_track_mu);
 }
 
 static void track_remove(slang_object *o) {
     track *t = (track *)o - 1;
-    pthread_mutex_lock(&g_track_mu);
+    slang__plat_mutex_lock(&g_track_mu);
     t->prev->next = t->next;
     t->next->prev = t->prev;
     t->prev = t->next = t;
-    pthread_mutex_unlock(&g_track_mu);
+    slang__plat_mutex_unlock(&g_track_mu);
 }
 
 /* ---- raw memory ---- */
@@ -109,15 +108,15 @@ typedef struct slab_region {                 /* at the region base (first slot) 
 } slab_region;
 
 static uint64_t *g_slab_map[SLAB_TOP];       /* leaf bitmaps, set once */
-static pthread_mutex_t g_slab_mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex g_slab_mu = SLANG_PLAT_MUTEX_INIT;
 static struct {
     char *cur, *end;                         /* uncarved part of the current region */
     slab_node *batches;                      /* spilled free lists (linked by next_batch) */
 } g_slab[SLAB_CLASSES];
 static slab_region *g_slab_regions;
 static int g_slab_off;                       /* SLANG_NO_SLAB set, or no TLS key */
-static pthread_once_t g_slab_once = PTHREAD_ONCE_INIT;
-static pthread_key_t g_slab_key;
+static slang__plat_once g_slab_once = SLANG_PLAT_ONCE_INIT;
+static slang__plat_tls_key g_slab_key;
 
 typedef struct {
     slab_node *free;                         /* free slots */
@@ -146,7 +145,7 @@ static inline int64_t slab_size(int64_t cls) { return (cls + 1) * 16; }
 /* Flush a thread's free lists into the global pools (thread exit). */
 static void slab_thread_exit(void *arg) {
     (void)arg;
-    pthread_mutex_lock(&g_slab_mu);
+    slang__plat_mutex_lock(&g_slab_mu);
     for (int c = 0; c < SLAB_CLASSES; c++) {
         slab_local *l = &t_slab[c];
         if (l->free) {
@@ -157,12 +156,12 @@ static void slab_thread_exit(void *arg) {
         l->nfree = 0;
         l->cur = l->end = NULL;  /* the rest of the span is abandoned */
     }
-    pthread_mutex_unlock(&g_slab_mu);
+    slang__plat_mutex_unlock(&g_slab_mu);
 }
 
 static void slab_init_key(void) {
     const char *e = getenv("SLANG_NO_SLAB");
-    if ((e && *e && *e != '0') || pthread_key_create(&g_slab_key, slab_thread_exit) != 0)
+    if ((e && *e && *e != '0') || !slang__plat_tls_new(&g_slab_key, slab_thread_exit))
         __atomic_store_n(&g_slab_off, 1, __ATOMIC_RELAXED);
 }
 
@@ -186,26 +185,26 @@ static int slab_mark(char *base) {
 __attribute__((noinline)) static void *slab_refill(int64_t c) {
     slab_local *l = &t_slab[c];
     if (!l->registered) {
-        pthread_once(&g_slab_once, slab_init_key);
+        slang__plat_once_run(&g_slab_once, slab_init_key);
         if (__atomic_load_n(&g_slab_off, __ATOMIC_RELAXED)) return NULL;
-        pthread_setspecific(g_slab_key, (void *)1);
+        slang__plat_tls_set(g_slab_key, (void *)1);
         l->registered = 1;
     }
     int64_t sz = slab_size(c);
-    pthread_mutex_lock(&g_slab_mu);
+    slang__plat_mutex_lock(&g_slab_mu);
     slab_node *batch = g_slab[c].batches;
     if (batch) {
         g_slab[c].batches = batch->next_batch;
-        pthread_mutex_unlock(&g_slab_mu);
+        slang__plat_mutex_unlock(&g_slab_mu);
         l->free = batch->next;
         l->nfree = 0;  /* unknown length; only bounds spilling */
         return batch;
     }
     if (g_slab[c].end - g_slab[c].cur < (ptrdiff_t)SLAB_SPAN) {
-        char *base = aligned_alloc(SLAB_REGION, SLAB_REGION);
+        char *base = slang__plat_aligned_alloc(SLAB_REGION, SLAB_REGION);
         if (!base || !slab_mark(base)) {
-            pthread_mutex_unlock(&g_slab_mu);
-            free(base);
+            slang__plat_mutex_unlock(&g_slab_mu);
+            if (base) slang__plat_aligned_free(base);
             return NULL;
         }
         slab_region *rg = (slab_region *)base;
@@ -220,7 +219,7 @@ __attribute__((noinline)) static void *slab_refill(int64_t c) {
     size_t n = SLAB_SPAN - SLAB_SPAN % (size_t)sz;
     if ((size_t)(g_slab[c].end - span) < n) n = (size_t)(g_slab[c].end - span) / (size_t)sz * (size_t)sz;
     g_slab[c].cur = span + n;
-    pthread_mutex_unlock(&g_slab_mu);
+    slang__plat_mutex_unlock(&g_slab_mu);
     l->cur = span + sz;
     l->end = span + n;
     return span;
@@ -250,10 +249,10 @@ static inline void slab_free(void *p) {
     slab_node *n = p;
     if (l->nfree >= SLAB_BATCH) {
         /* Hand the whole list to the global pool and start a new one. */
-        pthread_mutex_lock(&g_slab_mu);
+        slang__plat_mutex_lock(&g_slab_mu);
         l->free->next_batch = g_slab[c].batches;
         g_slab[c].batches = l->free;
-        pthread_mutex_unlock(&g_slab_mu);
+        slang__plat_mutex_unlock(&g_slab_mu);
         l->free = NULL;
         l->nfree = 0;
     }
@@ -312,8 +311,8 @@ static void object_free(slang_object *o) {
 
 int64_t slang__object_capacity(slang_object *o) {
     if (SLAB_ENABLED && slab_is(o)) return slab_size(slab_cls_of(o));
-    if (g_track) return (int64_t)malloc_usable_size((track *)o - 1) - (int64_t)sizeof(track);
-    return (int64_t)malloc_usable_size(o);
+    if (g_track) return (int64_t)slang__plat_alloc_size((track *)o - 1) - (int64_t)sizeof(track);
+    return (int64_t)slang__plat_alloc_size(o);
 }
 
 slang_object *slang__object_resize(slang_object *o, int64_t size) {
@@ -328,16 +327,16 @@ slang_object *slang__object_resize(slang_object *o, int64_t size) {
         return n;
     }
     if (!g_track) return slang_realloc(o, size);
-    pthread_mutex_lock(&g_track_mu);
+    slang__plat_mutex_lock(&g_track_mu);
     track *t = (track *)o - 1;
     track *n = realloc(t, (size_t)size + sizeof(track));
     if (!n) {
-        pthread_mutex_unlock(&g_track_mu);
+        slang__plat_mutex_unlock(&g_track_mu);
         slang__panicf("out of memory (requested %lld bytes)", (long long)size);
     }
     n->prev->next = n;
     n->next->prev = n;
-    pthread_mutex_unlock(&g_track_mu);
+    slang__plat_mutex_unlock(&g_track_mu);
     return (slang_object *)(n + 1);
 }
 
@@ -391,22 +390,22 @@ int64_t slang__total_objects(void) {
 
 bool slang__heap_each(void (*cb)(const char *type, int64_t bytes, void *arg), void *arg) {
     if (!g_track) return false;
-    pthread_mutex_lock(&g_track_mu);
+    slang__plat_mutex_lock(&g_track_mu);
     for (track *t = g_track_head.next; t != &g_track_head; t = t->next) {
         slang_object *o = (slang_object *)(t + 1);
         const char *name = (o->type && o->type->name) ? o->type->name : "<untyped>";
-        int64_t bytes = (int64_t)malloc_usable_size(t) - (int64_t)sizeof(track);
+        int64_t bytes = (int64_t)slang__plat_alloc_size(t) - (int64_t)sizeof(track);
         cb(name, bytes, arg);
     }
-    pthread_mutex_unlock(&g_track_mu);
+    slang__plat_mutex_unlock(&g_track_mu);
     return true;
 }
 
 void slang__live_each(void (*cb)(slang_object *obj, void *arg), void *arg) {
     if (!g_track) return;
-    pthread_mutex_lock(&g_track_mu);
+    slang__plat_mutex_lock(&g_track_mu);
     for (track *t = g_track_head.next; t != &g_track_head; t = t->next) cb((slang_object *)(t + 1), arg);
-    pthread_mutex_unlock(&g_track_mu);
+    slang__plat_mutex_unlock(&g_track_mu);
 }
 
 /* ---- pointers to payloads (`*T` values) ---- */
@@ -436,7 +435,7 @@ void slang__leak_report(void) {
     fflush(stdout);
     fprintf(stderr, "leak: %lld objects\n", (long long)live);
     if (g_track) {
-        pthread_mutex_lock(&g_track_mu);
+        slang__plat_mutex_lock(&g_track_mu);
         int64_t cap = 16, len = 0;
         type_count *counts = calloc((size_t)cap, sizeof *counts);
         for (track *t = g_track_head.next; t != &g_track_head && counts; t = t->next) {
@@ -457,7 +456,7 @@ void slang__leak_report(void) {
             }
             counts[i].n++;
         }
-        pthread_mutex_unlock(&g_track_mu);
+        slang__plat_mutex_unlock(&g_track_mu);
         if (counts) {
             qsort(counts, (size_t)len, sizeof *counts, cmp_count);
             for (int64_t i = 0; i < len; i++)

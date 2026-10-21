@@ -23,8 +23,8 @@ struct countIter {
 
 // a Fibonacci iterator (an iterator is iterable itself)
 struct Fib {
-    a int
-    b int
+    a     int
+    b     int
     limit int
     func Next() (int, bool) {
         if this.a > this.limit {
@@ -38,7 +38,7 @@ struct Fib {
 
 struct Pairs {
     keys []string
-    i int
+    i    int
     func Next() (string, int, bool) {
         if this.i >= len(this.keys) {
             return ("", 0, false)
@@ -49,7 +49,7 @@ struct Pairs {
 }
 
 struct Node {
-    Val int
+    Val  int
     Next *Node
 }
 

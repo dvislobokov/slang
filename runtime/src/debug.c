@@ -18,10 +18,8 @@
 #include "rt_internal.h"
 #include "platform/platform.h"
 
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 /* ---- tables (ABI.md 22.1) ----------------------------------------------- */
 
@@ -112,11 +110,11 @@ typedef struct rec {
     int step;
     slang_dbg_frame *step_frame, *step_parent;
     int32_t step_depth, step_line, step_stmt;
-    pthread_cond_t cv;
+    slang__plat_cond cv;
     struct rec *next_step;        /* list of records with an active step */
 } rec;
 
-static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex g_mu = SLANG_PLAT_MUTEX_INIT;
 #define CHUNK 4096
 #define NCHUNKS 4096
 static rec **g_chunks[NCHUNKS];
@@ -124,9 +122,9 @@ static int64_t g_nrecs;           /* ids 1..g_nrecs are taken; 1 = main */
 static rec *g_steps;              /* records with step != STEP_NONE */
 
 /* The agent's own locks (std.debug.rtLock(n)): 0 = agent state, 1 = output. */
-static pthread_mutex_t g_user_mu[2] = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER };
-static pthread_mutex_t g_ready_mu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t g_ready_cv = PTHREAD_COND_INITIALIZER;
+static slang__plat_mutex g_user_mu[2] = { SLANG_PLAT_MUTEX_INIT, SLANG_PLAT_MUTEX_INIT };
+static slang__plat_mutex g_ready_mu = SLANG_PLAT_MUTEX_INIT;
+static slang__plat_cond g_ready_cv = SLANG_PLAT_COND_INIT;
 static int g_ready;
 
 /* ---- task records --------------------------------------------------------- */
@@ -152,7 +150,7 @@ static rec *rec_new(void) {
     r->id = id;
     r->alive = 1;
     r->func = -1;
-    pthread_cond_init(&r->cv, NULL);
+    slang__plat_cond_init(&r->cv);
     c[(id - 1) % CHUNK] = r;
     __atomic_store_n(&g_nrecs, id, __ATOMIC_RELEASE);
     return r;
@@ -164,14 +162,14 @@ static rec *cur_rec(int32_t func) {
     if (!t) {
         rec *m = rec_at(1);
         if (m) return m;
-        pthread_mutex_lock(&g_mu);
+        slang__plat_mutex_lock(&g_mu);
         if (g_nrecs == 0) {
             m = rec_new();
             if (m) m->func = func;
         } else {
             m = rec_at(1);
         }
-        pthread_mutex_unlock(&g_mu);
+        slang__plat_mutex_unlock(&g_mu);
         return m;
     }
     int32_t id = slang__task_dbg_id(t);
@@ -180,14 +178,14 @@ static rec *cur_rec(int32_t func) {
         if (r && r->func < 0 && func >= 0) r->func = func;
         return r;
     }
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     if (g_nrecs == 0) rec_new();  /* id 1 stays the main thread */
     rec *r = rec_new();
     if (r) {
         r->func = func;
         slang__task_set_dbg_id(t, (int32_t)r->id);
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     return r;
 }
 
@@ -195,10 +193,10 @@ static rec *cur_rec(int32_t func) {
 void slang__dbg_task_drop(int32_t id) {
     rec *r = rec_at(id);
     if (!r) return;
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     r->alive = 0;
     r->suspended = NULL;
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }
 
 /* ---- the frame chain -------------------------------------------------------- */
@@ -233,33 +231,33 @@ static void step_clear(rec *r);
 static _Thread_local rec *t_deciding;
 
 static void pause_begin(rec *r, slang_dbg_frame *f, int32_t stmt, int32_t reason) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     r->paused = f;
     r->stmt = stmt;
     r->reason = reason;
     r->resume = 0;
     r->deciding = 1;
     t_deciding = r;
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }
 
 /* act (the hook's result): 1 stopped (reported to the client), 2 frozen
  * while another task is stopped (silent: ends with the freeze). */
 static void pause_end(rec *r, int64_t act) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     r->deciding = 0;
     t_deciding = NULL;
     if (act & 1) {
-        while (!r->resume) pthread_cond_wait(&r->cv, &g_mu);
+        while (!r->resume) slang__plat_cond_wait(&r->cv, &g_mu);
     } else if (act & 2) {
-        while (!r->resume && __atomic_load_n(&g_freeze, __ATOMIC_ACQUIRE)) pthread_cond_wait(&r->cv, &g_mu);
+        while (!r->resume && __atomic_load_n(&g_freeze, __ATOMIC_ACQUIRE)) slang__plat_cond_wait(&r->cv, &g_mu);
     } else if (r->resume) {
         /* Resumed while the hook decided not to stop: drop its step. */
         step_clear(r);
     }
     r->paused = NULL;
     r->resume = 0;
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }
 
 /* g_mu held: removes r from the step list. */
@@ -281,7 +279,7 @@ static int step_done(rec *cur, slang_dbg_frame *f, int32_t id) {
     const slang_dbg_stmt_rec *st = stmt_at(id);
     if (!st || st->kind != KIND_STMT) return 0;
     int done = 0;
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     for (rec *s = g_steps; s && !done; s = s->next_step) {
         int same = s == cur;
         int on_chain = chain_has(f, s->step_frame);
@@ -313,7 +311,7 @@ static int step_done(rec *cur, slang_dbg_frame *f, int32_t id) {
         }
         if (done) step_clear(s);
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     return done;
 }
 
@@ -390,21 +388,21 @@ void slang_dbg_leave(slang_dbg_frame *f) {
     f->active = 0;
     if (__atomic_load_n(&g_nsteps, __ATOMIC_ACQUIRE)) {
         /* The frame's memory is about to be reused: steps must not match it. */
-        pthread_mutex_lock(&g_mu);
+        slang__plat_mutex_lock(&g_mu);
         for (rec *s = g_steps; s; s = s->next_step) {
             if (s->step_frame == f) s->step_frame = NULL;
             if (s->step_parent == f) s->step_parent = f->prev;
         }
-        pthread_mutex_unlock(&g_mu);
+        slang__plat_mutex_unlock(&g_mu);
     }
     if (f->func && (f->func->flags & FUNC_ASYNC) && !f->prev && g_tables) {
         slang_task *t = slang__task_cur();
         int32_t id = t ? slang__task_dbg_id(t) : 0;
         rec *r = id ? rec_at(id) : NULL;
         if (r) {
-            pthread_mutex_lock(&g_mu);
+            slang__plat_mutex_lock(&g_mu);
             r->finished = 1;
-            pthread_mutex_unlock(&g_mu);
+            slang__plat_mutex_unlock(&g_mu);
         }
     }
 }
@@ -416,9 +414,9 @@ void slang_dbg_suspend(slang_dbg_frame *f) {
     if (!g_tables) return;
     rec *r = cur_rec(func_index(f));
     if (r) {
-        pthread_mutex_lock(&g_mu);
+        slang__plat_mutex_lock(&g_mu);
         r->suspended = f;
-        pthread_mutex_unlock(&g_mu);
+        slang__plat_mutex_unlock(&g_mu);
     }
 }
 
@@ -430,9 +428,9 @@ void slang_dbg_resume(slang_dbg_frame *f) {
     if (!g_tables) return;
     rec *r = cur_rec(func_index(f));
     if (r) {
-        pthread_mutex_lock(&g_mu);
+        slang__plat_mutex_lock(&g_mu);
         if (r->suspended == f) r->suspended = NULL;
-        pthread_mutex_unlock(&g_mu);
+        slang__plat_mutex_unlock(&g_mu);
     }
 }
 
@@ -509,7 +507,7 @@ void slang_debug_rt_stop_next(void) { __atomic_store_n(&g_stop_next, 1, __ATOMIC
 /* Freezing makes every task (except exempt ones) pause at its next hook;
  * a new freeze clears the exemptions. */
 void slang_debug_rt_freeze(bool on) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     /* Called by the hook that is about to report a stop: from now on a
      * `continue` from the client releases this task too. */
     if (on && t_deciding) t_deciding->deciding = 0;
@@ -520,13 +518,13 @@ void slang_debug_rt_freeze(bool on) {
         }
     }
     __atomic_store_n(&g_freeze, on ? 1 : 0, __ATOMIC_RELEASE);
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }
 
 /* Lets task `id` go: mode 0 continue, 1 next, 2 step in, 3 step out. Unless
  * `single`, the freeze ends and every paused task goes too. */
 bool slang_debug_rt_resume(int64_t id, int64_t mode, bool single) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     rec *r = rec_at(id);
     bool ok = r && r->paused;
     if (ok) {
@@ -547,7 +545,7 @@ bool slang_debug_rt_resume(int64_t id, int64_t mode, bool single) {
             __atomic_store_n(&r->exempt, 1, __ATOMIC_RELEASE);
         }
         r->resume = 1;
-        pthread_cond_signal(&r->cv);
+        slang__plat_cond_signal(&r->cv);
     }
     if (!single) {
         __atomic_store_n(&g_freeze, 0, __ATOMIC_RELEASE);
@@ -557,17 +555,17 @@ bool slang_debug_rt_resume(int64_t id, int64_t mode, bool single) {
              * stop of its own: it is not released by someone else's resume. */
             if (o && o->paused && !o->resume && !o->deciding) {
                 o->resume = 1;
-                pthread_cond_signal(&o->cv);
+                slang__plat_cond_signal(&o->cv);
             }
         }
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     return ok;
 }
 
 /* Ends every step and lets everything run (disconnect). */
 void slang_debug_rt_release_all(void) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     while (g_steps) step_clear(g_steps);
     __atomic_store_n(&g_freeze, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&g_stop_next, 0, __ATOMIC_RELEASE);
@@ -578,39 +576,39 @@ void slang_debug_rt_release_all(void) {
         o->exempt = 0;
         if (o->paused && !o->resume) {
             o->resume = 1;
-            pthread_cond_signal(&o->cv);
+            slang__plat_cond_signal(&o->cv);
         }
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     if (g_tables) memset(g_tables->bp, 0, (size_t)g_tables->nstmts);
 }
 
 /* Live tasks seen by a hook, by id (the main thread is 1). */
 void slang_debug_rt_tasks(slang_slice *out) {
     slang_slice_new(out, 8, 0, 0);
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     for (int64_t i = 1; i <= g_nrecs; i++) {
         rec *r = rec_at(i);
         if (r && r->alive && !r->finished) slang_slice_append(out, 8, NULL, &r->id);
     }
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
 }
 
 /* 0 running, 1 paused in a hook, 2 waiting at an await, -1 gone. */
 int64_t slang_debug_rt_task_state(int64_t id) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     rec *r = rec_at(id);
     int64_t s = !r || !r->alive || r->finished ? -1 : r->paused ? 1 : r->suspended ? 2 : 0;
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     return s;
 }
 
 /* The top frame of a paused (or awaiting) task, 0 if none. */
 int64_t slang_debug_rt_task_frame(int64_t id) {
-    pthread_mutex_lock(&g_mu);
+    slang__plat_mutex_lock(&g_mu);
     rec *r = rec_at(id);
     slang_dbg_frame *f = r ? (r->paused ? r->paused : r->suspended) : NULL;
-    pthread_mutex_unlock(&g_mu);
+    slang__plat_mutex_unlock(&g_mu);
     return (int64_t)(intptr_t)f;
 }
 
@@ -624,21 +622,21 @@ int64_t slang_debug_rt_task_reason(int64_t id) {
     return r && r->paused ? r->reason : 0;
 }
 
-void slang_debug_rt_lock(int64_t n) { pthread_mutex_lock(&g_user_mu[n & 1]); }
-void slang_debug_rt_unlock(int64_t n) { pthread_mutex_unlock(&g_user_mu[n & 1]); }
+void slang_debug_rt_lock(int64_t n) { slang__plat_mutex_lock(&g_user_mu[n & 1]); }
+void slang_debug_rt_unlock(int64_t n) { slang__plat_mutex_unlock(&g_user_mu[n & 1]); }
 
 /* `--wait`: the program starts once the client sent configurationDone. */
 void slang_debug_rt_wait_ready(void) {
-    pthread_mutex_lock(&g_ready_mu);
-    while (!g_ready) pthread_cond_wait(&g_ready_cv, &g_ready_mu);
-    pthread_mutex_unlock(&g_ready_mu);
+    slang__plat_mutex_lock(&g_ready_mu);
+    while (!g_ready) slang__plat_cond_wait(&g_ready_cv, &g_ready_mu);
+    slang__plat_mutex_unlock(&g_ready_mu);
 }
 
 void slang_debug_rt_signal_ready(void) {
-    pthread_mutex_lock(&g_ready_mu);
+    slang__plat_mutex_lock(&g_ready_mu);
     g_ready = 1;
-    pthread_cond_broadcast(&g_ready_cv);
-    pthread_mutex_unlock(&g_ready_mu);
+    slang__plat_cond_broadcast(&g_ready_cv);
+    slang__plat_mutex_unlock(&g_ready_mu);
 }
 
 /* Hooks never fire on this thread (the agent's own threads). */
@@ -687,7 +685,7 @@ slang_string *slang_debug_rt_sym_name(int64_t addr) {
 
 SLANG_NORETURN void slang_debug_rt_exit(int64_t code) {
     slang__io_flush_all();
-    _exit((int)code);
+    _Exit((int)code);
 }
 
 /* Milliseconds since an arbitrary point (monotonic). */
@@ -737,15 +735,15 @@ slang_string *slang_debug_rt_error_type(int64_t addr) {
  * it must keep answering while every worker is blocked in a paused task).
  * ====================================================================== */
 
-static pthread_mutex_t g_poll_mu = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex g_poll_mu = SLANG_PLAT_MUTEX_INIT;
 static slang__plat_poller *g_poller;
 
 /* Waits until fd is ready for `interest` (or timeout_ms passes, -1 = forever). */
 static bool wait_fd(int64_t fd, int32_t interest, int64_t timeout_ms) {
-    pthread_mutex_lock(&g_poll_mu);
+    slang__plat_mutex_lock(&g_poll_mu);
     if (!g_poller) g_poller = slang__plat_poller_new();
     slang__plat_poller *p = g_poller;
-    pthread_mutex_unlock(&g_poll_mu);
+    slang__plat_mutex_unlock(&g_poll_mu);
     if (!p) return false;
     if (slang__plat_poller_arm(p, fd, interest, (uint64_t)fd, false) != 0) return false;
     slang__plat_event ev[4];
@@ -844,9 +842,9 @@ bool slang_debug_rt_send(int64_t fd, const slang_string *s) {
 }
 
 void slang_debug_rt_close(int64_t fd) {
-    pthread_mutex_lock(&g_poll_mu);
+    slang__plat_mutex_lock(&g_poll_mu);
     if (g_poller) slang__plat_poller_remove(g_poller, fd);
-    pthread_mutex_unlock(&g_poll_mu);
+    slang__plat_mutex_unlock(&g_poll_mu);
     slang__plat_sock_close(fd);
 }
 
@@ -854,10 +852,5 @@ void slang_debug_rt_close(int64_t fd) {
 void slang_debug_rt_eprint(const slang_string *s) {
     int64_t n = slang_string_len(s);
     const char *p = slang_string_data(s);
-    while (n > 0) {
-        ssize_t w = write(2, p, (size_t)n);
-        if (w <= 0) break;
-        p += w;
-        n -= w;
-    }
+    slang__plat_write_all(2, p, n);
 }

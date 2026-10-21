@@ -1,10 +1,15 @@
 //! `slang.lock`: a deterministic YAML description of every package in the
 //! graph (sorted packages, sorted dependency lists, alphabetical keys).
 //!
-//! Stage 1 records path packages; the `source` field is a
-//! [`Source::lock_id`](super::graph::Source::lock_id), so registry
-//! (`registry+<url>`) and git (`git+<url>#<rev>`) entries slot in later
-//! without changing the format.
+//! Every package of the graph has an entry: `name`, `version`, `source`
+//! ([`Source::lock_id`](super::graph::Source::lock_id)), `dependencies`
+//! (package names) and `checksum`. Path packages: `source: path:<dir>`,
+//! `checksum: sha256:<hex>` over the sources ([`checksum`]). Module
+//! packages add `module: <path>`, have `version: v1.2.3` (the selected
+//! tag or a pseudo-version), `source: module` (MVS over tags) or
+//! `git+<url>?tag=|branch=|rev=<ref>#<commit>` (a git pin), and
+//! `checksum: h1:...` over the module tree ([`super::sum`]), checked on
+//! every download.
 
 use super::graph::Project;
 use serde::{Deserialize, Serialize};
@@ -28,6 +33,9 @@ pub struct LockedPackage {
     /// Names of the direct dependencies (and dev-dependencies), sorted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
+    /// Module path of a module package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
     pub name: String,
     pub source: String,
     pub version: String,
@@ -43,8 +51,11 @@ impl LockFile {
             let mut deps: Vec<String> = p.deps.iter().chain(&p.dev_deps).map(|&d| project.packages[d].name.clone()).collect();
             deps.sort();
             deps.dedup();
-            let files = p.source_files()?;
-            packages.push(LockedPackage { checksum: checksum(&p.dir, &files)?, dependencies: deps, name: p.name.clone(), source: p.source.lock_id(), version: p.version.clone() });
+            let (sum, module, version) = match &p.source {
+                super::graph::Source::Module { path, version, h1, .. } => (h1.clone(), Some(path.clone()), version.clone()),
+                super::graph::Source::Path(_) => (checksum(&p.dir, &p.source_files()?)?, None, p.version.clone()),
+            };
+            packages.push(LockedPackage { checksum: sum, dependencies: deps, module, name: p.name.clone(), source: p.source.lock_id(), version });
         }
         packages.sort_by(|a, b| (&a.name, &a.version, &a.source).cmp(&(&b.name, &b.version, &b.source)));
         Ok(LockFile { packages, version: LOCK_VERSION })

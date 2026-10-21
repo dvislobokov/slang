@@ -6,7 +6,7 @@ namespace std.slices
 
 // A pair of values (the elements of Zip).
 struct Pair<A, B> {
-    First A
+    First  A
     Second B
 }
 

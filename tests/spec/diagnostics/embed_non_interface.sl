@@ -4,7 +4,9 @@ namespace spec.diagnostics.embed_non_interface
 
 import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 interface I {
     P

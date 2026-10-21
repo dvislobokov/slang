@@ -161,9 +161,7 @@ void slang_diag_rt_start_cpu_profile(const slang_string *path, int64_t hz, slang
     __atomic_store_n(&g_buf, buf, __ATOMIC_RELEASE);
     g_hz = hz > 0 ? hz : 100;
     g_start_ns = slang__plat_mono_ns();
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    g_start_wall = (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+    g_start_wall = slang__plat_wall_ns();
     slang_retain((void *)path);
     g_path = (slang_string *)path;
     if (!slang__plat_prof_start((int)g_hz, on_sample)) {
@@ -446,9 +444,7 @@ void slang_diag_rt_write_heap_profile(const slang_string *path, slang_error **er
         free(vals.p);
     }
     emit_locations(&out, &st, &lm, false);
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    pb_uint(&out, 9, (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec);
+    pb_uint(&out, 9, (uint64_t)slang__plat_wall_ns());
     emit_value_type(&out, 11, &st, "space", "bytes");
     pbuf final = {0};
     pb_bytes(&final, out.p, out.len);

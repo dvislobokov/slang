@@ -4,7 +4,9 @@ namespace spec.diagnostics.generic_literal_needs_type_args
 
 import std.io
 
-struct Box<T> { V T }
+struct Box<T> {
+    V T
+}
 
 func main() {
     var b = Box{V: 1}

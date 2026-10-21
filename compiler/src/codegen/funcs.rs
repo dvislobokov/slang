@@ -41,6 +41,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.fs_mut().locals = slots;
         self.fs_mut().flags = flags;
         self.fs_mut().borrowed = vec![false; f.locals.len()];
+        self.setup_interior(fid, f);
         if f.ret != self.prog.types.void {
             let t = self.llty(f.ret);
             let p = self.entry_alloca(t, "ret", true);
@@ -117,6 +118,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// so that a later release is a no-op.
     pub(crate) fn release_local(&mut self, l: LocalId, zero: bool) {
         let (info, slot) = self.local_info(l);
+        if self.is_interior_local(l) {
+            self.release_pins(l);
+            return;
+        }
         if self.fs().borrowed.get(l.0 as usize).copied().unwrap_or(false) {
             return;
         }

@@ -378,24 +378,19 @@ struct Agent {
                 this.fail(req, "unknown frame")
             } else {
                 var r = this.newRef(varRef{kind: 1, frame: f})
-                this.respond(
-                    req,
-                    obj([
-                        "scopes",
-                        "[" +
-                            obj([
-                                "name",
-                                q("Locals"),
-                                "presentationHint",
-                                q("locals"),
-                                "variablesReference",
-                                std.strconv.Itoa(r),
-                                "expensive",
-                                "false",
-                            ]) +
-                            "]",
-                    ]),
-                )
+                this.respond(req, obj([
+                    "scopes",
+                    "[" + obj([
+                        "name",
+                        q("Locals"),
+                        "presentationHint",
+                        q("locals"),
+                        "variablesReference",
+                        std.strconv.Itoa(r),
+                        "expensive",
+                        "false",
+                    ]) + "]",
+                ]))
             }
         } else if c == "variables" {
             this.variables(req)
@@ -459,6 +454,14 @@ struct Agent {
         } else {
             this.respond(req, "")
         }
+        // Clients that track the run state from events (and other
+        // attached views) learn that the task runs again.
+        this.event("continued", obj([
+            "threadId",
+            std.strconv.Itoa(task),
+            "allThreadsContinued",
+            std.strconv.FormatBool(!single),
+        ]))
         if !rtResume(task, mode, single) && mode == 0 {
             // Not stopped (or gone): still let everything run.
             rtResume(0, 0, false)
@@ -552,19 +555,16 @@ struct Agent {
                 at = this.stmtsAt(file, line)
             }
             if len(at) == 0 {
-                results = append(
-                    results,
-                    obj([
-                        "id",
-                        std.strconv.Itoa(id),
-                        "verified",
-                        "false",
-                        "line",
-                        std.strconv.Itoa(line),
-                        "message",
-                        q("no code at this line"),
-                    ]),
-                )
+                results = append(results, obj([
+                    "id",
+                    std.strconv.Itoa(id),
+                    "verified",
+                    "false",
+                    "line",
+                    std.strconv.Itoa(line),
+                    "message",
+                    q("no code at this line"),
+                ]))
                 continue
             }
             var bp = new breakpoint{id: id, stmt: at[0], line: this.t.stmtLine(at[0])}
@@ -581,19 +581,16 @@ struct Agent {
                 stmts = append(stmts, st)
                 rtSetBp(st, true)
             }
-            results = append(
-                results,
-                obj([
-                    "id",
-                    std.strconv.Itoa(id),
-                    "verified",
-                    "true",
-                    "line",
-                    std.strconv.Itoa(bp.line),
-                    "source",
-                    obj(["path", q(this.t.fileName(file))]),
-                ]),
-            )
+            results = append(results, obj([
+                "id",
+                std.strconv.Itoa(id),
+                "verified",
+                "true",
+                "line",
+                std.strconv.Itoa(bp.line),
+                "source",
+                obj(["path", q(this.t.fileName(file))]),
+            ]))
         }
         if file >= 0 {
             this.fileBps[file] = stmts
@@ -624,35 +621,29 @@ struct Agent {
                 }
             }
             if found < 0 {
-                results = append(
-                    results,
-                    obj([
-                        "id",
-                        std.strconv.Itoa(this.nextBp),
-                        "verified",
-                        "false",
-                        "message",
-                        q("no function " + name),
-                    ]),
-                )
+                results = append(results, obj([
+                    "id",
+                    std.strconv.Itoa(this.nextBp),
+                    "verified",
+                    "false",
+                    "message",
+                    q("no function " + name),
+                ]))
                 continue
             }
             var s = this.t.funcEntry(found)
             this.funcBps = append(this.funcBps, s)
             rtSetBp(s, true)
-            results = append(
-                results,
-                obj([
-                    "id",
-                    std.strconv.Itoa(this.nextBp),
-                    "verified",
-                    "true",
-                    "line",
-                    std.strconv.Itoa(this.t.stmtLine(s)),
-                    "source",
-                    obj(["path", q(this.t.fileName(this.t.stmtFile(s)))]),
-                ]),
-            )
+            results = append(results, obj([
+                "id",
+                std.strconv.Itoa(this.nextBp),
+                "verified",
+                "true",
+                "line",
+                std.strconv.Itoa(this.t.stmtLine(s)),
+                "source",
+                obj(["path", q(this.t.fileName(this.t.stmtFile(s)))]),
+            ]))
         }
         this.respond(req, obj(["breakpoints", "[" + std.strings.Join(results, ",") + "]"]))
     }
@@ -702,10 +693,12 @@ struct Agent {
     func threads(req request) {
         var items []string = []
         for task in rtTasks() {
-            items = append(
-                items,
-                obj(["id", std.strconv.Itoa(task), "name", q(this.taskName(task))]),
-            )
+            items = append(items, obj([
+                "id",
+                std.strconv.Itoa(task),
+                "name",
+                q(this.taskName(task)),
+            ]))
         }
         if len(items) == 0 {
             items = append(items, obj(["id", "1", "name", q("main")]))
@@ -734,34 +727,28 @@ struct Agent {
                 }
                 var path = this.t.fileName(file)
                 var fid = this.frameId(f, task)
-                items = append(
-                    items,
-                    obj([
-                        "id",
-                        std.strconv.Itoa(fid),
-                        "name",
-                        q(this.t.funcName(fi)),
-                        "line",
-                        std.strconv.Itoa(line),
-                        "column",
-                        std.strconv.Itoa(col),
-                        "source",
-                        obj(["name", q(baseName(path)), "path", q(path)]),
-                    ]),
-                )
+                items = append(items, obj([
+                    "id",
+                    std.strconv.Itoa(fid),
+                    "name",
+                    q(this.t.funcName(fi)),
+                    "line",
+                    std.strconv.Itoa(line),
+                    "column",
+                    std.strconv.Itoa(col),
+                    "source",
+                    obj(["name", q(baseName(path)), "path", q(path)]),
+                ]))
             }
             n += 1
             f = rd(f)
         }
-        this.respond(
-            req,
-            obj([
-                "stackFrames",
-                "[" + std.strings.Join(items, ",") + "]",
-                "totalFrames",
-                std.strconv.Itoa(n),
-            ]),
-        )
+        this.respond(req, obj([
+            "stackFrames",
+            "[" + std.strings.Join(items, ",") + "]",
+            "totalFrames",
+            std.strconv.Itoa(n),
+        ]))
     }
 
     func variable(name string, addr int, ti int) string {
@@ -832,17 +819,14 @@ struct Agent {
         if v.ti != 0 {
             r = this.refFor(v.addr, v.ti)
         }
-        this.respond(
-            req,
-            obj([
-                "result",
-                q(show(v)),
-                "type",
-                q(showType(v)),
-                "variablesReference",
-                std.strconv.Itoa(r),
-            ]),
-        )
+        this.respond(req, obj([
+            "result",
+            q(show(v)),
+            "type",
+            q(showType(v)),
+            "variablesReference",
+            std.strconv.Itoa(r),
+        ]))
     }
 
     // ---- the connection loop ---------------------------------------------
@@ -894,22 +878,25 @@ struct Agent {
 }
 
 func capabilities() string {
-    var filters = "[" +
-        obj(["filter", q("panic"), "label", q("Panics"), "default", "true"]) +
-        "," +
-        obj([
-            "filter",
-            q("error"),
-            "label",
-            q("Errors (on creation)"),
-            "default",
-            "false",
-            "supportsCondition",
-            "true",
-            "conditionDescription",
-            q("comma-separated error type names, e.g. NotFound"),
-        ]) +
-        "]"
+    var filters = "[" + obj([
+        "filter",
+        q("panic"),
+        "label",
+        q("Panics"),
+        "default",
+        "true",
+    ]) + "," + obj([
+        "filter",
+        q("error"),
+        "label",
+        q("Errors (on creation)"),
+        "default",
+        "false",
+        "supportsCondition",
+        "true",
+        "conditionDescription",
+        q("comma-separated error type names, e.g. NotFound"),
+    ]) + "]"
     return obj([
         "supportsConfigurationDoneRequest",
         "true",

@@ -10,7 +10,7 @@ namespace std.embed
 // the declaring source file (as written in the @embed pattern).
 struct FS {
     names []string
-    data [][]byte
+    data  [][]byte
 
     func find(name string) int {
         var n = std.strings.TrimPrefix(name, "./")

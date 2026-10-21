@@ -1,0 +1,1035 @@
+// test: std.data.kafka against an in-process mock broker (one node, in-memory logs, a group coordinator): request framing byte-exact against the Java client's ApiVersions v0, SASL PLAIN and SCRAM-SHA-256 (server side verified here), admin create/list/delete, an idempotent producer surviving NOT_LEADER_OR_FOLLOWER and a lost produce response without duplicates, acks none, gzip/zstd batches, a two-member consumer group (JoinGroup/SyncGroup, range assignment computed by the leader, rebalance seen through Heartbeat), commits and restart from the committed offsets, offset reset, errors, TLS with a pinned self-signed certificate
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib5.kafka_mock
+
+import std
+import std.data
+import std.io
+
+// ---- the mock broker ---------------------------------------------------------
+
+// a self-signed certificate for localhost / 127.0.0.1 (as in stdlib4/mail_smtp)
+const CertPEM = "-----BEGIN CERTIFICATE-----\nMIIBlTCCATugAwIBAgIUdwzHKFFR9jSgb1hmp35Ag4eQVnMwCgYIKoZIzj0EAwIw\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAyMDIyMTI1NloYDzIxMjYwOTI2\nMjIxMjU2WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO\nPQMBBwNCAARYFUuhrEhEqCXaURmgVzW8K02wCVyhH2HMM7MbEJGxGN10xQtbl9xT\nEC49C9A6sALZQIllZNstBF9nwBf9kdo8o2kwZzAdBgNVHQ4EFgQUiIXwxg3vSv4v\nZMl5fm9gF6BNTbkwHwYDVR0jBBgwFoAUiIXwxg3vSv4vZMl5fm9gF6BNTbkwDwYD\nVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhvc3QwCgYIKoZIzj0EAwID\nSAAwRQIgKIPUG22D9Uer8pgh/72P7ASAZfozUU+95MRNqkZXj4YCIQDp+mPI+8Mw\nw9FFCGseOrUYuaNwR6h3rQL+o9c+FcMnBA==\n-----END CERTIFICATE-----\n"
+const KeyPEM = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgiJNillhGcKwgcCOx\n1SSTFhRJeF/AFLwXyHhucI/a1imhRANCAARYFUuhrEhEqCXaURmgVzW8K02wCVyh\nH2HMM7MbEJGxGN10xQtbl9xTEC49C9A6sALZQIllZNstBF9nwBf9kdo8\n-----END PRIVATE KEY-----\n"
+
+// a net.Conn or a net.tls.Conn
+interface stream {
+    func Read(n int) Task<[]byte!>
+    func Write(data []byte) Task<int!>
+    func Close()
+}
+
+struct mpart {
+    batches [][]byte
+    next    int
+    // idempotence: last sequence per producer id
+    lastSeq  map[int]int
+    lastBase map[int]int
+    // fault injection: answer the next produce with this code (and store
+    // the batch anyway when keep is set: a "lost" response)
+    fail int
+    keep bool
+}
+
+struct member {
+    id         string
+    meta       []byte
+    joined     bool
+    assignment []byte
+}
+
+struct group {
+    members    []*member
+    generation int
+    leader     string
+    // 0 stable, 1 joining, 2 syncing
+    state    int
+    protocol string
+    offsets  map[string]int
+}
+
+struct broker {
+    l          net.Listener
+    port       int
+    topics     map[string][]*mpart
+    groups     map[string]*group
+    users      map[string]string
+    sasl       bool
+    autoCreate bool
+    firstFrame []byte
+    log        []string
+    conns      []stream
+    nextMember int
+    tls        bool
+
+    func api(key int, v int) {
+        this.log = append(this.log, kafka.APIName(key) + " v" + strconv.Itoa(v))
+    }
+}
+
+struct session {
+    c                stream
+    b                *broker
+    buf              []byte
+    authed           bool
+    mech             string
+    scramFirstBare   string
+    scramServerFirst string
+    scramUser        string
+    scramNonce       string
+}
+
+func be32(b []byte, p int) int {
+    return (int(b[p]) << 24) | (int(b[p + 1]) << 16) | (int(b[p + 2]) << 8) | int(b[p + 3])
+}
+
+func salt() []byte {
+    return strings.Bytes("mock-salt-16byte")
+}
+
+// Server side of SCRAM-SHA-256 (RFC 5802).
+func scramServer(s *session, msg string) (string, int)! {
+    if s.scramServerFirst == "" {
+        var bare = msg[3..]
+        var user = ""
+        var nonce = ""
+        for part in strings.Split(bare, ",") {
+            if strings.HasPrefix(part, "n=") {
+                user = part[2..]
+            }
+            if strings.HasPrefix(part, "r=") {
+                nonce = part[2..]
+            }
+        }
+        s.scramUser = user
+        s.scramFirstBare = bare
+        s.scramNonce = nonce + "server"
+        s.scramServerFirst = "r=" +
+            s.scramNonce +
+            ",s=" +
+            encoding.base64.Encode(salt()) +
+            ",i=4096"
+        return (s.scramServerFirst, 0)
+    }
+    var i = strings.Index(msg, ",p=")
+    var without = msg[..i]
+    var proof = encoding.base64.Decode(msg[i + 3..])?
+    var pw = s.b.users[s.scramUser]
+    var salted = crypto.kdf.Pbkdf2(strings.Bytes(pw), salt(), 4096, 32, "sha256")?
+    var clientKey = crypto.hmac.Sum("sha256", salted, strings.Bytes("Client Key"))?
+    var stored = crypto.hash.Sum("sha256", clientKey)?
+    var auth = s.scramFirstBare + "," + s.scramServerFirst + "," + without
+    var sig = crypto.hmac.Sum("sha256", stored, strings.Bytes(auth))?
+    var ok = len(proof) == 32 && pw != ""
+    if ok {
+        for k in 0..32 {
+            if (proof[k] ^ sig[k]) != clientKey[k] {
+                ok = false
+            }
+        }
+    }
+    if !ok {
+        return ("", 58)
+    }
+    var serverKey = crypto.hmac.Sum("sha256", salted, strings.Bytes("Server Key"))?
+    var ssig = crypto.hmac.Sum("sha256", serverKey, strings.Bytes(auth))?
+    s.authed = true
+    return ("v=" + encoding.base64.Encode(ssig), 0)
+}
+
+func topicOf(b *broker, name string) []*mpart {
+    return b.topics[name]
+}
+
+func createTopic(b *broker, name string, n int) {
+    var ps []*mpart = []
+    for _ in 0..n {
+        ps = append(ps, new mpart{lastSeq: map[int]int{}, lastBase: map[int]int{}})
+    }
+    b.topics[name] = ps
+}
+
+async func handle(s *session, key int, v int, d kafka.Decoder) []byte! {
+    var b = s.b
+    b.api(key, v)
+    var e = kafka.Encoder{}
+    var dd = d
+    if b.sasl && !s.authed && key != 18 && key != 17 && key != 36 {
+        return error("unauthenticated request")
+    }
+    switch key {
+        case 18:
+            e.Int16(0)
+            var keys = [
+                [0, 3, 7],
+                [1, 4, 10],
+                [2, 1, 1],
+                [3, 1, 1],
+                [8, 2, 2],
+                [9, 1, 1],
+                [10, 1, 1],
+                [11, 2, 2],
+                [12, 1, 1],
+                [13, 1, 1],
+                [14, 1, 1],
+                [17, 1, 1],
+                [18, 0, 0],
+                [19, 2, 2],
+                [20, 1, 1],
+                [22, 0, 0],
+                [36, 0, 0],
+            ]
+            e.ArrayLen(len(keys))
+            for k in keys {
+                e.Int16(k[0])
+                e.Int16(k[1])
+                e.Int16(k[2])
+            }
+        case 17:
+            s.mech = dd.String()
+            if s.mech == "PLAIN" || s.mech == "SCRAM-SHA-256" {
+                e.Int16(0)
+            } else {
+                e.Int16(33)
+            }
+            e.ArrayLen(2)
+            e.String("PLAIN")
+            e.String("SCRAM-SHA-256")
+        case 36:
+            var msg = strings.FromBytes(dd.Bytes())
+            if s.mech == "PLAIN" {
+                var parts = strings.Split(msg, "\u{0}")
+                if len(parts) == 3 && b.users[parts[1]] == parts[2] && parts[2] != "" {
+                    s.authed = true
+                    e.Int16(0)
+                    e.NullableString("", true)
+                    e.Bytes([])
+                } else {
+                    e.Int16(58)
+                    e.String("Authentication failed: Invalid username or password")
+                    e.Bytes([])
+                }
+            } else {
+                var (out, code) = scramServer(s, msg)?
+                e.Int16(code)
+                if code != 0 {
+                    e.String(
+                        "Authentication failed during authentication due to invalid credentials with SASL mechanism SCRAM-SHA-256",
+                    )
+                } else {
+                    e.NullableString("", true)
+                }
+                e.Bytes(strings.Bytes(out))
+            }
+        case 3:
+            var n = dd.Int32()
+            var names []string = []
+            if n < 0 {
+                names = maps.SortedKeys(b.topics)
+            }
+            for _ in 0..n {
+                names = append(names, dd.String())
+            }
+            e.ArrayLen(1)
+            e.Int32(1)
+            e.String("127.0.0.1")
+            e.Int32(b.port)
+            e.NullableString("", true)
+            e.Int32(1)
+            e.ArrayLen(len(names))
+            for name in names {
+                if topicOf(b, name) == nil && b.autoCreate {
+                    createTopic(b, name, 2)
+                }
+                var ps = topicOf(b, name)
+                if ps == nil {
+                    e.Int16(3)
+                } else {
+                    e.Int16(0)
+                }
+                e.String(name)
+                e.Bool(false)
+                e.ArrayLen(len(ps))
+                for i in 0..len(ps) {
+                    e.Int16(0)
+                    e.Int32(i)
+                    e.Int32(1)
+                    e.ArrayLen(1)
+                    e.Int32(1)
+                    e.ArrayLen(1)
+                    e.Int32(1)
+                }
+            }
+        case 19:
+            var n = dd.ArrayLen()
+            var results []string = []
+            var codes []int = []
+            for _ in 0..n {
+                var name = dd.String()
+                var parts = dd.Int32()
+                _ = dd.Int16()
+                var na = dd.ArrayLen()
+                for _ in 0..na {
+                    _ = dd.Int32()
+                    var nb = dd.ArrayLen()
+                    for _ in 0..nb {
+                        _ = dd.Int32()
+                    }
+                }
+                var nc = dd.ArrayLen()
+                for _ in 0..nc {
+                    _ = dd.String()
+                    _ = dd.String()
+                }
+                results = append(results, name)
+                if topicOf(b, name) != nil {
+                    codes = append(codes, 36)
+                } else {
+                    createTopic(b, name, parts)
+                    codes = append(codes, 0)
+                }
+            }
+            e.Int32(0)
+            e.ArrayLen(len(results))
+            for i, name in results {
+                e.String(name)
+                e.Int16(codes[i])
+                if codes[i] == 36 {
+                    e.String("Topic '" + name + "' already exists.")
+                } else {
+                    e.NullableString("", true)
+                }
+            }
+        case 20:
+            var n = dd.ArrayLen()
+            e.Int32(0)
+            e.ArrayLen(n)
+            for _ in 0..n {
+                var name = dd.String()
+                e.String(name)
+                if topicOf(b, name) == nil {
+                    e.Int16(3)
+                } else {
+                    delete(b.topics, name)
+                    e.Int16(0)
+                }
+            }
+        case 22:
+            e.Int32(0)
+            e.Int16(0)
+            e.Int64(4242)
+            e.Int16(0)
+        case 0:
+            _ = dd.Int16()
+            var acks = dd.Int16()
+            _ = dd.Int32()
+            e.ArrayLen(dd.ArrayLen())
+            for {
+                if dd.Remaining() == 0 {
+                    break
+                }
+                var name = dd.String()
+                e.String(name)
+                var np = dd.ArrayLen()
+                e.ArrayLen(np)
+                for _ in 0..np {
+                    var idx = dd.Int32()
+                    var data = dd.Bytes()
+                    var p = topicOf(b, name)[idx]
+                    var bs = kafka.DecodeBatches(data, name, idx)?
+                    var batch = bs[0]
+                    var code = 0
+                    var base = p.next
+                    var pid = batch.Producer.ID
+                    if pid >= 0 &&
+                        p.lastBase[pid] > 0 &&
+                        batch.Producer.BaseSequence <= p.lastSeq[pid] {
+                        code = 46
+                        base = p.lastBase[pid] - 1
+                    } else if p.fail != 0 && !p.keep {
+                        code = p.fail
+                        p.fail = 0
+                    } else {
+                        var stored = bytes.Clone(data)
+                        for k in 0..8 {
+                            stored[k] = byte((base >> (8 * (7 - k))) & 255)
+                        }
+                        p.batches = append(p.batches, stored)
+                        p.next += len(batch.Records)
+                        if pid >= 0 {
+                            p.lastSeq[pid] = batch.Producer.BaseSequence + len(batch.Records) - 1
+                            p.lastBase[pid] = base + 1
+                        }
+                        if p.fail != 0 {
+                            code = p.fail
+                            p.fail = 0
+                            p.keep = false
+                        }
+                    }
+                    e.Int32(idx)
+                    e.Int16(code)
+                    e.Int64(base)
+                    e.Int64(-1)
+                    e.Int64(0)
+                }
+            }
+            e.Int32(0)
+            if acks == 0 {
+                return []
+            }
+        case 1:
+            _ = dd.Int32()
+            var maxWait = dd.Int32()
+            _ = dd.Int32()
+            _ = dd.Int32()
+            _ = dd.Int8()
+            _ = dd.Int32()
+            _ = dd.Int32()
+            var nt = dd.ArrayLen()
+            var reqs []kafka.TopicPartition = []
+            var offs []int = []
+            for _ in 0..nt {
+                var name = dd.String()
+                var np = dd.ArrayLen()
+                for _ in 0..np {
+                    var idx = dd.Int32()
+                    _ = dd.Int32()
+                    var off = dd.Int64()
+                    _ = dd.Int64()
+                    _ = dd.Int32()
+                    reqs = append(reqs, kafka.TopicPartition{Topic: name, Partition: idx})
+                    offs = append(offs, off)
+                }
+            }
+            // long poll: wait for data up to maxWait
+            var waited = 0
+            for waited < maxWait {
+                var any = false
+                for i, r in reqs {
+                    var ps = topicOf(b, r.Topic)
+                    if ps != nil && ps[r.Partition].next > offs[i] {
+                        any = true
+                    }
+                }
+                if any {
+                    break
+                }
+                await task.Delay(10)
+                waited += 10
+            }
+            e.Int32(0)
+            e.Int16(0)
+            e.Int32(0)
+            e.ArrayLen(len(reqs))
+            for i, r in reqs {
+                e.String(r.Topic)
+                e.ArrayLen(1)
+                e.Int32(r.Partition)
+                var p = topicOf(b, r.Topic)[r.Partition]
+                if offs[i] > p.next {
+                    e.Int16(1)
+                } else {
+                    e.Int16(0)
+                }
+                e.Int64(p.next)
+                e.Int64(p.next)
+                e.Int64(0)
+                e.Int32(-1)
+                var data []byte = []
+                for bt in p.batches {
+                    var bd = kafka.Decoder{B: bt}
+                    var base = bd.Int64()
+                    var bs = kafka.DecodeBatches(bt, r.Topic, r.Partition)?
+                    if base + len(bs[0].Records) > offs[i] {
+                        data = bytes.Join([data, bt], [])
+                    }
+                }
+                e.Bytes(data)
+            }
+        case 2:
+            _ = dd.Int32()
+            var nt = dd.ArrayLen()
+            e.ArrayLen(nt)
+            for _ in 0..nt {
+                var name = dd.String()
+                e.String(name)
+                var np = dd.ArrayLen()
+                e.ArrayLen(np)
+                for _ in 0..np {
+                    var idx = dd.Int32()
+                    var ts = dd.Int64()
+                    e.Int32(idx)
+                    e.Int16(0)
+                    e.Int64(-1)
+                    if ts == -2 {
+                        e.Int64(0)
+                    } else {
+                        e.Int64(topicOf(b, name)[idx].next)
+                    }
+                }
+            }
+        case 10:
+            _ = dd.String()
+            e.Int32(0)
+            e.Int16(0)
+            e.NullableString("", true)
+            e.Int32(1)
+            e.String("127.0.0.1")
+            e.Int32(b.port)
+        case 11:
+            return await joinGroup(b, dd)?
+        case 14:
+            return await syncGroup(b, dd)?
+        case 12:
+            var g = b.groups[dd.String()]
+            var gen = dd.Int32()
+            var id = dd.String()
+            e.Int32(0)
+            if g == nil || findMember(g, id) == nil {
+                e.Int16(25)
+            } else if g.state != 0 {
+                e.Int16(27)
+            } else if gen != g.generation {
+                e.Int16(22)
+            } else {
+                e.Int16(0)
+            }
+        case 13:
+            var g = b.groups[dd.String()]
+            var id = dd.String()
+            var keep []*member = []
+            for m in g.members {
+                if m.id != id {
+                    keep = append(keep, m)
+                }
+            }
+            g.members = keep
+            if len(keep) > 0 {
+                startRebalance(g)
+            }
+            e.Int32(0)
+            e.Int16(0)
+        case 8:
+            var g = b.groups[dd.String()]
+            var gen = dd.Int32()
+            _ = dd.String()
+            _ = dd.Int64()
+            var code = 0
+            if gen != g.generation || g.state != 0 {
+                code = 22
+            }
+            var nt = dd.ArrayLen()
+            e.ArrayLen(nt)
+            for _ in 0..nt {
+                var name = dd.String()
+                e.String(name)
+                var np = dd.ArrayLen()
+                e.ArrayLen(np)
+                for _ in 0..np {
+                    var idx = dd.Int32()
+                    var off = dd.Int64()
+                    _ = dd.String()
+                    if code == 0 {
+                        g.offsets[name + "/" + strconv.Itoa(idx)] = off + 1
+                    }
+                    e.Int32(idx)
+                    e.Int16(code)
+                }
+            }
+        case 9:
+            var gname = dd.String()
+            var g = b.groups[gname]
+            var nt = dd.ArrayLen()
+            e.ArrayLen(nt)
+            for _ in 0..nt {
+                var name = dd.String()
+                e.String(name)
+                var np = dd.ArrayLen()
+                e.ArrayLen(np)
+                for _ in 0..np {
+                    var idx = dd.Int32()
+                    e.Int32(idx)
+                    var off = -1
+                    if g != nil && g.offsets[name + "/" + strconv.Itoa(idx)] > 0 {
+                        off = g.offsets[name + "/" + strconv.Itoa(idx)] - 1
+                    }
+                    e.Int64(off)
+                    e.NullableString("", true)
+                    e.Int16(0)
+                }
+            }
+        default:
+            return error("mock: unsupported api " + strconv.Itoa(key))
+    }
+    return e.B
+}
+
+func findMember(g *group, id string) *member {
+    for m in g.members {
+        if m.id == id {
+            return m
+        }
+    }
+    return nil
+}
+
+func startRebalance(g *group) {
+    g.state = 1
+    for m in g.members {
+        m.joined = false
+        m.assignment = []
+    }
+}
+
+async func joinGroup(b *broker, d kafka.Decoder) []byte! {
+    var dd = d
+    var gname = dd.String()
+    _ = dd.Int32()
+    _ = dd.Int32()
+    var id = dd.String()
+    _ = dd.String()
+    _ = dd.ArrayLen()
+    var proto = dd.String()
+    var meta = dd.Bytes()
+    var g = b.groups[gname]
+    if g == nil {
+        g = new group{offsets: map[string]int{}}
+        b.groups[gname] = g
+    }
+    var m = findMember(g, id)
+    if m == nil {
+        b.nextMember += 1
+        m = new member{id: "member-" + strconv.Itoa(b.nextMember)}
+        if g.state != 1 {
+            startRebalance(g)
+        }
+        g.members = append(g.members, m)
+    } else if g.state == 0 {
+        startRebalance(g)
+    }
+    m.meta = meta
+    m.joined = true
+    g.protocol = proto
+    // wait until every member has rejoined (1.5 s, then drop the others)
+    var waited = 0
+    for g.state == 1 && waited < 1500 {
+        var all = true
+        for x in g.members {
+            if !x.joined {
+                all = false
+            }
+        }
+        if all {
+            break
+        }
+        await task.Delay(10)
+        waited += 10
+    }
+    if g.state == 1 {
+        var keep []*member = []
+        for x in g.members {
+            if x.joined {
+                keep = append(keep, x)
+            }
+        }
+        g.members = keep
+        g.generation += 1
+        g.leader = g.members[0].id
+        g.state = 2
+    }
+    var e = kafka.Encoder{}
+    e.Int32(0)
+    e.Int16(0)
+    e.Int32(g.generation)
+    e.String(g.protocol)
+    e.String(g.leader)
+    e.String(m.id)
+    if m.id == g.leader {
+        e.ArrayLen(len(g.members))
+        for x in g.members {
+            e.String(x.id)
+            e.Bytes(x.meta)
+        }
+    } else {
+        e.ArrayLen(0)
+    }
+    return e.B
+}
+
+async func syncGroup(b *broker, d kafka.Decoder) []byte! {
+    var dd = d
+    var g = b.groups[dd.String()]
+    var gen = dd.Int32()
+    var id = dd.String()
+    var n = dd.ArrayLen()
+    for _ in 0..n {
+        var mid = dd.String()
+        var a = dd.Bytes()
+        var m = findMember(g, mid)
+        if m != nil {
+            m.assignment = a
+        }
+    }
+    if id == g.leader {
+        g.state = 0
+    }
+    var waited = 0
+    for g.state != 0 && waited < 2000 {
+        await task.Delay(10)
+        waited += 10
+    }
+    var e = kafka.Encoder{}
+    e.Int32(0)
+    var m = findMember(g, id)
+    if gen != g.generation || m == nil {
+        e.Int16(22)
+        e.Bytes([])
+    } else {
+        e.Int16(0)
+        e.Bytes(m.assignment)
+    }
+    return e.B
+}
+
+async func serve(b *broker, c stream) {
+    var s = new session{c: c, b: b}
+    for {
+        var chunk = try await c.Read(65536) catch _ {
+            break
+        }
+        if len(chunk) == 0 {
+            break
+        }
+        s.buf = bytes.Join([s.buf, chunk], [])
+        for len(s.buf) >= 4 && len(s.buf) >= 4 + be32(s.buf, 0) {
+            var n = be32(s.buf, 0)
+            var frame = s.buf[4..4 + n]
+            s.buf = bytes.Clone(s.buf[4 + n..])
+            if len(b.firstFrame) == 0 {
+                b.firstFrame = bytes.Clone(frame)
+            }
+            var d = kafka.Decoder{B: frame}
+            var key = d.Int16()
+            var v = d.Int16()
+            var corr = d.Int32()
+            _ = d.String()
+            var body = try await handle(s, key, v, d) catch err {
+                println("mock error:", err)
+                c.Close()
+                return
+            }
+            if key == 0 && len(body) == 0 {
+                continue
+            }
+            var e = kafka.Encoder{}
+            e.Int32(4 + len(body))
+            e.Int32(corr)
+            e.Raw(body)
+            try await c.Write(e.B) catch _ {
+                break
+            }
+        }
+    }
+    c.Close()
+}
+
+async func acceptLoop(b *broker) {
+    for {
+        var c = try await b.l.Accept() catch _ {
+            return
+        }
+        if b.tls {
+            var cert = try net.tls.LoadKeyPair(CertPEM, KeyPEM) else net.tls.Certificate{}
+            var tc = try net.tls.ServerConn(c, net.tls.ServerConfig{Certificates: [cert]}) catch _ {
+                c.Close()
+                continue
+            }
+            b.conns = append(b.conns, tc)
+            _ = serve(b, tc)
+            continue
+        }
+        b.conns = append(b.conns, c)
+        _ = serve(b, c)
+    }
+}
+
+func startBroker(sasl bool) *broker! {
+    var l = net.Listen("127.0.0.1:0")?
+    var b = new broker{
+        l: l,
+        port: l.Port(),
+        topics: map[string][]*mpart{},
+        groups: map[string]*group{},
+        users: map[string]string{"alice": "alice-secret", "bob": "bob-secret"},
+        sasl: sasl,
+    }
+    _ = acceptLoop(b)
+    return b
+}
+
+func stopBroker(b *broker) {
+    b.l.Close()
+    for c in b.conns {
+        c.Close()
+    }
+    b.conns = []
+    b.groups = map[string]*group{}
+}
+
+func addr(b *broker) []string {
+    return ["127.0.0.1:" + strconv.Itoa(b.port)]
+}
+
+func stored(b *broker, topic string) []int {
+    var out []int = []
+    for p in topicOf(b, topic) {
+        out = append(out, p.next)
+    }
+    return out
+}
+
+// ---- the test ---------------------------------------------------------------------
+
+async func main() void! {
+    var b = startBroker(true)?
+    var plain = kafka.Config{
+        SASL: kafka.SASL{Mechanism: "PLAIN", Username: "alice", Password: "alice-secret"},
+    }
+    var scram = kafka.Config{
+        SASL: kafka.SASL{Mechanism: "SCRAM-SHA-256", Username: "bob", Password: "bob-secret"},
+    }
+
+    var admin = await kafka.NewAdminWith(addr(b), plain)?
+    // the first frame is ApiVersions v0 exactly as the Java client writes
+    // it for client id "slang" and correlation id 1
+    println(
+        "ApiVersions frame matches the Java client:",
+        encoding.hex.Encode(b.firstFrame) == "00120000000000010005736c616e67",
+    )
+    await admin.CreateTopic("orders", 3, 1)?
+    try await admin.CreateTopic("orders", 3, 1) catch err {
+        println(err)
+    }
+    for t in await admin.ListTopics()? {
+        println("topic", t.Name, len(t.Partitions), t.Partitions[0].Leader)
+    }
+    try await kafka.NewAdminWith(addr(b), kafka.Config{
+        SASL: kafka.SASL{Mechanism: "PLAIN", Username: "alice", Password: "nope"},
+    }) catch err {
+        println("plain:", kafka.ErrorCode(err))
+    }
+    try await kafka.NewAdminWith(addr(b), kafka.Config{
+        SASL: kafka.SASL{Mechanism: "SCRAM-SHA-256", Username: "bob", Password: "nope"},
+    }) catch err {
+        println("scram:", kafka.ErrorCode(err))
+    }
+    try await kafka.NewAdminWith(addr(b), kafka.Config{
+        SASL: kafka.SASL{Mechanism: "GSSAPI"},
+    }) catch err {
+        println("gssapi:", kafka.ErrorCode(err))
+    }
+
+    // idempotent producer over SCRAM with injected failures
+    topicOf(b, "orders")[0].fail = 6
+    topicOf(b, "orders")[1].fail = 7
+    topicOf(b, "orders")[1].keep = true
+    var p = await kafka.NewProducer(addr(b), kafka.ProducerOptions{
+        Config: scram,
+        Idempotent: true,
+        LingerMs: 10,
+    })?
+    println("producer id", p.ProducerID())
+    var ts []Task<kafka.RecordMetadata!> = []
+    for i in 0..9 {
+        ts = append(ts, p.Send("orders", fmt.Format("key{0}", i), fmt.Format("order-{0}", i)))
+    }
+    for i, t in ts {
+        var m = await t?
+        println(" ", fmt.Format("key{0}", i), "->", m.Partition, m.Offset)
+    }
+    var (batches, retries) = p.Stats()
+    println("batches", batches, "retries", retries, "stored per partition", stored(b, "orders"))
+    await p.Close()
+
+    // acks none, compression
+    var fire = await kafka.NewProducer(addr(b), kafka.ProducerOptions{
+        Config: plain,
+        Acks: "none",
+        Compression: "zstd",
+    })?
+    var fm = await fire.SendTo("orders", 2, "", strings.Repeat("z", 1000))?
+    println("acks none:", fm.Offset)
+    await fire.Close()
+    var gz = await kafka.NewProducer(addr(b), kafka.ProducerOptions{
+        Config: plain,
+        Compression: "gzip",
+    })?
+    _ = await gz.SendTo("orders", 2, "g", strings.Repeat("g", 1000))?
+    await gz.Close()
+    try await kafka.NewProducer(addr(b), kafka.ProducerOptions{Compression: "lz4"}) catch err {
+        println(err)
+    }
+    println("stored per partition", stored(b, "orders"))
+
+    // a consumer group: c1 alone, then c2 joins while c1 polls
+    var c1 = await kafka.NewConsumerWith(addr(b), kafka.ConsumerOptions{
+        Config: plain,
+        Group: "billing",
+        Topics: ["orders"],
+        StartOffset: "earliest",
+        HeartbeatInterval: 50,
+        ManualCommit: true,
+    })?
+    println("c1 alone:", len(c1.Assignment()), c1.Generation())
+    var first []string = []
+    var start = time.Now()
+    for len(first) < 11 && time.Now() - start < 10000 {
+        for r in await c1.Poll(100)? {
+            first = append(first, fmt.Format("{0}/{1}:{2}", r.Partition, r.Offset, len(r.Value)))
+        }
+    }
+    slices.Sort(first)
+    println("c1 read", first)
+    await c1.Commit()?
+    var c2t = kafka.NewConsumerWith(addr(b), kafka.ConsumerOptions{
+        Config: plain,
+        Group: "billing",
+        Topics: ["orders"],
+        StartOffset: "earliest",
+        HeartbeatInterval: 50,
+    })
+    start = time.Now()
+    for time.Now() - start < 10000 {
+        _ = await c1.Poll(50)?
+        if await task.Timeout(c2t, 0) {
+            break
+        }
+    }
+    var c2 = await c2t?
+    _ = await c1.Poll(50)?
+    var a1 []string = []
+    for tp in c1.Assignment() {
+        a1 = append(a1, tp.Topic + strconv.Itoa(tp.Partition))
+    }
+    var a2 []string = []
+    for tp in c2.Assignment() {
+        a2 = append(a2, tp.Topic + strconv.Itoa(tp.Partition))
+    }
+    println(
+        "after rebalance: c1",
+        a1,
+        "c2",
+        a2,
+        "same generation",
+        c1.Generation() == c2.Generation(),
+        "c1 joins",
+        c1.Rebalances(),
+    )
+    var np = await kafka.NewProducer(addr(b), kafka.ProducerOptions{Config: plain})?
+    for i in 0..6 {
+        _ = await np.SendTo("orders", i % 3, "", fmt.Format("new-{0}", i))?
+    }
+    await np.Close()
+    var got []string = []
+    start = time.Now()
+    for len(got) < 6 && time.Now() - start < 10000 {
+        for r in await c1.Poll(50)? {
+            got = append(got, "c1:" + strings.FromBytes(r.Value))
+        }
+        for r in await c2.Poll(50)? {
+            got = append(got, "c2:" + strings.FromBytes(r.Value))
+        }
+    }
+    slices.Sort(got)
+    println("new records", got)
+    await c1.Commit()?
+    await c2.Close()
+    await c1.Close()
+    var g = b.groups["billing"]
+    println(
+        "committed next offsets",
+        g.offsets["orders/0"] - 1,
+        g.offsets["orders/1"] - 1,
+        g.offsets["orders/2"] - 1,
+    )
+
+    // a restarted member continues after the committed offsets
+    var c3 = await kafka.NewConsumerWith(addr(b), kafka.ConsumerOptions{
+        Config: plain,
+        Group: "billing",
+        Topics: ["orders"],
+        HeartbeatInterval: 50,
+    })?
+    var lp = await kafka.NewProducer(addr(b), kafka.ProducerOptions{Config: plain})?
+    _ = await lp.SendTo("orders", 1, "", "last")?
+    await lp.Close()
+    for r in c3 {
+        println("restarted member got", r.Partition, r.Offset, strings.FromBytes(r.Value))
+        break
+    }
+    await c3.Close()
+
+    // a group-less consumer, offset out of range resets to the start
+    var free = await kafka.NewConsumerWith(addr(b), kafka.ConsumerOptions{
+        Config: plain,
+        Topics: ["orders"],
+        StartOffset: "earliest",
+    })?
+    free.Seek("orders", 0, 1000)
+    var n = 0
+    start = time.Now()
+    for n < 15 && time.Now() - start < 10000 {
+        n += len(await free.Poll(50)?)
+    }
+    println("group-less read", n)
+    try await free.Commit() catch err {
+        println(err)
+    }
+    await free.Close()
+
+    // unknown topics
+    try await admin.DescribeTopic("missing") catch err {
+        println(err)
+    }
+    await admin.DeleteTopic("orders")?
+    try await admin.DeleteTopic("orders") catch err {
+        println(err)
+    }
+    admin.Close()
+    var calls = map[string]bool{}
+    for x in b.log {
+        calls[x] = true
+    }
+    println("apis used:", maps.SortedKeys(calls))
+    stopBroker(b)
+
+    // TLS (the broker's self-signed certificate as the trust anchor)
+    var tb = startBroker(false)?
+    tb.tls = true
+    tb.autoCreate = true
+    var pool = crypto.x509.NewCertPool()
+    _ = pool.AppendPEM(CertPEM)
+    var tlsCfg = kafka.Config{TLS: &net.tls.Config{RootCAs: pool, ServerName: "localhost"}}
+    var tp = await kafka.NewProducer(addr(tb), kafka.ProducerOptions{Config: tlsCfg})?
+    var tm = await tp.Send("secure", "k", "over TLS")?
+    println("tls produce", tm.Topic, tm.Partition, tm.Offset)
+    await tp.Close()
+    var tc = await kafka.NewConsumerWith(addr(tb), kafka.ConsumerOptions{
+        Config: tlsCfg,
+        Topics: ["secure"],
+        StartOffset: "earliest",
+    })?
+    for r in tc {
+        println("tls consume", strings.FromBytes(r.Value))
+        break
+    }
+    await tc.Close()
+    try await kafka.NewAdmin(addr(tb)) catch err {
+        println("plaintext client on a TLS broker fails:", err != nil)
+    }
+    try await kafka.NewAdminWith(addr(tb), kafka.Config{TLS: &net.tls.Config{}}) catch err {
+        println("untrusted certificate fails:", err != nil)
+    }
+    stopBroker(tb)
+}

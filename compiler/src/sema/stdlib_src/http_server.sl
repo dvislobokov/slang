@@ -11,11 +11,11 @@ namespace std.net.http
 
 struct route {
     method string
-    parts []string
+    parts  []string
     // no {param} or * segment: matched by comparing `path`
     isStatic bool
-    path string
-    handler func(*Request, *Response) Task<void!>
+    path     string
+    handler  func(*Request, *Response) Task<void!>
 }
 
 struct routeTable {
@@ -37,9 +37,9 @@ struct routerCore {
 // HEAD requests are served by GET routes. Use(mw) adds middleware (a
 // `func(next Handler) Handler`) around every route, in the order added.
 struct Router {
-    t *routeTable
-    mws []func(Handler) Handler
-    chain Handler
+    t        *routeTable
+    mws      []func(Handler) Handler
+    chain    Handler
     hasChain bool
 
     func table() *routeTable {
@@ -58,7 +58,13 @@ struct Router {
             }
         }
         var t = this.table()
-        t.routes = append(t.routes, route{method: method, parts: parts, isStatic: isStatic, path: "/" + std.strings.Join(parts, "/"), handler: h})
+        t.routes = append(t.routes, route{
+            method: method,
+            parts: parts,
+            isStatic: isStatic,
+            path: "/" + std.strings.Join(parts, "/"),
+            handler: h,
+        })
     }
 
     func Get(pattern string, h func(*Request, *Response) Task<void!>) {
@@ -154,7 +160,9 @@ func dispatch(t *routeTable, req *Request, res *Response) Task<void!> {
                 continue
             }
         }
-        if r.method != req.Method && r.method != "*" && !(r.method == "GET" && req.Method == "HEAD") {
+        if r.method != req.Method &&
+            r.method != "*" &&
+            !(r.method == "GET" && req.Method == "HEAD") {
             if !rtHasToken(allowed, r.method) {
                 if allowed != "" {
                     allowed += ", "
@@ -228,8 +236,8 @@ func matchRoute(pattern []string, path []string) map[string]string {
 // closes connections that send nothing; Shutdown stops accepting, closes
 // idle connections and waits for the requests in flight.
 struct Server {
-    Addr string
-    Handler Handler
+    Addr        string
+    Handler     Handler
     IdleTimeout int
     // Serves HTTPS with this configuration when set (ALPN defaults to
     // h2 and http/1.1, or http/1.1 alone with DisableHTTP2).
@@ -250,7 +258,12 @@ struct Server {
     MaxConcurrentStreams int
     // No Date header in responses.
     NoDate bool
-    st *serverState
+    // Request bodies are not buffered: the handler runs once the head is
+    // read, req.Body is "" and req.Reader streams the body (HTTP/1.1 and
+    // HTTP/2). MaxBodyBytes still applies: the reader fails with
+    // ErrBodyTooLarge (a handler returning that error answers 413).
+    StreamBodies bool
+    st           *serverState
 
     // Binds the listening socket (Serve does it if needed).
     func Listen() void! {
@@ -275,7 +288,19 @@ struct Server {
         if streams <= 0 {
             streams = 250
         }
-        var st = new serverState{l: l, handler: this.Handler, idle: idle, readTimeout: this.ReadTimeout, writeTimeout: this.WriteTimeout, maxHead: maxHead, maxBody: this.MaxBodyBytes, h2c: this.H2C, maxStreams: streams, noDate: this.NoDate}
+        var st = new serverState{
+            l: l,
+            handler: this.Handler,
+            idle: idle,
+            readTimeout: this.ReadTimeout,
+            writeTimeout: this.WriteTimeout,
+            maxHead: maxHead,
+            maxBody: this.MaxBodyBytes,
+            h2c: this.H2C,
+            maxStreams: streams,
+            noDate: this.NoDate,
+            streamBodies: this.StreamBodies,
+        }
         if this.TLS != nil {
             var cfg = *this.TLS
             if len(cfg.ALPN) == 0 {
@@ -348,30 +373,31 @@ async func failed(err error) void! {
 }
 
 struct connEntry {
-    c *conn
-    idle bool
+    c        *conn
+    idle     bool
     hijacked bool
     // set while the connection speaks HTTP/2 (Shutdown sends GOAWAY)
     h2 *h2conn
 }
 
 struct serverState {
-    l std.net.Listener
-    useTLS bool
-    tlsL std.net.tls.Listener
-    handler Handler
-    idle int
-    readTimeout int
+    l            std.net.Listener
+    useTLS       bool
+    tlsL         std.net.tls.Listener
+    handler      Handler
+    idle         int
+    readTimeout  int
     writeTimeout int
-    maxHead int
-    maxBody int
-    h2c bool
-    maxStreams int
-    noDate bool
-    guard int
-    closing bool
-    conns []*connEntry
-    wg std.task.WaitGroup
+    maxHead      int
+    maxBody      int
+    h2c          bool
+    maxStreams   int
+    noDate       bool
+    streamBodies bool
+    guard        int
+    closing      bool
+    conns        []*connEntry
+    wg           std.task.WaitGroup
 }
 
 // The next connection, wrapped in TLS for an HTTPS server (its handshake
@@ -448,16 +474,16 @@ func dropConn(st *serverState, e *connEntry) {
 // The response writer of one HTTP/1.1 connection (or one HTTP/2 stream),
 // shared by the requests on it; Response.w points here.
 struct respWriter {
-    c *conn
-    b *rbuf
-    h2 *h2stream
-    proto string
-    keep bool
+    c        *conn
+    b        *rbuf
+    h2       *h2stream
+    proto    string
+    keep     bool
     headOnly bool
-    started bool
-    chunked bool
+    started  bool
+    chunked  bool
     hijacked bool
-    noDate bool
+    noDate   bool
 }
 
 // The rtFormatHead flags for a response (see std_http.c).
@@ -571,6 +597,158 @@ async func finishResponse(w *respWriter, res *Response) bool! {
     return w.keep
 }
 
+// ---- streamed request bodies --------------------------------------------------
+
+// RequestBody streams a request body (Server.StreamBodies, req.Reader): an
+// io.AsyncReader. Read returns up to n bytes, empty at the end; a body
+// above MaxBodyBytes fails with ErrBodyTooLarge.
+struct RequestBody {
+    // HTTP/1.1: the connection and its read buffer
+    c *conn
+    b *rbuf
+    // 0 Content-Length (left bytes), 1 chunked (left of this chunk),
+    // 3 done
+    mode int
+    left int
+    // MaxBodyBytes (-1: none) and the bytes read so far
+    limit int
+    total int
+    // "100 Continue" is still to be sent (the client expects it)
+    cont    bool
+    timeout int
+    failed  error
+    // HTTP/2: the request stream
+    h2 *h2stream
+
+    func Read(n int) Task<[]byte!> {
+        return reqBodyRead(this, n)
+    }
+
+    // The rest of the body.
+    func ReadAll() Task<string!> {
+        return reqBodyReadAll(this)
+    }
+
+    // Skips what the handler left unread, up to max bytes (HTTP/1.1):
+    // true if the connection can serve the next request.
+    func discard(max int) Task<bool> {
+        return reqBodyDiscard(this, max)
+    }
+}
+
+async func reqBodyRead(rb *RequestBody, n int) []byte! {
+    if rb.failed != nil {
+        return rb.failed
+    }
+    if n <= 0 {
+        n = 32768
+    }
+    if rb.h2 != nil {
+        var piece = try await h2ReadReqBody(rb.h2, n) catch err {
+            rb.failed = err
+            return err
+        }
+        return piece
+    }
+    if rb.mode == 3 {
+        return []
+    }
+    var c = rb.c
+    var b = rb.b
+    if rb.cont {
+        rb.cont = false
+        _ = try await c.writeString("HTTP/1.1 100 Continue\r\n\r\n") else 0
+    }
+    c.setTimeout(rb.timeout)
+    try {
+        if rb.mode == 1 && rb.left == 0 {
+            var line = await readLine(c, b, 4096)?
+            var semi = std.strings.Index(line, ";")
+            if semi >= 0 {
+                line = line[..semi]
+            }
+            var size = parseHex(line)?
+            if size == 0 {
+                for {
+                    var tr = await readLine(c, b, 65536)?
+                    if tr == "" {
+                        break
+                    }
+                }
+                rb.mode = 3
+                return []
+            }
+            if rb.limit >= 0 && rb.total + size > rb.limit {
+                raise(ErrBodyTooLarge)?
+            }
+            rb.left = size
+        }
+        if b.buffered() == 0 {
+            if !await fill(c, b)? {
+                raise(error("unexpected end of stream in body"))?
+            }
+        }
+        var k = minInt(minInt(n, rb.left), b.buffered())
+        var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+        b.skip(k)
+        rb.left -= k
+        rb.total += k
+        if rb.left == 0 {
+            if rb.mode == 1 {
+                await fillTo(c, b, 2)?
+                if b.buf[b.r] != 13 || b.buf[b.r + 1] != 10 {
+                    raise(error("malformed chunk"))?
+                }
+                b.skip(2)
+            } else {
+                rb.mode = 3
+            }
+        }
+        return out
+    } catch err {
+        rb.failed = err
+        return err
+    }
+    return []
+}
+
+async func reqBodyReadAll(rb *RequestBody) string! {
+    var parts []byte = []
+    for {
+        var p = await reqBodyRead(rb, 65536)?
+        if len(p) == 0 {
+            return std.strings.FromBytes(parts)
+        }
+        parts = std.net.rtJoin(parts, p, len(p))
+    }
+    return ""
+}
+
+async func reqBodyDiscard(rb *RequestBody, max int) bool {
+    if rb.h2 != nil {
+        return true
+    }
+    if rb.failed != nil {
+        return false
+    }
+    // A client still waiting for "100 Continue" sends no body: nothing to skip.
+    if rb.cont {
+        return rb.mode == 3
+    }
+    var skipped = 0
+    for rb.mode != 3 {
+        if skipped > max {
+            return false
+        }
+        var p = try await reqBodyRead(rb, 65536) else []
+        if rb.failed != nil {
+            return false
+        }
+        skipped += len(p)
+    }
+    return true
+}
+
 func errorResponse(status int, msg string) *Response {
     var res = new Response{}
     res.Text(status, itoa(status) + " " + StatusText(status) + ": " + msg + "\n")
@@ -655,7 +833,16 @@ async func serveConn(st *serverState, e *connEntry) {
         }
         var info = rtHeadInfo()
         b.skip(end - b.r)
-        var req = new Request{Method: parts[0], Path: parts[1], Query: parts[2], Proto: parts[3], Headers: h, RemoteAddr: remote, Scheme: scheme, Host: h["Host"]}
+        var req = new Request{
+            Method: parts[0],
+            Path: parts[1],
+            Query: parts[2],
+            Proto: parts[3],
+            Headers: h,
+            RemoteAddr: remote,
+            Scheme: scheme,
+            Host: h["Host"],
+        }
         e.idle = false
         // 3. the body (rtHeadInfo flags: std_http.c I_*)
         var bodyOK = true
@@ -667,7 +854,33 @@ async func serveConn(st *serverState, e *connEntry) {
             await writeError(c, 501, "unsupported transfer encoding")
             break
         }
-        if (info & 2) != 0 {
+        var body *RequestBody
+        if st.streamBodies {
+            // the handler reads it (req.Reader)
+            var limit = -1
+            if st.maxBody > 0 {
+                limit = st.maxBody
+            }
+            body = new RequestBody{
+                c: c,
+                b: b,
+                mode: 3,
+                limit: limit,
+                cont: (info & 32) != 0,
+                timeout: st.readTimeout,
+            }
+            if (info & 2) != 0 {
+                body.mode = 1
+            } else if (info & 1) != 0 && (info >> 16) > 0 {
+                if limit >= 0 && (info >> 16) > limit {
+                    await writeError(c, 413, ErrBodyTooLarge.Message())
+                    break
+                }
+                body.mode = 0
+                body.left = info >> 16
+            }
+            req.Reader = body
+        } else if (info & 2) != 0 {
             if (info & 32) != 0 {
                 _ = try await c.writeString("HTTP/1.1 100 Continue\r\n\r\n") else 0
             }
@@ -732,10 +945,12 @@ async func serveConn(st *serverState, e *connEntry) {
         var remoteSpan = std.diag.enterRemote(trace)
         var failure = ""
         var abort = false
+        var tooLarge = false
         try await st.handler.Serve(req, res) catch err {
             if std.errors.Is(err, ErrAbortHandler) {
                 abort = true
             }
+            tooLarge = std.errors.Is(err, ErrBodyTooLarge)
             failure = err.Message()
             if failure == "" {
                 failure = "handler failed"
@@ -750,7 +965,17 @@ async func serveConn(st *serverState, e *connEntry) {
             break
         }
         if failure != "" {
-            res = errorResponse(500, failure)
+            if tooLarge {
+                res = errorResponse(413, failure)
+            } else {
+                res = errorResponse(500, failure)
+            }
+        }
+        // A streamed body the handler did not read to its end: the rest
+        // is skipped if it is small and well-formed, else the connection
+        // closes after the response.
+        if body != nil && !await body.discard(1 << 16) {
+            rw.keep = false
         }
         if res.Headers != nil && headerHas(res.Headers, "Connection", "close") {
             rw.keep = false
@@ -770,7 +995,14 @@ async func serveConn(st *serverState, e *connEntry) {
             if bodyless(status) {
                 out = rtFormatHead(status, "", res.Headers, 0, headFlags(rw, status), "")
             } else {
-                out = rtFormatHead(status, "", res.Headers, len(res.Body), headFlags(rw, status), res.Body)
+                out = rtFormatHead(
+                    status,
+                    "",
+                    res.Headers,
+                    len(res.Body),
+                    headFlags(rw, status),
+                    res.Body,
+                )
             }
             var wn = try await c.writeString(out) else -1
             ok = wn >= 0 && rw.keep

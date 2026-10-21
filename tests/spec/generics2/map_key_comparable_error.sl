@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.map_key_comparable_error
 
-import std.io
 import std.collections
+import std.io
 
 struct Point {
     X int

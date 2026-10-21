@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 static int g_panicking;
 
@@ -16,7 +15,7 @@ static SLANG_NORETURN void die(const char *msg, int64_t len) {
     if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED)) slang__dbg_panic(msg, len);
     /* A second panic (e.g. inside a destructor run during the first) aborts quietly. */
     if (__atomic_exchange_n(&g_panicking, 1, __ATOMIC_SEQ_CST)) {
-        for (;;) pause();  /* another thread is printing the first panic and will _exit */
+        for (;;) slang__plat_sleep_ns((int64_t)1000000000);  /* another thread is printing the first panic and will _exit */
     }
     slang__io_flush_all();
     fputs("panic: ", stderr);
@@ -26,10 +25,13 @@ static SLANG_NORETURN void die(const char *msg, int64_t len) {
         fputs("\nbacktrace (most recent call first):\n", stderr);
         fflush(stderr);
         /* skip slang__plat_backtrace, die() and the slang_panic* entry point */
-        slang__plat_backtrace(STDERR_FILENO, 3);
+        slang__plat_backtrace(2, 3);
     }
     fflush(stderr);
-    _exit(2);
+    /* An attached debugger learns that the program ends (DAP `exited` +
+     * `terminated`), also after `continue` from a panic stop. */
+    if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED)) slang_dbg_exit(2);
+    _Exit(2);
 }
 
 void slang_panic(const char *msg) {

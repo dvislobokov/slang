@@ -13,6 +13,7 @@ func main() {
     var e error = Res{}
     switch e {
         case Res r: println("res")
-        default: println("other")
+        default:
+            println("other")
     }
 }

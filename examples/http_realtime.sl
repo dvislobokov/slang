@@ -1,7 +1,7 @@
 namespace examples.http_realtime
 
-import std.io
 import std
+import std.io
 import std.net
 
 // A small realtime web service on std.net.http: HTTP/2 (h2c, multiplexed
@@ -10,7 +10,7 @@ import std.net
 // std.net.http.test.
 
 struct Room {
-    mu task.Mutex
+    mu      task.Mutex
     members []ws.Conn
     history []string
 }
@@ -67,7 +67,11 @@ async func main() void! {
     var ts = http.test.NewH2CServer(r)?
 
     // HTTP/2: three requests at once on one connection
-    var (a, b, c) = await task.All(ts.Client.Get(ts.URL + "/hello/ann"), ts.Client.Get(ts.URL + "/hello/bob"), ts.Client.Get(ts.URL + "/hello/cy"))?
+    var (a, b, c) = await task.All(
+        ts.Client.Get(ts.URL + "/hello/ann"),
+        ts.Client.Get(ts.URL + "/hello/bob"),
+        ts.Client.Get(ts.URL + "/hello/cy"),
+    )?
     print(a.Body, b.Body, c.Body)
     println("connections:", ts.Transport.Stats().Dials)
 

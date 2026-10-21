@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async2.await_in_block_try
 
-import std.io
 import std
+import std.io
 
 async func Get(n int) int! {
     await task.Delay(1)

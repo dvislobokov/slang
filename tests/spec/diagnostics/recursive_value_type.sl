@@ -5,7 +5,7 @@ namespace spec.diagnostics.recursive_value_type
 import std.io
 
 struct Node {
-    V int
+    V    int
     Next Node
 }
 

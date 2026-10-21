@@ -71,12 +71,16 @@ qualified_name ::= name_segment (DOT name_segment)*
 // keywords are allowed as path segments (`examples.async`, `@default`)
 name_segment ::= IDENTIFIER | NAMESPACE | IMPORT | AS | STRUCT | INTERFACE | ENUM | FUNC | STATIC | ASYNC | AWAIT | VAR | CONST | IF | ELSE | FOR | IN | SWITCH | CASE | DEFAULT | RETURN | BREAK | CONTINUE | DEFER | TRY | CATCH | NEW | NIL | TRUE | FALSE | MAP | THIS
 
-top_level_decl ::= attribute* (struct_decl | interface_decl | enum_decl | func_decl | var_decl eos | const_decl eos)
+top_level_decl ::= attribute* (struct_decl | interface_decl | enum_decl | func_decl | extern_func_decl eos | var_decl eos | const_decl eos)
+// `extern` is a contextual keyword (an IDENTIFIER spelled "extern"): a runtime
+// (C) function without a body, only in the generated std/**/*_extern.sl files.
+extern_func_decl ::= IDENTIFIER func_signature
 
 // `@json("name")`, `@reflect`, `@deprecated(reason: "...")`
 attribute ::= AT qualified_name attribute_args?
 attribute_args ::= LPAREN (attribute_arg (COMMA attribute_arg)*)? RPAREN
-attribute_arg ::= (IDENTIFIER COLON)? expr
+// `default` may name an argument (and a field): `@cli.flag(default: "8080")`.
+attribute_arg ::= ((IDENTIFIER | DEFAULT) COLON)? expr
 
 // ---------------------------------------------------------------------------
 // Declarations
@@ -86,7 +90,7 @@ struct_decl ::= STRUCT IDENTIFIER generic_params? implements_clause? LBRACE stru
 // `implements` is a contextual keyword (an IDENTIFIER spelled "implements").
 implements_clause ::= IDENTIFIER type (COMMA type)*
 struct_member ::= attribute* (method_decl | field_decl | embed_decl) eos?
-field_decl ::= IDENTIFIER type
+field_decl ::= (IDENTIFIER | DEFAULT) type
 embed_decl ::= type
 method_decl ::= STATIC? func_decl
 

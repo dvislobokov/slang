@@ -1,7 +1,7 @@
 namespace examples.tracing
 
-import std.io
 import std
+import std.io
 import std.net
 
 // std.diag tracing: OpenTelemetry-style spans that follow the task
@@ -28,7 +28,10 @@ async func load(id int) string! {
     var span = diag.StartSpan("load user")
     defer span.End()
     span.SetAttribute("user.id", id)
-    var logger = log.New().Enrich.FromContext().WriteTo.Console(log.ConsoleOptions{Template: "log: {Message} trace={TraceId:l} span={SpanId:l}{NewLine}", Stdout: true}).CreateLogger()
+    var logger = log.New().Enrich.FromContext().WriteTo.Console(log.ConsoleOptions{
+        Template: "log: {Message} trace={TraceId:l} span={SpanId:l}{NewLine}",
+        Stdout: true,
+    }).CreateLogger()
     logger.Info("loading {Id}", id)
     var res = await http.Get(base() + "/users/" + fmt.Format("{0}", id))?
     return res.Body

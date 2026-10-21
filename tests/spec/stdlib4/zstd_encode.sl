@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib4.zstd_encode
 
-import std.io
 import std
+import std.io
 
 func same(a []byte, b []byte) bool {
     if len(a) != len(b) {
@@ -27,7 +27,14 @@ func main() void! {
         bin = append(bin, byte((x >> 16) % 17 + 100))
     }
     var runs = strings.Bytes(strings.Repeat("a", 300000))
-    var inputs = [strings.Bytes(""), strings.Bytes("a"), strings.Bytes("hello, zstd"), strings.Bytes(text), bin, runs]
+    var inputs = [
+        strings.Bytes(""),
+        strings.Bytes("a"),
+        strings.Bytes("hello, zstd"),
+        strings.Bytes(text),
+        bin,
+        runs,
+    ]
     for i, data in inputs {
         for level in [1, 3, 9, 19] {
             var c = compress.zstd.Compress(data, level)?
@@ -42,6 +49,11 @@ func main() void! {
     var small = compress.zstd.Compress(strings.Bytes(text), 3)?
     println("text ratio below 2%", len(small) * 50 < len(text))
     var r = compress.zstd.NewReader()
-    r.Feed(compress.rtConcat(compress.zstd.Compress(strings.Bytes("first "), 1)?, compress.zstd.Compress(strings.Bytes("second"), 1)?))?
+    r.Feed(
+        compress.rtConcat(
+            compress.zstd.Compress(strings.Bytes("first "), 1)?,
+            compress.zstd.Compress(strings.Bytes("second"), 1)?,
+        ),
+    )?
     println(strings.FromBytes(r.Read()), r.Done())
 }

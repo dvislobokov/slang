@@ -4,7 +4,9 @@ namespace spec.diagnostics.constraint_not_interface
 
 import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 func F<T: P>(x T) T { return x }
 

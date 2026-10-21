@@ -1,0 +1,121 @@
+// test: std.data.redis codec without a server: every RESP2/RESP3 reply type (attributes skipped, verbatim, big numbers, nested maps/sets/pushes, null bulk/array), truncated and malformed input, command encoding of each argument type, Reply conversions, URL parsing, cluster hash slots with hash tags, command key extraction errors
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib5.redis_resp
+
+import std
+import std.data
+import std.io
+
+func show(text string) {
+    var rs = try redis.ParseReplies(strings.Bytes(text)) catch err {
+        println("error:", err)
+        return
+    }
+    for r in rs {
+        println(redis.KindName(r.Kind), r.String())
+    }
+}
+
+func main() void! {
+    // RESP2
+    show(
+        "+OK\r\n-ERR unknown command 'FOO'\r\n:-42\r\n$5\r\nhello\r\n$0\r\n\r\n$-1\r\n*-1\r\n*3\r\n:1\r\n$1\r\nx\r\n*1\r\n+nested\r\n",
+    )
+    // RESP3
+    show(
+        "_\r\n,3.25\r\n,inf\r\n,-inf\r\n#t\r\n#f\r\n(3492890328409238509324850943850943825024385\r\n=15\r\ntxt:Some string\r\n!21\r\nSYNTAX invalid syntax\r\n",
+    )
+    show(
+        "%2\r\n+first\r\n:1\r\n$6\r\nsecond\r\n~2\r\n:2\r\n:3\r\n>3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$3\r\nhi!\r\n",
+    )
+    show("|1\r\n+key-popularity\r\n%1\r\n$1\r\na\r\n,0.19\r\n*2\r\n:2039\r\n:9543\r\n")
+    // bulk strings carry any bytes, including CR LF
+    show("$4\r\na\r\nb\r\n")
+    show("$10\r\nshort\r\n")
+    show("*2\r\n:1\r\n")
+    show("?\r\n")
+    show(":12x\r\n")
+
+    // encoding
+    var enc = redis.EncodeCommand([
+        "SET",
+        "k",
+        42,
+        2.5,
+        true,
+        strings.Bytes("raw"),
+        time.Milliseconds(1500),
+    ])
+    println(strconv.Quote(strings.FromBytes(enc)))
+
+    // conversions
+    var rs = redis.ParseReplies(
+        strings.Bytes(
+            "$2\r\n17\r\n,1.5\r\n*4\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$-1\r\n#t\r\n_\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+        ),
+    )?
+    println(rs[0].Integer()?, rs[0].Number()?, rs[1].Number()?, rs[1].Text()?)
+    println(rs[2].Strings()?)
+    var m = rs[2].StringMap()?
+    println(m["a"], "[" + m["b"] + "]", len(m))
+    println(rs[3].Boolean()?)
+    try rs[4].Text() catch err {
+        println("nil:", errors.Is(err, redis.Nil))
+    }
+    var e = rs[5].Err()
+    println(redis.ErrorCode(e), e)
+    var re redis.Error
+    println(errors.As(e, &re), re.Code)
+    try rs[0].Values() catch err {
+        println(err)
+    }
+
+    // URLs
+    for u in [
+        "redis://localhost",
+        "redis://:pw@10.0.0.1:6380/4",
+        "redis://alice:s3cr3t@[::1]:7000?db=2&protocol=3&client_name=app&dial_timeout=250ms&read_timeout=2&pool_size=4&max_retries=-1",
+        "rediss://cache.example.com:6380/0?skip_verify=true",
+        "unix:///var/run/redis.sock?db=5",
+        "redis://secret@host",
+    ] {
+        var o = redis.ParseURL(u)?
+        var tls = "plain"
+        if o.TLS != nil {
+            tls = "tls:" + o.TLS.ServerName + fmt.Format(" skip={0}", o.TLS.InsecureSkipVerify)
+        }
+        println(
+            o.Network + "|" + o.Addr + "|" + o.Username + "|" + o.Password,
+            o.DB,
+            o.Protocol,
+            o.ClientName,
+            o.DialTimeout,
+            o.ReadTimeout,
+            o.PoolSize,
+            o.MaxRetries,
+            tls,
+        )
+    }
+    for u in ["http://x", "redis://h:port", "redis://h/x", "redis://h?protocol=4"] {
+        try redis.ParseURL(u) catch err {
+            println("bad:", err)
+        }
+    }
+
+    // cluster key slots (CLUSTER KEYSLOT)
+    for k in [
+        "foo",
+        "bar",
+        "hello",
+        "{user1000}.following",
+        "{user1000}.followers",
+        "foo{}{bar}",
+        "foo{{bar}}zap",
+        "foo{bar}{zap}",
+        "{}x",
+        "",
+    ] {
+        println(strconv.Quote(k), redis.HashSlot(k))
+    }
+}

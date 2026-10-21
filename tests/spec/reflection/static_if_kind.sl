@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.reflection.static_if_kind
 
-import std.io
 import std
+import std.io
 
 func Twice<T>(x T) T {
     if reflect.TypeOf<T>().Kind == reflect.Kind.String {

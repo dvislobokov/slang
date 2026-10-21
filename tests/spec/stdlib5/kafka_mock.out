@@ -1,0 +1,35 @@
+ApiVersions frame matches the Java client: true
+kafka: TOPIC_ALREADY_EXISTS (36): topic "orders": Topic 'orders' already exists.
+topic orders 3 1
+plain: 58
+scram: 58
+gssapi: 33
+producer id 4242
+  key0 -> 1 0
+  key1 -> 2 0
+  key2 -> 2 1
+  key3 -> 1 1
+  key4 -> 0 0
+  key5 -> 1 2
+  key6 -> 0 1
+  key7 -> 0 2
+  key8 -> 1 3
+batches 5 retries 2 stored per partition [3 4 2]
+acks none: -1
+kafka: lz4 compression is not supported (use gzip or zstd)
+stored per partition [3 4 4]
+c1 alone: 3 1
+c1 read [0/0:7 0/1:7 0/2:7 1/0:7 1/1:7 1/2:7 1/3:7 2/0:7 2/1:7 2/2:1000 2/3:1000]
+after rebalance: c1 [orders0 orders1] c2 [orders2] same generation true c1 joins 2
+new records [c1:new-0 c1:new-1 c1:new-3 c1:new-4 c2:new-2 c2:new-5]
+committed next offsets 5 6 6
+restarted member got 1 6 last
+group-less read 18
+kafka: a consumer without a group cannot commit
+kafka: UNKNOWN_TOPIC_OR_PARTITION (3): topic "missing"
+kafka: UNKNOWN_TOPIC_OR_PARTITION (3): topic "orders"
+apis used: [ApiVersions v0 CreateTopics v2 DeleteTopics v1 Fetch v10 FindCoordinator v1 Heartbeat v1 InitProducerId v0 JoinGroup v2 LeaveGroup v1 ListOffsets v1 Metadata v1 OffsetCommit v2 OffsetFetch v1 Produce v7 SaslAuthenticate v0 SaslHandshake v1 SyncGroup v1]
+tls produce secure 0 0
+tls consume over TLS
+plaintext client on a TLS broker fails: true
+untrusted certificate fails: true

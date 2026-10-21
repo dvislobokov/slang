@@ -21,9 +21,11 @@ func Describe(o Option<int>) string {
         case Option.Some(id):
             switch Lookup(id) {
                 case Option.Some(name): return "user " + name
-                default: return "unknown user"
+                default:
+                    return "unknown user"
             }
-        default: return "no id"
+        default:
+            return "no id"
     }
 }
 

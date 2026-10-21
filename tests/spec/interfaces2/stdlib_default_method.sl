@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.interfaces2.stdlib_default_method
 
-import std.io
 import std
+import std.io
 
 // A toy hash that sums bytes; it relies on the default WriteString.
 struct Sum8 {

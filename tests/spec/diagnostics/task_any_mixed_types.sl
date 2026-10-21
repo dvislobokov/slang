@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.task_any_mixed_types
 
-import std.io
 import std
+import std.io
 
 async func A() int { return 1 }
 async func B() string { return "b" }

@@ -9,9 +9,14 @@ import std.io
 async func main() void! {
     var r = await process.Run("sh", ["-c", "echo out; echo err >&2; exit 3"])?
     println(r.ExitCode, r.Success(), strings.Trim(r.Stdout), strings.Trim(r.Stderr))
-    var env = await process.RunWith("sh", ["-c", "echo $SLANG_X; pwd"], process.Options{Env: ["SLANG_X=hello"], Dir: "/"})?
+    var env = await process.RunWith("sh", ["-c", "echo $SLANG_X; pwd"], process.Options{
+        Env: ["SLANG_X=hello"],
+        Dir: "/",
+    })?
     println(strings.Replace(env.Stdout, "\n", "|"))
-    var clean = await process.RunWith("sh", ["-c", "echo [$HOME]"], process.Options{ClearEnv: true})?
+    var clean = await process.RunWith("sh", ["-c", "echo [$HOME]"], process.Options{
+        ClearEnv: true,
+    })?
     println(strings.Trim(clean.Stdout))
     println(strings.Trim(await process.Output("echo", ["a", "b c"])?))
     try {
@@ -29,9 +34,16 @@ async func main() void! {
     _ = await p.Stdin.WriteString("pear\napple\nfig\n")?
     p.Stdin.Close()
     var sorted = await p.Stdout.ReadAll()?
-    println(strings.Replace(strings.FromBytes(sorted), "\n", " "), await p.Wait()?, await p.Wait()?, p.Pid() > 0)
+    println(
+        strings.Replace(strings.FromBytes(sorted), "\n", " "),
+        await p.Wait()?,
+        await p.Wait()?,
+        p.Pid() > 0,
+    )
 
-    var big = process.Start("sh", ["-c", "head -c 300000 /dev/zero"], process.Options{Stdout: process.Pipe})?
+    var big = process.Start("sh", ["-c", "head -c 300000 /dev/zero"], process.Options{
+        Stdout: process.Pipe,
+    })?
     var n = 0
     for {
         var chunk = await big.Stdout.Read(4096)?

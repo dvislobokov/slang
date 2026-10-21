@@ -14,8 +14,8 @@ struct unit {
 @attribute
 struct meta {
     level Level
-    tags []string
-    u unit
+    tags  []string
+    u     unit
 }
 
 @meta(level: Level.High, tags: ["a", "b"], u: unit{name: "ms"})

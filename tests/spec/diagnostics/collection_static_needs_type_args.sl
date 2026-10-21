@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.collection_static_needs_type_args
 
-import std.io
 import std.collections
+import std.io
 
 func main() {
     var l = List()

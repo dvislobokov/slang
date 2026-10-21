@@ -2,12 +2,12 @@
 // status: passing
 namespace spec.async2.mutex_fifty_tasks
 
-import std.io
 import std
+import std.io
 
 struct Counter {
     Mu task.Mutex
-    N int
+    N  int
 }
 
 async func Add(c *Counter, times int) {

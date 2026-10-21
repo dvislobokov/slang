@@ -1,0 +1,11 @@
+// error: extern declarations exist only in the standard library
+namespace examples.bad
+
+import std.io
+
+// User code cannot declare runtime functions.
+extern func Split(s string, sep string) []string
+
+func main() {
+    println("unreachable")
+}

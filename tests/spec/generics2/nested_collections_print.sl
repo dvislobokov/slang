@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.nested_collections_print
 
-import std.io
 import std.collections
+import std.io
 
 func main() {
     var grid List<List<int>>

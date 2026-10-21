@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.typeof_arg_count
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(typeof(1, 2).Name)

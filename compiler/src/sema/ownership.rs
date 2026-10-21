@@ -13,7 +13,7 @@
 //!   tuple elements, enum payloads or task results.
 
 use crate::diagnostics::{Diagnostic, Diagnostics};
-use crate::hir::ownership::{drop_method, has_dtor, is_interior_addr, moved_return, param_facts, walk_function, ParamFacts, Pos};
+use crate::hir::ownership::{drop_method, has_dtor, interior_pin, interior_vars, is_interior_addr, moved_return, param_facts, pointer_pin, walk_function, ParamFacts, Pin, Pos};
 use crate::hir::*;
 use crate::span::Span;
 use crate::types::{Type, TypeId};
@@ -225,9 +225,67 @@ impl Checker<'_, '_> {
         let names = InNs { p, ns: Some(f.namespace) };
         let mut moved: HashSet<*const Expr> = HashSet::new();
         moved_returns(p, f, &f.body.stmts, &mut moved);
+        // Interior pointer variables (`var p = &xs[i]`): the values stored
+        // into them are pinned (their owner is kept alive by the variable).
+        let iv = interior_vars(p, f);
+        let is_iv = |l: LocalId| iv.is.get(l.0 as usize).copied().unwrap_or(false);
+        let mut kept: HashSet<*const Expr> = HashSet::new();
+        for (l, v) in &iv.sites {
+            let name = &f.locals[l.0 as usize].name;
+            let pin = match &v.kind {
+                ExprKind::AddrOf(inner) if is_interior_addr(v) => interior_pin(p, fid, f, facts, inner, &is_iv),
+                _ => pointer_pin(fid, f, facts, v, &is_iv),
+            };
+            let ok = match pin {
+                // (The cell of `&s.f` is pinned, so `s` may be declared
+                // anywhere; the pins of another interior variable are
+                // copied, so it must be declared first.)
+                Some(Pin::Interior(q)) => q.0 < l.0,
+                Some(_) => true,
+                None => false,
+            };
+            if ok {
+                kept.insert(*v as *const Expr);
+            } else {
+                found.push((
+                    format!("cannot keep this interior pointer in `{name}`: its owner is a temporary or is computed by a call (or it comes from an interior pointer variable declared after `{name}`)"),
+                    v.span,
+                    Some("take the address through a variable that outlives the pointer (`var xs = f(); var p = &xs[i]`)".into()),
+                ));
+            }
+        }
+        for (i, loc) in f.locals.iter().enumerate() {
+            if iv.is[i] && (loc.captured || loc.address_taken) {
+                found.push((
+                    format!("interior pointer variable `{}` cannot be captured by a closure or have its address taken", loc.name),
+                    loc.span,
+                    Some("it holds a pointer into another object; copy the value instead, or use `new`".into()),
+                ));
+            }
+        }
         walk_function(p, f, &mut |e, pos| {
+            // Uses of interior pointer variables: read through, compared,
+            // reassigned or passed to a non-escaping parameter only.
+            if let ExprKind::Local(l) = &e.kind {
+                if is_iv(*l) {
+                    let ok = match pos {
+                        Pos::Read | Pos::Target => true,
+                        Pos::Arg(g, i) => !facts.escapes(g, i),
+                        Pos::Store => kept.contains(&(e as *const Expr)),
+                        Pos::AddrOf => false,
+                    };
+                    if !ok {
+                        let name = &f.locals[l.0 as usize].name;
+                        found.push((
+                            format!("cannot keep interior pointer variable `{name}` elsewhere: it points into another object, so it can only be dereferenced, compared, reassigned or passed to a parameter that does not escape"),
+                            e.span,
+                            Some("store it only in local interior pointer variables; use `new` (or a pointer field) to share the value".into()),
+                        ));
+                    }
+                }
+            }
             // Interior pointers and slices without an owner.
-            let interior = is_interior_addr(e) || unowned_array_slice(p, e);
+            let interior = (is_interior_addr(e) && !kept.contains(&(e as *const Expr))) || unowned_array_slice(p, e);
             if interior {
                 let what = if is_interior_addr(e) { "an interior pointer (into a field, an element or a global)" } else { "a slice of an array that is not a variable" };
                 match pos {

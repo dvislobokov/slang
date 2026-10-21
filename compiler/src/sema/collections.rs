@@ -316,7 +316,8 @@ fn collections_ast() -> &'static ast::File {
     static AST: OnceLock<ast::File> = OnceLock::new();
     AST.get_or_init(|| {
         let mut diags = crate::diagnostics::Diagnostics::new();
-        let tokens = crate::lexer::lex(SOURCE, &mut diags);
+        let text = super::stdfs::load("std.collections", "collections.sl", SOURCE);
+        let tokens = crate::lexer::lex(&text, &mut diags);
         let file = crate::parser::parse(tokens, &mut diags);
         match file {
             Some(f) if !diags.has_errors() => f,

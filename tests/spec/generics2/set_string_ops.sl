@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.set_string_ops
 
-import std.io
 import std.collections
+import std.io
 
 func Of(xs []string) Set<string> {
     var s = Set<string>{}

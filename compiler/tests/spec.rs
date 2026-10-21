@@ -33,6 +33,8 @@ const AREAS: &[&str] = &[
     "basics", "control", "structs", "interfaces", "enums", "errors", "generics", "memory", "async", "attributes", "reflection", "stdlib",
     "namespaces", "switch", "closures", "pointers", "interfaces2", "generics2", "memory2", "errors2", "async2", "strings2",
     "diagnostics", "programs", "attributes2", "platform", "stdlib2", "stdlib3", "stdlib4", "operators", "iteration",
+    "stdlib5",
+    "web",
 ];
 
 /// Per-process timeout for a built program (a pending feature may hang).
@@ -390,6 +392,8 @@ areas!(
     spec_stdlib4 = "stdlib4",
     spec_operators = "operators",
     spec_iteration = "iteration",
+    spec_stdlib5 = "stdlib5",
+    spec_web = "web",
 );
 
 #[test]

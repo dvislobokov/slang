@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.reflection.enum_variants
 
-import std.io
 import std
+import std.io
 
 enum Shape {
     Circle(r float)

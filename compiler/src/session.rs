@@ -11,6 +11,14 @@
 //! where the text is incomplete, see [`crate::parser`]), so every file
 //! takes part in semantic analysis with its *current* text and all
 //! positions (diagnostics, symbols, references) refer to it.
+//!
+//! Read-only files: dependency sources (`.slang/deps/**`) are ordinary
+//! session files marked with [`Session::set_read_only`]; the standard
+//! library sources on disk come from a [`StdIndex`]
+//! ([`Session::set_std_index`]): they are not analysed (the compiler has
+//! its own copy of the stdlib) but appended to [`Analysis::files`], and
+//! every std symbol of the analysis gets its location and doc comment
+//! there, so navigation, hover and workspace symbols reach into `std/`.
 
 use crate::ast;
 use crate::diagnostics::{codes, Diagnostic, Diagnostics, Fix, Severity, TextEdit};
@@ -18,7 +26,9 @@ use crate::hir::Program;
 use crate::sema::index::{self, Location, Reference, SymKey, SymbolId, SymbolIndex, SymbolKind};
 use crate::span::{SourceFile, Span};
 use crate::{lexer, parser};
-use std::collections::BTreeMap;
+use crate::stdindex::StdIndex;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 struct FileState {
     source: SourceFile,
@@ -30,6 +40,8 @@ struct FileState {
 #[derive(Default)]
 pub struct Session {
     files: BTreeMap<String, FileState>,
+    read_only: BTreeSet<String>,
+    std: Option<Arc<StdIndex>>,
 }
 
 impl Session {
@@ -54,7 +66,31 @@ impl Session {
     }
 
     pub fn remove_file(&mut self, path: &str) -> bool {
+        self.read_only.remove(path);
         self.files.remove(path).is_some()
+    }
+
+    /// Marks `path` as a read-only library file (a dependency): analysed,
+    /// navigable, never renamed or edited by tools.
+    pub fn set_read_only(&mut self, path: &str, read_only: bool) {
+        if read_only {
+            self.read_only.insert(path.to_string());
+        } else {
+            self.read_only.remove(path);
+        }
+    }
+
+    pub fn is_read_only(&self, path: &str) -> bool {
+        self.read_only.contains(path) || self.std.as_ref().is_some_and(|s| s.files.iter().any(|f| f.path == path))
+    }
+
+    /// The standard library sources to navigate into (see the module docs).
+    pub fn set_std_index(&mut self, std: Option<Arc<StdIndex>>) {
+        self.std = std;
+    }
+
+    pub fn std_index(&self) -> Option<&Arc<StdIndex>> {
+        self.std.as_ref()
     }
 
     pub fn contains(&self, path: &str) -> bool {
@@ -87,7 +123,35 @@ impl Session {
         let ok = !diags.has_errors() && !diagnostics.iter().any(|d: &Diagnostic| d.severity == Severity::Error);
         diagnostics.extend(diags.items);
         complete_fixes(&mut diagnostics, &files, &asts);
-        Analysis { files, asts, diagnostics, index, hir, ok }
+        let read_only = self.files.keys().map(|p| self.read_only.contains(p)).collect();
+        let mut a = Analysis { files, asts, diagnostics, index, hir, ok, read_only };
+        if let Some(std) = &self.std {
+            attach_std(&mut a, std);
+        }
+        a
+    }
+}
+
+/// Appends the std files to `a` and points std symbols at their source.
+fn attach_std(a: &mut Analysis, std: &StdIndex) {
+    let base = a.files.len();
+    a.files.extend(std.files.iter().cloned());
+    a.read_only.extend(std::iter::repeat_n(true, std.files.len()));
+    a.index.files.extend(std::iter::repeat_n(None, std.files.len()));
+    for sym in &mut a.index.symbols {
+        if sym.loc.is_some() || !(sym.full_name == "std" || sym.full_name.starts_with("std.")) {
+            continue;
+        }
+        let Some(d) = std.lookup(&sym.full_name) else { continue };
+        sym.loc = Some(Location { file: base + d.file, name_span: d.name_span, full_span: d.full_span });
+        sym.is_std = true;
+        if sym.doc.is_none() {
+            sym.doc = d.doc.clone();
+        }
+        // Placeholder signatures of stdlib templates (`func Get`).
+        if !sym.signature.contains('(') && !sym.signature.contains('{') && matches!(sym.kind, SymbolKind::Func | SymbolKind::Method | SymbolKind::Struct | SymbolKind::Enum) {
+            sym.signature = d.signature.clone();
+        }
     }
 }
 
@@ -201,6 +265,8 @@ pub struct Analysis {
     /// were errors. Its `file` fields index `files`.
     pub hir: Program,
     ok: bool,
+    /// Per file: a read-only library file (dependency or std source).
+    pub read_only: Vec<bool>,
 }
 
 impl Analysis {
@@ -211,6 +277,11 @@ impl Analysis {
 
     pub fn file_index(&self, path: &str) -> Option<usize> {
         self.files.iter().position(|f| f.path == path)
+    }
+
+    /// Whether file `file` is a read-only library file.
+    pub fn is_read_only(&self, file: usize) -> bool {
+        self.read_only.get(file).copied().unwrap_or(false)
     }
 
     pub fn diagnostics_for(&self, file: usize) -> impl Iterator<Item = &Diagnostic> {

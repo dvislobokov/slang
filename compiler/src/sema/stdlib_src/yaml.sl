@@ -16,13 +16,13 @@ namespace std.encoding.yaml
 // A dynamic YAML node (kind: null, bool, int, float, string, sequence,
 // mapping). Mapping keys are strings (other scalar keys are converted).
 struct Value {
-    kind int
-    b bool
-    i int
-    f float
-    s string
+    kind  int
+    b     bool
+    i     int
+    f     float
+    s     string
     items []Value
-    keys []string
+    keys  []string
 
     func IsNull() bool {
         return this.kind == 0
@@ -243,14 +243,21 @@ func ParseValue(text string) Value! {
         return Value{}
     }
     if len(docs) > 1 {
-        return error(std.fmt.Format("yaml: expected one document, found {0} (use ParseAll)", len(docs)))
+        return error(
+            std.fmt.Format("yaml: expected one document, found {0} (use ParseAll)", len(docs)),
+        )
     }
     return docs[0]
 }
 
 // Parses every document of a stream.
 func ParseAll(text string) []Value! {
-    var p = parser{anchors: map[string]Value{}, sizes: map[string]int{}, budget: 1000000, noFinalNewline: !std.strings.HasSuffix(text, "\n")}
+    var p = parser{
+        anchors: map[string]Value{},
+        sizes: map[string]int{},
+        budget: 1000000,
+        noFinalNewline: !std.strings.HasSuffix(text, "\n"),
+    }
     var raw = std.strings.Split(text, "\n")
     for l in raw {
         if std.strings.HasSuffix(l, "\r") {
@@ -274,13 +281,13 @@ func ParseAll(text string) []Value! {
 }
 
 struct parser {
-    lines []string
-    li int
-    col int
+    lines   []string
+    li      int
+    col     int
     anchors map[string]Value
-    sizes map[string]int
-    budget int
-    eofDoc bool
+    sizes   map[string]int
+    budget  int
+    eofDoc  bool
     started bool
     // the text does not end with a line break
     noFinalNewline bool
@@ -346,7 +353,12 @@ struct parser {
 
     func atDocMarker() bool {
         var l = this.line()
-        return this.li < len(this.lines) && (l == "---" || std.strings.HasPrefix(l, "--- ") || l == "..." || std.strings.HasPrefix(l, "... ") || std.strings.HasPrefix(l, "---\t"))
+        return this.li < len(this.lines) &&
+            (l == "---" ||
+                std.strings.HasPrefix(l, "--- ") ||
+                l == "..." ||
+                std.strings.HasPrefix(l, "... ") ||
+                std.strings.HasPrefix(l, "---\t"))
     }
 
     // One document; sets eofDoc when the stream has no more.
@@ -451,7 +463,10 @@ struct parser {
             return
         }
         if !this.restBlank() {
-            return this.fail("unexpected text after a value: " + std.encoding.json.Quote(std.strings.Trim(this.rest())))
+            return this.fail(
+                "unexpected text after a value: " +
+                    std.encoding.json.Quote(std.strings.Trim(this.rest())),
+            )
         }
         this.nextLine()
     }
@@ -492,7 +507,9 @@ struct parser {
                 return false
             }
             var after = std.strings.TrimLeft(r[end..], " \t")
-            return after == ":" || std.strings.HasPrefix(after, ": ") || std.strings.HasPrefix(after, ":\t")
+            return after == ":" ||
+                std.strings.HasPrefix(after, ": ") ||
+                std.strings.HasPrefix(after, ":\t")
         }
         return keyEnd(r, 0) >= 0
     }
@@ -521,7 +538,8 @@ struct parser {
                 break
             }
             var r = l[li..]
-            if li == ind && (r == "-" || std.strings.HasPrefix(r, "- ") || std.strings.HasPrefix(r, "-\t")) {
+            if li == ind &&
+                (r == "-" || std.strings.HasPrefix(r, "- ") || std.strings.HasPrefix(r, "-\t")) {
                 continue
             }
             if li == ind {
@@ -553,7 +571,10 @@ struct parser {
                 if li < len(l) {
                     r = l[li..]
                 }
-                if this.li < len(this.lines) && !this.atDocMarker() && li == ind && (r == "-" || std.strings.HasPrefix(r, "- ")) {
+                if this.li < len(this.lines) &&
+                    !this.atDocMarker() &&
+                    li == ind &&
+                    (r == "-" || std.strings.HasPrefix(r, "- ")) {
                     val = this.seq(ind)?
                 } else {
                     val = this.block(ind)?
@@ -592,7 +613,9 @@ struct parser {
                 break
             }
             if !this.looksLikeKey() {
-                return this.fail("expected a mapping key, found " + std.encoding.json.Quote(std.strings.Trim(r)))
+                return this.fail(
+                    "expected a mapping key, found " + std.encoding.json.Quote(std.strings.Trim(r)),
+                )
             }
         }
         // merge keys: earlier explicit keys win, then the merged maps in order
@@ -711,7 +734,12 @@ struct parser {
         if c == 42 {
             var r = this.rest()
             var j = 1
-            for j < len(r) && int(r[j]) != 32 && int(r[j]) != 9 && int(r[j]) != 44 && int(r[j]) != 93 && int(r[j]) != 125 {
+            for j < len(r) &&
+                int(r[j]) != 32 &&
+                int(r[j]) != 9 &&
+                int(r[j]) != 44 &&
+                int(r[j]) != 93 &&
+                int(r[j]) != 125 {
                 j += 1
             }
             this.col += j
@@ -786,7 +814,10 @@ struct parser {
                 continue
             }
             var lind = this.indentOf(l)
-            if lind <= ind || std.strings.HasPrefix(t, "#") || (lind == 0 && (std.strings.HasPrefix(l, "---") || std.strings.HasPrefix(l, "..."))) {
+            if lind <= ind ||
+                std.strings.HasPrefix(t, "#") ||
+                (lind == 0 &&
+                    (std.strings.HasPrefix(l, "---") || std.strings.HasPrefix(l, "..."))) {
                 break
             }
             var body = stripComment(t)
@@ -920,7 +951,9 @@ struct parser {
                     }
                     b.Write(string(char(v)))
                 } else {
-                    return this.fail("invalid escape \\" + string(char(e)) + " in a double-quoted scalar")
+                    return this.fail(
+                        "invalid escape \\" + string(char(e)) + " in a double-quoted scalar",
+                    )
                 }
                 continue
             }
@@ -993,7 +1026,8 @@ struct parser {
             if cind < 0 || this.indentOf(l) < cind {
                 break
             }
-            if this.indentOf(l) == 0 && (std.strings.HasPrefix(l, "---") || std.strings.HasPrefix(l, "...")) {
+            if this.indentOf(l) == 0 &&
+                (std.strings.HasPrefix(l, "---") || std.strings.HasPrefix(l, "...")) {
                 break
             }
             lines = append(lines, l[cind..])
@@ -1027,8 +1061,12 @@ struct parser {
                         j += 1
                     }
                     var k = j - i
-                    var prevNormal = i > 0 && !std.strings.HasPrefix(lines[i - 1], " ") && !std.strings.HasPrefix(lines[i - 1], "\t")
-                    var nextNormal = j < n && !std.strings.HasPrefix(lines[j], " ") && !std.strings.HasPrefix(lines[j], "\t")
+                    var prevNormal = i > 0 &&
+                        !std.strings.HasPrefix(lines[i - 1], " ") &&
+                        !std.strings.HasPrefix(lines[i - 1], "\t")
+                    var nextNormal = j < n &&
+                        !std.strings.HasPrefix(lines[j], " ") &&
+                        !std.strings.HasPrefix(lines[j], "\t")
                     if i > 0 && !(prevNormal && nextNormal) {
                         k += 1
                     }
@@ -1043,7 +1081,10 @@ struct parser {
                 }
                 if i > 0 {
                     var prev = lines[i - 1]
-                    var spaced = std.strings.HasPrefix(l, " ") || std.strings.HasPrefix(l, "\t") || std.strings.HasPrefix(prev, " ") || std.strings.HasPrefix(prev, "\t")
+                    var spaced = std.strings.HasPrefix(l, " ") ||
+                        std.strings.HasPrefix(l, "\t") ||
+                        std.strings.HasPrefix(prev, " ") ||
+                        std.strings.HasPrefix(prev, "\t")
                     if spaced {
                         b.Write("\n")
                     } else {
@@ -1166,7 +1207,12 @@ struct parser {
             if d == 44 || d == 93 || d == 125 || d == 91 || d == 123 {
                 break
             }
-            if d == 58 && (this.col + 1 >= len(l) || int(l[this.col + 1]) == 32 || int(l[this.col + 1]) == 44 || int(l[this.col + 1]) == 93 || int(l[this.col + 1]) == 125) {
+            if d == 58 &&
+                (this.col + 1 >= len(l) ||
+                    int(l[this.col + 1]) == 32 ||
+                    int(l[this.col + 1]) == 44 ||
+                    int(l[this.col + 1]) == 93 ||
+                    int(l[this.col + 1]) == 125) {
                 break
             }
             if d == 35 && this.col > start && int(l[this.col - 1]) == 32 {
@@ -1211,7 +1257,9 @@ func keyEnd(s string, from int) int {
             depth += 1
         } else if c == 93 || c == 125 {
             depth -= 1
-        } else if c == 58 && depth <= 0 && (i + 1 >= len(s) || int(s[i + 1]) == 32 || int(s[i + 1]) == 9) {
+        } else if c == 58 &&
+            depth <= 0 &&
+            (i + 1 >= len(s) || int(s[i + 1]) == 32 || int(s[i + 1]) == 9) {
             return i
         }
         i += 1
@@ -1307,7 +1355,14 @@ func applyTag(tag string, v Value, line int) Value! {
                 want = 0
             }
             if r.kind != want {
-                return error(std.fmt.Format("yaml: line {0}: {1} is not a valid {2}", line, std.encoding.json.Quote(v.s), tag))
+                return error(
+                    std.fmt.Format(
+                        "yaml: line {0}: {1} is not a valid {2}",
+                        line,
+                        std.encoding.json.Quote(v.s),
+                        tag,
+                    ),
+                )
             }
             return r
         }
@@ -1343,14 +1398,22 @@ func resolvePlain(s string) Value {
         if s == ".nan" || s == ".NaN" || s == ".NAN" {
             return Value{kind: 3, f: std.math.NaN()}
         }
-        if std.strings.HasPrefix(body, "0x") && len(body) > 2 && allDigits(body[2..], 16) && c != 45 && c != 43 {
+        if std.strings.HasPrefix(body, "0x") &&
+            len(body) > 2 &&
+            allDigits(body[2..], 16) &&
+            c != 45 &&
+            c != 43 {
             var v = 0
             for k in 2..len(body) {
                 v = v * 16 + hexVal(int(body[k]))
             }
             return Value{kind: 2, i: v}
         }
-        if std.strings.HasPrefix(body, "0o") && len(body) > 2 && allDigits(body[2..], 8) && c != 45 && c != 43 {
+        if std.strings.HasPrefix(body, "0o") &&
+            len(body) > 2 &&
+            allDigits(body[2..], 8) &&
+            c != 45 &&
+            c != 43 {
             var v = 0
             for k in 2..len(body) {
                 v = v * 8 + int(body[k]) - 48
@@ -1359,7 +1422,8 @@ func resolvePlain(s string) Value {
         }
         if allDigits(body, 10) && body != "" {
             var n = try std.strings.ToInt(s) else -1
-            if std.fmt.Format("{0}", n) == std.strings.TrimLeft(s, "+") || allDigits(body, 10) && n != -1 {
+            if std.fmt.Format("{0}", n) == std.strings.TrimLeft(s, "+") ||
+                allDigits(body, 10) && n != -1 {
                 return Value{kind: 2, i: n}
             }
         }
@@ -1464,7 +1528,27 @@ func needsQuote(s string) bool {
     }
     var c = int(s[0])
     // indicators that cannot start a plain scalar
-    if c == 45 || c == 63 || c == 58 || c == 44 || c == 91 || c == 93 || c == 123 || c == 125 || c == 35 || c == 38 || c == 42 || c == 33 || c == 124 || c == 62 || c == 39 || c == 34 || c == 37 || c == 64 || c == 96 || c == 32 || c == 9 {
+    if c == 45 ||
+        c == 63 ||
+        c == 58 ||
+        c == 44 ||
+        c == 91 ||
+        c == 93 ||
+        c == 123 ||
+        c == 125 ||
+        c == 35 ||
+        c == 38 ||
+        c == 42 ||
+        c == 33 ||
+        c == 124 ||
+        c == 62 ||
+        c == 39 ||
+        c == 34 ||
+        c == 37 ||
+        c == 64 ||
+        c == 96 ||
+        c == 32 ||
+        c == 9 {
         if !(c == 45 && len(s) > 1 && int(s[1]) != 32) {
             return true
         }
@@ -1473,7 +1557,11 @@ func needsQuote(s string) bool {
     if last == 32 || last == 9 || last == 58 {
         return true
     }
-    if std.strings.Contains(s, ": ") || std.strings.Contains(s, " #") || std.strings.Contains(s, "\n") || std.strings.Contains(s, "\t") || std.strings.Contains(s, "\r") {
+    if std.strings.Contains(s, ": ") ||
+        std.strings.Contains(s, " #") ||
+        std.strings.Contains(s, "\n") ||
+        std.strings.Contains(s, "\t") ||
+        std.strings.Contains(s, "\r") {
         return true
     }
     for i in 0..len(s) {
@@ -1645,7 +1733,9 @@ func emitScalarAfter(b *std.strings.Builder, x Value, ind int) {
 // A literal block keeps s exactly: no trailing blank lines, no lines
 // starting with white space at the first line, no control characters.
 func literalOK(s string) bool {
-    if std.strings.HasSuffix(s, "\n\n") || std.strings.HasPrefix(s, " ") || std.strings.HasPrefix(s, "\n") {
+    if std.strings.HasSuffix(s, "\n\n") ||
+        std.strings.HasPrefix(s, " ") ||
+        std.strings.HasPrefix(s, "\n") {
         return false
     }
     for i in 0..len(s) {
@@ -1704,7 +1794,9 @@ func decode<T>(v Value, path string, out *T) void! {
         *out = v
         return
     }
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
         if v.kind == 0 {
             *out = nil
             return
@@ -1745,14 +1837,22 @@ func decode<T>(v Value, path string, out *T) void! {
             return mismatch(path, "bool", v)
         }
         *out = v.b
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         if v.kind != 2 {
             return mismatch(path, "int", v)
         }
         *out = try std.encoding.intAs<T>(v.i) catch err {
             return error(prefix(path) + err.Message())
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         if v.kind == 2 {
             *out = std.encoding.floatAs<T>(float(v.i))
         } else if v.kind == 3 {
@@ -1767,7 +1867,9 @@ func decode<T>(v Value, path string, out *T) void! {
         var t = std.reflect.TypeOf<T>()
         var variant = t.Variant(v.s)
         if variant == nil || len(variant.Fields) > 0 {
-            return error(prefix(path) + "unknown " + t.Name + " value " + std.encoding.json.Quote(v.s))
+            return error(
+                prefix(path) + "unknown " + t.Name + " value " + std.encoding.json.Quote(v.s),
+            )
         }
         std.reflect.storeTag(out, variant.Index)
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice {
@@ -1782,7 +1884,12 @@ func decode<T>(v Value, path string, out *T) void! {
             }
             decodeMap(v, path, out)?
         } else {
-            return error(prefix(path) + "cannot decode into " + std.reflect.TypeOf<T>().Name + " (map keys must be strings)")
+            return error(
+                prefix(path) +
+                    "cannot decode into " +
+                    std.reflect.TypeOf<T>().Name +
+                    " (map keys must be strings)",
+            )
         }
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
         decodePtr(v, path, out)?
@@ -1862,13 +1969,22 @@ func ToValue<T>(v T) Value {
         return Value{kind: 4, s: v}
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
         return Value{kind: 1, b: v}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         return Value{kind: 2, i: int(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         return Value{kind: 3, f: float(v)}
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
         return Value{kind: 4, s: std.fmt.Format("{0}", v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
         var items []Value = []
         for x in v {
             items = append(items, ToValue(x))

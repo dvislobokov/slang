@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.iteration.collections
 
-import std.io
 import std.collections
+import std.io
 
 func main() {
     var l = LinkedList<string>{}

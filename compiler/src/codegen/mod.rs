@@ -146,7 +146,9 @@
 //! borrowed-only: sema (`sema::ownership`) only lets them be read through
 //! or passed to non-escaping parameters, and `CodeGen::place_ex`
 //! pins their owners (the dereferenced pointer, the slice) for the call.
-//! Sub-slices of a local array own the array's cell.
+//! An interior pointer stored in a local (`var p = &xs[i]`) is never
+//! retained itself: the local's hidden pin slots hold its owners
+//! (`interior.rs`). Sub-slices of a local array own the array's cell.
 //!
 //! Not released (by design): values reachable from a panicking task (a
 //! panic does not unwind), strong reference cycles (use `weak`; detected by
@@ -165,6 +167,7 @@ pub use debug::dedup_declares;
 mod expr;
 mod funcs;
 mod iface;
+mod interior;
 mod ops;
 mod print;
 mod rc;
@@ -319,6 +322,8 @@ pub(crate) struct FnState<'a, 'ctx> {
     pub flags: Vec<Option<PointerValue<'ctx>>>,
     /// Enclosing block `try`s, innermost last.
     pub try_targets: Vec<TryTarget<'ctx>>,
+    /// Interior pointer variables and their pins (`interior.rs`).
+    pub interior: Option<Box<interior::InteriorState<'a, 'ctx>>>,
 }
 
 /// The code generator.
@@ -377,16 +382,45 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) dbga: Option<Box<debug_agent::Agent<'ctx>>>,
 }
 
-/// Creates a target machine for the host.
+/// Creates a target machine for the current target
+/// ([`crate::target::current`]: the host unless `--target` chose another).
+/// The host gets its own CPU and features; another target a baseline CPU
+/// (`x86-64`, `apple-m1` for macOS arm64, `generic` otherwise). The module's
+/// triple and data layout come from this machine, so type sizes, alignment
+/// and the C calling convention (SysV, Win64, AAPCS64) are the target's.
+/// The ABI boundary only passes scalars and pointers (`slang_slice` and
+/// other aggregates go by pointer, ABI.md), so the Win64 rules for structs
+/// by value and varargs never come into play.
 pub fn host_machine(opt: OptimizationLevel) -> Result<TargetMachine, String> {
-    Target::initialize_native(&InitializationConfig::default())?;
-    let triple = TargetMachine::get_default_triple();
-    let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
-    let cpu = TargetMachine::get_host_cpu_name();
-    let features = TargetMachine::get_host_cpu_features();
+    target_machine(&crate::target::current(), opt)
+}
+
+/// [`host_machine`] for an explicit target.
+pub fn target_machine(t: &crate::target::Target, opt: OptimizationLevel) -> Result<TargetMachine, String> {
+    if t.is_host() {
+        Target::initialize_native(&InitializationConfig::default())?;
+        let triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+        let cpu = TargetMachine::get_host_cpu_name();
+        let features = TargetMachine::get_host_cpu_features();
+        return target
+            .create_target_machine(&triple, cpu.to_str().unwrap_or("generic"), features.to_str().unwrap_or(""), opt, RelocMode::PIC, CodeModel::Default)
+            .ok_or_else(|| "cannot create a target machine for the host".to_string());
+    }
+    let cfg = InitializationConfig::default();
+    Target::initialize_x86(&cfg);
+    Target::initialize_aarch64(&cfg);
+    Target::initialize_webassembly(&cfg);
+    let triple = inkwell::targets::TargetTriple::create(&t.triple);
+    let target = Target::from_triple(&triple).map_err(|e| format!("unsupported target {}: {}", t.triple, e.to_string()))?;
+    let cpu = match (t.arch.as_str(), t.os.as_str()) {
+        ("amd64", _) => "x86-64",
+        ("arm64", "macos") => "apple-m1",
+        _ => "generic",
+    };
     target
-        .create_target_machine(&triple, cpu.to_str().unwrap_or("generic"), features.to_str().unwrap_or(""), opt, RelocMode::PIC, CodeModel::Default)
-        .ok_or_else(|| "cannot create a target machine for the host".to_string())
+        .create_target_machine(&triple, cpu, "", opt, RelocMode::PIC, CodeModel::Default)
+        .ok_or_else(|| format!("cannot create a target machine for {}", t.triple))
 }
 
 /// Lowers `program` into a new LLVM module named `module_name` for the host
@@ -555,6 +589,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             borrowed: Vec::new(),
             flags: Vec::new(),
             try_targets: Vec::new(),
+            interior: None,
         };
         let saved = self.f.replace(st);
         self.b.position_at_end(body);

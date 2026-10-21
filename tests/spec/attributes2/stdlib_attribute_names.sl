@@ -2,15 +2,15 @@
 // status: passing
 namespace spec.attributes2.stdlib_attribute_names
 
-import std.io
 import std.cli
-import std.reflect
 import std.encoding.binary
+import std.io
+import std.reflect
 
 @binary(endian: "big")
 struct Opts {
-    @flag(name: "port", short: "p") @json(name: "listen_port") Port int = 8080
-    @binary(endian: "little") @json(skip: true) Magic uint32
+    @flag(name: "port", short: "p") @json(name: "listen_port") Port  int = 8080
+    @binary(endian: "little") @json(skip: true)                Magic uint32
 }
 
 func main() {
@@ -18,5 +18,9 @@ func main() {
     var f = t.Fields[0].Attribute<flag>()
     println(f.name, f.short, f.required)
     println(t.Fields[0].Attribute<json>().name, t.Fields[1].Attribute<json>().skip)
-    println(t.Attribute<binary>().endian, t.Fields[1].Attribute<binary>().endian, t.Fields[1].Attribute<flag>() == nil)
+    println(
+        t.Attribute<binary>().endian,
+        t.Fields[1].Attribute<binary>().endian,
+        t.Fields[1].Attribute<flag>() == nil,
+    )
 }

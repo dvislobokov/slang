@@ -79,7 +79,9 @@ fn module_asts() -> &'static [ast::File] {
     ASTS.get_or_init(|| {
         MODULES
             .iter()
-            .map(|(ns, name, src, _)| {
+            .map(|(ns, name, embedded, _)| {
+                let text = super::stdfs::load(ns, name, embedded);
+                let src: &str = &text;
                 let mut diags = crate::diagnostics::Diagnostics::new();
                 let tokens = crate::lexer::lex(src, &mut diags);
                 let file = crate::parser::parse(tokens, &mut diags);

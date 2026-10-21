@@ -28,11 +28,11 @@ func Decompress(data []byte) []byte! {
 // with Bytes() whenever convenient; Flush makes everything written so far
 // decodable (sync flush); Close ends the stream.
 struct Writer {
-    level int
+    level   int
     pending []byte
-    hist []byte
-    out []byte
-    closed bool
+    hist    []byte
+    out     []byte
+    closed  bool
 
     func Write(p []byte) {
         if this.closed {
@@ -91,8 +91,8 @@ func NewWriter(level int) *Writer {
 // the decompressed bytes with Read(). Done() reports the end of the stream;
 // Rest() holds the input bytes that followed it.
 struct Reader {
-    st []byte
-    out []byte
+    st   []byte
+    out  []byte
     rest []byte
     done bool
 
@@ -108,7 +108,10 @@ struct Reader {
             this.done = true
             var unused = std.compress.rtInflateUnused(this.st)
             var tail = std.compress.rtInflateTail(this.st)
-            this.rest = std.compress.rtConcat(tail, std.compress.rtCopy(chunk, len(chunk) - unused, len(chunk)))
+            this.rest = std.compress.rtConcat(
+                tail,
+                std.compress.rtCopy(chunk, len(chunk) - unused, len(chunk)),
+            )
         }
     }
 

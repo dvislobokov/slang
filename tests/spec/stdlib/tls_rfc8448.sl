@@ -3,11 +3,11 @@
 // run-flags: --leak-check
 namespace spec.stdlib.tls_rfc8448
 
-import std.io
 import std
-import std.net
 import std.crypto
 import std.encoding
+import std.io
+import std.net
 
 func h(s string) []byte {
     return try hex.Decode(s) else []
@@ -88,7 +88,14 @@ func main() void! {
     var binderKey = tls.DeriveSecret("sha256", early2, "res binder", empty)?
     show("binder key", binderKey)
     var fk = tls.ExpandLabel("sha256", binderKey, "finished", [], 32)?
-    show("binder", hmac.Sum("sha256", fk, h("63224b2e4573f2d3454ca84b9d009a04f6be9e05711a8396473aefa01e924a14"))?)
+    show(
+        "binder",
+        hmac.Sum(
+            "sha256",
+            fk,
+            h("63224b2e4573f2d3454ca84b9d009a04f6be9e05711a8396473aefa01e924a14"),
+        )?,
+    )
     var thCH = h("08ad0fa05d7c7233b1775ba2ff9f4c5b8b59276b7f227f13a976245f5d960913")
     show("c e traffic", tls.DeriveSecret("sha256", early2, "c e traffic", thCH)?)
     show("e exp master", tls.DeriveSecret("sha256", early2, "e exp master", thCH)?)
@@ -101,5 +108,13 @@ func main() void! {
     show("resumed c ap traffic", tls.DeriveSecret("sha256", master2, "c ap traffic", thSF2)?)
     show("resumed s ap traffic", tls.DeriveSecret("sha256", master2, "s ap traffic", thSF2)?)
     show("resumed exp master", tls.DeriveSecret("sha256", master2, "exp master", thSF2)?)
-    show("resumed res master", tls.DeriveSecret("sha256", master2, "res master", h("c3c122e0bd907a4a3ff6112d8fd53dbf89c773d9552e8b6b9d56d361b3a97bf6"))?)
+    show(
+        "resumed res master",
+        tls.DeriveSecret(
+            "sha256",
+            master2,
+            "res master",
+            h("c3c122e0bd907a4a3ff6112d8fd53dbf89c773d9552e8b6b9d56d361b3a97bf6"),
+        )?,
+    )
 }

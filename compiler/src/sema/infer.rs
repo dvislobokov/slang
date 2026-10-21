@@ -109,7 +109,7 @@ impl<'a> Sema<'a> {
 
     /// Infers the type arguments of a call of `t` from `args`; typed
     /// arguments are left in `typed` for the caller.
-    fn infer_type_args(&mut self, t: u32, decl: &ast::FuncDecl, args: &[ast::Expr], typed: &mut [Option<hir::Expr>], span: Span) -> Option<Vec<TypeId>> {
+    fn infer_type_args(&mut self, t: u32, decl: &ast::FuncDecl, args: &[ast::Expr], typed: &mut [Option<hir::Expr>], span: Span, hint: Option<TypeId>) -> Option<Vec<TypeId>> {
         let tm = &self.gen.templates[t as usize];
         let names: Vec<String> = tm.generics.iter().map(|g| g.name.name.clone()).collect();
         let fname = tm.name.clone();
@@ -142,6 +142,15 @@ impl<'a> Sema<'a> {
         if bad {
             return None;
         }
+        // Type parameters only in the result: from the expected type
+        // (`return Nf()` in a function returning `Res<int>` or `Res<int>!`).
+        if let (true, Some(h), Some(ret)) = (binds.iter().any(|b| b.is_none()), hint, decl.ret.as_ref()) {
+            let h = match (&ret.kind, self.tt.fallible_inner(h)) {
+                (ast::TypeKind::Fallible(_), _) | (_, None) => h,
+                (_, Some(inner)) => inner,
+            };
+            let _ = self.unify(ret, h, &names, &mut binds);
+        }
         if let Some(k) = binds.iter().position(|b| b.is_none()) {
             self.err(format!("cannot infer type parameter {} of {fname} from the arguments; write {fname}<...>(...)", names[k]), span);
             return None;
@@ -152,6 +161,7 @@ impl<'a> Sema<'a> {
     /// Call of generic function or method template `t`. `recv` is the
     /// receiver (`*S`) for non-static methods.
     pub(crate) fn generic_call(&mut self, t: u32, targs: Option<&[ast::TypeExpr]>, recv: Option<hir::Expr>, args: &[ast::Expr], span: Span) -> hir::Expr {
+        let hint = self.gen.ret_hint.take();
         if let Some(e) = self.reflect_generic_call(t, span) {
             return e;
         }
@@ -176,7 +186,7 @@ impl<'a> Sema<'a> {
                 self.err(format!("wrong number of arguments in call to {name}: expected {}, got {}", decl.params.len(), args.len()), span);
                 None
             }
-            None => self.infer_type_args(t, decl, args, &mut typed, span),
+            None => self.infer_type_args(t, decl, args, &mut typed, span, hint),
         };
         let checked = types.clone();
         let fid = match types.and_then(|ts| if ts.is_empty() { self.plain_std_inst(t, span).or_else(|| self.instantiate(t, ts, span)) } else { self.instantiate(t, ts, span) }) {

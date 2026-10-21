@@ -8,6 +8,7 @@ func main() {
     var s = "b"
     switch s {
         case "a".."c": println("early")
-        default: println("late")
+        default:
+            println("late")
     }
 }

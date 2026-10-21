@@ -1,0 +1,40 @@
+// test: io.BoundedPipe holds at most its capacity: Send waits for the reader (back-pressure), Write fails with "io: pipe full", Close ends the stream after the buffered data
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib2.io_bounded_pipe
+
+import std
+import std.io
+
+async func main() void! {
+    var p = io.BoundedPipe(4)
+    var r = p.Reader
+    var w = p.Writer
+    // a synchronous write that does not fit fails, one that fits succeeds
+    try w.WriteString("too long") catch err {
+        println("write:", err)
+    }
+    println("fits:", w.WriteString("ab")?)
+    // Send waits while the pipe is full: the writer is paced by the reader
+    var writer = task.Spawn(async func() int {
+        var n = try await w.Send(strings.Bytes("cdefghijkl")) else -1
+        try w.Close() catch err {}
+        return n
+    })
+    await task.Delay(20)
+    var most = 0
+    var all = ""
+    for {
+        // never more than the capacity is buffered
+        var chunk = await r.Recv(100)?
+        if len(chunk) == 0 {
+            break
+        }
+        if len(chunk) > most {
+            most = len(chunk)
+        }
+        all += strings.FromBytes(chunk)
+        await task.Yield()
+    }
+    println("read:", all, "sent:", await writer, "largest read:", most)
+}

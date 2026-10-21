@@ -1,0 +1,124 @@
+# CI matrix of docs/PLATFORMS.md: the compiler and the runtime on every
+# tier-1 host, plus cross builds from Linux (Windows executables run under
+# Wine, macOS objects without an SDK).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (LLVM 18, clang, lld)
+        run: sudo ./scripts/setup.sh
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Runtime
+        run: make -C runtime -j"$(nproc)" && make -C runtime test
+      - name: Runtime under ThreadSanitizer
+        if: matrix.arch == 'amd64'
+        run: make -C runtime tsan
+      - name: Compiler, examples, spec corpus
+        run: cargo build --workspace && cargo test --workspace
+      - name: Hello world size
+        run: cargo build --release && ./scripts/bench-size.sh
+
+  macos:
+    name: macos-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-14
+          - arch: amd64
+            os: macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: LLVM 18
+        run: |
+          brew install llvm@18 lld
+          echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+          echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Runtime (kqueue poller, POSIX layer)
+        run: make -C runtime CC=clang -j"$(sysctl -n hw.ncpu)" && make -C runtime CC=clang test
+      - name: Compiler, examples, spec corpus
+        run: cargo build --workspace && cargo test --workspace
+
+  windows:
+    name: windows-amd64
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-lld
+            mingw-w64-x86_64-llvm
+      - name: Runtime (MinGW ABI) and its C tests, natively
+        # CROSS selects the Windows build (win32.c, net_win32.c, the WSAPoll
+        # poller); WINE= runs the test binaries directly instead of under Wine.
+        run: make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)" && make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
+      - name: LLVM 18 for the compiler
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "18.1"
+          directory: ${{ runner.temp }}/llvm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compiler and examples
+        shell: pwsh
+        env:
+          LLVM_SYS_180_PREFIX: ${{ runner.temp }}/llvm
+        run: |
+          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+          cargo build --workspace
+          cargo test --workspace
+
+  cross:
+    name: cross (linux -> windows, macos)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (LLVM 18, mingw-w64, Wine)
+        run: |
+          sudo ./scripts/setup.sh
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 wine64
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Runtime for Windows (-Werror) and its C tests under Wine
+        run: |
+          make -C runtime -j"$(nproc)"
+          make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)"
+          make -C runtime CROSS=x86_64-w64-mingw32 test-wine
+      - name: Examples built for windows-amd64 and run under Wine; macos-arm64 objects
+        run: cargo test -p slang --test cross -- --include-ignored
+      - name: Windows hello world size
+        run: cargo build --release && ./scripts/bench-size.sh

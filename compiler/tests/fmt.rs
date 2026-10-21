@@ -1,6 +1,6 @@
 //! `slang fmt`: golden cases (`tests/fixtures/fmt/NN_name.in.sl` ->
 //! `NN_name.out.sl`) plus idempotence and round-trip over every `.sl` file
-//! of the repository's examples, benchmarks and spec corpus.
+//! of the repository's examples, benchmarks, spec corpus and std sources.
 
 use slang::fmt::{format_source, normalized, FmtError};
 use std::path::{Path, PathBuf};
@@ -51,7 +51,7 @@ fn golden_cases() {
 #[test]
 fn corpus_is_idempotent_and_preserves_the_syntax_tree() {
     let mut files = Vec::new();
-    for d in ["examples", "benchmarks", "tests/spec"] {
+    for d in ["examples", "benchmarks", "tests/spec", "compiler/src/sema/stdlib_src", "compiler/src/sema/reflect_src"] {
         sl_files(&repo().join(d), &mut files);
     }
     files.sort();

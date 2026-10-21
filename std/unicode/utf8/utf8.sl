@@ -1,0 +1,282 @@
+namespace std.unicode.utf8
+
+// std.unicode.utf8: UTF-8 encoding and decoding (Go's unicode/utf8).
+// Invalid input decodes as (RuneError, 1); surrogates and overlong forms
+// are invalid. Decoders return (rune, size) tuples:
+// `var (r, n) = utf8.DecodeRune(b)`.
+
+// Bytes needed to encode r, or -1 if r is not a valid code point.
+func RuneLen(r char) int {
+    var c = int(r)
+    if c < 0 {
+        return -1
+    }
+    if c < 0x80 {
+        return 1
+    }
+    if c < 0x800 {
+        return 2
+    }
+    if c >= 0xD800 && c <= 0xDFFF {
+        return -1
+    }
+    if c < 0x10000 {
+        return 3
+    }
+    if c <= 0x10FFFF {
+        return 4
+    }
+    return -1
+}
+
+// True if r can be encoded (not a surrogate, at most U+10FFFF).
+func ValidRune(r char) bool {
+    var c = int(r)
+    return (c >= 0 && c < 0xD800) || (c > 0xDFFF && c <= 0x10FFFF)
+}
+
+// Appends the encoding of r (RuneError if r is invalid) to b.
+func AppendRune(b []byte, r char) []byte {
+    var c = int(r)
+    if !ValidRune(r) {
+        c = 0xFFFD
+    }
+    var out = b
+    if c < 0x80 {
+        out = append(out, byte(c))
+    } else if c < 0x800 {
+        out = append(out, byte(0xC0 | (c >> 6)))
+        out = append(out, byte(0x80 | (c & 0x3F)))
+    } else if c < 0x10000 {
+        out = append(out, byte(0xE0 | (c >> 12)))
+        out = append(out, byte(0x80 | ((c >> 6) & 0x3F)))
+        out = append(out, byte(0x80 | (c & 0x3F)))
+    } else {
+        out = append(out, byte(0xF0 | (c >> 18)))
+        out = append(out, byte(0x80 | ((c >> 12) & 0x3F)))
+        out = append(out, byte(0x80 | ((c >> 6) & 0x3F)))
+        out = append(out, byte(0x80 | (c & 0x3F)))
+    }
+    return out
+}
+
+// The UTF-8 encoding of r (RuneError's if r is invalid).
+func EncodeRune(r char) []byte {
+    var b []byte = []
+    return AppendRune(b, r)
+}
+
+// Decodes from the bytes b0..b3 (n of them available).
+func decode(b0 int, b1 int, b2 int, b3 int, n int) (char, int) {
+    var bad = ('\u{FFFD}', 1)
+    if b0 < 0x80 {
+        return (char(b0), 1)
+    }
+    var cont1 = n > 1 && (b1 & 0xC0) == 0x80
+    if b0 >= 0xC2 && b0 <= 0xDF {
+        if !cont1 {
+            return bad
+        }
+        return (char(((b0 & 0x1F) << 6) | (b1 & 0x3F)), 2)
+    }
+    var cont2 = n > 2 && (b2 & 0xC0) == 0x80
+    if b0 >= 0xE0 && b0 <= 0xEF {
+        if !cont1 || !cont2 || (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 > 0x9F) {
+            return bad
+        }
+        return (char(((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)), 3)
+    }
+    var cont3 = n > 3 && (b3 & 0xC0) == 0x80
+    if b0 >= 0xF0 && b0 <= 0xF4 {
+        if !cont1 || !cont2 || !cont3 || (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
+            return bad
+        }
+        return (char(
+            ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F),
+        ), 4)
+    }
+    return bad
+}
+
+func at(b []byte, i int) int {
+    if i < len(b) {
+        return int(b[i])
+    }
+    return 0
+}
+
+func atStr(s string, i int) int {
+    if i < len(s) {
+        return int(s[i])
+    }
+    return 0
+}
+
+// The first rune of b and its size; (RuneError, 0) for empty b.
+func DecodeRune(b []byte) (char, int) {
+    return DecodeRuneIn(b, 0)
+}
+
+// The rune starting at byte i of b and its size ((RuneError, 0) at the end).
+func DecodeRuneIn(b []byte, i int) (char, int) {
+    if i >= len(b) {
+        return ('\u{FFFD}', 0)
+    }
+    return decode(int(b[i]), at(b, i + 1), at(b, i + 2), at(b, i + 3), len(b) - i)
+}
+
+// The first rune of s and its size; (RuneError, 0) for "".
+func DecodeRuneInString(s string) (char, int) {
+    return DecodeRuneAt(s, 0)
+}
+
+// The rune starting at byte i of s and its size ((RuneError, 0) at the end).
+func DecodeRuneAt(s string, i int) (char, int) {
+    if i >= len(s) {
+        return ('\u{FFFD}', 0)
+    }
+    return decode(int(s[i]), atStr(s, i + 1), atStr(s, i + 2), atStr(s, i + 3), len(s) - i)
+}
+
+// The last rune of b and its size; (RuneError, 0) for empty b.
+func DecodeLastRune(b []byte) (char, int) {
+    var n = len(b)
+    if n == 0 {
+        return ('\u{FFFD}', 0)
+    }
+    var start = n - 1
+    var lim = n - 4
+    if lim < 0 {
+        lim = 0
+    }
+    for start > lim && !RuneStart(b[start]) {
+        start -= 1
+    }
+    var (r, size) = DecodeRuneIn(b, start)
+    if start + size != n {
+        return ('\u{FFFD}', 1)
+    }
+    return (r, size)
+}
+
+// The last rune of s and its size; (RuneError, 0) for "".
+func DecodeLastRuneInString(s string) (char, int) {
+    var n = len(s)
+    if n == 0 {
+        return ('\u{FFFD}', 0)
+    }
+    var start = n - 1
+    var lim = n - 4
+    if lim < 0 {
+        lim = 0
+    }
+    for start > lim && !RuneStart(s[start]) {
+        start -= 1
+    }
+    var (r, size) = DecodeRuneAt(s, start)
+    if start + size != n {
+        return ('\u{FFFD}', 1)
+    }
+    return (r, size)
+}
+
+// True if c can start an encoded rune (is not a continuation byte).
+func RuneStart(c byte) bool {
+    return (c & 0xC0) != 0x80
+}
+
+// True if b is entirely valid UTF-8.
+func Valid(b []byte) bool {
+    var i = 0
+    for i < len(b) {
+        if b[i] < 0x80 {
+            i += 1
+            continue
+        }
+        var (r, size) = DecodeRuneIn(b, i)
+        if r == '\u{FFFD}' && size == 1 {
+            return false
+        }
+        i += size
+    }
+    return true
+}
+
+// True if s is entirely valid UTF-8.
+func ValidString(s string) bool {
+    var i = 0
+    for i < len(s) {
+        if s[i] < 0x80 {
+            i += 1
+            continue
+        }
+        var (r, size) = DecodeRuneAt(s, i)
+        if r == '\u{FFFD}' && size == 1 {
+            return false
+        }
+        i += size
+    }
+    return true
+}
+
+// Number of runes in b (each invalid byte counts as one).
+func RuneCount(b []byte) int {
+    var n = 0
+    var i = 0
+    for i < len(b) {
+        if b[i] < 0x80 {
+            i += 1
+        } else {
+            var (_, size) = DecodeRuneIn(b, i)
+            i += size
+        }
+        n += 1
+    }
+    return n
+}
+
+// Number of runes in s (each invalid byte counts as one).
+func RuneCountInString(s string) int {
+    var n = 0
+    var i = 0
+    for i < len(s) {
+        if s[i] < 0x80 {
+            i += 1
+        } else {
+            var (_, size) = DecodeRuneAt(s, i)
+            i += size
+        }
+        n += 1
+    }
+    return n
+}
+
+// True if b begins with a complete (possibly invalid) encoding.
+func FullRune(b []byte) bool {
+    if len(b) == 0 {
+        return false
+    }
+    var (r, size) = DecodeRune(b)
+    if r != '\u{FFFD}' || size != 1 {
+        return true
+    }
+    // A truncated valid prefix is not full.
+    var c = int(b[0])
+    var need = 1
+    if c >= 0xC2 && c <= 0xDF {
+        need = 2
+    } else if c >= 0xE0 && c <= 0xEF {
+        need = 3
+    } else if c >= 0xF0 && c <= 0xF4 {
+        need = 4
+    }
+    if len(b) >= need {
+        return true
+    }
+    for i in 1..len(b) {
+        if (b[i] & 0xC0) != 0x80 {
+            return true
+        }
+    }
+    return false
+}

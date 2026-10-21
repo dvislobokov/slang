@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.async2.task_leak_check
 
-import std.io
 import std
+import std.io
 
 struct Payload {
     Data []int

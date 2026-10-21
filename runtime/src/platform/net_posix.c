@@ -851,6 +851,4 @@ int slang__plat_interfaces(char ***out, int *n) {
     return 0;
 }
 
-#else
-#error "platform/net_posix.c: unsupported platform"
-#endif
+#endif /* POSIX; Windows: net_win32.c */

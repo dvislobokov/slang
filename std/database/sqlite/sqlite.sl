@@ -1,0 +1,501 @@
+namespace std.database.sqlite
+
+// std.database.sqlite: the SQLite driver of std.database.sql over the
+// system libsqlite3 (runtime/src/std_sqlite.c; the compiler links
+// -lsqlite3 only into programs that use this namespace). SQLite calls are
+// synchronous: they run on the calling worker thread.
+//
+// DSN: a file path, ":memory:", or a "file:" URI (SQLite URI parameters
+// such as mode=ro, cache=shared), plus driver options prefixed with "_":
+// _busy_timeout=ms (default 5000), _foreign_keys=on|off,
+// _journal_mode=WAL|DELETE|..., _synchronous=NORMAL|FULL|...,
+// _txlock=deferred|immediate|exclusive.
+//
+// Values: INTEGER -> int, REAL -> float, TEXT -> string (a time.Time when
+// the declared column type contains DATE or TIME and the text parses),
+// BLOB -> []byte, NULL -> nil; a BOOLEAN column gives bool. Arguments:
+// bool binds 0/1, time.Time binds text "2006-01-02 15:04:05.999999999-07:00".
+
+// A SQLite error with its (extended) result code.
+struct Error {
+    Code         int
+    ExtendedCode int
+    Msg          string
+
+    func Message() string {
+        return "sqlite: " + this.Msg
+    }
+
+    // UNIQUE, NOT NULL, CHECK, FOREIGN KEY ... violations.
+    func IsConstraint() bool {
+        return this.Code == 19
+    }
+}
+
+// Whether the runtime was built with SQLite.
+func Available() bool {
+    return rtAvailable()
+}
+
+// The SQLite library version ("3.45.1").
+func Version() string {
+    return rtVersion()
+}
+
+// The driver (register it: sql.Register("sqlite", sqlite.Driver{})).
+struct Driver {
+    func Open(dsn string) Task<std.database.sql.DriverConn!> {
+        return openConn(dsn)
+    }
+}
+
+// Opens a pool over the driver without registering it. An in-memory
+// database (":memory:") is private to its connection, so the pool is
+// limited to one connection then.
+func Open(dsn string) *std.database.sql.DB {
+    var db = std.database.sql.OpenDriver(Driver{}, dsn)
+    if dsn == ":memory:" ||
+        std.strings.Contains(dsn, "mode=memory") && !std.strings.Contains(dsn, "cache=shared") {
+        db.SetMaxOpenConns(1)
+        db.SetMaxIdleConns(1)
+        db.SetHealthCheck(-1)
+    }
+    return db
+}
+
+struct options {
+    path    string
+    busy    int = 5000
+    pragmas []string
+    txlock  string = "DEFERRED"
+}
+
+func parseDSN(dsn string) options! {
+    var o = options{path: dsn}
+    var q = std.strings.Index(dsn, "?")
+    if q < 0 {
+        return o
+    }
+    var keep []string = []
+    for kv in std.strings.Split(dsn[q + 1..], "&") {
+        if kv == "" {
+            continue
+        }
+        var eq = std.strings.Index(kv, "=")
+        var k = kv
+        var v = ""
+        if eq >= 0 {
+            k = kv[..eq]
+            v = kv[eq + 1..]
+        }
+        if !std.strings.HasPrefix(k, "_") {
+            keep = append(keep, kv)
+            continue
+        }
+        if k == "_busy_timeout" {
+            o.busy = std.strconv.Atoi(v)?("sqlite: _busy_timeout")
+        } else if k == "_foreign_keys" || k == "_fk" {
+            o.pragmas = append(o.pragmas, "PRAGMA foreign_keys = " + v)
+        } else if k == "_journal_mode" || k == "_journal" {
+            o.pragmas = append(o.pragmas, "PRAGMA journal_mode = " + v)
+        } else if k == "_synchronous" || k == "_sync" {
+            o.pragmas = append(o.pragmas, "PRAGMA synchronous = " + v)
+        } else if k == "_txlock" {
+            var t = std.strings.ToUpper(v)
+            if t != "DEFERRED" && t != "IMMEDIATE" && t != "EXCLUSIVE" {
+                return error("sqlite: bad _txlock " + v)
+            }
+            o.txlock = t
+        } else {
+            return error("sqlite: unknown DSN option " + k)
+        }
+    }
+    var base = dsn[..q]
+    if len(keep) > 0 {
+        if !std.strings.HasPrefix(base, "file:") {
+            base = "file:" + base
+        }
+        base = base + "?" + std.strings.Join(keep, "&")
+    }
+    o.path = base
+    return o
+}
+
+async func openConn(dsn string) std.database.sql.DriverConn! {
+    var o = parseDSN(dsn)?
+    var h = try rtOpen(o.path, 0) catch err {
+        return Error{Code: 14, ExtendedCode: 14, Msg: err.Message()}
+    }
+    var c = new conn{h: h, txlock: o.txlock}
+    rtBusyTimeout(h, o.busy)
+    for p in o.pragmas {
+        try rtExec(h, p) catch err {
+            return c.fail(err)
+        }
+    }
+    return c
+}
+
+struct conn {
+    h      int
+    bad    bool
+    txlock string
+
+    func Drop() {
+        if this.h != 0 {
+            rtClose(this.h)
+            this.h = 0
+        }
+    }
+
+    func fail(err error) error {
+        var code = rtErrcode(this.h)
+        return Error{Code: code % 256, ExtendedCode: code, Msg: err.Message()}
+    }
+
+    func Prepare(query string) Task<std.database.sql.DriverStmt!> {
+        return this.prepare(query)
+    }
+
+    async func prepare(query string) std.database.sql.DriverStmt! {
+        return this.newStmt(query)?
+    }
+
+    func newStmt(query string) *stmt! {
+        if this.h == 0 {
+            return std.database.sql.ErrConnDone
+        }
+        var h = try rtPrepare(this.h, query) catch err {
+            return this.fail(err)
+        }
+        return new stmt{c: this, h: h, n: rtParamCount(h), q: query}
+    }
+
+    func Exec(query string, args []any) Task<std.database.sql.Result!> {
+        return this.exec(query, args)
+    }
+
+    async func exec(query string, args []any) std.database.sql.Result! {
+        if this.h == 0 {
+            return std.database.sql.ErrConnDone
+        }
+        if len(args) == 0 {
+            try rtExec(this.h, query) catch err {
+                return this.fail(err)
+            }
+            return std.database.sql.Result{
+                RowsAffected: rtChanges(this.h),
+                LastInsertId: rtLastInsertId(this.h),
+            }
+        }
+        var s = this.newStmt(query)?
+        defer s.finalize()
+        return s.run(args)?
+    }
+
+    func Query(query string, args []any) Task<std.database.sql.DriverRows!> {
+        return this.query(query, args)
+    }
+
+    async func query(query string, args []any) std.database.sql.DriverRows! {
+        var s = this.newStmt(query)?
+        var r = try s.open(args) catch err {
+            _ = s.Close()
+            return err
+        }
+        r.ownStmt = true
+        return r
+    }
+
+    func Begin() Task<std.database.sql.DriverTx!> {
+        return this.begin()
+    }
+
+    async func begin() std.database.sql.DriverTx! {
+        try rtExec(this.h, "BEGIN " + this.txlock) catch err {
+            return this.fail(err)
+        }
+        return new tx{c: this}
+    }
+
+    func Ping() Task<void!> {
+        return this.ping()
+    }
+
+    async func ping() void! {
+        if this.h == 0 {
+            return std.database.sql.ErrConnDone
+        }
+    }
+
+    func Close() void! {
+        if this.h != 0 {
+            rtClose(this.h)
+            this.h = 0
+        }
+    }
+
+    func IsValid() bool {
+        return this.h != 0 && !this.bad
+    }
+
+    func Placeholder() int {
+        return std.database.sql.PlaceholderQuestion
+    }
+
+    // Whether the connection is outside a transaction.
+    func Autocommit() bool {
+        return this.h == 0 || rtAutocommit(this.h)
+    }
+}
+
+struct tx {
+    c *conn
+
+    func Commit() Task<void!> {
+        return this.end("COMMIT")
+    }
+
+    func Rollback() Task<void!> {
+        return this.end("ROLLBACK")
+    }
+
+    async func end(sql string) void! {
+        if this.c.h == 0 {
+            return std.database.sql.ErrConnDone
+        }
+        if rtAutocommit(this.c.h) {
+            // SQLite already ended the transaction (e.g. after an error).
+            if sql == "ROLLBACK" {
+                return
+            }
+        }
+        try rtExec(this.c.h, sql) catch err {
+            return this.c.fail(err)
+        }
+    }
+}
+
+struct stmt {
+    c    *conn
+    h    int
+    n    int
+    q    string
+    busy bool
+
+    func Drop() {
+        if this.h != 0 {
+            rtFinalize(this.h)
+            this.h = 0
+        }
+    }
+
+    func NumInput() int {
+        return this.n
+    }
+
+    func Close() void! {
+        this.finalize()
+    }
+
+    func finalize() {
+        if this.h != 0 {
+            rtFinalize(this.h)
+            this.h = 0
+        }
+    }
+
+    func bind(args []any) void! {
+        if this.h == 0 {
+            return error("sqlite: statement is closed")
+        }
+        if len(args) != this.n {
+            return error(
+                "sqlite: expected " +
+                    std.fmt.Format("{0}", this.n) +
+                    " arguments, got " +
+                    std.fmt.Format("{0}", len(args)),
+            )
+        }
+        rtReset(this.h)
+        for i, a in args {
+            var k = i + 1
+            switch a {
+                case nil:
+                    rtBindNull(this.h, k)?
+                case int n:
+                    rtBindInt(this.h, k, n)?
+                case float f:
+                    rtBindFloat(this.h, k, f)?
+                case bool b:
+                    if b {
+                        rtBindInt(this.h, k, 1)?
+                    } else {
+                        rtBindInt(this.h, k, 0)?
+                    }
+                case string s:
+                    rtBindText(this.h, k, s)?
+                case []byte b:
+                    rtBindBlob(this.h, k, b)?
+                case std.time.Time t:
+                    rtBindText(this.h, k, t.Format("2006-01-02 15:04:05.999999999-07:00"))?
+                default:
+                    return error(
+                        "sqlite: unsupported argument " +
+                            std.fmt.Format("{0}", i + 1) +
+                            " of type " +
+                            typeof(a).Name,
+                    )
+            }
+        }
+    }
+
+    func run(args []any) std.database.sql.Result! {
+        if this.busy {
+            // The cached statement is still being read: use a fresh one.
+            var s = this.c.newStmt(this.q)?
+            defer s.finalize()
+            return s.run(args)?
+        }
+        this.bind(args)?
+        for {
+            var r = try rtStep(this.h) catch err {
+                rtReset(this.h)
+                return this.c.fail(err)
+            }
+            if r == 0 {
+                break
+            }
+        }
+        rtReset(this.h)
+        return std.database.sql.Result{
+            RowsAffected: rtChanges(this.c.h),
+            LastInsertId: rtLastInsertId(this.c.h),
+        }
+    }
+
+    func Exec(args []any) Task<std.database.sql.Result!> {
+        return this.exec(args)
+    }
+
+    async func exec(args []any) std.database.sql.Result! {
+        return this.run(args)?
+    }
+
+    func open(args []any) *rows! {
+        this.bind(args)?
+        this.busy = true
+        var cols []string = []
+        var types []string = []
+        var nc = rtColumnCount(this.h)
+        for i in 0..nc {
+            cols = append(cols, rtColumnName(this.h, i))
+            types = append(types, std.strings.ToUpper(rtColumnDecltype(this.h, i)))
+        }
+        return new rows{s: this, cols: cols, types: types}
+    }
+
+    func Query(args []any) Task<std.database.sql.DriverRows!> {
+        return this.query(args)
+    }
+
+    async func query(args []any) std.database.sql.DriverRows! {
+        if this.busy {
+            // Same statement already being iterated: prepare another one.
+            var s = this.c.newStmt(this.q)?
+            var r = try s.open(args) catch err {
+                _ = s.Close()
+                return err
+            }
+            r.ownStmt = true
+            return r
+        }
+        return this.open(args)?
+    }
+}
+
+struct rows {
+    s       *stmt
+    cols    []string
+    types   []string
+    done    bool
+    ownStmt bool
+
+    func Columns() []string {
+        return this.cols
+    }
+
+    func ColumnTypes() []string {
+        return this.types
+    }
+
+    func Next(dest []any) Task<bool!> {
+        return this.next(dest)
+    }
+
+    async func next(dest []any) bool! {
+        if this.done {
+            return false
+        }
+        var h = this.s.h
+        var r = try rtStep(h) catch err {
+            this.finish()
+            return this.s.c.fail(err)
+        }
+        if r == 0 {
+            this.finish()
+            return false
+        }
+        for i in 0..len(this.cols) {
+            var t = rtColumnType(h, i)
+            var decl = this.types[i]
+            if t == 1 {
+                var n = rtColumnInt(h, i)
+                if std.strings.Contains(decl, "BOOL") {
+                    dest[i] = n != 0
+                } else {
+                    dest[i] = n
+                }
+            } else if t == 2 {
+                dest[i] = rtColumnFloat(h, i)
+            } else if t == 3 {
+                var s = rtColumnText(h, i)
+                if std.strings.Contains(decl, "DATE") || std.strings.Contains(decl, "TIME") {
+                    var tm = try std.database.sql.ParseTimeText(s) catch err {
+                        dest[i] = s
+                        continue
+                    }
+                    dest[i] = tm
+                } else {
+                    dest[i] = s
+                }
+            } else if t == 4 {
+                dest[i] = rtColumnBlob(h, i)
+            } else {
+                dest[i] = nil
+            }
+        }
+        return true
+    }
+
+    func finish() {
+        if !this.done {
+            this.done = true
+            this.s.busy = false
+            if this.s.h != 0 {
+                rtReset(this.s.h)
+            }
+            if this.ownStmt {
+                _ = this.s.Close()
+            }
+        }
+    }
+
+    func Close() void! {
+        this.finish()
+    }
+
+    func Drop() {
+        this.finish()
+    }
+}

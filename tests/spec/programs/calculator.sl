@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.programs.calculator
 
-import std.io
 import std
+import std.io
 
 enum Token {
     Num(value int)
@@ -19,7 +19,10 @@ enum Expr {
     Bin(op char, left *Expr, right *Expr)
 }
 
-func Ptr(e Expr) *Expr { var b = e; return &b }
+func Ptr(e Expr) *Expr {
+    var b = e
+    return &b
+}
 
 func IsDigit(c char) bool { return c >= '0' && c <= '9' }
 
@@ -43,7 +46,8 @@ func Tokenize(src string) []Token! {
             case '+', '-', '*', '/': toks = append(toks, Token.Op(c))
             case '(': toks = append(toks, Token.LParen)
             case ')': toks = append(toks, Token.RParen)
-            default: return error(fmt.Format("unexpected '{0}' at {1}", c, i))
+            default:
+                return error(fmt.Format("unexpected '{0}' at {1}", c, i))
         }
     }
     if inNum { toks = append(toks, Token.Num(num)) }
@@ -53,7 +57,7 @@ func Tokenize(src string) []Token! {
 
 struct Parser {
     toks []Token
-    pos int
+    pos  int
 
     func Peek() Token { return this.toks[this.pos] }
 
@@ -66,14 +70,16 @@ struct Parser {
     func OpSym() char {
         switch this.Peek() {
             case Token.Op(s): return s
-            default: return ' '
+            default:
+                return ' '
         }
     }
 
     func AtEnd() bool {
         switch this.Peek() {
             case Token.End: return true
-            default: return false
+            default:
+                return false
         }
     }
 
@@ -115,9 +121,11 @@ struct Parser {
                 var e = this.Expr()?
                 switch this.Next() {
                     case Token.RParen: return e
-                    default: return error("missing )")
+                    default:
+                        return error("missing )")
                 }
-            default: return error("unexpected end")
+            default:
+                return error("unexpected end")
         }
     }
 }
@@ -137,7 +145,8 @@ func Eval(e *Expr) int! {
                     if b == 0 { return error("division by zero") }
                     return a / b
             }
-        default: return error("bad expression")
+        default:
+            return error("bad expression")
     }
 }
 
@@ -146,7 +155,8 @@ func Show(e *Expr) string {
         case Expr.Lit(v): return fmt.Format("{0}", v)
         case Expr.Neg(x): return "-" + Show(x)
         case Expr.Bin(op, l, r): return "(" + Show(l) + " " + string(op) + " " + Show(r) + ")"
-        default: return "?"
+        default:
+            return "?"
     }
 }
 
@@ -160,7 +170,17 @@ func Calc(src string) int! {
 }
 
 func main() {
-    var inputs = ["1 + 2 * 3", "(1 + 2) * 3", "10 / (5 - 5)", "2 * -3 + 20 / 4", "7 $ 3", "(4 + 4", "8 - 3 - 2", "1 2", "100"]
+    var inputs = [
+        "1 + 2 * 3",
+        "(1 + 2) * 3",
+        "10 / (5 - 5)",
+        "2 * -3 + 20 / 4",
+        "7 $ 3",
+        "(4 + 4",
+        "8 - 3 - 2",
+        "1 2",
+        "100",
+    ]
     var ok = 0
     for src in inputs {
         println(src)

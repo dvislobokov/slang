@@ -1,0 +1,43 @@
+namespace std.math.bits
+
+// std.math.bits (Go's math/bits): the single-value functions are C
+// externs over compiler builtins (runtime/src/std_math_bits.c); the
+// multi-word arithmetic with carries/borrows returns tuples:
+// `var (sum, carry) = bits.Add64(x, y, 0)`.
+
+// x + y + carry (carry must be 0 or 1): (sum, carryOut).
+func Add64(x uint, y uint, carry uint) (uint, uint) {
+    var sum = x + y + carry
+    var carryOut = ((x & y) | ((x | y) & (sum ^ 18446744073709551615))) >> 63
+    return (sum, carryOut)
+}
+
+// x - y - borrow (borrow must be 0 or 1): (diff, borrowOut).
+func Sub64(x uint, y uint, borrow uint) (uint, uint) {
+    var diff = x - y - borrow
+    var borrowOut = (((x ^ 18446744073709551615) & y) |
+        (((x ^ y) ^ 18446744073709551615) & diff)) >> 63
+    return (diff, borrowOut)
+}
+
+// The 128-bit product x * y: (hi, lo).
+func Mul64(x uint, y uint) (uint, uint) {
+    return (rtMulHi(x, y), x * y)
+}
+
+// (hi, lo) / y: (quo, rem). Panics if y == 0 or y <= hi (the quotient
+// would overflow).
+func Div64(hi uint, lo uint, y uint) (uint, uint) {
+    return (rtDivQuo(hi, lo, y), rtDivRem(hi, lo, y))
+}
+
+// 32-bit variants.
+func Add32(x uint32, y uint32, carry uint32) (uint32, uint32) {
+    var s = uint(x) + uint(y) + uint(carry)
+    return (uint32(s & 4294967295), uint32(s >> 32))
+}
+
+func Mul32(x uint32, y uint32) (uint32, uint32) {
+    var p = uint(x) * uint(y)
+    return (uint32(p >> 32), uint32(p & 4294967295))
+}

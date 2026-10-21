@@ -1,0 +1,59 @@
+// test: interior pointers kept in locals pin their owner: slice backing (survives append/reassignment), pointer, variable cell, another interior variable
+// status: passing
+// run-flags: --leak-check
+namespace spec.pointers.interior_pointer_local
+
+import std.io
+
+struct P {
+    X    int
+    Name string
+}
+
+struct Box {
+    Items []P
+    Inner P
+}
+
+func bump(p *P) {
+    p.X += 1
+}
+
+func get(b *Box) *Box {
+    return b
+}
+
+func main() {
+    var xs = [P{X: 1, Name: "a"}, P{X: 2, Name: "b"}]
+    var p = &xs[1]
+    xs = append(xs, P{X: 3, Name: "c"}) // new backing: p keeps the old one alive
+    xs[1].X = 99
+    p.X += 10
+    bump(p)
+    println(p.X, p.Name, xs[1].X)
+    var b = new Box{Items: [P{X: 5, Name: "e"}]}
+    var q = &b.Inner
+    q.Name = "inner"
+    var r = &b.Items[0]
+    b = nil // q and r keep the box / the slice alive
+    println(q.Name, r.X, r.Name)
+    var s = P{X: 7, Name: "s"}
+    var t = &s.X
+    *t = 8
+    println(s.X, *t)
+    for i in 0..3 {
+        var ys = [i, i * 2]
+        var e = &ys[1]
+        *e += 100
+        println(ys, *e)
+    }
+    var u = &xs[0]
+    u = &xs[2]
+    u = p
+    println(u.X, u == p)
+    u = nil
+    println(u == nil)
+    var w = &q.X
+    *w = 42
+    println(q.X)
+}

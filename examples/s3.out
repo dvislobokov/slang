@@ -1,0 +1,10 @@
+2026/q1.csv 22 text/csv
+region,total
+south,12
+
+listed 2026/q1.csv 22
+listed 2026/q2.csv 22
+missing: true
+presigned: true
+blob: hello false
+blob: hello false

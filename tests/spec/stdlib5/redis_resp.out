@@ -1,0 +1,54 @@
+status OK
+error (error) ERR unknown command 'FOO'
+int (integer) -42
+bulk "hello"
+bulk ""
+nil (nil)
+nil (nil)
+array [(integer) 1, "x", [nested]]
+nil (nil)
+double (double) 3.25
+double (double) inf
+double (double) -inf
+bool (true)
+bool (false)
+bignumber "3492890328409238509324850943850943825024385"
+verbatim "Some string"
+error (error) SYNTAX invalid syntax
+map {first => (integer) 1, "second" => ~[(integer) 2, (integer) 3]}
+push >["message", "ch", "hi!"]
+array [(integer) 2039, (integer) 9543]
+bulk "a\r\nb"
+error: redis: truncated reply
+error: redis: truncated reply
+error: redis: protocol error: unexpected reply type byte 63
+error: redis: protocol error: bad integer "12x"
+"*7\r\n$3\r\nSET\r\n$1\r\nk\r\n$2\r\n42\r\n$3\r\n2.5\r\n$1\r\n1\r\n$3\r\nraw\r\n$4\r\n1500\r\n"
+17 17 1.5 1.5
+[a 1 b ]
+1 [] 2
+true
+nil: true
+WRONGTYPE WRONGTYPE Operation against a key holding the wrong kind of value
+true WRONGTYPE
+redis: expected an array reply, got bulk
+|localhost:6379|| 0 0  0 0 0 0 plain
+|10.0.0.1:6380||pw 4 0  0 0 0 0 plain
+|[::1]:7000|alice|s3cr3t 2 3 app 250 2000 4 -1 plain
+|cache.example.com:6380|| 0 0  0 0 0 0 tls:cache.example.com skip=true
+unix|/var/run/redis.sock|| 5 0  0 0 0 0 plain
+|host:6379||secret 0 0  0 0 0 0 plain
+bad: redis: invalid URL scheme "http" (want redis, rediss or unix)
+bad: redis: invalid URL: parse "redis://h:port": invalid port ":port" after host
+bad: redis: invalid database number "x": strconv.Atoi: parsing "x": invalid syntax
+bad: redis: protocol must be 2 or 3
+"foo" 12182
+"bar" 5061
+"hello" 866
+"{user1000}.following" 3443
+"{user1000}.followers" 3443
+"foo{}{bar}" 8363
+"foo{{bar}}zap" 4015
+"foo{bar}{zap}" 5061
+"{}x" 10595
+"" 0

@@ -330,18 +330,26 @@ func encodeTo<T>(b []byte, v T, order ByteOrder) []byte {
         out = append(out, v)
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 {
         out = append(out, byte(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 {
         out = app16(order, out, uint16(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
         out = app32(order, out, uint32(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int {
         out = app64(order, out, uint(v))
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float {
         out = app64(order, out, std.math.Float64bits(v))
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         out = app32(order, out, std.math.Float32bits(v))
     } else {
-        panic("binary: cannot encode type " + std.reflect.TypeOf<T>().Name + " (fixed-size types only)")
+        panic(
+            "binary: cannot encode type " +
+                std.reflect.TypeOf<T>().Name +
+                " (fixed-size types only)",
+        )
     }
     return out
 }
@@ -399,7 +407,11 @@ func decodeFrom<T>(b []byte, pos *int, order ByteOrder, out *T) void! {
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         *out = std.math.Float32frombits(get32(order, take(b, pos, 4)?))
     } else {
-        panic("binary: cannot decode type " + std.reflect.TypeOf<T>().Name + " (fixed-size types only)")
+        panic(
+            "binary: cannot decode type " +
+                std.reflect.TypeOf<T>().Name +
+                " (fixed-size types only)",
+        )
     }
 }
 

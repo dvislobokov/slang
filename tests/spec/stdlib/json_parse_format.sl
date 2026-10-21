@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.json_parse_format
 
-import std.io
 import std.encoding
+import std.io
 
 struct User {
     @json(name: "id") Id int

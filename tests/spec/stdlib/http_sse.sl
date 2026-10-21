@@ -3,13 +3,13 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_sse
 
-import std.io
 import std
+import std.io
 import std.net
 
 struct Feed {
     connects int
-    lastIDs []string
+    lastIDs  []string
 }
 
 async func events(f *Feed, req *http.Request, res *http.Response) void! {
@@ -61,7 +61,15 @@ async func main() void! {
                 break
             }
         }
-        println(proto, "connects:", f.connects, "Last-Event-ID sent:", strings.Join(f.lastIDs, " "), "last:", es.LastEventID)
+        println(
+            proto,
+            "connects:",
+            f.connects,
+            "Last-Event-ID sent:",
+            strings.Join(f.lastIDs, " "),
+            "last:",
+            es.LastEventID,
+        )
         es.Close()
         await ts.Close()
     }

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.reflection.method_call_typed
 
-import std.io
 import std
+import std.io
 
 struct Counter {
     N int

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.constraint_default_method
 
-import std.io
 import std
+import std.io
 
 interface Shape {
     func Area() float

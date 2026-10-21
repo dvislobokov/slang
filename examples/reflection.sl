@@ -2,19 +2,19 @@
 // method calls, and compile-time field loops in generic code.
 namespace examples.reflection
 
-import std.io
 import std
+import std.io
 
 @attribute(targets: [reflect.Target.Field])
 struct column {
-    name string
+    name    string
     primary bool = false
 }
 
 @reflect
 struct Product {
-    @column("product_id", primary: true) Id int
-    @column("title") Name string
+    @column("product_id", primary: true) Id   int
+    @column("title")                     Name string
     Price float
     Stock int32
 

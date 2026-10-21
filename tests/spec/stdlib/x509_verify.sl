@@ -3,9 +3,9 @@
 // run-flags: --leak-check
 namespace spec.stdlib.x509_verify
 
-import std.io
 import std
 import std.crypto
+import std.io
 
 // A P-256 root, an RSA intermediate (pathlen 0, name constraints
 // example.com and localhost) and a P-256 leaf for www.example.com,
@@ -100,12 +100,56 @@ func main() void! {
     var inter = x509.ParsePEM(interPEM)?[0]
     var leaf = x509.ParsePEM(leafPEM)?[0]
     println("subject:", leaf.Subject.String(), "issuer:", leaf.Issuer.String())
-    println("version:", leaf.Version, "sig:", leaf.SignatureAlgorithm, "key:", leaf.PublicKeyAlgorithm, leaf.Curve, len(leaf.PublicKey))
-    println("san:", leaf.DNSNames, leaf.IPAddresses, "eku:", leaf.ExtKeyUsage, "ku:", leaf.KeyUsage, "ca:", leaf.IsCA)
-    println("inter:", inter.PublicKeyAlgorithm, len(inter.PublicKey) * 8, "bits, ca:", inter.IsCA, "pathlen:", inter.MaxPathLen, "permitted:", inter.PermittedDNSDomains)
-    println("root:", root.Subject.CommonName, "ca:", root.IsCA, "self-signed:", root.Subject.String() == root.Issuer.String())
-    println("not before:", time.Format(leaf.NotBefore, "%Y-%m-%d"), "not after:", time.Format(leaf.NotAfter, "%Y-%m-%d"))
-    println("aki = parent ski:", encoding.hex.Encode(leaf.AuthorityKeyId) == encoding.hex.Encode(inter.SubjectKeyId))
+    println(
+        "version:",
+        leaf.Version,
+        "sig:",
+        leaf.SignatureAlgorithm,
+        "key:",
+        leaf.PublicKeyAlgorithm,
+        leaf.Curve,
+        len(leaf.PublicKey),
+    )
+    println(
+        "san:",
+        leaf.DNSNames,
+        leaf.IPAddresses,
+        "eku:",
+        leaf.ExtKeyUsage,
+        "ku:",
+        leaf.KeyUsage,
+        "ca:",
+        leaf.IsCA,
+    )
+    println(
+        "inter:",
+        inter.PublicKeyAlgorithm,
+        len(inter.PublicKey) * 8,
+        "bits, ca:",
+        inter.IsCA,
+        "pathlen:",
+        inter.MaxPathLen,
+        "permitted:",
+        inter.PermittedDNSDomains,
+    )
+    println(
+        "root:",
+        root.Subject.CommonName,
+        "ca:",
+        root.IsCA,
+        "self-signed:",
+        root.Subject.String() == root.Issuer.String(),
+    )
+    println(
+        "not before:",
+        time.Format(leaf.NotBefore, "%Y-%m-%d"),
+        "not after:",
+        time.Format(leaf.NotAfter, "%Y-%m-%d"),
+    )
+    println(
+        "aki = parent ski:",
+        encoding.hex.Encode(leaf.AuthorityKeyId) == encoding.hex.Encode(inter.SubjectKeyId),
+    )
     var der = x509.ParseDER(leaf.Raw)?
     println("der round trip:", der.Equal(leaf), len(der.Fingerprint()))
     var pem = x509.EncodePEM("CERTIFICATE", leaf.Raw)
@@ -159,7 +203,15 @@ func main() void! {
     println("intermediate signed by root: ok")
 
     var key = x509.ParsePrivateKeyPEM(leafKey)?
-    println("key:", key.Algorithm, len(key.Bytes), "matches leaf:", key.Matches(leaf), "matches inter:", key.Matches(inter))
+    println(
+        "key:",
+        key.Algorithm,
+        len(key.Bytes),
+        "matches leaf:",
+        key.Matches(leaf),
+        "matches inter:",
+        key.Matches(inter),
+    )
     try x509.ParsePEM("not a certificate") catch err {
         println("garbage:", err)
     }

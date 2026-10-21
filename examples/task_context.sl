@@ -1,7 +1,7 @@
 namespace examples.task_context
 
-import std.io
 import std
+import std.io
 
 // Task-context values: typed keys, scoped with task.With, visible in the
 // started task, in nested calls and in spawned children, and gone after

@@ -4,24 +4,30 @@
 namespace spec.stdlib2.binary_encode
 
 import std
-import std.io
 import std.encoding.binary
+import std.io
 
 @binary(endian: "big")
 struct Header {
-    Magic [4]byte
+    Magic   [4]byte
     Version uint16
     @binary(endian: "little") Flags uint32
     Length int32
-    Ratio float32
-    Ok bool
+    Ratio  float32
+    Ok     bool
 }
 
 func main() {
     var b = [byte(0), 0, 0, 0, 0, 0, 0, 0]
     BigEndian.PutUint32(b, 0x01020304)
     LittleEndian.PutUint16(b[4..], 0x0506)
-    println(b, BigEndian.Uint32(b), LittleEndian.Uint32(b), BigEndian.Uint16(b[4..]), LittleEndian.Uint64(b))
+    println(
+        b,
+        BigEndian.Uint32(b),
+        LittleEndian.Uint32(b),
+        BigEndian.Uint16(b[4..]),
+        LittleEndian.Uint64(b),
+    )
     BigEndian.PutUint64(b, 0x1122334455667788)
     println(b, BigEndian.Uint64(b))
     var x []byte = []

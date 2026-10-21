@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_unix
 
-import std.io
 import std
+import std.io
 
 async func echoOnce(l net.Listener) void! {
     var s = await l.Accept()?

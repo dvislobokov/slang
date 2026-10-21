@@ -35,7 +35,29 @@ func q(s string) string {
 }
 
 func main() void! {
-    var ps = ["text/html", "text/html; charset=UTF-8", "Text/HTML ; Charset=\"utf-8\"", "multipart/form-data; boundary=\"--abc--\"", "attachment; filename=\"a b.txt\"", "form-data; name=\"f\"; filename=\"C:\\\\x\\\\y.txt\"", "application/x-stuff; title*=us-ascii'en-us'This%20is%20%2A%2A%2Afun%2A%2A%2A", "message/external-body; access-type=URL; URL*0=\"ftp://\"; URL*1=\"cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar\"", "application/x-stuff; title*0*=us-ascii'en'This%20is%20even%20more%20; title*1*=%2A%2A%2Afun%2A%2A%2A%20; title*2=\"isn't it!\"", "text/plain; name*=utf-8''%E2%82%AC%20rates", "text/plain;", "text/", "/plain", "text/plain; =x", "text/plain; a=1; a=2", "text/plain; a", "", "foo bar", "text/plain; a=\"unterminated", "inline", "text/plain;charset=utf-8;format=flowed"]
+    var ps = [
+        "text/html",
+        "text/html; charset=UTF-8",
+        "Text/HTML ; Charset=\"utf-8\"",
+        "multipart/form-data; boundary=\"--abc--\"",
+        "attachment; filename=\"a b.txt\"",
+        "form-data; name=\"f\"; filename=\"C:\\\\x\\\\y.txt\"",
+        "application/x-stuff; title*=us-ascii'en-us'This%20is%20%2A%2A%2Afun%2A%2A%2A",
+        "message/external-body; access-type=URL; URL*0=\"ftp://\"; URL*1=\"cs.utk.edu/pub/moore/bulk-mailer/bulk-mailer.tar\"",
+        "application/x-stuff; title*0*=us-ascii'en'This%20is%20even%20more%20; title*1*=%2A%2A%2Afun%2A%2A%2A%20; title*2=\"isn't it!\"",
+        "text/plain; name*=utf-8''%E2%82%AC%20rates",
+        "text/plain;",
+        "text/",
+        "/plain",
+        "text/plain; =x",
+        "text/plain; a=1; a=2",
+        "text/plain; a",
+        "",
+        "foo bar",
+        "text/plain; a=\"unterminated",
+        "inline",
+        "text/plain;charset=utf-8;format=flowed",
+    ]
     for i, p in ps {
         var m = try mime.ParseMediaType(p) catch err {
             println(i, "error")
@@ -46,10 +68,17 @@ func main() void! {
     println(q(mime.FormatMediaType("text/html", map[string]string{})))
     println(q(mime.FormatMediaType("TEXT/html", map[string]string{"charset": "utf-8"})))
     println(q(mime.FormatMediaType("attachment", map[string]string{"filename": "a b.txt"})))
-    println(q(mime.FormatMediaType("text/plain", map[string]string{"name": "€ rates", "a": "x\"y"})))
+    println(q(mime.FormatMediaType("text/plain", map[string]string{
+        "name": "€ rates",
+        "a": "x\"y",
+    })))
     println(q(mime.FormatMediaType("noslash", map[string]string{})))
     println(q(mime.FormatMediaType("bad type", map[string]string{})))
-    println(q(mime.FormatMediaType("text/plain", map[string]string{"z": "1", "a": "2", "m": "tok"})))
+    println(q(mime.FormatMediaType("text/plain", map[string]string{
+        "z": "1",
+        "a": "2",
+        "m": "tok",
+    })))
     println(q(mime.TypeByExtension(".html")))
     println(q(mime.TypeByExtension(".HTML")))
     println(q(mime.TypeByExtension(".png")))
@@ -64,8 +93,20 @@ func main() void! {
     println(q(mime.quotedprintable.Encode("café = été")))
     println(q(mime.quotedprintable.Encode("trailing space \nnext")))
     println(q(mime.quotedprintable.Encode("tab\tend\t")))
-    println(q(mime.quotedprintable.Encode("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")))
-    println(q(mime.quotedprintable.Encode("x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=")))
+    println(
+        q(
+            mime.quotedprintable.Encode(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        ),
+    )
+    println(
+        q(
+            mime.quotedprintable.Encode(
+                "x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=x=",
+            ),
+        ),
+    )
     println(q(mime.quotedprintable.Encode("line1\r\nline2\n")))
     println(q(mime.quotedprintable.Encode("ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ")))
     println(q(try mime.quotedprintable.Decode("foo=\r\nbar") else "error"))

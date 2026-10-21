@@ -149,7 +149,8 @@ const ERROR_KEYWORDS: &[(&str, &str)] = &[
     ("await_outside_async.sl", "await outside async"),
     ("catch_falls_through.sl", "catch block must return"),
     ("copy_drop_value.sl", "cannot copy a value of type File"),
-    ("interior_pointer_escape.sl", "cannot keep an interior pointer"),
+    ("extern_in_user_code.sl", "extern declarations exist only in the standard library"),
+    ("interior_pointer_escape.sl", "cannot keep interior pointer variable `p`"),
     ("log_template_args.sl", "the template has 2 placeholders ({UserId}, {Amount}) but 3 arguments are given"),
     ("missing_return.sl", "missing return"),
     ("question_outside_fallible.sl", "? outside of fallible function"),
@@ -557,8 +558,12 @@ func setp(l *L, p *P) { l.a = *p }
 fn interior_pointers_are_borrowed_only() {
     // Read through, compared and passed to non-escaping parameters: fine.
     ok(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n println(look(&l.a), look(&g), (&l.b).y)\n setp(l, &l.b)\n l.ps = append(l.ps, P{{}})\n println(look(&l.ps[0]))\n var s = l.arr\n println(s)\n}}")));
-    // Kept in a variable, returned through an escaping parameter, stored.
-    err(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n var p = &l.a\n println(p.x)\n}}")), "cannot keep an interior pointer");
+    // Kept in a local variable: allowed (it pins its owner, DESIGN.md
+    // "Память"), but such a variable cannot be copied, returned or captured.
+    ok(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n var p = &l.a\n println(p.x)\n}}")));
+    err(&prog(&format!("{MEM_DECLS}\nfunc f(l *L) *P {{\n var p = &l.a\n return p\n}}\nfunc main() {{ println(f(new L{{}}).x) }}")), "cannot keep interior pointer variable `p`");
+    err(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n var p = &l.a\n var f = func() int {{ return p.x }}\n println(f())\n}}")), "cannot be captured by a closure");
+    // Returned through an escaping parameter, stored.
     err(&prog(&format!("{MEM_DECLS}\nfunc main() {{\n var l = new L{{}}\n println(keep(&l.a).x)\n}}")), "to parameter `p` of t.keep: the parameter escapes");
     err(&prog(&format!("{MEM_DECLS}\nfunc f() *P {{ return &g }}\nfunc main() {{ println(f().x) }}")), "cannot keep an interior pointer");
     err(&prog(&format!("{MEM_DECLS}\nstruct H {{ p *P }}\nfunc main() {{\n var l = new L{{}}\n var h = H{{p: &l.ps[0]}}\n println(h.p.x)\n}}")), "cannot keep an interior pointer");

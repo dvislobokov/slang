@@ -4,25 +4,48 @@
 namespace spec.stdlib2.encoding_base32_pem
 
 import std
-import std.io
 import std.encoding
+import std.io
 
 func main() {
     for s in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
         var e = base32.EncodeString(s)
-        println("[" + e + "]", try base32.DecodeString(e) else "?", base32.EncodeHex(strings.Bytes(s)))
+        println(
+            "[" + e + "]",
+            try base32.DecodeString(e) else "?",
+            base32.EncodeHex(strings.Bytes(s)),
+        )
     }
     var np = base32.Std().WithPadding(false)
-    println(np.EncodeString("fooba"), np.EncodeString("foob"), try np.DecodeString("MZXW6YQ") else "?", try base32.DecodeString("MZXW6YQ") else "pad required")
-    println(try base32.DecodeString("MZXW6YQ=") else "bad length", try base32.DecodeString("M!======") else "bad char", try base32.DecodeString("MZXW\n6===") else "?")
+    println(
+        np.EncodeString("fooba"),
+        np.EncodeString("foob"),
+        try np.DecodeString("MZXW6YQ") else "?",
+        try base32.DecodeString("MZXW6YQ") else "pad required",
+    )
+    println(
+        try base32.DecodeString("MZXW6YQ=") else "bad length",
+        try base32.DecodeString("M!======") else "bad char",
+        try base32.DecodeString("MZXW\n6===") else "?",
+    )
     var hex = try base32.DecodeHex("CPNMUOJ1") else []
-    println(strings.FromBytes(hex), base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").EncodeString("hi"))
+    println(
+        strings.FromBytes(hex),
+        base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").EncodeString("hi"),
+    )
 
     var text = "junk before\n-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,ABCD\n\naGVsbG8g\nd29ybGQ=\n-----END RSA PRIVATE KEY-----\n-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----\ntrailing"
     var d = pem.Decode(text)
     if d.Block != nil {
         var b = d.Block
-        println(b.Type, b.Header("Proc-Type"), b.Header("DEK-Info"), b.Header("None") == "", strings.FromBytes(b.Bytes), b.HeaderKeys)
+        println(
+            b.Type,
+            b.Header("Proc-Type"),
+            b.Header("DEK-Info"),
+            b.Header("None") == "",
+            strings.FromBytes(b.Bytes),
+            b.HeaderKeys,
+        )
     }
     println(strings.HasPrefix(d.Rest, "-----BEGIN CERTIFICATE"))
     var all = pem.DecodeAll(text)

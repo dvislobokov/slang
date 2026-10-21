@@ -2,19 +2,19 @@
 // status: passing
 namespace spec.programs.inventory
 
-import std.io
 import std
 import std.collections
+import std.io
 
 struct Item {
-    Sku string
-    Name string
-    Qty int
+    Sku        string
+    Name       string
+    Qty        int
     PriceCents int
 }
 
 struct OutOfStock {
-    Sku string
+    Sku  string
     Want int
     Have int
     func Message() string {
@@ -31,7 +31,7 @@ struct Line {
 
 struct Inventory {
     items Map<string, Item>
-    log List<string>
+    log   List<string>
 
     func Add(sku, name string, qty, price int) {
         if this.items.Has(sku) {

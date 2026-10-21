@@ -1,0 +1,1095 @@
+namespace std.collections
+
+// More std.collections types (the core List/Map/Set/Queue/Stack are in
+// sema/collections.rs): LinkedList, Deque, Ring, Heap, PriorityQueue,
+// OrderedMap, LRU and BitSet. `for x in c` works on each through the
+// iteration protocol (DESIGN.md "Управление потоком"): LinkedList,
+// OrderedMap and LRU have Iter() (OrderedMap and LRU yield key and value:
+// `for k, v in m`), the others iterate their Items() slice. BitSet also has
+// `b[i]` / `b[i] = true` (Index/IndexSet). The zero value of each is ready
+// to use except where a constructor takes a parameter (Ring,
+// PriorityQueue, LRU).
+
+struct listNode<T> {
+    value T
+    next  *listNode<T>
+    prev  weak *listNode<T>
+}
+
+// A doubly linked list (Go's container/list): O(1) push/pop at both ends.
+struct LinkedList<T> {
+    head *listNode<T>
+    tail *listNode<T>
+    n    int
+
+    static func New() LinkedList<T> {
+        return LinkedList<T>{}
+    }
+
+    func Len() int {
+        return this.n
+    }
+
+    func PushBack(v T) {
+        var node = new listNode<T>{value: v}
+        if this.tail == nil {
+            this.head = node
+        } else {
+            node.prev = this.tail
+            this.tail.next = node
+        }
+        this.tail = node
+        this.n += 1
+    }
+
+    func PushFront(v T) {
+        var node = new listNode<T>{value: v, next: this.head}
+        if this.head == nil {
+            this.tail = node
+        } else {
+            this.head.prev = node
+        }
+        this.head = node
+        this.n += 1
+    }
+
+    func PopFront() T! {
+        if this.head == nil {
+            return error("list is empty")
+        }
+        var node = this.head
+        this.head = node.next
+        if this.head == nil {
+            this.tail = nil
+        } else {
+            this.head.prev = nil
+        }
+        this.n -= 1
+        return node.value
+    }
+
+    func PopBack() T! {
+        if this.tail == nil {
+            return error("list is empty")
+        }
+        var node = this.tail
+        var prev = node.prev
+        this.tail = prev
+        if prev == nil {
+            this.head = nil
+        } else {
+            prev.next = nil
+        }
+        this.n -= 1
+        return node.value
+    }
+
+    func Front() T! {
+        if this.head == nil {
+            return error("list is empty")
+        }
+        return this.head.value
+    }
+
+    func Back() T! {
+        if this.tail == nil {
+            return error("list is empty")
+        }
+        return this.tail.value
+    }
+
+    // Inserts v before position i (0 <= i <= Len()).
+    func Insert(i int, v T) {
+        if i < 0 || i > this.n {
+            panic("LinkedList.Insert: index out of range")
+        }
+        if i == this.n {
+            this.PushBack(v)
+            return
+        }
+        if i == 0 {
+            this.PushFront(v)
+            return
+        }
+        var at = this.nodeAt(i)
+        var prev = at.prev
+        var node = new listNode<T>{value: v, next: at, prev: prev}
+        prev.next = node
+        at.prev = node
+        this.n += 1
+    }
+
+    // Removes and returns the element at position i.
+    func RemoveAt(i int) T {
+        if i < 0 || i >= this.n {
+            panic("LinkedList.RemoveAt: index out of range")
+        }
+        if i == 0 {
+            var first = this.head.value
+            _ = this.PopFront()
+            return first
+        }
+        if i == this.n - 1 {
+            var last = this.tail.value
+            _ = this.PopBack()
+            return last
+        }
+        var at = this.nodeAt(i)
+        var prev = at.prev
+        prev.next = at.next
+        at.next.prev = prev
+        this.n -= 1
+        return at.value
+    }
+
+    func Get(i int) T {
+        if i < 0 || i >= this.n {
+            panic("LinkedList.Get: index out of range")
+        }
+        return this.nodeAt(i).value
+    }
+
+    func nodeAt(i int) *listNode<T> {
+        var p = this.head
+        for _ in 0..i {
+            p = p.next
+        }
+        return p
+    }
+
+    func Clear() {
+        // unlink iteratively (a long chain would recurse in release)
+        var p = this.head
+        this.head = nil
+        this.tail = nil
+        for p != nil {
+            var next = p.next
+            p.next = nil
+            p = next
+        }
+        this.n = 0
+    }
+
+    // Iterator front to back (`for x in list`); no copy.
+    func Iter() listIter<T> {
+        return listIter<T>{p: this.head}
+    }
+
+    // The elements front to back (a copy).
+    func Items() []T {
+        var out []T = []
+        var p = this.head
+        for p != nil {
+            out = append(out, p.value)
+            p = p.next
+        }
+        return out
+    }
+}
+
+// Iterator of a LinkedList (the Iterator<T> protocol).
+struct listIter<T> {
+    p *listNode<T>
+
+    func Next() (T, bool) {
+        if this.p == nil {
+            var zero T
+            return (zero, false)
+        }
+        var v = this.p.value
+        this.p = this.p.next
+        return (v, true)
+    }
+}
+
+// A double-ended queue on a growable ring buffer: amortized O(1) at both
+// ends and O(1) indexing.
+struct Deque<T> {
+    buf  []T
+    head int
+    n    int
+
+    static func New() Deque<T> {
+        return Deque<T>{}
+    }
+
+    func Len() int {
+        return this.n
+    }
+
+    func grow() {
+        var cap = len(this.buf) * 2
+        if cap < 8 {
+            cap = 8
+        }
+        var nb []T = []
+        for i in 0..this.n {
+            nb = append(nb, this.buf[(this.head + i) % len(this.buf)])
+        }
+        var zero T
+        for len(nb) < cap {
+            nb = append(nb, zero)
+        }
+        this.buf = nb
+        this.head = 0
+    }
+
+    func PushBack(v T) {
+        if this.n == len(this.buf) {
+            this.grow()
+        }
+        this.buf[(this.head + this.n) % len(this.buf)] = v
+        this.n += 1
+    }
+
+    func PushFront(v T) {
+        if this.n == len(this.buf) {
+            this.grow()
+        }
+        this.head = (this.head + len(this.buf) - 1) % len(this.buf)
+        this.buf[this.head] = v
+        this.n += 1
+    }
+
+    func PopFront() T! {
+        if this.n == 0 {
+            return error("deque is empty")
+        }
+        var v = this.buf[this.head]
+        var zero T
+        this.buf[this.head] = zero
+        this.head = (this.head + 1) % len(this.buf)
+        this.n -= 1
+        return v
+    }
+
+    func PopBack() T! {
+        if this.n == 0 {
+            return error("deque is empty")
+        }
+        var i = (this.head + this.n - 1) % len(this.buf)
+        var v = this.buf[i]
+        var zero T
+        this.buf[i] = zero
+        this.n -= 1
+        return v
+    }
+
+    func Front() T! {
+        if this.n == 0 {
+            return error("deque is empty")
+        }
+        return this.buf[this.head]
+    }
+
+    func Back() T! {
+        if this.n == 0 {
+            return error("deque is empty")
+        }
+        return this.buf[(this.head + this.n - 1) % len(this.buf)]
+    }
+
+    // Element i from the front (0 <= i < Len()).
+    func Get(i int) T {
+        if i < 0 || i >= this.n {
+            panic("Deque.Get: index out of range")
+        }
+        return this.buf[(this.head + i) % len(this.buf)]
+    }
+
+    func Set(i int, v T) {
+        if i < 0 || i >= this.n {
+            panic("Deque.Set: index out of range")
+        }
+        this.buf[(this.head + i) % len(this.buf)] = v
+    }
+
+    func Clear() {
+        this.buf = nil
+        this.head = 0
+        this.n = 0
+    }
+
+    func Items() []T {
+        var out []T = []
+        for i in 0..this.n {
+            out = append(out, this.buf[(this.head + i) % len(this.buf)])
+        }
+        return out
+    }
+}
+
+// A fixed-capacity circular buffer: Push overwrites the oldest element
+// when full (e.g. the last N log lines).
+struct Ring<T> {
+    buf  []T
+    head int
+    n    int
+
+    // A ring holding at most capacity elements (> 0).
+    static func New(capacity int) Ring<T> {
+        if capacity <= 0 {
+            panic("Ring: capacity must be positive")
+        }
+        var b []T = []
+        var zero T
+        for _ in 0..capacity {
+            b = append(b, zero)
+        }
+        return Ring<T>{buf: b}
+    }
+
+    func Cap() int {
+        return len(this.buf)
+    }
+
+    func Len() int {
+        return this.n
+    }
+
+    func IsFull() bool {
+        return this.n == len(this.buf)
+    }
+
+    // Appends v; returns true if an element was overwritten.
+    func Push(v T) bool {
+        if len(this.buf) == 0 {
+            panic("Ring: use Ring<T>(capacity) to create one")
+        }
+        if this.n < len(this.buf) {
+            this.buf[(this.head + this.n) % len(this.buf)] = v
+            this.n += 1
+            return false
+        }
+        this.buf[this.head] = v
+        this.head = (this.head + 1) % len(this.buf)
+        return true
+    }
+
+    // Removes the oldest element.
+    func Pop() T! {
+        if this.n == 0 {
+            return error("ring is empty")
+        }
+        var v = this.buf[this.head]
+        var zero T
+        this.buf[this.head] = zero
+        this.head = (this.head + 1) % len(this.buf)
+        this.n -= 1
+        return v
+    }
+
+    // Element i, oldest first.
+    func Get(i int) T {
+        if i < 0 || i >= this.n {
+            panic("Ring.Get: index out of range")
+        }
+        return this.buf[(this.head + i) % len(this.buf)]
+    }
+
+    func Items() []T {
+        var out []T = []
+        for i in 0..this.n {
+            out = append(out, this.buf[(this.head + i) % len(this.buf)])
+        }
+        return out
+    }
+}
+
+// A binary min-heap over Ordered values (Go's container/heap without the
+// interface): Pop returns the smallest.
+struct Heap<T: Ordered> {
+    items []T
+
+    static func New() Heap<T> {
+        return Heap<T>{}
+    }
+
+    // A heap of the given values (O(n) heapify).
+    static func From(xs []T) Heap<T> {
+        var h = Heap<T>{}
+        for x in xs {
+            h.items = append(h.items, x)
+        }
+        var i = len(h.items) / 2 - 1
+        for i >= 0 {
+            h.down(i)
+            i -= 1
+        }
+        return h
+    }
+
+    func Len() int {
+        return len(this.items)
+    }
+
+    func Push(x T) {
+        this.items = append(this.items, x)
+        this.up(len(this.items) - 1)
+    }
+
+    func Pop() T! {
+        var n = len(this.items)
+        if n == 0 {
+            return error("heap is empty")
+        }
+        var top = this.items[0]
+        this.items[0] = this.items[n - 1]
+        this.items = this.items[..n - 1]
+        if n > 1 {
+            this.down(0)
+        }
+        return top
+    }
+
+    func Peek() T! {
+        if len(this.items) == 0 {
+            return error("heap is empty")
+        }
+        return this.items[0]
+    }
+
+    func up(j0 int) {
+        var j = j0
+        for j > 0 {
+            var p = (j - 1) / 2
+            if !(this.items[j] < this.items[p]) {
+                break
+            }
+            var t = this.items[j]
+            this.items[j] = this.items[p]
+            this.items[p] = t
+            j = p
+        }
+    }
+
+    func down(i0 int) {
+        var i = i0
+        var n = len(this.items)
+        for {
+            var l = 2 * i + 1
+            if l >= n {
+                break
+            }
+            var m = l
+            if l + 1 < n && this.items[l + 1] < this.items[l] {
+                m = l + 1
+            }
+            if !(this.items[m] < this.items[i]) {
+                break
+            }
+            var t = this.items[i]
+            this.items[i] = this.items[m]
+            this.items[m] = t
+            i = m
+        }
+    }
+
+    // The elements in heap order (not sorted; a copy).
+    func Items() []T {
+        return std.slices.Clone(this.items)
+    }
+}
+
+// A priority queue ordered by less (Pop returns the least element;
+// insertion order breaks ties, so equal priorities are FIFO).
+struct PriorityQueue<T> {
+    items []T
+    seqs  []int
+    next  int
+    less  func(T, T) bool
+
+    // A queue ordered by less (e.g. (a Job, b Job) => a.Priority > b.Priority
+    // for a max-queue).
+    static func New(less func(T, T) bool) PriorityQueue<T> {
+        return PriorityQueue<T>{less: less}
+    }
+
+    func Len() int {
+        return len(this.items)
+    }
+
+    func before(i int, j int) bool {
+        if this.less(this.items[i], this.items[j]) {
+            return true
+        }
+        if this.less(this.items[j], this.items[i]) {
+            return false
+        }
+        return this.seqs[i] < this.seqs[j]
+    }
+
+    func swap(i int, j int) {
+        var t = this.items[i]
+        this.items[i] = this.items[j]
+        this.items[j] = t
+        var s = this.seqs[i]
+        this.seqs[i] = this.seqs[j]
+        this.seqs[j] = s
+    }
+
+    func Push(x T) {
+        if this.less == nil {
+            panic("PriorityQueue: create it with PriorityQueue<T>(less)")
+        }
+        this.items = append(this.items, x)
+        this.seqs = append(this.seqs, this.next)
+        this.next += 1
+        var j = len(this.items) - 1
+        for j > 0 {
+            var p = (j - 1) / 2
+            if !this.before(j, p) {
+                break
+            }
+            this.swap(j, p)
+            j = p
+        }
+    }
+
+    func Pop() T! {
+        var n = len(this.items)
+        if n == 0 {
+            return error("priority queue is empty")
+        }
+        var top = this.items[0]
+        this.swap(0, n - 1)
+        this.items = this.items[..n - 1]
+        this.seqs = this.seqs[..n - 1]
+        var i = 0
+        var m2 = n - 1
+        for {
+            var l = 2 * i + 1
+            if l >= m2 {
+                break
+            }
+            var m = l
+            if l + 1 < m2 && this.before(l + 1, l) {
+                m = l + 1
+            }
+            if !this.before(m, i) {
+                break
+            }
+            this.swap(i, m)
+            i = m
+        }
+        return top
+    }
+
+    func Peek() T! {
+        if len(this.items) == 0 {
+            return error("priority queue is empty")
+        }
+        return this.items[0]
+    }
+}
+
+// A map kept sorted by key (a sorted slice: O(log n) lookup, O(n)
+// insert); Keys/Values/iteration are in ascending key order.
+struct OrderedMap<K: Ordered, V> {
+    keys []K
+    vals []V
+
+    static func New() OrderedMap<K, V> {
+        return OrderedMap<K, V>{}
+    }
+
+    func find(k K) int {
+        var lo = 0
+        var hi = len(this.keys)
+        for lo < hi {
+            var m = lo + (hi - lo) / 2
+            if this.keys[m] < k {
+                lo = m + 1
+            } else {
+                hi = m
+            }
+        }
+        return lo
+    }
+
+    func Len() int {
+        return len(this.keys)
+    }
+
+    func Set(k K, v V) {
+        var i = this.find(k)
+        if i < len(this.keys) && this.keys[i] == k {
+            this.vals[i] = v
+            return
+        }
+        var zk K
+        var zv V
+        this.keys = append(this.keys, zk)
+        this.vals = append(this.vals, zv)
+        var j = len(this.keys) - 1
+        for j > i {
+            this.keys[j] = this.keys[j - 1]
+            this.vals[j] = this.vals[j - 1]
+            j -= 1
+        }
+        this.keys[i] = k
+        this.vals[i] = v
+    }
+
+    // The value of k, or the zero value.
+    func Get(k K) V {
+        var i = this.find(k)
+        if i < len(this.keys) && this.keys[i] == k {
+            return this.vals[i]
+        }
+        var zero V
+        return zero
+    }
+
+    func Has(k K) bool {
+        var i = this.find(k)
+        return i < len(this.keys) && this.keys[i] == k
+    }
+
+    // Removes k; true if it was present.
+    func Remove(k K) bool {
+        var i = this.find(k)
+        if i >= len(this.keys) || this.keys[i] != k {
+            return false
+        }
+        var n = len(this.keys)
+        for j in i..n - 1 {
+            this.keys[j] = this.keys[j + 1]
+            this.vals[j] = this.vals[j + 1]
+        }
+        var zk K
+        var zv V
+        this.keys[n - 1] = zk
+        this.vals[n - 1] = zv
+        this.keys = this.keys[..n - 1]
+        this.vals = this.vals[..n - 1]
+        return true
+    }
+
+    // Smallest key (error if empty).
+    func Min() K! {
+        if len(this.keys) == 0 {
+            return error("ordered map is empty")
+        }
+        return this.keys[0]
+    }
+
+    // Largest key (error if empty).
+    func Max() K! {
+        if len(this.keys) == 0 {
+            return error("ordered map is empty")
+        }
+        return this.keys[len(this.keys) - 1]
+    }
+
+    // The smallest key >= k (error if none).
+    func Ceiling(k K) K! {
+        var i = this.find(k)
+        if i >= len(this.keys) {
+            return error("no key >= the given one")
+        }
+        return this.keys[i]
+    }
+
+    // The largest key <= k (error if none).
+    func Floor(k K) K! {
+        var i = this.find(k)
+        if i < len(this.keys) && this.keys[i] == k {
+            return k
+        }
+        if i == 0 {
+            return error("no key <= the given one")
+        }
+        return this.keys[i - 1]
+    }
+
+    // Keys in [lo, hi), ascending.
+    func Range(lo K, hi K) []K {
+        var out []K = []
+        var i = this.find(lo)
+        for i < len(this.keys) && this.keys[i] < hi {
+            out = append(out, this.keys[i])
+            i += 1
+        }
+        return out
+    }
+
+    func Keys() []K {
+        return std.slices.Clone(this.keys)
+    }
+
+    // Iterator over (key, value) in ascending key order (`for k, v in m`).
+    func Iter() orderedIter<K, V> {
+        return orderedIter<K, V>{keys: this.keys, vals: this.vals}
+    }
+
+    func Values() []V {
+        return std.slices.Clone(this.vals)
+    }
+
+    func Clear() {
+        this.keys = nil
+        this.vals = nil
+    }
+}
+
+// Iterator of an OrderedMap: (key, value, more).
+struct orderedIter<K, V> {
+    keys []K
+    vals []V
+    i    int
+
+    func Next() (K, V, bool) {
+        if this.i >= len(this.keys) {
+            var zk K
+            var zv V
+            return (zk, zv, false)
+        }
+        var i = this.i
+        this.i += 1
+        return (this.keys[i], this.vals[i], true)
+    }
+}
+
+struct lruNode<K, V> {
+    key   K
+    value V
+    newer *lruNode<K, V>
+    older weak *lruNode<K, V>
+}
+
+// A least-recently-used cache holding at most Cap() entries: Get and Set
+// mark an entry as used; Set on a full cache evicts the least recently
+// used one. O(1) operations (map + doubly linked list).
+struct LRU<K: Comparable, V> {
+    cap       int
+    index     map[K]*lruNode<K, V>
+    newest    *lruNode<K, V>
+    oldest    *lruNode<K, V>
+    evictions int
+
+    // A cache of at most capacity entries (> 0).
+    static func New(capacity int) LRU<K, V> {
+        if capacity <= 0 {
+            panic("LRU: capacity must be positive")
+        }
+        return LRU<K, V>{cap: capacity, index: map[K]*lruNode<K, V>{}}
+    }
+
+    func Len() int {
+        return len(this.index)
+    }
+
+    func Cap() int {
+        return this.cap
+    }
+
+    // Number of entries evicted so far.
+    func Evictions() int {
+        return this.evictions
+    }
+
+    func unlink(n *lruNode<K, V>) {
+        var older = n.older
+        var newer = n.newer
+        if older != nil {
+            older.newer = newer
+        } else {
+            this.oldest = newer
+        }
+        if newer != nil {
+            newer.older = older
+        } else {
+            this.newest = older
+        }
+        n.newer = nil
+        n.older = nil
+    }
+
+    func pushNewest(n *lruNode<K, V>) {
+        n.older = this.newest
+        n.newer = nil
+        if this.newest != nil {
+            this.newest.newer = n
+        }
+        this.newest = n
+        if this.oldest == nil {
+            this.oldest = n
+        }
+    }
+
+    // The value of k and whether it was present (marks it as used).
+    func Get(k K) (V, bool) {
+        var n = this.index[k]
+        if n == nil {
+            var zero V
+            return (zero, false)
+        }
+        if this.newest != n {
+            this.unlink(n)
+            this.pushNewest(n)
+        }
+        return (n.value, true)
+    }
+
+    // The value of k without marking it as used.
+    func Peek(k K) (V, bool) {
+        var n = this.index[k]
+        if n == nil {
+            var zero V
+            return (zero, false)
+        }
+        return (n.value, true)
+    }
+
+    func Has(k K) bool {
+        return this.index[k] != nil
+    }
+
+    // Adds or updates k; returns true if another entry was evicted.
+    func Set(k K, v V) bool {
+        if this.cap <= 0 {
+            panic("LRU: create it with LRU<K, V>(capacity)")
+        }
+        var n = this.index[k]
+        if n != nil {
+            n.value = v
+            if this.newest != n {
+                this.unlink(n)
+                this.pushNewest(n)
+            }
+            return false
+        }
+        var evicted = false
+        if len(this.index) >= this.cap {
+            var old = this.oldest
+            this.unlink(old)
+            delete(this.index, old.key)
+            this.evictions += 1
+            evicted = true
+        }
+        var node = new lruNode<K, V>{key: k, value: v}
+        this.index[k] = node
+        this.pushNewest(node)
+        return evicted
+    }
+
+    func Remove(k K) bool {
+        var n = this.index[k]
+        if n == nil {
+            return false
+        }
+        this.unlink(n)
+        delete(this.index, k)
+        return true
+    }
+
+    // Iterator over (key, value) from most to least recently used; does
+    // not mark entries as used.
+    func Iter() lruIter<K, V> {
+        return lruIter<K, V>{p: this.newest}
+    }
+
+    // Keys from most to least recently used.
+    func Keys() []K {
+        var out []K = []
+        var p = this.newest
+        for p != nil {
+            out = append(out, p.key)
+            p = p.older
+        }
+        return out
+    }
+
+    func Clear() {
+        var p = this.newest
+        for p != nil {
+            var older = p.older
+            p.newer = nil
+            p = older
+        }
+        this.newest = nil
+        this.oldest = nil
+        this.index = map[K]*lruNode<K, V>{}
+    }
+}
+
+// Iterator of an LRU: (key, value, more).
+struct lruIter<K, V> {
+    p *lruNode<K, V>
+
+    func Next() (K, V, bool) {
+        if this.p == nil {
+            var zk K
+            var zv V
+            return (zk, zv, false)
+        }
+        var n = this.p
+        this.p = n.older
+        return (n.key, n.value, true)
+    }
+}
+
+// A growable set of non-negative integers as bits.
+struct BitSet {
+    words []uint
+
+    static func New() BitSet {
+        return BitSet{}
+    }
+
+    func Set(i int) {
+        if i < 0 {
+            panic("BitSet: negative index")
+        }
+        var w = i / 64
+        for len(this.words) <= w {
+            this.words = append(this.words, 0)
+        }
+        this.words[w] = this.words[w] | (uint(1) << uint(i % 64))
+    }
+
+    func Clear(i int) {
+        var w = i / 64
+        if i < 0 || w >= len(this.words) {
+            return
+        }
+        this.words[w] = this.words[w] & ((uint(1) << uint(i % 64)) ^ 18446744073709551615)
+    }
+
+    func Has(i int) bool {
+        var w = i / 64
+        if i < 0 || w >= len(this.words) {
+            return false
+        }
+        return ((this.words[w] >> uint(i % 64)) & 1) == 1
+    }
+
+    // Flips bit i.
+    func Toggle(i int) {
+        if this.Has(i) {
+            this.Clear(i)
+        } else {
+            this.Set(i)
+        }
+    }
+
+    // Number of set bits.
+    func Count() int {
+        var n = 0
+        for w in this.words {
+            n += std.math.bits.OnesCount(w)
+        }
+        return n
+    }
+
+    // One past the largest set bit (0 if empty).
+    func Len() int {
+        var i = len(this.words) - 1
+        for i >= 0 {
+            if this.words[i] != 0 {
+                return i * 64 + std.math.bits.Len(this.words[i])
+            }
+            i -= 1
+        }
+        return 0
+    }
+
+    func Union(o BitSet) BitSet {
+        var out = BitSet{}
+        var n = len(this.words)
+        if len(o.words) > n {
+            n = len(o.words)
+        }
+        for i in 0..n {
+            var a uint = 0
+            var b uint = 0
+            if i < len(this.words) {
+                a = this.words[i]
+            }
+            if i < len(o.words) {
+                b = o.words[i]
+            }
+            out.words = append(out.words, a | b)
+        }
+        return out
+    }
+
+    func Intersect(o BitSet) BitSet {
+        var out = BitSet{}
+        var n = len(this.words)
+        if len(o.words) < n {
+            n = len(o.words)
+        }
+        for i in 0..n {
+            out.words = append(out.words, this.words[i] & o.words[i])
+        }
+        return out
+    }
+
+    // Bits of this not in o.
+    func Difference(o BitSet) BitSet {
+        var out = BitSet{}
+        for i, w in this.words {
+            var b uint = 0
+            if i < len(o.words) {
+                b = o.words[i]
+            }
+            out.words = append(out.words, w & (b ^ 18446744073709551615))
+        }
+        return out
+    }
+
+    func Equals(o BitSet) bool {
+        var n = len(this.words)
+        if len(o.words) > n {
+            n = len(o.words)
+        }
+        for i in 0..n {
+            var a uint = 0
+            var b uint = 0
+            if i < len(this.words) {
+                a = this.words[i]
+            }
+            if i < len(o.words) {
+                b = o.words[i]
+            }
+            if a != b {
+                return false
+            }
+        }
+        return true
+    }
+
+    // The set bits, ascending.
+    func Items() []int {
+        var out []int = []
+        for wi, w in this.words {
+            var x = w
+            for x != 0 {
+                var t = std.math.bits.TrailingZeros(x)
+                out = append(out, wi * 64 + t)
+                x = x & (x - 1)
+            }
+        }
+        return out
+    }
+
+    func Reset() {
+        this.words = nil
+    }
+
+    // `b[i]`: Has(i).
+    func Index(i int) bool {
+        return this.Has(i)
+    }
+
+    // `b[i] = v`: Set(i) or Clear(i).
+    func IndexSet(i int, v bool) {
+        if v {
+            this.Set(i)
+        } else {
+            this.Clear(i)
+        }
+    }
+}

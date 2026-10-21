@@ -1,0 +1,1006 @@
+namespace std.net.url
+
+// URLs (RFC 3986) with Go's net/url semantics: Parse, String, escaping
+// per component, query Values, ResolveReference with dot-segment removal,
+// JoinPath. Unlike Go, the host and the port are separate fields (Host
+// holds no brackets; HostPort() joins them back).
+
+// User name and optional password of a URL.
+struct Userinfo {
+    Username    string
+    Password    string
+    HasPassword bool
+
+    func String() string {
+        var s = escape(this.Username, 4)
+        if this.HasPassword {
+            s += ":" + escape(this.Password, 4)
+        }
+        return s
+    }
+}
+
+func User(name string) *Userinfo {
+    return &Userinfo{Username: name}
+}
+
+func UserPassword(name string, password string) *Userinfo {
+    return &Userinfo{Username: name, Password: password, HasPassword: true}
+}
+
+// A parsed URL: [scheme:][//[user@]host[:port]][/]path[?query][#fragment],
+// or scheme:opaque[?query][#fragment]. Path and Fragment are unescaped;
+// RawPath / RawFragment keep a non-default escaping of them.
+struct URL {
+    Scheme      string
+    Opaque      string
+    User        *Userinfo
+    Host        string
+    Port        string
+    Path        string
+    RawPath     string
+    OmitHost    bool
+    ForceQuery  bool
+    RawQuery    string
+    Fragment    string
+    RawFragment string
+
+    // host[:port], with brackets around an IPv6 host.
+    func HostPort() string {
+        var h = this.Host
+        if std.strings.Contains(h, ":") {
+            h = "[" + h + "]"
+        }
+        if this.Port != "" {
+            return h + ":" + this.Port
+        }
+        return h
+    }
+
+    func IsAbs() bool {
+        return this.Scheme != ""
+    }
+
+    // The escaped path (RawPath when it is a valid encoding of Path).
+    func EscapedPath() string {
+        if this.RawPath != "" && validEncoded(this.RawPath, 1) {
+            var p = try unescape(this.RawPath, 1) else ""
+            if p == this.Path {
+                return this.RawPath
+            }
+        }
+        if this.Path == "*" {
+            return "*"
+        }
+        return escape(this.Path, 1)
+    }
+
+    func EscapedFragment() string {
+        if this.RawFragment != "" && validEncoded(this.RawFragment, 6) {
+            var f = try unescape(this.RawFragment, 6) else ""
+            if f == this.Fragment {
+                return this.RawFragment
+            }
+        }
+        return escape(this.Fragment, 6)
+    }
+
+    // The URL text.
+    func String() string {
+        var b = std.strings.Builder{}
+        if this.Scheme != "" {
+            b.Write(this.Scheme)
+            b.Write(":")
+        }
+        if this.Opaque != "" {
+            b.Write(this.Opaque)
+        } else {
+            var hp = this.HostPort()
+            if this.Scheme != "" || hp != "" || this.User != nil {
+                if this.OmitHost && hp == "" && this.User == nil {
+                    // empty host omitted
+                } else {
+                    if hp != "" || this.Path != "" || this.User != nil {
+                        b.Write("//")
+                    }
+                    if this.User != nil {
+                        b.Write(this.User.String())
+                        b.Write("@")
+                    }
+                    if hp != "" {
+                        b.Write(escape(hp, 3))
+                    }
+                }
+            }
+            var path = this.EscapedPath()
+            if path != "" && int(path[0]) != 47 && hp != "" {
+                b.Write("/")
+            }
+            if b.Len() == 0 {
+                // a first segment with a colon would read as a scheme
+                var seg = path
+                var slash = std.strings.Index(path, "/")
+                if slash >= 0 {
+                    seg = path[..slash]
+                }
+                if std.strings.Contains(seg, ":") {
+                    b.Write("./")
+                }
+            }
+            b.Write(path)
+        }
+        if this.ForceQuery || this.RawQuery != "" {
+            b.Write("?")
+            b.Write(this.RawQuery)
+        }
+        if this.Fragment != "" {
+            b.Write("#")
+            b.Write(this.EscapedFragment())
+        }
+        return b.String()
+    }
+
+    // String with the password replaced by "xxxxx".
+    func Redacted() string {
+        if this.User == nil || !this.User.HasPassword {
+            return this.String()
+        }
+        var c = *this
+        c.User = UserPassword(this.User.Username, "xxxxx")
+        return c.String()
+    }
+
+    // The parsed query (malformed pairs are skipped, as Go).
+    func Query() Values {
+        return parseQuery(this.RawQuery).v
+    }
+
+    // path?query as sent in an HTTP request line.
+    func RequestURI() string {
+        var r = this.Opaque
+        if r == "" {
+            r = this.EscapedPath()
+            if r == "" {
+                r = "/"
+            }
+        } else if std.strings.HasPrefix(r, "//") {
+            r = this.Scheme + ":" + r
+        }
+        if this.ForceQuery || this.RawQuery != "" {
+            r += "?" + this.RawQuery
+        }
+        return r
+    }
+
+    // ref resolved against this URL (RFC 3986 section 5.2).
+    func ResolveReference(ref URL) URL {
+        var u = ref
+        if ref.Scheme == "" {
+            u.Scheme = this.Scheme
+        }
+        if ref.Scheme != "" || ref.Host != "" || ref.User != nil {
+            u.setPath(resolvePath(ref.EscapedPath(), ""))
+            return u
+        }
+        if ref.Opaque != "" {
+            u.User = nil
+            u.Host = ""
+            u.Port = ""
+            u.Path = ""
+            return u
+        }
+        if ref.Path == "" && !ref.ForceQuery && ref.RawQuery == "" {
+            u.RawQuery = this.RawQuery
+            if ref.Fragment == "" {
+                u.Fragment = this.Fragment
+                u.RawFragment = this.RawFragment
+            }
+        }
+        if ref.Path == "" && this.Opaque != "" {
+            u.Opaque = this.Opaque
+            u.User = nil
+            u.Host = ""
+            u.Port = ""
+            u.Path = ""
+            return u
+        }
+        u.Host = this.Host
+        u.Port = this.Port
+        u.User = this.User
+        u.setPath(resolvePath(this.EscapedPath(), ref.EscapedPath()))
+        return u
+    }
+
+    // Parses ref and resolves it against this URL.
+    func Parse(ref string) URL! {
+        var r = Parse(ref)?
+        return this.ResolveReference(r)
+    }
+
+    // The URL with elems joined to its path (cleaned; a trailing slash kept).
+    func JoinPath(elems []string) URL {
+        var all []string = [this.EscapedPath()]
+        for e in elems {
+            all = append(all, e)
+        }
+        var p = ""
+        if !std.strings.HasPrefix(all[0], "/") {
+            all[0] = "/" + all[0]
+            p = joinClean(all)[1..]
+        } else {
+            p = joinClean(all)
+        }
+        if std.strings.HasSuffix(all[len(all) - 1], "/") && !std.strings.HasSuffix(p, "/") {
+            p += "/"
+        }
+        var u = *this
+        u.setPath(p)
+        return u
+    }
+
+    func setPath(p string) {
+        var path = try unescape(p, 1) else p
+        this.Path = path
+        if escape(path, 1) == p {
+            this.RawPath = ""
+        } else {
+            this.RawPath = p
+        }
+    }
+}
+
+// Joins base and elems as a URL path.
+func JoinPath(base string, elems []string) string! {
+    var u = Parse(base)?
+    return u.JoinPath(elems).String()
+}
+
+// -- parsing ----------------------------------------------------------------------
+
+func parseError(raw string, msg string) error {
+    return error("parse " + goQuote(raw) + ": " + msg)
+}
+
+// A quoted string with control bytes as \xNN (as Go's %q for ASCII text).
+func goQuote(s string) string {
+    var b = std.strings.Builder{}
+    b.Write("\"")
+    var start = 0
+    for i in 0..len(s) {
+        var c = int(s[i])
+        var e = ""
+        if c == 34 {
+            e = "\\\""
+        } else if c == 92 {
+            e = "\\\\"
+        } else if c == 10 {
+            e = "\\n"
+        } else if c == 9 {
+            e = "\\t"
+        } else if c == 13 {
+            e = "\\r"
+        } else if c < 32 || c == 127 {
+            var d = "0123456789abcdef"
+            e = "\\x" + d[c >> 4..(c >> 4) + 1] + d[c & 15..(c & 15) + 1]
+        } else {
+            continue
+        }
+        b.Write(s[start..i])
+        b.Write(e)
+        start = i + 1
+    }
+    b.Write(s[start..])
+    b.Write("\"")
+    return b.String()
+}
+
+// Parses an absolute or relative URL.
+func Parse(raw string) URL! {
+    var hash = std.strings.Index(raw, "#")
+    var u = raw
+    var frag = ""
+    var hasFrag = false
+    if hash >= 0 {
+        u = raw[..hash]
+        frag = raw[hash + 1..]
+        hasFrag = true
+    }
+    var url = try parse(u, false) catch err {
+        return parseError(u, err.Message())
+    }
+    if hasFrag && frag != "" {
+        url.Fragment = try unescape(frag, 6) catch err {
+            return parseError(raw, err.Message())
+        }
+        if escape(url.Fragment, 6) == frag {
+            url.RawFragment = ""
+        } else {
+            url.RawFragment = frag
+        }
+    }
+    return url
+}
+
+// Parses a URL from an HTTP request line (absolute or an absolute path).
+func ParseRequestURI(raw string) URL! {
+    var url = try parse(raw, true) catch err {
+        return parseError(raw, err.Message())
+    }
+    return url
+}
+
+func parse(raw string, viaRequest bool) URL! {
+    for i in 0..len(raw) {
+        var c = int(raw[i])
+        if c < 32 || c == 127 {
+            return error("net/url: invalid control character in URL")
+        }
+    }
+    if raw == "" && viaRequest {
+        return error("empty url")
+    }
+    var url = URL{}
+    if raw == "*" {
+        url.Path = "*"
+        return url
+    }
+    var rest = raw
+    // scheme
+    for i in 0..len(raw) {
+        var c = int(raw[i])
+        if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) {
+            continue
+        }
+        if (c >= 48 && c <= 57) || c == 43 || c == 45 || c == 46 {
+            if i == 0 {
+                break
+            }
+            continue
+        }
+        if c == 58 {
+            if i == 0 {
+                return error("missing protocol scheme")
+            }
+            url.Scheme = std.strings.ToLower(raw[..i])
+            rest = raw[i + 1..]
+        }
+        break
+    }
+    if std.strings.HasSuffix(rest, "?") && std.strings.Count(rest, "?") == 1 {
+        url.ForceQuery = true
+        rest = rest[..len(rest) - 1]
+    } else {
+        var q = std.strings.Index(rest, "?")
+        if q >= 0 {
+            url.RawQuery = rest[q + 1..]
+            rest = rest[..q]
+        }
+    }
+    if !std.strings.HasPrefix(rest, "/") {
+        if url.Scheme != "" {
+            url.Opaque = rest
+            return url
+        }
+        if viaRequest {
+            return error("invalid URI for request")
+        }
+        var seg = rest
+        var slash = std.strings.Index(rest, "/")
+        if slash >= 0 {
+            seg = rest[..slash]
+        }
+        if std.strings.Contains(seg, ":") {
+            return error("first path segment in URL cannot contain colon")
+        }
+    }
+    if (url.Scheme != "" || (!viaRequest && !std.strings.HasPrefix(rest, "///"))) &&
+        std.strings.HasPrefix(rest, "//") {
+        var authority = rest[2..]
+        rest = ""
+        var slash = std.strings.Index(authority, "/")
+        if slash >= 0 {
+            rest = authority[slash..]
+            authority = authority[..slash]
+        }
+        parseAuthority(&url, authority)?
+    } else if url.Scheme != "" && std.strings.HasPrefix(rest, "/") {
+        url.OmitHost = true
+    }
+    var path = unescape(rest, 1)?
+    url.Path = path
+    if escape(path, 1) == rest {
+        url.RawPath = ""
+    } else {
+        url.RawPath = rest
+    }
+    return url
+}
+
+func parseAuthority(url *URL, authority string) void! {
+    var at = std.strings.LastIndex(authority, "@")
+    var hostPart = authority
+    if at >= 0 {
+        hostPart = authority[at + 1..]
+        var userinfo = authority[..at]
+        if !validUserinfo(userinfo) {
+            return error("net/url: invalid userinfo")
+        }
+        var colon = std.strings.Index(userinfo, ":")
+        if colon < 0 {
+            url.User = User(unescape(userinfo, 4)?)
+        } else {
+            url.User = UserPassword(
+                unescape(userinfo[..colon], 4)?,
+                unescape(userinfo[colon + 1..], 4)?,
+            )
+        }
+    }
+    // host, port
+    var host = hostPart
+    var port = ""
+    if std.strings.HasPrefix(host, "[") {
+        var close = std.strings.LastIndex(host, "]")
+        if close < 0 {
+            return error("missing ']' in host")
+        }
+        var colonPort = host[close + 1..]
+        if !validPort(colonPort) {
+            return error("invalid port " + std.encoding.json.Quote(colonPort) + " after host")
+        }
+        if colonPort != "" {
+            port = colonPort[1..]
+        }
+        host = host[1..close]
+        // an IPv6 zone (RFC 6874): "%25" and then any %-escapes
+        var zone = std.strings.Index(host, "%25")
+        if zone >= 0 {
+            url.Host = unescape(host[..zone], 3)? + unescape(host[zone..], 7)?
+            url.Port = port
+            return
+        }
+    } else {
+        var colon = std.strings.LastIndex(host, ":")
+        if colon >= 0 {
+            var colonPort = host[colon..]
+            if !validPort(colonPort) {
+                return error("invalid port " + std.encoding.json.Quote(colonPort) + " after host")
+            }
+            port = colonPort[1..]
+            host = host[..colon]
+        }
+    }
+    url.Host = unescape(host, 3)?
+    url.Port = port
+}
+
+func validPort(p string) bool {
+    if p == "" {
+        return true
+    }
+    if int(p[0]) != 58 {
+        return false
+    }
+    for i in 1..len(p) {
+        if int(p[i]) < 48 || int(p[i]) > 57 {
+            return false
+        }
+    }
+    return true
+}
+
+func validUserinfo(s string) bool {
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) {
+            continue
+        }
+        if c == 45 ||
+            c == 46 ||
+            c == 95 ||
+            c == 58 ||
+            c == 126 ||
+            c == 33 ||
+            c == 36 ||
+            c == 38 ||
+            c == 39 ||
+            c == 40 ||
+            c == 41 ||
+            c == 42 ||
+            c == 43 ||
+            c == 44 ||
+            c == 59 ||
+            c == 61 ||
+            c == 37 ||
+            c == 64 {
+            continue
+        }
+        return false
+    }
+    return true
+}
+
+// -- escaping ----------------------------------------------------------------------
+
+// Modes: 1 path, 2 path segment, 3 host, 4 user/password, 5 query
+// component, 6 fragment, 7 IPv6 zone (Go's shouldEscape).
+func shouldEscape(c int, mode int) bool {
+    if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) {
+        return false
+    }
+    if mode == 3 || mode == 7 {
+        if c == 33 ||
+            c == 36 ||
+            c == 38 ||
+            c == 39 ||
+            c == 40 ||
+            c == 41 ||
+            c == 42 ||
+            c == 43 ||
+            c == 44 ||
+            c == 59 ||
+            c == 61 ||
+            c == 58 ||
+            c == 91 ||
+            c == 93 ||
+            c == 60 ||
+            c == 62 ||
+            c == 34 {
+            return false
+        }
+    }
+    if c == 45 || c == 95 || c == 46 || c == 126 {
+        return false
+    }
+    if c == 36 ||
+        c == 38 ||
+        c == 43 ||
+        c == 44 ||
+        c == 47 ||
+        c == 58 ||
+        c == 59 ||
+        c == 61 ||
+        c == 63 ||
+        c == 64 {
+        if mode == 1 {
+            return c == 63
+        }
+        if mode == 2 {
+            return c == 47 || c == 59 || c == 44 || c == 63
+        }
+        if mode == 4 {
+            return c == 64 || c == 47 || c == 63 || c == 58
+        }
+        if mode == 5 {
+            return true
+        }
+        if mode == 6 {
+            return false
+        }
+    }
+    if mode == 6 && (c == 33 || c == 40 || c == 41 || c == 42) {
+        return false
+    }
+    return true
+}
+
+func hexUpper(c int) string {
+    var d = "0123456789ABCDEF"
+    return "%" + d[c >> 4..(c >> 4) + 1] + d[c & 15..(c & 15) + 1]
+}
+
+func escape(s string, mode int) string {
+    var need = false
+    for i in 0..len(s) {
+        if shouldEscape(int(s[i]), mode) {
+            need = true
+            break
+        }
+    }
+    if !need {
+        return s
+    }
+    var b = std.strings.Builder{}
+    var start = 0
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if !shouldEscape(c, mode) {
+            continue
+        }
+        b.Write(s[start..i])
+        if c == 32 && mode == 5 {
+            b.Write("+")
+        } else {
+            b.Write(hexUpper(c))
+        }
+        start = i + 1
+    }
+    b.Write(s[start..])
+    return b.String()
+}
+
+func hexVal(c int) int {
+    if c >= 48 && c <= 57 {
+        return c - 48
+    }
+    if c >= 97 && c <= 102 {
+        return c - 87
+    }
+    if c >= 65 && c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+func unescape(s string, mode int) string! {
+    var hasPct = false
+    var hasPlus = false
+    var i = 0
+    for i < len(s) {
+        var c = int(s[i])
+        if c == 37 {
+            hasPct = true
+            if i + 2 >= len(s) || hexVal(int(s[i + 1])) < 0 || hexVal(int(s[i + 2])) < 0 {
+                return error(
+                    "invalid URL escape " +
+                        std.encoding.json.Quote(s[i..std.math.IMin(i + 3, len(s))]),
+                )
+            }
+            // in a host, %-encoding is only for non-ASCII bytes (and %25 in IPv6 zones)
+            if mode == 3 && hexVal(int(s[i + 1])) < 8 && s[i..i + 3] != "%25" {
+                return error("invalid URL escape " + std.encoding.json.Quote(s[i..i + 3]))
+            }
+            if mode == 7 {
+                var v = hexVal(int(s[i + 1])) * 16 + hexVal(int(s[i + 2]))
+                if s[i..i + 3] != "%25" && v != 32 && shouldEscape(v, 3) {
+                    return error("invalid URL escape " + std.encoding.json.Quote(s[i..i + 3]))
+                }
+            }
+            i += 3
+            continue
+        }
+        if c == 43 {
+            hasPlus = mode == 5
+        } else if (mode == 3 || mode == 7) && c < 128 && shouldEscape(c, 3) {
+            return error(
+                "invalid character " + std.encoding.json.Quote(s[i..i + 1]) + " in host name",
+            )
+        }
+        i += 1
+    }
+    if !hasPct && !hasPlus {
+        return s
+    }
+    var out []byte = []
+    var k = 0
+    for k < len(s) {
+        var c = int(s[k])
+        if c == 37 {
+            out = append(out, byte(hexVal(int(s[k + 1])) * 16 + hexVal(int(s[k + 2]))))
+            k += 3
+        } else if c == 43 && mode == 5 {
+            out = append(out, byte(32))
+            k += 1
+        } else {
+            out = append(out, s[k])
+            k += 1
+        }
+    }
+    return std.strings.FromBytes(out)
+}
+
+func validEncoded(s string, mode int) bool {
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if c == 33 ||
+            c == 36 ||
+            c == 38 ||
+            c == 39 ||
+            c == 40 ||
+            c == 41 ||
+            c == 42 ||
+            c == 43 ||
+            c == 44 ||
+            c == 59 ||
+            c == 61 ||
+            c == 58 ||
+            c == 64 ||
+            c == 91 ||
+            c == 93 {
+            continue
+        }
+        if c == 37 {
+            continue
+        }
+        if shouldEscape(c, mode) {
+            return false
+        }
+    }
+    return true
+}
+
+// Escapes s for a query component (space as +).
+func QueryEscape(s string) string {
+    return escape(s, 5)
+}
+
+func QueryUnescape(s string) string! {
+    return unescape(s, 5)?
+}
+
+// Escapes s for a path segment (/ escaped too).
+func PathEscape(s string) string {
+    return escape(s, 2)
+}
+
+func PathUnescape(s string) string! {
+    return unescape(s, 2)?
+}
+
+// -- query values -------------------------------------------------------------------
+
+// Query parameters: several values per key; Encode sorts the keys.
+struct Values {
+    keys []string
+    vals [][]string
+
+    func Get(key string) string {
+        var i = this.index(key)
+        if i < 0 || len(this.vals[i]) == 0 {
+            return ""
+        }
+        return this.vals[i][0]
+    }
+
+    func Values(key string) []string {
+        var i = this.index(key)
+        var out []string = []
+        if i >= 0 {
+            for v in this.vals[i] {
+                out = append(out, v)
+            }
+        }
+        return out
+    }
+
+    func Has(key string) bool {
+        return this.index(key) >= 0
+    }
+
+    func Set(key string, value string) {
+        var i = this.index(key)
+        if i < 0 {
+            this.keys = append(this.keys, key)
+            this.vals = append(this.vals, [value])
+            return
+        }
+        this.vals[i] = [value]
+    }
+
+    func Add(key string, value string) {
+        var i = this.index(key)
+        if i < 0 {
+            this.keys = append(this.keys, key)
+            this.vals = append(this.vals, [value])
+            return
+        }
+        this.vals[i] = append(this.vals[i], value)
+    }
+
+    func Del(key string) {
+        var i = this.index(key)
+        if i < 0 {
+            return
+        }
+        var ks []string = []
+        var vs [][]string = []
+        for j, k in this.keys {
+            if j != i {
+                ks = append(ks, k)
+                vs = append(vs, this.vals[j])
+            }
+        }
+        this.keys = ks
+        this.vals = vs
+    }
+
+    // The keys in first-seen order.
+    func Keys() []string {
+        var out []string = []
+        for k in this.keys {
+            out = append(out, k)
+        }
+        return out
+    }
+
+    // "a=1&b=2&b=3" with keys sorted and escaped.
+    func Encode() string {
+        var ks = this.Keys()
+        sortStrings(ks)
+        var parts []string = []
+        for k in ks {
+            for v in this.vals[this.index(k)] {
+                parts = append(parts, QueryEscape(k) + "=" + QueryEscape(v))
+            }
+        }
+        return std.strings.Join(parts, "&")
+    }
+
+    func index(k string) int {
+        for i, x in this.keys {
+            if x == k {
+                return i
+            }
+        }
+        return -1
+    }
+}
+
+// Parses a query string; the first error is returned (Go also rejects
+// ';' separators). URL.Query keeps the well-formed pairs instead.
+func ParseQuery(q string) Values! {
+    var r = parseQuery(q)
+    if r.err != "" {
+        return error(r.err)
+    }
+    return r.v
+}
+
+struct queryResult {
+    v   Values
+    err string
+}
+
+func parseQuery(q string) queryResult {
+    var v = Values{}
+    var first = ""
+    var rest = q
+    for rest != "" {
+        var key = rest
+        var amp = std.strings.Index(rest, "&")
+        if amp >= 0 {
+            key = rest[..amp]
+            rest = rest[amp + 1..]
+        } else {
+            rest = ""
+        }
+        if std.strings.Contains(key, ";") {
+            if first == "" {
+                first = "invalid semicolon separator in query"
+            }
+            continue
+        }
+        if key == "" {
+            continue
+        }
+        var value = ""
+        var eq = std.strings.Index(key, "=")
+        if eq >= 0 {
+            value = key[eq + 1..]
+            key = key[..eq]
+        }
+        var k = try unescape(key, 5) catch err {
+            if first == "" {
+                first = err.Message()
+            }
+            continue
+        }
+        var val = try unescape(value, 5) catch err {
+            if first == "" {
+                first = err.Message()
+            }
+            continue
+        }
+        v.Add(k, val)
+    }
+    return queryResult{v: v, err: first}
+}
+
+// -- paths --------------------------------------------------------------------------
+
+func resolvePath(base string, ref string) string {
+    var full = ""
+    if ref == "" {
+        full = base
+    } else if int(ref[0]) != 47 {
+        var i = std.strings.LastIndex(base, "/")
+        full = base[..i + 1] + ref
+    } else {
+        full = ref
+    }
+    if full == "" {
+        return ""
+    }
+    var dst = std.strings.Builder{}
+    dst.Write("/")
+    var first = true
+    var elem = ""
+    for part in std.strings.Split(full, "/") {
+        elem = part
+        if elem == "." {
+            first = false
+            continue
+        }
+        if elem == ".." {
+            var str = dst.String()[1..]
+            var index = std.strings.LastIndex(str, "/")
+            dst.Reset()
+            dst.Write("/")
+            if index == -1 {
+                first = true
+            } else {
+                dst.Write(str[..index])
+            }
+        } else {
+            if !first {
+                dst.Write("/")
+            }
+            dst.Write(elem)
+            first = false
+        }
+    }
+    if elem == "." || elem == ".." {
+        dst.Write("/")
+    }
+    var r = dst.String()
+    if len(r) > 1 && int(r[1]) == 47 {
+        r = r[1..]
+    }
+    return r
+}
+
+// path.Join: the elements joined with '/' and cleaned.
+func joinClean(elems []string) string {
+    var parts []string = []
+    for e in elems {
+        if e != "" {
+            parts = append(parts, e)
+        }
+    }
+    if len(parts) == 0 {
+        return ""
+    }
+    return clean(std.strings.Join(parts, "/"))
+}
+
+// Lexical path cleaning (Go path.Clean).
+func clean(p string) string {
+    if p == "" {
+        return "."
+    }
+    var rooted = int(p[0]) == 47
+    var out []string = []
+    for seg in std.strings.Split(p, "/") {
+        if seg == "" || seg == "." {
+            continue
+        }
+        if seg == ".." {
+            if len(out) > 0 && out[len(out) - 1] != ".." {
+                out = out[..len(out) - 1]
+            } else if !rooted {
+                out = append(out, "..")
+            }
+            continue
+        }
+        out = append(out, seg)
+    }
+    var s = std.strings.Join(out, "/")
+    if rooted {
+        return "/" + s
+    }
+    if s == "" {
+        return "."
+    }
+    return s
+}
+
+func sortStrings(a []string) {
+    for i in 1..len(a) {
+        var j = i
+        for j > 0 && a[j - 1] > a[j] {
+            var t = a[j]
+            a[j] = a[j - 1]
+            a[j - 1] = t
+            j -= 1
+        }
+    }
+}

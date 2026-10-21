@@ -3,13 +3,13 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_keepalive
 
-import std.io
 import std
+import std.io
 import std.net
 
 struct Hits {
     Mu task.Mutex
-    N int
+    N  int
 }
 
 struct Counter {
@@ -48,10 +48,16 @@ async func main() void! {
     var c = await net.Dial(fmt.Format("127.0.0.1:{0}", srv.Port()))?
     _ = await c.WriteString("POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc")?
     println(strings.Replace(noDate(await c.ReadString(1000)?), "\r\n", "|"))
-    _ = await c.WriteString("GET /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n")?
+    _ = await c.WriteString(
+        "GET /b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n",
+    )?
     println(strings.Replace(noDate(await c.ReadString(1000)?), "\r\n", "|"))
     var base = fmt.Format("http://127.0.0.1:{0}", srv.Port())
-    var (r1, r2, r3) = await task.All(http.Get(base + "/1"), http.Get(base + "/2"), http.Get(base + "/3"))?
+    var (r1, r2, r3) = await task.All(
+        http.Get(base + "/1"),
+        http.Get(base + "/2"),
+        http.Get(base + "/3"),
+    )?
     println(r1.Body, "|", r2.Body, "|", r3.Body)
     await srv.Shutdown()
     await serving?

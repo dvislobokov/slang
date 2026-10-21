@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.async.task_context
 
-import std.io
 import std
+import std.io
 
 struct Request {
     Id int

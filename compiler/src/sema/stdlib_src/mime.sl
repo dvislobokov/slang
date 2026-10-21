@@ -30,7 +30,7 @@ func ExtensionsByType(typ string) []string! {
 
 // A parsed media type: Type is lower case ("text/html"), Params keys too.
 struct MediaType {
-    Type string
+    Type   string
     Params map[string]string
 
     func Param(name string) string {
@@ -43,7 +43,21 @@ func isToken(c int) bool {
         return false
     }
     // tspecials of RFC 1521 / 2045
-    return !(c == 40 || c == 41 || c == 60 || c == 62 || c == 64 || c == 44 || c == 59 || c == 58 || c == 92 || c == 34 || c == 47 || c == 91 || c == 93 || c == 63 || c == 61)
+    return !(c == 40 ||
+        c == 41 ||
+        c == 60 ||
+        c == 62 ||
+        c == 64 ||
+        c == 44 ||
+        c == 59 ||
+        c == 58 ||
+        c == 92 ||
+        c == 34 ||
+        c == 47 ||
+        c == 91 ||
+        c == 93 ||
+        c == 63 ||
+        c == 61)
 }
 
 func tokenLen(s string, from int) int {
@@ -253,7 +267,7 @@ func lookup(keys []string, vals []string, k string) found {
 }
 
 struct decoded {
-    ok bool
+    ok    bool
     value string
 }
 
@@ -273,7 +287,10 @@ func decode2231(s string, first bool) decoded {
     var i = 0
     for i < len(text) {
         var c = int(text[i])
-        if c == 37 && i + 2 < len(text) + 0 && hexv(int(text[i + 1])) >= 0 && hexv(int(text[i + 2])) >= 0 {
+        if c == 37 &&
+            i + 2 < len(text) + 0 &&
+            hexv(int(text[i + 1])) >= 0 &&
+            hexv(int(text[i + 2])) >= 0 {
             raw = append(raw, byte(hexv(int(text[i + 1])) * 16 + hexv(int(text[i + 2]))))
             i += 3
             continue
@@ -320,7 +337,10 @@ func FormatMediaType(typ string, params map[string]string) string {
     } else {
         var major = typ[..slash]
         var sub = typ[slash + 1..]
-        if major == "" || sub == "" || tokenLen(major, 0) != len(major) || tokenLen(sub, 0) != len(sub) {
+        if major == "" ||
+            sub == "" ||
+            tokenLen(major, 0) != len(major) ||
+            tokenLen(sub, 0) != len(sub) {
             return ""
         }
         b.Write(std.strings.ToLower(major))
@@ -413,7 +433,14 @@ func EncodeWord(s string) string {
         var c = int(s[i])
         if c == 32 {
             b.Write("_")
-        } else if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 33 || c == 42 || c == 43 || c == 45 || c == 47 {
+        } else if (c >= 48 && c <= 57) ||
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122) ||
+            c == 33 ||
+            c == 42 ||
+            c == 43 ||
+            c == 45 ||
+            c == 47 {
             b.Write(s[i..i + 1])
         } else {
             b.Write("=" + hex2(c))
@@ -474,7 +501,10 @@ func DecodeHeader(s string) string! {
                 if c == 95 {
                     raw = append(raw, byte(32))
                     k += 1
-                } else if c == 61 && k + 2 < len(text) + 0 && hexv(int(text[k + 1])) >= 0 && hexv(int(text[k + 2])) >= 0 {
+                } else if c == 61 &&
+                    k + 2 < len(text) + 0 &&
+                    hexv(int(text[k + 1])) >= 0 &&
+                    hexv(int(text[k + 2])) >= 0 {
                     raw = append(raw, byte(hexv(int(text[k + 1])) * 16 + hexv(int(text[k + 2]))))
                     k += 3
                 } else {

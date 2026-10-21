@@ -1,0 +1,594 @@
+namespace std.slices
+
+// std.slices: generic algorithms over []T (Go's slices + sort).
+// Sorting is stable (bottom-up merge sort with insertion-sorted runs).
+// Functions that build a new slice say so; the others work in place.
+
+// A pair of values (the elements of Zip).
+struct Pair<A, B> {
+    First  A
+    Second B
+}
+
+// Sorts xs in place, ascending, stable.
+func Sort<T: Ordered>(xs []T) {
+    SortFunc(xs, (a T, b T) => a < b)
+}
+
+// Sorts xs in place by key(x), ascending, stable. key is called twice
+// per comparison; precompute expensive keys.
+func SortBy<T, K: Ordered>(xs []T, key func(T) K) {
+    SortFunc(xs, (a T, b T) => key(a) < key(b))
+}
+
+// Sorts xs in place with less (a strict weak order), stable.
+func SortFunc<T>(xs []T, less func(T, T) bool) {
+    var n = len(xs)
+    if n < 2 {
+        return
+    }
+    // Insertion-sort runs of 16.
+    var run = 16
+    var lo = 0
+    for lo < n {
+        var hi = lo + run
+        if hi > n {
+            hi = n
+        }
+        insertion(xs, lo, hi, less)
+        lo = hi
+    }
+    if n <= run {
+        return
+    }
+    var buf []T = []
+    for x in xs {
+        buf = append(buf, x)
+    }
+    // Merge passes alternate between xs and buf.
+    var src = xs
+    var dst = buf
+    var inBuf = false
+    var width = run
+    for width < n {
+        var i = 0
+        for i < n {
+            var mid = i + width
+            if mid > n {
+                mid = n
+            }
+            var end = i + 2 * width
+            if end > n {
+                end = n
+            }
+            merge(src, dst, i, mid, end, less)
+            i = end
+        }
+        var t = src
+        src = dst
+        dst = t
+        inBuf = !inBuf
+        width = width * 2
+    }
+    if inBuf {
+        for k in 0..n {
+            xs[k] = src[k]
+        }
+    }
+}
+
+func insertion<T>(xs []T, lo int, hi int, less func(T, T) bool) {
+    for i in lo + 1..hi {
+        var j = i
+        var x = xs[i]
+        for j > lo && less(x, xs[j - 1]) {
+            xs[j] = xs[j - 1]
+            j -= 1
+        }
+        xs[j] = x
+    }
+}
+
+func merge<T>(src []T, dst []T, lo int, mid int, hi int, less func(T, T) bool) {
+    var i = lo
+    var j = mid
+    var k = lo
+    for i < mid && j < hi {
+        if less(src[j], src[i]) {
+            dst[k] = src[j]
+            j += 1
+        } else {
+            dst[k] = src[i]
+            i += 1
+        }
+        k += 1
+    }
+    for i < mid {
+        dst[k] = src[i]
+        i += 1
+        k += 1
+    }
+    for j < hi {
+        dst[k] = src[j]
+        j += 1
+        k += 1
+    }
+}
+
+// True if xs is sorted ascending.
+func IsSorted<T: Ordered>(xs []T) bool {
+    for i in 1..len(xs) {
+        if xs[i] < xs[i - 1] {
+            return false
+        }
+    }
+    return true
+}
+
+// True if xs is sorted by less.
+func IsSortedFunc<T>(xs []T, less func(T, T) bool) bool {
+    for i in 1..len(xs) {
+        if less(xs[i], xs[i - 1]) {
+            return false
+        }
+    }
+    return true
+}
+
+// Searches sorted xs for x: the index where x is (or would be inserted)
+// and whether it is there.
+func BinarySearch<T: Ordered>(xs []T, x T) (int, bool) {
+    var lo = 0
+    var hi = len(xs)
+    for lo < hi {
+        var m = lo + (hi - lo) / 2
+        if xs[m] < x {
+            lo = m + 1
+        } else {
+            hi = m
+        }
+    }
+    return (lo, lo < len(xs) && xs[lo] == x)
+}
+
+// Like BinarySearch with cmp(element, target) returning <0, 0, >0.
+func BinarySearchFunc<T, K>(xs []T, target K, cmp func(T, K) int) (int, bool) {
+    var lo = 0
+    var hi = len(xs)
+    for lo < hi {
+        var m = lo + (hi - lo) / 2
+        if cmp(xs[m], target) < 0 {
+            lo = m + 1
+        } else {
+            hi = m
+        }
+    }
+    return (lo, lo < len(xs) && cmp(xs[lo], target) == 0)
+}
+
+// Index of the first x in xs, or -1.
+func Index<T: Comparable>(xs []T, x T) int {
+    for i, y in xs {
+        if y == x {
+            return i
+        }
+    }
+    return -1
+}
+
+// Index of the first element satisfying f, or -1.
+func IndexFunc<T>(xs []T, f func(T) bool) int {
+    for i, y in xs {
+        if f(y) {
+            return i
+        }
+    }
+    return -1
+}
+
+// True if x is in xs.
+func Contains<T: Comparable>(xs []T, x T) bool {
+    return Index(xs, x) >= 0
+}
+
+// True if some element satisfies f.
+func ContainsFunc<T>(xs []T, f func(T) bool) bool {
+    return IndexFunc(xs, f) >= 0
+}
+
+// True if every element satisfies f (true for an empty slice).
+func All<T>(xs []T, f func(T) bool) bool {
+    for x in xs {
+        if !f(x) {
+            return false
+        }
+    }
+    return true
+}
+
+// Number of elements satisfying f.
+func Count<T>(xs []T, f func(T) bool) int {
+    var n = 0
+    for x in xs {
+        if f(x) {
+            n += 1
+        }
+    }
+    return n
+}
+
+// New slice of f(x) for every x.
+func Map<T, U>(xs []T, f func(T) U) []U {
+    var out []U = []
+    for x in xs {
+        out = append(out, f(x))
+    }
+    return out
+}
+
+// New slice of the elements satisfying keep.
+func Filter<T>(xs []T, keep func(T) bool) []T {
+    var out []T = []
+    for x in xs {
+        if keep(x) {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+// Folds xs from the left: f(...f(f(init, xs[0]), xs[1])..., xs[n-1]).
+func Reduce<T, A>(xs []T, init A, f func(A, T) A) A {
+    var acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    return acc
+}
+
+// Reverses xs in place.
+func Reverse<T>(xs []T) {
+    var i = 0
+    var j = len(xs) - 1
+    for i < j {
+        var t = xs[i]
+        xs[i] = xs[j]
+        xs[j] = t
+        i += 1
+        j -= 1
+    }
+}
+
+// New slice without duplicates, keeping the first occurrence of each.
+func Unique<T: Comparable>(xs []T) []T {
+    var seen = map[T]bool{}
+    var out []T = []
+    for x in xs {
+        if !seen[x] {
+            seen[x] = true
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+// New slice with runs of equal consecutive elements replaced by one
+// (Go's Compact; on a sorted slice this is Unique).
+func Compact<T: Comparable>(xs []T) []T {
+    var out []T = []
+    for i, x in xs {
+        if i == 0 || x != xs[i - 1] {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+// Like Compact with an equality function.
+func CompactFunc<T>(xs []T, eq func(T, T) bool) []T {
+    var out []T = []
+    for i, x in xs {
+        if i == 0 || !eq(x, xs[i - 1]) {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+// Consecutive sub-slices of n elements (the last may be shorter). They
+// share xs's storage. Panics if n < 1.
+func Chunk<T>(xs []T, n int) [][]T {
+    if n < 1 {
+        panic("slices.Chunk: n must be at least 1")
+    }
+    var out [][]T = []
+    var i = 0
+    for i < len(xs) {
+        var j = i + n
+        if j > len(xs) {
+            j = len(xs)
+        }
+        out = append(out, xs[i..j])
+        i = j
+    }
+    return out
+}
+
+// Every window of n consecutive elements, sliding by one (none if
+// len(xs) < n). They share xs's storage. Panics if n < 1.
+func Window<T>(xs []T, n int) [][]T {
+    if n < 1 {
+        panic("slices.Window: n must be at least 1")
+    }
+    var out [][]T = []
+    var i = 0
+    for i + n <= len(xs) {
+        out = append(out, xs[i..i + n])
+        i += 1
+    }
+    return out
+}
+
+// Pairs of elements at the same index (as long as the shorter slice).
+func Zip<A, B>(a []A, b []B) []Pair<A, B> {
+    var n = len(a)
+    if len(b) < n {
+        n = len(b)
+    }
+    var out []Pair<A, B> = []
+    for i in 0..n {
+        out = append(out, Pair<A, B>{First: a[i], Second: b[i]})
+    }
+    return out
+}
+
+// Concatenation of all the slices.
+func Flatten<T>(xss [][]T) []T {
+    var out []T = []
+    for xs in xss {
+        for x in xs {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+// Concatenation of two slices (a new slice).
+func Concat<T>(a []T, b []T) []T {
+    var out []T = []
+    for x in a {
+        out = append(out, x)
+    }
+    for x in b {
+        out = append(out, x)
+    }
+    return out
+}
+
+// Smallest element; panics on an empty slice.
+func Min<T: Ordered>(xs []T) T {
+    if len(xs) == 0 {
+        panic("slices.Min: empty list")
+    }
+    var m = xs[0]
+    for x in xs {
+        if x < m {
+            m = x
+        }
+    }
+    return m
+}
+
+// Largest element; panics on an empty slice.
+func Max<T: Ordered>(xs []T) T {
+    if len(xs) == 0 {
+        panic("slices.Max: empty list")
+    }
+    var m = xs[0]
+    for x in xs {
+        if x > m {
+            m = x
+        }
+    }
+    return m
+}
+
+// Smallest element by less (the first of equal ones); panics if empty.
+func MinFunc<T>(xs []T, less func(T, T) bool) T {
+    if len(xs) == 0 {
+        panic("slices.MinFunc: empty list")
+    }
+    var m = xs[0]
+    for x in xs {
+        if less(x, m) {
+            m = x
+        }
+    }
+    return m
+}
+
+// Largest element by less (the first of equal ones); panics if empty.
+func MaxFunc<T>(xs []T, less func(T, T) bool) T {
+    if len(xs) == 0 {
+        panic("slices.MaxFunc: empty list")
+    }
+    var m = xs[0]
+    for x in xs {
+        if less(m, x) {
+            m = x
+        }
+    }
+    return m
+}
+
+// Sum of the elements (zero for an empty slice; concatenation for strings).
+func Sum<T: Ordered>(xs []T) T {
+    var s T
+    for x in xs {
+        s = s + x
+    }
+    return s
+}
+
+// True if a and b have the same length and equal elements.
+func Equal<T: Comparable>(a []T, b []T) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i, x in a {
+        if x != b[i] {
+            return false
+        }
+    }
+    return true
+}
+
+// Like Equal with an equality function.
+func EqualFunc<T, U>(a []T, b []U, eq func(T, U) bool) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i, x in a {
+        if !eq(x, b[i]) {
+            return false
+        }
+    }
+    return true
+}
+
+// Lexicographic comparison: -1, 0 or +1.
+func Compare<T: Ordered>(a []T, b []T) int {
+    var n = len(a)
+    if len(b) < n {
+        n = len(b)
+    }
+    for i in 0..n {
+        if a[i] < b[i] {
+            return -1
+        }
+        if b[i] < a[i] {
+            return 1
+        }
+    }
+    if len(a) < len(b) {
+        return -1
+    }
+    if len(a) > len(b) {
+        return 1
+    }
+    return 0
+}
+
+// A copy of xs (nil stays empty).
+func Clone<T>(xs []T) []T {
+    var out []T = []
+    for x in xs {
+        out = append(out, x)
+    }
+    return out
+}
+
+// New slice with vals inserted at index i (0 <= i <= len(xs)).
+func Insert<T>(xs []T, i int, vals []T) []T {
+    if i < 0 || i > len(xs) {
+        panic("slices.Insert: index out of range")
+    }
+    var out []T = []
+    for x in xs[..i] {
+        out = append(out, x)
+    }
+    for x in vals {
+        out = append(out, x)
+    }
+    for x in xs[i..] {
+        out = append(out, x)
+    }
+    return out
+}
+
+// New slice without the elements xs[i..j].
+func Delete<T>(xs []T, i int, j int) []T {
+    if i < 0 || j > len(xs) || i > j {
+        panic("slices.Delete: index out of range")
+    }
+    var out []T = []
+    for x in xs[..i] {
+        out = append(out, x)
+    }
+    for x in xs[j..] {
+        out = append(out, x)
+    }
+    return out
+}
+
+// New slice without the elements satisfying del.
+func DeleteFunc<T>(xs []T, del func(T) bool) []T {
+    var out []T = []
+    for x in xs {
+        if !del(x) {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+// Sets every element of xs to v.
+func Fill<T>(xs []T, v T) {
+    for i in 0..len(xs) {
+        xs[i] = v
+    }
+}
+
+// New slice of xs repeated n times. Panics if n < 0.
+func Repeat<T>(xs []T, n int) []T {
+    if n < 0 {
+        panic("slices.Repeat: negative count")
+    }
+    var out []T = []
+    for _ in 0..n {
+        for x in xs {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+// New slice of n copies of v.
+func Of<T>(v T, n int) []T {
+    var out []T = []
+    for _ in 0..n {
+        out = append(out, v)
+    }
+    return out
+}
+
+// Shuffles xs in place (Fisher-Yates); rng(n) must return a random
+// int in [0, n), e.g. `(n int) => random.IntN(n)`.
+func Shuffle<T>(xs []T, rng func(int) int) {
+    var i = len(xs) - 1
+    for i > 0 {
+        var j = rng(i + 1)
+        var t = xs[i]
+        xs[i] = xs[j]
+        xs[j] = t
+        i -= 1
+    }
+}
+
+// Groups the elements by key, in first-seen key order.
+func GroupBy<T, K: Comparable>(xs []T, key func(T) K) []Pair<K, []T> {
+    var index = map[K]int{}
+    var out []Pair<K, []T> = []
+    for x in xs {
+        var k = key(x)
+        var i = index[k]
+        if i == 0 {
+            var empty []T = []
+            out = append(out, Pair<K, []T>{First: k, Second: empty})
+            i = len(out)
+            index[k] = i
+        }
+        out[i - 1].Second = append(out[i - 1].Second, x)
+    }
+    return out
+}

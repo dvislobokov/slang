@@ -7,11 +7,11 @@ namespace std.compress.gzip
 // The optional header fields of a member. ModTime is Unix seconds (0:
 // unset); OS is the RFC 1952 operating system byte (255: unknown).
 struct Header {
-    Name string
+    Name    string
     Comment string
     ModTime int
-    OS int = 255
-    Extra []byte
+    OS      int = 255
+    Extra   []byte
 }
 
 // Compresses data into one member with an empty header.
@@ -157,13 +157,13 @@ func zero(b []byte, from int) int {
 
 // A streaming gzip compressor: set Header before the first Write.
 struct Writer {
-    Header Header
-    d *std.compress.deflate.Writer
-    crc int
-    size int
-    out []byte
+    Header  Header
+    d       *std.compress.deflate.Writer
+    crc     int
+    size    int
+    out     []byte
     started bool
-    closed bool
+    closed  bool
 
     func Write(p []byte) {
         this.start()
@@ -218,14 +218,14 @@ func NewWriter(level int) *Writer {
 // A streaming gzip decompressor over concatenated members; checksums and
 // sizes are verified at the end of each member.
 struct Reader {
-    state int
-    buf []byte
-    d *std.compress.deflate.Reader
-    crc int
-    size int
+    state   int
+    buf     []byte
+    d       *std.compress.deflate.Reader
+    crc     int
+    size    int
     members int
-    header Header
-    out []byte
+    header  Header
+    out     []byte
 
     func Feed(chunk []byte) void! {
         var input = chunk
@@ -321,11 +321,11 @@ func NewReader() *Reader {
 // decompressed data of src; gzip.NewStreamWriter(dst, level) is an
 // io.Writer that writes gzip data to dst (Close writes the trailer).
 struct StreamReader {
-    src std.io.Reader
-    z *Reader
+    src     std.io.Reader
+    z       *Reader
     pending []byte
-    pos int
-    eof bool
+    pos     int
+    eof     bool
 
     func Read(buf []byte) int! {
         for this.pos >= len(this.pending) {
@@ -366,7 +366,7 @@ func NewStreamReader(src std.io.Reader) *StreamReader {
 
 struct StreamWriter {
     dst std.io.Writer
-    z *Writer
+    z   *Writer
 
     func Write(buf []byte) int! {
         this.z.Write(buf)

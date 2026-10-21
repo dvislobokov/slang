@@ -8,7 +8,7 @@ import std.io
 
 struct P {
     Name string
-    Age int
+    Age  int
 }
 
 func main() {

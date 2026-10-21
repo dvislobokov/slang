@@ -7,10 +7,34 @@ import std.io
 import std.math
 
 func main() {
-    println(bits.LeadingZeros(1), bits.LeadingZeros(0), bits.LeadingZeros32(1), bits.TrailingZeros(8), bits.TrailingZeros(0), bits.TrailingZeros32(0))
-    println(bits.OnesCount(255), bits.OnesCount32(4294967295), bits.Len(0), bits.Len(255), bits.Len32(256), bits.UintSize)
-    println(bits.RotateLeft(1, 63), bits.RotateLeft(1, -1), bits.RotateLeft32(2147483648, 1), bits.Reverse(1), bits.Reverse32(1))
-    println(bits.ReverseBytes(0x0102030405060708), bits.ReverseBytes32(0x01020304), bits.ReverseBytes16(0x0102))
+    println(
+        bits.LeadingZeros(1),
+        bits.LeadingZeros(0),
+        bits.LeadingZeros32(1),
+        bits.TrailingZeros(8),
+        bits.TrailingZeros(0),
+        bits.TrailingZeros32(0),
+    )
+    println(
+        bits.OnesCount(255),
+        bits.OnesCount32(4294967295),
+        bits.Len(0),
+        bits.Len(255),
+        bits.Len32(256),
+        bits.UintSize,
+    )
+    println(
+        bits.RotateLeft(1, 63),
+        bits.RotateLeft(1, -1),
+        bits.RotateLeft32(2147483648, 1),
+        bits.Reverse(1),
+        bits.Reverse32(1),
+    )
+    println(
+        bits.ReverseBytes(0x0102030405060708),
+        bits.ReverseBytes32(0x01020304),
+        bits.ReverseBytes16(0x0102),
+    )
     var (s, c) = bits.Add64(18446744073709551615, 1, 0)
     var (s2, c2) = bits.Add64(1, 2, 1)
     var (d, b) = bits.Sub64(0, 1, 0)

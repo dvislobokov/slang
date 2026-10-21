@@ -6,11 +6,9 @@
 #include "platform/platform.h"
 
 #include <errno.h>
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 /* ======================================================================
  * Scheduler: N workers over one global FIFO queue.
@@ -24,9 +22,9 @@ typedef struct job {
     struct job *next;
 } job;
 
-static pthread_mutex_t q_mu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t q_cv = PTHREAD_COND_INITIALIZER;     /* work available / stop */
-static pthread_cond_t idle_cv = PTHREAD_COND_INITIALIZER;  /* drained / thread exited */
+static slang__plat_mutex q_mu = SLANG_PLAT_MUTEX_INIT;
+static slang__plat_cond q_cv = SLANG_PLAT_COND_INIT;     /* work available / stop */
+static slang__plat_cond idle_cv = SLANG_PLAT_COND_INIT;  /* drained / thread exited */
 static job *q_head, *q_tail;
 static int q_stopping;
 static int q_started;
@@ -60,7 +58,7 @@ static void *worker_main(void *spare_flag) {
     int spare = spare_flag != NULL;
     t_is_worker = 1;
     slang__plat_thread_stack_init(); /* frame walks of the CPU profiler */
-    pthread_mutex_lock(&q_mu);
+    slang__plat_mutex_lock(&q_mu);
     for (;;) {
         job *j = pop_locked();
         if (!j) {
@@ -68,12 +66,12 @@ static void *worker_main(void *spare_flag) {
             /* spare threads retire once enough unblocked workers exist again */
             if (spare && q_alive - q_blocked > q_nworkers) break;
             q_idle++;
-            pthread_cond_wait(&q_cv, &q_mu);
+            slang__plat_cond_wait(&q_cv, &q_mu);
             q_idle--;
             continue;
         }
         q_active++;
-        pthread_mutex_unlock(&q_mu);
+        slang__plat_mutex_unlock(&q_mu);
         slang_resume_fn fn = j->fn;
         void *arg = j->arg;
         slang_object *saved = t_ctx;
@@ -82,17 +80,24 @@ static void *worker_main(void *spare_flag) {
         t_cur = j->cur;
         free(j);
         fn(arg);
-        slang_release(t_ctx);
-        slang_release(t_cur);
+        /* Restore the thread-locals before dropping the job's references:
+         * the release may free the task (or context) and run destructors
+         * (a task result's Drop) that start tasks, which must not see a
+         * dying object as their parent (that resurrected and double-freed
+         * it). */
+        slang_object *done_ctx = t_ctx;
+        slang_task *done_cur = t_cur;
         t_ctx = saved;
         t_cur = saved_cur;
-        pthread_mutex_lock(&q_mu);
+        slang_release(done_ctx);
+        slang_release(done_cur);
+        slang__plat_mutex_lock(&q_mu);
         q_active--;
-        if (!q_head && q_active == 0) pthread_cond_broadcast(&idle_cv);
+        if (!q_head && q_active == 0) slang__plat_cond_broadcast(&idle_cv);
     }
     q_alive--;
-    pthread_cond_broadcast(&idle_cv);
-    pthread_mutex_unlock(&q_mu);
+    slang__plat_cond_broadcast(&idle_cv);
+    slang__plat_mutex_unlock(&q_mu);
     return NULL;
 }
 
@@ -116,32 +121,32 @@ static void timers_start(void);
 static void timers_stop(void);
 
 void slang__sched_start(void) {
-    static pthread_once_t proc_once = PTHREAD_ONCE_INIT;
-    pthread_once(&proc_once, slang__plat_process_init);  /* SIGPIPE, open-files limit */
-    pthread_mutex_lock(&q_mu);
-    if (q_started) { pthread_mutex_unlock(&q_mu); return; }
+    static slang__plat_once proc_once = SLANG_PLAT_ONCE_INIT;
+    slang__plat_once_run(&proc_once, slang__plat_process_init);  /* SIGPIPE, open-files limit */
+    slang__plat_mutex_lock(&q_mu);
+    if (q_started) { slang__plat_mutex_unlock(&q_mu); return; }
     q_stopping = 0;
     q_nworkers = worker_count();
     for (int64_t i = 0; i < q_nworkers; i++) spawn_worker_locked(0);
     __atomic_store_n(&q_started, 1, __ATOMIC_RELEASE);
-    pthread_mutex_unlock(&q_mu);
+    slang__plat_mutex_unlock(&q_mu);
     timers_start();
 }
 
 void slang__sched_stop(void) {
-    pthread_mutex_lock(&q_mu);
-    if (!q_started) { pthread_mutex_unlock(&q_mu); return; }
-    while (q_head || q_active > 0) pthread_cond_wait(&idle_cv, &q_mu);  /* drain */
+    slang__plat_mutex_lock(&q_mu);
+    if (!q_started) { slang__plat_mutex_unlock(&q_mu); return; }
+    while (q_head || q_active > 0) slang__plat_cond_wait(&idle_cv, &q_mu);  /* drain */
     q_stopping = 1;
-    pthread_cond_broadcast(&q_cv);
-    while (q_alive > 0) pthread_cond_wait(&idle_cv, &q_mu);
-    pthread_mutex_unlock(&q_mu);
+    slang__plat_cond_broadcast(&q_cv);
+    while (q_alive > 0) slang__plat_cond_wait(&idle_cv, &q_mu);
+    slang__plat_mutex_unlock(&q_mu);
     timers_stop();
     slang__io_stop();
-    pthread_mutex_lock(&q_mu);
+    slang__plat_mutex_lock(&q_mu);
     q_nworkers = 0;
     __atomic_store_n(&q_started, 0, __ATOMIC_RELEASE);
-    pthread_mutex_unlock(&q_mu);
+    slang__plat_mutex_unlock(&q_mu);
 }
 
 /* Posts fn(arg) to run with context `ctx` as task `cur` (owned references, moved). */
@@ -155,11 +160,11 @@ static void sched_post_ctx(slang_resume_fn fn, void *arg, slang_object *ctx, sla
     j->ctx = ctx;
     j->cur = cur;
     j->next = NULL;
-    pthread_mutex_lock(&q_mu);
+    slang__plat_mutex_lock(&q_mu);
     if (q_tail) q_tail->next = j; else q_head = j;
     q_tail = j;
-    pthread_cond_signal(&q_cv);
-    pthread_mutex_unlock(&q_mu);
+    slang__plat_cond_signal(&q_cv);
+    slang__plat_mutex_unlock(&q_mu);
 }
 
 void slang_sched_post(slang_resume_fn fn, void *arg) {
@@ -207,8 +212,8 @@ typedef struct hook {
 
 struct slang_task {
     slang_object hdr;
-    pthread_mutex_t mu;
-    pthread_cond_t cv;
+    slang__plat_mutex mu;
+    slang__plat_cond cv;
     int32_t state;              /* atomic */
     int32_t _pad;
     int64_t result_size;
@@ -239,9 +244,9 @@ int64_t slang__live_tasks(void) { return __atomic_load_n(&g_live_tasks, __ATOMIC
 
 int64_t slang__sched_queue_len(void) {
     int64_t n = 0;
-    pthread_mutex_lock(&q_mu);
+    slang__plat_mutex_lock(&q_mu);
     for (job *j = q_head; j; j = j->next) n++;
-    pthread_mutex_unlock(&q_mu);
+    slang__plat_mutex_unlock(&q_mu);
     return n;
 }
 
@@ -258,14 +263,14 @@ static void task_drop(void *obj) {
     if (t->dbg_id) slang__dbg_task_drop(t->dbg_id);
     if (t->parent) {
         slang_task *p = t->parent;
-        pthread_mutex_lock(&p->mu);
+        slang__plat_mutex_lock(&p->mu);
         if (t->sib_prev) t->sib_prev->sib_next = t->sib_next; else p->child_head = t->sib_next;
         if (t->sib_next) t->sib_next->sib_prev = t->sib_prev;
-        pthread_mutex_unlock(&p->mu);
+        slang__plat_mutex_unlock(&p->mu);
         slang_release(p);
     }
-    pthread_mutex_destroy(&t->mu);
-    pthread_cond_destroy(&t->cv);
+    slang__plat_mutex_destroy(&t->mu);
+    slang__plat_cond_destroy(&t->cv);
 }
 
 static const slang_type_info task_type = { "Task", 0, task_drop };
@@ -274,8 +279,8 @@ static slang_task *task_new_ex(int64_t result_size, const slang_value_ops *ops, 
     if (result_size < 0) slang__panicf("slang_task_new: negative result size");
     slang_task *t = slang_object_new(&task_type,
                                      (int64_t)sizeof(slang_task) + SLANG_ROUND8(result_size));
-    pthread_mutex_init(&t->mu, NULL);
-    pthread_cond_init(&t->cv, NULL);
+    slang__plat_mutex_init(&t->mu);
+    slang__plat_cond_init(&t->cv);
     __atomic_add_fetch(&g_live_tasks, 1, __ATOMIC_RELAXED);
     t->result_size = result_size;
     t->ops = ops;
@@ -288,12 +293,12 @@ static void task_attach(slang_task *t, slang_task *parent) {
     if (!parent) return;
     slang_retain(parent);
     t->parent = parent;
-    pthread_mutex_lock(&parent->mu);
+    slang__plat_mutex_lock(&parent->mu);
     t->sib_next = parent->child_head;
     if (parent->child_head) parent->child_head->sib_prev = t;
     parent->child_head = t;
     if (__atomic_load_n(&parent->cancelled, __ATOMIC_ACQUIRE)) __atomic_store_n(&t->cancelled, 1, __ATOMIC_RELEASE);
-    pthread_mutex_unlock(&parent->mu);
+    slang__plat_mutex_unlock(&parent->mu);
 }
 
 /* The task of the code that runs now: a child of the current task, and the
@@ -336,9 +341,9 @@ static void restore_parent(slang_task *t) {
 /* Completes t; returns false (and does nothing) if it already was done. */
 static bool task_complete(slang_task *t, const void *result) {
     if (!t) slang_panic_nil();
-    pthread_mutex_lock(&t->mu);
+    slang__plat_mutex_lock(&t->mu);
     if (t->state == TASK_DONE) {
-        pthread_mutex_unlock(&t->mu);
+        slang__plat_mutex_unlock(&t->mu);
         return false;
     }
     if (result && t->result_size > 0) {
@@ -348,8 +353,8 @@ static bool task_complete(slang_task *t, const void *result) {
     __atomic_store_n(&t->state, TASK_DONE, __ATOMIC_RELEASE);
     cont *c = t->conts, *rev = NULL;
     t->conts = NULL;
-    pthread_cond_broadcast(&t->cv);
-    pthread_mutex_unlock(&t->mu);
+    slang__plat_cond_broadcast(&t->cv);
+    slang__plat_mutex_unlock(&t->mu);
     restore_parent(t);  /* a coroutine returning: the code after it is its parent's */
     /* After this point `t` may be freed by another thread; use only `rev`. */
     while (c) { cont *n = c->next; c->next = rev; rev = c; c = n; }
@@ -384,9 +389,9 @@ static bool add_cont(slang_task *t, slang_resume_fn fn, void *frame) {
     c->frame = frame;
     c->ctx = t_ctx;
     c->cur = t_cur;
-    pthread_mutex_lock(&t->mu);
+    slang__plat_mutex_lock(&t->mu);
     if (t->state == TASK_DONE) {
-        pthread_mutex_unlock(&t->mu);
+        slang__plat_mutex_unlock(&t->mu);
         free(c);
         return false;
     }
@@ -394,7 +399,7 @@ static bool add_cont(slang_task *t, slang_resume_fn fn, void *frame) {
     slang_retain(c->cur);
     c->next = t->conts;
     t->conts = c;
-    pthread_mutex_unlock(&t->mu);
+    slang__plat_mutex_unlock(&t->mu);
     return true;
 }
 
@@ -417,18 +422,18 @@ void *slang_task_await(slang_task *t) {
     if (t_is_worker) {
         /* Blocking a worker: make sure the pool keeps N runnable threads by
          * starting a spare worker if nobody is idle (it retires later). */
-        pthread_mutex_lock(&q_mu);
+        slang__plat_mutex_lock(&q_mu);
         q_blocked++;
         if (q_idle == 0 && !q_stopping) spawn_worker_locked(1);
-        pthread_mutex_unlock(&q_mu);
+        slang__plat_mutex_unlock(&q_mu);
     }
-    pthread_mutex_lock(&t->mu);
-    while (t->state != TASK_DONE) pthread_cond_wait(&t->cv, &t->mu);
-    pthread_mutex_unlock(&t->mu);
+    slang__plat_mutex_lock(&t->mu);
+    while (t->state != TASK_DONE) slang__plat_cond_wait(&t->cv, &t->mu);
+    slang__plat_mutex_unlock(&t->mu);
     if (t_is_worker) {
-        pthread_mutex_lock(&q_mu);
+        slang__plat_mutex_lock(&q_mu);
         q_blocked--;
-        pthread_mutex_unlock(&q_mu);
+        slang__plat_mutex_unlock(&q_mu);
     }
     return t->slot;
 }
@@ -474,44 +479,37 @@ slang_task *slang_task_spawn(slang_task_fn fn, void *ctx) {
  * ====================================================================== */
 
 typedef struct timer {
-    struct timespec deadline;
+    int64_t deadline;   /* monotonic ns */
     slang_task *task;   /* owned: completed at the deadline, or */
     slang_task *cancel; /* owned: cancelled at the deadline (slang_task_set_deadline) */
     struct timer *next;
 } timer;
 
-static pthread_mutex_t tm_mu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t tm_cv;
+static slang__plat_mutex tm_mu = SLANG_PLAT_MUTEX_INIT;
+static slang__plat_cond tm_cv;
 static timer *tm_list;
 static int tm_running, tm_stop;
 static slang__plat_thread tm_thread;
 
-static int ts_cmp(const struct timespec *a, const struct timespec *b) {
-    if (a->tv_sec != b->tv_sec) return a->tv_sec < b->tv_sec ? -1 : 1;
-    if (a->tv_nsec != b->tv_nsec) return a->tv_nsec < b->tv_nsec ? -1 : 1;
-    return 0;
-}
-
 static void *timer_main(void *unused) {
     (void)unused;
-    pthread_mutex_lock(&tm_mu);
+    slang__plat_mutex_lock(&tm_mu);
     while (!tm_stop) {
-        if (!tm_list) { pthread_cond_wait(&tm_cv, &tm_mu); continue; }
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        if (ts_cmp(&tm_list->deadline, &now) > 0) {
-            pthread_cond_timedwait(&tm_cv, &tm_mu, &tm_list->deadline);
+        if (!tm_list) { slang__plat_cond_wait(&tm_cv, &tm_mu); continue; }
+        int64_t left = tm_list->deadline - slang__plat_mono_ns();
+        if (left > 0) {
+            slang__plat_cond_wait_ns(&tm_cv, &tm_mu, left);
             continue;
         }
         timer *t = tm_list;
         tm_list = t->next;
-        pthread_mutex_unlock(&tm_mu);
+        slang__plat_mutex_unlock(&tm_mu);
         if (t->task) slang_task_try_complete(t->task, NULL);  /* may race with rt_fire */
         if (t->cancel) slang_task_cancel(t->cancel);
         slang_release(t->task);
         slang_release(t->cancel);
         free(t);
-        pthread_mutex_lock(&tm_mu);
+        slang__plat_mutex_lock(&tm_mu);
     }
     /* Pending timers at shutdown are dropped without completing. */
     while (tm_list) {
@@ -521,37 +519,33 @@ static void *timer_main(void *unused) {
         slang_release(t->cancel);
         free(t);
     }
-    pthread_mutex_unlock(&tm_mu);
+    slang__plat_mutex_unlock(&tm_mu);
     return NULL;
 }
 
 static void timers_start(void) {
-    pthread_mutex_lock(&tm_mu);
+    slang__plat_mutex_lock(&tm_mu);
     if (!tm_running) {
-        pthread_condattr_t ca;
-        pthread_condattr_init(&ca);
-        pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
-        pthread_cond_init(&tm_cv, &ca);
-        pthread_condattr_destroy(&ca);
+        slang__plat_cond_init(&tm_cv);  /* monotonic timed waits where available */
         tm_stop = 0;
         if (!slang__plat_thread_start(&tm_thread, timer_main, NULL))
             slang_panic("cannot create timer thread");
         tm_running = 1;
     }
-    pthread_mutex_unlock(&tm_mu);
+    slang__plat_mutex_unlock(&tm_mu);
 }
 
 static void timers_stop(void) {
-    pthread_mutex_lock(&tm_mu);
-    if (!tm_running) { pthread_mutex_unlock(&tm_mu); return; }
+    slang__plat_mutex_lock(&tm_mu);
+    if (!tm_running) { slang__plat_mutex_unlock(&tm_mu); return; }
     tm_stop = 1;
-    pthread_cond_signal(&tm_cv);
-    pthread_mutex_unlock(&tm_mu);
+    slang__plat_cond_signal(&tm_cv);
+    slang__plat_mutex_unlock(&tm_mu);
     slang__plat_thread_join(tm_thread);
-    pthread_mutex_lock(&tm_mu);
+    slang__plat_mutex_lock(&tm_mu);
     tm_running = 0;
-    pthread_cond_destroy(&tm_cv);
-    pthread_mutex_unlock(&tm_mu);
+    slang__plat_cond_destroy(&tm_cv);
+    slang__plat_mutex_unlock(&tm_mu);
 }
 
 static void cancel_hook(void (*fn)(slang_task *), slang_task *w);
@@ -579,24 +573,18 @@ static void timer_insert(int64_t ms, slang_task *t, slang_task *cancel) {
     if (!__atomic_load_n(&q_started, __ATOMIC_ACQUIRE)) slang__sched_start();
     timer *tm = malloc(sizeof *tm);
     if (!tm) slang_panic("out of memory (timer)");
-    clock_gettime(CLOCK_MONOTONIC, &tm->deadline);
-    tm->deadline.tv_sec += ms / 1000;
-    tm->deadline.tv_nsec += (ms % 1000) * 1000000L;
-    if (tm->deadline.tv_nsec >= 1000000000L) {
-        tm->deadline.tv_sec++;
-        tm->deadline.tv_nsec -= 1000000000L;
-    }
+    tm->deadline = slang__plat_mono_ns() + ms * 1000000;
     slang_retain(t);
     slang_retain(cancel);
     tm->task = t;
     tm->cancel = cancel;
-    pthread_mutex_lock(&tm_mu);
+    slang__plat_mutex_lock(&tm_mu);
     timer **pp = &tm_list;
-    while (*pp && ts_cmp(&(*pp)->deadline, &tm->deadline) <= 0) pp = &(*pp)->next;
+    while (*pp && (*pp)->deadline <= tm->deadline) pp = &(*pp)->next;
     tm->next = *pp;
     *pp = tm;
-    pthread_cond_signal(&tm_cv);
-    pthread_mutex_unlock(&tm_mu);
+    slang__plat_cond_signal(&tm_cv);
+    slang__plat_mutex_unlock(&tm_mu);
 }
 
 /* ======================================================================
@@ -721,7 +709,7 @@ static waiter *wq_pop(wqueue *q) {
 
 struct slang_mutex {
     slang_object hdr;
-    pthread_mutex_t mu;
+    slang__plat_mutex mu;
     int32_t locked;
     wqueue waiters;
 };
@@ -730,24 +718,24 @@ static void mutex_drop(void *obj) {
     slang_mutex *m = obj;
     waiter *w;
     while ((w = wq_pop(&m->waiters))) { slang_release(w->task); free(w); }
-    pthread_mutex_destroy(&m->mu);
+    slang__plat_mutex_destroy(&m->mu);
 }
 
 static const slang_type_info mutex_type = { "Mutex", (int64_t)sizeof(struct slang_mutex), mutex_drop };
 
 slang_mutex *slang_mutex_new(void) {
     slang_mutex *m = slang_object_new(&mutex_type, (int64_t)sizeof(struct slang_mutex));
-    pthread_mutex_init(&m->mu, NULL);
+    slang__plat_mutex_init(&m->mu);
     return m;
 }
 
 slang_task *slang_mutex_lock_async(slang_mutex *m) {
     if (!m) slang_panic_nil();
     slang_task *t = task_new_ex(0, NULL, 0);
-    pthread_mutex_lock(&m->mu);
+    slang__plat_mutex_lock(&m->mu);
     if (!m->locked) {
         m->locked = 1;
-        pthread_mutex_unlock(&m->mu);
+        slang__plat_mutex_unlock(&m->mu);
         slang_task_complete(t, NULL);
         return t;
     }
@@ -756,7 +744,7 @@ slang_task *slang_mutex_lock_async(slang_mutex *m) {
     slang_retain(t);
     w->task = t;
     wq_push(&m->waiters, w);
-    pthread_mutex_unlock(&m->mu);
+    slang__plat_mutex_unlock(&m->mu);
     return t;
 }
 
@@ -768,20 +756,20 @@ void slang_mutex_lock(slang_mutex *m) {
 
 bool slang_mutex_try_lock(slang_mutex *m) {
     if (!m) slang_panic_nil();
-    pthread_mutex_lock(&m->mu);
+    slang__plat_mutex_lock(&m->mu);
     bool ok = !m->locked;
     if (ok) m->locked = 1;
-    pthread_mutex_unlock(&m->mu);
+    slang__plat_mutex_unlock(&m->mu);
     return ok;
 }
 
 void slang_mutex_unlock(slang_mutex *m) {
     if (!m) slang_panic_nil();
-    pthread_mutex_lock(&m->mu);
-    if (!m->locked) { pthread_mutex_unlock(&m->mu); slang_panic("unlock of unlocked mutex"); }
+    slang__plat_mutex_lock(&m->mu);
+    if (!m->locked) { slang__plat_mutex_unlock(&m->mu); slang_panic("unlock of unlocked mutex"); }
     waiter *w = wq_pop(&m->waiters);
     if (!w) m->locked = 0;           /* else: ownership passes directly to w */
-    pthread_mutex_unlock(&m->mu);
+    slang__plat_mutex_unlock(&m->mu);
     if (w) {
         slang_task_complete(w->task, NULL);
         slang_release(w->task);
@@ -795,7 +783,7 @@ void slang_mutex_unlock(slang_mutex *m) {
 
 struct slang_chan {
     slang_object hdr;
-    pthread_mutex_t mu;
+    slang__plat_mutex mu;
     int64_t elem_size;
     const slang_value_ops *ops;
     int64_t capacity;
@@ -817,7 +805,7 @@ static void chan_drop(void *obj) {
     while ((w = wq_pop(&c->senders))) { val_release(c, w->elem); slang_release(w->task); free(w); }
     while ((w = wq_pop(&c->receivers))) { slang_release(w->task); free(w); }
     slang_free(c->buf);
-    pthread_mutex_destroy(&c->mu);
+    slang__plat_mutex_destroy(&c->mu);
 }
 
 static const slang_type_info chan_type = { "Channel", (int64_t)sizeof(struct slang_chan), chan_drop };
@@ -825,7 +813,7 @@ static const slang_type_info chan_type = { "Channel", (int64_t)sizeof(struct sla
 slang_chan *slang_chan_new(int64_t elem_size, const slang_value_ops *ops, int64_t capacity) {
     if (elem_size < 0 || capacity < 0) slang_panic("slang_chan_new: invalid size");
     slang_chan *c = slang_object_new(&chan_type, (int64_t)sizeof(struct slang_chan));
-    pthread_mutex_init(&c->mu, NULL);
+    slang__plat_mutex_init(&c->mu);
     c->elem_size = elem_size;
     c->ops = ops;
     c->capacity = capacity;
@@ -835,9 +823,9 @@ slang_chan *slang_chan_new(int64_t elem_size, const slang_value_ops *ops, int64_
 
 int64_t slang_chan_len(const slang_chan *c) {
     if (!c) return 0;
-    pthread_mutex_lock((pthread_mutex_t *)&c->mu);
+    slang__plat_mutex_lock((slang__plat_mutex *)&c->mu);
     int64_t n = c->count;
-    pthread_mutex_unlock((pthread_mutex_t *)&c->mu);
+    slang__plat_mutex_unlock((slang__plat_mutex *)&c->mu);
     return n;
 }
 
@@ -865,14 +853,14 @@ slang_task *slang_chan_send_async(slang_chan *c, const void *elem) {
     memcpy(sw->elem, elem, (size_t)c->elem_size);
     val_retain(c, sw->elem);
 
-    pthread_mutex_lock(&c->mu);
+    slang__plat_mutex_lock(&c->mu);
     if (c->closed) {
-        pthread_mutex_unlock(&c->mu);
+        slang__plat_mutex_unlock(&c->mu);
         slang_panic("send on closed channel");
     }
     waiter *rw = wq_pop(&c->receivers);
     if (rw) {
-        pthread_mutex_unlock(&c->mu);
+        slang__plat_mutex_unlock(&c->mu);
         finish_recv(c, rw->task, 1, sw->elem);
         slang_release(rw->task);
         free(rw);
@@ -885,7 +873,7 @@ slang_task *slang_chan_send_async(slang_chan *c, const void *elem) {
         memcpy(c->buf + ((c->head + c->count) % c->capacity) * c->elem_size, sw->elem,
                (size_t)c->elem_size);  /* ownership moves into the buffer */
         c->count++;
-        pthread_mutex_unlock(&c->mu);
+        slang__plat_mutex_unlock(&c->mu);
         free(sw);
         slang_task_complete(done, NULL);
         return done;
@@ -893,7 +881,7 @@ slang_task *slang_chan_send_async(slang_chan *c, const void *elem) {
     slang_retain(done);
     sw->task = done;
     wq_push(&c->senders, sw);
-    pthread_mutex_unlock(&c->mu);
+    slang__plat_mutex_unlock(&c->mu);
     return done;
 }
 
@@ -904,7 +892,7 @@ slang_task *slang_chan_recv_async(slang_chan *c) {
     unsigned char *v = (size_t)c->elem_size <= sizeof tmp ? tmp : slang_alloc(c->elem_size);
     waiter *sender = NULL;
 
-    pthread_mutex_lock(&c->mu);
+    slang__plat_mutex_lock(&c->mu);
     if (c->count > 0) {
         unsigned char *slot = c->buf + c->head * c->elem_size;
         memcpy(v, slot, (size_t)c->elem_size);   /* take ownership */
@@ -919,7 +907,7 @@ slang_task *slang_chan_recv_async(slang_chan *c) {
     } else if ((sender = wq_pop(&c->senders))) {
         memcpy(v, sender->elem, (size_t)c->elem_size);  /* direct hand-off (unbuffered) */
     } else if (c->closed) {
-        pthread_mutex_unlock(&c->mu);
+        slang__plat_mutex_unlock(&c->mu);
         finish_recv(c, t, 0, NULL);
         if (v != tmp) slang_free(v);
         return t;
@@ -929,11 +917,11 @@ slang_task *slang_chan_recv_async(slang_chan *c) {
         slang_retain(t);
         w->task = t;
         wq_push(&c->receivers, w);
-        pthread_mutex_unlock(&c->mu);
+        slang__plat_mutex_unlock(&c->mu);
         if (v != tmp) slang_free(v);
         return t;
     }
-    pthread_mutex_unlock(&c->mu);
+    slang__plat_mutex_unlock(&c->mu);
     finish_recv(c, t, 1, v);
     val_release(c, v);
     if (v != tmp) slang_free(v);
@@ -965,13 +953,13 @@ bool slang_chan_recv(slang_chan *c, void *out) {
 
 void slang_chan_close(slang_chan *c) {
     if (!c) slang_panic_nil();
-    pthread_mutex_lock(&c->mu);
-    if (c->closed) { pthread_mutex_unlock(&c->mu); slang_panic("close of closed channel"); }
-    if (c->senders.head) { pthread_mutex_unlock(&c->mu); slang_panic("send on closed channel"); }
+    slang__plat_mutex_lock(&c->mu);
+    if (c->closed) { slang__plat_mutex_unlock(&c->mu); slang_panic("close of closed channel"); }
+    if (c->senders.head) { slang__plat_mutex_unlock(&c->mu); slang_panic("send on closed channel"); }
     c->closed = 1;
     wqueue rs = c->receivers;
     c->receivers.head = c->receivers.tail = NULL;
-    pthread_mutex_unlock(&c->mu);
+    slang__plat_mutex_unlock(&c->mu);
     waiter *w;
     while ((w = wq_pop(&rs))) {
         finish_recv(c, w->task, 0, NULL);
@@ -1010,7 +998,7 @@ slang_task *slang_task_rt_waker(void) { return task_new_ex(0, NULL, 0); }
 void slang_task_rt_fire(slang_task *t) {
     if (!t) slang_panic_nil();
     timer *found = NULL;
-    pthread_mutex_lock(&tm_mu);
+    slang__plat_mutex_lock(&tm_mu);
     for (timer **pp = &tm_list; *pp; pp = &(*pp)->next) {
         if ((*pp)->task == t && t) {
             found = *pp;
@@ -1018,7 +1006,7 @@ void slang_task_rt_fire(slang_task *t) {
             break;
         }
     }
-    pthread_mutex_unlock(&tm_mu);
+    slang__plat_mutex_unlock(&tm_mu);
     slang_task_try_complete(t, NULL);
     if (found) {
         slang_release(found->task);
@@ -1063,7 +1051,7 @@ slang_task *slang_task_yield(void) {
 /* Collects (moves) the hooks of t and its descendants and flags them; locks
  * are taken parent before child. */
 static void cancel_collect(slang_task *t, hook **out) {
-    pthread_mutex_lock(&t->mu);
+    slang__plat_mutex_lock(&t->mu);
     if (__atomic_exchange_n(&t->cancelled, 1, __ATOMIC_ACQ_REL) == 0 || t->hooks) {
         hook *h = t->hooks;
         while (h) { hook *n = h->next; h->next = *out; *out = h; h = n; }
@@ -1071,7 +1059,7 @@ static void cancel_collect(slang_task *t, hook **out) {
         t->nhooks = 0;
     }
     for (slang_task *c = t->child_head; c; c = c->sib_next) cancel_collect(c, out);
-    pthread_mutex_unlock(&t->mu);
+    slang__plat_mutex_unlock(&t->mu);
 }
 
 void slang_task_cancel(slang_task *t) {
@@ -1099,9 +1087,9 @@ bool slang_task_cur_cancelled(void) { return slang_task_is_cancelled(t_cur); }
 static void cancel_hook_ex(void (*fn)(slang_task *), void (*fn_data)(slang_task *, uintptr_t), uintptr_t data, slang_task *w) {
     slang_task *t = t_cur;
     if (!t) return;
-    pthread_mutex_lock(&t->mu);
+    slang__plat_mutex_lock(&t->mu);
     if (__atomic_load_n(&t->cancelled, __ATOMIC_ACQUIRE)) {
-        pthread_mutex_unlock(&t->mu);
+        slang__plat_mutex_unlock(&t->mu);
         if (fn_data) fn_data(w, data);
         else fn(w);
         return;
@@ -1130,7 +1118,7 @@ static void cancel_hook_ex(void (*fn)(slang_task *), void (*fn_data)(slang_task 
     h->next = t->hooks;
     t->hooks = h;
     t->nhooks++;
-    pthread_mutex_unlock(&t->mu);
+    slang__plat_mutex_unlock(&t->mu);
 }
 
 static void cancel_hook(void (*fn)(slang_task *), slang_task *w) { cancel_hook_ex(fn, NULL, 0, w); }

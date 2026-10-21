@@ -15,15 +15,15 @@ struct Server {
 }
 
 struct Config {
-    Name string
+    Name   string
     Server Server
-    Tags []string
+    Tags   []string
 }
 
 struct Item {
     @csv(name: "sku")
-    Sku string
-    Qty int
+    Sku   string
+    Qty   int
     Price float
 }
 
@@ -62,9 +62,11 @@ debug_mode = false
 
     // The template literal is checked against Page when compiling: a
     // misspelled {{.Titel}} would be a build error.
-    var page = html.template.Parse<Page>(`<h1>{{.Title}}</h1>
+    var page = html.template.Parse<Page>(
+        `<h1>{{.Title}}</h1>
 <ul>{{range .Items}}<li><a href="/item?sku={{.Sku}}">{{.Sku}}</a> x{{.Qty}}</li>{{end}}</ul>
-`)?
+`,
+    )?
     print(page.Execute(Page{Title: "Tom & Jerry's <shop>", Items: items})?)
 
     var t = text.table.New(["SKU", "Qty", "Price"])

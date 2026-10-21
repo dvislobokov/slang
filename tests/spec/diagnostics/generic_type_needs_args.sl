@@ -4,7 +4,9 @@ namespace spec.diagnostics.generic_type_needs_args
 
 import std.io
 
-struct Box<T> { V T }
+struct Box<T> {
+    V T
+}
 
 func F(b Box) {}
 

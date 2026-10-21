@@ -1,0 +1,18 @@
+// error: parameter of type int of Cache.New cannot be injected
+// status: passing
+namespace spec.web.err_ctor_param
+
+import std.web
+
+struct Cache {
+    size int
+
+    static func New(size int) *Cache {
+        return new Cache{size: size}
+    }
+}
+
+func main() {
+    var app = NewApp()
+    app.Services.AddSingleton<Cache>()
+}

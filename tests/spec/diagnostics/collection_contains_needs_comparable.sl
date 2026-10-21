@@ -2,10 +2,12 @@
 // status: passing
 namespace spec.diagnostics.collection_contains_needs_comparable
 
-import std.io
 import std.collections
+import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 func main() {
     var l = List<P>{}

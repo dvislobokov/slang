@@ -1,7 +1,7 @@
 namespace examples.cpuprofile
 
-import std.io
 import std
+import std.io
 
 // std.diag CPU profile: a SIGPROF sampler walks frame pointers and
 // StopCPUProfile writes a pprof profile.proto (`slang tool pprof -top

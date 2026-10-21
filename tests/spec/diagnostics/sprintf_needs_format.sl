@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.sprintf_needs_format
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(fmt.Sprintf())

@@ -8,6 +8,7 @@
  * chunks. Arena objects are not counted by slang_live_objects. Arenas are
  * not thread-safe. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -64,7 +65,7 @@ void *slang_arena_object(int64_t h, const slang_type_info *type, int64_t size) {
     chunk *c = a->last;
     if (!c || c->cap - c->used < need) {
         int64_t cap = need > CHUNK_SIZE / 4 ? need : CHUNK_SIZE;
-        c = aligned_alloc(16, (sizeof(chunk) + (size_t)cap + 15) & ~(size_t)15);
+        c = slang__plat_aligned_alloc(16, (sizeof(chunk) + (size_t)cap + 15) & ~(size_t)15);
         if (!c) slang__panicf("out of memory (arena chunk of %lld bytes)", (long long)cap);
         c->next = NULL;
         c->used = 0;
@@ -123,7 +124,7 @@ void slang_arena_free(int64_t h) {
                 if (r->obj.type && r->obj.type->drop) r->obj.type->drop(&r->obj);
             }
             chunk *next = c->next;
-            free(c);
+            slang__plat_aligned_free(c);
             c = next;
         }
     }

@@ -61,6 +61,18 @@ void slang_regex_rt_ints(int64_t n, slang_slice *out) {
     slang_slice_new(out, 8, n, n);
 }
 
+/* memmem (a GNU/BSD extension, absent from some C libraries). */
+static const char *find_bytes(const char *h, int64_t hn, const char *nd, int64_t m) {
+    while (hn >= m) {
+        const char *c = memchr(h, nd[0], (size_t)(hn - m + 1));
+        if (!c) return NULL;
+        if (memcmp(c, nd, (size_t)m) == 0) return c;
+        hn -= c + 1 - h;
+        h = c + 1;
+    }
+    return NULL;
+}
+
 /* Byte offset of the first occurrence of sub in s at or after from, or -1. */
 int64_t slang_regex_rt_index(const slang_string *s, const slang_string *sub, int64_t from) {
     int64_t n = slen(s), m = slen(sub);
@@ -72,7 +84,7 @@ int64_t slang_regex_rt_index(const slang_string *s, const slang_string *sub, int
         const char *r = memchr(p + from, q[0], (size_t)(n - from));
         return r ? r - p : -1;
     }
-    const char *r = memmem(p + from, (size_t)(n - from), q, (size_t)m);
+    const char *r = find_bytes(p + from, n - from, q, m);
     return r ? r - p : -1;
 }
 

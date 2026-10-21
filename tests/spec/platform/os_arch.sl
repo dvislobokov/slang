@@ -2,12 +2,13 @@
 // status: passing
 namespace spec.platform.os_arch
 
-import std.io
 import std
+import std.io
 
 func main() {
     switch os.Arch {
         case "amd64", "arm64": println("tier 1")
-        default: println("other", os.Arch)
+        default:
+            println("other", os.Arch)
     }
 }

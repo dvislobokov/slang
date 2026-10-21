@@ -2,10 +2,12 @@
 // status: passing
 namespace spec.diagnostics.fields_not_for_sequence
 
-import std.io
 import std
+import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 func Show<T>(x T) {
     var fs = reflect.Fields<T>()

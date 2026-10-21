@@ -1,0 +1,1449 @@
+namespace std.data.kafka
+
+// std.data.kafka: an Apache Kafka client written in Slang over std.net and
+// std.net.tls (docs/STDLIB.md level 3b). Files of the namespace:
+//
+//   kafka.sl           wire encoding, record batches v2 (CRC-32C, gzip and
+//                      zstd), errors, broker connections (ApiVersions,
+//                      SASL PLAIN / SCRAM-SHA-256 / SCRAM-SHA-512, TLS),
+//                      the cluster client (metadata cache, leaders,
+//                      coordinators, retries with backoff)
+//   kafka_producer.sl  Producer: batching by size and linger, acks,
+//                      idempotence (producer id + sequences), partitioners
+//   kafka_consumer.sl  Consumer: consumer groups (range / round-robin
+//                      assignors, rebalances, heartbeats in a background
+//                      task, auto or manual commits), fetching
+//   kafka_admin.sl     Admin: create, delete, list and describe topics
+//
+// Protocol versions (all non-flexible, so that one encoder covers them):
+// ApiVersions 0, Metadata 1, Produce 7 (3 on brokers without it), Fetch 10
+// (4), ListOffsets 1, FindCoordinator 1, JoinGroup 2, SyncGroup 1,
+// Heartbeat 1, LeaveGroup 1, OffsetCommit 2, OffsetFetch 1, SaslHandshake
+// 1, SaslAuthenticate 0, CreateTopics 2, DeleteTopics 1, InitProducerId 0.
+// They are inside the ranges of Kafka 1.0 through 4.x; zstd needs Produce 7
+// and Fetch 10 (Kafka >= 2.1). snappy and lz4 batches are not supported
+// (producing them is refused, consuming them fails with an error).
+
+// ---- errors -----------------------------------------------------------------
+
+// A Kafka protocol error code (Code) from a broker response.
+struct Error {
+    Code int
+    Text string
+
+    func Message() string {
+        var s = "kafka: " + errorName(this.Code) + " (" + std.strconv.Itoa(this.Code) + ")"
+        if this.Text != "" {
+            s += ": " + this.Text
+        }
+        return s
+    }
+
+    // Whether the request may succeed when retried (after a metadata
+    // refresh for leadership errors).
+    func Retriable() bool {
+        return retriableCode(this.Code)
+    }
+}
+
+func errorName(code int) string {
+    switch code {
+        case -1:
+            return "UNKNOWN_SERVER_ERROR"
+        case 1:
+            return "OFFSET_OUT_OF_RANGE"
+        case 2:
+            return "CORRUPT_MESSAGE"
+        case 3:
+            return "UNKNOWN_TOPIC_OR_PARTITION"
+        case 4:
+            return "INVALID_FETCH_SIZE"
+        case 5:
+            return "LEADER_NOT_AVAILABLE"
+        case 6:
+            return "NOT_LEADER_OR_FOLLOWER"
+        case 7:
+            return "REQUEST_TIMED_OUT"
+        case 9:
+            return "REPLICA_NOT_AVAILABLE"
+        case 10:
+            return "MESSAGE_TOO_LARGE"
+        case 13:
+            return "NETWORK_EXCEPTION"
+        case 14:
+            return "COORDINATOR_LOAD_IN_PROGRESS"
+        case 15:
+            return "COORDINATOR_NOT_AVAILABLE"
+        case 16:
+            return "NOT_COORDINATOR"
+        case 17:
+            return "INVALID_TOPIC_EXCEPTION"
+        case 19:
+            return "NOT_ENOUGH_REPLICAS"
+        case 20:
+            return "NOT_ENOUGH_REPLICAS_AFTER_APPEND"
+        case 22:
+            return "ILLEGAL_GENERATION"
+        case 23:
+            return "INCONSISTENT_GROUP_PROTOCOL"
+        case 25:
+            return "UNKNOWN_MEMBER_ID"
+        case 26:
+            return "INVALID_SESSION_TIMEOUT"
+        case 27:
+            return "REBALANCE_IN_PROGRESS"
+        case 29:
+            return "TOPIC_AUTHORIZATION_FAILED"
+        case 30:
+            return "GROUP_AUTHORIZATION_FAILED"
+        case 31:
+            return "CLUSTER_AUTHORIZATION_FAILED"
+        case 33:
+            return "UNSUPPORTED_SASL_MECHANISM"
+        case 34:
+            return "ILLEGAL_SASL_STATE"
+        case 35:
+            return "UNSUPPORTED_VERSION"
+        case 36:
+            return "TOPIC_ALREADY_EXISTS"
+        case 37:
+            return "INVALID_PARTITIONS"
+        case 38:
+            return "INVALID_REPLICATION_FACTOR"
+        case 41:
+            return "NOT_CONTROLLER"
+        case 42:
+            return "INVALID_REQUEST"
+        case 45:
+            return "OUT_OF_ORDER_SEQUENCE_NUMBER"
+        case 46:
+            return "DUPLICATE_SEQUENCE_NUMBER"
+        case 47:
+            return "INVALID_PRODUCER_EPOCH"
+        case 58:
+            return "SASL_AUTHENTICATION_FAILED"
+        case 59:
+            return "UNKNOWN_PRODUCER_ID"
+        case 74:
+            return "FENCED_LEADER_EPOCH"
+        case 75:
+            return "UNKNOWN_LEADER_EPOCH"
+        case 76:
+            return "UNSUPPORTED_COMPRESSION_TYPE"
+        case 79:
+            return "MEMBER_ID_REQUIRED"
+    }
+    return "ERROR"
+}
+
+func retriableCode(code int) bool {
+    switch code {
+        case 3, 5, 6, 7, 9, 13, 14, 15, 16, 19, 20, 41, 74, 75:
+            return true
+    }
+    return false
+}
+
+// Leadership / metadata errors: refresh the metadata before retrying.
+func staleMetadataCode(code int) bool {
+    return code == 3 || code == 5 || code == 6 || code == 9 || code == 74 || code == 75
+}
+
+func kerr(code int) error {
+    return Error{Code: code}
+}
+
+// The Kafka error code in err's chain (0 if none).
+func ErrorCode(err error) int {
+    var e Error
+    if std.errors.As(err, &e) {
+        return e.Code
+    }
+    return 0
+}
+
+// ---- wire encoding ------------------------------------------------------------
+
+// Big-endian encoder of protocol messages.
+struct Encoder {
+    B []byte
+
+    func Int8(v int) {
+        this.B = append(this.B, byte(v & 255))
+    }
+
+    func Int16(v int) {
+        this.B = append(this.B, byte((v >> 8) & 255), byte(v & 255))
+    }
+
+    func Int32(v int) {
+        this.B = append(this.B, byte((v >> 24) & 255), byte((v >> 16) & 255), byte((v >> 8) & 255), byte(v & 255))
+    }
+
+    func Int64(v int) {
+        this.Int32(v >> 32)
+        this.Int32(v)
+    }
+
+    func Bool(v bool) {
+        if v {
+            this.Int8(1)
+        } else {
+            this.Int8(0)
+        }
+    }
+
+    // A string with an int16 length.
+    func String(s string) {
+        this.Int16(len(s))
+        this.B = std.data.rtAppendStr(this.B, s)
+    }
+
+    // A nullable string (null: length -1).
+    func NullableString(s string, isNull bool) {
+        if isNull {
+            this.Int16(-1)
+            return
+        }
+        this.String(s)
+    }
+
+    // Bytes with an int32 length.
+    func Bytes(b []byte) {
+        this.Int32(len(b))
+        this.B = std.data.rtAppend(this.B, b)
+    }
+
+    func NullBytes() {
+        this.Int32(-1)
+    }
+
+    func Raw(b []byte) {
+        this.B = std.data.rtAppend(this.B, b)
+    }
+
+    // An array length.
+    func ArrayLen(n int) {
+        this.Int32(n)
+    }
+
+    func Varint(v int) {
+        this.B = std.encoding.binary.AppendVarint(this.B, v)
+    }
+
+    func Uvarint(v int) {
+        this.B = std.encoding.binary.AppendUvarint(this.B, uint(v))
+    }
+
+    // Bytes with a varint length (-1: null) as in records.
+    func VarBytes(b []byte, isNull bool) {
+        if isNull {
+            this.Varint(-1)
+            return
+        }
+        this.Varint(len(b))
+        this.B = std.data.rtAppend(this.B, b)
+    }
+
+    // Overwrites 4 bytes at pos with v.
+    func PutInt32(pos int, v int) {
+        this.B[pos] = byte((v >> 24) & 255)
+        this.B[pos + 1] = byte((v >> 16) & 255)
+        this.B[pos + 2] = byte((v >> 8) & 255)
+        this.B[pos + 3] = byte(v & 255)
+    }
+}
+
+// Big-endian decoder; reading past the end sets Err and yields zeros.
+struct Decoder {
+    B []byte
+    Pos int
+    Err bool
+
+    func need(n int) bool {
+        if n < 0 || this.Pos + n > len(this.B) {
+            this.Err = true
+            this.Pos = len(this.B)
+            return false
+        }
+        return true
+    }
+
+    func Remaining() int {
+        return len(this.B) - this.Pos
+    }
+
+    func Int8() int {
+        if !this.need(1) {
+            return 0
+        }
+        var v = int(this.B[this.Pos])
+        this.Pos += 1
+        if v >= 128 {
+            v -= 256
+        }
+        return v
+    }
+
+    func Int16() int {
+        if !this.need(2) {
+            return 0
+        }
+        var v = (int(this.B[this.Pos]) << 8) | int(this.B[this.Pos + 1])
+        this.Pos += 2
+        if v >= 32768 {
+            v -= 65536
+        }
+        return v
+    }
+
+    func Int32() int {
+        if !this.need(4) {
+            return 0
+        }
+        var b = this.B
+        var p = this.Pos
+        var v = (int(b[p]) << 24) | (int(b[p + 1]) << 16) | (int(b[p + 2]) << 8) | int(b[p + 3])
+        this.Pos += 4
+        if v >= 2147483648 {
+            v -= 4294967296
+        }
+        return v
+    }
+
+    func Uint32() int {
+        var v = this.Int32()
+        if v < 0 {
+            v += 4294967296
+        }
+        return v
+    }
+
+    func Int64() int {
+        var hi = this.Int32()
+        var lo = this.Uint32()
+        return (hi << 32) | lo
+    }
+
+    func Bool() bool {
+        return this.Int8() != 0
+    }
+
+    func String() string {
+        var n = this.Int16()
+        if n < 0 {
+            return ""
+        }
+        if !this.need(n) {
+            return ""
+        }
+        var s = std.strings.FromBytes(this.B[this.Pos..this.Pos + n])
+        this.Pos += n
+        return s
+    }
+
+    func Bytes() []byte {
+        var n = this.Int32()
+        if n < 0 {
+            return []
+        }
+        if !this.need(n) {
+            return []
+        }
+        var b = std.compress.rtCopy(this.B, this.Pos, this.Pos + n)
+        this.Pos += n
+        return b
+    }
+
+    func ArrayLen() int {
+        var n = this.Int32()
+        if n > this.Remaining() {
+            this.Err = true
+            return 0
+        }
+        return n
+    }
+
+    func Varint() int {
+        if this.Pos >= len(this.B) {
+            this.Err = true
+            return 0
+        }
+        var (v, n) = std.encoding.binary.Varint(this.B[this.Pos..])
+        if n <= 0 {
+            this.Err = true
+            this.Pos = len(this.B)
+            return 0
+        }
+        this.Pos += n
+        return v
+    }
+
+    func VarBytes() ([]byte, bool) {
+        var n = this.Varint()
+        if n < 0 {
+            return ([], true)
+        }
+        if !this.need(n) {
+            return ([], false)
+        }
+        var b = std.compress.rtCopy(this.B, this.Pos, this.Pos + n)
+        this.Pos += n
+        return (b, false)
+    }
+}
+
+// ---- records and record batches ---------------------------------------------
+
+// A record header.
+struct Header {
+    Key string
+    Value []byte
+}
+
+// A record: produced by the application or fetched from a partition.
+// An empty Key is sent as a null key. Timestamp is milliseconds since the
+// epoch (0: now, when producing).
+struct Record {
+    Topic string
+    Partition int
+    Offset int
+    Key []byte
+    Value []byte
+    Headers []Header
+    Timestamp int
+}
+
+// Where a produced record was stored.
+struct RecordMetadata {
+    Topic string
+    Partition int
+    Offset int
+    Timestamp int
+}
+
+// Compression codecs (record batch attributes bits 0-2).
+func codecOf(name string) int! {
+    switch std.strings.ToLower(name) {
+        case "", "none":
+            return 0
+        case "gzip":
+            return 1
+        case "zstd":
+            return 4
+        case "snappy", "lz4":
+            return error("kafka: " + name + " compression is not supported (use gzip or zstd)")
+    }
+    return error("kafka: unknown compression " + std.strconv.Quote(name))
+}
+
+// Producer state written into a batch (idempotence).
+struct BatchProducer {
+    ID int
+    Epoch int
+    BaseSequence int
+}
+
+func noProducer() BatchProducer {
+    return BatchProducer{ID: -1, Epoch: -1, BaseSequence: -1}
+}
+
+// Encodes records as one record batch (magic 2) starting at offset
+// baseOffset: CRC-32C over attributes..end, records compressed with codec
+// 0 (none), 1 (gzip) or 4 (zstd) at level (0: the codec's default).
+func EncodeBatch(records []Record, baseOffset int, codec int, level int, prod BatchProducer) []byte! {
+    if len(records) == 0 {
+        return error("kafka: empty record batch")
+    }
+    var first = records[0].Timestamp
+    var maxTs = first
+    for r in records {
+        if r.Timestamp < first {
+            first = r.Timestamp
+        }
+        if r.Timestamp > maxTs {
+            maxTs = r.Timestamp
+        }
+    }
+    var body = Encoder{}
+    for i, r in records {
+        var rec = Encoder{}
+        rec.Int8(0)
+        rec.Varint(r.Timestamp - first)
+        rec.Varint(i)
+        rec.VarBytes(r.Key, len(r.Key) == 0)
+        rec.VarBytes(r.Value, false)
+        rec.Varint(len(r.Headers))
+        for h in r.Headers {
+            rec.Varint(len(h.Key))
+            rec.B = std.data.rtAppendStr(rec.B, h.Key)
+            rec.VarBytes(h.Value, false)
+        }
+        body.Varint(len(rec.B))
+        body.Raw(rec.B)
+    }
+    var recs = body.B
+    if codec == 1 {
+        var gl = level
+        if gl == 0 {
+            gl = -1
+        }
+        recs = std.compress.gzip.Compress(recs, gl)
+    } else if codec == 4 {
+        var zl = level
+        if zl <= 0 {
+            zl = 3
+        }
+        recs = std.compress.zstd.Compress(recs, zl)?
+    } else if codec != 0 {
+        return error("kafka: unsupported compression codec " + std.strconv.Itoa(codec))
+    }
+    var e = Encoder{}
+    e.Int64(baseOffset)
+    e.Int32(0)
+    e.Int32(-1)
+    e.Int8(2)
+    e.Int32(0)
+    var crcStart = len(e.B)
+    e.Int16(codec)
+    e.Int32(len(records) - 1)
+    e.Int64(first)
+    e.Int64(maxTs)
+    e.Int64(prod.ID)
+    e.Int16(prod.Epoch)
+    e.Int32(prod.BaseSequence)
+    e.Int32(len(records))
+    e.Raw(recs)
+    e.PutInt32(8, len(e.B) - 12)
+    var crc = std.data.rtCrc32c(0, e.B[crcStart..])
+    e.PutInt32(crcStart - 4, crc)
+    return e.B
+}
+
+// A decoded batch: its records and producer information.
+struct Batch {
+    BaseOffset int
+    LastOffset int
+    Codec int
+    Producer BatchProducer
+    Transactional bool
+    Control bool
+    Records []Record
+}
+
+// Decodes the record batches in data (a fetch response's records or a
+// produce request's); a truncated last batch is ignored (the broker cuts
+// the response at max bytes). Batches of magic 0/1 are skipped. CRCs are
+// checked.
+func DecodeBatches(data []byte, topic string, partition int) []Batch! {
+    var out []Batch = []
+    var d = Decoder{B: data}
+    for d.Remaining() >= 17 {
+        var start = d.Pos
+        var base = d.Int64()
+        var length = d.Int32()
+        if length < 0 || d.Remaining() < length {
+            break
+        }
+        var end = d.Pos + length
+        _ = d.Int32()
+        var magic = d.Int8()
+        if magic != 2 {
+            d.Pos = end
+            continue
+        }
+        var crc = d.Uint32()
+        var crcStart = d.Pos
+        if std.data.rtCrc32c(0, data[crcStart..end]) != crc {
+            return error("kafka: record batch CRC mismatch at offset " + std.strconv.Itoa(base))
+        }
+        var attrs = d.Int16()
+        var lastDelta = d.Int32()
+        var firstTs = d.Int64()
+        _ = d.Int64()
+        var pid = d.Int64()
+        var epoch = d.Int16()
+        var seq = d.Int32()
+        var count = d.Int32()
+        var b = Batch{BaseOffset: base, LastOffset: base + lastDelta, Codec: attrs & 7, Producer: BatchProducer{ID: pid, Epoch: epoch, BaseSequence: seq}, Transactional: (attrs & 16) != 0, Control: (attrs & 32) != 0}
+        var recs = data[d.Pos..end]
+        if b.Codec == 1 {
+            recs = std.compress.gzip.Decompress(recs)?("kafka: gzip batch")
+        } else if b.Codec == 4 {
+            recs = std.compress.zstd.Decompress(recs)?("kafka: zstd batch")
+        } else if b.Codec != 0 {
+            return error("kafka: unsupported compression codec " + std.strconv.Itoa(b.Codec) + " (snappy and lz4 are not supported)")
+        }
+        var rd = Decoder{B: recs}
+        for _ in 0..count {
+            var rlen = rd.Varint()
+            var rend = rd.Pos + rlen
+            _ = rd.Int8()
+            var tsd = rd.Varint()
+            var od = rd.Varint()
+            var (k, _) = rd.VarBytes()
+            var (v, _) = rd.VarBytes()
+            var nh = rd.Varint()
+            var hs []Header = []
+            for _ in 0..nh {
+                var klen = rd.Varint()
+                var key = ""
+                if klen > 0 && rd.need(klen) {
+                    key = std.strings.FromBytes(rd.B[rd.Pos..rd.Pos + klen])
+                    rd.Pos += klen
+                }
+                var (hv, _) = rd.VarBytes()
+                hs = append(hs, Header{Key: key, Value: hv})
+            }
+            if rd.Err {
+                return error("kafka: malformed record in batch at offset " + std.strconv.Itoa(base))
+            }
+            rd.Pos = rend
+            b.Records = append(b.Records, Record{Topic: topic, Partition: partition, Offset: base + od, Key: k, Value: v, Headers: hs, Timestamp: firstTs + tsd})
+        }
+        out = append(out, b)
+        d.Pos = end
+        _ = start
+    }
+    return out
+}
+
+// ---- configuration --------------------------------------------------------------
+
+// SASL authentication: Mechanism "PLAIN", "SCRAM-SHA-256" or
+// "SCRAM-SHA-512" ("" for none).
+struct SASL {
+    Mechanism string
+    Username string
+    Password string
+}
+
+// Connection settings shared by producers, consumers and admins.
+// Durations are milliseconds.
+struct Config {
+    ClientID string
+    // TLS (nil: plaintext)
+    TLS *std.net.tls.Config
+    SASL SASL
+    // [10000]
+    DialTimeout int
+    // limit of each request round trip [30000]
+    RequestTimeout int
+    // metadata older than this is refreshed [300000]
+    MetadataMaxAge int
+    // retries of retriable errors [5] with exponential backoff from
+    // RetryBackoff [100] up to 1000
+    MaxRetries int
+    RetryBackoff int
+}
+
+func configDefaults(c Config) Config {
+    var r = c
+    if r.ClientID == "" {
+        r.ClientID = "slang"
+    }
+    if r.DialTimeout <= 0 {
+        r.DialTimeout = 10000
+    }
+    if r.RequestTimeout <= 0 {
+        r.RequestTimeout = 30000
+    }
+    if r.MetadataMaxAge <= 0 {
+        r.MetadataMaxAge = 300000
+    }
+    if r.MaxRetries == 0 {
+        r.MaxRetries = 5
+    }
+    if r.MaxRetries < 0 {
+        r.MaxRetries = 0
+    }
+    if r.RetryBackoff <= 0 {
+        r.RetryBackoff = 100
+    }
+    return r
+}
+
+func nowMs() int {
+    return std.time.Now()
+}
+
+func monoMs() int {
+    return std.diag.rtMonoNanos() / 1000000
+}
+
+async func backoff(c Config, attempt int) {
+    var d = c.RetryBackoff
+    for _ in 1..attempt {
+        d = d * 2
+        if d >= 1000 {
+            d = 1000
+            break
+        }
+    }
+    await std.task.Delay(d)
+}
+
+// ---- broker connections ------------------------------------------------------------
+
+interface stream {
+    func Read(n int) Task<[]byte!>
+    func Write(data []byte) Task<int!>
+    func Close()
+    func SetTimeout(ms int)
+}
+
+// The API keys this client uses.
+// The name of a protocol API key ("Produce", "Fetch"...).
+func APIName(key int) string {
+    switch key {
+        case 0:
+            return "Produce"
+        case 1:
+            return "Fetch"
+        case 2:
+            return "ListOffsets"
+        case 3:
+            return "Metadata"
+        case 8:
+            return "OffsetCommit"
+        case 9:
+            return "OffsetFetch"
+        case 10:
+            return "FindCoordinator"
+        case 11:
+            return "JoinGroup"
+        case 12:
+            return "Heartbeat"
+        case 13:
+            return "LeaveGroup"
+        case 14:
+            return "SyncGroup"
+        case 17:
+            return "SaslHandshake"
+        case 18:
+            return "ApiVersions"
+        case 19:
+            return "CreateTopics"
+        case 20:
+            return "DeleteTopics"
+        case 22:
+            return "InitProducerId"
+        case 36:
+            return "SaslAuthenticate"
+    }
+    return "api " + std.strconv.Itoa(key)
+}
+
+// One connection to a broker: requests are serialized (one in flight).
+struct brokerConn {
+    s stream
+    addr string
+    node int
+    corr int
+    mu std.task.Mutex
+    buf []byte
+    pos int
+    bad bool
+    closed bool
+    // api key -> [min, max] supported by the broker
+    minV map[int]int
+    maxV map[int]int
+    has map[int]bool
+    clientID string
+    timeout int
+
+    func close() {
+        if !this.closed {
+            this.closed = true
+            this.s.Close()
+        }
+    }
+
+    func unlock() {
+        this.mu.Unlock()
+    }
+
+    // The highest version <= want that the broker supports, at least min
+    // (-1: none). Without an ApiVersions answer want is assumed.
+    func version(key int, want int, min int) int {
+        if len(this.has) == 0 {
+            return want
+        }
+        if !this.has[key] {
+            return -1
+        }
+        var v = want
+        if this.maxV[key] < v {
+            v = this.maxV[key]
+        }
+        if v < this.minV[key] || v < min {
+            return -1
+        }
+        return v
+    }
+
+    async func fill(n int) void! {
+        for len(this.buf) - this.pos < n {
+            var chunk = try await this.s.Read(65536) catch err {
+                this.bad = true
+                return err
+            }
+            if len(chunk) == 0 {
+                this.bad = true
+                return std.errors.Wrap(std.net.ErrEOF, "kafka: broker " + this.addr + " closed the connection")
+            }
+            if this.pos >= len(this.buf) {
+                this.buf = chunk
+            } else if this.pos > 0 {
+                this.buf = std.net.rtJoin(this.buf[this.pos..], chunk, len(chunk))
+            } else {
+                this.buf = std.data.rtAppend(this.buf, chunk)
+            }
+            this.pos = 0
+        }
+    }
+
+    // Sends a request and returns the response body (after the
+    // correlation id); noResponse for Produce with acks=0.
+    async func roundTrip(key int, version int, body []byte, noResponse bool) []byte! {
+        await this.mu.Lock()
+        defer this.unlock()
+        if this.closed || this.bad {
+            return std.errors.Wrap(std.net.ErrClosed, "kafka: connection to " + this.addr + " is closed")
+        }
+        this.corr += 1
+        var corr = this.corr
+        var e = Encoder{}
+        e.Int32(0)
+        e.Int16(key)
+        e.Int16(version)
+        e.Int32(corr)
+        e.String(this.clientID)
+        e.Raw(body)
+        e.PutInt32(0, len(e.B) - 4)
+        try await this.s.Write(e.B) catch err {
+            this.bad = true
+            return err
+        }
+        if noResponse {
+            return []
+        }
+        await this.fill(4)?
+        var d = Decoder{B: this.buf, Pos: this.pos}
+        var size = d.Int32()
+        if size < 4 || size > 1 << 30 {
+            this.bad = true
+            return error("kafka: bad response size from " + this.addr)
+        }
+        await this.fill(4 + size)?
+        var resp = std.compress.rtCopy(this.buf, this.pos + 4, this.pos + 4 + size)
+        this.pos += 4 + size
+        if this.pos >= len(this.buf) {
+            this.buf = []
+            this.pos = 0
+        }
+        var rd = Decoder{B: resp}
+        var got = rd.Int32()
+        if got != corr {
+            this.bad = true
+            return error("kafka: correlation id mismatch from " + this.addr + " (" + APIName(key) + ")")
+        }
+        return resp[4..]
+    }
+
+    // ApiVersions v0.
+    async func apiVersions() void! {
+        var resp = await this.roundTrip(18, 0, [], false)?
+        var d = Decoder{B: resp}
+        var code = d.Int16()
+        if code != 0 {
+            return kerr(code)
+        }
+        var n = d.ArrayLen()
+        for _ in 0..n {
+            var k = d.Int16()
+            var lo = d.Int16()
+            var hi = d.Int16()
+            this.minV[k] = lo
+            this.maxV[k] = hi
+            this.has[k] = true
+        }
+        if d.Err {
+            return error("kafka: malformed ApiVersions response")
+        }
+    }
+
+    // SaslHandshake v1 + SaslAuthenticate v0.
+    async func authenticate(s SASL) void! {
+        var mech = std.strings.ToUpper(s.Mechanism)
+        var e = Encoder{}
+        e.String(mech)
+        var resp = await this.roundTrip(17, 1, e.B, false)?
+        var d = Decoder{B: resp}
+        var code = d.Int16()
+        if code != 0 {
+            var mechs []string = []
+            var n = d.ArrayLen()
+            for _ in 0..n {
+                mechs = append(mechs, d.String())
+            }
+            return Error{Code: code, Text: "broker offers " + std.strings.Join(mechs, ", ")}
+        }
+        if mech == "PLAIN" {
+            var msg = std.strings.Bytes("\u{0}" + s.Username + "\u{0}" + s.Password)
+            _ = await this.saslStep(msg)?
+            return
+        }
+        var hash = ""
+        var size = 0
+        if mech == "SCRAM-SHA-256" {
+            hash = "sha256"
+            size = 32
+        } else if mech == "SCRAM-SHA-512" {
+            hash = "sha512"
+            size = 64
+        } else {
+            return error("kafka: unsupported SASL mechanism " + std.strconv.Quote(s.Mechanism))
+        }
+        var sc = Scram{Hash: hash, Size: size, Username: s.Username, Password: s.Password}
+        sc.Nonce = std.encoding.base64.Encode(std.crypto.rand.Bytes(24)?)
+        var serverFirst = await this.saslStep(std.strings.Bytes(sc.First()))?
+        var final = sc.Final(std.strings.FromBytes(serverFirst))?
+        var serverFinal = await this.saslStep(std.strings.Bytes(final))?
+        sc.Verify(std.strings.FromBytes(serverFinal))?
+    }
+
+    async func saslStep(msg []byte) []byte! {
+        var e = Encoder{}
+        e.Bytes(msg)
+        var resp = await this.roundTrip(36, 0, e.B, false)?
+        var d = Decoder{B: resp}
+        var code = d.Int16()
+        var text = d.String()
+        if code != 0 {
+            return Error{Code: code, Text: text}
+        }
+        return d.Bytes()
+    }
+}
+
+// Dials a broker: TCP (and TLS), ApiVersions, SASL.
+async func dialBroker(cfg Config, addr string, node int) *brokerConn! {
+    var raw = await std.net.DialTimeout(addr, cfg.DialTimeout)?
+    var s stream = raw
+    if cfg.TLS != nil {
+        var tc = *cfg.TLS
+        if tc.ServerName == "" {
+            var hp = try std.net.SplitHostPort(addr) else std.net.HostPort{}
+            tc.ServerName = hp.Host
+        }
+        var t = try await std.net.tls.Client(raw, tc) catch err {
+            raw.Close()
+            return err
+        }
+        try await t.Handshake() catch err {
+            t.Close()
+            return err
+        }
+        s = t
+    }
+    s.SetTimeout(cfg.RequestTimeout)
+    var c = new brokerConn{s: s, addr: addr, node: node, clientID: cfg.ClientID, minV: map[int]int{}, maxV: map[int]int{}, has: map[int]bool{}, timeout: cfg.RequestTimeout}
+    try {
+        await c.apiVersions()?
+        if cfg.SASL.Mechanism != "" {
+            await c.authenticate(cfg.SASL)?
+        }
+    } catch err {
+        c.close()
+        return err
+    }
+    return c
+}
+
+// ---- SCRAM (RFC 5802) ---------------------------------------------------------------
+
+func scramAttr(msg string, k string) string {
+    for part in std.strings.Split(msg, ",") {
+        if std.strings.HasPrefix(part, k + "=") {
+            return part[len(k) + 1..]
+        }
+    }
+    return ""
+}
+
+func xorBytes(a []byte, b []byte) []byte {
+    var out []byte = []
+    for i, x in a {
+        out = append(out, x ^ b[i])
+    }
+    return out
+}
+
+// The client side of SCRAM-SHA-256/512 without channel binding (also used
+// by the tests' mock broker).
+struct Scram {
+    Hash string
+    Size int
+    Username string
+    Password string
+    Nonce string
+    clientFirstBare string
+    authMessage string
+    salted []byte
+
+    func First() string {
+        var user = std.strings.Replace(std.strings.Replace(this.Username, "=", "=3D"), ",", "=2C")
+        this.clientFirstBare = "n=" + user + ",r=" + this.Nonce
+        return "n,," + this.clientFirstBare
+    }
+
+    func Final(serverFirst string) string! {
+        var nonce = scramAttr(serverFirst, "r")
+        var salt = std.encoding.base64.Decode(scramAttr(serverFirst, "s"))?("kafka: SCRAM salt")
+        var iter = std.strconv.Atoi(scramAttr(serverFirst, "i"))?("kafka: SCRAM iteration count")
+        if !std.strings.HasPrefix(nonce, this.Nonce) || len(nonce) <= len(this.Nonce) {
+            return error("kafka: SCRAM server nonce does not extend the client nonce")
+        }
+        this.salted = std.crypto.kdf.Pbkdf2(std.strings.Bytes(this.Password), salt, iter, this.Size, this.Hash)?
+        var clientKey = std.crypto.hmac.Sum(this.Hash, this.salted, std.strings.Bytes("Client Key"))?
+        var storedKey = std.crypto.hash.Sum(this.Hash, clientKey)?
+        var without = "c=biws,r=" + nonce
+        this.authMessage = this.clientFirstBare + "," + serverFirst + "," + without
+        var sig = std.crypto.hmac.Sum(this.Hash, storedKey, std.strings.Bytes(this.authMessage))?
+        return without + ",p=" + std.encoding.base64.Encode(xorBytes(clientKey, sig))
+    }
+
+    func Verify(serverFinal string) void! {
+        var e = scramAttr(serverFinal, "e")
+        if e != "" {
+            return error("kafka: SCRAM authentication failed: " + e)
+        }
+        var serverKey = std.crypto.hmac.Sum(this.Hash, this.salted, std.strings.Bytes("Server Key"))?
+        var want = std.crypto.hmac.Sum(this.Hash, serverKey, std.strings.Bytes(this.authMessage))?
+        var got = std.encoding.base64.Decode(scramAttr(serverFinal, "v"))?("kafka: SCRAM server signature")
+        if !std.crypto.hmac.Equal(want, got) {
+            return error("kafka: SCRAM server signature mismatch")
+        }
+    }
+}
+
+// ---- cluster metadata and the client -------------------------------------------------
+
+// A broker of the cluster.
+struct Broker {
+    ID int
+    Host string
+    Port int
+    Rack string
+
+    func Addr() string {
+        return std.net.JoinHostPort(this.Host, this.Port)
+    }
+}
+
+// A partition: its leader and replicas.
+struct PartitionInfo {
+    ID int
+    Leader int
+    Replicas []int
+    ISR []int
+    Err int
+}
+
+// A topic and its partitions.
+struct TopicInfo {
+    Name string
+    Internal bool
+    Partitions []PartitionInfo
+    Err int
+}
+
+// A topic partition.
+struct TopicPartition {
+    Topic string
+    Partition int
+}
+
+func tpKey(topic string, partition int) string {
+    return topic + "\u{0}" + std.strconv.Itoa(partition)
+}
+
+// The cluster client: bootstrap addresses, a metadata cache and one
+// connection per (broker, purpose).
+struct client {
+    guard int
+    cfg Config
+    seeds []string
+    brokers map[int]Broker
+    topics map[string]TopicInfo
+    controller int
+    metaAt int
+    conns map[string]*brokerConn
+    dialing map[string]std.task.Mutex
+    closed bool
+    refreshes int
+
+    func lock() {
+        std.task.rtLock(&this.guard)
+    }
+
+    func unlock() {
+        std.task.rtUnlock(&this.guard)
+    }
+
+    func brokerAddr(id int) string {
+        this.lock()
+        var b = this.brokers[id]
+        this.unlock()
+        if b.Host == "" {
+            return ""
+        }
+        return b.Addr()
+    }
+
+    func topic(name string) TopicInfo {
+        this.lock()
+        var t = this.topics[name]
+        this.unlock()
+        return t
+    }
+
+    func leaderOf(topic string, partition int) int {
+        var t = this.topic(topic)
+        for p in t.Partitions {
+            if p.ID == partition {
+                return p.Leader
+            }
+        }
+        return -1
+    }
+
+    func closeAll() {
+        this.lock()
+        this.closed = true
+        var cs = this.conns
+        this.conns = map[string]*brokerConn{}
+        this.unlock()
+        for _, c in cs {
+            c.close()
+        }
+    }
+
+    // Forgets a connection that failed.
+    func drop(key string, c *brokerConn) {
+        this.lock()
+        if this.conns[key] == c {
+            delete(this.conns, key)
+        }
+        this.unlock()
+        c.close()
+    }
+}
+
+func newClient(cfg Config, brokers []string) *client! {
+    if len(brokers) == 0 {
+        return error("kafka: no bootstrap brokers")
+    }
+    return new client{cfg: configDefaults(cfg), seeds: brokers, brokers: map[int]Broker{}, topics: map[string]TopicInfo{}, conns: map[string]*brokerConn{}, controller: -1}
+}
+
+// The connection for purpose ("" general, "fetch", "group") to addr.
+async func connTo(c *client, addr string, node int, purpose string) *brokerConn! {
+    var key = addr + "/" + purpose
+    c.lock()
+    if c.closed {
+        c.unlock()
+        return ErrClosed
+    }
+    var bc = c.conns[key]
+    c.unlock()
+    if bc != nil && !bc.bad && !bc.closed {
+        return bc
+    }
+    var nc = await dialBroker(c.cfg, addr, node)?
+    c.lock()
+    if c.closed {
+        c.unlock()
+        nc.close()
+        return ErrClosed
+    }
+    var other = c.conns[key]
+    if other != nil && !other.bad && !other.closed {
+        c.unlock()
+        nc.close()
+        return other
+    }
+    c.conns[key] = nc
+    c.unlock()
+    return nc
+}
+
+async func connToBroker(c *client, node int, purpose string) *brokerConn! {
+    var addr = c.brokerAddr(node)
+    if addr == "" {
+        await refreshMetadata(c, [])?
+        addr = c.brokerAddr(node)
+        if addr == "" {
+            return error("kafka: unknown broker " + std.strconv.Itoa(node))
+        }
+    }
+    return await connTo(c, addr, node, purpose)?
+}
+
+// A request to a broker; a network failure drops the connection (the
+// caller decides about retries).
+async func request(c *client, bc *brokerConn, key int, version int, body []byte, noResponse bool) []byte! {
+    var r = try await bc.roundTrip(key, version, body, noResponse) catch err {
+        if bc.bad {
+            c.drop(bc.addr + "/" + purposeOf(c, bc), bc)
+        }
+        return err
+    }
+    return r
+}
+
+func purposeOf(c *client, bc *brokerConn) string {
+    c.lock()
+    var p = ""
+    for k, v in c.conns {
+        if v == bc {
+            var i = std.strings.LastIndex(k, "/")
+            p = k[i + 1..]
+        }
+    }
+    c.unlock()
+    return p
+}
+
+// Any reachable broker (known brokers first, then the bootstrap list).
+async func anyConn(c *client) *brokerConn! {
+    var addrs []string = []
+    c.lock()
+    for _, b in c.brokers {
+        addrs = append(addrs, b.Addr())
+    }
+    c.unlock()
+    for s in c.seeds {
+        addrs = append(addrs, s)
+    }
+    var lastErr error = ErrNoBrokers
+    for a in addrs {
+        var bc = try await connTo(c, a, -1, "") catch err {
+            lastErr = std.errors.Wrap(err, "kafka: broker " + a)
+            continue
+        }
+        return bc
+    }
+    return lastErr
+}
+
+func isNetErr(err error) bool {
+    return std.errors.Is(err, std.net.ErrRefused) || std.errors.Is(err, std.net.ErrReset) || std.errors.Is(err, std.net.ErrEOF) || std.errors.Is(err, std.net.ErrClosed) || std.errors.Is(err, std.net.ErrTimeout) || std.errors.Is(err, std.net.ErrUnreachable)
+}
+
+// Metadata v1 for topics (empty: all topics).
+func encodeMetadata(topics []string) []byte {
+    var e = Encoder{}
+    if len(topics) == 0 {
+        e.ArrayLen(-1)
+    } else {
+        e.ArrayLen(len(topics))
+        for t in topics {
+            e.String(t)
+        }
+    }
+    return e.B
+}
+
+func decodeMetadata(resp []byte) ([]Broker, int, []TopicInfo, bool) {
+    var d = Decoder{B: resp}
+    var bs []Broker = []
+    var n = d.ArrayLen()
+    for _ in 0..n {
+        var b = Broker{ID: d.Int32(), Host: d.String(), Port: d.Int32()}
+        b.Rack = d.String()
+        bs = append(bs, b)
+    }
+    var ctrl = d.Int32()
+    var ts []TopicInfo = []
+    var nt = d.ArrayLen()
+    for _ in 0..nt {
+        var t = TopicInfo{Err: d.Int16(), Name: d.String(), Internal: d.Bool()}
+        var np = d.ArrayLen()
+        for _ in 0..np {
+            var p = PartitionInfo{Err: d.Int16(), ID: d.Int32(), Leader: d.Int32()}
+            var nr = d.ArrayLen()
+            for _ in 0..nr {
+                p.Replicas = append(p.Replicas, d.Int32())
+            }
+            var ni = d.ArrayLen()
+            for _ in 0..ni {
+                p.ISR = append(p.ISR, d.Int32())
+            }
+            t.Partitions = append(t.Partitions, p)
+        }
+        std.slices.SortFunc(t.Partitions, func(a PartitionInfo, b PartitionInfo) bool {
+            return a.ID < b.ID
+        })
+        ts = append(ts, t)
+    }
+    return (bs, ctrl, ts, d.Err)
+}
+
+// Refreshes the metadata of topics (empty: all) from any broker.
+async func refreshMetadata(c *client, topics []string) void! {
+    var attempt = 0
+    for {
+        var bc = await anyConn(c)?
+        var resp = try await request(c, bc, 3, 1, encodeMetadata(topics), false) catch err {
+            if attempt < c.cfg.MaxRetries && isNetErr(err) {
+                attempt += 1
+                await backoff(c.cfg, attempt)
+                continue
+            }
+            return err
+        }
+        var (bs, ctrl, ts, bad) = decodeMetadata(resp)
+        if bad {
+            return error("kafka: malformed Metadata response")
+        }
+        c.lock()
+        for b in bs {
+            c.brokers[b.ID] = b
+        }
+        c.controller = ctrl
+        for t in ts {
+            c.topics[t.Name] = t
+        }
+        c.metaAt = monoMs()
+        c.refreshes += 1
+        c.unlock()
+        return
+    }
+}
+
+// The partitions of topic, refreshing the metadata when it is unknown
+// (waiting for an auto-created topic's leaders).
+async func topicPartitions(c *client, topic string) TopicInfo! {
+    var t = c.topic(topic)
+    c.lock()
+    var stale = monoMs() - c.metaAt > c.cfg.MetadataMaxAge
+    c.unlock()
+    if len(t.Partitions) > 0 && t.Err == 0 && !stale {
+        return t
+    }
+    var attempt = 0
+    for {
+        await refreshMetadata(c, [topic])?
+        t = c.topic(topic)
+        var ready = t.Err == 0 && len(t.Partitions) > 0
+        for p in t.Partitions {
+            if p.Leader < 0 {
+                ready = false
+            }
+        }
+        if ready {
+            return t
+        }
+        if attempt >= c.cfg.MaxRetries + 5 || (t.Err != 0 && !retriableCode(t.Err)) {
+            if t.Err != 0 {
+                return Error{Code: t.Err, Text: "topic " + std.strconv.Quote(topic)}
+            }
+            return error("kafka: topic " + std.strconv.Quote(topic) + " has no leader")
+        }
+        attempt += 1
+        await backoff(c.cfg, attempt)
+    }
+}
+
+// ListOffsets v1: the offset for timestamp (-1 latest, -2 earliest).
+async func listOffset(c *client, topic string, partition int, ts int) int! {
+    var attempt = 0
+    for {
+        var leader = c.leaderOf(topic, partition)
+        if leader < 0 {
+            _ = await topicPartitions(c, topic)?
+            leader = c.leaderOf(topic, partition)
+        }
+        var bc = await connToBroker(c, leader, "")?
+        var e = Encoder{}
+        e.Int32(-1)
+        e.ArrayLen(1)
+        e.String(topic)
+        e.ArrayLen(1)
+        e.Int32(partition)
+        e.Int64(ts)
+        var resp = try await request(c, bc, 2, 1, e.B, false) catch err {
+            if attempt < c.cfg.MaxRetries && isNetErr(err) {
+                attempt += 1
+                await backoff(c.cfg, attempt)
+                continue
+            }
+            return err
+        }
+        var d = Decoder{B: resp}
+        var nt = d.ArrayLen()
+        for _ in 0..nt {
+            _ = d.String()
+            var np = d.ArrayLen()
+            for _ in 0..np {
+                _ = d.Int32()
+                var code = d.Int16()
+                _ = d.Int64()
+                var off = d.Int64()
+                if code != 0 {
+                    if retriableCode(code) && attempt < c.cfg.MaxRetries {
+                        attempt += 1
+                        await refreshMetadata(c, [topic])?
+                        await backoff(c.cfg, attempt)
+                        continue
+                    }
+                    return kerr(code)
+                }
+                return off
+            }
+        }
+        return error("kafka: empty ListOffsets response")
+    }
+}
+
+// FindCoordinator v1 for a group: the coordinator broker id.
+async func findCoordinator(c *client, group string) int! {
+    var attempt = 0
+    for {
+        var bc = await anyConn(c)?
+        var e = Encoder{}
+        e.String(group)
+        e.Int8(0)
+        var resp = try await request(c, bc, 10, 1, e.B, false) catch err {
+            if attempt < c.cfg.MaxRetries && isNetErr(err) {
+                attempt += 1
+                await backoff(c.cfg, attempt)
+                continue
+            }
+            return err
+        }
+        var d = Decoder{B: resp}
+        _ = d.Int32()
+        var code = d.Int16()
+        var msg = d.String()
+        var node = d.Int32()
+        var host = d.String()
+        var port = d.Int32()
+        if code != 0 {
+            if retriableCode(code) && attempt < c.cfg.MaxRetries + 10 {
+                attempt += 1
+                await backoff(c.cfg, attempt)
+                continue
+            }
+            return Error{Code: code, Text: msg}
+        }
+        c.lock()
+        if c.brokers[node].Host == "" {
+            c.brokers[node] = Broker{ID: node, Host: host, Port: port}
+        }
+        c.unlock()
+        return node
+    }
+}

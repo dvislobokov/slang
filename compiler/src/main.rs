@@ -31,6 +31,16 @@ commands:
                                  (gdb-like commands; --headless: only start the agent,
                                  for an editor to attach)
   debug attach [host:]port       debug a program started with SLANG_DEBUG=[host]:port
+  install [--offline] [--locked] fetch module dependencies into the store and .slang/deps/,
+                                 write slang.lock (--offline: only from the lock and the store)
+  update [module|name ...]       newest versions within the constraints (all, or the named)
+  tree                           print the dependency graph
+  why <module|name>              print every chain of requirements leading to a package
+  vendor                         copy all modules into vendor/ (builds then use it)
+  store verify|prune|path        check, clean up or locate the module store
+  env [NAME ...]                 print SLANG_STD, SLANG_HOME, SLANG_STORE, SLANG_PROXY, ...
+  proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb]
+                                 serve a module proxy (static layout) and checksum log
   manifest schema                print the manifest JSON Schema
   manifest convert <toml|json|yaml> [dir]
                                  rewrite the manifest in another format
@@ -55,6 +65,7 @@ build options:
   --target <t>         target for @cfg, file suffixes and os.Name/os.Arch
                        (triple or alias such as linux-amd64; non-host only for check)
   --locked             fail if slang.lock would change
+  --offline            module dependencies only from slang.lock and the store
   -v, --verbose        log the object cache and the linker";
 
 fn main() {
@@ -98,10 +109,31 @@ fn main() {
         "lsp" => lsp(rest),
         "tool" => tool(rest),
         "fmt" => exit(slang::fmt::cli::run(rest)),
+        "install" => done(package::cli::install(rest)),
+        "update" => done(package::cli::update(rest)),
+        "vendor" => done(package::cli::vendor(rest)),
+        "tree" => print(package::cli::tree(rest)),
+        "why" => print(package::cli::why(rest)),
+        "store" => print(package::cli::store_cmd(rest)),
+        "env" => print(package::cli::env(rest)),
+        "proxy" => done(package::cli::proxy(rest)),
         cmd => {
             eprintln!("error: command `{cmd}` is not implemented yet\n{USAGE}");
             exit(2);
         }
+    }
+}
+
+fn done(r: Result<(), String>) {
+    if let Err(e) = r {
+        fail(&e);
+    }
+}
+
+fn print(r: Result<String, String>) {
+    match r {
+        Ok(out) => print!("{out}"),
+        Err(e) => fail(&e),
     }
 }
 

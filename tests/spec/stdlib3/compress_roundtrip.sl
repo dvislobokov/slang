@@ -45,7 +45,13 @@ func feedChunks(r *compress.gzip.Reader, data []byte, size int) []byte! {
 }
 
 func main() void! {
-    var inputs = [strings.Bytes(""), strings.Bytes("a"), strings.Bytes("abcabcabcabcabcabc"), pseudoRandom(5000), strings.Bytes(strings.Repeat("slang compresses text; ", 3000))]
+    var inputs = [
+        strings.Bytes(""),
+        strings.Bytes("a"),
+        strings.Bytes("abcabcabcabcabcabc"),
+        pseudoRandom(5000),
+        strings.Bytes(strings.Repeat("slang compresses text; ", 3000)),
+    ]
     for i, data in inputs {
         var sizes []int = []
         var ok = true

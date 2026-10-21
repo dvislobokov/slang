@@ -4,8 +4,8 @@
 namespace spec.stdlib2.hash_funcs
 
 import std
-import std.io
 import std.hash
+import std.io
 
 func sum64(h hash.Hash64, s string) uint {
     h.Reset()
@@ -28,9 +28,17 @@ func main() {
     _ = d.WriteString("hello")
     println(a.Sum32(), b.Sum32(), c.Sum64(), d.Sum64(), fnv.String64a("hello"))
     println(hex(a), hex(d), a.Size(), d.Size(), d.BlockSize())
-    println(sum64(fnv.New64a(), ""), sum64(crc64.New(crc64.MakeTable(crc64.ECMA)), "123456789"), sum64(crc64.New(crc64.MakeTable(crc64.ISO)), "123456789"))
+    println(
+        sum64(fnv.New64a(), ""),
+        sum64(crc64.New(crc64.MakeTable(crc64.ECMA)), "123456789"),
+        sum64(crc64.New(crc64.MakeTable(crc64.ISO)), "123456789"),
+    )
     var data = strings.Bytes("The quick brown fox jumps over the lazy dog")
-    println(crc32.ChecksumIEEE(data), crypto.hash.Crc32("The quick brown fox jumps over the lazy dog"), crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli)))
+    println(
+        crc32.ChecksumIEEE(data),
+        crypto.hash.Crc32("The quick brown fox jumps over the lazy dog"),
+        crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli)),
+    )
     var cd = crc32.NewIEEE()
     _ = cd.Write(data[..10])
     _ = cd.Write(data[10..])
@@ -48,14 +56,23 @@ func main() {
     for i in 0..15 {
         input = append(input, byte(i))
     }
-    println(maphash.Bytes(seed, input), maphash.String(seed, "abc") == maphash.Bytes(seed, strings.Bytes("abc")))
+    println(
+        maphash.Bytes(seed, input),
+        maphash.String(seed, "abc") == maphash.Bytes(seed, strings.Bytes("abc")),
+    )
     var mh = maphash.Hash{}
     mh.SetSeed(seed)
     _ = mh.WriteString("ab")
     _ = mh.WriteString("c")
-    println(mh.Sum64() == maphash.String(seed, "abc"), sum64(mh, "abc") == maphash.String(seed, "abc"))
+    println(
+        mh.Sum64() == maphash.String(seed, "abc"),
+        sum64(mh, "abc") == maphash.String(seed, "abc"),
+    )
     var r1 = maphash.MakeSeed()
     var r2 = maphash.MakeSeed()
     println(maphash.String(r1, "x") != maphash.String(r2, "x"))
-    println(hash.Combine(1, 2), hash.Combine(hash.Combine(0, 1), 2) != hash.Combine(hash.Combine(0, 2), 1))
+    println(
+        hash.Combine(1, 2),
+        hash.Combine(hash.Combine(0, 1), 2) != hash.Combine(hash.Combine(0, 2), 1),
+    )
 }

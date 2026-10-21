@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.iteration.regex_iter
 
-import std.io
 import std
+import std.io
 
 func main() {
     var re = regex.Pattern("[0-9]+")

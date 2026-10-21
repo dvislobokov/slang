@@ -217,6 +217,12 @@ impl<'a> Sema<'a> {
                         let t = self.new_template(&f.name.name, generics::TmplDecl::Func(f), &f.generics, Vec::new(), false);
                         self.register(ns, &f.name, Member::Generic(t));
                     }
+                    ast::Decl::Func(f) if f.is_extern => {
+                        self.err(
+                            format!("`extern func {}` declares a runtime function; extern declarations exist only in the standard library's generated std/**/*_extern.sl files", f.name.name),
+                            f.name.span,
+                        );
+                    }
                     ast::Decl::Func(f) => {
                         if f.body.is_none() {
                             self.err(format!("function {} has no body", f.name.name), f.name.span);
@@ -341,6 +347,14 @@ impl<'a> Sema<'a> {
             let path = self.nss[ns].path.clone();
             self.err(format!("{} is private to namespace {path} (only capitalised names are exported)", name.name), name.span);
         }
+        // A gated module reached by its full path (`std.unsafe.ReadInt`)
+        // needs the capability just like `import std.unsafe`.
+        if report && !self.nss[self.cur_ns].is_std && super::debug_agent::gate_of(&self.nss[ns].path).is_some() {
+            let path = self.nss[ns].path.clone();
+            if let Err(msg) = self.check_capability(self.cur_file, &path) {
+                self.err(msg, name.span);
+            }
+        }
         Some(m)
     }
 
@@ -357,6 +371,11 @@ impl<'a> Sema<'a> {
         for (i, e) in self.file_scopes[self.cur_file].imports.iter().enumerate() {
             match e {
                 ImportEntry::Glob(ns) => {
+                    // A stdlib attribute named like a builtin (`@delete` of
+                    // std.web) does not hide the builtin outside attributes.
+                    if self.nss[*ns].is_std && !self.refl.in_attr && matches!(n, "delete" | "len" | "append" | "panic" | "typeof" | "error") {
+                        continue;
+                    }
                     if let Some((m, _, _)) = self.nss[*ns].members.get(n) {
                         if self.nss[*ns].is_std || is_exported(n) || matches!(m, Member::Ns(_)) {
                             used.push(i);

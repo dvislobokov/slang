@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.platform.os_name_const
 
-import std.io
 import std
+import std.io
 
 const IsLinux = os.Name == "linux"
 const Target = os.Name + "-" + os.Arch

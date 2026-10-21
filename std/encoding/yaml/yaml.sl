@@ -1,0 +1,2033 @@
+namespace std.encoding.yaml
+
+// YAML 1.2 for configuration files: block and flow mappings and
+// sequences, plain / single-quoted / double-quoted scalars, literal (|)
+// and folded (>) block scalars with chomping and indentation indicators,
+// comments, anchors and aliases (with a limit on alias expansion against
+// "billion laughs" documents), merge keys (<<), tags !!str !!int !!float
+// !!bool !!null (others are ignored), multi-document streams (---, ...).
+// Plain scalars are resolved with the core schema (null, bool, int incl.
+// 0x/0o, float incl. .inf/.nan, else string). Not supported: complex keys
+// (?), tabs for indentation. Formatting does not keep comments.
+//
+// Parse<T>/Format<T> map structs through compile-time reflection with
+// @yaml(name:, omitEmpty:, skip:, flow:) and @serde(name:, omitEmpty:, skip:).
+
+// A dynamic YAML node (kind: null, bool, int, float, string, sequence,
+// mapping). Mapping keys are strings (other scalar keys are converted).
+struct Value {
+    kind  int
+    b     bool
+    i     int
+    f     float
+    s     string
+    items []Value
+    keys  []string
+
+    func IsNull() bool {
+        return this.kind == 0
+    }
+
+    func IsBool() bool {
+        return this.kind == 1
+    }
+
+    func IsInt() bool {
+        return this.kind == 2
+    }
+
+    func IsFloat() bool {
+        return this.kind == 3
+    }
+
+    func IsString() bool {
+        return this.kind == 4
+    }
+
+    func IsSeq() bool {
+        return this.kind == 5
+    }
+
+    func IsMap() bool {
+        return this.kind == 6
+    }
+
+    // "null", "bool", "int", "float", "string", "seq" or "map".
+    func Type() string {
+        return kindName(this.kind)
+    }
+
+    func Bool() bool! {
+        if this.kind != 1 {
+            return error("yaml: " + kindName(this.kind) + " is not a bool")
+        }
+        return this.b
+    }
+
+    func Int() int! {
+        if this.kind != 2 {
+            return error("yaml: " + kindName(this.kind) + " is not an int")
+        }
+        return this.i
+    }
+
+    // An int or float as a float.
+    func Float() float! {
+        if this.kind == 2 {
+            return float(this.i)
+        }
+        if this.kind != 3 {
+            return error("yaml: " + kindName(this.kind) + " is not a number")
+        }
+        return this.f
+    }
+
+    func String() string! {
+        if this.kind != 4 {
+            return error("yaml: " + kindName(this.kind) + " is not a string")
+        }
+        return this.s
+    }
+
+    // The scalar as text ("" for null and collections).
+    func Text() string {
+        if this.kind == 1 {
+            if this.b {
+                return "true"
+            }
+            return "false"
+        }
+        if this.kind == 2 {
+            return std.fmt.Format("{0}", this.i)
+        }
+        if this.kind == 3 {
+            return formatFloat(this.f)
+        }
+        return this.s
+    }
+
+    func Len() int {
+        if this.kind == 5 || this.kind == 6 {
+            return len(this.items)
+        }
+        return 0
+    }
+
+    func Index(i int) Value {
+        if this.kind == 5 && i >= 0 && i < len(this.items) {
+            return this.items[i]
+        }
+        return Value{}
+    }
+
+    func Get(key string) Value {
+        var i = this.find(key)
+        if i < 0 {
+            return Value{}
+        }
+        return this.items[i]
+    }
+
+    func Has(key string) bool {
+        return this.find(key) >= 0
+    }
+
+    func find(key string) int {
+        if this.kind == 6 {
+            for i, k in this.keys {
+                if k == key {
+                    return i
+                }
+            }
+        }
+        return -1
+    }
+
+    // Mapping keys in document order.
+    func Keys() []string {
+        var out []string = []
+        if this.kind == 6 {
+            for k in this.keys {
+                out = append(out, k)
+            }
+        }
+        return out
+    }
+
+    // Sequence elements (or mapping values).
+    func Items() []Value {
+        var out []Value = []
+        for x in this.items {
+            out = append(out, x)
+        }
+        return out
+    }
+
+    // Block-style YAML text of the node.
+    func Format() string {
+        var b = std.strings.Builder{}
+        emitTop(&b, *this)
+        return b.String()
+    }
+}
+
+func NewNull() Value {
+    return Value{}
+}
+
+func NewBool(b bool) Value {
+    return Value{kind: 1, b: b}
+}
+
+func NewInt(i int) Value {
+    return Value{kind: 2, i: i}
+}
+
+func NewFloat(f float) Value {
+    return Value{kind: 3, f: f}
+}
+
+func NewString(s string) Value {
+    return Value{kind: 4, s: s}
+}
+
+func NewSeq(items []Value) Value {
+    var c []Value = []
+    for x in items {
+        c = append(c, x)
+    }
+    return Value{kind: 5, items: c}
+}
+
+func NewMap(keys []string, values []Value) Value! {
+    if len(keys) != len(values) {
+        return error("yaml.NewMap: keys and values differ in length")
+    }
+    var ks []string = []
+    var vs []Value = []
+    for i, k in keys {
+        ks = append(ks, k)
+        vs = append(vs, values[i])
+    }
+    return Value{kind: 6, keys: ks, items: vs}
+}
+
+func kindName(k int) string {
+    if k == 0 {
+        return "null"
+    }
+    if k == 1 {
+        return "bool"
+    }
+    if k == 2 {
+        return "int"
+    }
+    if k == 3 {
+        return "float"
+    }
+    if k == 4 {
+        return "string"
+    }
+    if k == 5 {
+        return "seq"
+    }
+    return "map"
+}
+
+// -- parsing --------------------------------------------------------------------
+
+// Parses a single-document stream.
+func ParseValue(text string) Value! {
+    var docs = ParseAll(text)?
+    if len(docs) == 0 {
+        return Value{}
+    }
+    if len(docs) > 1 {
+        return error(
+            std.fmt.Format("yaml: expected one document, found {0} (use ParseAll)", len(docs)),
+        )
+    }
+    return docs[0]
+}
+
+// Parses every document of a stream.
+func ParseAll(text string) []Value! {
+    var p = parser{
+        anchors: map[string]Value{},
+        sizes: map[string]int{},
+        budget: 1000000,
+        noFinalNewline: !std.strings.HasSuffix(text, "\n"),
+    }
+    var raw = std.strings.Split(text, "\n")
+    for l in raw {
+        if std.strings.HasSuffix(l, "\r") {
+            p.lines = append(p.lines, l[..len(l) - 1])
+        } else {
+            p.lines = append(p.lines, l)
+        }
+    }
+    if len(p.lines) > 0 && std.strings.HasPrefix(p.lines[0], "\u{FEFF}") {
+        p.lines[0] = p.lines[0][3..]
+    }
+    var docs []Value = []
+    for {
+        var d = p.document()?
+        if p.eofDoc {
+            break
+        }
+        docs = append(docs, d)
+    }
+    return docs
+}
+
+struct parser {
+    lines   []string
+    li      int
+    col     int
+    anchors map[string]Value
+    sizes   map[string]int
+    budget  int
+    eofDoc  bool
+    started bool
+    // the text does not end with a line break
+    noFinalNewline bool
+
+    func fail(msg string) error {
+        return error(std.fmt.Format("yaml: line {0}: {1}", this.li + 1, msg))
+    }
+
+    func line() string {
+        if this.li < len(this.lines) {
+            return this.lines[this.li]
+        }
+        return ""
+    }
+
+    // The rest of the current line from col.
+    func rest() string {
+        var l = this.line()
+        if this.col >= len(l) {
+            return ""
+        }
+        return l[this.col..]
+    }
+
+    func peekc() int {
+        var l = this.line()
+        if this.col < len(l) {
+            return int(l[this.col])
+        }
+        return -1
+    }
+
+    func skipSpaces() {
+        var l = this.line()
+        for this.col < len(l) && (int(l[this.col]) == 32 || int(l[this.col]) == 9) {
+            this.col += 1
+        }
+    }
+
+    // True if the rest of the line is empty or a comment.
+    func restBlank() bool {
+        var r = std.strings.TrimLeft(this.rest(), " \t")
+        return r == "" || std.strings.HasPrefix(r, "#")
+    }
+
+    func nextLine() {
+        this.li += 1
+        this.col = 0
+    }
+
+    // Skips empty and comment-only lines (from the start of a line).
+    func skipBlankLines() {
+        for this.li < len(this.lines) {
+            var t = std.strings.Trim(this.lines[this.li])
+            if t == "" || std.strings.HasPrefix(t, "#") {
+                this.li += 1
+                this.col = 0
+                continue
+            }
+            break
+        }
+    }
+
+    func atDocMarker() bool {
+        var l = this.line()
+        return this.li < len(this.lines) &&
+            (l == "---" ||
+                std.strings.HasPrefix(l, "--- ") ||
+                l == "..." ||
+                std.strings.HasPrefix(l, "... ") ||
+                std.strings.HasPrefix(l, "---\t"))
+    }
+
+    // One document; sets eofDoc when the stream has no more.
+    func document() Value! {
+        this.skipBlankLines()
+        // directives
+        for this.li < len(this.lines) && std.strings.HasPrefix(this.line(), "%") {
+            this.nextLine()
+            this.skipBlankLines()
+        }
+        if this.li >= len(this.lines) {
+            this.eofDoc = true
+            return Value{}
+        }
+        var explicit = false
+        if std.strings.HasPrefix(this.line(), "...") && this.atDocMarker() {
+            this.nextLine()
+            return this.document()?
+        }
+        if this.atDocMarker() && std.strings.HasPrefix(this.line(), "---") {
+            explicit = true
+            this.col = 3
+            this.skipSpaces()
+            if this.restBlank() {
+                this.nextLine()
+            } else {
+                // content on the --- line
+                var v = this.inline(-1)?
+                this.finishLine()?
+                this.endDocument()
+                return v
+            }
+        }
+        this.skipBlankLines()
+        if this.li >= len(this.lines) || this.atDocMarker() {
+            this.endDocument()
+            if !explicit && this.li >= len(this.lines) {
+                this.eofDoc = true
+            }
+            return Value{}
+        }
+        var v = this.block(-1)?
+        this.skipBlankLines()
+        if this.li < len(this.lines) && !this.atDocMarker() {
+            return this.fail("unexpected content (bad indentation?)")
+        }
+        this.endDocument()
+        return v
+    }
+
+    func endDocument() {
+        this.skipBlankLines()
+        if this.li < len(this.lines) && std.strings.HasPrefix(this.line(), "...") {
+            this.nextLine()
+        }
+    }
+
+    func indentOf(l string) int {
+        var i = 0
+        for i < len(l) && int(l[i]) == 32 {
+            i += 1
+        }
+        return i
+    }
+
+    // A block node whose lines are indented more than parent (we are at
+    // the start of a line); null if there is none.
+    func block(parent int) Value! {
+        this.skipBlankLines()
+        if this.li >= len(this.lines) || this.atDocMarker() {
+            return Value{}
+        }
+        var l = this.line()
+        var ind = this.indentOf(l)
+        if ind < len(l) && int(l[ind]) == 9 {
+            return this.fail("tabs are not allowed for indentation")
+        }
+        if ind <= parent {
+            return Value{}
+        }
+        this.col = ind
+        return this.nodeAt(ind)?
+    }
+
+    // A node starting at (li, col) whose own indentation is ind.
+    func nodeAt(ind int) Value! {
+        var r = this.rest()
+        if r == "-" || std.strings.HasPrefix(r, "- ") || std.strings.HasPrefix(r, "-\t") {
+            return this.seq(this.col)?
+        }
+        if this.looksLikeKey() {
+            return this.mapping(this.col)?
+        }
+        var v = this.inline(ind)?
+        this.finishLine()?
+        return v
+    }
+
+    // After an inline node: only a comment may follow on the line.
+    func finishLine() void! {
+        if this.li >= len(this.lines) {
+            return
+        }
+        if !this.restBlank() {
+            return this.fail(
+                "unexpected text after a value: " +
+                    std.encoding.json.Quote(std.strings.Trim(this.rest())),
+            )
+        }
+        this.nextLine()
+    }
+
+    // Is the text at col a mapping key (plain or quoted, then ':' and a
+    // space or the line end)?
+    func looksLikeKey() bool {
+        var r = this.rest()
+        if r == "" {
+            return false
+        }
+        var c = int(r[0])
+        if c == 91 || c == 123 || c == 35 || c == 124 || c == 62 || c == 42 {
+            // [ { # | > *
+            if c == 42 {
+                // an alias used as a key: *a : v
+                var j = keyEnd(r, 0)
+                return j >= 0
+            }
+            return false
+        }
+        if c == 38 || c == 33 {
+            // &anchor / !tag before a key or a value
+            var sp = std.strings.Index(r, " ")
+            if sp < 0 {
+                return false
+            }
+            var save = this.col
+            this.col += sp
+            this.skipSpaces()
+            var k = this.looksLikeKey()
+            this.col = save
+            return k
+        }
+        if c == 34 || c == 39 {
+            var end = quotedEnd(r)
+            if end < 0 {
+                return false
+            }
+            var after = std.strings.TrimLeft(r[end..], " \t")
+            return after == ":" ||
+                std.strings.HasPrefix(after, ": ") ||
+                std.strings.HasPrefix(after, ":\t")
+        }
+        return keyEnd(r, 0) >= 0
+    }
+
+    func seq(ind int) Value! {
+        var items []Value = []
+        for {
+            // at "-" on column ind
+            this.col = ind + 1
+            this.skipSpaces()
+            var item = Value{}
+            if this.restBlank() {
+                this.nextLine()
+                item = this.block(ind)?
+            } else {
+                item = this.nodeAt(ind)?
+            }
+            items = append(items, item)
+            this.skipBlankLines()
+            if this.li >= len(this.lines) || this.atDocMarker() {
+                break
+            }
+            var l = this.line()
+            var li = this.indentOf(l)
+            if li < ind {
+                break
+            }
+            var r = l[li..]
+            if li == ind &&
+                (r == "-" || std.strings.HasPrefix(r, "- ") || std.strings.HasPrefix(r, "-\t")) {
+                continue
+            }
+            if li == ind {
+                break
+            }
+            return this.fail("bad indentation of a sequence entry")
+        }
+        return Value{kind: 5, items: items}
+    }
+
+    func mapping(ind int) Value! {
+        var keys []string = []
+        var vals []Value = []
+        var merges []Value = []
+        for {
+            // a key at (li, col == ind)
+            var keyLine = this.li
+            var key = this.key()?
+            // the value
+            this.skipSpaces()
+            var val = Value{}
+            if this.restBlank() {
+                this.nextLine()
+                this.skipBlankLines()
+                // a sequence may sit at the key's own indentation
+                var l = this.line()
+                var li = this.indentOf(l)
+                var r = ""
+                if li < len(l) {
+                    r = l[li..]
+                }
+                if this.li < len(this.lines) &&
+                    !this.atDocMarker() &&
+                    li == ind &&
+                    (r == "-" || std.strings.HasPrefix(r, "- ")) {
+                    val = this.seq(ind)?
+                } else {
+                    val = this.block(ind)?
+                }
+            } else {
+                val = this.inline(ind)?
+                this.finishLine()?
+            }
+            if key == "<<" {
+                merges = append(merges, val)
+            } else {
+                for k in keys {
+                    if k == key {
+                        this.li = keyLine
+                        return this.fail("duplicate key " + std.encoding.json.Quote(key))
+                    }
+                }
+                keys = append(keys, key)
+                vals = append(vals, val)
+            }
+            this.skipBlankLines()
+            if this.li >= len(this.lines) || this.atDocMarker() {
+                break
+            }
+            var l = this.line()
+            var li = this.indentOf(l)
+            if li < ind {
+                break
+            }
+            if li > ind {
+                return this.fail("bad indentation of a mapping entry")
+            }
+            this.col = ind
+            var r = this.rest()
+            if r == "-" || std.strings.HasPrefix(r, "- ") {
+                break
+            }
+            if !this.looksLikeKey() {
+                return this.fail(
+                    "expected a mapping key, found " + std.encoding.json.Quote(std.strings.Trim(r)),
+                )
+            }
+        }
+        // merge keys: earlier explicit keys win, then the merged maps in order
+        for m in merges {
+            var sources []Value = []
+            if m.kind == 6 {
+                sources = append(sources, m)
+            } else if m.kind == 5 {
+                for x in m.items {
+                    sources = append(sources, x)
+                }
+            } else {
+                return this.fail("<< needs a mapping or a sequence of mappings")
+            }
+            for src in sources {
+                if src.kind != 6 {
+                    return this.fail("<< needs a mapping or a sequence of mappings")
+                }
+                for i, k in src.keys {
+                    var have = false
+                    for k2 in keys {
+                        if k2 == k {
+                            have = true
+                        }
+                    }
+                    if !have {
+                        keys = append(keys, k)
+                        vals = append(vals, src.items[i])
+                    }
+                }
+            }
+        }
+        return Value{kind: 6, keys: keys, items: vals}
+    }
+
+    // A block mapping key at col, up to and including the ':'.
+    func key() string! {
+        var r = this.rest()
+        var c = int(r[0])
+        if c == 38 || c == 33 {
+            // anchors/tags on keys are skipped
+            var sp = std.strings.Index(r, " ")
+            this.col += sp
+            this.skipSpaces()
+            r = this.rest()
+            c = int(r[0])
+        }
+        if c == 34 || c == 39 {
+            var v = this.quoted()?
+            this.skipSpaces()
+            if this.peekc() != 58 {
+                return this.fail("expected : after a key")
+            }
+            this.col += 1
+            return v.s
+        }
+        if c == 42 {
+            var j0 = keyEnd(r, 0)
+            var name = std.strings.Trim(r[1..j0])
+            this.col += j0 + 1
+            var a = this.alias(name)?
+            return a.Text()
+        }
+        var j = keyEnd(r, 0)
+        var k = std.strings.Trim(r[..j])
+        this.col += j + 1
+        return k
+    }
+
+    // An inline node at col (scalar, flow collection, block scalar,
+    // anchor, alias, tag); continuation lines must be indented more than ind.
+    func inline(ind int) Value! {
+        var c = this.peekc()
+        if c == 38 {
+            // &anchor
+            var r = this.rest()
+            var j = 1
+            for j < len(r) && int(r[j]) != 32 && int(r[j]) != 9 {
+                j += 1
+            }
+            var name = r[1..j]
+            if name == "" {
+                return this.fail("empty anchor name")
+            }
+            this.col += j
+            this.skipSpaces()
+            var v = Value{}
+            if this.restBlank() {
+                this.nextLine()
+                this.skipBlankLines()
+                var l = this.line()
+                var li = this.indentOf(l)
+                var rr = ""
+                if li < len(l) {
+                    rr = l[li..]
+                }
+                if li == ind + 0 && ind >= 0 && (rr == "-" || std.strings.HasPrefix(rr, "- ")) {
+                    v = this.seq(ind)?
+                } else {
+                    v = this.block(ind)?
+                }
+                // the caller's finishLine must see a blank rest: step back
+                this.li -= 1
+                this.col = len(this.line())
+            } else if this.looksLikeKey() {
+                v = this.mapping(this.col)?
+                this.li -= 1
+                this.col = len(this.line())
+            } else {
+                v = this.inline(ind)?
+            }
+            this.anchors[name] = v
+            this.sizes[name] = countNodes(v, this.budget + 1) + 1
+            return v
+        }
+        if c == 42 {
+            var r = this.rest()
+            var j = 1
+            for j < len(r) &&
+                int(r[j]) != 32 &&
+                int(r[j]) != 9 &&
+                int(r[j]) != 44 &&
+                int(r[j]) != 93 &&
+                int(r[j]) != 125 {
+                j += 1
+            }
+            this.col += j
+            return this.alias(r[1..j])?
+        }
+        if c == 33 {
+            var r = this.rest()
+            var j = 1
+            for j < len(r) && int(r[j]) != 32 && int(r[j]) != 9 {
+                j += 1
+            }
+            var tag = r[..j]
+            this.col += j
+            this.skipSpaces()
+            var v = Value{}
+            if this.restBlank() {
+                this.nextLine()
+                v = this.block(ind)?
+                this.li -= 1
+                this.col = len(this.line())
+            } else {
+                v = this.inline(ind)?
+            }
+            return applyTag(tag, v, this.li + 1)?
+        }
+        if c == 91 || c == 123 {
+            return this.flow(0)?
+        }
+        if c == 34 || c == 39 {
+            return this.quoted()?
+        }
+        if c == 124 || c == 62 {
+            return this.blockScalar(ind)?
+        }
+        return this.plain(ind)?
+    }
+
+    func alias(name string) Value! {
+        var size = this.sizes[name]
+        if size == 0 {
+            return this.fail("unknown alias *" + name)
+        }
+        this.budget -= size - 1
+        if this.budget < 0 {
+            return this.fail("too many alias expansions (a \"billion laughs\" document?)")
+        }
+        return this.anchors[name]
+    }
+
+    // A plain scalar from col to the end of the line (comments removed),
+    // folded with more-indented continuation lines.
+    func plain(ind int) Value! {
+        var r = this.rest()
+        var text = stripComment(r)
+        if std.strings.HasPrefix(text, "- ") || text == "-" {
+            return this.fail("a sequence is not allowed here")
+        }
+        if keyEnd(text, 0) >= 0 {
+            return this.fail("mapping values are not allowed here")
+        }
+        this.col = len(this.line())
+        var parts = [std.strings.Trim(text)]
+        // continuation lines
+        var pending = 0
+        var li = this.li + 1
+        for li < len(this.lines) {
+            var l = this.lines[li]
+            var t = std.strings.Trim(l)
+            if t == "" {
+                pending += 1
+                li += 1
+                continue
+            }
+            var lind = this.indentOf(l)
+            if lind <= ind ||
+                std.strings.HasPrefix(t, "#") ||
+                (lind == 0 &&
+                    (std.strings.HasPrefix(l, "---") || std.strings.HasPrefix(l, "..."))) {
+                break
+            }
+            var body = stripComment(t)
+            if keyEnd(body, 0) >= 0 {
+                break
+            }
+            for _ in 0..pending {
+                parts = append(parts, "\n")
+            }
+            if pending == 0 {
+                parts = append(parts, " ")
+            }
+            parts = append(parts, std.strings.Trim(body))
+            pending = 0
+            this.li = li
+            this.col = len(l)
+            li += 1
+            if std.strings.Contains(t, " #") {
+                break
+            }
+        }
+        return resolvePlain(std.strings.Join(parts, ""))
+    }
+
+    // A quoted scalar starting at col (may span lines).
+    func quoted() Value! {
+        var q = this.peekc()
+        this.col += 1
+        var b = std.strings.Builder{}
+        var startLine = this.li
+        for {
+            if this.li >= len(this.lines) {
+                this.li = startLine
+                return this.fail("unterminated quoted scalar")
+            }
+            var l = this.line()
+            if this.col >= len(l) {
+                // line break inside the scalar: folded to a space, empty lines to \n
+                var trimmed = b.String()
+                b.Reset()
+                b.Write(std.strings.TrimRight(trimmed, " \t"))
+                this.nextLine()
+                var empties = 0
+                for this.li < len(this.lines) && std.strings.Trim(this.line()) == "" {
+                    empties += 1
+                    this.nextLine()
+                }
+                if empties == 0 {
+                    b.Write(" ")
+                } else {
+                    for _ in 0..empties {
+                        b.Write("\n")
+                    }
+                }
+                this.skipSpaces()
+                continue
+            }
+            var c = int(l[this.col])
+            if q == 39 {
+                if c == 39 {
+                    if this.col + 1 < len(l) && int(l[this.col + 1]) == 39 {
+                        b.Write("'")
+                        this.col += 2
+                        continue
+                    }
+                    this.col += 1
+                    break
+                }
+                b.Write(l[this.col..this.col + 1])
+                this.col += 1
+                continue
+            }
+            if c == 34 {
+                this.col += 1
+                break
+            }
+            if c == 92 {
+                if this.col + 1 >= len(l) {
+                    // escaped line break: joins the lines
+                    this.nextLine()
+                    this.skipSpaces()
+                    continue
+                }
+                var e = int(l[this.col + 1])
+                this.col += 2
+                if e == 110 {
+                    b.Write("\n")
+                } else if e == 116 || e == 9 {
+                    b.Write("\t")
+                } else if e == 114 {
+                    b.Write("\r")
+                } else if e == 48 {
+                    b.Write(string(char(0)))
+                } else if e == 97 {
+                    b.Write(string(char(7)))
+                } else if e == 98 {
+                    b.Write(string(char(8)))
+                } else if e == 101 {
+                    b.Write(string(char(27)))
+                } else if e == 102 {
+                    b.Write(string(char(12)))
+                } else if e == 118 {
+                    b.Write(string(char(11)))
+                } else if e == 32 || e == 34 || e == 47 || e == 92 {
+                    b.Write(string(char(e)))
+                } else if e == 78 {
+                    b.Write("\u{85}")
+                } else if e == 95 {
+                    b.Write("\u{A0}")
+                } else if e == 120 || e == 117 || e == 85 {
+                    var n = 2
+                    if e == 117 {
+                        n = 4
+                    } else if e == 85 {
+                        n = 8
+                    }
+                    if this.col + n > len(l) {
+                        return this.fail("invalid escape in a double-quoted scalar")
+                    }
+                    var v = 0
+                    for k in 0..n {
+                        var h = hexVal(int(l[this.col + k]))
+                        if h < 0 {
+                            return this.fail("invalid escape in a double-quoted scalar")
+                        }
+                        v = v * 16 + h
+                    }
+                    this.col += n
+                    if v > 1114111 {
+                        return this.fail("invalid escape in a double-quoted scalar")
+                    }
+                    b.Write(string(char(v)))
+                } else {
+                    return this.fail(
+                        "invalid escape \\" + string(char(e)) + " in a double-quoted scalar",
+                    )
+                }
+                continue
+            }
+            b.Write(l[this.col..this.col + 1])
+            this.col += 1
+        }
+        return Value{kind: 4, s: b.String()}
+    }
+
+    // A literal (|) or folded (>) block scalar; ind is the parent indentation.
+    func blockScalar(ind int) Value! {
+        var folded = this.peekc() == 62
+        this.col += 1
+        var chomp = 0
+        var explicit = 0
+        for this.col < len(this.line()) {
+            var c = this.peekc()
+            if c == 45 {
+                chomp = -1
+            } else if c == 43 {
+                chomp = 1
+            } else if c >= 49 && c <= 57 {
+                explicit = c - 48
+            } else {
+                break
+            }
+            this.col += 1
+        }
+        if !this.restBlank() {
+            return this.fail("unexpected text after a block scalar indicator")
+        }
+        this.nextLine()
+        // content indentation: explicit, or that of the first non-empty line
+        var base = ind
+        if base < 0 {
+            base = -1
+        }
+        var cind = -1
+        if explicit > 0 {
+            cind = std.math.IMax(base, 0) + explicit
+            if base < 0 {
+                cind = explicit
+            }
+        } else {
+            var k = this.li
+            for k < len(this.lines) {
+                if std.strings.Trim(this.lines[k]) != "" {
+                    cind = this.indentOf(this.lines[k])
+                    break
+                }
+                k += 1
+            }
+            if cind <= base {
+                cind = -1
+            }
+        }
+        var lines []string = []
+        var lastLine = -1
+        for this.li < len(this.lines) {
+            var l = this.line()
+            if std.strings.Trim(l) == "" {
+                if cind >= 0 && len(l) > cind {
+                    lines = append(lines, l[cind..])
+                } else {
+                    lines = append(lines, "")
+                }
+                this.nextLine()
+                continue
+            }
+            if cind < 0 || this.indentOf(l) < cind {
+                break
+            }
+            if this.indentOf(l) == 0 &&
+                (std.strings.HasPrefix(l, "---") || std.strings.HasPrefix(l, "...")) {
+                break
+            }
+            lines = append(lines, l[cind..])
+            lastLine = this.li
+            this.nextLine()
+        }
+        // trailing empty lines are handled by chomping
+        var trailing = 0
+        var n = len(lines)
+        for n > 0 && std.strings.Trim(lines[n - 1]) == "" {
+            n -= 1
+            trailing += 1
+        }
+        var b = std.strings.Builder{}
+        if !folded {
+            for i in 0..n {
+                if i > 0 {
+                    b.Write("\n")
+                }
+                b.Write(lines[i])
+            }
+        } else {
+            var i = 0
+            for i < n {
+                var l = lines[i]
+                if l == "" {
+                    // a run of empty lines: k breaks between two normal
+                    // lines (the first break is folded away), else k + 1
+                    var j = i
+                    for j < n && lines[j] == "" {
+                        j += 1
+                    }
+                    var k = j - i
+                    var prevNormal = i > 0 &&
+                        !std.strings.HasPrefix(lines[i - 1], " ") &&
+                        !std.strings.HasPrefix(lines[i - 1], "\t")
+                    var nextNormal = j < n &&
+                        !std.strings.HasPrefix(lines[j], " ") &&
+                        !std.strings.HasPrefix(lines[j], "\t")
+                    if i > 0 && !(prevNormal && nextNormal) {
+                        k += 1
+                    }
+                    for _ in 0..k {
+                        b.Write("\n")
+                    }
+                    if j < n {
+                        b.Write(lines[j])
+                    }
+                    i = j + 1
+                    continue
+                }
+                if i > 0 {
+                    var prev = lines[i - 1]
+                    var spaced = std.strings.HasPrefix(l, " ") ||
+                        std.strings.HasPrefix(l, "\t") ||
+                        std.strings.HasPrefix(prev, " ") ||
+                        std.strings.HasPrefix(prev, "\t")
+                    if spaced {
+                        b.Write("\n")
+                    } else {
+                        b.Write(" ")
+                    }
+                }
+                b.Write(l)
+                i += 1
+            }
+        }
+        var s = b.String()
+        var eofCut = this.noFinalNewline && lastLine == len(this.lines) - 1 && trailing == 0
+        if n > 0 && chomp >= 0 && !eofCut {
+            s += "\n"
+        }
+        if chomp == 1 {
+            for _ in 0..trailing {
+                s += "\n"
+            }
+        }
+        // the caller's finishLine expects to be on the last consumed line
+        this.li -= 1
+        this.col = len(this.line())
+        return Value{kind: 4, s: s}
+    }
+
+    // A flow collection or flow scalar at col (may span lines).
+    func flow(depth int) Value! {
+        if depth > 200 {
+            return this.fail("flow nesting too deep")
+        }
+        this.flowSpace()?
+        var c = this.peekc()
+        if c == 91 {
+            this.col += 1
+            var items []Value = []
+            for {
+                this.flowSpace()?
+                if this.peekc() == 93 {
+                    this.col += 1
+                    break
+                }
+                var item = this.flow(depth + 1)?
+                this.flowSpace()?
+                if this.peekc() == 58 {
+                    // [k: v] is a single-pair mapping
+                    this.col += 1
+                    var v = this.flow(depth + 1)?
+                    item = Value{kind: 6, keys: [item.Text()], items: [v]}
+                    this.flowSpace()?
+                }
+                items = append(items, item)
+                var d = this.peekc()
+                if d == 44 {
+                    this.col += 1
+                    continue
+                }
+                if d == 93 {
+                    this.col += 1
+                    break
+                }
+                return this.fail("expected , or ] in a flow sequence")
+            }
+            return Value{kind: 5, items: items}
+        }
+        if c == 123 {
+            this.col += 1
+            var keys []string = []
+            var vals []Value = []
+            for {
+                this.flowSpace()?
+                if this.peekc() == 125 {
+                    this.col += 1
+                    break
+                }
+                var k = this.flow(depth + 1)?
+                this.flowSpace()?
+                var v = Value{}
+                if this.peekc() == 58 {
+                    this.col += 1
+                    this.flowSpace()?
+                    var d0 = this.peekc()
+                    if d0 != 44 && d0 != 125 {
+                        v = this.flow(depth + 1)?
+                    }
+                    this.flowSpace()?
+                }
+                var key = k.Text()
+                for x in keys {
+                    if x == key {
+                        return this.fail("duplicate key " + std.encoding.json.Quote(key))
+                    }
+                }
+                keys = append(keys, key)
+                vals = append(vals, v)
+                var d = this.peekc()
+                if d == 44 {
+                    this.col += 1
+                    continue
+                }
+                if d == 125 {
+                    this.col += 1
+                    break
+                }
+                return this.fail("expected , or } in a flow mapping")
+            }
+            return Value{kind: 6, keys: keys, items: vals}
+        }
+        if c == 34 || c == 39 {
+            return this.quoted()?
+        }
+        if c == 42 || c == 38 || c == 33 {
+            return this.inline(1000000)?
+        }
+        // plain scalar in flow context: up to , : ] } or a comment
+        var l = this.line()
+        var start = this.col
+        for this.col < len(l) {
+            var d = int(l[this.col])
+            if d == 44 || d == 93 || d == 125 || d == 91 || d == 123 {
+                break
+            }
+            if d == 58 &&
+                (this.col + 1 >= len(l) ||
+                    int(l[this.col + 1]) == 32 ||
+                    int(l[this.col + 1]) == 44 ||
+                    int(l[this.col + 1]) == 93 ||
+                    int(l[this.col + 1]) == 125) {
+                break
+            }
+            if d == 35 && this.col > start && int(l[this.col - 1]) == 32 {
+                break
+            }
+            this.col += 1
+        }
+        var text = std.strings.Trim(l[start..this.col])
+        if text == "" {
+            return this.fail("expected a value in a flow collection")
+        }
+        return resolvePlain(text)
+    }
+
+    // Skips white space, line breaks and comments inside a flow collection.
+    func flowSpace() void! {
+        for {
+            if this.li >= len(this.lines) {
+                return this.fail("unterminated flow collection")
+            }
+            this.skipSpaces()
+            if this.restBlank() {
+                this.nextLine()
+                continue
+            }
+            return
+        }
+    }
+}
+
+// The index of the ':' ending a plain key in s (": " or ':' at the end),
+// outside quotes and flow brackets; -1 if s is no key.
+func keyEnd(s string, from int) int {
+    var i = from
+    var depth = 0
+    for i < len(s) {
+        var c = int(s[i])
+        if c == 35 && i > 0 && (int(s[i - 1]) == 32 || int(s[i - 1]) == 9) {
+            return -1
+        }
+        if c == 91 || c == 123 {
+            depth += 1
+        } else if c == 93 || c == 125 {
+            depth -= 1
+        } else if c == 58 &&
+            depth <= 0 &&
+            (i + 1 >= len(s) || int(s[i + 1]) == 32 || int(s[i + 1]) == 9) {
+            return i
+        }
+        i += 1
+    }
+    return -1
+}
+
+// The index after the closing quote of a quoted scalar starting s, or -1.
+func quotedEnd(s string) int {
+    var q = int(s[0])
+    var i = 1
+    for i < len(s) {
+        var c = int(s[i])
+        if q == 39 && c == 39 {
+            if i + 1 < len(s) && int(s[i + 1]) == 39 {
+                i += 2
+                continue
+            }
+            return i + 1
+        }
+        if q == 34 && c == 92 {
+            i += 2
+            continue
+        }
+        if q == 34 && c == 34 {
+            return i + 1
+        }
+        i += 1
+    }
+    return -1
+}
+
+// s without a trailing " # comment".
+func stripComment(s string) string {
+    if std.strings.HasPrefix(s, "#") {
+        return ""
+    }
+    for i in 1..len(s) {
+        if int(s[i]) == 35 && (int(s[i - 1]) == 32 || int(s[i - 1]) == 9) {
+            return std.strings.TrimRight(s[..i], " \t")
+        }
+    }
+    return std.strings.TrimRight(s, " \t")
+}
+
+func hexVal(c int) int {
+    if c >= 48 && c <= 57 {
+        return c - 48
+    }
+    if c >= 97 && c <= 102 {
+        return c - 87
+    }
+    if c >= 65 && c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+// Nodes in v (stops counting past limit).
+func countNodes(v Value, limit int) int {
+    var n = 1
+    for x in v.items {
+        if n > limit {
+            return n
+        }
+        n += countNodes(x, limit - n)
+    }
+    return n
+}
+
+func applyTag(tag string, v Value, line int) Value! {
+    if tag == "!!str" && v.kind <= 4 {
+        if v.kind == 0 {
+            return Value{kind: 4, s: ""}
+        }
+        return Value{kind: 4, s: v.Text()}
+    }
+    if tag == "!!float" && v.kind == 2 {
+        return Value{kind: 3, f: float(v.i)}
+    }
+    if tag == "!!int" || tag == "!!float" || tag == "!!bool" || tag == "!!null" {
+        if v.kind == 4 {
+            var r = resolvePlain(v.s)
+            var want = 2
+            if tag == "!!float" {
+                want = 3
+                if r.kind == 2 {
+                    return Value{kind: 3, f: float(r.i)}
+                }
+            } else if tag == "!!bool" {
+                want = 1
+            } else if tag == "!!null" {
+                want = 0
+            }
+            if r.kind != want {
+                return error(
+                    std.fmt.Format(
+                        "yaml: line {0}: {1} is not a valid {2}",
+                        line,
+                        std.encoding.json.Quote(v.s),
+                        tag,
+                    ),
+                )
+            }
+            return r
+        }
+    }
+    return v
+}
+
+// Core schema resolution of a plain scalar.
+func resolvePlain(s string) Value {
+    if s == "" || s == "~" || s == "null" || s == "Null" || s == "NULL" {
+        return Value{}
+    }
+    if s == "true" || s == "True" || s == "TRUE" {
+        return Value{kind: 1, b: true}
+    }
+    if s == "false" || s == "False" || s == "FALSE" {
+        return Value{kind: 1, b: false}
+    }
+    var c = int(s[0])
+    if (c >= 48 && c <= 57) || c == 45 || c == 43 || c == 46 {
+        var body = s
+        var neg = false
+        if c == 45 || c == 43 {
+            body = s[1..]
+            neg = c == 45
+        }
+        if body == ".inf" || body == ".Inf" || body == ".INF" {
+            if neg {
+                return Value{kind: 3, f: std.math.Inf(-1)}
+            }
+            return Value{kind: 3, f: std.math.Inf(1)}
+        }
+        if s == ".nan" || s == ".NaN" || s == ".NAN" {
+            return Value{kind: 3, f: std.math.NaN()}
+        }
+        if std.strings.HasPrefix(body, "0x") &&
+            len(body) > 2 &&
+            allDigits(body[2..], 16) &&
+            c != 45 &&
+            c != 43 {
+            var v = 0
+            for k in 2..len(body) {
+                v = v * 16 + hexVal(int(body[k]))
+            }
+            return Value{kind: 2, i: v}
+        }
+        if std.strings.HasPrefix(body, "0o") &&
+            len(body) > 2 &&
+            allDigits(body[2..], 8) &&
+            c != 45 &&
+            c != 43 {
+            var v = 0
+            for k in 2..len(body) {
+                v = v * 8 + int(body[k]) - 48
+            }
+            return Value{kind: 2, i: v}
+        }
+        if allDigits(body, 10) && body != "" {
+            var n = try std.strings.ToInt(s) else -1
+            if std.fmt.Format("{0}", n) == std.strings.TrimLeft(s, "+") ||
+                allDigits(body, 10) && n != -1 {
+                return Value{kind: 2, i: n}
+            }
+        }
+        if isFloat(body) {
+            var f = try std.strings.ToFloat(s) catch err {
+                return Value{kind: 4, s: s}
+            }
+            return Value{kind: 3, f: f}
+        }
+    }
+    return Value{kind: 4, s: s}
+}
+
+func allDigits(s string, base int) bool {
+    if s == "" {
+        return false
+    }
+    for i in 0..len(s) {
+        var h = hexVal(int(s[i]))
+        if h < 0 || h >= base {
+            return false
+        }
+    }
+    return true
+}
+
+// [0-9]*(.[0-9]*)?([eE][-+]?[0-9]+)? with at least one digit.
+func isFloat(s string) bool {
+    var i = 0
+    var digits = 0
+    for i < len(s) && int(s[i]) >= 48 && int(s[i]) <= 57 {
+        i += 1
+        digits += 1
+    }
+    if i < len(s) && int(s[i]) == 46 {
+        i += 1
+        for i < len(s) && int(s[i]) >= 48 && int(s[i]) <= 57 {
+            i += 1
+            digits += 1
+        }
+    }
+    if digits == 0 {
+        return false
+    }
+    if i < len(s) && (int(s[i]) == 101 || int(s[i]) == 69) {
+        i += 1
+        if i < len(s) && (int(s[i]) == 43 || int(s[i]) == 45) {
+            i += 1
+        }
+        var ed = 0
+        for i < len(s) && int(s[i]) >= 48 && int(s[i]) <= 57 {
+            i += 1
+            ed += 1
+        }
+        if ed == 0 {
+            return false
+        }
+    }
+    return i == len(s)
+}
+
+// -- emitting -------------------------------------------------------------------
+
+func formatFloat(f float) string {
+    if std.math.IsNaN(f) {
+        return ".nan"
+    }
+    if std.math.IsInf(f, 1) {
+        return ".inf"
+    }
+    if std.math.IsInf(f, -1) {
+        return "-.inf"
+    }
+    var s = std.fmt.Format("{0}", f)
+    if !std.strings.Contains(s, ".") && !std.strings.Contains(s, "e") {
+        s += ".0"
+    }
+    return s
+}
+
+// A string scalar as plain text if that reads back as the same string,
+// else double-quoted.
+func scalarText(s string) string {
+    if needsQuote(s) {
+        return quote(s)
+    }
+    return s
+}
+
+func needsQuote(s string) bool {
+    if s == "" {
+        return true
+    }
+    var r = resolvePlain(s)
+    if r.kind != 4 {
+        return true
+    }
+    // YAML 1.1 booleans, still read as bools by many tools
+    var low = std.strings.ToLower(s)
+    if low == "yes" || low == "no" || low == "on" || low == "off" || low == "y" || low == "n" {
+        return true
+    }
+    var c = int(s[0])
+    // indicators that cannot start a plain scalar
+    if c == 45 ||
+        c == 63 ||
+        c == 58 ||
+        c == 44 ||
+        c == 91 ||
+        c == 93 ||
+        c == 123 ||
+        c == 125 ||
+        c == 35 ||
+        c == 38 ||
+        c == 42 ||
+        c == 33 ||
+        c == 124 ||
+        c == 62 ||
+        c == 39 ||
+        c == 34 ||
+        c == 37 ||
+        c == 64 ||
+        c == 96 ||
+        c == 32 ||
+        c == 9 {
+        if !(c == 45 && len(s) > 1 && int(s[1]) != 32) {
+            return true
+        }
+    }
+    var last = int(s[len(s) - 1])
+    if last == 32 || last == 9 || last == 58 {
+        return true
+    }
+    if std.strings.Contains(s, ": ") ||
+        std.strings.Contains(s, " #") ||
+        std.strings.Contains(s, "\n") ||
+        std.strings.Contains(s, "\t") ||
+        std.strings.Contains(s, "\r") {
+        return true
+    }
+    for i in 0..len(s) {
+        if int(s[i]) < 32 {
+            return true
+        }
+    }
+    return false
+}
+
+func quote(s string) string {
+    var b = std.strings.Builder{}
+    b.Write("\"")
+    var start = 0
+    for i in 0..len(s) {
+        var c = int(s[i])
+        var esc = ""
+        if c == 34 {
+            esc = "\\\""
+        } else if c == 92 {
+            esc = "\\\\"
+        } else if c == 10 {
+            esc = "\\n"
+        } else if c == 9 {
+            esc = "\\t"
+        } else if c == 13 {
+            esc = "\\r"
+        } else if c < 32 {
+            esc = "\\x" + hex2(c)
+        } else {
+            continue
+        }
+        b.Write(s[start..i])
+        b.Write(esc)
+        start = i + 1
+    }
+    b.Write(s[start..])
+    b.Write("\"")
+    return b.String()
+}
+
+func hex2(c int) string {
+    var d = "0123456789abcdef"
+    return d[c >> 4..(c >> 4) + 1] + d[c & 15..(c & 15) + 1]
+}
+
+func scalarOf(v Value) string {
+    if v.kind == 0 {
+        return "null"
+    }
+    if v.kind == 7 {
+        // pre-rendered flow text (@yaml(flow: true))
+        return v.s
+    }
+    if v.kind == 4 {
+        return scalarText(v.s)
+    }
+    return v.Text()
+}
+
+func emitTop(b *std.strings.Builder, v Value) {
+    if v.kind == 5 && len(v.items) > 0 {
+        emitSeq(b, v, 0)
+    } else if v.kind == 6 && len(v.items) > 0 {
+        emitMap(b, v, 0)
+    } else {
+        b.Write(inlineOf(v))
+        b.Write("\n")
+    }
+}
+
+// A node on one line: scalar, [] / {} for empty collections, or a flow form.
+func inlineOf(v Value) string {
+    if v.kind == 5 {
+        var parts []string = []
+        for x in v.items {
+            parts = append(parts, inlineOf(x))
+        }
+        return "[" + std.strings.Join(parts, ", ") + "]"
+    }
+    if v.kind == 6 {
+        var parts []string = []
+        for i, k in v.keys {
+            parts = append(parts, scalarText(k) + ": " + inlineOf(v.items[i]))
+        }
+        return "{" + std.strings.Join(parts, ", ") + "}"
+    }
+    return scalarOf(v)
+}
+
+func pad(b *std.strings.Builder, n int) {
+    for _ in 0..n {
+        b.Write(" ")
+    }
+}
+
+func emitMap(b *std.strings.Builder, v Value, ind int) {
+    for i, k in v.keys {
+        pad(b, ind)
+        b.Write(scalarText(k))
+        b.Write(":")
+        emitValue(b, v.items[i], ind)
+    }
+}
+
+func emitSeq(b *std.strings.Builder, v Value, ind int) {
+    for x in v.items {
+        pad(b, ind)
+        b.Write("-")
+        if x.kind == 6 && len(x.items) > 0 {
+            // compact mapping: first key on the dash line
+            b.Write(" ")
+            var first = true
+            for i, k in x.keys {
+                if !first {
+                    pad(b, ind + 2)
+                }
+                first = false
+                b.Write(scalarText(k))
+                b.Write(":")
+                emitValue(b, x.items[i], ind + 2)
+            }
+        } else if x.kind == 5 && len(x.items) > 0 {
+            b.Write("\n")
+            emitSeq(b, x, ind + 2)
+        } else {
+            emitScalarAfter(b, x, ind + 2)
+        }
+    }
+}
+
+// The value after "key:" at indentation ind.
+func emitValue(b *std.strings.Builder, x Value, ind int) {
+    if x.kind == 6 && len(x.items) > 0 {
+        b.Write("\n")
+        emitMap(b, x, ind + 2)
+    } else if x.kind == 5 && len(x.items) > 0 {
+        b.Write("\n")
+        emitSeq(b, x, ind + 2)
+    } else {
+        emitScalarAfter(b, x, ind + 2)
+    }
+}
+
+// " scalar\n", or a literal block for multi-line strings.
+func emitScalarAfter(b *std.strings.Builder, x Value, ind int) {
+    if x.kind == 4 && std.strings.Contains(x.s, "\n") && literalOK(x.s) {
+        var s = x.s
+        if std.strings.HasSuffix(s, "\n") {
+            b.Write(" |\n")
+            s = s[..len(s) - 1]
+        } else {
+            b.Write(" |-\n")
+        }
+        for l in std.strings.Split(s, "\n") {
+            if l != "" {
+                pad(b, ind)
+                b.Write(l)
+            }
+            b.Write("\n")
+        }
+        return
+    }
+    b.Write(" ")
+    b.Write(inlineOf(x))
+    b.Write("\n")
+}
+
+// A literal block keeps s exactly: no trailing blank lines, no lines
+// starting with white space at the first line, no control characters.
+func literalOK(s string) bool {
+    if std.strings.HasSuffix(s, "\n\n") ||
+        std.strings.HasPrefix(s, " ") ||
+        std.strings.HasPrefix(s, "\n") {
+        return false
+    }
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if c < 32 && c != 10 {
+            return false
+        }
+    }
+    for l in std.strings.Split(s, "\n") {
+        if std.strings.HasSuffix(l, " ") {
+            return false
+        }
+    }
+    return true
+}
+
+// -- typed ----------------------------------------------------------------------
+
+// Parses a single-document stream into a T (structs by keys named by
+// @yaml(name:) / @serde(name:) / the field name; slices, maps with
+// string keys, pointers, scalars, plain enums by name, yaml.Value).
+func Parse<T>(text string) T! {
+    var v = ParseValue(text)?
+    var out T
+    decode(v, "", &out)?
+    return out
+}
+
+// Decodes a dynamic Value into a T.
+func Decode<T>(v Value) T! {
+    var out T
+    decode(v, "", &out)?
+    return out
+}
+
+func prefix(path string) string {
+    if path == "" {
+        return "yaml: "
+    }
+    return "yaml: " + path + ": "
+}
+
+func join(path string, name string) string {
+    if path == "" {
+        return name
+    }
+    return path + "." + name
+}
+
+func mismatch(path string, want string, v Value) error {
+    return error(prefix(path) + "expected " + want + ", found " + kindName(v.kind))
+}
+
+func decode<T>(v Value, path string, out *T) void! {
+    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+        *out = v
+        return
+    }
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+        if v.kind == 0 {
+            *out = nil
+            return
+        }
+    }
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+        if v.kind == 0 {
+            return
+        }
+        if v.kind != 6 {
+            return mismatch(path, "map", v)
+        }
+        for f in std.reflect.Fields<T>() {
+            var tag = f.Attribute<std.reflect.yamlAttr>()
+            var sd = f.Attribute<std.reflect.serde>()
+            if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
+                continue
+            }
+            var name = f.Name
+            if sd != nil && sd.name != "" {
+                name = sd.name
+            }
+            if tag != nil && tag.name != "" {
+                name = tag.name
+            }
+            var i = v.find(name)
+            if i >= 0 {
+                decode(v.items[i], join(path, name), &f.Get(*out))?
+            }
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+        if v.kind == 0 || v.kind >= 5 {
+            return mismatch(path, "string", v)
+        }
+        *out = v.Text()
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+        if v.kind != 1 {
+            return mismatch(path, "bool", v)
+        }
+        *out = v.b
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+        if v.kind != 2 {
+            return mismatch(path, "int", v)
+        }
+        *out = try std.encoding.intAs<T>(v.i) catch err {
+            return error(prefix(path) + err.Message())
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+        if v.kind == 2 {
+            *out = std.encoding.floatAs<T>(float(v.i))
+        } else if v.kind == 3 {
+            *out = std.encoding.floatAs<T>(v.f)
+        } else {
+            return mismatch(path, "number", v)
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
+        if v.kind != 4 {
+            return mismatch(path, "string", v)
+        }
+        var t = std.reflect.TypeOf<T>()
+        var variant = t.Variant(v.s)
+        if variant == nil || len(variant.Fields) > 0 {
+            return error(
+                prefix(path) + "unknown " + t.Name + " value " + std.encoding.json.Quote(v.s),
+            )
+        }
+        std.reflect.storeTag(out, variant.Index)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice {
+        if v.kind != 5 {
+            return mismatch(path, "seq", v)
+        }
+        decodeSlice(v.items, path, out)?
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+        if std.reflect.TypeOf<T>().Key.Kind == std.reflect.Kind.String {
+            if v.kind != 6 {
+                return mismatch(path, "map", v)
+            }
+            decodeMap(v, path, out)?
+        } else {
+            return error(
+                prefix(path) +
+                    "cannot decode into " +
+                    std.reflect.TypeOf<T>().Name +
+                    " (map keys must be strings)",
+            )
+        }
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+        decodePtr(v, path, out)?
+    } else {
+        return error(prefix(path) + "cannot decode into " + std.reflect.TypeOf<T>().Name)
+    }
+}
+
+func decodeSlice<E>(items []Value, path string, out *[]E) void! {
+    var res []E = []
+    for i, x in items {
+        var e E
+        decode(x, path + "[" + std.fmt.Format("{0}", i) + "]", &e)?
+        res = append(res, e)
+    }
+    *out = res
+}
+
+func decodeMap<V>(v Value, path string, out *map[string]V) void! {
+    var m = map[string]V{}
+    for i, k in v.keys {
+        var e V
+        decode(v.items[i], join(path, k), &e)?
+        m[k] = e
+    }
+    *out = m
+}
+
+func decodePtr<E>(v Value, path string, out **E) void! {
+    var e E
+    decode(v, path, &e)?
+    *out = &e
+}
+
+// Block-style YAML for v (struct fields in declaration order, map keys
+// sorted).
+func Format<T>(v T) string {
+    var b = std.strings.Builder{}
+    emitTop(&b, ToValue(v))
+    return b.String()
+}
+
+// The dynamic Value of v.
+func ToValue<T>(v T) Value {
+    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+        return v
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+        var keys []string = []
+        var vals []Value = []
+        for f in std.reflect.Fields<T>() {
+            var tag = f.Attribute<std.reflect.yamlAttr>()
+            var sd = f.Attribute<std.reflect.serde>()
+            if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
+                continue
+            }
+            var omit = (tag != nil && tag.omitEmpty) || (sd != nil && sd.omitEmpty)
+            if omit && std.encoding.isEmpty(f.Get(v)) {
+                continue
+            }
+            var name = f.Name
+            if sd != nil && sd.name != "" {
+                name = sd.name
+            }
+            if tag != nil && tag.name != "" {
+                name = tag.name
+            }
+            var x = ToValue(f.Get(v))
+            if tag != nil && tag.flow && (x.kind == 5 || x.kind == 6) {
+                // rendered in flow style: a string holding the flow text
+                x = Value{kind: 7, s: inlineOf(x)}
+            }
+            keys = append(keys, name)
+            vals = append(vals, x)
+        }
+        return Value{kind: 6, keys: keys, items: vals}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+        return Value{kind: 4, s: v}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+        return Value{kind: 1, b: v}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+        return Value{kind: 2, i: int(v)}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+        return Value{kind: 3, f: float(v)}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
+        return Value{kind: 4, s: std.fmt.Format("{0}", v)}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+        var items []Value = []
+        for x in v {
+            items = append(items, ToValue(x))
+        }
+        return Value{kind: 5, items: items}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+        var keys []string = []
+        for k, _ in v {
+            keys = append(keys, std.fmt.Format("{0}", k))
+        }
+        sortStrings(keys)
+        var vals []Value = []
+        for k in keys {
+            vals = append(vals, mapValue(v, k))
+        }
+        return Value{kind: 6, keys: keys, items: vals}
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+        if v == nil {
+            return Value{}
+        }
+        return ToValue(*v)
+    } else {
+        return Value{}
+    }
+}
+
+func mapValue<K, V>(m map[K]V, key string) Value {
+    for k, x in m {
+        if std.fmt.Format("{0}", k) == key {
+            return ToValue(x)
+        }
+    }
+    return Value{}
+}
+
+func sortStrings(a []string) {
+    for i in 1..len(a) {
+        var j = i
+        for j > 0 && a[j - 1] > a[j] {
+            var t = a[j]
+            a[j] = a[j - 1]
+            a[j - 1] = t
+            j -= 1
+        }
+    }
+}

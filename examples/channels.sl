@@ -1,7 +1,7 @@
 namespace examples.channels
 
-import std.io
 import std
+import std.io
 
 // A producer/consumer pipeline over channels, a mutex-protected counter,
 // a WaitGroup, task.Spawn, task.Timeout and the task context.
@@ -24,7 +24,7 @@ async func Square(src task.Channel<int>, out task.Channel<int>) {
 
 struct Counter {
     Mu task.Mutex
-    N int
+    N  int
 }
 
 async func Work(c *Counter, wg *task.WaitGroup, times int) {

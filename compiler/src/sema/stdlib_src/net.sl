@@ -21,10 +21,10 @@ namespace std.net
 // "accept", "read", "write", "close", "set", "lookup"...; Net is "tcp",
 // "udp" or "unix"; Addr the address involved ("" if none); Err the cause.
 struct OpError {
-    Op string
-    Net string
+    Op   string
+    Net  string
     Addr string
-    Err error
+    Err  error
 
     func Message() string {
         return opPrefix(this.Op, this.Net, this.Addr) + ": " + this.Err.Message()
@@ -142,7 +142,9 @@ struct IP {
     func IsPrivate() bool {
         var a = this.To4()
         if len(a.b) == 4 {
-            return a.b[0] == 10 || (a.b[0] == 172 && (a.b[1] & 240) == 16) || (a.b[0] == 192 && a.b[1] == 168)
+            return a.b[0] == 10 ||
+                (a.b[0] == 172 && (a.b[1] & 240) == 16) ||
+                (a.b[0] == 192 && a.b[1] == 168)
         }
         return len(a.b) == 16 && (a.b[0] & 254) == 252
     }
@@ -215,7 +217,7 @@ func IPv6Loopback() IP {
 // Addr is a socket address: IP, port and IPv6 zone, or the Path of a Unix
 // domain socket ("@name" is the Linux abstract namespace).
 struct Addr {
-    IP IP
+    IP   IP
     Port int
     Zone string
     Path string
@@ -265,7 +267,10 @@ func ParseAddr(s string) Addr! {
 
 // ParseAddr of the runtime's address text (never fails for its output).
 func addrOf(s string) Addr {
-    if s == "" || std.strings.HasPrefix(s, "/") || std.strings.HasPrefix(s, "@") || !std.strings.Contains(s, ":") {
+    if s == "" ||
+        std.strings.HasPrefix(s, "/") ||
+        std.strings.HasPrefix(s, "@") ||
+        !std.strings.Contains(s, ":") {
         return Addr{Path: s}
     }
     return try ParseAddr(s) else Addr{Path: s}
@@ -390,16 +395,16 @@ func MakeBuffer(n int) []byte {
 // descriptor (closed by Close, or by Drop at the latest, which also frees
 // the handle). Deadlines are std.time.Now() milliseconds (0: none).
 struct sock {
-    h int
-    nw string
-    laddr string
+    h       int
+    nw      string
+    laddr   string
     timeout int
-    rdl int
-    wdl int
-    pend []byte
-    poff int
-    lbuf []byte
-    peerOK bool
+    rdl     int
+    wdl     int
+    pend    []byte
+    poff    int
+    lbuf    []byte
+    peerOK  bool
 
     func Drop() {
         if this.h != 0 {
@@ -935,7 +940,7 @@ struct Dialer {
     LocalAddr string
     // Happy Eyeballs (RFC 8305): race IPv6 and IPv4 addresses, starting
     // the next attempt FallbackDelay ms after the previous one.
-    DualStack bool = true
+    DualStack     bool = true
     FallbackDelay int = 300
     // TCP_NODELAY (default on).
     NoDelay bool = true

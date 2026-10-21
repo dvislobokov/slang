@@ -13,7 +13,12 @@ struct M {
     D int
 
     func MatMul(o M) M {
-        return M{A: this.A * o.A + this.B * o.C, B: this.A * o.B + this.B * o.D, C: this.C * o.A + this.D * o.C, D: this.C * o.B + this.D * o.D}
+        return M{
+            A: this.A * o.A + this.B * o.C,
+            B: this.A * o.B + this.B * o.D,
+            C: this.C * o.A + this.D * o.C,
+            D: this.C * o.B + this.D * o.D,
+        }
     }
     func Add(o M) M { return M{A: this.A + o.A, B: this.B + o.B, C: this.C + o.C, D: this.D + o.D} }
 }

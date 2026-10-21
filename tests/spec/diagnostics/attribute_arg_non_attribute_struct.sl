@@ -4,7 +4,9 @@ namespace spec.diagnostics.attribute_arg_non_attribute_struct
 
 import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 @attribute
 struct note {
@@ -12,7 +14,9 @@ struct note {
 }
 
 @note(p: P{X: 1})
-struct A { X int }
+struct A {
+    X int
+}
 
 func main() {
     println(A{X: 1}.X)

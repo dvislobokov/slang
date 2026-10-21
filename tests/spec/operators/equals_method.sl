@@ -5,7 +5,7 @@ namespace spec.operators.equals_method
 import std.io
 
 struct Money {
-    Cents int
+    Cents    int
     Currency string
     func Equals(o Money) bool { return this.Cents == o.Cents && this.Currency == o.Currency }
 }
@@ -24,12 +24,14 @@ enum Shape {
             case Shape.Circle(a):
                 switch o {
                     case Shape.Circle(b): return a == b
-                    default: return false
+                    default:
+                        return false
                 }
             case Shape.Square(a):
                 switch o {
                     case Shape.Square(b): return a == b
-                    default: return false
+                    default:
+                        return false
                 }
         }
     }
@@ -45,5 +47,9 @@ func main() {
     var pb = &b
     println(pa == pb, pa == pa, *pa == *pb)
     println(Color.Red == Color.Red, Color.Red != Color.Green)
-    println(Shape.Circle(1) == Shape.Circle(1), Shape.Circle(1) == Shape.Square(1), Shape.Square(2) != Shape.Square(3))
+    println(
+        Shape.Circle(1) == Shape.Circle(1),
+        Shape.Circle(1) == Shape.Square(1),
+        Shape.Square(2) != Shape.Square(3),
+    )
 }

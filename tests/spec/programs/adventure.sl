@@ -2,9 +2,9 @@
 // status: passing
 namespace spec.programs.adventure
 
-import std.io
 import std
 import std.collections
+import std.io
 
 enum Room {
     Hall
@@ -19,7 +19,8 @@ enum Room {
             case Room.Library: return "a library full of old books"
             case Room.Vault: return "a cold vault"
             case Room.Garden: return "an overgrown garden"
-            default: return "the open road"
+            default:
+                return "the open road"
         }
     }
 
@@ -73,9 +74,12 @@ func Parse(line string) Cmd! {
         return error("empty command")
     }
     switch w[0] {
-        case "go": if len(w) == 2 { return Cmd.Go(w[1]) }
-        case "take": if len(w) == 2 { return Cmd.Take(w[1]) }
-        case "use": if len(w) == 2 { return Cmd.Use(w[1]) }
+        case "go":
+            if len(w) == 2 { return Cmd.Go(w[1]) }
+        case "take":
+            if len(w) == 2 { return Cmd.Take(w[1]) }
+        case "use":
+            if len(w) == 2 { return Cmd.Use(w[1]) }
         case "look": return Cmd.Look
         case "quit": return Cmd.Quit
     }
@@ -83,11 +87,11 @@ func Parse(line string) Cmd! {
 }
 
 struct Game {
-    room Room
+    room  Room
     items map[Room]string
-    bag Set<string>
+    bag   Set<string>
     moves int
-    done bool
+    done  bool
 
     func Go(dir string) {
         var next = this.room.Next(dir)
@@ -130,20 +134,48 @@ struct Game {
         }
         switch item {
             case "lamp": println("The lamp glows.")
-            default: println("Nothing to unlock here.")
+            default:
+                println("Nothing to unlock here.")
         }
     }
 
     func Look() {
-        println("You are in", this.room.Describe() + ".", "Exits:", strings.Join(this.room.Exits(), " "))
+        println(
+            "You are in",
+            this.room.Describe() + ".",
+            "Exits:",
+            strings.Join(this.room.Exits(), " "),
+        )
     }
 }
 
 func main() {
     var g = Game{room: Room.Hall, items: map[Room]string{Room.Garden: "lamp", Room.Vault: "key"}}
-    var script = ["look", "go down", "dance", "go north", "go down", "go south", "go east", "take sword",
-        "take lamp", "use lamp", "use key", "go gate", "go west", "go north", "go down", "look", "take key",
-        "use key", "go up", "go south", "go east", "go gate", "look"]
+    var script = [
+        "look",
+        "go down",
+        "dance",
+        "go north",
+        "go down",
+        "go south",
+        "go east",
+        "take sword",
+        "take lamp",
+        "use lamp",
+        "use key",
+        "go gate",
+        "go west",
+        "go north",
+        "go down",
+        "look",
+        "take key",
+        "use key",
+        "go up",
+        "go south",
+        "go east",
+        "go gate",
+        "look",
+    ]
     for line in script {
         if g.done { break }
         println("> " + line)

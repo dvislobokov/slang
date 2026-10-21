@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.reflection.typeinfo_identity
 
-import std.io
 import std
+import std.io
 
 struct A {
     X int

@@ -6,7 +6,38 @@ import std
 import std.io
 
 func main() {
-    var us = ["&amp;", "&lt;&gt;&quot;&#39;&apos;", "&amp", "&ampx", "&notit;", "&notin;", "&not", "&NotEqualTilde;", "&#65;&#x42;&#X43;", "&#0;", "&#x110000;", "&#128;&#150;", "&#xD800;", "&;", "& ", "&#;", "&#x;", "&unknown;", "&copy2024", "&AElig &aelig;", "plain text", "", "&&&amp;&", "&lt", "&LT;", "&ThinSpace;&hairsp;", "&#9999999999;", "a&#x41b", "&fjlig;&bne;", "caf&eacute; &mdash; &hellip;"]
+    var us = [
+        "&amp;",
+        "&lt;&gt;&quot;&#39;&apos;",
+        "&amp",
+        "&ampx",
+        "&notit;",
+        "&notin;",
+        "&not",
+        "&NotEqualTilde;",
+        "&#65;&#x42;&#X43;",
+        "&#0;",
+        "&#x110000;",
+        "&#128;&#150;",
+        "&#xD800;",
+        "&;",
+        "& ",
+        "&#;",
+        "&#x;",
+        "&unknown;",
+        "&copy2024",
+        "&AElig &aelig;",
+        "plain text",
+        "",
+        "&&&amp;&",
+        "&lt",
+        "&LT;",
+        "&ThinSpace;&hairsp;",
+        "&#9999999999;",
+        "a&#x41b",
+        "&fjlig;&bne;",
+        "caf&eacute; &mdash; &hellip;",
+    ]
     for u in us {
         println(encoding.hex.EncodeString(html.Unescape(u)))
     }

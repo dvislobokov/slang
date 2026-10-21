@@ -188,6 +188,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         for p in &f.params {
             Self::agent_record(&mut cur, f, *p, line, end_line, self.fs().locals.get(p.0 as usize).copied().flatten().is_some_and(|s| s.cell));
         }
+        // A lambda's captured variables, too: slot `locals + i` of the
+        // frame array is the address of the env's cell pointer `i`.
+        let env = self.fs().env;
+        let ncap = if env.is_some() { f.captures.len() } else { 0 };
+        for (i, c) in f.captures.iter().enumerate().take(ncap) {
+            if c.name.is_empty() || c.name == "_" || c.name.contains(['$', '#', '.']) || cur.locals.iter().any(|l| l.name == c.name) {
+                continue;
+            }
+            cur.locals.push(LocalRec { name: c.name.clone(), ty: c.ty, slot: (f.locals.len() + i) as i32, flags: LOCAL_CELL, line, end_line });
+        }
         let name = f.full_name.clone();
         let short = f.name.clone();
         let flags = if f.is_async { FUNC_ASYNC } else { 0 };
@@ -196,16 +206,25 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         a.funcs.push(FuncRec { name, short, file: f.file as i32, line, first: entry, last: entry, flags, locals: Vec::new(), addr });
         a.cur = Some(cur);
         let func_rec = self.dbga_func_ptr(index);
-        let with_locals = !self.opts.optimized && !f.locals.is_empty();
-        let n = f.locals.len() as u32;
+        let with_locals = !self.opts.optimized && (!f.locals.is_empty() || ncap > 0);
+        let nl = f.locals.len() as u32;
+        let n = nl + ncap as u32;
         let arr = with_locals.then(|| self.entry_alloca(self.ptr_ty().array_type(n).into(), "dbg.locals", false));
         self.agent_guard(on, |cg| {
             let lp = match arr {
                 Some(arr) => {
-                    for i in 0..n {
+                    let at = |cg: &mut Self, i: u32| unsafe { cg.b.build_in_bounds_gep(cg.ptr_ty().array_type(n), arr, &[cg.i64_ty().const_zero(), cg.i64_ty().const_int(i as u64, false)], "") }.unwrap();
+                    for i in 0..nl {
                         let Some(slot) = cg.fs().locals.get(i as usize).copied().flatten() else { continue };
-                        let at = unsafe { cg.b.build_in_bounds_gep(cg.ptr_ty().array_type(n), arr, &[cg.i64_ty().const_zero(), cg.i64_ty().const_int(i as u64, false)], "") }.unwrap();
-                        cg.b.build_store(at, slot.ptr).unwrap();
+                        let p = at(cg, i);
+                        cg.b.build_store(p, slot.ptr).unwrap();
+                    }
+                    if let Some(env) = env {
+                        for i in 0..ncap as u32 {
+                            let cellp = cg.byte_gep(env, 24 + 8 * i as u64);
+                            let p = at(cg, nl + i);
+                            cg.b.build_store(p, cellp).unwrap();
+                        }
                     }
                     arr
                 }

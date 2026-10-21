@@ -5,7 +5,7 @@ namespace spec.diagnostics.help_did_you_mean
 import std.io
 
 struct Box {
-    Width int
+    Width  int
     Height int
 }
 

@@ -1,0 +1,104 @@
+// std.cloud.s3 and std.cloud.blob. So that the example runs anywhere it
+// talks to a tiny in-memory S3 server (bottom of the file, it does not
+// check signatures); point the Config at AWS, MinIO, R2 or GCS instead:
+//   s3.Config{Region: "eu-west-1"}                      (keys from the environment / ~/.aws)
+//   s3.Config{Endpoint: "http://localhost:9000", PathStyle: true, AccessKey: ..., SecretKey: ...}
+namespace examples.s3
+
+import std.io
+import std
+import std.cloud
+
+async func main() void! {
+    var srv = net.http.test.NewServer(fakeS3{st: new store{objects: map[string]string{}, types: map[string]string{}}})?
+    var c = s3.NewClient(s3.Config{Endpoint: srv.URL, AccessKey: "AKIDEXAMPLE", SecretKey: "secret", PathStyle: true})?
+
+    await c.CreateBucket("reports")?
+    _ = await c.PutObject("reports", "2026/q1.csv", "region,total\nnorth,10\n", s3.PutOptions{ContentType: "text/csv"})?
+    _ = await c.PutObject("reports", "2026/q2.csv", "region,total\nsouth,12\n", s3.PutOptions{ContentType: "text/csv"})?
+    _ = await c.PutObject("reports", "readme.txt", "quarterly reports", s3.PutOptions{})?
+
+    var info = await c.HeadObject("reports", "2026/q1.csv")?
+    println(info.Key, info.Size, info.ContentType)
+    println(strings.FromBytes(await c.GetObjectBytes("reports", "2026/q2.csv")?))
+
+    // listing is paginated behind an iterator
+    for obj in c.List("reports", "2026/", "") {
+        println("listed", obj.Key, obj.Size)
+    }
+
+    // missing objects are typed errors
+    try await c.GetObjectBytes("reports", "2025/q4.csv") catch err {
+        println("missing:", errors.Is(err, s3.ErrNoSuchKey))
+    }
+
+    // a presigned URL works without credentials (until it expires)
+    var url = c.Presign("GET", "reports", "readme.txt", 3600)?
+    println("presigned:", strings.Contains(url, "X-Amz-Signature="))
+
+    // the same code over S3 or a local directory: blob.Bucket
+    var buckets []cloud.blob.Bucket = [cloud.blob.OpenS3(c, "reports", "cache/")]
+    var dir = fs.TempDir() + "/slang_example_blob_" + strconv.Itoa(os.Pid())
+    buckets = append(buckets, cloud.blob.OpenDir(dir)?)
+    for b in buckets {
+        await b.Write("greeting.txt", strings.Bytes("hello"), "text/plain")?
+        println("blob:", strings.FromBytes(await b.Read("greeting.txt")?), await b.Exists("nothing")?)
+        await b.Delete("greeting.txt")?
+    }
+    fs.RemoveAll(dir)?
+    await srv.Close()
+}
+
+// ---- a tiny in-memory S3 server (not part of the client) ----------------------------
+
+struct store {
+    objects map[string]string
+    types map[string]string
+}
+
+struct fakeS3 {
+    st *store
+
+    func Serve(req *net.http.Request, res *net.http.Response) Task<void!> {
+        return handle(this.st, req, res)
+    }
+}
+
+async func handle(st *store, req *net.http.Request, res *net.http.Response) void! {
+    var path = net.url.PathUnescape(req.Path)?
+    var slash = strings.Index(path[1..], "/")
+    if slash < 0 {
+        // the bucket itself: create, or ListObjectsV2
+        if req.Method == "PUT" {
+            res.Text(200, "")
+            return
+        }
+        var prefix = net.url.QueryUnescape(strings.Split(req.Query + "&prefix=", "prefix=")[1])?
+        prefix = strings.Split(prefix, "&")[0]
+        var out = "<ListBucketResult><IsTruncated>false</IsTruncated>"
+        for k in maps.SortedKeys(st.objects) {
+            if strings.HasPrefix(k, path + "/" + prefix) {
+                out += "<Contents><Key>" + k[len(path) + 1..] + "</Key><Size>" + strconv.Itoa(len(st.objects[k])) + "</Size></Contents>"
+            }
+        }
+        res.Text(200, out + "</ListBucketResult>")
+        return
+    }
+    switch req.Method {
+        case "PUT":
+            st.objects[path] = req.Body
+            st.types[path] = req.Header("Content-Type")
+            res.Text(200, "")
+        case "DELETE":
+            delete(st.objects, path)
+            res.Text(204, "")
+        default:
+            if st.objects[path] == "" {
+                res.Text(404, "<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>")
+                return
+            }
+            res.SetHeader("Content-Type", st.types[path])
+            res.Write(st.objects[path])
+            res.Status = 200
+    }
+}

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.interfaces2.sealed_exhaustive_switch
 
-import std.io
 import std
+import std.io
 
 sealed interface Shape {
     func Area() float

@@ -11,9 +11,9 @@ import std.io
 // os.Exit(app.Run(os.Args())).
 
 struct GreetFlags {
-    @cli.flag(short: "n", help: "who to greet") Name string = "world"
-    @cli.flag(help: "repeat the greeting") Times int = 1
-    @cli.flag(short: "l", help: "shout") Loud bool
+    @cli.flag(short: "n", help: "who to greet") Name  string = "world"
+    @cli.flag(help: "repeat the greeting")      Times int = 1
+    @cli.flag(short: "l", help: "shout")        Loud  bool
 }
 
 struct SumFlags {
@@ -21,7 +21,10 @@ struct SumFlags {
 }
 
 func app() cli.App {
-    var greet = cli.Command{Name: "greet", Help: "print a greeting", Flags: cli.FlagsOf<GreetFlags>(),
+    var greet = cli.Command{
+        Name: "greet",
+        Help: "print a greeting",
+        Flags: cli.FlagsOf<GreetFlags>(),
         Run: func(c *cli.Context) void! {
             var f = cli.Bind<GreetFlags>(c)?
             var msg = "hello, " + f.Name
@@ -31,8 +34,13 @@ func app() cli.App {
             for _ in 0..f.Times {
                 println(msg)
             }
-        }}
-    var sum = cli.Command{Name: "sum", Help: "add numbers", Args: "<numbers...>", Flags: cli.FlagsOf<SumFlags>(),
+        },
+    }
+    var sum = cli.Command{
+        Name: "sum",
+        Help: "add numbers",
+        Args: "<numbers...>",
+        Flags: cli.FlagsOf<SumFlags>(),
         Run: func(c *cli.Context) void! {
             var f = cli.Bind<SumFlags>(c)?
             var total = 0.0
@@ -40,7 +48,8 @@ func app() cli.App {
                 total += strconv.ParseFloat(a)?("argument " + strconv.Quote(a))
             }
             println(strconv.FormatFloat(total, 'f', f.Precision))
-        }}
+        },
+    }
     return cli.App{Name: "demo", Version: "0.3.0", Help: "a demo tool", Commands: [greet, sum]}
 }
 

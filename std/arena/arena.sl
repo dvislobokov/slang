@@ -1,0 +1,64 @@
+namespace std.arena
+
+// Arenas (DESIGN.md "Арены", runtime/ABI.md 3.6): objects allocated with
+// a.New<T>() and slices with a.Alloc<T>(n) live in the arena and are all
+// released by a.Free() (or when the last copy of the Arena is gone). Their
+// retain/release are no-ops; pointers into a freed arena are invalid (not
+// checked). Strings and slices made by ordinary code are never arena
+// allocated; a.String(s) copies a string into the arena.
+
+// The runtime arena; destroyed with its last reference.
+struct region {
+    h int
+
+    func Drop() {
+        rtArenaDestroy(this.h)
+    }
+}
+
+struct Arena {
+    r *region
+
+    // A zeroed T in the arena.
+    func New<T>() *T {
+        return rtArenaNew<T>(this.handle())
+    }
+
+    // A slice of n zeroed T in the arena (appending beyond n copies it to
+    // the ordinary heap, as for any full slice).
+    func Alloc<T>(n int) []T {
+        return rtArenaAlloc<T>(this.handle(), n)
+    }
+
+    // A copy of s in the arena.
+    func String(s string) string {
+        return rtArenaString(this.handle(), s)
+    }
+
+    // Releases everything allocated so far; the arena stays usable.
+    func Free() {
+        if this.r != nil {
+            rtArenaFree(this.r.h)
+        }
+    }
+
+    // Number of objects currently allocated in the arena.
+    func Len() int {
+        if this.r == nil {
+            return 0
+        }
+        return rtArenaLen(this.r.h)
+    }
+
+    func handle() int {
+        if this.r == nil {
+            panic("arena: use of a zero Arena (create it with arena.New())")
+        }
+        return this.r.h
+    }
+}
+
+// A new, empty arena.
+func New() Arena {
+    return Arena{r: new region{h: rtArenaCreate()}}
+}

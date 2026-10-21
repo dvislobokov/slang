@@ -20,13 +20,13 @@ namespace std.text.template
 // A dynamic value: nil, bool, int, float, string, list, map (sorted keys),
 // struct (fields in order), or safe HTML / URL / JS text (html templates).
 struct Value {
-    kind int
-    b bool
-    i int
-    f float
-    s string
-    items []Value
-    keys []string
+    kind     int
+    b        bool
+    i        int
+    f        float
+    s        string
+    items    []Value
+    keys     []string
     typeName string
     // maps: the zero value of the element type (for missing keys)
     zero []Value
@@ -164,15 +164,24 @@ func ValueOf<T>(v T) Value {
         return Value{kind: 4, s: v}
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
         return Value{kind: 1, b: v}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         return Value{kind: 2, i: int(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         return Value{kind: 3, f: float(v)}
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
         return Value{kind: 4, s: string(v)}
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
         return Value{kind: 4, s: std.fmt.Format("{0}", v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
         var items []Value = []
         for x in v {
             items = append(items, ValueOf(x))
@@ -261,7 +270,12 @@ struct Template<T> {
     func ExecuteTemplate(name string, data T) string! {
         var n = this.t.defs[name]
         if n == 0 {
-            return error("template: no template " + std.encoding.json.Quote(name) + " defined in " + this.t.name)
+            return error(
+                "template: no template " +
+                    std.encoding.json.Quote(name) +
+                    " defined in " +
+                    this.t.name,
+            )
         }
         return this.t.execute(n - 1, ValueOf(data))?
     }
@@ -313,7 +327,14 @@ func parseHTML<T>(name string, src string, funcs map[string]func([]Value) Value!
 }
 
 func build(name string, src string, funcs map[string]func([]Value) Value!, html bool) *tmpl! {
-    var t = &tmpl{name: name, src: src, funcs: funcs, html: html, defs: map[string]int{}, fnames: map[string]bool{}}
+    var t = &tmpl{
+        name: name,
+        src: src,
+        funcs: funcs,
+        html: html,
+        defs: map[string]int{},
+        fnames: map[string]bool{},
+    }
     for k, _ in funcs {
         t.fnames[k] = true
     }
@@ -335,22 +356,22 @@ func build(name string, src string, funcs map[string]func([]Value) Value!, html 
 // Node kinds: 0 list, 1 text, 2 action, 3 if, 4 range, 5 with, 6 template
 // call, 8 break, 9 continue.
 struct tnode {
-    kind int
-    text string
-    pipe int
-    list []int
+    kind     int
+    text     string
+    pipe     int
+    list     []int
     elseList []int
-    hasElse bool
-    name string
-    line int
-    esc int
+    hasElse  bool
+    name     string
+    line     int
+    esc      int
 }
 
 struct tpipe {
-    vars []string
+    vars   []string
     assign bool
-    cmds []tcmd
-    line int
+    cmds   []tcmd
+    line   int
 }
 
 struct tcmd {
@@ -361,26 +382,26 @@ struct tcmd {
 // 4 identifier (function), 5 string, 6 int, 7 float, 8 bool, 9 nil,
 // 10 parenthesized pipeline (+ fields).
 struct targ {
-    kind int
-    name string
+    kind   int
+    name   string
     fields []string
-    s string
-    i int
-    f float
-    b bool
-    pipe int
+    s      string
+    i      int
+    f      float
+    b      bool
+    pipe   int
 }
 
 struct tmpl {
-    name string
-    src string
-    nodes []tnode
-    pipes []tpipe
-    defs map[string]int
-    root int
-    funcs map[string]func([]Value) Value!
+    name   string
+    src    string
+    nodes  []tnode
+    pipes  []tpipe
+    defs   map[string]int
+    root   int
+    funcs  map[string]func([]Value) Value!
     fnames map[string]bool
-    html bool
+    html   bool
 
     func fail(line int, msg string) error {
         return error(std.fmt.Format("template: {0}:{1}: {2}", this.name, line, msg))
@@ -403,7 +424,7 @@ struct tmpl {
 
 struct listResult {
     list []int
-    end string
+    end  string
     // for "else if" / "else with": the keyword after else
     elseKw string
 }
@@ -411,14 +432,14 @@ struct listResult {
 // -- parser --------------------------------------------------------------------------
 
 struct tparser {
-    t *tmpl
-    src string
-    pos int
-    line int
+    t        *tmpl
+    src      string
+    pos      int
+    line     int
     trimNext bool
     // set while inside {{range}} (break/continue allowed)
     rangeDepth int
-    vars []string
+    vars       []string
     // the end of the current action (after }} and a trim marker)
     actEnd int
 
@@ -440,7 +461,11 @@ struct tparser {
                 text = std.strings.TrimLeft(text, " \t\r\n")
                 this.trimNext = false
             }
-            var trimLeft = open >= 0 && open + 2 < len(this.src) && int(this.src[open + 2]) == 45 && open + 3 < len(this.src) && isSpace(int(this.src[open + 3]))
+            var trimLeft = open >= 0 &&
+                open + 2 < len(this.src) &&
+                int(this.src[open + 2]) == 45 &&
+                open + 3 < len(this.src) &&
+                isSpace(int(this.src[open + 3]))
             if trimLeft {
                 text = std.strings.TrimRight(text, " \t\r\n")
             }
@@ -507,7 +532,12 @@ struct tparser {
                     pipe = this.pipeline(false)?
                 }
                 this.closeAction()?
-                nodes = append(nodes, this.t.add(tnode{kind: 6, name: name, pipe: pipe, line: this.line}))
+                nodes = append(nodes, this.t.add(tnode{
+                    kind: 6,
+                    name: name,
+                    pipe: pipe,
+                    line: this.line,
+                }))
                 continue
             }
             if kw == "break" || kw == "continue" {
@@ -620,7 +650,13 @@ struct tparser {
         if this.pos >= len(this.src) {
             return this.fail("unclosed action")
         }
-        return this.fail("unexpected " + std.encoding.json.Quote(this.src[this.pos..std.math.IMin(this.pos + 10, len(this.src))]) + " in action")
+        return this.fail(
+            "unexpected " +
+                std.encoding.json.Quote(
+                    this.src[this.pos..std.math.IMin(this.pos + 10, len(this.src))],
+                ) +
+                " in action",
+        )
     }
 
     func atActionEnd() bool {
@@ -720,7 +756,8 @@ struct tparser {
                     ok = true
                     break
                 }
-                if std.strings.HasPrefix(this.src[this.pos..], "=") && !std.strings.HasPrefix(this.src[this.pos..], "==") {
+                if std.strings.HasPrefix(this.src[this.pos..], "=") &&
+                    !std.strings.HasPrefix(this.src[this.pos..], "==") {
                     this.pos += 1
                     p.assign = true
                     ok = true
@@ -799,7 +836,10 @@ struct tparser {
         var a = this.term()?
         // field chain after a variable or a parenthesized pipeline
         if a.kind == 2 || a.kind == 10 {
-            for this.pos < len(this.src) && int(this.src[this.pos]) == 46 && this.pos + 1 < len(this.src) && isIdent(int(this.src[this.pos + 1])) {
+            for this.pos < len(this.src) &&
+                int(this.src[this.pos]) == 46 &&
+                this.pos + 1 < len(this.src) &&
+                isIdent(int(this.src[this.pos + 1])) {
                 this.pos += 1
                 var start = this.pos
                 for this.pos < len(this.src) && isIdent(int(this.src[this.pos])) {
@@ -817,7 +857,10 @@ struct tparser {
             // . or .Field.Chain
             if this.pos + 1 < len(this.src) && isIdent(int(this.src[this.pos + 1])) {
                 var a = targ{kind: 1}
-                for this.pos < len(this.src) && int(this.src[this.pos]) == 46 && this.pos + 1 < len(this.src) && isIdent(int(this.src[this.pos + 1])) {
+                for this.pos < len(this.src) &&
+                    int(this.src[this.pos]) == 46 &&
+                    this.pos + 1 < len(this.src) &&
+                    isIdent(int(this.src[this.pos + 1])) {
                     this.pos += 1
                     var start = this.pos
                     for this.pos < len(this.src) && isIdent(int(this.src[this.pos])) {
@@ -875,11 +918,18 @@ struct tparser {
         if (c >= 48 && c <= 57) || c == 45 || c == 43 {
             var start = this.pos
             this.pos += 1
-            for this.pos < len(this.src) && (isIdent(int(this.src[this.pos])) || int(this.src[this.pos]) == 46 || ((int(this.src[this.pos]) == 45 || int(this.src[this.pos]) == 43) && (int(this.src[this.pos - 1]) == 101 || int(this.src[this.pos - 1]) == 69))) {
+            for this.pos < len(this.src) &&
+                (isIdent(int(this.src[this.pos])) ||
+                    int(this.src[this.pos]) == 46 ||
+                    ((int(this.src[this.pos]) == 45 || int(this.src[this.pos]) == 43) &&
+                        (int(this.src[this.pos - 1]) == 101 ||
+                            int(this.src[this.pos - 1]) == 69))) {
                 this.pos += 1
             }
             var text = this.src[start..this.pos]
-            if std.strings.Contains(text, ".") || ((std.strings.Contains(text, "e") || std.strings.Contains(text, "E")) && !std.strings.HasPrefix(std.strings.TrimLeft(text, "+-"), "0x")) {
+            if std.strings.Contains(text, ".") ||
+                ((std.strings.Contains(text, "e") || std.strings.Contains(text, "E")) &&
+                    !std.strings.HasPrefix(std.strings.TrimLeft(text, "+-"), "0x")) {
                 var f = try std.strings.ToFloat(text) catch err {
                     return this.fail("bad number syntax: " + std.encoding.json.Quote(text))
                 }
@@ -928,7 +978,11 @@ func isSpace(c int) bool {
 }
 
 func isIdent(c int) bool {
-    return c == 95 || (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c >= 128
+    return c == 95 ||
+        (c >= 48 && c <= 57) ||
+        (c >= 65 && c <= 90) ||
+        (c >= 97 && c <= 122) ||
+        c >= 128
 }
 
 func hexVal(c int) int {
@@ -958,7 +1012,38 @@ func isBuiltin(name string) bool {
 }
 
 func builtinNames() []string {
-    return ["and", "or", "not", "len", "index", "slice", "print", "printf", "println", "eq", "ne", "lt", "le", "gt", "ge", "html", "js", "urlquery", "upper", "lower", "title", "trim", "join", "split", "contains", "hasPrefix", "hasSuffix", "replace", "repeat", "default"]
+    return [
+        "and",
+        "or",
+        "not",
+        "len",
+        "index",
+        "slice",
+        "print",
+        "printf",
+        "println",
+        "eq",
+        "ne",
+        "lt",
+        "le",
+        "gt",
+        "ge",
+        "html",
+        "js",
+        "urlquery",
+        "upper",
+        "lower",
+        "title",
+        "trim",
+        "join",
+        "split",
+        "contains",
+        "hasPrefix",
+        "hasSuffix",
+        "replace",
+        "repeat",
+        "default",
+    ]
 }
 
 func sortStrings(a []string) {

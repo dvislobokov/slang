@@ -241,6 +241,16 @@ impl Parser<'_> {
         }
     }
 
+    /// A field name in a struct declaration or an attribute argument: an
+    /// identifier, or the keyword `default`.
+    fn field_decl_name(&mut self) -> PResult<Ident> {
+        if self.at(&TokenKind::Default) {
+            let span = self.bump().span;
+            return Ok(Ident { name: "default".into(), span });
+        }
+        self.ident()
+    }
+
     /// An identifier or `_`.
     fn binding(&mut self) -> PResult<Ident> {
         if self.at(&TokenKind::Underscore) {
@@ -377,6 +387,17 @@ impl Parser<'_> {
             }
             TokenKind::Enum => Decl::Enum(self.enum_decl()?),
             TokenKind::Func | TokenKind::Async => Decl::Func(self.func_decl(true)?),
+            // `extern` is a contextual keyword: only before `func`.
+            TokenKind::Ident(s) if s == "extern" && self.peek_n(1) == &TokenKind::Func => {
+                let start = self.bump().span;
+                let mut d = self.func_decl(false)?;
+                if d.body.is_some() {
+                    return Err(self.error_at(d.name.span, "an `extern func` has no body"));
+                }
+                d.is_extern = true;
+                d.span = start.to(d.span);
+                Decl::Func(d)
+            }
             TokenKind::Var => Decl::Var(self.var_decl()?),
             TokenKind::Const => Decl::Const(self.const_decl()?),
             TokenKind::Static => {
@@ -411,8 +432,9 @@ impl Parser<'_> {
                 self.with_struct_lit(true, |p| {
                     while !p.at(&TokenKind::RParen) && !p.at_eof() {
                         let arg_start = p.span();
-                        let name = if matches!(p.peek(), TokenKind::Ident(_)) && p.peek_n(1) == &TokenKind::Colon {
-                            let name = p.ident()?;
+                        // (`default:` is a parameter name too: `@cli.flag(default: "x")`.)
+                        let name = if matches!(p.peek(), TokenKind::Ident(_) | TokenKind::Default) && p.peek_n(1) == &TokenKind::Colon {
+                            let name = p.field_decl_name()?;
                             p.bump(); // `:`
                             Some(name)
                         } else {
@@ -476,6 +498,8 @@ impl Parser<'_> {
                 TokenKind::Ident(_) if p.peek_n(1) == &TokenKind::Comma || starts_type(p.peek_n(1)) => {
                     fields.extend(p.fields(attrs)?)
                 }
+                // A field named `default` (attribute structs: `@flag(default: ...)`).
+                TokenKind::Default if starts_type(p.peek_n(1)) => fields.extend(p.fields(attrs)?),
                 TokenKind::Ident(_) | TokenKind::Star => {
                     if let Some(span) = attr_span {
                         p.diags.warning("attributes on embedded types are ignored", span);
@@ -509,9 +533,9 @@ impl Parser<'_> {
     /// `X, Y float [= default]`: one or more field names sharing a type.
     fn fields(&mut self, attrs: Vec<Attribute>) -> PResult<Vec<Field>> {
         let start = attrs.first().map(|a| a.span);
-        let mut names = vec![self.ident()?];
+        let mut names = vec![self.field_decl_name()?];
         while self.eat(&TokenKind::Comma) {
-            names.push(self.ident()?);
+            names.push(self.field_decl_name()?);
         }
         let ty = self.parse_type()?;
         let default = if self.eat(&TokenKind::Assign) { Some(self.parse_expr()?) } else { None };
@@ -681,6 +705,7 @@ impl Parser<'_> {
             body,
             is_async,
             is_static,
+            is_extern: false,
             span: self.span_from(start),
         })
     }

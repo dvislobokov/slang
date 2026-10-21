@@ -2,10 +2,12 @@
 // status: passing
 namespace spec.diagnostics.fields_outside_generic
 
-import std.io
 import std
+import std.io
 
-struct P { X int }
+struct P {
+    X int
+}
 
 func main() {
     for f in reflect.Fields<P>() {

@@ -1,0 +1,54 @@
+// test: storing into a field (or array element) of a by-value struct parameter writes the callee's own copy: the caller's value is untouched and nothing leaks or is freed twice
+// status: passing
+// run-flags: --leak-check
+namespace spec.memory2.value_param_field_store
+
+import std.io
+
+struct Note {
+    Title string
+    Tags  [2]string
+    Meta  Inner
+}
+
+struct Inner {
+    Label string
+}
+
+func retitle(n Note) Note {
+    n.Title = n.Title + "x"
+    return n
+}
+
+func tag(n Note, t string) Note {
+    n.Tags[1] = t + "!"
+    n.Meta.Label += "-edited"
+    return n
+}
+
+func touch(n Note) int {
+    n.Title = "local " + n.Title
+    return len(n.Title)
+}
+
+func main() {
+    var a = Note{Title: "t" + "1", Meta: Inner{Label: "m" + "1"}}
+    a.Tags[0] = "a" + "a"
+    a.Tags[1] = "b" + "b"
+    var b = retitle(a)
+    var c = tag(b, "z")
+    for _ in 0..3 {
+        b = retitle(b)
+    }
+    println(
+        a.Title,
+        b.Title,
+        c.Title,
+        a.Tags[1],
+        c.Tags[1],
+        a.Meta.Label,
+        c.Meta.Label,
+        touch(a),
+        a.Title,
+    )
+}

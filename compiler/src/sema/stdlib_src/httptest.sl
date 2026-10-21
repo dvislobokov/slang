@@ -9,12 +9,12 @@ namespace std.net.http.test
 // or https); Client talks to it (TLS servers: the test certificate is
 // trusted, ALPN h2; H2C servers: HTTP/2 with prior knowledge).
 struct Server {
-    URL string
-    Client std.net.http.Client
+    URL       string
+    Client    std.net.http.Client
     Transport *std.net.http.Transport
-    srv *std.net.http.Server
-    serving Task<void!>
-    stopped bool
+    srv       *std.net.http.Server
+    serving   Task<void!>
+    stopped   bool
 
     func Port() int {
         return this.srv.Port()
@@ -47,7 +47,7 @@ struct Options {
     DisableHTTP2 bool
     // Server.MaxBodyBytes, Server.IdleTimeout.
     MaxBodyBytes int
-    IdleTimeout int
+    IdleTimeout  int
 }
 
 // A test server for h on 127.0.0.1 (a free port).
@@ -66,7 +66,13 @@ func NewH2CServer(h std.net.http.Handler) *Server! {
 }
 
 func NewServerWith(h std.net.http.Handler, o Options) *Server! {
-    var srv = new std.net.http.Server{Addr: "127.0.0.1:0", Handler: h, H2C: o.H2C, MaxBodyBytes: o.MaxBodyBytes, IdleTimeout: o.IdleTimeout}
+    var srv = new std.net.http.Server{
+        Addr: "127.0.0.1:0",
+        Handler: h,
+        H2C: o.H2C,
+        MaxBodyBytes: o.MaxBodyBytes,
+        IdleTimeout: o.IdleTimeout,
+    }
     var t = new std.net.http.Transport{H2C: o.H2C, DisableHTTP2: o.DisableHTTP2}
     if o.TLS {
         var pair = std.net.tls.LoadKeyPair(testCert(), testKey())?
@@ -93,7 +99,15 @@ func NewRecorder() *std.net.http.Response {
 // ("/a?b=1") or a URL ("https://example.com/a"); Host defaults to
 // example.com, RemoteAddr is 192.0.2.1:1234, a body sets Content-Length.
 func NewRequest(method string, target string, body string) *std.net.http.Request {
-    var req = new std.net.http.Request{Method: method, Proto: "HTTP/1.1", Headers: map[string]string{}, Body: body, RemoteAddr: "192.0.2.1:1234", Scheme: "http", Host: "example.com"}
+    var req = new std.net.http.Request{
+        Method: method,
+        Proto: "HTTP/1.1",
+        Headers: map[string]string{},
+        Body: body,
+        RemoteAddr: "192.0.2.1:1234",
+        Scheme: "http",
+        Host: "example.com",
+    }
     var path = target
     if std.strings.Contains(target, "://") {
         var u = try std.net.http.ParseURL(target) else std.net.http.URL{Path: "/"}

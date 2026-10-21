@@ -141,11 +141,19 @@ TEST(os) {
     slang_release(h);
 
     slang_string *cwd = slang_os_cwd(&e);
+#if !defined(_WIN32)
     assert(e == NULL && slang_string_data(cwd)[0] == '/');
     slang_string *tmp = S("/");
     slang_os_chdir(tmp, &e);
     assert(e == NULL);
     EXPECT_STR(slang_os_cwd(NULL), "/");
+#else
+    assert(e == NULL && slang_string_data(cwd)[1] == ':' && slang_string_data(cwd)[2] == '\\');  /* C:\... */
+    slang_string *tmp = S("C:\\");
+    slang_os_chdir(tmp, &e);
+    assert(e == NULL);
+    EXPECT_STR(slang_os_cwd(NULL), "C:\\");
+#endif
     slang_os_chdir(cwd, &e);
     assert(e == NULL);
     slang_release(tmp);
@@ -391,7 +399,9 @@ TEST(io_lines) {
 
 static const char *g_stdin_path;
 static void read_all_child(void) {
-    assert(freopen(g_stdin_path, "r", stdin) != NULL);
+    /* g_stdin_path survives fork; a re-executed child (Windows) gets the env */
+    const char *in = g_stdin_path ? g_stdin_path : getenv("SLANG_STD2_STDIN");
+    assert(in && freopen(in, "r", stdin) != NULL);
     slang_error *e = NULL;
     slang_string *s = slang_io_read_all(&e);
     assert(e == NULL);
@@ -411,6 +421,7 @@ TEST(io_read_all) {
     assert(write(fd, "x\ny\n", 4) == 4);
     close(fd);
     g_stdin_path = path;
+    setenv("SLANG_STD2_STDIN", path, 1);
     char buf[64];
     assert(run_child_fd(read_all_child, 1, buf, sizeof buf) == 0);
     assert(strcmp(buf, "[x\ny\n]4") == 0);

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.programs.matrix
 
-import std.io
 import std
+import std.io
 
 struct Matrix<T: Ordered> {
     Rows int

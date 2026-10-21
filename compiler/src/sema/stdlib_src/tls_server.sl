@@ -8,30 +8,30 @@ namespace std.net.tls
 
 // Parsed ClientHello.
 struct clientHello {
-    raw []byte
-    version int
-    random []byte
-    sessionID []byte
-    suites []int
-    serverName string
-    groups []int
-    schemes []int
-    alpn []string
-    versions []int
-    shareGroups []int
-    shareKeys [][]byte
-    pskModes []int
+    raw           []byte
+    version       int
+    random        []byte
+    sessionID     []byte
+    suites        []int
+    serverName    string
+    groups        []int
+    schemes       []int
+    alpn          []string
+    versions      []int
+    shareGroups   []int
+    shareKeys     [][]byte
+    pskModes      []int
     pskIdentities [][]byte
-    pskAges []int
-    pskBinders [][]byte
+    pskAges       []int
+    pskBinders    [][]byte
     // bytes of the binders list (with its length) at the end of raw
-    bindersLen int
-    ems bool
-    reneg bool
-    renegOK bool
-    ticketExt bool
-    ticket []byte
-    cookie []byte
+    bindersLen   int
+    ems          bool
+    reneg        bool
+    renegOK      bool
+    ticketExt    bool
+    ticket       []byte
+    cookie       []byte
     pointFormats bool
 }
 
@@ -207,18 +207,21 @@ func pickALPN(c *conn, ch clientHello) string! {
 
 func sealTicket(st *serverState, plain []byte) []byte! {
     var nonce = randomBytes(12)?
-    return cat(nonce, std.crypto.aes.GcmSeal(st.ticketKey, nonce, plain, bytesOf("slang tls ticket"))?)
+    return cat(
+        nonce,
+        std.crypto.aes.GcmSeal(st.ticketKey, nonce, plain, bytesOf("slang tls ticket"))?,
+    )
 }
 
 // The ticket contents, or nil if it is not ours or is damaged.
 struct ticketData {
     version int
-    suite int
+    suite   int
     created int
-    ageAdd int
-    secret []byte
-    ems bool
-    alpn string
+    ageAdd  int
+    secret  []byte
+    ems     bool
+    alpn    string
     // the client certificate chain of the original handshake (DER)
     certs []*std.crypto.x509.Certificate
 }
@@ -248,7 +251,12 @@ func openTicket(st *serverState, ticket []byte) *ticketData {
     if len(ticket) < 12 + 16 {
         return nil
     }
-    var plain = try std.crypto.aes.GcmOpen(st.ticketKey, ticket[..12], ticket[12..], bytesOf("slang tls ticket")) else []
+    var plain = try std.crypto.aes.GcmOpen(
+        st.ticketKey,
+        ticket[..12],
+        ticket[12..],
+        bytesOf("slang tls ticket"),
+    ) else []
     if len(plain) == 0 {
         return nil
     }
@@ -293,9 +301,15 @@ func checkClientCerts(c *conn, certs []*std.crypto.x509.Certificate) void! {
         for i in 1..len(certs) {
             inter = append(inter, certs[i])
         }
-        var chain = try std.crypto.x509.Verify(certs[0], std.crypto.x509.VerifyOptions{Roots: c.srv.cfg.ClientCAs,
-            Intermediates: inter, KeyUsage: "clientAuth"}) catch err {
-            return c.fail(certAlert(err.Message()), "client certificate: " + std.strings.TrimPrefix(err.Message(), "x509: "))
+        var chain = try std.crypto.x509.Verify(certs[0], std.crypto.x509.VerifyOptions{
+            Roots: c.srv.cfg.ClientCAs,
+            Intermediates: inter,
+            KeyUsage: "clientAuth",
+        }) catch err {
+            return c.fail(
+                certAlert(err.Message()),
+                "client certificate: " + std.strings.TrimPrefix(err.Message(), "x509: "),
+            )
         }
         c.verified = chain
     }
@@ -355,7 +369,8 @@ async func server13(c *conn, chIn clientHello, minV int, maxV int) void! {
     var group = 0
     var peerKey []byte = []
     for i in 0..len(ch.shareGroups) {
-        if group == 0 && (ch.shareGroups[i] == 29 || ch.shareGroups[i] == 23 || ch.shareGroups[i] == 24) {
+        if group == 0 &&
+            (ch.shareGroups[i] == 29 || ch.shareGroups[i] == 23 || ch.shareGroups[i] == 24) {
             group = ch.shareGroups[i]
             peerKey = ch.shareKeys[i]
         }
@@ -549,8 +564,15 @@ async func server13(c *conn, chIn clientHello, minV int, maxV int) void! {
         var ageAdd = u16(ageBytes, 0) * 65536 + u16(ageBytes, 2)
         var nonce = [byte(0)]
         var tpsk = ExpandLabel(hh, c.resMaster, "resumption", nonce, hashLen(hh))?
-        var ticket = sealTicket(c.srv, encodeTicket(ticketData{version: 772, suite: s.id, created: std.time.Now(),
-            ageAdd: ageAdd, secret: tpsk, alpn: c.alpn, certs: c.peerCerts}))?
+        var ticket = sealTicket(c.srv, encodeTicket(ticketData{
+            version: 772,
+            suite: s.id,
+            created: std.time.Now(),
+            ageAdd: ageAdd,
+            secret: tpsk,
+            alpn: c.alpn,
+            certs: c.peerCerts,
+        }))?
         var nb = newBuilder()
         nb.u32(86400)
         nb.u32(ageAdd)
@@ -569,7 +591,10 @@ async func server12(c *conn, ch clientHello, maxV int) void! {
     var cfg = c.srv.cfg
     c.vers = 771
     if !ch.ems {
-        return c.fail(40, "client does not support extended_master_secret (RFC 7627), which is required")
+        return c.fail(
+            40,
+            "client does not support extended_master_secret (RFC 7627), which is required",
+        )
     }
     if ch.reneg && !ch.renegOK {
         return c.fail(40, "renegotiation is not supported")
@@ -714,8 +739,15 @@ async func server12(c *conn, ch clientHello, maxV int) void! {
     }
     c.addTranscript(fin)
     if tickets {
-        var ticket = sealTicket(c.srv, encodeTicket(ticketData{version: 771, suite: s.id, created: std.time.Now(),
-            secret: c.master, ems: true, alpn: c.alpn, certs: c.peerCerts}))?
+        var ticket = sealTicket(c.srv, encodeTicket(ticketData{
+            version: 771,
+            suite: s.id,
+            created: std.time.Now(),
+            secret: c.master,
+            ems: true,
+            alpn: c.alpn,
+            certs: c.peerCerts,
+        }))?
         var nb = newBuilder()
         nb.u32(86400)
         nb.vec16(ticket)
@@ -728,7 +760,13 @@ async func server12(c *conn, ch clientHello, maxV int) void! {
 }
 
 // A TLS 1.2 ServerHello body.
-func serverHello12(c *conn, ch clientHello, random []byte, sessionID []byte, ticketExt bool) []byte {
+func serverHello12(
+    c *conn,
+    ch clientHello,
+    random []byte,
+    sessionID []byte,
+    ticketExt bool,
+) []byte {
     var b = newBuilder()
     b.u16(771)
     b.raw(random)

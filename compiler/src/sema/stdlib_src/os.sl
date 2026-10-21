@@ -10,7 +10,7 @@ namespace std.os
 
 // The descriptor; closed when the last File copy is gone (or by Close).
 struct fileState {
-    fd int
+    fd   int
     name string
     keep bool
 
@@ -18,8 +18,7 @@ struct fileState {
         if this.fd >= 0 && !this.keep {
             try {
                 rtClose(this.fd)?
-            } catch err {
-            }
+            } catch err {}
         }
     }
 }
@@ -108,8 +107,8 @@ struct FileInfo {
     Name string
     Size int
     // Permission bits (0o644).
-    Mode int
-    IsDir bool
+    Mode      int
+    IsDir     bool
     IsSymlink bool
     // Modification time, nanoseconds since the Unix epoch.
     ModTimeNanos int
@@ -126,13 +125,21 @@ struct FileInfo {
 }
 
 func info(name string, v []int) FileInfo {
-    return FileInfo{Name: name, Size: v[0], Mode: v[1], IsDir: v[2] == 1, IsSymlink: v[2] == 2, ModTimeNanos: v[3] * 1000000000 + v[4], kind: v[2]}
+    return FileInfo{
+        Name: name,
+        Size: v[0],
+        Mode: v[1],
+        IsDir: v[2] == 1,
+        IsSymlink: v[2] == 2,
+        ModTimeNanos: v[3] * 1000000000 + v[4],
+        kind: v[2],
+    }
 }
 
 // One directory entry (ReadDir).
 struct DirEntry {
-    Name string
-    IsDir bool
+    Name      string
+    IsDir     bool
     IsSymlink bool
     // Full path of the entry (dir + "/" + Name).
     Path string
@@ -176,7 +183,12 @@ func ReadDir(dir string) []DirEntry! {
     var out []DirEntry = []
     for e in rtReadDir(dir)? {
         var name = e[1..]
-        out = append(out, DirEntry{Name: name, IsDir: e[0] == 100, IsSymlink: e[0] == 108, Path: std.fs.Join(dir, name)})
+        out = append(out, DirEntry{
+            Name: name,
+            IsDir: e[0] == 100,
+            IsSymlink: e[0] == 108,
+            Path: std.fs.Join(dir, name),
+        })
     }
     return out
 }

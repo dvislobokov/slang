@@ -15,14 +15,14 @@ struct Header {
     // '0' regular, '5' directory, '2' symlink, '1' hard link (bytes 48..).
     Type int = 48
     Mode int = 420
-    Uid int
-    Gid int
+    Uid  int
+    Gid  int
     Size int
     // Unix seconds.
-    ModTime int
+    ModTime  int
     Linkname string
-    Uname string
-    Gname string
+    Uname    string
+    Gname    string
 
     func IsDir() bool {
         return this.Type == 53
@@ -36,7 +36,7 @@ struct Header {
 // An entry: its header and content.
 struct Entry {
     Header Header
-    Data []byte
+    Data   []byte
 }
 
 // Reads every entry of an archive.
@@ -55,11 +55,11 @@ func Read(data []byte) []Entry! {
 
 // Sequential access to the entries of an archive in memory.
 struct Reader {
-    data []byte
-    pos int
-    cur []byte
+    data   []byte
+    pos    int
+    cur    []byte
     global map[string]string
-    done bool
+    done   bool
 
     // The next entry's header, or nil at the end of the archive.
     func Next() *Header! {
@@ -304,7 +304,7 @@ func applyPax(h *Header, recs map[string]string) void! {
 
 // Builds an archive in memory: Add entries, then Close() returns the bytes.
 struct Writer {
-    buf []byte
+    buf    []byte
     closed bool
 
     // Adds a regular file (mode 0644, time 0).
@@ -375,7 +375,12 @@ struct Writer {
         }
         if len(pax) > 0 {
             var body = std.strings.Bytes(std.strings.Join(pax, ""))
-            var ph = Header{Name: asciiPrefix("PaxHeaders/" + asciiPrefix(std.fs.Base(h.Name), 80), 100), Type: 120, Mode: 420, Size: len(body)}
+            var ph = Header{
+                Name: asciiPrefix("PaxHeaders/" + asciiPrefix(std.fs.Base(h.Name), 80), 100),
+                Type: 120,
+                Mode: 420,
+                Size: len(body),
+            }
             this.block(ph, ph.Name, "", "", body)
         }
         this.block(h, name, prefix, link, data)

@@ -59,6 +59,10 @@ struct UserService {
 - Конфликт коротких имён из двух импортов — ошибка компиляции; её решают
   псевдонимом (`as`) или полным путём.
 - Импортировать можно и отдельный тип: `import app.models.User`.
+- Имя встроенной функции (`delete`, `len`, `append`, `panic`, `typeof`,
+  `error`) не перекрывается одноимённым членом пространства stdlib,
+  импортированного целиком (атрибут `@delete` из `std.web`): вне атрибутов
+  оно остаётся встроенной функцией.
 - Неиспользуемый импорт — ошибка компиляции (`unused import`), как в Go.
   Исключение — импорт корневого пространства имён (`import std`): он лишь
   делает дочерние пространства доступными по последнему сегменту.
@@ -202,7 +206,9 @@ struct User {
   `dir/имя`. У `var` с `@embed` нет инициализатора.
 - Атрибут-структуры могут объявляться и в stdlib на Slang
   (`@binary(endian: "big")` из `std.encoding.binary`, `@cli.flag(...)` из
-  `std.cli`): они пишутся через пространство имён, как обычные.
+  `std.cli`): они пишутся через пространство имён, как обычные. Ключевое
+  слово `default` допустимо как имя поля и аргумента
+  (`@cli.flag(default: "8080")`).
 - Каждый применённый атрибут — константное значение своей структуры
   (аргументы и значения полей по умолчанию), вшитое в таблицы рефлексии;
   у встроенных это структуры `std.reflect` (`json`, `deprecated`, ...).
@@ -531,7 +537,10 @@ Go): `a + b` для `T` без `Ordered` — ошибка в самой декл
 `map[K]V`, `*T`, `T!`, кортежи). Нетипизированные константы обрабатываются
 последними: если параметр — ровно `T`, уже выведенный из другого аргумента,
 константа получает этот тип (`Max(x, 1)` при `x float`), иначе — тип по
-умолчанию (`Max(1, 2)` — `Max<int>`). Разные типы для одного параметра
+умолчанию (`Max(1, 2)` — `Max<int>`). Параметр, который встречается только в результате, выводится из
+ожидаемого типа вызова (`return web.NotFound()` в функции с результатом
+`web.Result<User>!` даёт `NotFound<User>`; `!` ожидаемого типа
+снимается, если результат шаблона не `T!`). Разные типы для одного параметра
 (`conflicting types for type parameter T`) и невыводимый параметр
 (`cannot infer type parameter T`, например `Id(nil)`) — ошибки. Лямбды
 всегда имеют типы параметров, поэтому выводятся по своему типу.
@@ -1082,6 +1091,7 @@ for variant in reflect.TypeOf<Color>().Variants { println(variant.Name) }
   `Uint8` (`byte`)…`Uint32`, `Float`, `Float32`, `Char`, `String`, `Error`,
   `Any`, `Interface`, `Struct`, `Enum`, `Pointer`, `Weak`, `Slice`,
   `Array`, `Map`, `Tuple`, `Func`, `Fallible`, `Task`, `Void`, `Invalid`.
+  У кортежа `Fields` — его элементы `_0`, `_1`, … (со смещениями).
   Поле, тип которого записан синонимом (`int64`, `uint`, `uint8`,
   `float64`), показывает это написание в `f.Type.Name`.
 - `reflect.Value` — `{владелец any, адрес, *TypeInfo}`: владелец держит
@@ -1283,10 +1293,25 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 - внутренний указатель можно разыменовать, сравнить, использовать для
   доступа к полю и передать как аргумент (в том числе как получатель
   метода, `s.inner.Method()`) параметру, который **не убегает**;
-- его нельзя сохранить в переменную, поле, элемент, map, замыкание,
+- его можно сохранить в **локальную переменную** (`var p = &xs[1]`, как
+  в Go): такая переменная — *внутренний указатель в локальной* — держит
+  скрытую сильную ссылку на владельца (*pin*): на массив среза для
+  `&slice[i]` (поэтому `xs = append(xs, ...)` или `xs = nil` не делают `p`
+  висячим — он продолжает указывать в старый массив), на объект для
+  `&p.f`, на ячейку переменной для `&s.f`, на pins другой такой переменной
+  для `&q.f`. Владелец должен вычисляться без вызовов (путь из
+  переменных, полей, разыменований и индексов); `&f()[i]` — ошибка.
+  Переменную можно разыменовывать, сравнивать, переприсваивать (`p =
+  &ys[0]`, `p = q`, `p = nil`; старые pins освобождаются вместе с
+  переменной) и передавать неубегающим параметрам; pins освобождаются в
+  конце её блока. Её нельзя скопировать в другую переменную (`var q = p`),
+  поле, элемент, map, интерфейс или `weak`, вернуть, захватить замыканием
+  или взять её адрес (`&p`);
+- в остальном его нельзя сохранить в поле, элемент, map, замыкание,
   интерфейс или `weak`, вернуть из функции или передать параметру,
   который убегает — это ошибка компиляции «cannot keep an interior
-  pointer» / «cannot pass an interior pointer to parameter ...»;
+  pointer» / «cannot pass an interior pointer to parameter ...» /
+  «cannot keep interior pointer variable ...»;
 - параметр **убегает**, если функция его сохраняет (куда угодно, включая
   локальную переменную), возвращает, переприсваивает, берёт его адрес,
   захватывает замыканием, превращает в интерфейс или `weak`, передаёт
@@ -1302,9 +1327,11 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   ячейкой, глобального — указывает в статическую память, а срез массива,
   доступного через указатель, — внутренний и подчиняется тому же правилу.
 
-Так любой сохранённый `*T` указывает на заголовок объекта (payload − 16),
-и `retain`/`release` всегда корректны, а внутренние указатели живут не
-дольше вызова, на время которого их владелец удерживается.
+Так любой сохранённый в куче `*T` указывает на заголовок объекта
+(payload − 16), и `retain`/`release` всегда корректны, а внутренние
+указатели живут не дольше вызова, на время которого их владелец
+удерживается, или не дольше локальной переменной, которая держит владельца
+(сама такая переменная не считает ссылок).
 
 ### Деструкторы
 
@@ -1439,9 +1466,18 @@ func Handle(words []string) int {
 Колонка «Реализовано» — то, что уже есть в компиляторе и рантайме
 (`compiler/src/sema/stdlib.rs`, сигнатуры и семантика — `runtime/ABI.md`, раздел 14).
 
+Исходники стандартной библиотеки лежат на диске в `std/<путь пространства
+имён>/` (генерируются `compiler/build.rs`, см. docs/TOOLING.md):
+модули на Slang и файлы-объявления `<ns>_extern.sl` для функций рантайма
+вида `extern func Split(s string, sep string) []string` (без тела;
+`extern` — контекстное ключевое слово, допустимое только в этих файлах,
+в пользовательском коде — ошибка). Компилятор загружает модули из
+`$SLANG_STD`, `<exe>/../std` или `std/` репозитория, иначе использует
+встроенные копии.
+
 | Пространство | Содержимое | Реализовано |
 |--------------|------------|-------------|
-| `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; интерфейсы `Reader`/`Writer`/`Closer`/`Seeker`/`ReadWriter`/… (`Read(buf) int!`, 0 — конец), `AsyncReader`/`AsyncWriter` (их реализует `net.Conn`), `Copy`/`CopyN`/`ReadFull`/`ReadN`/`ReadAllFrom`, `StringReader`/`BytesReader`/`BytesWriter`, `LimitReader`/`MultiReader`/`MultiWriter`/`TeeReader`/`Pipe`/`Discard`, `BufferedReader`/`BufferedWriter`, `Scanner`, `Lines`/`Words`, `io.EOF` |
+| `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; интерфейсы `Reader`/`Writer`/`Closer`/`Seeker`/`ReadWriter`/… (`Read(buf) int!`, 0 — конец), `AsyncReader`/`AsyncWriter` (их реализует `net.Conn`), `Copy`/`CopyN`/`ReadFull`/`ReadN`/`ReadAllFrom`, `StringReader`/`BytesReader`/`BytesWriter`, `LimitReader`/`MultiReader`/`MultiWriter`/`TeeReader`/`Pipe`/`BoundedPipe(max)` (ограниченный буфер: `Writer.Send` ждёт места, `Write` — ошибка «pipe full»)/`Discard`, `BufferedReader`/`BufferedWriter`, `Scanner`, `Lines`/`Words`, `io.EOF` |
 | `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`, `Sprintf` (глаголы Go: `%v %d %s %f %.2f %5d %-4d %03d %x %q %c %t %e %%`); даты — `time.Format` |
 | `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё (`Builder{}` с `Write`, `String`, `Len`, `Reset`), плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
 | `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
@@ -1469,7 +1505,7 @@ brotli, bzip2, lzw.
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.net` | TCP/UDP/Unix-сокеты, `Dial`/`Dialer` (Happy Eyeballs), `Listen`/`ListenConfig` (dual-stack), DNS через пул резолверов, `IP`/`Addr`, опции сокетов, half-close, дедлайны, `SendFile`, буферизованный ввод-вывод, типизированные ошибки; всё асинхронное |
+| `std.net` | TCP/UDP/Unix-сокеты, `Dial`/`Dialer` (Happy Eyeballs; TCP self-connect — ядро выбрало набираемый порт loopback исходным — считается `ErrRefused`, как в Go), `Listen`/`ListenConfig` (dual-stack), DNS через пул резолверов, `IP`/`Addr`, опции сокетов, half-close, дедлайны, `SendFile`, буферизованный ввод-вывод, типизированные ошибки; всё асинхронное |
 | `std.net.http` | клиент: `Get`, `Post`, `Request`, `Client` с таймаутами и заголовками; сервер: `Server`, `Router`, `Handler`, middleware; HTTP/1.1 и HTTP/2 |
 
 Реализовано (Slang-код в `compiler/src/sema/stdlib_src/`, рантайм —
@@ -1563,7 +1599,7 @@ brotli, bzip2, lzw.
     `Write`, `Text/Json/Html(status, body)`, `SendJSON<T>(status, v)`,
     `JSON<T>()`, `Redirect(status, loc)`, `SetCookie(Cookie)`, а на сервере
     — `Flush() Task<void!>` (потоковый ответ: chunked в HTTP/1.1, кадры DATA
-    в HTTP/2), `SendFile(path, off, n)` (sendfile(2) на TCP), `Hijack()
+    в HTTP/2), `SendFile(path, off, n)` (sendfile(2) на TCP; по HTTP/2 — DATA кусками по 64 KB с управлением потоком, без чтения файла целиком), `Hijack()
     RawConn!` (HTTP/1.x: соединение переходит вызывающему, так работает
     `ws.Upgrade`), `Started()`. Заголовки в каноническом виде
     (`Content-Type`); повторы склеиваются через `", "`, `Set-Cookie` — через
@@ -1591,14 +1627,32 @@ brotli, bzip2, lzw.
     прокси (абсолютная форма для http, туннель CONNECT для https,
     `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`), `Accept-Encoding: gzip` с
     прозрачной распаковкой (`std.compress.gzip`), `Stats()`,
-    `CloseIdleConnections()`; `DefaultTransport()` — общий для процесса.
+    `CloseIdleConnections()` (закрывает и HTTP/2-соединение без потоков, с
+    GOAWAY); `DefaultTransport()` — общий для процесса. У каждого
+    HTTP/2-соединения клиента своя задача-читатель: кадры читаются по мере
+    прихода, SETTINGS и PING получают ответ сразу (и между запросами),
+    WINDOW_UPDATE и GOAWAY применяются, HEADERS/DATA/RST_STREAM раздаются
+    потокам; соединение без потоков дольше `IdleConnTimeout` закрывается с
+    GOAWAY(NO_ERROR); `Transport`, который освобождается, закрывает свои
+    соединения (и их читателей). Соединения `DefaultTransport()` живут до
+    конца процесса — под `--leak-check` их задачи-читатели видны как
+    утечка (используйте свой `Transport` или `CloseIdleConnections()`).
     `NewCookieJar()` (RFC 6265: host-only и доменные cookie, пути, сроки,
     `Secure`). `DialRaw(url, tls, ms) Task<RawConn!>` — сырое соединение для
     протоколов с HTTP/1.1-upgrade.
   - **Сервер**: `Server{Addr ("unix:/path" — Unix-сокет), Handler,
-    IdleTimeout = 5000, TLS *tls.ServerConfig (ALPN `h2`, `http/1.1`),
+    IdleTimeout = 5000 (простаивающее HTTP/2-соединение перед закрытием
+    получает GOAWAY(NO_ERROR)), TLS *tls.ServerConfig (ALPN `h2`, `http/1.1`),
     ReadTimeout, WriteTimeout, MaxHeaderBytes = 1 MB (431), MaxBodyBytes
-    (413), H2C, DisableHTTP2, MaxConcurrentStreams = 250, NoDate}` с
+    (413), H2C, DisableHTTP2, MaxConcurrentStreams = 250, NoDate,
+    StreamBodies (тело запроса не буферизуется: обработчик запускается
+    после заголовков, `req.Body` пуст, `req.Reader` — `*RequestBody`,
+    `io.AsyncReader` с `Read(n)`/`ReadAll()` по HTTP/1.1 (Content-Length и
+    chunked, `100 Continue` при первом чтении) и HTTP/2 (окно потока
+    возвращается по мере чтения); `MaxBodyBytes` действует —
+    `ErrBodyTooLarge` из чтения, обработчик, вернувший её, отвечает 413;
+    непрочитанный остаток до 64 KB пропускается, иначе соединение
+    закрывается, на HTTP/2 — RST_STREAM(NO_ERROR) после ответа)}` с
     `Listen() void!`, `Port()`, `URL()`, `Serve() Task<void!>`, `Shutdown()
     Task<void>` (перестаёт принимать, закрывает простаивающие соединения,
     HTTP/2 получает GOAWAY, ждёт текущие запросы); `ListenAndServe(addr, h)`.
@@ -1840,6 +1894,9 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 | `std.regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Slang |
 | `std.unicode` | классификация символов, нормализация (✓ классы и регистр по таблицам Unicode 15, `utf8`, `utf16`; нет нормализации) |
 | `std.database.sql` | единый асинхронный интерфейс к SQL с пулом и `Query<T>`; драйверы `std.database.postgres` (на Slang) и `std.database.sqlite` (системная libsqlite3) — ✓ (см. `docs/FRAMEWORK.md` §3); MySQL позже |
+| `std.data.redis` | клиент Redis на Slang (уровень 3б `docs/STDLIB.md`) — ✓: RESP2/RESP3 (`HELLO 3` с откатом на RESP2), `redis.Connect(url)` (`redis://`, `rediss://`, `unix://`, AUTH, SELECT, параметры пула в URL), типизированные команды методами (`Get/Set/SetEx/SetNX/Del/Exists/Incr/Expire/TTL/MGet/MSet/H*/L*/S*/Z*/PF*/XAdd/XRange/Keys/Scan/Publish/Eval/EvalSha/Script*`; несколько значений — срезом, вариадиков нет) и `Do(args []any) Reply!`; отсутствующее значение — `redis.Nil`, ошибка сервера — `redis.Error{Code, Text}`; пул с проверкой простаивающих (PING), сроком жизни, ожиданием с таймаутом (`ErrPoolTimeout`), повторами с backoff; `Pipeline()` — задачи команд завершаются после `Exec` (одна запись в сокет); `TxPipeline` (MULTI/EXEC), `Watch(keys, fn)` (`ErrTxFailed`); `NewScript` + `Run` (EVALSHA → EVAL при NOSCRIPT); `Subscribe/PSubscribe` с `for msg in sub` и переподключением; таймауты через контекст задачи; **Sentinel** (`ConnectSentinel`: поиск мастера, подписка на `+switch-master`, повторный опрос при READONLY/сетевой ошибке, чтение с реплик); **Cluster** (`ConnectCluster`: карта слотов из `CLUSTER SLOTS`, CRC16 и hash tags, MOVED/ASK, многоключевые команды в одном слоте — иначе `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE); `GetJSON<T>/SetJSON<T>` и `redis.Get<T>/Set<T>`. Проверено на redis-server 7.0 (TLS, Sentinel с отказом мастера, Cluster из 3 узлов с миграцией слота) |
+| `std.data.kafka` | клиент Kafka на Slang без C — ✓: протокол (ApiVersions 0, Metadata 1, Produce 7/3, Fetch 10/4, ListOffsets 1, FindCoordinator 1, JoinGroup 2, SyncGroup 1, Heartbeat 1, LeaveGroup 1, OffsetCommit 2, OffsetFetch 1, SaslHandshake 1, SaslAuthenticate 0, CreateTopics 2, DeleteTopics 1, InitProducerId 0), record batch v2 (CRC-32C, gzip, zstd; snappy/lz4 нет), `NewProducer(brokers, opts)` с батчами по размеру и `LingerMs`, acks, идемпотентностью (producer id + последовательности), разбиением по murmur2 как в Java-клиенте и round-robin, `Send(topic, key, value) Task<RecordMetadata!>`; `NewConsumer(brokers, group, topics)` — группы (range/round-robin, ребаланс, heartbeat в фоновой задаче, авто- и ручной commit), `for rec in consumer`, `Poll`, `Seek`; `NewAdmin` (create/delete/list/describe); TLS, SASL PLAIN/SCRAM-SHA-256/512, обновление метаданных при смене лидера, повторы с backoff. Проверено на Kafka 3.7 (KRaft) |
+| `std.cloud.s3`, `std.cloud.blob` | клиент S3 на Slang — ✓: AWS Signature V4 (заголовки и presigned URL; векторы AWS и botocore), `s3.NewClient(Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle})` для AWS, MinIO, R2, GCS; `PutObject` (тип, метаданные, ACL, `If-None-Match`), `GetObject` потоком и диапазоном, `GetObjectBytes`, `HeadObject`, `DeleteObject(s)`, `ListObjectsV2` и итератор `List` с префиксами и разделителем, `CopyObject`, бакеты (`Create/Delete/List/Exists`), multipart `Upload(bucket, key, reader, partSize, concurrency)` с параллельными частями и отменой при ошибке, `Presign`, типизированные ошибки (`s3.Error`, `ErrNoSuchKey`…), повторы при 5xx/SlowDown, учётные данные из env, `~/.aws/credentials` и IMDSv2; `std.cloud.blob.Bucket` поверх S3 (`OpenS3`) и каталога (`OpenDir`). Проверено на MinIO |
 
 Реализовано: `std.encoding.base64` — `Encode`, `EncodeString`, `Decode`,
 `DecodeString`, URL-safe `EncodeURL`/`DecodeURL`; `std.encoding.hex` —
@@ -1855,6 +1912,17 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 миграциями), `slang.log` (структурированный логгер уровня Serilog с sinks и
 enrichers), `slang.diag` (профилировщик CPU/памяти/задач в формате pprof,
 метрики, OpenTelemetry, `slang tool pprof`). Подробно: `docs/FRAMEWORK.md`.
+
+Пока нет реестра пакетов, `slang.web` живёт в stdlib как `std.web`
+(`std.web.auth.jwt`, `std.web.config`). Вызовы `app.MapController<C>()`,
+`app.MapGet(path, handler)` и `app.Services.AddSingleton<T>()` (и их
+родственники) компилятор раскрывает при компиляции (`sema/web.rs`): по
+атрибутам и сигнатурам он порождает исходник обобщённой функции stdlib,
+чьи параметры типа связаны с конкретными типами программы, — таблицу
+маршрутов с привязкой параметров и фабрики DI. Неверный маршрут и
+зависимость, которую программа нигде не регистрирует, — ошибки компиляции.
+Внутри таких экземпляров `T.New(...)` с параметром типа, связанным со
+структурой, вызывает её статический метод.
 
 ### GUI
 
@@ -2021,7 +2089,7 @@ async func main() {
 ```
 file        = { attribute } "namespace" path { import } { decl } ;   (* @cfg(...) here excludes the file *)
 import      = "import" path [ "as" ident ] ;
-decl        = { attribute } ( struct | interface | enum | func | var | const ) ;
+decl        = { attribute } ( struct | interface | enum | func | externfunc | var | const ) ;
 attribute   = "@" path [ "(" [ attrarg { "," attrarg } ] ")" ] ;
 attrarg     = [ ident ":" ] expr ;           (* in attribute arguments a call takes attrargs: @cfg(not(os: "windows")) *)
 cfg         = "@cfg" "(" cond { "," cond } ")" ;
@@ -2036,6 +2104,7 @@ variant     = { attribute } ident [ "(" params ")" ] ;
 field       = { attribute } ident type [ "=" expr ] ;
 method      = [ "static" ] func ;
 func        = [ "async" ] "func" ident [ generics ] "(" [ params ] ")" [ type ] block ;
+externfunc  = "extern" "func" ident "(" [ params ] ")" [ type ] ;   (* только в std/**/*_extern.sl *)
 params      = param { "," param } ;
 param       = ident { "," ident } type ;
 type        = path [ typeargs ] [ "!" ] | "*" type | "weak" "*" type | "[" [ constexpr ] "]" type

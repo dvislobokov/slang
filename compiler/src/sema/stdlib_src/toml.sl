@@ -11,14 +11,14 @@ namespace std.encoding.toml
 
 // A TOML value. Datetimes keep their text (DateKind tells which form).
 struct Value {
-    kind int
-    s string
-    i int
-    f float
-    b bool
-    items []Value
-    keys []string
-    dt int
+    kind   int
+    s      string
+    i      int
+    f      float
+    b      bool
+    items  []Value
+    keys   []string
+    dt     int
     inline bool
 
     func IsString() bool {
@@ -270,38 +270,38 @@ func ParseValue(text string) Value! {
 // arrays of tables).
 struct entry {
     path []string
-    v Value
+    v    Value
 }
 
 // A key/value line of the document: byte offsets of the key, the value
 // and the line.
 struct kvPos {
-    path string
-    table string
-    keyStart int
-    valStart int
-    valEnd int
+    path      string
+    table     string
+    keyStart  int
+    valStart  int
+    valEnd    int
     lineStart int
-    lineEnd int
+    lineEnd   int
 }
 
 struct hdrPos {
-    path string
+    path  string
     start int
-    end int
-    aot bool
+    end   int
+    aot   bool
 }
 
 struct parser {
-    s string
-    i int
-    line int
+    s       string
+    i       int
+    line    int
     entries []entry
-    defs map[string]int
-    aot map[string]int
-    cur []string
-    kvs []kvPos
-    hdrs []hdrPos
+    defs    map[string]int
+    aot     map[string]int
+    cur     []string
+    kvs     []kvPos
+    hdrs    []hdrPos
 
     func fail(msg string) error {
         return error(std.fmt.Format("toml: line {0}: {1}", this.line, msg))
@@ -383,7 +383,10 @@ struct parser {
             this.line += 1
             return
         }
-        return this.fail("expected the end of the line, found " + std.encoding.json.Quote(this.s[this.i..std.math.IMin(this.i + 10, len(this.s))]))
+        return this.fail(
+            "expected the end of the line, found " +
+                std.encoding.json.Quote(this.s[this.i..std.math.IMin(this.i + 10, len(this.s))]),
+        )
     }
 
     func run() void! {
@@ -438,7 +441,9 @@ struct parser {
             } else if d == 4 {
                 path = append(path, "\u{1e}" + std.fmt.Format("{0}", this.aot[j] - 1))
             } else if d == 5 || d == 6 {
-                return this.fail("key " + std.encoding.json.Quote(dotted(key, k + 1)) + " is not a table")
+                return this.fail(
+                    "key " + std.encoding.json.Quote(dotted(key, k + 1)) + " is not a table",
+                )
             }
         }
         path = append(path, key[len(key) - 1])
@@ -451,7 +456,11 @@ struct parser {
             } else if d == 4 {
                 this.aot[full] = this.aot[full] + 1
             } else {
-                return this.fail("cannot define " + std.encoding.json.Quote(dotted(key, len(key))) + " as an array of tables (already defined)")
+                return this.fail(
+                    "cannot define " +
+                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        " as an array of tables (already defined)",
+                )
             }
             path = append(path, "\u{1e}" + std.fmt.Format("{0}", this.aot[full] - 1))
             this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
@@ -462,12 +471,21 @@ struct parser {
                 this.defs[full] = 1
                 this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
             } else {
-                return this.fail("table " + std.encoding.json.Quote(dotted(key, len(key))) + " defined more than once")
+                return this.fail(
+                    "table " +
+                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        " defined more than once",
+                )
             }
         }
         this.cur = path
         this.endOfLine()?
-        this.hdrs = append(this.hdrs, hdrPos{path: join(path), start: start, end: this.i, aot: isAot})
+        this.hdrs = append(this.hdrs, hdrPos{
+            path: join(path),
+            start: start,
+            end: this.i,
+            aot: isAot,
+        })
     }
 
     func keyValue() void! {
@@ -492,7 +510,11 @@ struct parser {
                 this.defs[j] = 3
                 this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
             } else if d != 3 {
-                return this.fail("cannot add to " + std.encoding.json.Quote(dotted(key, k + 1)) + " with a dotted key")
+                return this.fail(
+                    "cannot add to " +
+                        std.encoding.json.Quote(dotted(key, k + 1)) +
+                        " with a dotted key",
+                )
             }
         }
         path = append(path, key[len(key) - 1])
@@ -507,7 +529,15 @@ struct parser {
         }
         this.entries = append(this.entries, entry{path: path, v: v})
         this.endOfLine()?
-        this.kvs = append(this.kvs, kvPos{path: full, table: join(this.cur), keyStart: keyStart, valStart: valStart, valEnd: valEnd, lineStart: lineStart, lineEnd: this.i})
+        this.kvs = append(this.kvs, kvPos{
+            path: full,
+            table: join(this.cur),
+            keyStart: keyStart,
+            valStart: valStart,
+            valEnd: valEnd,
+            lineStart: lineStart,
+            lineEnd: this.i,
+        })
     }
 
     // A dotted key: simple keys separated by '.'.
@@ -584,7 +614,11 @@ struct parser {
             var d = this.c()
             if isBare(d) || d == 43 || d == 46 || d == 58 {
                 this.i += 1
-            } else if d == 32 && this.i - start == 10 && isDigit(this.at(1)) && isDigit(this.at(2)) && this.at(3) == 58 {
+            } else if d == 32 &&
+                this.i - start == 10 &&
+                isDigit(this.at(1)) &&
+                isDigit(this.at(2)) &&
+                this.at(3) == 58 {
                 // "1979-05-27 07:32:00": date, space, time
                 this.i += 1
             } else {
@@ -616,7 +650,9 @@ struct parser {
         if tok == "nan" || tok == "+nan" || tok == "-nan" {
             return Value{kind: 3, f: std.math.NaN()}
         }
-        if std.strings.HasPrefix(tok, "0x") || std.strings.HasPrefix(tok, "0o") || std.strings.HasPrefix(tok, "0b") {
+        if std.strings.HasPrefix(tok, "0x") ||
+            std.strings.HasPrefix(tok, "0o") ||
+            std.strings.HasPrefix(tok, "0b") {
             var base = 16
             if tok[1..2] == "o" {
                 base = 8
@@ -649,7 +685,9 @@ struct parser {
         if std.strings.HasPrefix(body, "+") || std.strings.HasPrefix(body, "-") {
             body = body[1..]
         }
-        var isF = std.strings.Contains(body, ".") || std.strings.Contains(body, "e") || std.strings.Contains(body, "E")
+        var isF = std.strings.Contains(body, ".") ||
+            std.strings.Contains(body, "e") ||
+            std.strings.Contains(body, "E")
         if !isF {
             if !underscoresOK(body) || !allDigits(body) {
                 return this.fail("invalid value " + std.encoding.json.Quote(tok))
@@ -799,9 +837,12 @@ struct parser {
                 for k < len(this.s) && (int(this.s[k]) == 32 || int(this.s[k]) == 9) {
                     k += 1
                 }
-                if k < len(this.s) && (int(this.s[k]) == 10 || (int(this.s[k]) == 13 && k + 1 < len(this.s) && int(this.s[k + 1]) == 10)) {
+                if k < len(this.s) &&
+                    (int(this.s[k]) == 10 ||
+                        (int(this.s[k]) == 13 && k + 1 < len(this.s) && int(this.s[k + 1]) == 10)) {
                     this.i = k
-                    for this.more() && (this.c() == 32 || this.c() == 9 || this.c() == 10 || this.c() == 13) {
+                    for this.more() &&
+                        (this.c() == 32 || this.c() == 9 || this.c() == 10 || this.c() == 13) {
                         if this.c() == 10 {
                             this.line += 1
                         }
@@ -942,12 +983,20 @@ struct parser {
                     sub.defs[j] = 3
                     es = append(es, entry{path: copyPath(path), v: Value{kind: 7}})
                 } else if d != 3 {
-                    return this.fail("cannot add to " + std.encoding.json.Quote(dotted(key, k + 1)) + " in an inline table")
+                    return this.fail(
+                        "cannot add to " +
+                            std.encoding.json.Quote(dotted(key, k + 1)) +
+                            " in an inline table",
+                    )
                 }
             }
             path = append(path, key[len(key) - 1])
             if sub.defs[join(path)] != 0 {
-                return this.fail("duplicate key " + std.encoding.json.Quote(dotted(key, len(key))) + " in an inline table")
+                return this.fail(
+                    "duplicate key " +
+                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        " in an inline table",
+                )
             }
             sub.defs[join(path)] = 5
             es = append(es, entry{path: path, v: v})
@@ -977,7 +1026,11 @@ func newParser(text string) *parser {
 }
 
 func isBare(c int) bool {
-    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95 || c == 45
+    return (c >= 65 && c <= 90) ||
+        (c >= 97 && c <= 122) ||
+        (c >= 48 && c <= 57) ||
+        c == 95 ||
+        c == 45
 }
 
 func isDigit(c int) bool {
@@ -1065,7 +1118,11 @@ func dateKind(s string) int {
     if (z == 90 || z == 122) && end + 1 == len(s) {
         return 1
     }
-    if (z == 43 || z == 45) && end + 6 == len(s) && digits(s, end + 1, 2) && int(s[end + 3]) == 58 && digits(s, end + 4, 2) {
+    if (z == 43 || z == 45) &&
+        end + 6 == len(s) &&
+        digits(s, end + 1, 2) &&
+        int(s[end + 3]) == 58 &&
+        digits(s, end + 4, 2) {
         var oh = num(s, end + 1, 2)
         var om = num(s, end + 4, 2)
         if oh < 24 && om < 60 {
@@ -1122,7 +1179,12 @@ func dateOK(s string) bool {
 
 // HH:MM:SS(.frac)? at s[at..]; the end offset or -1.
 func timeOK(s string, at int) int {
-    if !digits(s, at, 2) || at + 8 > len(s) || int(s[at + 2]) != 58 || !digits(s, at + 3, 2) || int(s[at + 5]) != 58 || !digits(s, at + 6, 2) {
+    if !digits(s, at, 2) ||
+        at + 8 > len(s) ||
+        int(s[at + 2]) != 58 ||
+        !digits(s, at + 3, 2) ||
+        int(s[at + 5]) != 58 ||
+        !digits(s, at + 6, 2) {
         return -1
     }
     if num(s, at, 2) > 23 || num(s, at + 3, 2) > 59 || num(s, at + 6, 2) > 59 {
@@ -1276,7 +1338,9 @@ func floatText(f float) string {
         return "-inf"
     }
     var s = std.fmt.Format("{0}", f)
-    if !std.strings.Contains(s, ".") && !std.strings.Contains(s, "e") && !std.strings.Contains(s, "E") {
+    if !std.strings.Contains(s, ".") &&
+        !std.strings.Contains(s, "e") &&
+        !std.strings.Contains(s, "E") {
         s += ".0"
     }
     return s
@@ -1458,14 +1522,22 @@ func decode<T>(v Value, path string, out *T) void! {
             return mismatch(path, "bool", v)
         }
         *out = v.b
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         if v.kind != 2 {
             return mismatch(path, "integer", v)
         }
         *out = try std.encoding.intAs<T>(v.i) catch err {
             return error(prefix(path) + err.Message())
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         if v.kind == 2 {
             *out = std.encoding.floatAs<T>(float(v.i))
         } else if v.kind == 3 {
@@ -1480,7 +1552,9 @@ func decode<T>(v Value, path string, out *T) void! {
         var t = std.reflect.TypeOf<T>()
         var variant = t.Variant(v.s)
         if variant == nil || len(variant.Fields) > 0 {
-            return error(prefix(path) + "unknown " + t.Name + " value " + std.encoding.json.Quote(v.s))
+            return error(
+                prefix(path) + "unknown " + t.Name + " value " + std.encoding.json.Quote(v.s),
+            )
         }
         std.reflect.storeTag(out, variant.Index)
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice {
@@ -1495,7 +1569,12 @@ func decode<T>(v Value, path string, out *T) void! {
             }
             decodeMap(v, path, out)?
         } else {
-            return error(prefix(path) + "cannot decode into " + std.reflect.TypeOf<T>().Name + " (map keys must be strings)")
+            return error(
+                prefix(path) +
+                    "cannot decode into " +
+                    std.reflect.TypeOf<T>().Name +
+                    " (map keys must be strings)",
+            )
         }
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
         decodePtr(v, path, out)?
@@ -1579,13 +1658,22 @@ func ToValue<T>(v T) Value {
         return Value{kind: 1, s: v}
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
         return Value{kind: 4, b: v}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         return Value{kind: 2, i: int(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         return Value{kind: 3, f: float(v)}
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
         return Value{kind: 1, s: std.fmt.Format("{0}", v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
         if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice && v == nil {
             return Value{}
         }
@@ -1645,7 +1733,7 @@ func sortStrings(a []string) {
 // lines only, so comments, order and layout survive.
 struct Document {
     text string
-    p *parser
+    p    *parser
 
     // The text of the document.
     func String() string {
@@ -1728,7 +1816,11 @@ struct Document {
             if this.text != "" {
                 sep += "\n"
             }
-            this.splice(len(this.text), len(this.text), sep + "[" + headerText(table) + "]\n" + keyText(last) + " = " + val + "\n")?
+            this.splice(
+                len(this.text),
+                len(this.text),
+                sep + "[" + headerText(table) + "]\n" + keyText(last) + " = " + val + "\n",
+            )?
             return
         }
         this.insertLine(at, keyText(last) + " = " + val + "\n")?

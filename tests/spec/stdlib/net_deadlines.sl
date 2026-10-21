@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_deadlines
 
-import std.io
 import std
+import std.io
 
 async func main() void! {
     var l = net.Listen("127.0.0.1:0")?
@@ -15,7 +15,12 @@ async func main() void! {
     var t0 = time.Now()
     s.SetReadDeadline(time.Now() + 30)
     try await s.Read(10) catch err {
-        println("read deadline:", errors.Is(err, net.ErrTimeout), net.IsTimeout(err), time.Now() - t0 >= 25)
+        println(
+            "read deadline:",
+            errors.Is(err, net.ErrTimeout),
+            net.IsTimeout(err),
+            time.Now() - t0 >= 25,
+        )
         var oe net.OpError
         println("timeout op:", errors.As(err, &oe), oe.Op, oe.Timeout())
     }
@@ -32,7 +37,11 @@ async func main() void! {
     // SetTimeout: each wait may take at most 20 ms
     s.SetTimeout(20)
     try await s.ReadLine() catch err {
-        println("per-op timeout:", net.IsTimeout(err), strings.HasSuffix(err.Message(), ": i/o timeout"))
+        println(
+            "per-op timeout:",
+            net.IsTimeout(err),
+            strings.HasSuffix(err.Message(), ": i/o timeout"),
+        )
     }
     s.SetTimeout(0)
 

@@ -39,37 +39,39 @@ enum Kind {
     BigNumber
     Verbatim
     Push
-
-    func String() string {
-        switch this {
-            case Kind.Nil:
-                return "nil"
-            case Kind.Status:
-                return "status"
-            case Kind.Error:
-                return "error"
-            case Kind.Int:
-                return "int"
-            case Kind.Bulk:
-                return "bulk"
-            case Kind.Array:
-                return "array"
-            case Kind.Map:
-                return "map"
-            case Kind.Set:
-                return "set"
-            case Kind.Double:
-                return "double"
-            case Kind.Bool:
-                return "bool"
-            case Kind.BigNumber:
-                return "bignumber"
-            case Kind.Verbatim:
-                return "verbatim"
-        }
-        return "push"
-    }
 }
+
+// The name of a reply kind ("bulk", "map"...).
+func KindName(k Kind) string {
+    switch k {
+        case Kind.Nil:
+            return "nil"
+        case Kind.Status:
+            return "status"
+        case Kind.Error:
+            return "error"
+        case Kind.Int:
+            return "int"
+        case Kind.Bulk:
+            return "bulk"
+        case Kind.Array:
+            return "array"
+        case Kind.Map:
+            return "map"
+        case Kind.Set:
+            return "set"
+        case Kind.Double:
+            return "double"
+        case Kind.Bool:
+            return "bool"
+        case Kind.BigNumber:
+            return "bignumber"
+        case Kind.Verbatim:
+            return "verbatim"
+    }
+    return "push"
+}
+
 
 // One reply. Str holds the text of Status, Error, Bulk, Verbatim (without
 // its "txt:" format prefix) and BigNumber replies; Int an Int (and a Bool
@@ -118,7 +120,7 @@ struct Reply {
             case Kind.Error:
                 return errorOf(this.Str)
         }
-        return error("redis: expected a string reply, got " + this.Kind.String())
+        return error("redis: expected a string reply, got " + KindName(this.Kind))
     }
 
     // The reply as an integer (an Int, a Bool, or a numeric string).
@@ -135,7 +137,7 @@ struct Reply {
             case Kind.Error:
                 return errorOf(this.Str)
         }
-        return error("redis: expected an integer reply, got " + this.Kind.String())
+        return error("redis: expected an integer reply, got " + KindName(this.Kind))
     }
 
     // The reply as a float (a Double, an Int or a numeric string).
@@ -152,7 +154,7 @@ struct Reply {
             case Kind.Error:
                 return errorOf(this.Str)
         }
-        return error("redis: expected a number reply, got " + this.Kind.String())
+        return error("redis: expected a number reply, got " + KindName(this.Kind))
     }
 
     // The reply as a boolean: Bool, Int (non-zero), Status "OK".
@@ -169,7 +171,7 @@ struct Reply {
             case Kind.Error:
                 return errorOf(this.Str)
         }
-        return error("redis: expected a boolean reply, got " + this.Kind.String())
+        return error("redis: expected a boolean reply, got " + KindName(this.Kind))
     }
 
     // The elements of an Array, Set, Push or Map (flattened); Nil gives none.
@@ -182,7 +184,7 @@ struct Reply {
             case Kind.Error:
                 return errorOf(this.Str)
         }
-        return error("redis: expected an array reply, got " + this.Kind.String())
+        return error("redis: expected an array reply, got " + KindName(this.Kind))
     }
 
     // The elements as strings (nil elements become "").
@@ -321,7 +323,7 @@ func parseFloat(s string) float! {
 
 // ---- RESP codec -----------------------------------------------------------------
 
-// Result of parse when the buffer holds no complete reply yet.
+// The buffer being parsed; need and err describe an incomplete or bad reply.
 struct parser {
     b []byte
     // bytes the incomplete reply needs at least (from its start; 0 unknown)
@@ -395,10 +397,10 @@ func parse(ps *parser, p int) (Reply, int) {
             return (Reply{Kind: Kind.Nil}, next)
         case 44:
             var s = textOf(b, p + 1, end)
+            if std.strings.ToLower(s) == "nan" {
+                return (Reply{Kind: Kind.Double, Float: std.math.NaN()}, next)
+            }
             var f = try parseFloat(s) catch _ {
-                if std.strings.ToLower(s) == "nan" {
-                    return (Reply{Kind: Kind.Double, Float: std.math.NaN()}, next)
-                }
                 ps.err = "bad double " + std.strconv.Quote(s)
                 return (none, -2)
             }
@@ -504,8 +506,8 @@ func ParseReplies(data []byte) []Reply! {
 }
 
 // The text of a command argument: strings and []byte as they are,
-// numbers in decimal (floats shortest), bools as 1/0, other values with
-// fmt "{0}".
+// numbers in decimal (floats shortest), bools as 1/0, a time.Duration in
+// milliseconds, other values with fmt "{0}".
 func argBytes(a any) []byte {
     switch a {
         case string s:
@@ -755,8 +757,7 @@ struct conn {
         }
     }
 
-    // Reads more bytes into the buffer (at least one, unless the stream
-    // ends: then an error).
+    // Reads more bytes into the buffer (fails at the end of the stream).
     async func more() void! {
         var chunk = try await this.s.Read(65536) catch err {
             this.bad = true
@@ -961,6 +962,19 @@ struct pool {
         std.task.rtUnlock(&this.guard)
     }
 
+    // Counts a hit (0), a timeout (1) or a stale connection (2).
+    func count(what int) {
+        this.lock()
+        if what == 0 {
+            this.stats.Hits += 1
+        } else if what == 1 {
+            this.stats.Timeouts += 1
+        } else {
+            this.stats.StaleConns += 1
+        }
+        this.unlock()
+    }
+
     // Under the lock.
     func wakeOne() {
         if len(this.waiters) > 0 {
@@ -990,7 +1004,7 @@ struct pool {
                 this.idle = this.idle[..n - 1]
                 this.unlock()
                 if this.opts.MaxConnAge > 0 && now - c.created >= this.opts.MaxConnAge {
-                    this.stats.StaleConns += 1
+                    this.count(2)
                     this.remove(c)
                     continue
                 }
@@ -1003,12 +1017,12 @@ struct pool {
                         ok = false
                     }
                     if !ok {
-                        this.stats.StaleConns += 1
+                        this.count(2)
                         this.remove(c)
                         continue
                     }
                 }
-                this.stats.Hits += 1
+                this.count(0)
                 return c
             }
             if this.numOpen < this.opts.PoolSize {

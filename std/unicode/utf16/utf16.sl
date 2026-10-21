@@ -1,0 +1,94 @@
+namespace std.unicode.utf16
+
+// std.unicode.utf16: UTF-16 encoding and decoding of code points
+// (Go's unicode/utf16). Unpaired surrogates decode to U+FFFD.
+
+// True if r is a surrogate half (U+D800..U+DFFF).
+func IsSurrogate(r char) bool {
+    return int(r) >= 0xD800 && int(r) < 0xE000
+}
+
+// The surrogate pair of r, or (U+FFFD, U+FFFD) if r is not above U+FFFF
+// or not valid.
+func EncodeRune(r char) (char, char) {
+    var c = int(r)
+    if c < 0x10000 || c > 0x10FFFF {
+        return ('\u{FFFD}', '\u{FFFD}')
+    }
+    c -= 0x10000
+    return (char(0xD800 + ((c >> 10) & 0x3FF)), char(0xDC00 + (c & 0x3FF)))
+}
+
+// The code point of a surrogate pair, or U+FFFD if it is not one.
+func DecodeRune(r1 char, r2 char) char {
+    var a = int(r1)
+    var b = int(r2)
+    if a >= 0xD800 && a < 0xDC00 && b >= 0xDC00 && b < 0xE000 {
+        return char((((a - 0xD800) << 10) | (b - 0xDC00)) + 0x10000)
+    }
+    return '\u{FFFD}'
+}
+
+// Number of 16-bit units needed for r (1 or 2), or -1 if invalid.
+func RuneLen(r char) int {
+    var c = int(r)
+    if (c >= 0 && c < 0xD800) || (c >= 0xE000 && c < 0x10000) {
+        return 1
+    }
+    if c >= 0x10000 && c <= 0x10FFFF {
+        return 2
+    }
+    return -1
+}
+
+// The UTF-16 encoding of the code points (invalid ones become U+FFFD).
+func Encode(rs []char) []uint16 {
+    var out []uint16 = []
+    for r in rs {
+        var c = int(r)
+        if (c >= 0 && c < 0xD800) || (c >= 0xE000 && c < 0x10000) {
+            out = append(out, uint16(c))
+        } else if c >= 0x10000 && c <= 0x10FFFF {
+            var (a, b) = EncodeRune(r)
+            out = append(out, uint16(int(a)))
+            out = append(out, uint16(int(b)))
+        } else {
+            out = append(out, uint16(0xFFFD))
+        }
+    }
+    return out
+}
+
+// Appends the encoding of r to u.
+func AppendRune(u []uint16, r char) []uint16 {
+    var out = u
+    for x in Encode([r]) {
+        out = append(out, x)
+    }
+    return out
+}
+
+// The code points of a UTF-16 sequence.
+func Decode(u []uint16) []char {
+    var out []char = []
+    var i = 0
+    for i < len(u) {
+        var a = int(u[i])
+        if a >= 0xD800 &&
+            a < 0xDC00 &&
+            i + 1 < len(u) &&
+            int(u[i + 1]) >= 0xDC00 &&
+            int(u[i + 1]) < 0xE000 {
+            out = append(out, DecodeRune(char(a), char(int(u[i + 1]))))
+            i += 2
+        } else {
+            if a >= 0xD800 && a < 0xE000 {
+                out = append(out, '\u{FFFD}')
+            } else {
+                out = append(out, char(a))
+            }
+            i += 1
+        }
+    }
+    return out
+}

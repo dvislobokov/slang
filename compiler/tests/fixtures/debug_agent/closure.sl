@@ -1,0 +1,23 @@
+namespace app
+
+import std
+import std.io
+
+// Debug-agent fixture: variables captured by a closure and tuples.
+
+func divmod(a int, b int) (int, string) {
+    return (a / b, "rem")
+}
+
+func main() {
+    var base = 10
+    var label = "sum"
+    var pair = divmod(17, 5)
+    var add = func(x int) int {
+        var r = base + x // BREAK lambda
+        return r
+    }
+    base = 20
+    var (q, rest) = pair // BREAK tuple
+    println(label, add(1), q, rest)
+}

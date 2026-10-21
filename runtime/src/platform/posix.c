@@ -1,6 +1,8 @@
 /* posix.c - POSIX implementation of the platform layer (Linux, macOS, BSD):
- * threads, CPU count, monotonic clock, entropy, backtraces and the CPU
- * profiler's SIGPROF sampler and symbolizer. The
+ * threads, CPU count, clocks, sleeping, time formatting, entropy, aligned
+ * memory, console and environment, backtraces and the CPU profiler's
+ * SIGPROF sampler and symbolizer. Files, processes, signals and users are
+ * in fs_posix.c. The
  * readiness poller is in poll_epoll.c / poll_kqueue.c. */
 #include "platform.h"
 
@@ -12,8 +14,16 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#elif defined(__FreeBSD__) || defined(__DragonFly__)
+#include <malloc_np.h>
+#else
+#include <malloc.h>
+#endif
 #if defined(__linux__)
 #include <sys/random.h>
 #endif
@@ -53,6 +63,97 @@ int64_t slang__plat_mono_ns(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
 }
+
+int64_t slang__plat_wall_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+void slang__plat_sleep_ns(int64_t ns) {
+    if (ns <= 0) return;
+    struct timespec ts = { (time_t)(ns / 1000000000), (long)(ns % 1000000000) };
+    while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
+}
+
+size_t slang__plat_strftime(char *buf, size_t cap, const char *fmt, const struct tm *tm) {
+    return strftime(buf, cap, fmt, tm);
+}
+
+const char *slang__plat_strptime(const char *s, const char *fmt, struct tm *tm, long *gmtoff) {
+    const char *end = strptime(s, fmt, tm);
+    *gmtoff = end ? (long)tm->tm_gmtoff : 0;  /* set by %z (glibc, BSD), 0 otherwise */
+    return end;
+}
+
+const char *slang__plat_localtime_path(void) { return "/etc/localtime"; }
+const char *slang__plat_zoneinfo_dir(void) { return "/usr/share/zoneinfo"; }
+
+/* ---- memory ------------------------------------------------------------ */
+
+void *slang__plat_aligned_alloc(size_t align, size_t size) { return aligned_alloc(align, size); }
+void slang__plat_aligned_free(void *p) { free(p); }
+
+size_t slang__plat_alloc_size(void *p) {
+#if defined(__APPLE__)
+    return malloc_size(p);
+#else
+    return malloc_usable_size(p);
+#endif
+}
+
+/* ---- process, console, environment -------------------------------------- */
+
+void slang__plat_runtime_init(int *argc, char ***argv) {
+    (void)argc;
+    (void)argv;
+}
+
+void slang__plat_stream_write(FILE *f, const char *p, size_t n) {
+    if (n) fwrite(p, 1, n, f);
+}
+
+int64_t slang__plat_pid(void) { return (int64_t)getpid(); }
+
+char *slang__plat_getenv(const char *name) {
+    const char *v = getenv(name);
+    return v ? strdup(v) : NULL;
+}
+
+int slang__plat_setenv(const char *name, const char *value) {
+    int rc = value ? setenv(name, value, 1) : unsetenv(name);
+    return rc == 0 ? 0 : errno;
+}
+
+extern char **environ;
+
+char **slang__plat_environ(void) {
+    size_t n = 0;
+    for (char **e = environ; *e; e++) n++;
+    char **v = calloc(n + 1, sizeof *v);
+    if (!v) return NULL;
+    for (size_t i = 0; i < n; i++) v[i] = strdup(environ[i]);
+    return v;
+}
+
+void slang__plat_free_strv(char **v) {
+    if (!v) return;
+    for (char **p = v; *p; p++) free(*p);
+    free(v);
+}
+
+int slang__plat_hostname(char *buf, size_t cap) {
+    if (gethostname(buf, cap) != 0) return errno;
+    buf[cap - 1] = 0;
+    return 0;
+}
+
+char *slang__plat_temp_dir(void) {
+    const char *t = getenv("TMPDIR");
+    return strdup(t && *t ? t : "/tmp");
+}
+
+char slang__plat_path_sep(void) { return '/'; }
 
 bool slang__plat_random_bytes(void *buf, size_t n) {
     unsigned char *p = buf;
@@ -396,6 +497,4 @@ const char *slang__plat_dl_error(void) {
     return e ? e : "unknown error";
 }
 
-#else
-#error "platform/posix.c: unsupported platform (a win32.c implementation is planned)"
-#endif
+#endif /* POSIX; Windows: win32.c */

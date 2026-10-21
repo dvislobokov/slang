@@ -7,8 +7,8 @@
  * Everything here is a pure function of its arguments (plus the per-thread
  * date cache); the protocol state machines stay in Slang. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +53,7 @@ static const char *const common_names[] = {
 #define NCOMMON (sizeof common_names / sizeof common_names[0])
 
 static slang_string *common_strs[NCOMMON];
-static pthread_once_t common_once = PTHREAD_ONCE_INIT;
+static slang__plat_once common_once = SLANG_PLAT_ONCE_INIT;
 
 static int cmp_names(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
@@ -69,7 +69,7 @@ static void common_init(void) {
 
 /* The interned string equal to b[0..n), or NULL. */
 static slang_string *common_lookup(const char *b, size_t n) {
-    pthread_once(&common_once, common_init);
+    slang__plat_once_run(&common_once, common_init);
     size_t lo = 0, hi = NCOMMON;
     while (lo < hi) { /* the table is sorted (strcmp order) */
         size_t mid = (lo + hi) / 2;
@@ -560,7 +560,7 @@ static const char *http_date(void) {
         static const char days[] = "SunMonTueWedThuFriSat";
         static const char mons[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
         struct tm tm;
-        gmtime_r(&now, &tm);
+        slang__plat_utc_tm((int64_t)now, &tm);
         snprintf(buf, sizeof buf, "%.3s, %02d %.3s %04d %02d:%02d:%02d GMT", days + 3 * tm.tm_wday, tm.tm_mday & 31,
                  mons + 3 * tm.tm_mon, (tm.tm_year + 1900) % 10000, tm.tm_hour & 31, tm.tm_min & 63, tm.tm_sec & 63);
         cached = now;
@@ -799,7 +799,7 @@ slang_string *slang_net_http_rt_http_time(int64_t sec) {
     static const char mons[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
     time_t t = (time_t)sec;
     struct tm tm;
-    gmtime_r(&t, &tm);
+    slang__plat_utc_tm((int64_t)t, &tm);
     char buf[64];
     int k = snprintf(buf, sizeof buf, "%.3s, %02d %.3s %04d %02d:%02d:%02d GMT", days + 3 * tm.tm_wday,
                      tm.tm_mday & 31, mons + 3 * tm.tm_mon, (tm.tm_year + 1900) % 10000, tm.tm_hour & 31,
@@ -920,7 +920,7 @@ static const uint8_t huff_lens[256] = {
  * leaf for symbol value - 0x1000 (256 = EOS). */
 static uint16_t trie[512][2];
 static int trie_nodes;
-static pthread_once_t trie_once = PTHREAD_ONCE_INIT;
+static slang__plat_once trie_once = SLANG_PLAT_ONCE_INIT;
 
 static void trie_add(uint32_t code, int len, int sym) {
     int n = 0;
@@ -976,7 +976,7 @@ void slang_net_http_hpack_rt_huff_encode(const slang_string *s, slang_slice *out
  * the data, padding longer than 7 bits or not all ones. */
 slang_string *slang_net_http_hpack_rt_huff_decode(const slang_slice *b, int64_t off, int64_t n, slang_error **err) {
     if (err) *err = NULL;
-    pthread_once(&trie_once, trie_init);
+    slang__plat_once_run(&trie_once, trie_init);
     if (!b || off < 0 || n < 0 || off + n > b->len) {
         if (err) *err = slang_error_new_cstr("hpack: invalid Huffman range");
         return NULL;

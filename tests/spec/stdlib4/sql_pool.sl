@@ -3,16 +3,16 @@
 // run-flags: --leak-check
 namespace spec.stdlib4.sql_pool
 
-import std.io
 import std
 import std.database
+import std.io
 
 struct counters {
-    opened int
-    closed int
+    opened   int
+    closed   int
     prepared int
-    pings int
-    queries []string
+    pings    int
+    queries  []string
 }
 
 // A fake driver: "select N" returns rows 1..N of one column; "fail" breaks
@@ -34,8 +34,8 @@ async func openFake(c *counters, dsn string) sql.DriverConn! {
 }
 
 struct fakeConn {
-    c *counters
-    id int
+    c      *counters
+    id     int
     broken bool
 
     func Prepare(query string) Task<sql.DriverStmt!> {
@@ -52,7 +52,10 @@ struct fakeConn {
     }
 
     async func exec(query string, args []any) sql.Result! {
-        this.c.queries = append(this.c.queries, fmt.Format("conn{0}: {1} {2}", this.id, query, args))
+        this.c.queries = append(
+            this.c.queries,
+            fmt.Format("conn{0}: {1} {2}", this.id, query, args),
+        )
         if query == "fail" {
             this.broken = true
             return error("fake: connection lost")
@@ -68,7 +71,10 @@ struct fakeConn {
     }
 
     async func query(query string, args []any) sql.DriverRows! {
-        this.c.queries = append(this.c.queries, fmt.Format("conn{0}: {1} {2}", this.id, query, args))
+        this.c.queries = append(
+            this.c.queries,
+            fmt.Format("conn{0}: {1} {2}", this.id, query, args),
+        )
         var n = 3
         if len(args) > 0 {
             switch args[0] {
@@ -110,7 +116,7 @@ struct fakeConn {
 
 struct fakeStmt {
     conn *fakeConn
-    q string
+    q    string
 
     func Exec(args []any) Task<sql.Result!> {
         return this.conn.exec(this.q, args)
@@ -124,8 +130,7 @@ struct fakeStmt {
         return -1
     }
 
-    func Close() void! {
-    }
+    func Close() void! {}
 }
 
 struct fakeRows {
@@ -153,8 +158,7 @@ struct fakeRows {
         return true
     }
 
-    func Close() void! {
-    }
+    func Close() void! {}
 }
 
 struct fakeTx {
@@ -184,8 +188,15 @@ async func main() void! {
     db.SetHealthCheck(-1)
 
     // named parameters become $n in order of first use
-    _ = await db.Exec("update t set a = :a, b = :b where a = :a and c = ':a' -- :zz", [sql.Named("b", 2), sql.Named("a", 1)])?
-    var (q, args) = sql.RewriteNamed("x = :x::int, y = ?", [sql.Named("x", 5)], sql.PlaceholderQuestion)?
+    _ = await db.Exec("update t set a = :a, b = :b where a = :a and c = ':a' -- :zz", [
+        sql.Named("b", 2),
+        sql.Named("a", 1),
+    ])?
+    var (q, args) = sql.RewriteNamed(
+        "x = :x::int, y = ?",
+        [sql.Named("x", 5)],
+        sql.PlaceholderQuestion,
+    )?
     println(q, args)
 
     // 5 tasks through 2 connections

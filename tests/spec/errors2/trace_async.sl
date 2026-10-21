@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors2.trace_async
 
-import std.io
 import std
+import std.io
 
 async func Fetch(url string) string! {
     await task.Delay(1)

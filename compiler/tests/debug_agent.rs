@@ -360,9 +360,42 @@ fn exception_breakpoint_on_panic() {
     assert_eq!((func.as_str(), line), ("app.divide", line_of(&s.src, "panic")));
     assert_eq!(s.eval(t, "b").unwrap(), "0");
     s.c.request("continue", json!({"threadId": t})).unwrap();
+    // The resumed run is announced, and the panic ending the program is
+    // reported as `exited` (code 2) and `terminated`.
+    let cont = s.c.wait_event("continued", T).expect("no continued event");
+    assert_eq!(cont["body"]["threadId"].as_i64(), Some(t));
+    let ex = s.c.wait_event("exited", T).expect("no exited event after the panic");
+    assert_eq!(ex["body"]["exitCode"], 2);
+    s.c.wait_event("terminated", T).expect("no terminated event after the panic");
     let out = s.child.wait_with_output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("-1 2"));
     assert!(!out.status.success(), "the panic goes on after continue");
+}
+
+#[test]
+fn closure_captures_and_tuples() {
+    let mut s = Session::start("debug_agent/closure.sl", &[]);
+    s.begin(&[("tuple", "", ""), ("lambda", "", "")]);
+    let t = s.stopped()["threadId"].as_i64().unwrap();
+    assert_eq!(s.top(t).2, line_of(&s.src, "tuple"));
+    let vs = s.vars(t);
+    let pair = find(&vs, "pair").clone();
+    assert_eq!((pair.1.as_str(), pair.2.as_str()), ("(int, string)", "(3, \"rem\")"));
+    let kids = s.c.children(pair.3).unwrap();
+    assert_eq!(kids.iter().map(|v| (v["name"].as_str().unwrap(), v["value"].as_str().unwrap())).collect::<Vec<_>>(), [("_0", "3"), ("_1", "\"rem\"")]);
+    assert_eq!(s.eval(t, "pair._1").unwrap(), "\"rem\"");
+    s.c.request("continue", json!({"threadId": t})).unwrap();
+    // Inside the lambda: its parameter, its local and the captured
+    // variables of main (by reference: base was changed to 20).
+    let t = s.stopped()["threadId"].as_i64().unwrap();
+    let (_, func, line) = s.top(t);
+    assert_eq!((func.as_str(), line), ("app.main$lambda1", line_of(&s.src, "lambda")));
+    let vs = s.vars(t);
+    assert_eq!(find(&vs, "x").2, "1");
+    assert_eq!(find(&vs, "base").2, "20");
+    assert_eq!(s.eval(t, "base == 20").unwrap(), "true");
+    assert!(!vs.iter().any(|v| v.0 == "label"), "only what the lambda captures: {vs:?}");
+    assert_eq!(s.finish(), "sum 21 3 rem\n");
 }
 
 #[test]
@@ -462,6 +495,19 @@ fn capability_gate() {
     let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("check").arg(&f).output().unwrap();
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("needs the `unsafe` capability"), "{}", String::from_utf8_lossy(&r.stderr));
+    // Reaching it by its full path without an import is gated too
+    // (also through `import std` and with std.plugin).
+    for (body, cap) in [
+        ("import std.io\n\nfunc main() {\n    println(std.unsafe.ReadInt(0, 0))\n}\n", "unsafe"),
+        ("import std.io\nimport std\n\nfunc main() {\n    println(unsafe.ReadInt(0, 0))\n}\n", "unsafe"),
+        ("import std.io\n\nfunc main() {\n    println(try std.plugin.rtOpen(\"x\") else 0)\n}\n", "plugin"),
+    ] {
+        std::fs::write(&f, format!("namespace app\n\n{body}")).unwrap();
+        let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("check").arg(&f).output().unwrap();
+        assert!(!r.status.success(), "{body}");
+        let err = String::from_utf8_lossy(&r.stderr);
+        assert!(err.contains(&format!("needs the `{cap}` capability")), "{body}: {err}");
+    }
     // A package granting the capability may import it.
     let pkg = dir.join("pkg");
     std::fs::create_dir_all(pkg.join("src")).unwrap();

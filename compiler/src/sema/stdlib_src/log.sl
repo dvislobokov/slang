@@ -27,18 +27,18 @@ enum Level { Verbose, Debug, Information, Warning, Error, Fatal }
 // them in that order. Message is the rendered template with strings
 // written as they are (Serilog's `{Message:lj}`).
 struct Event {
-    Timestamp int
-    Level Level
-    Template string
-    Message string
+    Timestamp  int
+    Level      Level
+    Template   string
+    Message    string
     Properties map[string]any
-    Error error
-    Category string
-    keys []string
-    parts []string
-    names []string
-    formats []string
-    values []any
+    Error      error
+    Category   string
+    keys       []string
+    parts      []string
+    names      []string
+    formats    []string
+    values     []any
 
     // Property names in insertion order.
     func Keys() []string {
@@ -90,7 +90,12 @@ struct Event {
         for i, p in this.parts {
             b.Write(p)
             if i < len(this.names) {
-                b.Write(applyAlign(renderValue(this.values[i], formatOf(this.formats[i]), !literal), this.formats[i]))
+                b.Write(
+                    applyAlign(
+                        renderValue(this.values[i], formatOf(this.formats[i]), !literal),
+                        this.formats[i],
+                    ),
+                )
             }
         }
         return b.String()
@@ -100,8 +105,8 @@ struct Event {
 // A destructured struct (`{@Order}`): Serilog's StructureValue.
 struct Structure {
     TypeTag string
-    Names []string
-    Values []any
+    Names   []string
+    Values  []any
 
     func Get(name string) any {
         for i, n in this.Names {
@@ -115,7 +120,7 @@ struct Structure {
 
 // A destructured map with string keys (keys sorted).
 struct Dictionary {
-    Keys []string
+    Keys   []string
     Values []any
 }
 
@@ -157,33 +162,33 @@ func NewLevelSwitch(level Level) *LevelSwitch {
 
 struct override {
     prefix string
-    level Level
+    level  Level
 }
 
 struct prop {
-    name string
+    name  string
     value any
 }
 
 // ---- configuration --------------------------------------------------------
 
 struct cfgState {
-    min Level
-    sw *LevelSwitch
+    min       Level
+    sw        *LevelSwitch
     overrides []override
     enrichers []Enricher
-    sinks []Sink
-    filters []func(*Event) bool
-    clock func() int
+    sinks     []Sink
+    filters   []func(*Event) bool
+    clock     func() int
 }
 
 // Configuration builds a logger: log.New().MinimumLevel(...).Enrich....
 // .WriteTo....CreateLogger(). Copies share their state.
 struct Configuration {
-    st *cfgState
-    Enrich EnrichConfiguration
+    st      *cfgState
+    Enrich  EnrichConfiguration
     WriteTo SinkConfiguration
-    Filter FilterConfiguration
+    Filter  FilterConfiguration
 
     func MinimumLevel(level Level) Configuration {
         this.st.min = level
@@ -227,7 +232,12 @@ struct Configuration {
 }
 
 func wrap(st *cfgState) Configuration {
-    return Configuration{st: st, Enrich: EnrichConfiguration{st: st}, WriteTo: SinkConfiguration{st: st}, Filter: FilterConfiguration{st: st}}
+    return Configuration{
+        st: st,
+        Enrich: EnrichConfiguration{st: st},
+        WriteTo: SinkConfiguration{st: st},
+        Filter: FilterConfiguration{st: st},
+    }
 }
 
 func copyOverrides(o []override) []override {
@@ -331,16 +341,16 @@ struct FilterConfiguration {
 
 // Pipeline is the Logger made by CreateLogger.
 struct Pipeline {
-    min Level
-    sw *LevelSwitch
-    fixed bool
+    min       Level
+    sw        *LevelSwitch
+    fixed     bool
     overrides []override
     enrichers []Enricher
-    sinks []Sink
-    filters []func(*Event) bool
-    clock func() int
-    category string
-    props []prop
+    sinks     []Sink
+    filters   []func(*Event) bool
+    clock     func() int
+    category  string
+    props     []prop
 
     func IsEnabled(level Level) bool {
         var m = this.min
@@ -379,7 +389,17 @@ struct Pipeline {
     }
 
     func derive() *Pipeline {
-        var p = new Pipeline{min: this.min, sw: this.sw, fixed: this.fixed, overrides: this.overrides, enrichers: this.enrichers, sinks: this.sinks, filters: this.filters, clock: this.clock, category: this.category}
+        var p = new Pipeline{
+            min: this.min,
+            sw: this.sw,
+            fixed: this.fixed,
+            overrides: this.overrides,
+            enrichers: this.enrichers,
+            sinks: this.sinks,
+            filters: this.filters,
+            clock: this.clock,
+            category: this.category,
+        }
         for x in this.props {
             p.props = append(p.props, x)
         }
@@ -399,7 +419,8 @@ struct Pipeline {
         p.category = category
         var best = -1
         for o in this.overrides {
-            if (category == o.prefix || std.strings.HasPrefix(category, o.prefix + ".")) && len(o.prefix) > best {
+            if (category == o.prefix || std.strings.HasPrefix(category, o.prefix + ".")) &&
+                len(o.prefix) > best {
                 best = len(o.prefix)
                 p.min = o.level
                 p.fixed = true
@@ -440,7 +461,9 @@ func Global() Logger {
             std.diag.rtUnlock()
             return h.l
     }
-    var l = New().WriteTo.Console(ConsoleOptions{Template: "{Level:u4} {Message:lj}{NewLine}{Exception}"}).CreateLogger()
+    var l = New().WriteTo.Console(ConsoleOptions{
+        Template: "{Level:u4} {Message:lj}{NewLine}{Exception}",
+    }).CreateLogger()
     m["log.global"] = globalHolder{l: l}
     std.diag.rtUnlock()
     return l
@@ -523,12 +546,29 @@ func enabled(l Logger, level Level) bool {
     return l.IsEnabled(level)
 }
 
-func emit(l Logger, level Level, err error, text string, parts []string, names []string, formats []string, values []any) bool {
+func emit(
+    l Logger,
+    level Level,
+    err error,
+    text string,
+    parts []string,
+    names []string,
+    formats []string,
+    values []any,
+) bool {
     var lg = l
     if lg == nil {
         lg = Global()
     }
-    var e = new Event{Level: level, Template: text, Error: err, parts: parts, names: names, formats: formats, values: values}
+    var e = new Event{
+        Level: level,
+        Template: text,
+        Error: err,
+        parts: parts,
+        names: names,
+        formats: formats,
+        values: values,
+    }
     e.Properties = map[string]any{}
     for i, n in names {
         e.AddIfAbsent(n, values[i])
@@ -550,9 +590,20 @@ func emit(l Logger, level Level, err error, text string, parts []string, names [
 // variant name, slices and arrays element-wise, pointers by their target,
 // other types (structs, maps, functions) by their type name.
 func capture<T>(v T) any {
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Any || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Error {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Any ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Error {
         return v
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
         return int(v)
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
         return float(v)
@@ -560,7 +611,8 @@ func capture<T>(v T) any {
         return string(v)
     } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
         return std.fmt.Format("{0}", v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
         var xs []any = []
         for x in v {
             xs = append(xs, capture(x))
@@ -608,7 +660,8 @@ func destructureAt<T>(v T, depth int) any {
             return nil
         }
         return destructureAt(*v, depth)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
         var xs []any = []
         for x in v {
             xs = append(xs, destructureAt(x, depth + 1))
@@ -655,7 +708,11 @@ struct Context {
     static func Push(name string, value any) ContextScope {
         var old = std.task.rtGetCtx()
         var c = std.task.CurrentContext()
-        var fr = new std.task.ctxFrame{key: -101, val: new prop{name: name, value: value}, next: c.top()}
+        var fr = new std.task.ctxFrame{
+            key: -101,
+            val: new prop{name: name, value: value},
+            next: c.top(),
+        }
         var m = map[string]any{}
         m[""] = fr
         std.task.rtSetCtx(m)
@@ -690,7 +747,7 @@ struct ContextScope {
 }
 
 struct propertyEnricher {
-    name string
+    name  string
     value any
 
     func Enrich(e *Event) {
@@ -1070,10 +1127,10 @@ func formatTime(ms int, f string) string {
 // ---- output templates -----------------------------------------------------
 
 struct segment {
-    text string
-    name string
+    text   string
+    name   string
     format string
-    align string
+    align  string
 }
 
 // Splits an output template ("{Timestamp:HH:mm:ss} [{Level:u3}] {Message:lj}{NewLine}").
@@ -1262,7 +1319,7 @@ struct ConsoleOptions {
 }
 
 struct ConsoleSink {
-    segs []segment
+    segs   []segment
     stdout bool
     colors bool
 
@@ -1306,16 +1363,16 @@ struct FileOptions {
 }
 
 struct FileSink {
-    guard int
-    base string
-    opts FileOptions
-    segs []segment
-    fd int
-    period string
-    seq int
-    size int
+    guard   int
+    base    string
+    opts    FileOptions
+    segs    []segment
+    fd      int
+    period  string
+    seq     int
+    size    int
     current string
-    err string
+    err     string
 
     func pathFor(period string, seq int) string {
         var dir = std.fs.Dir(this.base)
@@ -1406,7 +1463,9 @@ struct FileSink {
                 this.seq = 0
             }
             this.open(period)
-        } else if this.opts.FileSizeLimit > 0 && this.size + len(line) > this.opts.FileSizeLimit && this.size > 0 {
+        } else if this.opts.FileSizeLimit > 0 &&
+            this.size + len(line) > this.opts.FileSizeLimit &&
+            this.size > 0 {
             this.seq += 1
             this.open(period)
         }
@@ -1449,7 +1508,7 @@ struct JsonOptions {
 }
 
 struct JsonSink {
-    file *FileSink
+    file   *FileSink
     stdout bool
 
     func Emit(e *Event) {
@@ -1484,8 +1543,8 @@ func NewJsonSink(opts JsonOptions) *JsonSink {
 // AsyncSink hands events to a background task through a channel (Emit
 // never blocks the caller while the queue has room); Close drains it.
 struct AsyncSink {
-    ch std.task.Channel<*Event>
-    done Task<void>
+    ch     std.task.Channel<*Event>
+    done   Task<void>
     closed bool
 
     func Emit(e *Event) {

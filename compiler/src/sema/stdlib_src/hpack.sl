@@ -8,8 +8,8 @@ namespace std.net.http.hpack
 // A header field. Sensitive fields are never indexed (encoded as
 // "literal never indexed", and kept so by intermediaries).
 struct HeaderField {
-    Name string
-    Value string
+    Name      string
+    Value     string
     Sensitive bool
 
     // The table size of the entry (RFC 7541 4.1).
@@ -21,7 +21,7 @@ struct HeaderField {
 // The dynamic table: entries[len-1] is the newest (index 62).
 struct table {
     entries []HeaderField
-    size int
+    size    int
     maxSize int
 
     func add(f HeaderField) {
@@ -128,7 +128,7 @@ func appendString(out []byte, s string, huffman bool) []byte {
 
 // A decoding cursor over one header block.
 struct cursor {
-    b []byte
+    b   []byte
     pos int
 
     func readInt(n int) int! {
@@ -270,7 +270,7 @@ func NewDecoder(maxTableSize int) *Decoder {
 struct Encoder {
     t table
     // a pending dynamic table size update (after SetMaxTableSize)
-    update bool
+    update  bool
     minSize int
     // Huffman-code strings when shorter (default on via NewEncoder)
     Huffman bool

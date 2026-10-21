@@ -2,11 +2,11 @@
 // status: passing
 namespace spec.reflection.attribute_after_index
 
-import std.io
 import std
+import std.io
 
 struct User {
-    @json(name: "id") Id int
+    @json(name: "id")                    Id    int
     @json(name: "mail", omitEmpty: true) Email string
 }
 

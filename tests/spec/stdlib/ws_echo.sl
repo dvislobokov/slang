@@ -3,14 +3,14 @@
 // run-flags: --leak-check
 namespace spec.stdlib.ws_echo
 
-import std.io
 import std
+import std.io
 import std.net
 
 struct Seen {
     closeCode int
-    reason string
-    done task.Channel<int>
+    reason    string
+    done      task.Channel<int>
 }
 
 async func echo(seen *Seen, req *http.Request, res *http.Response) void! {
@@ -56,7 +56,11 @@ async func main() void! {
     await c.SendText(big)?
     m = await c.Recv()?
     println("big:", len(m.Data), m.Text() == big)
-    await c.SendFragments(ws.TextMessage, [strings.Bytes("frag"), strings.Bytes("men"), strings.Bytes("ted")])?
+    await c.SendFragments(ws.TextMessage, [
+        strings.Bytes("frag"),
+        strings.Bytes("men"),
+        strings.Bytes("ted"),
+    ])?
     m = await c.Recv()?
     println("fragments:", m.Text())
     await c.Ping(strings.Bytes("p"))?

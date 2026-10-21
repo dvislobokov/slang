@@ -25,7 +25,12 @@ func main() {
     print(Greeting)
     println(len(Greeting), Blob, len(Banner), strings.HasPrefix(Banner, "Hello"))
     println(Assets.Names(), Assets.Len(), Texts.Names())
-    println(try Assets.ReadString("assets/sub/c.txt") else "?", try Assets.ReadString("./assets/a.txt") else "?", Assets.Has("assets/b.md"), Texts.Has("assets/b.md"))
+    println(
+        try Assets.ReadString("assets/sub/c.txt") else "?",
+        try Assets.ReadString("./assets/a.txt") else "?",
+        Assets.Has("assets/b.md"),
+        Texts.Has("assets/b.md"),
+    )
     println(Assets.List("assets/sub"))
     try {
         _ = Assets.ReadFile("nope")?

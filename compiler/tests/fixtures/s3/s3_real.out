@@ -1,0 +1,29 @@
+exists before false
+create again: BucketAlreadyOwnedByYou
+listed true true
+etag true
+head 11 text/plain ann true
+get hello minio
+range minio 11
+streamed 3000000
+missing: true NoSuchKey
+head missing: true
+no bucket: true
+wrong secret: SignatureDoesNotMatch
+page 10 true logs/1000.log
+all 23 pages 3
+top level [big.txt dir/ logs/]
+copy keeps metadata ann hello minio
+copy replaces metadata bob text/x-note
+multipart true
+multipart size true
+multipart content true
+aborted upload left nothing: true
+presigned get 200 hello minio
+presigned put 200 uploaded with a presigned URL
+blob [a/1.txt=3 a/2.txt=4] two! false
+blob signed url one
+blob missing: true
+not empty: BucketNotEmpty
+deleted 31 failed 0
+exists after false

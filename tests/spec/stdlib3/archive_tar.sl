@@ -13,11 +13,22 @@ func short(name string) string {
 }
 
 func main() void! {
-    var tgz = encoding.base64.Decode("H4sIAAAAAAACA+3Zy26CQBiG4VlzFSzbDc55ysJ9l70ForSaYDFIE9Or7+jKQ1p7EIjlfTb8kYWG8eNzMJs8FdvHspiXzWayKKuqztptK65KRt7a/TE6PUoZrFDWuWCMc14LqbTySqRb0YO3TVs08aOIcTIyLdrlqpyqkGun7YP1mVS5dbm1eRLPzs7PmqBUMCERuHkdRf5n+df6JP/Khph/2Wf+m7r+8hpcOn/L658+N/UqfV+u79Q9qR6V7LD/5/VsM0T+z/o/9ouk/4fsfyW18fT/v7eL/KTj99hH3LnP8x/n4/xL541IHf3fz/ofVEDVgUv3fx3c8fob7eNL3P97oHSerot2Md1/Eape7bYdCRvQ4fPf8Tpf/P0nT/NvvbTs//pQ1a8v5Gjk+T/o/6ZcX/1p0C+e/1oT6P8h93/U74jy30Xov59/66w8+/9HOfq/D3Hpy6JNq+VrmTAzMzMzMzMzM/99ZocBAAAAAAAAAAAAAAAAAACAa/oAvXil7gBQAAA=")?
+    var tgz = encoding.base64.Decode(
+        "H4sIAAAAAAACA+3Zy26CQBiG4VlzFSzbDc55ysJ9l70ForSaYDFIE9Or7+jKQ1p7EIjlfTb8kYWG8eNzMJs8FdvHspiXzWayKKuqztptK65KRt7a/TE6PUoZrFDWuWCMc14LqbTySqRb0YO3TVs08aOIcTIyLdrlqpyqkGun7YP1mVS5dbm1eRLPzs7PmqBUMCERuHkdRf5n+df6JP/Khph/2Wf+m7r+8hpcOn/L658+N/UqfV+u79Q9qR6V7LD/5/VsM0T+z/o/9ouk/4fsfyW18fT/v7eL/KTj99hH3LnP8x/n4/xL541IHf3fz/ofVEDVgUv3fx3c8fob7eNL3P97oHSerot2Md1/Eape7bYdCRvQ4fPf8Tpf/P0nT/NvvbTs//pQ1a8v5Gjk+T/o/6ZcX/1p0C+e/1oT6P8h93/U74jy30Xov59/66w8+/9HOfq/D3Hpy6JNq+VrmTAzMzMzMzMzM/99ZocBAAAAAAAAAAAAAAAAAACAa/oAvXil7gBQAAA=",
+    )?
     var data = compress.gzip.Decompress(tgz)?
     for e in archive.tar.Read(data)? {
         var h = e.Header
-        println(short(h.Name), string(char(h.Type)), h.Size, len(e.Data), h.ModTime, h.Mode, h.Uid, h.IsDir())
+        println(
+            short(h.Name),
+            string(char(h.Type)),
+            h.Size,
+            len(e.Data),
+            h.ModTime,
+            h.Mode,
+            h.Uid,
+            h.IsDir(),
+        )
     }
 
     var w = archive.tar.NewWriter()
@@ -27,7 +38,16 @@ func main() void! {
     w.AddString(deep, "deep")?
     w.AddString("ünïcödé.txt", "utf8")?
     w.AddString(strings.Repeat("x", 300), "long")?
-    w.AddHeader(archive.tar.Header{Name: "link", Type: archive.tar.TypeSymlink, Linkname: "plain.txt", Uid: 5000000, Uname: "someone"}, [])?
+    w.AddHeader(
+        archive.tar.Header{
+            Name: "link",
+            Type: archive.tar.TypeSymlink,
+            Linkname: "plain.txt",
+            Uid: 5000000,
+            Uname: "someone",
+        },
+        [],
+    )?
     var out = w.Close()
     println(len(out) % 512 == 0)
     var r = archive.tar.NewReader(out)
@@ -36,7 +56,16 @@ func main() void! {
         if h == nil {
             break
         }
-        println(short(h.Name), len(h.Name), string(char(h.Type)), h.Size, strings.FromBytes(r.Data()), h.Linkname, h.Uid, h.Uname)
+        println(
+            short(h.Name),
+            len(h.Name),
+            string(char(h.Type)),
+            h.Size,
+            strings.FromBytes(r.Data()),
+            h.Linkname,
+            h.Uid,
+            h.Uname,
+        )
     }
 
     var bad []byte = []

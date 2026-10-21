@@ -324,3 +324,493 @@ fn cfg_features_and_file_suffixes_in_packages() {
     assert_eq!(out, "verbose fast extra base host\n");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---------------------------------------------------------------------------
+// Stage 2: module dependencies (git tags, MVS, lock, proxy, checksum log,
+// store, offline, vendor). Every test builds local bare git repositories
+// and maps `https://example.com/<name>` to them with git's `insteadOf`
+// (through GIT_CONFIG_* variables), so nothing leaves the machine.
+// ---------------------------------------------------------------------------
+
+/// A sandbox: bare repositories, a store, a home, projects.
+struct Sandbox {
+    root: PathBuf,
+}
+
+/// Runs git in `dir` (test identity, no user configuration).
+fn git(dir: &Path, args: &[&str]) {
+    let o = Command::new("git")
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git");
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+}
+
+/// One release of a test module: tag and files.
+type Release<'a> = (&'a str, &'a [(&'a str, &'a str)]);
+
+impl Sandbox {
+    fn new(test: &str) -> Sandbox {
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!("slang-mod-{}-{}-{test}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("repos")).unwrap();
+        Sandbox { root }
+    }
+
+    fn path(&self, p: &str) -> PathBuf {
+        self.root.join(p)
+    }
+
+    fn write(&self, p: &str, s: &str) {
+        let f = self.root.join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, s).unwrap();
+    }
+
+    /// Creates the bare repository `repos/<name>` (module path
+    /// `example.com/<name>`) with one commit and tag per release; files of
+    /// a release replace the previous tree.
+    fn module(&self, name: &str, releases: &[Release]) {
+        let work = self.path(&format!("work/{name}"));
+        std::fs::create_dir_all(&work).unwrap();
+        git(&work, &["init", "-q"]);
+        for (tag, files) in releases {
+            for e in std::fs::read_dir(&work).unwrap().flatten() {
+                if e.file_name() != ".git" {
+                    let p = e.path();
+                    if p.is_dir() {
+                        std::fs::remove_dir_all(p).unwrap();
+                    } else {
+                        std::fs::remove_file(p).unwrap();
+                    }
+                }
+            }
+            for (p, text) in *files {
+                let f = work.join(p);
+                std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+                std::fs::write(f, text).unwrap();
+            }
+            git(&work, &["add", "-A"]);
+            git(&work, &["commit", "-q", "--allow-empty", "-m", tag]);
+            if !tag.is_empty() && !tag.starts_with("branch:") {
+                git(&work, &["tag", "-f", tag]);
+            }
+        }
+        let bare = self.path(&format!("repos/{name}"));
+        let _ = std::fs::remove_dir_all(&bare);
+        git(&self.root, &["clone", "-q", "--bare", work.to_str().unwrap(), bare.to_str().unwrap()]);
+    }
+
+    /// Environment of a `slang` run: own store and home, and (`git`) the
+    /// rewrite of example.com to the local repositories.
+    fn env(&self, git: bool) -> Vec<(String, String)> {
+        let mut v = vec![
+            ("SLANG_STORE".to_string(), self.path("store").display().to_string()),
+            ("SLANG_HOME".to_string(), self.path("home").display().to_string()),
+            ("GIT_CONFIG_GLOBAL".to_string(), "/dev/null".to_string()),
+            ("GIT_CONFIG_NOSYSTEM".to_string(), "1".to_string()),
+        ];
+        if git {
+            v.push(("GIT_CONFIG_COUNT".into(), "1".into()));
+            v.push(("GIT_CONFIG_KEY_0".into(), format!("url.file://{}/.insteadOf", self.path("repos").display())));
+            v.push(("GIT_CONFIG_VALUE_0".into(), "https://example.com/".into()));
+        }
+        v
+    }
+
+    fn run(&self, dir: &str, args: &[&str], env: &[(String, String)]) -> Output {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_slang"));
+        c.args(args).current_dir(self.path(dir));
+        for v in ["SLANG_PROXY", "SLANG_SUMDB", "SLANG_PRIVATE", "SLANG_NOPROXY", "SLANG_NOSUMDB", "GIT_CONFIG_COUNT", "SLANG_STD"] {
+            c.env_remove(v);
+        }
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.output().expect("cannot run slang")
+    }
+
+    fn ok(&self, dir: &str, args: &[&str], env: &[(String, String)]) -> String {
+        let o = self.run(dir, args, env);
+        let (out, err) = (String::from_utf8_lossy(&o.stdout).to_string(), String::from_utf8_lossy(&o.stderr).to_string());
+        assert!(o.status.success(), "slang {args:?} in {dir} failed:\nstdout:\n{out}\nstderr:\n{err}");
+        out + &err
+    }
+
+    fn fails(&self, dir: &str, args: &[&str], env: &[(String, String)]) -> String {
+        let o = self.run(dir, args, env);
+        let err = String::from_utf8_lossy(&o.stderr).to_string();
+        assert!(!o.status.success(), "slang {args:?} in {dir} unexpectedly succeeded:\n{err}");
+        err
+    }
+
+    fn read(&self, p: &str) -> String {
+        std::fs::read_to_string(self.path(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            make_writable(&self.root);
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+}
+
+fn make_writable(p: &Path) {
+    if let Ok(m) = std::fs::symlink_metadata(p) {
+        if m.is_dir() {
+            for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+                make_writable(&e.path());
+            }
+        }
+        let mut perm = m.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+        let _ = std::fs::set_permissions(p, perm);
+    }
+}
+
+/// A library module manifest + source: `func Name() string` returns `text`.
+fn lib_files(name: &str, version: &str, deps: &str, body: &str) -> Vec<(String, String)> {
+    vec![
+        ("slang.toml".into(), format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\nnamespace = \"{}\"\n\n[dependencies]\n{deps}", name.replace('-', "_"))),
+        ("src/lib.sl".into(), format!("namespace {}\n\n// Name says which version this is.\n{body}\n", name.replace('-', "_"))),
+    ]
+}
+
+fn module_from(sb: &Sandbox, name: &str, releases: &[(&str, Vec<(String, String)>)]) {
+    let owned: Vec<(&str, Vec<(&str, &str)>)> = releases.iter().map(|(t, fs)| (*t, fs.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect())).collect();
+    let rel: Vec<Release> = owned.iter().map(|(t, fs)| (*t, fs.as_slice())).collect();
+    sb.module(name, &rel);
+}
+
+/// The app project in `dir` depending on `deps`, printing `body`.
+fn app(sb: &Sandbox, dir: &str, deps: &str, imports: &str, body: &str) {
+    sb.write(&format!("{dir}/slang.toml"), &format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.sl\"\n\n[dependencies]\n{deps}"));
+    sb.write(&format!("{dir}/src/main.sl"), &format!("namespace app\n\nimport std.io\n{imports}\nfunc main() {{\n    println({body})\n}}\n"));
+}
+
+/// Modules a (v1.0.0, v1.1.0, v2.0.0) and c (v1.0.0..v1.3.0), b (v1.0.0)
+/// with a -> c ^1.1, b -> c ^1.2.
+fn three_modules(sb: &Sandbox) {
+    let c = |v: &str| lib_files("modc", &v[1..], "", &format!("func Name() string {{\n    return \"c{v}\"\n}}"));
+    module_from(sb, "c", &[("v1.0.0", c("v1.0.0")), ("v1.1.0", c("v1.1.0")), ("v1.2.0", c("v1.2.0")), ("v1.3.0", c("v1.3.0"))]);
+    let a = |v: &str| lib_files("moda", &v[1..], "\"example.com/c\" = \"^1.1\"\n", &format!("import modc\n\nfunc Name() string {{\n    return \"a{v}+\" + modc.Name()\n}}"));
+    module_from(sb, "a", &[("v1.0.0", a("v1.0.0")), ("v1.1.0", a("v1.1.0")), ("v2.0.0", a("v2.0.0"))]);
+    let b = lib_files("modb", "1.0.0", "\"example.com/c\" = \"^1.2\"\n", "import modc\n\nfunc Name() string {\n    return \"b+\" + modc.Name()\n}");
+    module_from(sb, "b", &[("v1.0.0", b)]);
+}
+
+#[test]
+fn git_dependencies_resolve_from_tags_with_mvs() {
+    ensure_runtime();
+    let sb = Sandbox::new("mvs");
+    three_modules(&sb);
+    let env = sb.env(true);
+    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n\"example.com/b\" = \"^1\"\n", "import moda\nimport modb\n", "moda.Name(), modb.Name()");
+    let out = sb.ok("p", &["run"], &env);
+    // MVS: a at its minimum v1.0.0; c at max(min(^1.1), min(^1.2)) = v1.2.0.
+    assert!(out.ends_with("av1.0.0+cv1.2.0 b+cv1.2.0\n"), "{out}");
+    let lock = sb.read("p/slang.lock");
+    assert!(lock.contains("module: example.com/a") && lock.contains("version: v1.0.0"), "{lock}");
+    assert!(lock.contains("module: example.com/c") && lock.contains("version: v1.2.0"), "{lock}");
+    assert!(lock.contains("checksum: h1:") && lock.contains("source: module"), "{lock}");
+    assert!(sb.path("p/.slang/deps/example.com/c@v1.2.0/src/lib.sl").is_file());
+    // tree and why.
+    let tree = sb.ok("p", &["tree"], &env);
+    assert!(tree.contains("├── moda v1.0.0 (example.com/a)") && tree.contains("modc v1.2.0 (example.com/c)"), "{tree}");
+    let why = sb.ok("p", &["why", "example.com/c"], &env);
+    assert!(why.contains("moda v1.0.0 (example.com/a) (example.com/a ^1.0) -> modc v1.2.0 (example.com/c) (example.com/c ^1.1)"), "{why}");
+    assert!(why.contains("modb v1.0.0 (example.com/b)"), "{why}");
+    // Re-tagged releases with other content: the lock's checksum catches it.
+    let c13 = lib_files("modc", "1.4.0", "", "func Name() string {\n    return \"cv1.4.0\"\n}");
+    module_from(&sb, "c", &[("v1.0.0", c13.clone()), ("v1.1.0", c13.clone()), ("v1.2.0", c13.clone()), ("v1.3.0", c13.clone()), ("v1.4.0", c13)]);
+    make_writable(&sb.path("store"));
+    std::fs::remove_dir_all(sb.path("store")).unwrap();
+    let err = sb.fails("p", &["install"], &env);
+    assert!(err.contains("checksum mismatch for example.com/c@v1.2.0"), "{err}");
+    // Back to the original content (v1.4.0 stays): a new release changes
+    // nothing until `slang update`.
+    three_modules(&sb);
+    sb.ok("p", &["install"], &env);
+    assert!(sb.read("p/slang.lock").contains("version: v1.2.0"));
+    let up = sb.ok("p", &["update", "example.com/a"], &env);
+    assert!(up.contains("updated example.com/a v1.0.0 -> v1.1.0"), "{up}");
+    assert!(!sb.path("p/.slang/deps/example.com/a@v1.0.0").exists(), "stale version removed");
+    let out = sb.ok("p", &["run"], &env);
+    assert!(out.ends_with("av1.1.0+cv1.2.0 b+cv1.2.0\n"), "major 2 is never picked: {out}");
+    let up = sb.ok("p", &["update"], &env);
+    assert!(up.contains("updated example.com/c v1.2.0 -> v1.4.0"), "{up}");
+}
+
+#[test]
+fn git_pins_aliases_and_version_errors() {
+    ensure_runtime();
+    let sb = Sandbox::new("pins");
+    three_modules(&sb);
+    let env = sb.env(true);
+    // Alias key with a git location and a version; a tag pin; a branch pin.
+    let d = lib_files("modd", "0.1.0", "", "func Name() string {\n    return \"d-main\"\n}");
+    module_from(&sb, "d", &[("v0.1.0", d.clone()), ("branch:main", lib_files("modd", "0.2.0", "", "func Name() string {\n    return \"d-head\"\n}"))]);
+    let deps = "cee = { git = \"https://example.com/c\", version = \"~1.1\" }\n\"example.com/d\" = { git = \"example.com/d\", branch = \"main\" }\n";
+    app(&sb, "p", deps, "import modc\nimport modd\n", "modc.Name(), modd.Name()");
+    let out = sb.ok("p", &["run"], &env);
+    assert!(out.ends_with("cv1.1.0 d-head\n"), "{out}");
+    let lock = sb.read("p/slang.lock");
+    assert!(lock.contains("source: git+https://example.com/d?branch=main#"), "{lock}");
+    assert!(lock.contains("version: v0.0.0-"), "branch pins get a pseudo-version: {lock}");
+    // Tag and rev pins.
+    app(&sb, "p", "\"example.com/d\" = { git = \"example.com/d\", tag = \"v0.1.0\" }\n", "import modd\n", "modd.Name()");
+    assert!(sb.ok("p", &["run"], &env).ends_with("d-main\n"));
+    // Errors: no matching version; two majors; a version without a module path.
+    app(&sb, "p", "\"example.com/c\" = \"^3\"\n", "", "1");
+    let err = sb.fails("p", &["check"], &env);
+    assert!(err.contains("no version of example.com/c matches `^3`") && err.contains("v1.3.0"), "{err}");
+    app(&sb, "p", "\"example.com/a\" = \"^2\"\n\"example.com/b\" = \"^1\"\nalias = { git = \"example.com/a\", version = \"^1\" }\n", "", "1");
+    let err = sb.fails("p", &["check"], &env);
+    assert!(err.contains("only one major version"), "{err}");
+    app(&sb, "p", "router = \"^1\"\n", "", "1");
+    let err = sb.fails("p", &["check"], &env);
+    assert!(err.contains("a version needs a module path"), "{err}");
+}
+
+#[test]
+fn lock_file_with_modules_is_deterministic_and_locked() {
+    let sb = Sandbox::new("lockdet");
+    three_modules(&sb);
+    let env = sb.env(true);
+    for p in ["p1", "p2"] {
+        app(&sb, p, "\"example.com/b\" = \"^1\"\n\"example.com/a\" = \"^1.0\"\n", "import moda\nimport modb\n", "moda.Name(), modb.Name()");
+    }
+    sb.ok("p1", &["install"], &env);
+    sb.ok("p2", &["check"], &env);
+    let (l1, l2) = (sb.read("p1/slang.lock"), sb.read("p2/slang.lock"));
+    assert_eq!(l1, l2);
+    assert!(!l1.contains(sb.root.to_str().unwrap()), "no machine paths: {l1}");
+    let names: Vec<&str> = l1.lines().filter_map(|l| l.strip_prefix("  name: ")).collect();
+    assert_eq!(names, ["app", "moda", "modb", "modc"]);
+    sb.ok("p1", &["install", "--locked"], &env);
+    assert_eq!(sb.read("p1/slang.lock"), l1, "re-install keeps the lock byte for byte");
+    // A stricter constraint needs a new lock.
+    app(&sb, "p1", "\"example.com/b\" = \"^1\"\n\"example.com/a\" = \"^1.1\"\n", "import moda\nimport modb\n", "1");
+    let err = sb.fails("p1", &["install", "--locked"], &env);
+    assert!(err.contains("--locked"), "{err}");
+}
+
+/// A running `slang proxy serve`, killed on drop.
+struct ProxyServer {
+    child: std::process::Child,
+    url: String,
+}
+
+impl ProxyServer {
+    fn start(sb: &Sandbox, dir: &str, extra: &[&str], git: bool) -> ProxyServer {
+        use std::io::BufRead;
+        let mut c = Command::new(env!("CARGO_BIN_EXE_slang"));
+        c.args(["proxy", "serve", "--dir", sb.path(dir).to_str().unwrap()]).args(extra);
+        for (k, v) in sb.env(git) {
+            c.env(k, v);
+        }
+        let mut child = c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let url = line.trim().strip_prefix("listening on ").unwrap_or_else(|| panic!("proxy said {line:?}")).to_string();
+        ProxyServer { child, url }
+    }
+}
+
+impl Drop for ProxyServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn proxy_server_round_trip_and_checksum_log() {
+    let sb = Sandbox::new("proxy");
+    three_modules(&sb);
+    // The proxy reaches git; the client only the proxy (no git rewrite).
+    let proxy = ProxyServer::start(&sb, "cache", &["--sumdb"], true);
+    let mut env = sb.env(false);
+    env.push(("SLANG_PROXY".into(), proxy.url.clone()));
+    env.push(("SLANG_SUMDB".into(), format!("{}/sumdb", proxy.url)));
+    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n\"example.com/b\" = \"^1\"\n", "import moda\nimport modb\n", "moda.Name(), modb.Name()");
+    sb.ok("p", &["install"], &env);
+    sb.ok("p", &["check"], &env);
+    for f in ["example.com/c/@v/list", "example.com/c/@v/v1.2.0.info", "example.com/c/@v/v1.2.0.manifest", "example.com/c/@v/v1.2.0.zip", "sumdb/latest", "sumdb/lookup/example.com/c@v1.2.0"] {
+        assert!(sb.path(&format!("cache/{f}")).is_file(), "proxy cache has {f}");
+    }
+    assert_eq!(sb.read("cache/example.com/c/@v/list"), "v1.0.0\nv1.1.0\nv1.2.0\nv1.3.0\n");
+    let info = sb.read("cache/example.com/c/@v/v1.2.0.info");
+    assert!(info.contains("\"Version\": \"v1.2.0\"") && info.contains("\"Manifest\": \"slang.toml\""), "{info}");
+    let lookup = sb.read("cache/sumdb/lookup/example.com/c@v1.2.0");
+    let lock = sb.read("p/slang.lock");
+    let h = lookup.lines().nth(1).unwrap().rsplit(' ').next().unwrap();
+    assert!(lock.contains(&format!("checksum: {h}")), "log and lock agree on {h}:\n{lock}");
+    assert!(sb.read("cache/sumdb/latest").starts_with("slang-sumdb v1\n"));
+
+    // The filled directory is a static mirror: `--upstream off` serves it alone.
+    let mirror = ProxyServer::start(&sb, "cache", &["--upstream", "off", "--sumdb"], false);
+    let mut env2 = sb.env(false);
+    env2.push(("SLANG_STORE".into(), sb.path("store2").display().to_string()));
+    env2.push(("SLANG_PROXY".into(), mirror.url.clone()));
+    env2.push(("SLANG_SUMDB".into(), format!("{}/sumdb", mirror.url)));
+    app(&sb, "q", "\"example.com/b\" = \"^1\"\n", "import modb\n", "modb.Name()");
+    sb.ok("q", &["install"], &env2);
+    // Unknown on the mirror (404): `,direct` falls back to git.
+    let d = lib_files("modd", "0.1.0", "", "func Name() string {\n    return \"d\"\n}");
+    module_from(&sb, "d", &[("v0.1.0", d)]);
+    app(&sb, "q", "\"example.com/b\" = \"^1\"\n\"example.com/d\" = \"^0.1\"\n", "import modb\nimport modd\n", "modb.Name(), modd.Name()");
+    let err = sb.fails("q", &["install"], &env2);
+    assert!(err.contains("example.com/d"), "{err}");
+    let mut env3 = sb.env(true);
+    env3.push(("SLANG_STORE".into(), sb.path("store2").display().to_string()));
+    env3.push(("SLANG_PROXY".into(), format!("{},direct", mirror.url)));
+    env3.push(("SLANG_NOSUMDB".into(), "example.com/d".into()));
+    env3.push(("SLANG_SUMDB".into(), format!("{}/sumdb", mirror.url)));
+    sb.ok("q", &["install"], &env3);
+    assert!(sb.read("q/slang.lock").contains("module: example.com/d"));
+    // SLANG_PRIVATE: direct, without proxy or log.
+    let mut env4 = sb.env(true);
+    env4.push(("SLANG_STORE".into(), sb.path("store3").display().to_string()));
+    env4.push(("SLANG_PROXY".into(), "off".into()));
+    env4.push(("SLANG_PRIVATE".into(), "example.com/*".into()));
+    env4.push(("SLANG_SUMDB".into(), "http://127.0.0.1:9/none".into()));
+    sb.ok("q", &["install"], &env4);
+}
+
+#[test]
+fn checksum_mismatch_is_rejected() {
+    let sb = Sandbox::new("tamper");
+    three_modules(&sb);
+    let proxy = ProxyServer::start(&sb, "cache", &["--sumdb"], true);
+    let mut env = sb.env(false);
+    env.push(("SLANG_PROXY".into(), proxy.url.clone()));
+    env.push(("SLANG_SUMDB".into(), format!("{}/sumdb", proxy.url)));
+    app(&sb, "p", "\"example.com/c\" = \"^1.2\"\n", "import modc\n", "modc.Name()");
+    sb.ok("p", &["install"], &env);
+    // Replace the cached archive with different content: the log says otherwise.
+    let zip = sb.path("cache/example.com/c/@v/v1.2.0.zip");
+    let files = slang::package::sum::zip_read(&std::fs::read(&zip).unwrap(), "example.com/c@v1.2.0").unwrap();
+    let evil: Vec<(String, Vec<u8>)> = files.into_iter().map(|(p, d)| if p == "src/lib.sl" { (p, b"namespace modc\nfunc Name() string { return \"evil\" }\n".to_vec()) } else { (p, d) }).collect();
+    std::fs::write(&zip, slang::package::sum::zip_write("example.com/c@v1.2.0", &evil)).unwrap();
+    let mut env2 = env.clone();
+    env2.push(("SLANG_STORE".into(), sb.path("store2").display().to_string()));
+    let _ = std::fs::remove_file(sb.path("p/slang.lock"));
+    let err = sb.fails("p", &["install"], &env2);
+    assert!(err.contains("SECURITY ERROR: checksum mismatch for example.com/c@v1.2.0") && err.contains("checksum log"), "{err}");
+    // Without the log, the lock catches it.
+    sb.ok("p", &["install"], &env);
+    let mut env3: Vec<(String, String)> = env.iter().filter(|(k, _)| k != "SLANG_SUMDB").cloned().collect();
+    env3.push(("SLANG_STORE".into(), sb.path("store3").display().to_string()));
+    let err = sb.fails("p", &["install"], &env3);
+    assert!(err.contains("checksum mismatch for example.com/c@v1.2.0") && err.contains("slang.lock"), "{err}");
+    // A corrupted store file is found by `slang store verify`.
+    sb.ok("p", &["store", "verify"], &env);
+    let idx = sb.read("store/packages/example.com/c/v1.2.0/index.yaml");
+    let sha = idx.lines().find(|l| l.contains("sha256:")).unwrap().rsplit(' ').next().unwrap().to_string();
+    let f = sb.path(&format!("store/files/{sha}"));
+    make_writable(&f);
+    std::fs::write(&f, "corrupt").unwrap();
+    let err = sb.fails("p", &["store", "verify"], &env);
+    assert!(err.contains("contents do not match the hash"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn store_deduplicates_across_projects_and_installs_offline() {
+    use std::os::unix::fs::MetadataExt;
+    ensure_runtime();
+    let sb = Sandbox::new("store");
+    three_modules(&sb);
+    let env = sb.env(true);
+    for p in ["p1", "p2"] {
+        app(&sb, p, "\"example.com/b\" = \"^1\"\n", "import modb\n", "modb.Name()");
+    }
+    sb.ok("p1", &["install"], &env);
+    let count = || std::fs::read_dir(sb.path("store/files")).unwrap().count();
+    let n = count();
+    sb.ok("p2", &["install"], &env);
+    assert_eq!(count(), n, "the second project adds no files to the store");
+    let f1 = std::fs::metadata(sb.path("p1/.slang/deps/example.com/c@v1.2.0/src/lib.sl")).unwrap();
+    let f2 = std::fs::metadata(sb.path("p2/.slang/deps/example.com/c@v1.2.0/src/lib.sl")).unwrap();
+    assert_eq!(f1.ino(), f2.ino(), "hard links to one store file");
+    assert!(f1.nlink() >= 3);
+    let store_path = sb.ok("p1", &["store", "path"], &env);
+    assert_eq!(store_path.trim(), sb.path("store").display().to_string());
+    // Offline: from the lock and the store, without git.
+    std::fs::remove_dir_all(sb.path("p2/.slang")).unwrap();
+    let offline = sb.env(false);
+    sb.ok("p2", &["install", "--offline"], &offline);
+    assert!(sb.ok("p2", &["run", "--offline"], &offline).ends_with("b+cv1.2.0\n"));
+    let mut fresh = offline.clone();
+    fresh.push(("SLANG_STORE".into(), sb.path("empty-store").display().to_string()));
+    let err = sb.fails("p2", &["install", "--offline"], &fresh);
+    assert!(err.contains("--offline"), "{err}");
+    // prune keeps what registered projects lock, drops the rest.
+    app(&sb, "p1", "", "", "1");
+    sb.ok("p1", &["install"], &env);
+    std::fs::remove_dir_all(sb.path("p2")).unwrap();
+    let pruned = sb.ok("p1", &["store", "prune"], &env);
+    assert!(pruned.contains("removed example.com/c@v1.2.0"), "{pruned}");
+    assert_eq!(count(), 0, "{pruned}");
+}
+
+#[test]
+fn vendor_directory_replaces_store_and_network() {
+    ensure_runtime();
+    let sb = Sandbox::new("vendor");
+    three_modules(&sb);
+    let env = sb.env(true);
+    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n", "import moda\n", "moda.Name()");
+    sb.ok("p", &["vendor"], &env);
+    assert!(sb.path("p/vendor/modules.yaml").is_file());
+    assert!(sb.path("p/vendor/example.com/c@v1.1.0/src/lib.sl").is_file());
+    std::fs::remove_dir_all(sb.path("p/.slang")).unwrap();
+    make_writable(&sb.path("store"));
+    std::fs::remove_dir_all(sb.path("store")).unwrap();
+    let offline = sb.env(false);
+    let out = sb.ok("p", &["run"], &offline);
+    assert!(out.ends_with("av1.0.0+cv1.1.0\n"), "{out}");
+    assert!(!sb.path("store").exists(), "vendor builds never touch the store");
+    // A tampered vendored file is caught.
+    let f = sb.path("p/vendor/example.com/c@v1.1.0/src/lib.sl");
+    std::fs::write(&f, std::fs::read_to_string(&f).unwrap() + "// edit\n").unwrap();
+    let err = sb.fails("p", &["check"], &offline);
+    assert!(err.contains("checksum mismatch"), "{err}");
+}
+
+#[test]
+fn std_loads_from_disk_and_falls_back_to_embedded() {
+    let sb = Sandbox::new("std");
+    // A std tree with one extra function in std.cmp.
+    copy_dir(&repo().join("std"), &sb.path("std"));
+    let cmp = sb.path("std/cmp/cmp.sl");
+    std::fs::write(&cmp, std::fs::read_to_string(&cmp).unwrap() + "\n// FromDisk exists only in this copy.\nfunc FromDisk() int {\n    return 7\n}\n").unwrap();
+    sb.write("x/main.sl", "namespace app\n\nimport std.io\nimport std.cmp\n\nfunc main() {\n    println(FromDisk())\n}\n");
+    let mut env = sb.env(false);
+    env.push(("SLANG_STD".into(), sb.path("std").display().to_string()));
+    sb.ok("x", &["check", "main.sl"], &env);
+    let out = sb.ok("x", &["env", "SLANG_STD"], &env);
+    assert_eq!(out.trim(), sb.path("std").display().to_string());
+    // An empty SLANG_STD directory: every module comes from the binary.
+    std::fs::create_dir_all(sb.path("empty")).unwrap();
+    let mut env2 = sb.env(false);
+    env2.push(("SLANG_STD".into(), sb.path("empty").display().to_string()));
+    let err = sb.fails("x", &["check", "main.sl"], &env2);
+    assert!(err.contains("FromDisk"), "{err}");
+    sb.write("y/main.sl", "namespace app\n\nimport std.io\nimport std.cmp\n\nfunc main() {\n    println(Compare(1, 2))\n}\n");
+    sb.ok("y", &["check", "main.sl"], &env2);
+    let all = sb.ok("x", &["env"], &env);
+    for v in ["SLANG_STD=", "SLANG_HOME=", "SLANG_STORE=", "SLANG_PROXY=\"direct\""] {
+        assert!(all.contains(v), "{all}");
+    }
+}

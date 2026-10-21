@@ -1,0 +1,10 @@
+port 9090 tags [a b] level info plain 3 ctx 9090
+=> 0
+port 1 tags [x] level debug plain 3 ctx 1
+=> 0
+port 7070 tags [a b] level info plain 3 ctx 7070
+=> 0
+flag port default 9090
+flag tags default a,b
+flag level default info
+flag plain default 3

@@ -8,7 +8,7 @@ namespace std.mime.multipart
 // One part: its header and body.
 struct Part {
     Header std.net.textproto.Header
-    Body string
+    Body   string
 
     // The name parameter of a form-data Content-Disposition ("" if none).
     func FormName() string {
@@ -46,11 +46,11 @@ struct Part {
 
 // Reads the parts of a body with the given boundary.
 struct Reader {
-    body string
+    body     string
     boundary string
-    pos int
-    started bool
-    done bool
+    pos      int
+    started  bool
+    done     bool
 
     // The next part, or nil after the last one.
     func NextPart() *Part! {
@@ -70,7 +70,11 @@ struct Reader {
                 }
             }
             if at < 0 {
-                return error("multipart: NextPart: no boundary " + std.encoding.json.Quote(this.boundary) + " found")
+                return error(
+                    "multipart: NextPart: no boundary " +
+                        std.encoding.json.Quote(this.boundary) +
+                        " found",
+                )
             }
             this.pos = at
             this.started = true
@@ -121,8 +125,8 @@ func NewReader(body string, boundary string) *Reader {
 // An uploaded file of a form.
 struct FileHeader {
     Filename string
-    Header std.net.textproto.Header
-    Content []byte
+    Header   std.net.textproto.Header
+    Content  []byte
 
     func Size() int {
         return len(this.Content)
@@ -132,7 +136,7 @@ struct FileHeader {
 // A parsed multipart/form-data body.
 struct Form {
     Value map[string][]string
-    File map[string][]FileHeader
+    File  map[string][]FileHeader
 
     // The first value of a field ("" if absent).
     func Get(name string) string {
@@ -162,7 +166,11 @@ func ReadForm(body string, boundary string) Form! {
         if fname == "" && p.disposition().Param("filename") == "" {
             f.Value[name] = append(f.Value[name], p.Body)
         } else {
-            f.File[name] = append(f.File[name], FileHeader{Filename: fname, Header: p.Header, Content: p.Bytes()})
+            f.File[name] = append(f.File[name], FileHeader{
+                Filename: fname,
+                Header: p.Header,
+                Content: p.Bytes(),
+            })
         }
     }
     return f
@@ -171,9 +179,9 @@ func ReadForm(body string, boundary string) Form! {
 // Builds a multipart body; call Close before taking the bytes.
 struct Writer {
     boundary string
-    b std.strings.Builder
-    parts int
-    closed bool
+    b        std.strings.Builder
+    parts    int
+    closed   bool
 
     func Boundary() string {
         return this.boundary
@@ -190,7 +198,22 @@ struct Writer {
         }
         for i in 0..len(b) {
             var c = int(b[i])
-            var ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 39 || c == 40 || c == 41 || c == 43 || c == 95 || c == 44 || c == 45 || c == 46 || c == 47 || c == 58 || c == 61 || c == 63 || (c == 32 && i != len(b) - 1)
+            var ok = (c >= 48 && c <= 57) ||
+                (c >= 65 && c <= 90) ||
+                (c >= 97 && c <= 122) ||
+                c == 39 ||
+                c == 40 ||
+                c == 41 ||
+                c == 43 ||
+                c == 95 ||
+                c == 44 ||
+                c == 45 ||
+                c == 46 ||
+                c == 47 ||
+                c == 58 ||
+                c == 61 ||
+                c == 63 ||
+                (c == 32 && i != len(b) - 1)
             if !ok {
                 return error("mime: invalid boundary character")
             }
@@ -204,7 +227,22 @@ struct Writer {
         var special = false
         for i in 0..len(b) {
             var c = int(b[i])
-            if c == 40 || c == 41 || c == 60 || c == 62 || c == 64 || c == 44 || c == 59 || c == 58 || c == 92 || c == 34 || c == 47 || c == 91 || c == 93 || c == 63 || c == 61 || c == 32 {
+            if c == 40 ||
+                c == 41 ||
+                c == 60 ||
+                c == 62 ||
+                c == 64 ||
+                c == 44 ||
+                c == 59 ||
+                c == 58 ||
+                c == 92 ||
+                c == 34 ||
+                c == 47 ||
+                c == 91 ||
+                c == 93 ||
+                c == 63 ||
+                c == 61 ||
+                c == 32 {
                 special = true
             }
         }
@@ -239,7 +277,14 @@ struct Writer {
     // A file field (Content-Type application/octet-stream).
     func CreateFormFile(field string, filename string, content []byte) void! {
         var h = std.net.textproto.NewHeader()
-        h.Set("Content-Disposition", "form-data; name=\"" + escapeQuotes(field) + "\"; filename=\"" + escapeQuotes(filename) + "\"")
+        h.Set(
+            "Content-Disposition",
+            "form-data; name=\"" +
+                escapeQuotes(field) +
+                "\"; filename=\"" +
+                escapeQuotes(filename) +
+                "\"",
+        )
         h.Set("Content-Type", "application/octet-stream")
         this.CreatePart(h, content)?
     }
@@ -267,7 +312,9 @@ struct Writer {
 
 // A writer with a random 60-hex-digit boundary.
 func NewWriter() *Writer {
-    var raw = try std.crypto.rand.Hex(30) else "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
+    var raw = try std.crypto.rand.Hex(
+        30,
+    ) else "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
     return &Writer{boundary: raw}
 }
 

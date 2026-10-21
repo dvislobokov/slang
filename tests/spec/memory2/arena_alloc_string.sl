@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.memory2.arena_alloc_string
 
-import std.io
 import std
+import std.io
 
 struct Tok {
     Text string

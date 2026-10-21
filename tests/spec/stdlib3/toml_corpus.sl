@@ -78,7 +78,7 @@ func main() {
         "str1 = \"The quick brown fox jumps over the lazy dog.\"\nstr2 = \"\"\"\nThe quick brown \\\n\n\n  fox jumps over \\\n    the lazy dog.\"\"\"\n",
         "utf = \"日本語 ☺\"\n\"key_ü\" = 1\n",
         "a.b = 1\na.c = 2\n[d]\ne = 3\n",
-        "x = 0\ny = -0\nz = +0\nw = 0.0\nv = -0.0\n"
+        "x = 0\ny = -0\nz = +0\nw = 0.0\nv = -0.0\n",
     ]
     var invalid = [
         "a = 1\na = 2\n",
@@ -110,7 +110,7 @@ func main() {
         "a = \"line\nbreak\"\n",
         "a = [1 2]\n",
         "x = { a = 1 }\nx.b = 2\n",
-        "[fruit]\napple.color = \"red\"\n[fruit.apple]\n"
+        "[fruit]\napple.color = \"red\"\n[fruit.apple]\n",
     ]
     for i, c in valid {
         var v = try encoding.toml.ParseValue(c) catch err {

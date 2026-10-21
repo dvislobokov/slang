@@ -11,8 +11,8 @@ namespace std.task
 // `await m.Lock()` waits until the caller owns it, `m.Unlock()` hands it
 // to the oldest waiter (FIFO). Not re-entrant.
 struct Mutex {
-    guard int
-    locked bool
+    guard   int
+    locked  bool
     waiters []Task<void>
 
     func Lock() Task<void> {
@@ -60,8 +60,8 @@ struct Mutex {
 // WaitGroup waits for a number of tasks: Add(n) before starting them,
 // Done() when each finishes, `await wg.Wait()` until the count is zero.
 struct WaitGroup {
-    guard int
-    n int
+    guard   int
+    n       int
     waiters []Task<void>
 
     func Add(n int) {
@@ -166,14 +166,14 @@ struct Channel<T> {
 }
 
 struct chanState<T> {
-    guard int
+    guard    int
     capacity int
-    buf []T
-    closed bool
-    sent int
-    taken int
-    recvq []Task<void>
-    sendq []Task<void>
+    buf      []T
+    closed   bool
+    sent     int
+    taken    int
+    recvq    []Task<void>
+    sendq    []Task<void>
 
     func room() int {
         if this.capacity == 0 {
@@ -342,8 +342,8 @@ struct Key<T> {
 
 // One frame of the immutable context list.
 struct ctxFrame {
-    key int
-    val any
+    key  int
+    val  any
     next *ctxFrame
 }
 
@@ -352,7 +352,7 @@ struct ctxFrame {
 // to run code in it.
 struct Context {
     // The runtime slot: {"": *ctxFrame} (nil when empty).
-    slot map[string]any
+    slot  map[string]any
     scope Task<void>
 
     func top() *ctxFrame {

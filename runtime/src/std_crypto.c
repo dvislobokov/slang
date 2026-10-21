@@ -10,7 +10,6 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
 static inline const uint8_t *sbytes(const slang_string *s) {

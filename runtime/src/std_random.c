@@ -6,12 +6,10 @@
 #include "rt_internal.h"
 #include "platform/platform.h"
 
-#include <pthread.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
-static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+static slang__plat_mutex g_lock = SLANG_PLAT_MUTEX_INIT;
 static uint64_t g_s[4];
 static bool g_seeded;
 
@@ -34,9 +32,8 @@ static uint64_t next_locked(void) {
     if (!g_seeded) {
         uint64_t seed = 0;
         if (!slang__plat_random_bytes(&seed, sizeof seed)) {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            seed = (uint64_t)ts.tv_sec * 1000000007ULL ^ (uint64_t)ts.tv_nsec ^ ((uint64_t)getpid() << 32);
+            int64_t ns = slang__plat_wall_ns();
+            seed = (uint64_t)(ns / 1000000000) * 1000000007ULL ^ (uint64_t)(ns % 1000000000) ^ ((uint64_t)slang__plat_pid() << 32);
         }
         seed_locked(seed);
     }
@@ -51,9 +48,9 @@ static uint64_t next_locked(void) {
 }
 
 static uint64_t next(void) {
-    pthread_mutex_lock(&g_lock);
+    slang__plat_mutex_lock(&g_lock);
     uint64_t r = next_locked();
-    pthread_mutex_unlock(&g_lock);
+    slang__plat_mutex_unlock(&g_lock);
     return r;
 }
 
@@ -66,18 +63,18 @@ static uint64_t below_locked(uint64_t n) {
 }
 
 void slang_random_seed(int64_t seed) {
-    pthread_mutex_lock(&g_lock);
+    slang__plat_mutex_lock(&g_lock);
     seed_locked((uint64_t)seed);
-    pthread_mutex_unlock(&g_lock);
+    slang__plat_mutex_unlock(&g_lock);
 }
 
 int64_t slang_random_int(void) { return (int64_t)(next() >> 1); }
 
 int64_t slang_random_int_n(int64_t n) {
     if (n <= 0) slang_panic("random: invalid argument to IntN");
-    pthread_mutex_lock(&g_lock);
+    slang__plat_mutex_lock(&g_lock);
     uint64_t r = below_locked((uint64_t)n);
-    pthread_mutex_unlock(&g_lock);
+    slang__plat_mutex_unlock(&g_lock);
     return (int64_t)r;
 }
 
@@ -87,13 +84,13 @@ void slang_random_bytes(int64_t n, slang_slice *out) {
     if (n < 0) slang_panic("random: negative length in Bytes");
     slang_slice_new(out, 1, n, n);
     uint8_t *p = out->data;
-    pthread_mutex_lock(&g_lock);
+    slang__plat_mutex_lock(&g_lock);
     for (int64_t i = 0; i < n; i += 8) {
         uint64_t r = next_locked();
         int64_t k = n - i < 8 ? n - i : 8;
         memcpy(p + i, &r, (size_t)k);   /* little-endian byte order of r */
     }
-    pthread_mutex_unlock(&g_lock);
+    slang__plat_mutex_unlock(&g_lock);
 }
 
 /* In-place Fisher-Yates shuffle of an []int (slices share their buffer). */
@@ -101,10 +98,10 @@ void slang_random_shuffle(const slang_slice *s) {
     int64_t n = s ? s->len : 0;
     if (n < 2) return;
     int64_t *a = s->data;
-    pthread_mutex_lock(&g_lock);
+    slang__plat_mutex_lock(&g_lock);
     for (int64_t i = n - 1; i > 0; i--) {
         int64_t j = (int64_t)below_locked((uint64_t)i + 1);
         int64_t t = a[i]; a[i] = a[j]; a[j] = t;
     }
-    pthread_mutex_unlock(&g_lock);
+    slang__plat_mutex_unlock(&g_lock);
 }

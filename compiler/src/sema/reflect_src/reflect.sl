@@ -48,9 +48,9 @@ enum Target {
 
 // Values of the builtin attributes (f.Attribute<json>()).
 struct json {
-    name string = ""
+    name      string = ""
     omitEmpty bool = false
-    skip bool = false
+    skip      bool = false
 }
 
 struct deprecated {
@@ -68,67 +68,65 @@ struct logAttr {
 // (named ...Attr so that they do not clash with those namespaces); @serde
 // is the format-independent fallback every codec reads after its own.
 struct csvAttr {
-    name string = ""
-    index int = -1
-    skip bool = false
+    name      string = ""
+    index     int = -1
+    skip      bool = false
     omitEmpty bool = false
 }
 
 struct xmlAttr {
-    name string = ""
-    attr bool = false
-    text bool = false
+    name      string = ""
+    attr      bool = false
+    text      bool = false
     omitEmpty bool = false
-    ns string = ""
-    skip bool = false
+    ns        string = ""
+    skip      bool = false
 }
 
 struct yamlAttr {
-    name string = ""
+    name      string = ""
     omitEmpty bool = false
-    skip bool = false
-    flow bool = false
+    skip      bool = false
+    flow      bool = false
 }
 
 struct tomlAttr {
-    name string = ""
+    name      string = ""
     omitEmpty bool = false
-    skip bool = false
-    inline bool = false
+    skip      bool = false
+    inline    bool = false
 }
 
 struct serde {
-    name string = ""
+    name      string = ""
     omitEmpty bool = false
-    skip bool = false
+    skip      bool = false
 }
 
-struct inline {
-}
+struct inline {}
 
-struct test {
-}
+struct test {}
 
 // The static description of a type. The first three words are the
 // runtime's slang_type_info header (runtime/ABI.md section 17).
 struct TypeInfo {
-    rtName int
-    rtSize int
-    rtDrop int
-    Kind Kind
-    Name string
+    rtName   int
+    rtSize   int
+    rtDrop   int
+    Kind     Kind
+    Name     string
     FullName string
-    Size int
-    Align int
-    Fields []*FieldInfo
-    Methods []*MethodInfo
+    Size     int
+    Align    int
+    Fields   []*FieldInfo
+    Methods  []*MethodInfo
     Variants []*VariantInfo
-    Elem *TypeInfo
-    Key *TypeInfo
-    Len int
-    attrs []any
-    ptrTo *TypeInfo
-    canon *TypeInfo
+    Elem     *TypeInfo
+    Key      *TypeInfo
+    Len      int
+    attrs    []any
+    ptrTo    *TypeInfo
+    canon    *TypeInfo
 
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
@@ -167,7 +165,11 @@ struct TypeInfo {
 
     func New() any {
         if this.ptrTo == nil {
-            panic("reflect: " + this.Name + ".New: no constructor metadata (name the type in reflect.TypeOf<T>(), typeof or mark it @reflect)")
+            panic(
+                "reflect: " +
+                    this.Name +
+                    ".New: no constructor metadata (name the type in reflect.TypeOf<T>(), typeof or mark it @reflect)",
+            )
         }
         return newOf(this)
     }
@@ -182,13 +184,13 @@ struct TypeInfo {
 }
 
 struct FieldInfo {
-    Name string
-    Type *TypeInfo
-    Offset int
-    Index int
+    Name     string
+    Type     *TypeInfo
+    Offset   int
+    Index    int
     Embedded bool
     Exported bool
-    attrs []any
+    attrs    []any
 
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
@@ -200,12 +202,12 @@ struct FieldInfo {
 }
 
 struct MethodInfo {
-    Name string
-    Type *TypeInfo
+    Name   string
+    Type   *TypeInfo
     Static bool
     invoke int
-    fnval int
-    attrs []any
+    fnval  int
+    attrs  []any
 
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
@@ -224,17 +226,24 @@ struct MethodInfo {
     func Call<F>() F {
         var want = TypeOf<F>()
         if want != this.Type {
-            panic("reflect: " + this.Name + ".Call<" + want.Name + ">: the method has type " + this.Type.Name)
+            panic(
+                "reflect: " +
+                    this.Name +
+                    ".Call<" +
+                    want.Name +
+                    ">: the method has type " +
+                    this.Type.Name,
+            )
         }
         return asFunc<F>(this.fnval)
     }
 }
 
 struct VariantInfo {
-    Name string
-    Index int
+    Name   string
+    Index  int
     Fields []*FieldInfo
-    attrs []any
+    attrs  []any
 
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
@@ -249,9 +258,9 @@ struct VariantInfo {
 // memory alive.
 struct Value {
     owner any
-    addr int
-    Type *TypeInfo
-    name string
+    addr  int
+    Type  *TypeInfo
+    name  string
 
     func IsValid() bool {
         return this.Type != nil
@@ -297,7 +306,14 @@ struct Value {
             panic("reflect: Set of an invalid Value")
         }
         if !sameType(want, this.Type) {
-            panic("reflect: cannot set " + this.name + " (type " + this.Type.Name + ") to a value of type " + want.Name)
+            panic(
+                "reflect: cannot set " +
+                    this.name +
+                    " (type " +
+                    this.Type.Name +
+                    ") to a value of type " +
+                    want.Name,
+            )
         }
         store<T>(this.addr, v)
     }
@@ -380,8 +396,7 @@ func load<T>(addr int) T {
     return zero
 }
 
-func store<T>(addr int, v T) {
-}
+func store<T>(addr int, v T) {}
 
 func newOf(t *TypeInfo) any {
     return nil
@@ -396,5 +411,4 @@ func asFunc<F>(fn int) F {
     return zero
 }
 
-func storeTag<T>(p *T, tag int) {
-}
+func storeTag<T>(p *T, tag int) {}

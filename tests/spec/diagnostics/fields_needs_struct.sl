@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.fields_needs_struct
 
-import std.io
 import std
+import std.io
 
 func Show<T>(x T) {
     for f in reflect.Fields<T>() {

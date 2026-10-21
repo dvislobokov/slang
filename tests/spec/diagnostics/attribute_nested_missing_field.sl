@@ -15,7 +15,9 @@ struct metric {
 }
 
 @metric(u: unit{})
-struct A { X int }
+struct A {
+    X int
+}
 
 func main() {
     println(A{X: 1}.X)

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.sprintf_verbs
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(fmt.Sprintf("[%d] [%5d] [%-5d] [%05d]", -42, -42, -42, 42))

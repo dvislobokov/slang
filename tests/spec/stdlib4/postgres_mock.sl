@@ -3,9 +3,9 @@
 // run-flags: --leak-check
 namespace spec.stdlib4.postgres_mock
 
-import std.io
 import std
 import std.database
+import std.io
 
 // ---- a mock PostgreSQL server ----------------------------------------------------
 
@@ -15,7 +15,13 @@ struct msgw {
     func msg(t int, body []byte) {
         this.b = append(this.b, byte(t))
         var n = len(body) + 4
-        this.b = append(this.b, byte(n >> 24), byte((n >> 16) & 255), byte((n >> 8) & 255), byte(n & 255))
+        this.b = append(
+            this.b,
+            byte(n >> 24),
+            byte((n >> 16) & 255),
+            byte((n >> 8) & 255),
+            byte(n & 255),
+        )
         for x in body {
             this.b = append(this.b, x)
         }
@@ -73,16 +79,16 @@ func readCstr(b []byte, off int) (string, int) {
 
 struct col {
     name string
-    oid int
+    oid  int
 }
 
 struct server {
-    c net.Conn
+    c   net.Conn
     log []string
     // statement name -> query
-    stmts map[string]string
-    formats []int
-    portal string
+    stmts    map[string]string
+    formats  []int
+    portal   string
     lastArgs []string
 
     async func readN(n int) []byte! {
@@ -105,7 +111,15 @@ struct server {
 
     func columns(q string) []col {
         if strings.Contains(q, "from items") {
-            return [col{name: "id", oid: 23}, col{name: "name", oid: 25}, col{name: "created", oid: 1184}, col{name: "price", oid: 1700}, col{name: "tags", oid: 1009}, col{name: "data", oid: 17}, col{name: "ok", oid: 16}]
+            return [
+                col{name: "id", oid: 23},
+                col{name: "name", oid: 25},
+                col{name: "created", oid: 1184},
+                col{name: "price", oid: 1700},
+                col{name: "tags", oid: 1009},
+                col{name: "data", oid: 17},
+                col{name: "ok", oid: 16},
+            ]
         }
         if strings.HasPrefix(q, "select") {
             return [col{name: "n", oid: 20}]
@@ -122,7 +136,15 @@ struct server {
             } else if i < len(formats) {
                 f = formats[i]
             }
-            parts = append(parts, cat([cstr(c.name), i32(0), i16(0), i32(c.oid), i16(-1), i32(-1), i16(f)]))
+            parts = append(parts, cat([
+                cstr(c.name),
+                i32(0),
+                i16(0),
+                i32(c.oid),
+                i16(-1),
+                i32(-1),
+                i16(f),
+            ]))
         }
         return cat(parts)
     }
@@ -153,9 +175,22 @@ struct server {
             var vals [][]byte = []
             var id = k + 1
             if bin {
-                vals = [i32(id), strings.Bytes(["apple", "pear"][k]), cat([i32(0x2b5cb), i32(0xc686a638)]), strings.Bytes(["1.25", "10.50"][k]), strings.Bytes(["{red,fruit}", "{}"][k]), [222, 173, 190, 239], [byte(1 - k)]]
+                vals = [i32(id), strings.Bytes(["apple", "pear"][k]), cat([
+                    i32(0x2b5cb),
+                    i32(0xc686a638),
+                ]), strings.Bytes(
+                    ["1.25", "10.50"][k],
+                ), strings.Bytes(["{red,fruit}", "{}"][k]), [222, 173, 190, 239], [byte(1 - k)]]
             } else {
-                vals = [strings.Bytes(fmt.Format("{0}", id)), strings.Bytes(["apple", "pear"][k]), strings.Bytes("2024-03-04 05:06:07.123+02"), strings.Bytes(["1.25", "10.50"][k]), strings.Bytes(["{red,fruit}", "{\"a b\",c}"][k]), strings.Bytes("\\xdeadbeef"), strings.Bytes(["t", "f"][k])]
+                vals = [
+                    strings.Bytes(fmt.Format("{0}", id)),
+                    strings.Bytes(["apple", "pear"][k]),
+                    strings.Bytes("2024-03-04 05:06:07.123+02"),
+                    strings.Bytes(["1.25", "10.50"][k]),
+                    strings.Bytes(["{red,fruit}", "{\"a b\",c}"][k]),
+                    strings.Bytes("\\xdeadbeef"),
+                    strings.Bytes(["t", "f"][k]),
+                ]
             }
             var parts [][]byte = [i16(len(vals))]
             for i, v in vals {
@@ -203,7 +238,10 @@ struct server {
         if !crypto.hmac.Equal(crypto.hash.Sum("sha256", recovered)?, stored) {
             this.log = append(this.log, "auth: bad proof")
             w = msgw{}
-            w.msg(69, fields("FATAL", "28P01", "password authentication failed for user \"tester\"", ""))
+            w.msg(
+                69,
+                fields("FATAL", "28P01", "password authentication failed for user \"tester\"", ""),
+            )
             await this.send(w)?
             return error("bad proof")
         }
@@ -239,7 +277,10 @@ struct server {
                 params = append(params, k + "=" + v)
             }
         }
-        this.log = append(this.log, "startup protocol " + fmt.Format("{0}", be(h, 4, 4)) + " " + strings.Join(params, " "))
+        this.log = append(
+            this.log,
+            "startup protocol " + fmt.Format("{0}", be(h, 4, 4)) + " " + strings.Join(params, " "),
+        )
         await this.scram()?
         var tx = 73
         var err = false
@@ -340,7 +381,15 @@ struct server {
                 }
                 this.formats = formats
                 this.portal = this.stmts[stmt]
-                this.log = append(this.log, "Bind " + stmt + " args=" + fmt.Format("{0}", args) + " formats=" + fmt.Format("{0}", formats))
+                this.log = append(
+                    this.log,
+                    "Bind " +
+                        stmt +
+                        " args=" +
+                        fmt.Format("{0}", args) +
+                        " formats=" +
+                        fmt.Format("{0}", formats),
+                )
                 this.lastArgs = args
                 w.msg(50, [])
                 await this.send(w)?
@@ -370,17 +419,16 @@ struct server {
             }
         }
     }
-
 }
 
 struct Item {
-    Id int
-    Name string
+    Id      int
+    Name    string
     Created time.Time
-    Price math.big.Decimal
-    Tags []string
-    Data []byte
-    Ok bool
+    Price   math.big.Decimal
+    Tags    []string
+    Data    []byte
+    Ok      bool
 }
 
 async func serve(l net.Listener) *server! {
@@ -392,12 +440,27 @@ async func serve(l net.Listener) *server! {
 
 async func main() void! {
     // connection strings
-    for dsn in ["postgres://u:p%40ss@db.example.com:6543/app?sslmode=require&application_name=x", "host=/var/run/postgresql port=5433 user=bob password='it\\'s' dbname=d connect_timeout=3", "postgresql://[::1]/x", "postgres://h?sslmode=bogus"] {
+    for dsn in [
+        "postgres://u:p%40ss@db.example.com:6543/app?sslmode=require&application_name=x",
+        "host=/var/run/postgresql port=5433 user=bob password='it\\'s' dbname=d connect_timeout=3",
+        "postgresql://[::1]/x",
+        "postgres://h?sslmode=bogus",
+    ] {
         var c = try postgres.ParseDSN(dsn) catch err {
             println("dsn:", err)
             continue
         }
-        println("dsn:", c.Host, c.Port, c.User, c.Password, c.Database, c.SSLMode, c.ConnectTimeout, c.Params["application_name"])
+        println(
+            "dsn:",
+            c.Host,
+            c.Port,
+            c.User,
+            c.Password,
+            c.Database,
+            c.SSLMode,
+            c.ConnectTimeout,
+            c.Params["application_name"],
+        )
     }
 
     var l = net.Listen("127.0.0.1:0")?
@@ -406,7 +469,10 @@ async func main() void! {
     var d = postgres.Driver{OnNotice: func(e postgres.Error) {
         notices = append(notices, e.Severity + ": " + e.Msg)
     }}
-    var db = sql.OpenDriver(d, fmt.Format("postgres://tester:s3cret@127.0.0.1:{0}/shop?application_name=spec", l.Port()))
+    var db = sql.OpenDriver(
+        d,
+        fmt.Format("postgres://tester:s3cret@127.0.0.1:{0}/shop?application_name=spec", l.Port()),
+    )
     db.SetMaxOpenConns(1)
     defer db.Close()
     await db.Ping()?
@@ -414,11 +480,29 @@ async func main() void! {
     println("simple", n)
     var items = await db.Query<Item>("select * from items", [])?
     for it in items {
-        println("text", it.Id, it.Name, it.Created.Format(time.RFC3339Nano), it.Price.String(), it.Tags, len(it.Data), it.Ok)
+        println(
+            "text",
+            it.Id,
+            it.Name,
+            it.Created.Format(time.RFC3339Nano),
+            it.Price.String(),
+            it.Tags,
+            len(it.Data),
+            it.Ok,
+        )
     }
     var items2 = await db.Query<Item>("select * from items where id > $1", [0])?
     for it in items2 {
-        println("binary", it.Id, it.Name, it.Created.Format(time.RFC3339Nano), it.Price.String(), it.Tags, len(it.Data), it.Ok)
+        println(
+            "binary",
+            it.Id,
+            it.Name,
+            it.Created.Format(time.RFC3339Nano),
+            it.Price.String(),
+            it.Tags,
+            len(it.Data),
+            it.Ok,
+        )
     }
     println("param", await db.QueryOne<int>("select $1", [77])?)
     println("param again (cached statement)", await db.QueryOne<int>("select $1", [78])?)

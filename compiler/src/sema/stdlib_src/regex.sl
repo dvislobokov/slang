@@ -293,14 +293,14 @@ struct Regex {
 // A match: byte offsets [Start, End) and the matched text.
 struct Match {
     Start int
-    End int
-    Text string
+    End   int
+    Text  string
 }
 
 // The capture groups of one match. Group 0 is the whole match.
 struct Groups {
-    s string
-    caps []int
+    s     string
+    caps  []int
     names []string
 
     // Number of groups, group 0 included.
@@ -354,7 +354,11 @@ struct Groups {
 
     // The whole match.
     func Match() Match {
-        return Match{Start: this.caps[0], End: this.caps[1], Text: this.s[this.caps[0]..this.caps[1]]}
+        return Match{
+            Start: this.caps[0],
+            End: this.caps[1],
+            Text: this.s[this.caps[0]..this.caps[1]],
+        }
     }
 
     func index(name string) int {
@@ -372,9 +376,9 @@ struct Groups {
 
 // An iterator over successive matches: Next() returns nil at the end.
 struct Iter {
-    r Regex
-    s string
-    pos int
+    r    Regex
+    s    string
+    pos  int
     prev int
     done bool
 
@@ -439,7 +443,20 @@ func Escape(s string) string {
     var changed = false
     for i in 0..len(s) {
         var c = int(s[i])
-        if c == 92 || c == 46 || c == 43 || c == 42 || c == 63 || c == 40 || c == 41 || c == 124 || c == 91 || c == 93 || c == 123 || c == 125 || c == 94 || c == 36 {
+        if c == 92 ||
+            c == 46 ||
+            c == 43 ||
+            c == 42 ||
+            c == 63 ||
+            c == 40 ||
+            c == 41 ||
+            c == 124 ||
+            c == 91 ||
+            c == 93 ||
+            c == 123 ||
+            c == 125 ||
+            c == 94 ||
+            c == 36 {
             b.Write(s[start..i])
             b.Write("\\")
             start = i
@@ -457,19 +474,19 @@ func Escape(s string) string {
 
 // The shared compiled form of a Regex.
 struct re {
-    pattern string
-    names []string
-    ncap int
-    fwd *prog
-    revp *prog
-    literal bool
-    lit string
-    prefix string
+    pattern  string
+    names    []string
+    ncap     int
+    fwd      *prog
+    revp     *prog
+    literal  bool
+    lit      string
+    prefix   string
     anchored bool
-    lock int
-    fdfa *dfa
-    rdfa *dfa
-    vm *pike
+    lock     int
+    fdfa     *dfa
+    rdfa     *dfa
+    vm       *pike
 
     // [start, end] of the leftmost match at or after pos, or [-1, -1].
     func find(s string, pos int) []int {
@@ -586,7 +603,7 @@ func build(pattern string) *re! {
 }
 
 struct litInfo {
-    prefix string
+    prefix   string
     complete bool
 }
 

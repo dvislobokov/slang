@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib4.mail_smtp
 
-import std.io
 import std
+import std.io
 
 const CertPEM = "-----BEGIN CERTIFICATE-----\nMIIBlTCCATugAwIBAgIUdwzHKFFR9jSgb1hmp35Ag4eQVnMwCgYIKoZIzj0EAwIw\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAyMDIyMTI1NloYDzIxMjYwOTI2\nMjIxMjU2WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO\nPQMBBwNCAARYFUuhrEhEqCXaURmgVzW8K02wCVyhH2HMM7MbEJGxGN10xQtbl9xT\nEC49C9A6sALZQIllZNstBF9nwBf9kdo8o2kwZzAdBgNVHQ4EFgQUiIXwxg3vSv4v\nZMl5fm9gF6BNTbkwHwYDVR0jBBgwFoAUiIXwxg3vSv4vZMl5fm9gF6BNTbkwDwYD\nVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhvc3QwCgYIKoZIzj0EAwID\nSAAwRQIgKIPUG22D9Uer8pgh/72P7ASAZfozUU+95MRNqkZXj4YCIQDp+mPI+8Mw\nw9FFCGseOrUYuaNwR6h3rQL+o9c+FcMnBA==\n-----END CERTIFICATE-----\n"
 const KeyPEM = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgiJNillhGcKwgcCOx\n1SSTFhRJeF/AFLwXyHhucI/a1imhRANCAARYFUuhrEhEqCXaURmgVzW8K02wCVyh\nH2HMM7MbEJGxGN10xQtbl9xTEC49C9A6sALZQIllZNstBF9nwBf9kdo8\n-----END PRIVATE KEY-----\n"
@@ -17,13 +17,13 @@ interface stream {
 
 // A tiny SMTP server: one session, a transcript of what it received.
 struct server {
-    s stream
-    raw net.Conn
-    buf string
-    tlsOn bool
+    s        stream
+    raw      net.Conn
+    buf      string
+    tlsOn    bool
     starttls bool
-    log []string
-    data string
+    log      []string
+    data     string
 
     async func line() string! {
         for {
@@ -81,8 +81,14 @@ struct server {
                 var ch = "<1896.697170952@postoffice.reston.mci.net>"
                 await this.say("334 " + encoding.base64.EncodeString(ch))?
                 var resp = encoding.base64.DecodeString(await this.line()?)?
-                var want = "tim " + encoding.hex.Encode(net.mail.HmacMD5(strings.Bytes("tanstaaftanstaaf"), strings.Bytes(ch)))
-                this.log = append(this.log, "AUTH CRAM-MD5 " + resp + " ok=" + fmt.Format("{0}", resp == want))
+                var want = "tim " +
+                    encoding.hex.Encode(
+                        net.mail.HmacMD5(strings.Bytes("tanstaaftanstaaf"), strings.Bytes(ch)),
+                    )
+                this.log = append(
+                    this.log,
+                    "AUTH CRAM-MD5 " + resp + " ok=" + fmt.Format("{0}", resp == want),
+                )
                 await this.say("235 ok")?
             } else if strings.HasPrefix(up, "MAIL FROM:") || strings.HasPrefix(up, "RCPT TO:") {
                 this.log = append(this.log, l)
@@ -132,7 +138,9 @@ func message() net.mail.Message! {
         Subject: "Привет, a subject that is long enough to need several encoded words in the header",
         Text: "Hello Bob,\n.leading dot line\nbye\n",
         HTML: "<p>Hello <b>Bob</b></p>",
-        Attachments: [net.mail.Attachment{Filename: "notes.txt", Data: strings.Bytes("attached text")}],
+        Attachments: [
+            net.mail.Attachment{Filename: "notes.txt", Data: strings.Bytes("attached text")},
+        ],
         Date: time.Date(2024, 5, 6, 7, 8, 9, 0, time.UTC()),
         MessageID: "<fixed@example.com>",
         Boundary: "BOUND",
@@ -142,7 +150,16 @@ func message() net.mail.Message! {
 
 async func main() void! {
     // address parsing
-    for s in ["ann@example.com", "<b@x.org>", "Bob Smith <bob@x.org>", "\"Smith, Bob\" <bob@x.org>", "=?utf-8?q?J=C3=BCrgen?= <j@x.de>", "carl@x.org (Carl)", "bad", "a@b, c@d"] {
+    for s in [
+        "ann@example.com",
+        "<b@x.org>",
+        "Bob Smith <bob@x.org>",
+        "\"Smith, Bob\" <bob@x.org>",
+        "=?utf-8?q?J=C3=BCrgen?= <j@x.de>",
+        "carl@x.org (Carl)",
+        "bad",
+        "a@b, c@d",
+    ] {
         var a = try net.mail.ParseAddress(s) catch err {
             println("parse", s, "->", err)
             continue
@@ -151,7 +168,12 @@ async func main() void! {
     }
     var list = net.mail.ParseAddressList("Team: a@x.org, \"B, b\" <b@x.org>;")?
     println(len(list), list[0].Address, list[1].Name)
-    println(net.mail.FoldHeader("Subject", "word word word word word word word word word word word word word word word word word"))
+    println(
+        net.mail.FoldHeader(
+            "Subject",
+            "word word word word word word word word word word word word word word word word word",
+        ),
+    )
 
     // the built message
     var text = message()?.Build()?
@@ -182,7 +204,12 @@ async func main() void! {
     var m = message()?
     m.To = [net.mail.Address{Address: "bounce@example.com"}]
     m.Bcc = []
-    try await net.mail.SendWith(addr, net.mail.Config{TLS: "none"}, net.mail.CramMD5Auth("tim", "tanstaaftanstaaf"), m) catch err {
+    try await net.mail.SendWith(
+        addr,
+        net.mail.Config{TLS: "none"},
+        net.mail.CramMD5Auth("tim", "tanstaaftanstaaf"),
+        m,
+    ) catch err {
         println("send error:", err)
         var se net.mail.SMTPError
         println(errors.As(err, &se), se.Code, se.Temporary())
@@ -193,7 +220,12 @@ async func main() void! {
 
     // PLAIN over an unencrypted connection is refused by default
     var refTask = session(l, false)
-    try await net.mail.SendWith(addr, net.mail.Config{TLS: "none"}, net.mail.PlainAuth("ann", "secret"), message()?) catch err {
+    try await net.mail.SendWith(
+        addr,
+        net.mail.Config{TLS: "none"},
+        net.mail.PlainAuth("ann", "secret"),
+        message()?,
+    ) catch err {
         println("refused:", err)
     }
     _ = await refTask?

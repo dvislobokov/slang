@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.async.task_timeout
 
-import std.io
 import std
+import std.io
 
 async func Sleep(ms int) int {
     await task.Delay(ms)

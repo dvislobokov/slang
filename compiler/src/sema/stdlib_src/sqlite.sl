@@ -18,9 +18,9 @@ namespace std.database.sqlite
 
 // A SQLite error with its (extended) result code.
 struct Error {
-    Code int
+    Code         int
     ExtendedCode int
-    Msg string
+    Msg          string
 
     func Message() string {
         return "sqlite: " + this.Msg
@@ -54,7 +54,8 @@ struct Driver {
 // limited to one connection then.
 func Open(dsn string) *std.database.sql.DB {
     var db = std.database.sql.OpenDriver(Driver{}, dsn)
-    if dsn == ":memory:" || std.strings.Contains(dsn, "mode=memory") && !std.strings.Contains(dsn, "cache=shared") {
+    if dsn == ":memory:" ||
+        std.strings.Contains(dsn, "mode=memory") && !std.strings.Contains(dsn, "cache=shared") {
         db.SetMaxOpenConns(1)
         db.SetMaxIdleConns(1)
         db.SetHealthCheck(-1)
@@ -63,10 +64,10 @@ func Open(dsn string) *std.database.sql.DB {
 }
 
 struct options {
-    path string
-    busy int = 5000
+    path    string
+    busy    int = 5000
     pragmas []string
-    txlock string = "DEFERRED"
+    txlock  string = "DEFERRED"
 }
 
 func parseDSN(dsn string) options! {
@@ -136,8 +137,8 @@ async func openConn(dsn string) std.database.sql.DriverConn! {
 }
 
 struct conn {
-    h int
-    bad bool
+    h      int
+    bad    bool
     txlock string
 
     func Drop() {
@@ -182,7 +183,10 @@ struct conn {
             try rtExec(this.h, query) catch err {
                 return this.fail(err)
             }
-            return std.database.sql.Result{RowsAffected: rtChanges(this.h), LastInsertId: rtLastInsertId(this.h)}
+            return std.database.sql.Result{
+                RowsAffected: rtChanges(this.h),
+                LastInsertId: rtLastInsertId(this.h),
+            }
         }
         var s = this.newStmt(query)?
         defer s.finalize()
@@ -273,10 +277,10 @@ struct tx {
 }
 
 struct stmt {
-    c *conn
-    h int
-    n int
-    q string
+    c    *conn
+    h    int
+    n    int
+    q    string
     busy bool
 
     func Drop() {
@@ -306,7 +310,12 @@ struct stmt {
             return error("sqlite: statement is closed")
         }
         if len(args) != this.n {
-            return error("sqlite: expected " + std.fmt.Format("{0}", this.n) + " arguments, got " + std.fmt.Format("{0}", len(args)))
+            return error(
+                "sqlite: expected " +
+                    std.fmt.Format("{0}", this.n) +
+                    " arguments, got " +
+                    std.fmt.Format("{0}", len(args)),
+            )
         }
         rtReset(this.h)
         for i, a in args {
@@ -331,7 +340,12 @@ struct stmt {
                 case std.time.Time t:
                     rtBindText(this.h, k, t.Format("2006-01-02 15:04:05.999999999-07:00"))?
                 default:
-                    return error("sqlite: unsupported argument " + std.fmt.Format("{0}", i + 1) + " of type " + typeof(a).Name)
+                    return error(
+                        "sqlite: unsupported argument " +
+                            std.fmt.Format("{0}", i + 1) +
+                            " of type " +
+                            typeof(a).Name,
+                    )
             }
         }
     }
@@ -354,7 +368,10 @@ struct stmt {
             }
         }
         rtReset(this.h)
-        return std.database.sql.Result{RowsAffected: rtChanges(this.c.h), LastInsertId: rtLastInsertId(this.c.h)}
+        return std.database.sql.Result{
+            RowsAffected: rtChanges(this.c.h),
+            LastInsertId: rtLastInsertId(this.c.h),
+        }
     }
 
     func Exec(args []any) Task<std.database.sql.Result!> {
@@ -398,10 +415,10 @@ struct stmt {
 }
 
 struct rows {
-    s *stmt
-    cols []string
-    types []string
-    done bool
+    s       *stmt
+    cols    []string
+    types   []string
+    done    bool
     ownStmt bool
 
     func Columns() []string {

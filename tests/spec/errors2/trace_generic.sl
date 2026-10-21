@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors2.trace_generic
 
-import std.io
 import std
+import std.io
 
 func First<T>(xs []T) T! {
     if len(xs) == 0 {

@@ -369,6 +369,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 out.push(("Key", kp.into()));
                 out.push(("Elem", vp.into()));
             }
+            Type::Tuple(ts) => {
+                // The elements as fields `_0`, `_1`, ... (like DWARF).
+                let st = self.llty(t).into_struct_type();
+                let fs: Vec<_> = ts.iter().enumerate().map(|(i, et)| (format!("_{i}"), *et, self.td.offset_of_element(&st, i as u32).unwrap_or(0), false, false, Vec::new(), None)).collect();
+                let fields = self.field_infos(fs);
+                out.push(("Fields", fields));
+            }
             _ => {}
         }
         if full && spelling.is_none() {

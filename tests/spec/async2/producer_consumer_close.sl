@@ -2,11 +2,11 @@
 // status: passing
 namespace spec.async2.producer_consumer_close
 
-import std.io
 import std
+import std.io
 
 struct State {
-    Mu task.Mutex
+    Mu   task.Mutex
     Live int
 }
 

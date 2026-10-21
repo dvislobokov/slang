@@ -8,8 +8,8 @@ import std.io
 struct Doc {
     Title string
     Lines []string
-    Tags map[string]int
-    Kids []*Doc
+    Tags  map[string]int
+    Kids  []*Doc
 }
 
 func Build(n int) *Doc {

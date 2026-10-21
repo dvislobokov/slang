@@ -1,0 +1,75 @@
+namespace std.cmp
+
+// std.cmp: comparisons generic over the builtin Ordered constraint
+// (integers, floats, string, char). For floats, NaN compares less than
+// every other value and equal to NaN (as in Go's cmp.Compare).
+
+func isNaN<T: Ordered>(x T) bool {
+    return x != x
+}
+
+// -1 if a < b, 0 if a == b, +1 if a > b.
+func Compare<T: Ordered>(a T, b T) int {
+    var an = isNaN(a)
+    var bn = isNaN(b)
+    if an || bn {
+        if an && bn {
+            return 0
+        }
+        if an {
+            return -1
+        }
+        return 1
+    }
+    if a < b {
+        return -1
+    }
+    if a > b {
+        return 1
+    }
+    return 0
+}
+
+// True if a < b (NaN is less than everything else).
+func Less<T: Ordered>(a T, b T) bool {
+    return Compare(a, b) < 0
+}
+
+// The smaller of a and b (a if equal).
+func Min<T: Ordered>(a T, b T) T {
+    if b < a {
+        return b
+    }
+    return a
+}
+
+// The larger of a and b (a if equal).
+func Max<T: Ordered>(a T, b T) T {
+    if b > a {
+        return b
+    }
+    return a
+}
+
+// x limited to [lo, hi]. Panics if lo > hi.
+func Clamp<T: Ordered>(x T, lo T, hi T) T {
+    if lo > hi {
+        panic("cmp.Clamp: lo > hi")
+    }
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+// The first argument that is not the zero value (or the zero value).
+func Or<T: Comparable>(a T, b T) T {
+    var zero T
+    if a != zero {
+        return a
+    }
+    return b
+}

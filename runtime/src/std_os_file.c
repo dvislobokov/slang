@@ -1,19 +1,15 @@
 /* std_os_file.c - file descriptors for std.os.File and std.os.ReadDir
  * (compiler/src/sema/stdlib_src/os.sl), plus the std.io.EOF sentinel.
- * POSIX calls directly, like std_fs.c. Errors are "<op> <path>: <strerror>"
+ * System calls through platform/platform.h, like std_fs.c. Errors are "<op> <path>: <strerror>"
  * (slang_error_errno; ENOENT wraps fs.ErrNotFound). Reads and writes
  * retry on EINTR; writes loop until everything is written. */
 #include "rt_internal.h"
+#include "platform/platform.h"
 
-#include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 slang_error *slang_io_err_eof(void);
 int64_t slang_os_rt_open(const slang_string *path, int64_t flags, int64_t perm, slang_error **err);
@@ -40,18 +36,8 @@ static void set_err(slang_error **err, const char *op, const char *path, int e) 
     *err = path ? slang_error_errno(op, path, e) : slang_error_new_cstr(strerror(e));
 }
 
-/* Portable flag bits of os.sl (RDONLY 0, WRONLY 1, RDWR 2, APPEND 8,
- * CREATE 64, EXCL 128, SYNC 256, TRUNC 512). */
-static int open_flags(int64_t f) {
-    int o = (f & 3) == 1 ? O_WRONLY : (f & 3) == 2 ? O_RDWR : O_RDONLY;
-    if (f & 8) o |= O_APPEND;
-    if (f & 64) o |= O_CREAT;
-    if (f & 128) o |= O_EXCL;
-    if (f & 256) o |= O_SYNC;
-    if (f & 512) o |= O_TRUNC;
-    return o | O_CLOEXEC;
-}
-
+/* The flag bits of os.sl (RDONLY 0, WRONLY 1, RDWR 2, APPEND 8, CREATE 64,
+ * EXCL 128, SYNC 256, TRUNC 512) are the platform layer's SLANG_PLAT_O_*. */
 int64_t slang_os_rt_open(const slang_string *path, int64_t flags, int64_t perm, slang_error **err) {
     if (err) *err = NULL;
     const char *p = sdata(path);
@@ -59,11 +45,9 @@ int64_t slang_os_rt_open(const slang_string *path, int64_t flags, int64_t perm, 
         set_err(err, "open", p, EINVAL);
         return -1;
     }
-    int fd;
-    do fd = open(p, open_flags(flags), (mode_t)perm);
-    while (fd < 0 && errno == EINTR);
+    int64_t fd = slang__plat_open(p, (int)flags, (int)perm);
     if (fd < 0) {
-        set_err(err, "open", p, errno);
+        set_err(err, "open", p, (int)-fd);
         return -1;
     }
     return fd;
@@ -72,11 +56,9 @@ int64_t slang_os_rt_open(const slang_string *path, int64_t flags, int64_t perm, 
 int64_t slang_os_rt_read(int64_t fd, const slang_slice *buf, slang_error **err) {
     if (err) *err = NULL;
     if (!buf || buf->len == 0) return 0;
-    ssize_t n;
-    do n = read((int)fd, buf->data, (size_t)buf->len);
-    while (n < 0 && errno == EINTR);
+    int64_t n = slang__plat_read(fd, buf->data, buf->len);
     if (n < 0) {
-        set_err(err, "read", NULL, errno);
+        set_err(err, "read", NULL, (int)-n);
         return 0;
     }
     return n;
@@ -85,11 +67,9 @@ int64_t slang_os_rt_read(int64_t fd, const slang_slice *buf, slang_error **err) 
 int64_t slang_os_rt_pread(int64_t fd, const slang_slice *buf, int64_t off, slang_error **err) {
     if (err) *err = NULL;
     if (!buf || buf->len == 0) return 0;
-    ssize_t n;
-    do n = pread((int)fd, buf->data, (size_t)buf->len, (off_t)off);
-    while (n < 0 && errno == EINTR);
+    int64_t n = slang__plat_pread(fd, buf->data, buf->len, off);
     if (n < 0) {
-        set_err(err, "read", NULL, errno);
+        set_err(err, "read", NULL, (int)-n);
         return 0;
     }
     return n;
@@ -102,10 +82,9 @@ static int64_t write_all(int64_t fd, const char *p, int64_t len, slang_error **e
     if (fd == 2) fflush(stderr);
     int64_t done = 0;
     while (done < len) {
-        ssize_t n = write((int)fd, p + done, (size_t)(len - done));
+        int64_t n = slang__plat_write(fd, p + done, len - done);
         if (n < 0) {
-            if (errno == EINTR) continue;
-            set_err(err, "write", NULL, errno);
+            set_err(err, "write", NULL, (int)-n);
             return done;
         }
         done += n;
@@ -123,49 +102,52 @@ int64_t slang_os_rt_write_str(int64_t fd, const slang_string *s, slang_error **e
 
 int64_t slang_os_rt_seek(int64_t fd, int64_t off, int64_t whence, slang_error **err) {
     if (err) *err = NULL;
-    int w = whence == 1 ? SEEK_CUR : whence == 2 ? SEEK_END : SEEK_SET;
-    off_t r = lseek((int)fd, (off_t)off, w);
+    int64_t r = slang__plat_seek(fd, off, (int)whence);
     if (r < 0) {
-        set_err(err, "seek", NULL, errno);
+        set_err(err, "seek", NULL, (int)-r);
         return 0;
     }
-    return (int64_t)r;
+    return r;
 }
 
 void slang_os_rt_close(int64_t fd, slang_error **err) {
     if (err) *err = NULL;
     if (fd < 0) return;
-    if (close((int)fd) != 0 && errno != EINTR) set_err(err, "close", NULL, errno);
+    int e = slang__plat_close(fd);
+    if (e) set_err(err, "close", NULL, e);
 }
 
 void slang_os_rt_sync(int64_t fd, slang_error **err) {
     if (err) *err = NULL;
-    if (fsync((int)fd) != 0) set_err(err, "sync", NULL, errno);
+    int e = slang__plat_fsync(fd);
+    if (e) set_err(err, "sync", NULL, e);
 }
 
 void slang_os_rt_truncate(int64_t fd, int64_t size, slang_error **err) {
     if (err) *err = NULL;
-    if (ftruncate((int)fd, (off_t)size) != 0) set_err(err, "truncate", NULL, errno);
+    int e = slang__plat_ftruncate(fd, size);
+    if (e) set_err(err, "truncate", NULL, e);
 }
 
 /* [size, mode (permission bits), kind (0 file, 1 dir, 2 symlink, 3 other),
  *  mtime seconds, mtime nanoseconds] */
-static void stat_out(const struct stat *st, slang_slice *out) {
+static void stat_out(const slang__plat_stat *st, slang_slice *out) {
     slang_slice_new(out, 8, 5, 5);
     int64_t *o = out->data;
-    o[0] = (int64_t)st->st_size;
-    o[1] = (int64_t)(st->st_mode & 07777);
-    o[2] = S_ISREG(st->st_mode) ? 0 : S_ISDIR(st->st_mode) ? 1 : S_ISLNK(st->st_mode) ? 2 : 3;
-    o[3] = (int64_t)st->st_mtim.tv_sec;
-    o[4] = (int64_t)st->st_mtim.tv_nsec;
+    o[0] = st->size;
+    o[1] = (int64_t)st->perm;
+    o[2] = st->kind;
+    o[3] = st->mtime_sec;
+    o[4] = st->mtime_nsec;
 }
 
 void slang_os_rt_fstat(int64_t fd, slang_slice *out, slang_error **err) {
     if (err) *err = NULL;
     memset(out, 0, sizeof *out);
-    struct stat st;
-    if (fstat((int)fd, &st) != 0) {
-        set_err(err, "stat", NULL, errno);
+    slang__plat_stat st;
+    int e = slang__plat_fstat(fd, &st);
+    if (e) {
+        set_err(err, "stat", NULL, e);
         return;
     }
     stat_out(&st, out);
@@ -174,10 +156,11 @@ void slang_os_rt_fstat(int64_t fd, slang_slice *out, slang_error **err) {
 void slang_os_rt_stat(const slang_string *path, bool follow, slang_slice *out, slang_error **err) {
     if (err) *err = NULL;
     memset(out, 0, sizeof *out);
-    struct stat st;
+    slang__plat_stat st;
     const char *p = sdata(path);
-    if ((follow ? stat(p, &st) : lstat(p, &st)) != 0) {
-        set_err(err, follow ? "stat" : "lstat", p, errno);
+    int e = slang__plat_stat_path(p, follow, &st);
+    if (e) {
+        set_err(err, follow ? "stat" : "lstat", p, e);
         return;
     }
     stat_out(&st, out);
@@ -194,37 +177,35 @@ void slang_os_rt_read_dir(const slang_string *path, slang_slice *out, slang_erro
     if (err) *err = NULL;
     memset(out, 0, sizeof *out);
     const char *p = sdata(path);
-    DIR *d = opendir(p);
+    int e = 0;
+    slang__plat_dir *d = slang__plat_dir_open(p, &e);
     if (!d) {
-        set_err(err, "open", p, errno);
+        set_err(err, "open", p, e);
         return;
     }
     slang_slice_new_ops(out, 8, 0, 8, &slang_ops_ref);
-    struct dirent *e;
-    while ((e = readdir(d)) != NULL) {
-        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
-        char kind = '?';
-        unsigned char t = e->d_type;
-        if (t == DT_UNKNOWN) {
+    const char *name;
+    int t;
+    while ((name = slang__plat_dir_next(d, &t, &e)) != NULL) {
+        if (t < 0) {
             char full[4096];
-            struct stat st;
-            snprintf(full, sizeof full, "%s/%s", p, e->d_name);
-            if (lstat(full, &st) == 0) t = S_ISREG(st.st_mode) ? DT_REG : S_ISDIR(st.st_mode) ? DT_DIR : S_ISLNK(st.st_mode) ? DT_LNK : DT_UNKNOWN;
+            slang__plat_stat st;
+            snprintf(full, sizeof full, "%s/%s", p, name);
+            t = slang__plat_stat_path(full, false, &st) == 0 ? st.kind : SLANG_PLAT_KIND_OTHER;
         }
-        if (t == DT_REG) kind = 'f';
-        else if (t == DT_DIR) kind = 'd';
-        else if (t == DT_LNK) kind = 'l';
+        char kind = t == SLANG_PLAT_KIND_FILE ? 'f' : t == SLANG_PLAT_KIND_DIR ? 'd' : t == SLANG_PLAT_KIND_LINK ? 'l' : '?';
         char buf[1024];
-        int n = snprintf(buf, sizeof buf, "%c%s", kind, e->d_name);
+        int n = snprintf(buf, sizeof buf, "%c%s", kind, name);
         slang_string *s = slang_string_new(buf, n);
         slang_slice_append(out, 8, &slang_ops_ref, &s);
         slang_release(s);
     }
-    closedir(d);
+    slang__plat_dir_close(d);
     if (out->len > 1) qsort(out->data, (size_t)out->len, 8, cmp_names);
 }
 
 void slang_os_rt_chmod(const slang_string *path, int64_t mode, slang_error **err) {
     if (err) *err = NULL;
-    if (chmod(sdata(path), (mode_t)mode) != 0) set_err(err, "chmod", sdata(path), errno);
+    int e = slang__plat_chmod(sdata(path), (int)mode);
+    if (e) set_err(err, "chmod", sdata(path), e);
 }

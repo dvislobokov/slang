@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.reverse_multibyte
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(strings.Reverse("héllo"))

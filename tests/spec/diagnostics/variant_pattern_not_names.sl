@@ -12,6 +12,7 @@ func main() {
     var sh = Shape.Circle(1)
     switch sh {
         case Shape.Circle(1): println("unit")
-        default: println("other")
+        default:
+            println("other")
     }
 }

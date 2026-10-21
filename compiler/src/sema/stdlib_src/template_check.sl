@@ -7,7 +7,7 @@ namespace std.text.template
 // Unknown types (any, interfaces, function results) end checking of a path.
 
 struct checker {
-    t *tmpl
+    t     *tmpl
     names []string
     types []*std.reflect.TypeInfo
 
@@ -141,17 +141,29 @@ struct checker {
             if t.Key != nil && t.Key.Kind == std.reflect.Kind.String {
                 return t.Elem
             }
-            return this.fail(line, "can't evaluate field " + name + " in type " + t.Name + " (map keys are not strings)")
+            return this.fail(
+                line,
+                "can't evaluate field " +
+                    name +
+                    " in type " +
+                    t.Name +
+                    " (map keys are not strings)",
+            )
         }
         return this.fail(line, "can't evaluate field " + name + " in type " + t.Name)
     }
 
     func elem(t0 *std.reflect.TypeInfo, line int) *std.reflect.TypeInfo! {
         var t = deref(t0)
-        if t == nil || t.Kind == std.reflect.Kind.Any || t.Kind == std.reflect.Kind.Interface || t == std.reflect.TypeOf<Value>() {
+        if t == nil ||
+            t.Kind == std.reflect.Kind.Any ||
+            t.Kind == std.reflect.Kind.Interface ||
+            t == std.reflect.TypeOf<Value>() {
             return nil
         }
-        if t.Kind == std.reflect.Kind.Slice || t.Kind == std.reflect.Kind.Array || t.Kind == std.reflect.Kind.Map {
+        if t.Kind == std.reflect.Kind.Slice ||
+            t.Kind == std.reflect.Kind.Array ||
+            t.Kind == std.reflect.Kind.Map {
             return t.Elem
         }
         if t.Kind == std.reflect.Kind.Int {
@@ -171,7 +183,10 @@ func deref(t0 *std.reflect.TypeInfo) *std.reflect.TypeInfo {
 
 func elemOf(t0 *std.reflect.TypeInfo) *std.reflect.TypeInfo {
     var t = deref(t0)
-    if t != nil && (t.Kind == std.reflect.Kind.Slice || t.Kind == std.reflect.Kind.Array || t.Kind == std.reflect.Kind.Map) {
+    if t != nil &&
+        (t.Kind == std.reflect.Kind.Slice ||
+            t.Kind == std.reflect.Kind.Array ||
+            t.Kind == std.reflect.Kind.Map) {
         return t.Elem
     }
     return nil

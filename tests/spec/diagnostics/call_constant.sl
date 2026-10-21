@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.call_constant
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(math.Pi(1))

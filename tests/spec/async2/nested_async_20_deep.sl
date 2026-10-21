@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.async2.nested_async_20_deep
 
-import std.io
 import std
+import std.io
 
 async func Level(n int) int {
     if n == 0 {

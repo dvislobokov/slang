@@ -106,8 +106,9 @@ switch any {
   `std.net.http.test` (`NewServer`, `NewRecorder`, `NewRequest`).
 - Нет: HTTP/3, server push, permessage-deflate, `http.Context`-обработчики
   (`Handler` пока `Serve(req, res)`), WebSocket поверх HTTP/2 (RFC 8441),
-  потоковое чтение тела запроса на сервере (тело буферизуется; лимит —
-  `MaxBodyBytes`).
+  (потоковое чтение тела запроса на сервере есть: `Server{StreamBodies}` +
+  `req.Reader`, лимит `MaxBodyBytes`; `SendFile` по HTTP/2 читает файл
+  кусками по 64 KB, а не целиком).
 
 ### TLS
 
@@ -243,6 +244,126 @@ async func main() {
 - **Фильтры и модель-биндинг**: `@filter(Auth)`, кастомные биндеры.
 - **Тестирование**: `web.TestServer(app)` — запросы в памяти без сокетов.
 - **gRPC** (`slang.grpc`) и **GraphQL** — отдельными пакетами на той же базе.
+
+**Статус (реализовано как `std.web`, пока нет реестра пакетов; исходники —
+`compiler/src/sema/stdlib_src/web_*.sl`, генерация при компиляции —
+`compiler/src/sema/web.rs`; пример — `examples/web_app/`, тесты —
+`tests/spec/web/`):**
+
+- ✓ **Контроллеры и маршруты при компиляции.** `app.MapController<C>()` /
+  `app.MapControllers<A, B>()` — не вызов рефлексии, а инструкция
+  компилятору: он читает `@route("/api/users")` структуры и
+  `@get/@post/@put/@delete/@patch("{id}")` её методов (несколько глаголов
+  на одном методе можно; путь с `/` — абсолютный), классифицирует
+  параметры и порождает исходник шаблона stdlib в `std.web`, параметры
+  типа которого связаны с конкретными типами (типы не пишутся текстом),
+  с одним endpoint на действие: привязка, проверка, создание контроллера,
+  вызов, запись результата и метаданные OpenAPI. Ошибки компиляции:
+  неверный шаблон пути, дубликат маршрута (во всей программе, в том числе
+  между minimal API), `{param}` без параметра, параметр пути не скалярного
+  типа, тело у GET/DELETE, непривязываемый тип, неизвестные аргументы
+  атрибутов, контроллер без `@route` или без действий.
+- ✓ **Источники параметров**: имя из `{name}` → путь; `@query("q")`,
+  `@header("X-Id")`, `@form("f")` (urlencoded), `@body` (JSON),
+  `@fromServices`; без атрибута `*web.Context` — контекст, указатели и
+  интерфейсы — сервисы, структуры/срезы/map — тело (POST/PUT/PATCH),
+  скаляры — query. Преобразование: строки, целые с проверкой диапазона,
+  float, bool (`true/1/on/yes`), простые enum по имени без учёта регистра,
+  `*T` (nil, если нет), срезы (повтор ключа или через запятую).
+- ✓ **`@validate(required, min, max, range: [a, b], minLength, maxLength,
+  pattern, email, message)`** на полях тела (вложенные структуры, срезы,
+  указатели; `required` для JSON — ключ есть и не null) и на параметрах;
+  все ошибки привязки и проверки — одним ответом 400
+  `application/problem+json` с `"errors": {"field": ["..."]}` (пути
+  `Lines[1].Qty`); `web.Validate<T>(v)` — то же для любого значения.
+- ✓ **Minimal API**: `app.MapGet/MapPost/MapPut/MapDelete/MapPatch(path,
+  handler)` с лямбдой или именованной функцией; параметры выводятся из
+  сигнатуры по тем же правилам (имена — из лямбды), async-обработчики,
+  результат `T`, `T!`, `Result<T>`, `void`; возвращается `*web.Endpoint`
+  (`RequireAuthorization(roles)`, `AllowAnonymous`, `WithSummary/WithTag/
+  WithName`). `app.Map(method, path, func(*Context) Task<void!>)` — без
+  привязки.
+- ✓ **DI**: `app.Services.AddSingleton<T>() / AddScoped<T>() /
+  AddTransient<T>()` регистрируют `*T`, `<I, T>` — интерфейс `I` с
+  реализацией `*T`; фабрику генерирует компилятор: `T.New(deps...)`
+  (параметры — сервисы) или нулевое `T` с полями `@inject`;
+  `AddInstance(x)` (статический тип `x`), `AddSingletonFactory<T>(func(*web.Scope) T!)`
+  и т. п. Контроллер создаётся на запрос, внедряются все его поля-указатели
+  и интерфейсы (`@inject(skip: true)` — нет). Singleton создаются в
+  `App.Build` (в порядке регистрации), scoped — один раз на запрос
+  (scope запроса освобождается с ним — работает `Drop`), transient —
+  при каждом разрешении; scoped из singleton — ошибка. `web.Resolve<T>()`
+  (scope текущего запроса из контекста задачи, ключ -103),
+  `ctx.Resolve<T>()`, `scope.Get<T>()`; без регистрации доступны
+  `log.Logger` (глобальный), `*web.Context`, `*web.App`, `*web.Scope`,
+  `*web.Principal`. **Проверка графа**: зависимость контроллера, обработчика
+  или сервиса, тип которой ни один `Add*` в программе не регистрирует, —
+  ошибка компиляции (`UsersController needs service *UserStore, which is
+  never registered`); `App.Build` (его зовут `Run`, `TestServer` и первый
+  запрос) проверяет то же во время выполнения со списком всех недостающих
+  регистраций (условные регистрации, типы stdlib).
+- ✓ **Middleware**: `app.Use(async func(c *web.Context, next *web.Next)
+  void! { ...; await next.Run(c)? })` в порядке добавления (внешний
+  первым), `UseHttp(mw)` — middleware `std.net.http` вокруг всего
+  приложения. Встроенные: `UseLogging` (одно событие `std.log` на запрос:
+  `HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed}
+  ms` + `Route`), `UseRecover`, `UseCors(http.CORSOptions)`, `UseGzip`,
+  `UseStaticFiles(prefix, dir)`, `UseRateLimit` (token bucket на IP, 429 +
+  `Retry-After`), `UseRequestId` (заголовок, `ctx.RequestId`, свойство лога
+  `RequestId`), `UseTracing` (span `std.diag` вида Server `HTTP GET
+  /api/users/{id}`), `UseAuth(AuthOptions{Key, Issuer, Audience, Leeway,
+  Clock})`, `UseBodyLimit(n)` (413), `UseTimeout(ms)`
+  (`http.TimeoutHandler`); `AddHealthCheck(name, f)` + `MapHealthChecks
+  ("/health")`.
+- ✓ **JWT** (`std.web.auth.jwt`): ключи `HS256(secret)`, `RS256(der)`,
+  `RS256Public(n, e)`, `ES256(priv)`, `ES256Public(pub)`; `Sign(claims,
+  key)`, `Verify(token, key, VerifyOptions{Issuer, Audience, Leeway,
+  Clock})` (алгоритм из заголовка должен совпасть с ключом, `none` не
+  принимается, exp/nbf), `Decode`, `Claims{Subject, Issuer, Audience,
+  ExpiresAt, NotBefore, IssuedAt, Id, Name, Email, Roles, Extra}`.
+  `@authorize` / `@authorize(roles: [...])` на контроллере или действии,
+  `@allowAnonymous`: 401 без пользователя, 403 без роли.
+- ✓ **Конфигурация** (`std.web.config`): `config.Load(LoadOptions{Dir,
+  Name, Environment, EnvPrefix, Args, NoArgs, NoFiles, Defaults})`:
+  встроенные `Defaults` (JSON) < `appsettings.{json,yaml,yml,toml}` <
+  `appsettings.<env>.*` < `APP__Section__Key` < `--Section:Key=value`;
+  ключи без учёта регистра; `cfg.Bind<T>(section)` / `config.Bind<T>()`
+  через compile-time рефлексию (вложенные структуры, срезы, map, указатели)
+  с `@validate`; `config.NewOptions<T>(cfg, section)`: `Value`,
+  `Version`, `Reload`, `CheckForChanges` (размер и mtime файлов), `Watch(ms)`
+  (фоновая задача, `Stop`), `OnChange`.
+- ✓ **Результаты**: `web.Result<T>` (`Ok`, `Created`, `CreatedAt`,
+  `Accepted`, `NoContent`, `StatusCode`, `NotFound`, `BadRequest`,
+  `Unauthorized`, `Forbidden`, `Conflict`, `Problem`, `ValidationProblem`,
+  `.WithHeader`); `T` результата без аргументов выводится из объявленного
+  типа (`return web.NotFound()` в `web.Result<User>!`). Значения пишутся
+  JSON по умолчанию, XML (`Accept: application/xml`) или YAML, строки —
+  `text/plain`. Ошибка `T!` из обработчика → Problem Details (RFC 9457)
+  с сообщением в `detail`, статусом из `web.Error(404, "...")`
+  (`HttpError`), а при `SLANG_ENV=development` — с `trace` =
+  `errors.Trace(err)`; 404/405 — тоже Problem Details.
+- ✓ **OpenAPI 3.1**: `app.MapOpenApi("/openapi.json")` — документ из
+  метаданных, которые генерирует компилятор вместе с таблицей маршрутов
+  (параметры, тела и ответы со схемами `json.Schema<T>()`, теги по
+  контроллеру, `@summary`, bearer-security для `@authorize`, 400/401/403);
+  `app.MapSwagger("/swagger", "/openapi.json")` — страница swagger-ui с
+  CDN (unpkg), без бандлинга. `std.encoding.json.Schema<T>()` — JSON Schema
+  2020-12 через compile-time рефлексию с ключевыми словами `@validate`.
+- ✓ **Тестирование**: `web.TestServer(app)` → `*web.TestClient` без сокетов
+  (`Get`, `Post`, `Put`, `Patch`, `Delete`, `Send`, `WithHeader`,
+  `WithBearer`, `GetJSON<T>`, `PostJSON<T, R>`); приложение — обычный
+  `http.Handler`, `app.Run(":8080")` / `Listen` + `Port` для реального
+  сервера.
+- Отличия от эскиза выше: пространство имён `std.web` (`import std.web` или
+  `import std` и `web.X`); пользователь запроса — `web.Principal`
+  (`ctx.User`), чтобы не конфликтовать с моделями `User`; middleware
+  получает `*web.Next`; RFC 9457 вместо 7807.
+- Нет: cookie/OAuth2/OIDC-аутентификации и политик сверх ролей,
+  `@filter` и своих биндеров, `$ref`-компонентов в OpenAPI (схемы
+  встраиваются), тел XML/YAML в запросах, `web.AutoTLS`, команды
+  `slang web openapi`, групп маршрутов, ограничений в шаблонах
+  (`{id:int}`), привязки multipart-форм; переменные окружения ищутся по
+  именам полей (`APP__Db__Host`), списка окружения нет.
 
 ## 3. Данные: `std.database.sql` и `slang.data` (ORM уровня EF Core)
 

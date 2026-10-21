@@ -1,4 +1,4 @@
-// error: cannot keep an interior pointer (address of a field stored in a variable)
+// error: cannot keep interior pointer variable `p` elsewhere (an interior pointer kept in a local is returned)
 namespace app
 
 struct Point {
@@ -11,8 +11,13 @@ struct Line {
     To   Point
 }
 
+func origin(l *Line) *Point {
+    var p = &l.From // fine: p pins l
+    p.X = 1
+    return p // but it cannot leave the function
+}
+
 func main() {
     var l = new Line{}
-    var p = &l.From
-    p.X = 1
+    _ = origin(l)
 }

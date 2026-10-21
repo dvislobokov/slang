@@ -22,24 +22,24 @@ func slots() map[string]any {
 
 struct series {
     values []string
-    value float
+    value  float
     // histograms
     counts []int
-    sum float
-    count int
+    sum    float
+    count  int
 }
 
 // A metric family: name, help, label names and one series per label
 // value combination (in creation order).
 struct family {
-    guard int
-    name string
-    help string
-    kind string
-    labels []string
+    guard   int
+    name    string
+    help    string
+    kind    string
+    labels  []string
     buckets []float
-    keys []string
-    series []*series
+    keys    []string
+    series  []*series
 
     func get(values []string) *series {
         var key = std.strings.Join(values, "\u{1}")
@@ -103,13 +103,47 @@ struct family {
         for s in this.series {
             if this.kind == "histogram" {
                 for i, bound in this.buckets {
-                    b.Write(this.name + "_bucket" + labelText(this.labels, s.values, "le", num(bound)) + " " + std.fmt.Format("{0}", s.counts[i]) + "\n")
+                    b.Write(
+                        this.name +
+                            "_bucket" +
+                            labelText(this.labels, s.values, "le", num(bound)) +
+                            " " +
+                            std.fmt.Format("{0}", s.counts[i]) +
+                            "\n",
+                    )
                 }
-                b.Write(this.name + "_bucket" + labelText(this.labels, s.values, "le", "+Inf") + " " + std.fmt.Format("{0}", s.count) + "\n")
-                b.Write(this.name + "_sum" + labelText(this.labels, s.values, "", "") + " " + num(s.sum) + "\n")
-                b.Write(this.name + "_count" + labelText(this.labels, s.values, "", "") + " " + std.fmt.Format("{0}", s.count) + "\n")
+                b.Write(
+                    this.name +
+                        "_bucket" +
+                        labelText(this.labels, s.values, "le", "+Inf") +
+                        " " +
+                        std.fmt.Format("{0}", s.count) +
+                        "\n",
+                )
+                b.Write(
+                    this.name +
+                        "_sum" +
+                        labelText(this.labels, s.values, "", "") +
+                        " " +
+                        num(s.sum) +
+                        "\n",
+                )
+                b.Write(
+                    this.name +
+                        "_count" +
+                        labelText(this.labels, s.values, "", "") +
+                        " " +
+                        std.fmt.Format("{0}", s.count) +
+                        "\n",
+                )
             } else {
-                b.Write(this.name + labelText(this.labels, s.values, "", "") + " " + num(s.value) + "\n")
+                b.Write(
+                    this.name +
+                        labelText(this.labels, s.values, "", "") +
+                        " " +
+                        num(s.value) +
+                        "\n",
+                )
             }
         }
         std.task.rtUnlock(&this.guard)
@@ -122,7 +156,11 @@ func escapeHelp(s string) string {
 }
 
 func escapeLabel(s string) string {
-    return std.strings.Replace(std.strings.Replace(std.strings.Replace(s, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n")
+    return std.strings.Replace(
+        std.strings.Replace(std.strings.Replace(s, "\\", "\\\\"), "\"", "\\\""),
+        "\n",
+        "\\n",
+    )
 }
 
 func labelText(names []string, values []string, extra string, extraValue string) string {
@@ -210,7 +248,7 @@ func register(name string, help string, kind string, labels []string, buckets []
 
 // A monotonically increasing value (`requests_total`).
 struct Counter {
-    f *family
+    f      *family
     values []string
 
     func Inc() {
@@ -236,7 +274,7 @@ struct Counter {
 
 // A value that goes up and down (`queue_length`).
 struct Gauge {
-    f *family
+    f      *family
     values []string
 
     func Set(v float) {
@@ -270,7 +308,7 @@ struct Gauge {
 
 // Observations counted in cumulative buckets (`request_seconds`).
 struct Histogram {
-    f *family
+    f      *family
     values []string
 
     func Observe(v float) {
@@ -321,7 +359,13 @@ struct RuntimeStats {
 }
 
 func Runtime() RuntimeStats {
-    return RuntimeStats{LiveObjects: rtLiveObjects(), Allocations: rtAllocations(), Tasks: rtLiveTasks(), QueueLength: rtQueueLen(), Workers: rtWorkers()}
+    return RuntimeStats{
+        LiveObjects: rtLiveObjects(),
+        Allocations: rtAllocations(),
+        Tasks: rtLiveTasks(),
+        QueueLength: rtQueueLen(),
+        Workers: rtWorkers(),
+    }
 }
 
 // Adds the runtime metrics (slang_live_objects, slang_allocations_total,
@@ -347,11 +391,31 @@ func runtimeText() string {
     }
     var r = Runtime()
     var b = std.strings.Builder{}
-    b.Write("# HELP slang_live_objects Live heap objects.\n# TYPE slang_live_objects gauge\nslang_live_objects " + std.fmt.Format("{0}", r.LiveObjects) + "\n")
-    b.Write("# HELP slang_allocations_total Heap objects allocated.\n# TYPE slang_allocations_total counter\nslang_allocations_total " + std.fmt.Format("{0}", r.Allocations) + "\n")
-    b.Write("# HELP slang_tasks Live tasks.\n# TYPE slang_tasks gauge\nslang_tasks " + std.fmt.Format("{0}", r.Tasks) + "\n")
-    b.Write("# HELP slang_scheduler_queue_length Jobs waiting for a worker.\n# TYPE slang_scheduler_queue_length gauge\nslang_scheduler_queue_length " + std.fmt.Format("{0}", r.QueueLength) + "\n")
-    b.Write("# HELP slang_scheduler_workers Scheduler worker threads.\n# TYPE slang_scheduler_workers gauge\nslang_scheduler_workers " + std.fmt.Format("{0}", r.Workers) + "\n")
+    b.Write(
+        "# HELP slang_live_objects Live heap objects.\n# TYPE slang_live_objects gauge\nslang_live_objects " +
+            std.fmt.Format("{0}", r.LiveObjects) +
+            "\n",
+    )
+    b.Write(
+        "# HELP slang_allocations_total Heap objects allocated.\n# TYPE slang_allocations_total counter\nslang_allocations_total " +
+            std.fmt.Format("{0}", r.Allocations) +
+            "\n",
+    )
+    b.Write(
+        "# HELP slang_tasks Live tasks.\n# TYPE slang_tasks gauge\nslang_tasks " +
+            std.fmt.Format("{0}", r.Tasks) +
+            "\n",
+    )
+    b.Write(
+        "# HELP slang_scheduler_queue_length Jobs waiting for a worker.\n# TYPE slang_scheduler_queue_length gauge\nslang_scheduler_queue_length " +
+            std.fmt.Format("{0}", r.QueueLength) +
+            "\n",
+    )
+    b.Write(
+        "# HELP slang_scheduler_workers Scheduler worker threads.\n# TYPE slang_scheduler_workers gauge\nslang_scheduler_workers " +
+            std.fmt.Format("{0}", r.Workers) +
+            "\n",
+    )
     return b.String()
 }
 
@@ -398,7 +462,7 @@ enum SpanKind { Internal, Server, Client, Producer, Consumer }
 enum StatusCode { Unset, Ok, Error }
 
 struct Attribute {
-    Key string
+    Key   string
     Value any
 }
 
@@ -406,21 +470,21 @@ struct Attribute {
 // bytes, SpanId 8), times are Unix nanoseconds. StartSpan makes it the
 // current span of the task until End.
 struct Span {
-    Name string
-    TraceId string
-    SpanId string
-    ParentSpanId string
-    Kind SpanKind
-    StartNanos int
-    EndNanos int
-    Attributes []Attribute
-    Status StatusCode
+    Name          string
+    TraceId       string
+    SpanId        string
+    ParentSpanId  string
+    Kind          SpanKind
+    StartNanos    int
+    EndNanos      int
+    Attributes    []Attribute
+    Status        StatusCode
     StatusMessage string
     // The span came from a traceparent header (another process).
-    Remote bool
-    ended bool
-    pushed bool
-    prev map[string]any
+    Remote    bool
+    ended     bool
+    pushed    bool
+    prev      map[string]any
     startMono int
 
     func SetAttribute(key string, value any) {
@@ -493,10 +557,10 @@ interface Exporter {
 
 struct tracer {
     exporters []Exporter
-    seeded bool
-    state int
-    clock func() int
-    service string
+    seeded    bool
+    state     int
+    clock     func() int
+    service   string
 }
 
 func tracerOf() *tracer {
@@ -644,7 +708,11 @@ func ParseTraceparent(h string) *Span {
     if len(p) != 4 || p[0] != "00" || len(p[1]) != 32 || len(p[2]) != 16 || len(p[3]) != 2 {
         return nil
     }
-    if !isHex(p[1]) || !isHex(p[2]) || !isHex(p[3]) || p[1] == "00000000000000000000000000000000" || p[2] == "0000000000000000" {
+    if !isHex(p[1]) ||
+        !isHex(p[2]) ||
+        !isHex(p[3]) ||
+        p[1] == "00000000000000000000000000000000" ||
+        p[2] == "0000000000000000" {
         return nil
     }
     return new Span{TraceId: p[1], SpanId: p[2], Remote: true, ended: true}
@@ -661,7 +729,7 @@ func isHex(s string) bool {
 }
 
 struct remoteScope {
-    old map[string]any
+    old    map[string]any
     pushed bool
 }
 
@@ -697,7 +765,18 @@ struct ConsoleExporter {
         if parent == "" {
             parent = "-"
         }
-        var line = "span " + s.Name + " trace=" + s.TraceId + " span=" + s.SpanId + " parent=" + parent + " kind=" + std.fmt.Format("{0}", s.Kind) + " status=" + std.fmt.Format("{0}", s.Status)
+        var line = "span " +
+            s.Name +
+            " trace=" +
+            s.TraceId +
+            " span=" +
+            s.SpanId +
+            " parent=" +
+            parent +
+            " kind=" +
+            std.fmt.Format("{0}", s.Kind) +
+            " status=" +
+            std.fmt.Format("{0}", s.Status)
         if s.StatusMessage != "" {
             line += " (" + s.StatusMessage + ")"
         }
@@ -804,20 +883,24 @@ func OtlpSpanJson(s *Span) string {
 
 // An ExportTraceServiceRequest in OTLP/JSON for spans.
 func OtlpTraceJson(service string, spans []string) string {
-    return "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":" + jsonString(service) + "}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"slang.diag\"},\"spans\":[" + std.strings.Join(spans, ",") + "]}]}]}"
+    return "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":" +
+        jsonString(service) +
+        "}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"slang.diag\"},\"spans\":[" +
+        std.strings.Join(spans, ",") +
+        "]}]}]}"
 }
 
 // Batches spans and POSTs them as OTLP/HTTP JSON to <Endpoint>/v1/traces
 // (every BatchSize spans and at Shutdown).
 struct OtlpExporter {
-    guard int
-    Endpoint string
+    guard     int
+    Endpoint  string
     BatchSize int
-    batch []string
-    pending []Task<void>
+    batch     []string
+    pending   []Task<void>
     // Status of the last POST (0 before, -1 on a transport error).
     LastStatus int
-    LastError string
+    LastError  string
 
     func Export(s *Span) {
         var j = OtlpSpanJson(s)

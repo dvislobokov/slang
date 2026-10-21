@@ -28,7 +28,6 @@ func case0() {
         return
     }
     println(0, quoted(recs))
-
 }
 
 func case1() {
@@ -42,7 +41,6 @@ func case1() {
         return
     }
     println(1, quoted(recs))
-
 }
 
 func case2() {
@@ -56,7 +54,6 @@ func case2() {
         return
     }
     println(2, quoted(recs))
-
 }
 
 func case3() {
@@ -70,7 +67,6 @@ func case3() {
         return
     }
     println(3, quoted(recs))
-
 }
 
 func case4() {
@@ -84,7 +80,6 @@ func case4() {
         return
     }
     println(4, quoted(recs))
-
 }
 
 func case5() {
@@ -98,7 +93,6 @@ func case5() {
         return
     }
     println(5, quoted(recs))
-
 }
 
 func case6() {
@@ -112,7 +106,6 @@ func case6() {
         return
     }
     println(6, quoted(recs))
-
 }
 
 func case7() {
@@ -126,7 +119,6 @@ func case7() {
         return
     }
     println(7, quoted(recs))
-
 }
 
 func case8() {
@@ -140,7 +132,6 @@ func case8() {
         return
     }
     println(8, quoted(recs))
-
 }
 
 func case9() {
@@ -154,7 +145,6 @@ func case9() {
         return
     }
     println(9, quoted(recs))
-
 }
 
 func case10() {
@@ -168,7 +158,6 @@ func case10() {
         return
     }
     println(10, quoted(recs))
-
 }
 
 func case11() {
@@ -182,7 +171,6 @@ func case11() {
         return
     }
     println(11, quoted(recs))
-
 }
 
 func case12() {
@@ -196,7 +184,6 @@ func case12() {
         return
     }
     println(12, quoted(recs))
-
 }
 
 func case13() {
@@ -210,7 +197,6 @@ func case13() {
         return
     }
     println(13, quoted(recs))
-
 }
 
 func case14() {
@@ -224,7 +210,6 @@ func case14() {
         return
     }
     println(14, quoted(recs))
-
 }
 
 func case15() {
@@ -239,7 +224,6 @@ func case15() {
         return
     }
     println(15, quoted(recs))
-
 }
 
 func case16() {
@@ -253,7 +237,6 @@ func case16() {
         return
     }
     println(16, quoted(recs))
-
 }
 
 func case17() {
@@ -267,7 +250,6 @@ func case17() {
         return
     }
     println(17, quoted(recs))
-
 }
 
 func case18() {
@@ -281,7 +263,6 @@ func case18() {
         return
     }
     println(18, quoted(recs))
-
 }
 
 func case19() {
@@ -295,7 +276,6 @@ func case19() {
         return
     }
     println(19, quoted(recs))
-
 }
 
 func case20() {
@@ -309,7 +289,6 @@ func case20() {
         return
     }
     println(20, quoted(recs))
-
 }
 
 func case21() {
@@ -323,7 +302,6 @@ func case21() {
         return
     }
     println(21, quoted(recs))
-
 }
 
 func case22() {
@@ -337,7 +315,6 @@ func case22() {
         return
     }
     println(22, quoted(recs))
-
 }
 
 func case23() {
@@ -351,7 +328,6 @@ func case23() {
         return
     }
     println(23, quoted(recs))
-
 }
 
 func case24() {
@@ -365,7 +341,6 @@ func case24() {
         return
     }
     println(24, quoted(recs))
-
 }
 
 func case25() {
@@ -379,7 +354,6 @@ func case25() {
         return
     }
     println(25, quoted(recs))
-
 }
 
 func case26() {
@@ -393,7 +367,6 @@ func case26() {
         return
     }
     println(26, quoted(recs))
-
 }
 
 func case27() {
@@ -407,7 +380,6 @@ func case27() {
         return
     }
     println(27, quoted(recs))
-
 }
 
 func case28() {
@@ -421,7 +393,6 @@ func case28() {
         return
     }
     println(28, quoted(recs))
-
 }
 
 func case29() {
@@ -435,7 +406,6 @@ func case29() {
         return
     }
     println(29, quoted(recs))
-
 }
 
 func case30() {
@@ -449,7 +419,6 @@ func case30() {
         return
     }
     println(30, quoted(recs))
-
 }
 
 func case31() {
@@ -463,7 +432,6 @@ func case31() {
         return
     }
     println(31, quoted(recs))
-
 }
 
 func case32() {
@@ -477,7 +445,6 @@ func case32() {
         return
     }
     println(32, quoted(recs))
-
 }
 
 func case33() {
@@ -491,7 +458,6 @@ func case33() {
         return
     }
     println(33, quoted(recs))
-
 }
 
 func case34() {
@@ -505,7 +471,6 @@ func case34() {
         return
     }
     println(34, quoted(recs))
-
 }
 
 func case35() {
@@ -519,7 +484,6 @@ func case35() {
         return
     }
     println(35, quoted(recs))
-
 }
 
 func case36() {
@@ -533,7 +497,6 @@ func case36() {
     w.Write(["\tlead", "x"])
     w.Write(["é", "日本"])
     println(encoding.json.Quote(w.String()))
-
 }
 
 func case37() {
@@ -547,7 +510,6 @@ func case37() {
     w.Write(["\tlead", "x"])
     w.Write(["é", "日本"])
     println(encoding.json.Quote(w.String()))
-
 }
 
 func main() {

@@ -5,7 +5,7 @@ namespace spec.generics2.func_returns_generic_struct
 import std.io
 
 struct Pair<A, B> {
-    First A
+    First  A
     Second B
 }
 

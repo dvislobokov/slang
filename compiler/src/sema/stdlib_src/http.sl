@@ -116,7 +116,13 @@ func QueryEscape(s string) string {
     var out []byte = []
     for i in 0..len(s) {
         var c = int(s[i])
-        var plain = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 46 || c == 95 || c == 126
+        var plain = (c >= 48 && c <= 57) ||
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122) ||
+            c == 45 ||
+            c == 46 ||
+            c == 95 ||
+            c == 126
         if plain {
             out = append(out, byte(c))
         } else if c == 32 {
@@ -204,8 +210,8 @@ func ParseTime(s string) int! {
 // TLS (std.net.tls.Conn). Plain TCP reads go straight into the caller's
 // buffer (ReadInto); TLS copies a decrypted record.
 struct conn {
-    nc std.net.Conn
-    tc std.net.tls.Conn
+    nc    std.net.Conn
+    tc    std.net.tls.Conn
     isTLS bool
     // TLS bytes decrypted but not yet consumed by readInto
     tpend []byte
@@ -358,11 +364,11 @@ async func copyFile(c *conn, path string, off int, n int) int! {
 // keep-alive connection reuses one buffer for every request.
 struct rbuf {
     buf []byte
-    r int
-    w int
+    r   int
+    w   int
     // where the search for the end of the head resumes
     scan int
-    eof bool
+    eof  bool
 
     func buffered() int {
         return this.w - this.r
@@ -516,11 +522,14 @@ struct Request {
     // The raw query after '?' ("" if none).
     Query string
     // "HTTP/1.1", "HTTP/1.0" or "HTTP/2.0".
-    Proto string
+    Proto   string
     Headers map[string]string
-    Body string
+    Body    string
+    // The body as a stream when the server has StreamBodies (Body is then
+    // ""); nil otherwise.
+    Reader *RequestBody
     // Path parameters set by the Router ({id} -> Params["id"]).
-    Params map[string]string
+    Params     map[string]string
     RemoteAddr string
     // The Host header (the :authority of HTTP/2).
     Host string
@@ -589,7 +598,8 @@ struct Request {
 
     // Whether the request asks for a WebSocket upgrade.
     func IsWebSocket() bool {
-        return headerHas(this.Headers, "Connection", "upgrade") && rtHasToken(this.Headers["Upgrade"], "websocket")
+        return headerHas(this.Headers, "Connection", "upgrade") &&
+            rtHasToken(this.Headers["Upgrade"], "websocket")
     }
 }
 
@@ -597,9 +607,9 @@ struct Request {
 // fills in (Status defaults to 200, Body is sent with a Content-Length
 // unless the handler streams it with Flush).
 struct Response {
-    Status int
+    Status  int
     Headers map[string]string
-    Body string
+    Body    string
     // Client side: the protocol of the response ("HTTP/1.1", "HTTP/2.0").
     Proto string
     // Client side, for Client.Stream: the body, read incrementally
@@ -609,7 +619,7 @@ struct Response {
     // server side: the connection's writer (nil in a recorder)
     w *respWriter
     // a file body set by SendFile
-    file string
+    file    string
     fileOff int
     fileLen int
     // flushes so far (recorders count them too)
@@ -733,24 +743,22 @@ struct Response {
     }
 }
 
-async func doneTask() void! {
-}
-
+async func doneTask() void! {}
 
 // ---- cookies ---------------------------------------------------------------
 
 // Cookie is an HTTP cookie (RFC 6265): Set-Cookie attributes for a
 // response, Name/Value for a request.
 struct Cookie {
-    Name string
-    Value string
-    Path string
+    Name   string
+    Value  string
+    Path   string
     Domain string
     // Unix seconds (0: a session cookie).
     Expires int
     // Max-Age in seconds (0: not set, < 0: delete now).
-    MaxAge int
-    Secure bool
+    MaxAge   int
+    Secure   bool
     HttpOnly bool
     // "Strict", "Lax", "None" or "".
     SameSite string
@@ -860,10 +868,10 @@ func ParseSetCookie(v string, now int) Cookie! {
 struct URL {
     Scheme string
     // host[:port] as written.
-    Host string
+    Host     string
     Hostname string
-    Port int
-    Path string
+    Port     int
+    Path     string
     RawQuery string
     // user:password before '@' ("" if none).
     User string

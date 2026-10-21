@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.platform.path_separator
 
-import std.io
 import std
+import std.io
 
 const Sep = os.PathSeparator
 

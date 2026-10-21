@@ -11,8 +11,8 @@ namespace std.encoding.asn1
 // One encoded element. Tag is the whole identifier byte (class bits,
 // constructed bit and tag number < 31), as in x509.
 struct RawValue {
-    Tag int
-    Bytes []byte
+    Tag       int
+    Bytes     []byte
     FullBytes []byte
 
     // 0 universal, 1 application, 2 context-specific, 3 private.
@@ -32,7 +32,7 @@ struct RawValue {
 
 // A BIT STRING: Bytes with UnusedBits (0..7) unused low bits in the last byte.
 struct BitString {
-    Bytes []byte
+    Bytes      []byte
     UnusedBits int
 
     // Number of bits.
@@ -72,7 +72,14 @@ struct Reader {
     func expect(tag int, what string) RawValue! {
         var v = this.Next()?
         if v.Tag != tag {
-            return error("asn1: " + what + ": want tag 0x" + std.strconv.FormatInt(tag, 16) + ", found 0x" + std.strconv.FormatInt(v.Tag, 16))
+            return error(
+                "asn1: " +
+                    what +
+                    ": want tag 0x" +
+                    std.strconv.FormatInt(tag, 16) +
+                    ", found 0x" +
+                    std.strconv.FormatInt(v.Tag, 16),
+            )
         }
         return v
     }

@@ -8,6 +8,7 @@ func main() {
     var n = 1
     switch n {
         case "one": println("one")
-        default: println("other")
+        default:
+            println("other")
     }
 }

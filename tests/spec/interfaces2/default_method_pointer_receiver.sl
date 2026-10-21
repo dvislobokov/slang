@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.interfaces2.default_method_pointer_receiver
 
-import std.io
 import std
+import std.io
 
 interface Account {
     func Balance() int

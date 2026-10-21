@@ -3,12 +3,16 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_reset
 
-import std.io
 import std
+import std.io
 
 async func blockedRead(c net.Conn) string {
     var r = try await c.Read(10) catch err {
-        return fmt.Format("blocked read: {0} {1}", errors.Is(err, net.ErrClosed), strings.HasPrefix(err.Message(), "read tcp 127.0.0.1:"))
+        return fmt.Format(
+            "blocked read: {0} {1}",
+            errors.Is(err, net.ErrClosed),
+            strings.HasPrefix(err.Message(), "read tcp 127.0.0.1:"),
+        )
     }
     return fmt.Format("read {0} bytes", len(r))
 }
@@ -34,7 +38,11 @@ async func main() void! {
     s.SetLinger(0)?
     s.Close()
     try await c.Read(100) catch err {
-        println("read after reset:", errors.Is(err, net.ErrReset), err.Message() == "read tcp " + c.RemoteAddr() + ": connection reset by peer")
+        println(
+            "read after reset:",
+            errors.Is(err, net.ErrReset),
+            err.Message() == "read tcp " + c.RemoteAddr() + ": connection reset by peer",
+        )
     }
     c.Close()
 

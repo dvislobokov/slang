@@ -1,0 +1,495 @@
+namespace std.data.kafka
+
+// The producer (see kafka.sl for the file layout). Records are collected
+// per partition into batches that are sent when they reach BatchSize
+// bytes or LingerMs after their first record; one batch per partition is
+// in flight at a time, so records of a partition keep their order and the
+// idempotent sequence numbers stay contiguous. Retriable errors refresh
+// the metadata (leader changes) and retry with backoff; an idempotent
+// producer retries with the same sequence, so a retry is never
+// duplicated (DUPLICATE_SEQUENCE_NUMBER counts as success).
+
+// Options of a Producer. Durations are milliseconds; zero values take the
+// defaults in brackets.
+struct ProducerOptions {
+    Config Config
+    // "all" in-sync replicas [default], "leader" (acks 1), "none" (acks
+    // 0: no answer, offsets are then -1)
+    Acks string
+    // producer id + sequence numbers (needs acks -1)
+    Idempotent bool
+    // "none" [default], "gzip", "zstd" ("snappy" and "lz4" are refused)
+    Compression string
+    CompressionLevel int
+    // bytes per partition batch [16384]
+    BatchSize int
+    // wait for more records after the first of a batch [5]
+    LingerMs int
+    // "murmur2" [default]: hash of the key like the Java client
+    // ((murmur2(key) & 0x7fffffff) mod partitions), records without a key
+    // round-robin; "roundrobin": every record round-robin
+    Partitioner string
+    // a custom partitioner (overrides Partitioner)
+    PartitionFunc func(string, []byte, int) int
+    // broker-side wait for acks [30000]
+    AckTimeout int
+}
+
+struct pendingRec {
+    rec Record
+    meta RecordMetadata
+    err error
+    done Task<void>
+}
+
+struct partBatch {
+    topic string
+    partition int
+    recs []*pendingRec
+    size int
+}
+
+struct partState {
+    mu std.task.Mutex
+    seq int
+}
+
+struct producerState {
+    guard int
+    c *client
+    opts ProducerOptions
+    codec int
+    acks int
+    batches map[string]*partBatch
+    parts map[string]*partState
+    rr map[string]int
+    pid int
+    epoch int
+    wg std.task.WaitGroup
+    closed bool
+    sentBatches int
+    retries int
+
+    func lock() {
+        std.task.rtLock(&this.guard)
+    }
+
+    func unlock() {
+        std.task.rtUnlock(&this.guard)
+    }
+
+    func part(key string) *partState {
+        this.lock()
+        var p = this.parts[key]
+        if p == nil {
+            p = new partState{}
+            this.parts[key] = p
+        }
+        this.unlock()
+        return p
+    }
+}
+
+// The Java client's murmur2 of b (signed 32-bit).
+func Murmur2(b []byte) int {
+    return std.data.rtMurmur2(b)
+}
+
+// The default partition of a key among n partitions.
+func HashPartition(key []byte, n int) int {
+    return (Murmur2(key) & 2147483647) % n
+}
+
+// Bytes of a key or value given as any: string, []byte, nil, or a value
+// formatted with fmt "{0}".
+func bytesOf(v any) []byte {
+    if v == nil {
+        return []
+    }
+    switch v {
+        case string s:
+            return std.strings.Bytes(s)
+        case []byte b:
+            return b
+    }
+    return std.strings.Bytes(std.fmt.Format("{0}", v))
+}
+
+// A Kafka producer. Safe for concurrent use.
+struct Producer {
+    st *producerState
+
+    // Sends a record (key and value: string, []byte or nil); the task
+    // completes when the broker has acknowledged its batch.
+    func Send(topic string, key any, value any) Task<RecordMetadata!> {
+        return sendRecord(this.st, Record{Topic: topic, Partition: -1, Key: bytesOf(key), Value: bytesOf(value)})
+    }
+
+    // Sends a record to an explicit partition.
+    func SendTo(topic string, partition int, key any, value any) Task<RecordMetadata!> {
+        return sendRecord(this.st, Record{Topic: topic, Partition: partition, Key: bytesOf(key), Value: bytesOf(value)})
+    }
+
+    // Sends a full record (headers, timestamp); its Partition is chosen by
+    // the partitioner unless it is >= 0 and explicit is true.
+    func SendRecord(r Record, explicit bool) Task<RecordMetadata!> {
+        var x = r
+        if !explicit {
+            x.Partition = -1
+        }
+        return sendRecord(this.st, x)
+    }
+
+    // Sends every pending batch now and waits until all are acknowledged.
+    func Flush() Task<void> {
+        return flushAll(this.st)
+    }
+
+    // Flushes and closes the connections; later sends fail with ErrClosed.
+    func Close() Task<void> {
+        return closeProducer(this.st)
+    }
+
+    // The producer id of an idempotent producer (-1 otherwise).
+    func ProducerID() int {
+        return this.st.pid
+    }
+
+    // Batches sent and retried so far.
+    func Stats() (int, int) {
+        this.st.lock()
+        var s = this.st.sentBatches
+        var r = this.st.retries
+        this.st.unlock()
+        return (s, r)
+    }
+}
+
+// A producer for brokers (host:port bootstrap addresses).
+async func NewProducer(brokers []string, opts ProducerOptions) *Producer! {
+    var c = newClient(opts.Config, brokers)?
+    var o = opts
+    if o.BatchSize <= 0 {
+        o.BatchSize = 16384
+    }
+    if o.LingerMs == 0 {
+        o.LingerMs = 5
+    }
+    if o.AckTimeout <= 0 {
+        o.AckTimeout = 30000
+    }
+    var acks = -1
+    if o.Acks == "leader" || o.Acks == "1" {
+        acks = 1
+    } else if o.Acks == "none" || o.Acks == "0" {
+        acks = 0
+    } else if o.Acks != "" && o.Acks != "all" && o.Acks != "-1" {
+        return error("kafka: Acks must be \"all\", \"leader\" or \"none\"")
+    }
+    if o.Idempotent && acks != -1 {
+        return error("kafka: an idempotent producer needs acks -1 (all)")
+    }
+    var st = new producerState{c: c, opts: o, codec: codecOf(o.Compression)?, acks: acks, batches: map[string]*partBatch{}, parts: map[string]*partState{}, rr: map[string]int{}, pid: -1, epoch: -1}
+    try {
+        await refreshMetadata(c, [])?
+        if o.Idempotent {
+            await initProducerID(st)?
+        }
+    } catch err {
+        c.closeAll()
+        return err
+    }
+    return new Producer{st: st}
+}
+
+// InitProducerId v0 (no transactional id).
+async func initProducerID(st *producerState) void! {
+    var attempt = 0
+    for {
+        var bc = await anyConn(st.c)?
+        var e = Encoder{}
+        e.NullableString("", true)
+        e.Int32(60000)
+        var resp = try await request(st.c, bc, 22, 0, e.B, false) catch err {
+            if attempt < st.c.cfg.MaxRetries && isNetErr(err) {
+                attempt += 1
+                await backoff(st.c.cfg, attempt)
+                continue
+            }
+            return err
+        }
+        var d = Decoder{B: resp}
+        _ = d.Int32()
+        var code = d.Int16()
+        var pid = d.Int64()
+        var epoch = d.Int16()
+        if code != 0 {
+            if retriableCode(code) && attempt < st.c.cfg.MaxRetries {
+                attempt += 1
+                await backoff(st.c.cfg, attempt)
+                continue
+            }
+            return kerr(code)
+        }
+        st.pid = pid
+        st.epoch = epoch
+        return
+    }
+}
+
+func choosePartition(st *producerState, r Record, n int) int {
+    if st.opts.PartitionFunc != nil {
+        var p = st.opts.PartitionFunc(r.Topic, r.Key, n)
+        if p < 0 || p >= n {
+            return 0
+        }
+        return p
+    }
+    if st.opts.Partitioner != "roundrobin" && len(r.Key) > 0 {
+        return HashPartition(r.Key, n)
+    }
+    st.lock()
+    var i = st.rr[r.Topic]
+    st.rr[r.Topic] = i + 1
+    st.unlock()
+    return i % n
+}
+
+async func sendRecord(st *producerState, r Record) RecordMetadata! {
+    st.lock()
+    var closed = st.closed
+    st.unlock()
+    if closed {
+        return ErrClosed
+    }
+    var rec = r
+    var t = await topicPartitions(st.c, rec.Topic)?
+    var n = len(t.Partitions)
+    if rec.Partition < 0 {
+        rec.Partition = choosePartition(st, rec, n)
+    } else if rec.Partition >= n {
+        return error("kafka: topic " + std.strconv.Quote(rec.Topic) + " has no partition " + std.strconv.Itoa(rec.Partition))
+    }
+    if rec.Timestamp == 0 {
+        rec.Timestamp = nowMs()
+    }
+    var pr = new pendingRec{rec: rec, done: std.task.rtWaker()}
+    enqueue(st, pr)
+    await pr.done
+    if pr.err != nil {
+        return pr.err
+    }
+    return pr.meta
+}
+
+func enqueue(st *producerState, pr *pendingRec) {
+    var key = tpKey(pr.rec.Topic, pr.rec.Partition)
+    var size = len(pr.rec.Key) + len(pr.rec.Value) + 20
+    for h in pr.rec.Headers {
+        size += len(h.Key) + len(h.Value) + 4
+    }
+    st.lock()
+    var b = st.batches[key]
+    var fresh = b == nil
+    if fresh {
+        b = new partBatch{topic: pr.rec.Topic, partition: pr.rec.Partition}
+        st.batches[key] = b
+    }
+    b.recs = append(b.recs, pr)
+    b.size += size
+    var full = b.size >= st.opts.BatchSize
+    if full {
+        delete(st.batches, key)
+        st.wg.Add(1)
+    }
+    st.unlock()
+    if full {
+        _ = dispatch(st, b)
+    } else if fresh {
+        _ = linger(st, key, b)
+    }
+}
+
+async func linger(st *producerState, key string, b *partBatch) {
+    if st.opts.LingerMs > 0 {
+        await std.task.Delay(st.opts.LingerMs)
+    }
+    st.lock()
+    if st.batches[key] != b {
+        st.unlock()
+        return
+    }
+    delete(st.batches, key)
+    st.wg.Add(1)
+    st.unlock()
+    await dispatch(st, b)
+}
+
+// Sends one batch (wg was incremented for it).
+async func dispatch(st *producerState, b *partBatch) {
+    var ps = st.part(tpKey(b.topic, b.partition))
+    await ps.mu.Lock()
+    var res = try await produceBatch(st, ps, b) catch err {
+        for pr in b.recs {
+            pr.err = err
+            std.task.rtFire(pr.done)
+        }
+        ps.mu.Unlock()
+        st.wg.Done()
+        return
+    }
+    for i, pr in b.recs {
+        var ts = pr.rec.Timestamp
+        if res.logAppendTime >= 0 {
+            ts = res.logAppendTime
+        }
+        var off = -1
+        if res.base >= 0 {
+            off = res.base + i
+        }
+        pr.meta = RecordMetadata{Topic: b.topic, Partition: b.partition, Offset: off, Timestamp: ts}
+        std.task.rtFire(pr.done)
+    }
+    ps.mu.Unlock()
+    st.wg.Done()
+}
+
+struct produceResult {
+    base int
+    logAppendTime int
+}
+
+// Produce v7 (v3 on older brokers) of one partition batch, with retries.
+async func produceBatch(st *producerState, ps *partState, b *partBatch) produceResult! {
+    var c = st.c
+    var recs []Record = []
+    for pr in b.recs {
+        recs = append(recs, pr.rec)
+    }
+    var prod = noProducer()
+    if st.opts.Idempotent {
+        prod = BatchProducer{ID: st.pid, Epoch: st.epoch, BaseSequence: ps.seq}
+    }
+    var batch = EncodeBatch(recs, 0, st.codec, st.opts.CompressionLevel, prod)?
+    var attempt = 0
+    for {
+        var leader = c.leaderOf(b.topic, b.partition)
+        if leader < 0 {
+            try await refreshMetadata(c, [b.topic]) catch err {
+                if attempt >= c.cfg.MaxRetries {
+                    return err
+                }
+            }
+            leader = c.leaderOf(b.topic, b.partition)
+        }
+        var bc = try await connToBroker(c, leader, "") catch err {
+            if attempt < c.cfg.MaxRetries && (isNetErr(err) || leader < 0) {
+                attempt += 1
+                st.retries += 1
+                await backoff(c.cfg, attempt)
+                try await refreshMetadata(c, [b.topic]) catch _ {
+                }
+                continue
+            }
+            return err
+        }
+        var version = bc.version(0, 7, 3)
+        if version < 0 {
+            return error("kafka: broker " + bc.addr + " does not support Produce v3+")
+        }
+        if st.codec == 4 && version < 7 {
+            return error("kafka: zstd needs Produce v7 (Kafka 2.1+)")
+        }
+        var e = Encoder{}
+        e.NullableString("", true)
+        e.Int16(st.acks)
+        e.Int32(st.opts.AckTimeout)
+        e.ArrayLen(1)
+        e.String(b.topic)
+        e.ArrayLen(1)
+        e.Int32(b.partition)
+        e.Bytes(batch)
+        var resp = try await request(c, bc, 0, version, e.B, st.acks == 0) catch err {
+            if attempt < c.cfg.MaxRetries && isNetErr(err) {
+                attempt += 1
+                st.retries += 1
+                await backoff(c.cfg, attempt)
+                try await refreshMetadata(c, [b.topic]) catch _ {
+                }
+                continue
+            }
+            return err
+        }
+        st.lock()
+        st.sentBatches += 1
+        st.unlock()
+        if st.acks == 0 {
+            return produceResult{base: -1, logAppendTime: -1}
+        }
+        var d = Decoder{B: resp}
+        var nt = d.ArrayLen()
+        var code = -1
+        var base = -1
+        var lat = -1
+        for _ in 0..nt {
+            _ = d.String()
+            var np = d.ArrayLen()
+            for _ in 0..np {
+                _ = d.Int32()
+                code = d.Int16()
+                base = d.Int64()
+                lat = d.Int64()
+                if version >= 5 {
+                    _ = d.Int64()
+                }
+            }
+        }
+        if d.Err {
+            return error("kafka: malformed Produce response")
+        }
+        if code == 0 || code == 46 {
+            if st.opts.Idempotent {
+                ps.seq += len(recs)
+            }
+            return produceResult{base: base, logAppendTime: lat}
+        }
+        if retriableCode(code) && attempt < c.cfg.MaxRetries {
+            attempt += 1
+            st.retries += 1
+            if staleMetadataCode(code) {
+                try await refreshMetadata(c, [b.topic]) catch _ {
+                }
+            }
+            await backoff(c.cfg, attempt)
+            continue
+        }
+        return kerr(code)
+    }
+}
+
+async func flushAll(st *producerState) {
+    st.lock()
+    var bs []*partBatch = []
+    for _, b in st.batches {
+        bs = append(bs, b)
+    }
+    st.batches = map[string]*partBatch{}
+    st.wg.Add(len(bs))
+    st.unlock()
+    for b in bs {
+        _ = dispatch(st, b)
+    }
+    await st.wg.Wait()
+}
+
+async func closeProducer(st *producerState) {
+    st.lock()
+    if st.closed {
+        st.unlock()
+        return
+    }
+    st.closed = true
+    st.unlock()
+    await flushAll(st)
+    st.c.closeAll()
+}

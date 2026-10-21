@@ -376,6 +376,9 @@ impl<'a> Fmt<'a> {
     fn func(&mut self, f: &FuncDecl) -> Doc {
         let kw = self.after_attrs(&f.attrs, f.span.start);
         let mut parts = vec![self.attrs(&f.attrs, kw)];
+        if f.is_extern {
+            parts.push(text("extern "));
+        }
         if f.is_static {
             parts.push(text("static "));
         }
@@ -514,8 +517,7 @@ impl<'a> Fmt<'a> {
                     // own-line attribute between them.
                     let mut rows: Vec<Row> = Vec::new();
                     let mut j = i;
-                    loop {
-                        let Member::Fields(g) = &members[j] else { break };
+                    while let Member::Fields(g) = &members[j] {
                         if j > i && (self.blank_before(members[j].start()) || self.pending_before(members[j].start())) {
                             break;
                         }
@@ -818,13 +820,23 @@ impl<'a> Fmt<'a> {
                     line.push(text(":"));
                     let last = c.patterns.last().map_or(c.span.start, |p| p.span.end);
                     let colon = self.tok_after(last, &TokenKind::Colon).unwrap_or(last);
-                    // `case 1: return "one"` written on one line stays so.
+                    // `case 1: return "one"` written on one line stays so
+                    // while it fits flat on the line; otherwise the body
+                    // goes on its own line (a broken `case X: f(` would
+                    // be re-read as multi-line and reformatted differently,
+                    // so the choice is made by width, not by the source).
                     if let [only] = c.body.as_slice() {
                         if !self.newline_between(c.span.start, only.span.end) && single_line_stmt(only) && !self.pending_before(only.span.end) {
-                            line.push(text(" "));
-                            line.push(self.stmt(only));
-                            line.push(self.trailing(only.span.end));
-                            inner.push(concat(line));
+                            let save = self.next;
+                            let mut flat_line = line.clone();
+                            flat_line.push(text(" "));
+                            flat_line.push(self.stmt(only));
+                            flat_line.push(self.trailing(only.span.end));
+                            let flat_line = concat(flat_line);
+                            self.next = save;
+                            let broken = concat(vec![concat(line), indent(concat(vec![Doc::Hard, self.stmt(only), self.trailing(only.span.end)]))]);
+                            let variants = if has_hard(&flat_line) { vec![broken] } else { vec![flat_line, broken] };
+                            inner.push(Doc::Cond(variants));
                             continue;
                         }
                     }
@@ -1017,7 +1029,9 @@ impl<'a> Fmt<'a> {
                 self.next += 1;
             }
             rest.push(text(format!(" {}", binop(*op))));
-            rest.push(Doc::Line);
+            // `>` and `>>` can end a statement (closing generic arguments),
+            // so a newline after them would insert a semicolon.
+            rest.push(if matches!(op, BinaryOp::Gt | BinaryOp::Shr) { text(" ") } else { Doc::Line });
             rest.push(self.expr(rhs));
         }
         group(concat(vec![first, nest(concat(rest))]))

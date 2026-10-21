@@ -80,6 +80,17 @@ pub fn has_forced(d: &Doc) -> bool {
     }
 }
 
+/// Does `d` contain a hard newline anywhere (a block body)?
+pub fn has_hard(d: &Doc) -> bool {
+    match d {
+        Doc::Hard => true,
+        Doc::Concat(v) | Doc::Cond(v) => v.iter().any(has_hard),
+        Doc::Nest(d) | Doc::Indent(d) | Doc::Group { doc: d, .. } => has_hard(d),
+        Doc::IfBreak(a, b) => has_hard(a) || has_hard(b),
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
     Flat,
@@ -120,9 +131,18 @@ impl Printer {
 
 /// Whether `next` (in `mode`) followed by the pending commands `rest`
 /// fits in `width` columns up to the next newline.
-fn fits(next: (Mode, &Doc), rest: &[(usize, Mode, &Doc)], mut width: isize) -> bool {
-    let mut stack: Vec<(Mode, &Doc)> = vec![next];
-    let mut rest_idx = rest.len();
+fn fits<'d>(next: (Mode, &'d Doc), rest: &[(usize, Mode, &'d Doc)], width: isize) -> bool {
+    fits_from(vec![next], rest, rest.len(), width)
+}
+
+/// [`fits`] with an explicit work stack and the number of `rest` commands
+/// not consumed yet. A flat [`Doc::Cond`] is measured the way [`print`]
+/// will lay it out: the first alternative that fits flat, else the last
+/// one broken. (Measuring only the first alternative made an enclosing
+/// group break around a call that then hugged its last argument, and the
+/// hugged literal, written multi-line, flipped the choice on the next run:
+/// `fmt` was not idempotent on nested calls.)
+fn fits_from<'d>(mut stack: Vec<(Mode, &'d Doc)>, rest: &[(usize, Mode, &'d Doc)], mut rest_idx: usize, mut width: isize) -> bool {
     loop {
         let (mode, d) = match stack.pop() {
             Some(x) => x,
@@ -162,9 +182,17 @@ fn fits(next: (Mode, &Doc), rest: &[(usize, Mode, &Doc)], mut width: isize) -> b
             Doc::Group { doc, force } => stack.push((if *force { Mode::Break } else { mode }, doc)),
             Doc::IfBreak(b, f) => stack.push((mode, if mode == Mode::Break { b } else { f })),
             Doc::Cond(vs) => {
-                if let Some(v) = if mode == Mode::Break { vs.last() } else { vs.first() } {
-                    stack.push((mode, v));
+                let Some(last) = vs.last() else { continue };
+                if mode == Mode::Flat {
+                    for v in &vs[..vs.len() - 1] {
+                        let mut s = stack.clone();
+                        s.push((Mode::Flat, v));
+                        if fits_from(s, rest, rest_idx, width) {
+                            return true;
+                        }
+                    }
                 }
+                stack.push((Mode::Break, last));
             }
         }
     }

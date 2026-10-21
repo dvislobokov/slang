@@ -35,7 +35,7 @@ impl Target {
         let triple = match (std::env::consts::ARCH, os) {
             (a, "linux") => format!("{a}-unknown-linux-gnu"),
             (a, "macos") => format!("{}-apple-darwin", if a == "aarch64" { "arm64" } else { a }),
-            (a, "windows") => format!("{a}-pc-windows-msvc"),
+            (a, "windows") => format!("{a}-pc-windows-gnu"),
             (a, o) => format!("{a}-unknown-{o}"),
         };
         Target { os: os.to_string(), arch, triple }
@@ -43,6 +43,10 @@ impl Target {
 
     /// Parses `--target`: an alias `os-arch` (`linux-amd64`, `macos-arm64`,
     /// `windows-amd64`) or an LLVM triple (`aarch64-apple-darwin`).
+    /// `windows-*` means the MinGW ABI (`x86_64-pc-windows-gnu`): the
+    /// runtime is built with mingw-w64 headers and linked against its CRT;
+    /// the MSVC ABI (`x86_64-pc-windows-msvc`, CodeView/PDB, the Windows
+    /// SDK's libraries) is accepted as a triple for `check`/`--emit=obj`.
     pub fn parse(s: &str) -> Result<Target, String> {
         if let Some((os, arch)) = s.split_once('-') {
             if KNOWN_OS.contains(&os) && KNOWN_ARCH.contains(&arch) {
@@ -54,7 +58,7 @@ impl Target {
                 let triple = match os {
                     "linux" => format!("{cpu}-unknown-linux-gnu"),
                     "macos" => format!("{cpu}-apple-darwin"),
-                    "windows" => format!("{cpu}-pc-windows-msvc"),
+                    "windows" => format!("{cpu}-pc-windows-gnu"),
                     o => format!("{cpu}-unknown-{o}"),
                 };
                 return Ok(Target { os: os.into(), arch: arch.into(), triple });
@@ -82,6 +86,34 @@ impl Target {
             return Err(format!("unknown operating system in target `{s}`"));
         };
         Ok(Target { os: os.into(), arch, triple: s.to_string() })
+    }
+
+    /// True if this is the machine the compiler runs on (same OS,
+    /// architecture and ABI), so the host CPU's features may be used and the
+    /// output can run here.
+    pub fn is_host(&self) -> bool {
+        let h = Target::host();
+        self.os == h.os && self.arch == h.arch && self.triple == h.triple
+    }
+
+    /// The object file format of the target.
+    pub fn object_format(&self) -> ObjectFormat {
+        match self.os.as_str() {
+            "windows" => ObjectFormat::Coff,
+            "macos" | "ios" => ObjectFormat::MachO,
+            "wasi" => ObjectFormat::Wasm,
+            _ => ObjectFormat::Elf,
+        }
+    }
+
+    /// The MSVC ABI (`*-windows-msvc`) rather than MinGW (`*-windows-gnu`).
+    pub fn is_msvc(&self) -> bool {
+        self.os == "windows" && self.triple.ends_with("-msvc")
+    }
+
+    /// Suffix of executables (`.exe` on Windows).
+    pub fn exe_suffix(&self) -> &'static str {
+        if self.os == "windows" { ".exe" } else { "" }
     }
 
     /// `os.PathSeparator`.
@@ -118,6 +150,15 @@ impl Target {
     }
 }
 
+/// Object file formats ([`Target::object_format`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectFormat {
+    Elf,
+    Coff,
+    MachO,
+    Wasm,
+}
+
 /// Slang's name of an LLVM/Rust CPU name.
 fn arch_name(cpu: &str) -> String {
     match cpu {
@@ -146,7 +187,11 @@ mod tests {
     #[test]
     fn parses_aliases_and_triples() {
         let t = Target::parse("windows-amd64").unwrap();
-        assert_eq!((t.os.as_str(), t.arch.as_str(), t.triple.as_str()), ("windows", "amd64", "x86_64-pc-windows-msvc"));
+        assert_eq!((t.os.as_str(), t.arch.as_str(), t.triple.as_str()), ("windows", "amd64", "x86_64-pc-windows-gnu"));
+        assert_eq!((t.object_format(), t.exe_suffix(), t.is_msvc()), (ObjectFormat::Coff, ".exe", false));
+        assert!(Target::parse("x86_64-pc-windows-msvc").unwrap().is_msvc());
+        assert_eq!(Target::parse("macos-arm64").unwrap().object_format(), ObjectFormat::MachO);
+        assert!(Target::host().is_host() && !Target::parse("windows-amd64").unwrap().is_host() || cfg!(windows));
         let t = Target::parse("aarch64-apple-darwin").unwrap();
         assert_eq!((t.os.as_str(), t.arch.as_str()), ("macos", "arm64"));
         let t = Target::parse("x86_64-unknown-linux-gnu").unwrap();

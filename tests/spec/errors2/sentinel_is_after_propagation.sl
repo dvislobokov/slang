@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors2.sentinel_is_after_propagation
 
-import std.io
 import std
+import std.io
 
 const ErrMissing = error("missing")
 

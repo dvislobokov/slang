@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.memory2.arena_scoped_parse
 
-import std.io
 import std
+import std.io
 
 struct Token {
     Text string

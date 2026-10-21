@@ -872,3 +872,135 @@ fn watched_files_are_added_and_removed() {
     c.notify::<notification::DidChangeWatchedFiles>(DidChangeWatchedFilesParams { changes: vec![FileEvent { uri: helper_uri, typ: FileChangeType::DELETED }] });
     assert!(c.diagnostics(&uri).iter().any(|d| d.message.contains("unknown identifier Helper")));
 }
+
+fn definition(c: &mut Client, uri: &Url, pos: Position) -> Location {
+    let def: Option<GotoDefinitionResponse> = c.request::<request::GotoDefinition>(GotoDefinitionParams {
+        text_document_position_params: tdp(uri, pos),
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    });
+    match def {
+        Some(GotoDefinitionResponse::Scalar(loc)) => loc,
+        other => panic!("no definition: {other:?}"),
+    }
+}
+
+fn hover_text(c: &mut Client, uri: &Url, pos: Position) -> String {
+    let h: Option<Hover> = c.request::<request::HoverRequest>(HoverParams { text_document_position_params: tdp(uri, pos), work_done_progress_params: Default::default() });
+    match h.expect("no hover").contents {
+        HoverContents::Markup(m) => m.value,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn workspace_symbols(c: &mut Client, query: &str) -> Vec<SymbolInformation> {
+    let r: Option<WorkspaceSymbolResponse> =
+        c.request::<request::WorkspaceSymbolRequest>(WorkspaceSymbolParams { query: query.into(), work_done_progress_params: Default::default(), partial_result_params: Default::default() });
+    match r {
+        Some(WorkspaceSymbolResponse::Flat(v)) => v,
+        other => panic!("{other:?}"),
+    }
+}
+
+const STD_USER: &str = "namespace app
+
+import std
+import std.io
+import std.net
+
+func main() {
+    var parts = strings.Split(\"a,b\", \",\")
+    println(len(parts))
+}
+
+async func fetch() void! {
+    var r = await http.Get(\"http://localhost/\")?
+    println(r.Text())
+}
+";
+
+#[test]
+fn definition_and_hover_reach_into_std_sources() {
+    let (dir, _) = project(&[]);
+    let path = dir.join("main.sl");
+    std::fs::write(&path, STD_USER).unwrap();
+    let uri = Url::from_file_path(&path).unwrap();
+    let mut c = Client::start(&dir);
+    c.open(&uri, STD_USER);
+    // A C function: its generated extern declaration.
+    let loc = definition(&mut c, &uri, pos_of(STD_USER, "Split(", 0, 1));
+    let p = loc.uri.to_file_path().unwrap();
+    assert!(p.ends_with("std/strings/strings_extern.sl"), "{}", p.display());
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert_eq!(range_text(&text, &loc.range), "Split");
+    assert!(line_text(&text, loc.range.start.line).starts_with("extern func Split("));
+    // A Slang-source stdlib function (a template).
+    let loc = definition(&mut c, &uri, pos_of(STD_USER, "Get(", 0, 1));
+    let p = loc.uri.to_file_path().unwrap();
+    assert!(p.ends_with("std/net/http/http_client.sl"), "{}", p.display());
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert_eq!(range_text(&text, &loc.range), "Get");
+    // Hover shows the doc comments of the std sources.
+    let h = hover_text(&mut c, &uri, pos_of(STD_USER, "Split(", 0, 1));
+    assert!(h.contains("func Split(string, string) []string") && h.contains("Split slices s into all substrings"), "{h}");
+    let h = hover_text(&mut c, &uri, pos_of(STD_USER, "Get(", 0, 1));
+    assert!(h.contains("func Get(url string) Task<Response!>"), "{h}");
+    // Read-only: no rename; workspace symbols include std declarations.
+    let msg = c.request_err::<request::PrepareRenameRequest>(tdp(&uri, pos_of(STD_USER, "Split(", 0, 1)));
+    assert!(msg.contains("standard library"), "{msg}");
+    let syms = workspace_symbols(&mut c, "Split");
+    assert!(syms.iter().any(|s| s.name == "Split" && s.location.uri.path().ends_with("std/strings/strings_extern.sl")), "{syms:?}");
+    // References of a std symbol across project files.
+    let refs: Option<Vec<Location>> = c.request::<request::References>(ReferenceParams {
+        text_document_position: tdp(&uri, pos_of(STD_USER, "Split(", 0, 1)),
+        context: ReferenceContext { include_declaration: true },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    });
+    let refs = refs.unwrap();
+    assert!(refs.iter().any(|l| l.uri == uri) && refs.iter().any(|l| l.uri.path().ends_with("strings_extern.sl")), "{refs:?}");
+}
+
+#[test]
+fn dependencies_in_slang_deps_are_read_only_project_files() {
+    let (dir, _) = project(&[]);
+    let w = |p: &str, s: &str| {
+        let f = dir.join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, s).unwrap();
+    };
+    w("slang.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.sl\"\n\n[dependencies]\n\"example.com/greet\" = \"^1\"\n");
+    let main = "namespace app\n\nimport std.io\nimport greet\n\nfunc main() {\n    println(greet.Hello(\"x\"))\n}\n";
+    w("src/main.sl", main);
+    w(
+        "slang.lock",
+        "packages:\n- checksum: sha256:00\n  dependencies:\n  - greet\n  name: app\n  source: path:.\n  version: 0.1.0\n- checksum: h1:AA==\n  module: example.com/greet\n  name: greet\n  source: module\n  version: v1.0.0\nversion: 1\n",
+    );
+    let dep = "namespace greet\n\n// Hello greets who.\nfunc Hello(who string) string {\n    return \"hello \" + who\n}\n";
+    w(".slang/deps/example.com/greet@v1.0.0/slang.toml", "[package]\nname = \"greet\"\nversion = \"1.0.0\"\n");
+    w(".slang/deps/example.com/greet@v1.0.0/src/greet.sl", dep);
+    let uri = Url::from_file_path(dir.join("src/main.sl")).unwrap();
+    let mut c = Client::start(&dir);
+    c.open(&uri, main);
+    assert_eq!(c.diagnostics(&uri), vec![]);
+    let loc = definition(&mut c, &uri, pos_of(main, "Hello(", 0, 1));
+    let p = loc.uri.to_file_path().unwrap();
+    assert!(p.ends_with(".slang/deps/example.com/greet@v1.0.0/src/greet.sl"), "{}", p.display());
+    assert_eq!(range_text(dep, &loc.range), "Hello");
+    let h = hover_text(&mut c, &uri, pos_of(main, "Hello(", 0, 1));
+    assert!(h.contains("Hello greets who."), "{h}");
+    // References from the declaration in the dependency reach the project.
+    let refs: Option<Vec<Location>> = c.request::<request::References>(ReferenceParams {
+        text_document_position: tdp(&loc.uri, loc.range.start),
+        context: ReferenceContext { include_declaration: false },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    });
+    assert!(refs.unwrap().iter().any(|l| l.uri == uri));
+    let msg = c.request_err::<request::PrepareRenameRequest>(tdp(&uri, pos_of(main, "Hello(", 0, 1)));
+    assert!(msg.contains("read-only"), "{msg}");
+    let syms = workspace_symbols(&mut c, "Hello");
+    assert!(syms.iter().any(|s| s.location.uri == loc.uri), "{syms:?}");
+    // No diagnostics are published for library files.
+    assert!(!c.notes.iter().any(|n| n.method == notification::PublishDiagnostics::METHOD && n.params.to_string().contains(".slang/deps")));
+}

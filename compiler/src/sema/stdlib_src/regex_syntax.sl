@@ -14,23 +14,23 @@ namespace std.regex
 // \n, 8 (?U) ungreedy.
 
 struct node {
-    op int
-    min int
-    max int
+    op     int
+    min    int
+    max    int
     greedy bool
-    r []int
-    subs []int
-    cap int
+    r      []int
+    subs   []int
+    cap    int
 }
 
 struct parser {
-    rs []char
-    offs []int
-    pos int
-    flags int
-    nodes []node
-    ncap int
-    names []string
+    rs      []char
+    offs    []int
+    pos     int
+    flags   int
+    nodes   []node
+    ncap    int
+    names   []string
     pattern string
 
     func fail(msg string, at int) error {
@@ -38,7 +38,14 @@ struct parser {
         if at >= 0 && at < len(this.offs) {
             off = this.offs[at]
         }
-        return error("regex: " + msg + " at offset " + std.fmt.Format("{0}", off) + " in " + std.encoding.json.Quote(this.pattern))
+        return error(
+            "regex: " +
+                msg +
+                " at offset " +
+                std.fmt.Format("{0}", off) +
+                " in " +
+                std.encoding.json.Quote(this.pattern),
+        )
     }
 
     func add(n node) int {
@@ -113,7 +120,11 @@ struct parser {
                 return this.fail("missing argument to repetition operator " + string(c), this.pos)
             }
             if c == '{' && this.repeatAhead() {
-                return this.fail("missing argument to repetition operator " + this.text(this.pos, this.repeatEnd()), this.pos)
+                return this.fail(
+                    "missing argument to repetition operator " +
+                        this.text(this.pos, this.repeatEnd()),
+                    this.pos,
+                )
             }
             if c == '\\' && this.peekAt(1) == 'Q' {
                 // \Q...\E: literal text; a quantifier applies to its last rune
@@ -184,7 +195,10 @@ struct parser {
                 break
             }
             if seen {
-                return this.fail("invalid nested repetition operator " + this.text(start, this.pos), opStart)
+                return this.fail(
+                    "invalid nested repetition operator " + this.text(start, this.pos),
+                    opStart,
+                )
             }
             seen = true
             var greedy = (this.flags & 8) == 0
@@ -310,7 +324,14 @@ struct parser {
                 this.pos += 2
                 return this.add(node{op: 2, min: 32})
             }
-            if e == 'd' || e == 'D' || e == 'w' || e == 'W' || e == 's' || e == 'S' || e == 'p' || e == 'P' {
+            if e == 'd' ||
+                e == 'D' ||
+                e == 'w' ||
+                e == 'W' ||
+                e == 's' ||
+                e == 'S' ||
+                e == 'p' ||
+                e == 'P' {
                 var r = this.perlOrUnicode()?
                 return this.add(node{op: 1, r: r})
             }
@@ -335,15 +356,25 @@ struct parser {
         var saved = this.flags
         var cap = -1
         if this.peek() == '?' {
-            if this.lookingAt("?=") || this.lookingAt("?!") || this.lookingAt("?<=") || this.lookingAt("?<!") {
+            if this.lookingAt("?=") ||
+                this.lookingAt("?!") ||
+                this.lookingAt("?<=") ||
+                this.lookingAt("?<!") {
                 var n = 2
                 if this.peekAt(1) == '<' {
                     n = 3
                 }
-                return this.fail("lookaround is not supported (RE2 syntax): " + this.text(start, this.pos + n), start)
+                return this.fail(
+                    "lookaround is not supported (RE2 syntax): " + this.text(start, this.pos + n),
+                    start,
+                )
             }
             if this.lookingAt("?P=") || this.lookingAt("?P>") {
-                return this.fail("backreferences are not supported (RE2 syntax): " + this.text(start, this.pos + 3), start)
+                return this.fail(
+                    "backreferences are not supported (RE2 syntax): " +
+                        this.text(start, this.pos + 3),
+                    start,
+                )
             }
             if this.lookingAt("?P<") || this.lookingAt("?<") {
                 if this.lookingAt("?P<") {
@@ -360,7 +391,10 @@ struct parser {
                 }
                 var name = this.text(nameStart, this.pos)
                 if !validName(name) {
-                    return this.fail("invalid named capture " + this.text(start, this.pos + 1), start)
+                    return this.fail(
+                        "invalid named capture " + this.text(start, this.pos + 1),
+                        start,
+                    )
                 }
                 this.pos += 1
                 this.ncap += 1
@@ -394,7 +428,10 @@ struct parser {
                     } else if (c == ':' || c == ')') && (any || !neg) {
                         break
                     } else {
-                        return this.fail("invalid or unsupported Perl syntax " + this.text(start, this.pos + 1), start)
+                        return this.fail(
+                            "invalid or unsupported Perl syntax " + this.text(start, this.pos + 1),
+                            start,
+                        )
                     }
                     if neg {
                         f = f & (15 - bit)
@@ -458,7 +495,10 @@ struct parser {
             return v
         }
         if c >= '1' && c <= '9' {
-            return this.fail("backreferences are not supported (RE2 syntax): " + this.text(start, this.pos), start)
+            return this.fail(
+                "backreferences are not supported (RE2 syntax): " + this.text(start, this.pos),
+                start,
+            )
         }
         if c == '0' {
             var v = 0
@@ -478,7 +518,10 @@ struct parser {
                 for this.more() && this.peek() != '}' {
                     var h = hexDigit(this.peek())
                     if h < 0 || v > 1114111 {
-                        return this.fail("invalid escape sequence " + this.text(start, this.pos + 1), start)
+                        return this.fail(
+                            "invalid escape sequence " + this.text(start, this.pos + 1),
+                            start,
+                        )
                     }
                     v = v * 16 + h
                     digits += 1
@@ -539,7 +582,10 @@ struct parser {
             var neg = e == 'P'
             var name = ""
             if !this.more() {
-                return this.fail("invalid character class range " + this.text(start, this.pos), start)
+                return this.fail(
+                    "invalid character class range " + this.text(start, this.pos),
+                    start,
+                )
             }
             if this.peek() == '{' {
                 var nameStart = this.pos + 1
@@ -547,7 +593,10 @@ struct parser {
                     this.pos += 1
                 }
                 if !this.more() {
-                    return this.fail("invalid character class range " + this.text(start, this.pos), start)
+                    return this.fail(
+                        "invalid character class range " + this.text(start, this.pos),
+                        start,
+                    )
                 }
                 name = this.text(nameStart, this.pos)
                 this.pos += 1
@@ -612,7 +661,10 @@ struct parser {
                     }
                     var pr = posixClass(name)
                     if len(pr) == 0 {
-                        return this.fail("invalid character class range " + this.text(this.pos, end), this.pos)
+                        return this.fail(
+                            "invalid character class range " + this.text(this.pos, end),
+                            this.pos,
+                        )
                     }
                     if pneg {
                         pr = negate(pr)
@@ -624,7 +676,14 @@ struct parser {
             }
             if c == '\\' && this.pos + 1 < len(this.rs) {
                 var e = this.rs[this.pos + 1]
-                if e == 'd' || e == 'D' || e == 'w' || e == 'W' || e == 's' || e == 'S' || e == 'p' || e == 'P' {
+                if e == 'd' ||
+                    e == 'D' ||
+                    e == 'w' ||
+                    e == 'W' ||
+                    e == 's' ||
+                    e == 'S' ||
+                    e == 'p' ||
+                    e == 'P' {
                     var saved = this.flags
                     this.flags = this.flags & 14
                     var pr = this.perlOrUnicode()?
@@ -640,7 +699,10 @@ struct parser {
                 this.pos += 1
                 hi = this.classChar()?
                 if hi < lo {
-                    return this.fail("invalid character class range " + this.text(loStart, this.pos), loStart)
+                    return this.fail(
+                        "invalid character class range " + this.text(loStart, this.pos),
+                        loStart,
+                    )
                 }
             }
             r = append(r, lo)
@@ -675,7 +737,10 @@ struct parser {
         var c = this.peek()
         if c == '\\' {
             if this.peekAt(1) == 'b' {
-                return this.fail("invalid escape sequence " + this.text(this.pos, this.pos + 2), this.pos)
+                return this.fail(
+                    "invalid escape sequence " + this.text(this.pos, this.pos + 2),
+                    this.pos,
+                )
             }
             return this.escape(true)?
         }
@@ -710,7 +775,10 @@ func validName(name string) bool {
         return false
     }
     for ch in name {
-        if !(ch == '_' || (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+        if !(ch == '_' ||
+            (ch >= '0' && ch <= '9') ||
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z')) {
             return false
         }
     }

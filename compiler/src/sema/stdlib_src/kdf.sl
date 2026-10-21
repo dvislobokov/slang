@@ -30,12 +30,12 @@ func Argon2d(password []byte, salt []byte, time int, memory int, threads int, ke
 struct Argon2Params {
     // "argon2id", "argon2i" or "argon2d".
     Variant string = "argon2id"
-    Time int = 3
+    Time    int = 3
     // KiB.
-    Memory int = 65536
-    Threads int = 4
-    KeyLen int = 32
-    Secret []byte
+    Memory         int = 65536
+    Threads        int = 4
+    KeyLen         int = 32
+    Secret         []byte
     AssociatedData []byte
 }
 
@@ -54,7 +54,17 @@ func variantCode(v string) int! {
 
 func Argon2(password []byte, salt []byte, p Argon2Params) []byte! {
     var t = variantCode(p.Variant)?
-    return rtArgon2(t, password, salt, p.Secret, p.AssociatedData, p.Time, p.Memory, p.Threads, p.KeyLen)?
+    return rtArgon2(
+        t,
+        password,
+        salt,
+        p.Secret,
+        p.AssociatedData,
+        p.Time,
+        p.Memory,
+        p.Threads,
+        p.KeyLen,
+    )?
 }
 
 // HKDF (RFC 5869): Extract then Expand to keyLen bytes.

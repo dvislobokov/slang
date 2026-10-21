@@ -8,14 +8,12 @@ import std.io
 
 func main() void! {
     var dir = fs.Join(fs.TempDir(), "slang_io_os_file_" + strconv.Itoa(os.Pid()))
-    try fs.RemoveAll(dir) catch err {
-    }
+    try fs.RemoveAll(dir) catch err {}
     fs.MkdirAll(dir)?
     defer func() {
         try {
             fs.RemoveAll(dir)?
-        } catch err {
-        }
+        } catch err {}
     }()
     var path = fs.Join(dir, "a.txt")
     var f = os.Create(path)?
@@ -49,7 +47,14 @@ func main() void! {
     _ = r.ReadAt(at, 6)?
     println(strings.FromBytes(at))
     var info = r.Stat()?
-    println(info.Name, info.Size, info.IsDir, info.IsRegular(), info.Mode > 0, info.ModTime().Year() >= 2024)
+    println(
+        info.Name,
+        info.Size,
+        info.IsDir,
+        info.IsRegular(),
+        info.Mode > 0,
+        info.ModTime().Year() >= 2024,
+    )
     r.Close()?
 
     var a = os.OpenFile(path, os.O_WRONLY | os.O_APPEND, 0)?

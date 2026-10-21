@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.attributes2.enum_and_slice_params
 
-import std.io
 import std
+import std.io
 
 enum Level {
     Debug
@@ -14,7 +14,7 @@ enum Level {
 @attribute
 struct logged {
     level Level = Level.Info
-    tags []string
+    tags  []string
 }
 
 @logged(level: Level.Warn, tags: ["db", "slow"])

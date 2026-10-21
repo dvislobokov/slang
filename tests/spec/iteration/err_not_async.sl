@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.iteration.err_not_async
 
-import std.io
 import std
+import std.io
 
 func main() {
     var ch = task.Channel<int>(1)

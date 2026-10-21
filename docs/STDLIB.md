@@ -29,7 +29,7 @@
 | `math` | `std.math` | ✅ есть | int-варианты (`IMin`), константы `MaxInt` |
 | `math/bits` | `std.math.bits` | ✅ есть (`LeadingZeros/TrailingZeros/OnesCount/Len/RotateLeft/Reverse/ReverseBytes` (+`32`), `Add64/Sub64/Mul64/Div64` кортежами, `Add32/Mul32`; C-builtins) | кортежи вместо пар результатов |
 | `math/cmplx` | `std.math.complex` | ✅ есть (`Complex{Re, Im}`: `Add/Sub/Mul/Div/Neg/Conj/Abs/Phase/Scale/String`; `Exp/Log/Sqrt/Pow/Sin/Cos/Polar/Rect/IsNaN/IsInf`) | методы с именами интерфейсов операторов (операторы — когда появятся) |
-| `math/big` | `std.math.big` | ✅ есть (`Int`: арифметика и операторы `+ - * / % < ==` (`/` усекает как `int`, евклидово — `DivEuclid`/`Mod`), `Quo/Rem`, `Exp`, `ModInverse`, `GCD`, `Sqrt`, `Lsh/Rsh`, `ProbablyPrime`, `Text/ParseInt` 2..36, `Bytes/FromBytes`; `Rat`; `Decimal` с 7 режимами округления (`/` и `%` дают `Decimal!`, `DivRound(y, scale, mode)`); лимбы на C: Karatsuba, Knuth D); нет `Float` | неизменяемые значения, `Decimal` в stdlib, методы с именами интерфейсов операторов |
+| `math/big` | `std.math.big` | ✅ есть (`Int`: арифметика и операторы `+ - * / % < ==` (`/` усекает как `int`, евклидово — `DivEuclid`/`Mod`), `Quo/Rem`, `Exp`, `ModInverse`, `GCD`, `Sqrt`, `Lsh/Rsh`, `ProbablyPrime`, `Text/ParseInt` 2..36, `Bytes/FromBytes`; `Rat`; `Decimal` с 7 режимами округления (`/` и `%` дают `Decimal!`, `DivRound(y, scale, mode)`); лимбы на C: Karatsuba, Knuth D); `Float` не планируется: точные вычисления — `Rat` и `Decimal` (деньги, фиксированная точность с явным округлением), приближённые — `float`; двоичная плавающая точка произвольной точности (`big.Float` Go: точность в битах, режимы округления IEEE) нужна редко и не окупает реализацию | неизменяемые значения, `Decimal` в stdlib, методы с именами интерфейсов операторов |
 | `unicode`, `unicode/utf8`, `unicode/utf16` | `std.unicode`, `std.unicode.utf8/utf16` | ✅ есть (полные таблицы Unicode 15 из Go: `Is*`, `ToUpper/ToLower/ToTitle`, `SimpleFold`; utf8 `RuneLen/EncodeRune/AppendRune/DecodeRune*/Valid*/RuneCount*/FullRune`; utf16 `Encode/Decode/EncodeRune/DecodeRune`); нет нормализации NFC/NFD | генератор таблиц `scripts/gen-unicode-tables.py` |
 | `strings` | `std.strings` | ✅ есть | `Builder`, `Runes`, `Reverse`, `Pad*`, `Title` |
 | `bytes` | `std.bytes` | ✅ есть (`Buffer` + функции `strings` над `[]byte`) | `Buffer` реализует `io.Reader/Writer` |
@@ -49,7 +49,7 @@
 
 | Go | Slang | Статус | Лучше чем в Go |
 |---|---|---|---|
-| `io` | `std.io` (`Reader`, `Writer`, `Closer`, `Seeker`, `Copy`, `ReadAllFrom`, `LimitReader`, `MultiWriter`, `Pipe`, `TeeReader`) | ✅ есть (+ `AsyncReader/AsyncWriter`, их реализует `net.Conn`; `os.File`) | интерфейсы async-совместимые (`AsyncReader`); нет `SendFile` в `Copy` |
+| `io` | `std.io` (`Reader`, `Writer`, `Closer`, `Seeker`, `Copy`, `ReadAllFrom`, `LimitReader`, `MultiWriter`, `Pipe`, `BoundedPipe`, `TeeReader`) | ✅ есть (+ `AsyncReader/AsyncWriter`, их реализует `net.Conn`; `os.File`) | интерфейсы async-совместимые (`AsyncReader`); нет `SendFile` в `Copy` |
 | `bufio` | `std.io.Buffered*`, `Scanner` | ✅ есть (`ReadLine/ReadString/ReadBytes/Peek/ReadRune`, `Flush`, `Scanner` с `ScanLines/Words/Runes/Bytes`, `io.Lines`/`Words`) | `Lines()`/`Words()` (срезами, итераторов нет) |
 | `fmt` | `std.fmt` | ✅ есть (Format, Sprintf) | `{0}`-шаблоны проверяются при компиляции, `Stringer` интерфейс |
 | `os` | `std.os` | ✅ есть (args, env, exit, cwd, hostname…) | константы платформы, `OnInterrupt` |
@@ -58,7 +58,7 @@
 | `os/user` | `std.os.user` | ✅ есть (`Current`, `Lookup`, `LookupId`, `LookupGroup(Id)`) | — |
 | `io/fs`, `path`, `path/filepath` | `std.fs` (+ `fs.Path` функции) | ✅ есть | `Walk` async, glob, `Watch` (inotify/FSEvents) |
 | `embed` | `@embed("file")` атрибут | ✅ есть (`string`, `[]byte`, `const`, `embed.FS` из каталога или `dir/*.ext`) | проверяется при компиляции, `embed.FS` |
-| `flag` | `std.cli` | ✅ есть (подкоманды, флаги из полей структуры `@cli.flag(...)`, env fallback, help, «did you mean», completion bash/zsh/fish) | подкоманды, help из атрибутов, env fallback |
+| `flag` | `std.cli` | ✅ есть (подкоманды, флаги из полей структуры `@cli.flag(...)` (умолчание — значение поля или `default: "текст"`), env fallback, help, «did you mean», completion bash/zsh/fish) | подкоманды, help из атрибутов, env fallback |
 | `sync`, `sync/atomic` | `std.task` (`Mutex`, `WaitGroup`) + `std.sync` (`RwMutex`, `Semaphore`, `Barrier`, `Once`, `AtomicInt/AtomicBool`, `Atomic<T>`, `Pool<T>`) | ✅ есть | async-aware мьютексы, generic атомики |
 | `context` | контекст задачи в `std.task` | ✅ есть | неявная передача, типизированные ключи, отмена дерева |
 | `math/rand`, `crypto/rand` | `std.random`, `std.crypto.rand` | ✅ есть | — |
@@ -105,7 +105,7 @@
 | Go | Slang | Статус | Лучше чем в Go |
 |---|---|---|---|
 | `crypto/tls` | `std.net.tls` | ✅ есть (1.3 + 1.2 ECDHE/AEAD, группы X25519/P-256/P-384, подписи ECDSA P-256/P-384, interop с OpenSSL) | только современные наборы, без C-зависимостей |
-| `crypto/x509`, `x509/pkix` | `std.crypto.x509` | ✅ есть (P-256 и P-384; без OCSP/CRL, без P-521) | — |
+| `crypto/x509`, `x509/pkix` | `std.crypto.x509` | ✅ есть (P-256 и P-384; `SystemRoots()` разбирается раз на процесс и переиспользуется, пока у файла те же путь, размер и mtime — каждый вызов получает свою копию пула; без OCSP/CRL, без P-521) | — |
 | `net/http` | `std.net.http` | ✅ есть (HTTP/1.1 и HTTP/2 (h2 по ALPN, h2c) клиент/сервер; пул соединений с прокси, gzip, cookies, потоковые тела; роутер с middleware (Recover, Logging, CORS, Gzip, BodyLimit, TimeoutHandler), ServeFile/ServeDir с диапазонами и ETag, SSE; interop с curl и Go); нет HTTP/3, server push | async, роутер с параметрами и middleware в stdlib, graceful shutdown с GOAWAY, сервер на уровне Go `net/http` по скорости |
 | `net/http/httptest`, `cookiejar` | `std.net.http.test`, `http.CookieJar` | ✅ есть (`NewServer`/`NewTLSServer`/`NewH2CServer`, `NewRecorder`, `NewRequest`, `Serve`; jar по RFC 6265) | тестовый сервер сразу с настроенным клиентом |
 | `net/http/httputil`, `fcgi`, `cgi`, `pprof` | `std.net.http.util`, `diag` endpoints | ❌ нет | — |
@@ -121,16 +121,20 @@
 
 | Go (внешние) | Slang | Статус | Лучше чем в Go |
 |---|---|---|---|
-| `go-redis` | `std.data.redis` | ❌ нет | RESP3, pipelining, pub/sub, транзакции, Lua-скрипты, cluster, **Sentinel** с автоматическим failover, типизированные команды, async |
-| `sarama`/`franz-go` | `std.data.kafka` | ❌ нет | producer с батчами и idempotence, consumer groups с rebalance, SASL (PLAIN/SCRAM), TLS, компрессия gzip/zstd, транзакции позже; один клиент на Slang без C |
-| `aws-sdk-go` S3 | `std.cloud.s3` | ❌ нет | SigV4, Get/Put/Delete/List, multipart upload с параллельными частями, presigned URLs, потоковые тела, совместимо с MinIO/R2/GCS-S3 |
-| `minio-go`, `gocloud blob` | `std.cloud.blob` (абстракция над s3/fs) | ❌ нет | единый интерфейс для S3 и локальной ФС |
+| `go-redis` | `std.data.redis` | ✅ есть (RESP2/RESP3 с откатом, `Connect(url)` с `redis://`/`rediss://`/`unix://`, AUTH, db; ~100 типизированных команд методами + `Do(args []any)`; `redis.Nil`, `redis.Error{Code}`; пул с PING-проверкой, сроком жизни, `ErrPoolTimeout`, повторами; `Pipeline()` одной записью (задачи команд завершаются после `Exec`), `TxPipeline` и `Watch` (`ErrTxFailed`), `NewScript().Run` с EVALSHA→EVAL; `Subscribe/PSubscribe` + `for msg in sub` с переподключением; таймауты через контекст задачи; Sentinel (`ConnectSentinel`: мастер, `+switch-master`, повторный опрос при READONLY, `ReadFromReplicas`); Cluster (`ConnectCluster`: `CLUSTER SLOTS`, hash tags, MOVED/ASK, `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE, SCAN по всем мастерам); `GetJSON<T>/SetJSON<T>`. Проверено на redis-server 7.0: TLS + пароль, Sentinel с `kill -9` мастера → повышенная реплика, Cluster из 3 мастеров с миграцией слота (ASK, затем MOVED); spec-тесты против мок-серверов) | RESP3, pipelining, pub/sub, транзакции, Lua-скрипты, cluster, **Sentinel** с автоматическим failover, типизированные команды, async |
+| `sarama`/`franz-go` | `std.data.kafka` | ✅ есть (протокол на Slang: ApiVersions, Metadata, Produce v7/v3, Fetch v10/v4, ListOffsets, FindCoordinator, JoinGroup/SyncGroup/Heartbeat/LeaveGroup, OffsetCommit/OffsetFetch, SASL PLAIN и SCRAM-SHA-256/512, CreateTopics/DeleteTopics, InitProducerId; record batch v2 побайтно как Java-клиент, CRC-32C на C, gzip/zstd; `NewProducer` с батчами по размеру и linger, acks, идемпотентностью, murmur2 как в Java, round-robin; `NewConsumer` с группами (range/round-robin, ребаланс, heartbeat в фоне, авто/ручной commit), `for rec in consumer`; `NewAdmin`; TLS; смена лидера и повторы с backoff. Проверено на Kafka 3.7 (KRaft, SASL PLAIN/SCRAM) — тест `--ignored` с `KAFKA_BROKERS`; spec-тесты против мок-брокера на Slang; нет snappy/lz4, транзакций, статического членства) | producer с батчами и idempotence, consumer groups с rebalance, SASL (PLAIN/SCRAM), TLS, компрессия gzip/zstd, транзакции позже; один клиент на Slang без C |
+| `aws-sdk-go` S3 | `std.cloud.s3` | ✅ есть (SigV4 заголовками и presigned URL — векторы набора AWS и документации S3, сверено с botocore; `Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle}` для AWS/MinIO/R2/GCS; Put/Get (поток, диапазон)/Head/Delete/DeleteObjects, `ListObjectsV2` и итератор `List`, `CopyObject`, бакеты, multipart `Upload` с параллельными частями и abort, `Presign`, `s3.Error` + `ErrNoSuchKey/NoSuchBucket/AccessDenied/PreconditionFailed`, повторы 5xx/SlowDown; учётные данные: env, `~/.aws/credentials`, IMDSv2. Проверено на MinIO; spec-тест против S3-сервера на Slang, проверяющего подписи; тела запросов в памяти — потоковой загрузки одним PUT нет, только multipart) | SigV4, Get/Put/Delete/List, multipart upload с параллельными частями, presigned URLs, потоковые тела, совместимо с MinIO/R2/GCS-S3 |
+| `minio-go`, `gocloud blob` | `std.cloud.blob` (абстракция над s3/fs) | ✅ есть (`Bucket`: Write/Read/Delete/Exists/Attributes/List/Copy/SignedURL; `OpenS3`, `OpenDir` с атомарной записью и защитой от `..`, `Open("s3://…"/"file://…")`, `blob.ErrNotFound`) | единый интерфейс для S3 и локальной ФС |
 
 ## Уровень 4 — фреймворк (`docs/FRAMEWORK.md`)
 
 `slang.web`, `slang.data`, `slang.log` (расширенные sinks), `slang.diag`
 (endpoints, trace), `slang.config`, `slang.cache`, `slang.jobs`,
 `slang.auth`, `slang.messaging`, `slang.cli`, `slang.test`.
+
+| Аналог | Slang | Статус | Лучше чем в Go |
+|---|---|---|---|
+| ASP.NET Core, `gin`/`echo` + `wire` + `viper` + `golang-jwt` + `swag` | `std.web` (`std.web.auth.jwt`, `std.web.config`; станет пакетом `slang.web`, когда появится реестр) | ✅ есть (контроллеры `@route`/`@get…` и minimal API `MapGet((id int, svc *Svc) => …)` — таблица маршрутов, привязка и фабрики DI генерируются при компиляции (`sema/web.rs`), неверный маршрут или незарегистрированная зависимость — ошибка компиляции; привязка path/query/header/form/JSON с `@validate` и 400 Problem Details; DI singleton/scoped/transient с `Drop` в конце запроса; middleware (логирование, recover, CORS, gzip, статика, rate limit, request id, трассировка, JWT HS256/RS256/ES256 + `@authorize(roles)`, body limit, timeout, health checks); `config.Bind<T>` из json/yaml/toml + env + args, `Options<T>` с перезагрузкой; `Result<T>` с content negotiation; OpenAPI 3.1 + `/swagger`; `TestServer`/`TestClient` в памяти; см. FRAMEWORK.md §2) | без рефлексии при старте и без кодогенерации отдельным шагом; ошибки маршрутов и DI — при компиляции |
 
 ## Чего в Go нет, а в Slang будет в stdlib
 

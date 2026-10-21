@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.generics2.generic_async
 
-import std.io
 import std
+import std.io
 
 async func Fetch<T>(v T, fail bool) T! {
     await task.Delay(1)

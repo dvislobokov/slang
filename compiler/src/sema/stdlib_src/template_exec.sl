@@ -3,10 +3,10 @@ namespace std.text.template
 // Execution of parsed templates over dynamic Values (see template.sl).
 
 struct executor {
-    t *tmpl
-    out *std.strings.Builder
+    t     *tmpl
+    out   *std.strings.Builder
     names []string
-    vals []Value
+    vals  []Value
     depth int
 
     func fail(line int, msg string) error {
@@ -179,7 +179,10 @@ struct executor {
                     n += 1
                 }
                 if n < 1 {
-                    return this.fail(line, "wrong number of args for " + name + ": want at least 1 got 0")
+                    return this.fail(
+                        line,
+                        "wrong number of args for " + name + ": want at least 1 got 0",
+                    )
                 }
                 for k in 1..len(c.args) {
                     res = this.arg(c.args[k], dot, line)?
@@ -420,12 +423,16 @@ func compare(a Value, b Value) int! {
         }
         return 2
     }
-    return error("incompatible types for comparison: " + kindName(a.kind) + " and " + kindName(b.kind))
+    return error(
+        "incompatible types for comparison: " + kindName(a.kind) + " and " + kindName(b.kind),
+    )
 }
 
 func need(name string, args []Value, n int) void! {
     if len(args) != n {
-        return error(std.fmt.Format("wrong number of args for {0}: want {1} got {2}", name, n, len(args)))
+        return error(
+            std.fmt.Format("wrong number of args for {0}: want {1} got {2}", name, n, len(args)),
+        )
     }
 }
 
@@ -504,7 +511,9 @@ func builtin(name string, args []Value) Value! {
             hi = args[2].i
         }
         if lo < 0 || hi > n || lo > hi {
-            return error(std.fmt.Format("slice index out of range [{0}:{1}] with length {2}", lo, hi, n))
+            return error(
+                std.fmt.Format("slice index out of range [{0}:{1}] with length {2}", lo, hi, n),
+            )
         }
         if v.kind == 4 {
             return Value{kind: 4, s: v.s[lo..hi]}
@@ -633,7 +642,10 @@ func builtin(name string, args []Value) Value! {
     }
     if name == "replace" {
         need(name, args, 3)?
-        return Value{kind: 4, s: std.strings.Replace(strOf(args[0]), strOf(args[1]), strOf(args[2]))}
+        return Value{
+            kind: 4,
+            s: std.strings.Replace(strOf(args[0]), strOf(args[1]), strOf(args[2])),
+        }
     }
     if name == "repeat" {
         need(name, args, 2)?
@@ -1000,7 +1012,13 @@ func queryEscape(s string) string {
     var b = std.strings.Builder{}
     for i in 0..len(s) {
         var c = int(s[i])
-        if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 {
+        if (c >= 48 && c <= 57) ||
+            (c >= 65 && c <= 90) ||
+            (c >= 97 && c <= 122) ||
+            c == 45 ||
+            c == 95 ||
+            c == 46 ||
+            c == 126 {
             b.Write(s[i..i + 1])
         } else if c == 32 {
             b.Write("+")

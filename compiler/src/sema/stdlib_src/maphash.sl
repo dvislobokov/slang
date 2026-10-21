@@ -46,8 +46,8 @@ func String(seed Seed, s string) uint {
 // A streaming maphash (std.hash.Hash64): buffers the input and hashes it
 // on Sum64, so the result equals Bytes(seed, everything written).
 struct Hash {
-    seed Seed
-    buf []byte
+    seed   Seed
+    buf    []byte
     seeded bool
 
     // Sets the seed (otherwise a random one is chosen on first use).

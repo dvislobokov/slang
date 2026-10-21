@@ -1,0 +1,38 @@
+HELLO 3 AUTH app pw SETNAME spec
+hello
+missing: true
+1 2
+server error: ERR | ERR value is not an integer or out of range
+true WRONGTYPE
+1
+queued 4
+4 (error) WRONGTYPE Operation against a key holding the wrong kind of value
+1 2 hello
+pipeline error: WRONGTYPE
+max commands per read: 4
+tx 1 2
+watch: true
+tries 1 changed
+e0e1f9fabfc9d4800c877a703b823ac0578ff8db
+"ran return 1 keys=2"
+"ran return 1 keys=1"
+  EVALSHA
+  EVAL
+  EVALSHA
+subscribed [news] [user.*]
+1
+1
+message news  first
+pmessage user.42 user.* second
+after reconnect: 1
+news third reconnects 1
+closed subscription: redis: client is closed
+after LOADING: hello
+timeout: true true
+PONG
+after close: true
+HELLO 3 AUTH default old | AUTH old | SELECT 7
+resp2 nil: true
+pool: true
+stats 1 1
+auth: WRONGPASS

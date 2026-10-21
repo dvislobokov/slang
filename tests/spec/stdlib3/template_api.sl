@@ -11,20 +11,20 @@ enum Tier {
 }
 
 struct Row {
-    Id int
+    Id   int
     Name string
 }
 
 struct Report {
-    Title string
-    Rows []Row
-    Scores map[int]string
-    Extra any
-    Tier Tier
+    Title   string
+    Rows    []Row
+    Scores  map[int]string
+    Extra   any
+    Tier    Tier
     Initial char
-    Body html.template.HTML
-    Link html.template.URL
-    Code html.template.JS
+    Body    html.template.HTML
+    Link    html.template.URL
+    Code    html.template.JS
 }
 
 func main() void! {
@@ -42,14 +42,30 @@ func main() void! {
         }
         return text.template.Int(t)
     }
-    var r = Report{Title: "q3", Rows: [Row{Id: 1, Name: "a"}, Row{Id: 2, Name: "b"}], Scores: map[int]string{10: "ten", 2: "two", 33: "x"}, Extra: 42, Tier: Tier.Pro, Initial: 'Q', Body: html.template.HTML{Text: "<em>trusted</em>"}, Link: html.template.URL{Text: "javascript:void(0)"}, Code: html.template.JS{Text: "{a: 1}"}}
-    var t = text.template.ParseWith<Report>("{{.Title | shout}} {{sum 1 2 3}} {{range $k, $v := .Scores}}{{$k}}={{$v}} {{end}}{{.Extra}} {{.Tier}} {{.Initial}}", funcs)?
+    var r = Report{
+        Title: "q3",
+        Rows: [Row{Id: 1, Name: "a"}, Row{Id: 2, Name: "b"}],
+        Scores: map[int]string{10: "ten", 2: "two", 33: "x"},
+        Extra: 42,
+        Tier: Tier.Pro,
+        Initial: 'Q',
+        Body: html.template.HTML{Text: "<em>trusted</em>"},
+        Link: html.template.URL{Text: "javascript:void(0)"},
+        Code: html.template.JS{Text: "{a: 1}"},
+    }
+    var t = text.template.ParseWith<Report>(
+        "{{.Title | shout}} {{sum 1 2 3}} {{range $k, $v := .Scores}}{{$k}}={{$v}} {{end}}{{.Extra}} {{.Tier}} {{.Initial}}",
+        funcs,
+    )?
     println(t.Execute(r)?)
     var bad = text.template.ParseWith<Report>("{{fail}}", funcs)?
     try bad.Execute(r) catch err {
         println(err.Message())
     }
-    var named = text.template.ParseNamed<Report>("report", "{{define \"row\"}}<{{.Id}}:{{.Name}}>{{end}}{{define \"head\"}}[{{.Title}}]{{end}}{{template \"head\" .}}{{range .Rows}}{{template \"row\" .}}{{end}}")?
+    var named = text.template.ParseNamed<Report>(
+        "report",
+        "{{define \"row\"}}<{{.Id}}:{{.Name}}>{{end}}{{define \"head\"}}[{{.Title}}]{{end}}{{template \"head\" .}}{{range .Rows}}{{template \"row\" .}}{{end}}",
+    )?
     println(named.Name(), named.Defined(), named.Execute(r)?, named.ExecuteTemplate("head", r)?)
     try named.ExecuteTemplate("row", r) catch err {
         println(err.Message())
@@ -66,6 +82,8 @@ func main() void! {
     try oob.Execute(r) catch err {
         println(err.Message())
     }
-    var h = html.template.Parse<Report>("{{define \"r\"}}<li>{{.Name}}</li>{{end}}<div>{{.Body}}</div><a href=\"{{.Link}}\">{{.Title}}</a><script>var c = {{.Code}};</script><ul>{{range .Rows}}{{template \"r\" .}}{{end}}</ul>")?
+    var h = html.template.Parse<Report>(
+        "{{define \"r\"}}<li>{{.Name}}</li>{{end}}<div>{{.Body}}</div><a href=\"{{.Link}}\">{{.Title}}</a><script>var c = {{.Code}};</script><ul>{{range .Rows}}{{template \"r\" .}}{{end}}</ul>",
+    )?
     println(h.Execute(r)?)
 }

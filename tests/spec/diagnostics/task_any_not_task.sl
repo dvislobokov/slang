@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.task_any_not_task
 
-import std.io
 import std
+import std.io
 
 async func main() {
     var x = await task.Any(1, 2)

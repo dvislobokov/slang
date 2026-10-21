@@ -1,0 +1,156 @@
+namespace std.crypto.rsa
+
+// RSA key generation (the signature and OAEP primitives are runtime
+// functions, crypto/rsa.c). Primes come from the runtime (random
+// candidates with the top two bits set, trial division, Miller-Rabin);
+// the key arithmetic uses std.math.big.
+
+// An RSA public key: modulus and exponent as big-endian bytes.
+struct PublicKey {
+    N []byte
+    E []byte
+
+    func Size() int {
+        return len(this.N)
+    }
+}
+
+// Generates a key of `bits` bits (2048, 3072 or 4096; at least 1024) with
+// e = 65537, as a PKCS#1 RSAPrivateKey DER (the form SignPKCS1v15,
+// SignPSS and DecryptOAEP take).
+func GenerateKey(bits int) []byte! {
+    if bits < 1024 || bits > 8192 || bits % 16 != 0 {
+        return error("rsa: key size must be a multiple of 16 in 1024..8192 bits")
+    }
+    var e = std.math.big.NewInt(65537)
+    var one = std.math.big.NewInt(1)
+    for attempt in 0..32 {
+        var p = std.math.big.FromBytes(rtGenPrime(bits / 2, 65537)?)
+        var q = std.math.big.FromBytes(rtGenPrime(bits / 2, 65537)?)
+        if p.Equals(q) {
+            continue
+        }
+        if p.Cmp(q) < 0 {
+            var t = p
+            p = q
+            q = t
+        }
+        var n = p.Mul(q)
+        if n.BitLen() != bits {
+            continue
+        }
+        var p1 = p.Sub(one)
+        var q1 = q.Sub(one)
+        var phi = p1.Mul(q1)
+        var d = try e.ModInverse(phi) catch err {
+            continue
+        }
+        var dp = d.Mod(p1)
+        var dq = d.Mod(q1)
+        var qinv = q.ModInverse(p)?
+        _ = attempt
+        var body []byte = derInt([0])
+        for x in [n, e, d, p, q, dp, dq, qinv] {
+            body = std.compress.rtConcat(body, derInt(x.Bytes()))
+        }
+        return derTLV(48, body)
+    }
+    return error("rsa: key generation failed")
+}
+
+func derTLV(tag int, content []byte) []byte {
+    var out []byte = [byte(tag)]
+    var n = len(content)
+    if n < 128 {
+        out = append(out, byte(n))
+    } else {
+        var lb []byte = []
+        var x = n
+        for x > 0 {
+            lb = append(lb, byte(x & 255))
+            x = x >> 8
+        }
+        out = append(out, byte(128 | len(lb)))
+        var i = len(lb) - 1
+        for i >= 0 {
+            out = append(out, lb[i])
+            i -= 1
+        }
+    }
+    return std.compress.rtConcat(out, content)
+}
+
+// DER INTEGER of a non-negative big-endian magnitude.
+func derInt(mag []byte) []byte {
+    var i = 0
+    for i < len(mag) - 1 && mag[i] == 0 {
+        i += 1
+    }
+    var v []byte = []
+    if len(mag) == 0 {
+        v = [0]
+    } else {
+        v = mag[i..]
+        if v[0] >= 128 {
+            v = std.compress.rtConcat([0], v)
+        }
+    }
+    return derTLV(2, v)
+}
+
+// The public key of a PKCS#1 RSAPrivateKey DER.
+func PublicKeyOf(der []byte) PublicKey! {
+    var ints = parseInts(der, 3)?
+    return PublicKey{N: ints[1], E: ints[2]}
+}
+
+// The first k INTEGERs of a DER SEQUENCE (big-endian magnitudes).
+func parseInts(der []byte, k int) [][]byte! {
+    var pos = 0
+    var (tag, start, end) = tlv(der, 0)?
+    if tag != 48 {
+        return error("rsa: not a PKCS#1 private key")
+    }
+    pos = start
+    var out [][]byte = []
+    for len(out) < k {
+        if pos >= end {
+            return error("rsa: truncated PKCS#1 private key")
+        }
+        var (t, s, e) = tlv(der, pos)?
+        if t != 2 {
+            return error("rsa: not a PKCS#1 private key")
+        }
+        var v = der[s..e]
+        for len(v) > 1 && v[0] == 0 {
+            v = v[1..]
+        }
+        out = append(out, v)
+        pos = e
+    }
+    return out
+}
+
+func tlv(b []byte, pos int) (int, int, int)! {
+    if pos + 2 > len(b) {
+        return error("rsa: truncated DER")
+    }
+    var tag = int(b[pos])
+    var n = int(b[pos + 1])
+    var p = pos + 2
+    if n >= 128 {
+        var k = n - 128
+        if k < 1 || k > 4 || p + k > len(b) {
+            return error("rsa: bad DER length")
+        }
+        n = 0
+        for i in 0..k {
+            n = n * 256 + int(b[p + i])
+        }
+        p += k
+    }
+    if p + n > len(b) {
+        return error("rsa: truncated DER")
+    }
+    return (tag, p, p + n)
+}

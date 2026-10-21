@@ -1,0 +1,146 @@
+// std.cloud.s3 and std.cloud.blob against a real MinIO server started by
+// compiler/tests/s3.rs (S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY). MinIO
+// checks every Signature V4 exactly like AWS.
+namespace s3real
+
+import std.io
+import std
+import std.cloud
+
+func env(n string) string {
+    return os.Getenv(n)
+}
+
+async func main() void! {
+    var cfg = s3.Config{Endpoint: env("S3_ENDPOINT"), AccessKey: env("S3_ACCESS_KEY"), SecretKey: env("S3_SECRET_KEY"), PathStyle: true}
+    var c = s3.NewClient(cfg)?
+    var b = "slang-it"
+    println("exists before", await c.BucketExists(b)?)
+    await c.CreateBucket(b)?
+    try await c.CreateBucket(b) catch err {
+        println("create again:", s3.ErrorCode(err))
+    }
+    var found = false
+    for x in await c.ListBuckets()? {
+        if x.Name == b {
+            found = true
+        }
+    }
+    println("listed", found, await c.BucketExists(b)?)
+
+    // objects with metadata and a key that needs escaping
+    var key = "dir/summer trip/ü+1 (copy).txt"
+    var put = await c.PutObject(b, key, "hello minio", s3.PutOptions{ContentType: "text/plain", Metadata: map[string]string{"Owner": "ann"}, CacheControl: "max-age=60"})?
+    println("etag", put.ETag == "\"" + crypto.hash.Md5Hex("hello minio") + "\"")
+    var info = await c.HeadObject(b, key)?
+    println("head", info.Size, info.ContentType, info.Metadata["owner"], info.LastModified.Year() >= 2024)
+    println("get", strings.FromBytes(await c.GetObjectBytes(b, key)?))
+    var part = await c.GetObject(b, key, s3.GetOptions{HasRange: true, RangeStart: 6, RangeEnd: -1})?
+    println("range", strings.FromBytes(await part.ReadAll()?), part.Info.Size)
+    var big = strings.Repeat("0123456789", 300000)
+    _ = await c.PutObject(b, "big.txt", big, s3.PutOptions{})?
+    var stream = await c.GetObject(b, "big.txt", s3.GetOptions{})?
+    var total = 0
+    for {
+        var chunk = await stream.Read(100000)?
+        if len(chunk) == 0 {
+            break
+        }
+        total += len(chunk)
+    }
+    println("streamed", total)
+    try await c.GetObjectBytes(b, "missing") catch err {
+        println("missing:", errors.Is(err, s3.ErrNoSuchKey), s3.ErrorCode(err))
+    }
+    try await c.HeadObject(b, "missing") catch err {
+        println("head missing:", errors.Is(err, s3.ErrNoSuchKey))
+    }
+    try await c.GetObjectBytes("no-such-bucket-slang", "k") catch err {
+        println("no bucket:", errors.Is(err, s3.ErrNoSuchBucket))
+    }
+    var wrong = cfg
+    wrong.SecretKey = "not-the-secret"
+    var bad = s3.NewClient(wrong)?
+    try await bad.ListBuckets() catch err {
+        println("wrong secret:", s3.ErrorCode(err))
+    }
+
+    // listing
+    for i in 0..23 {
+        _ = await c.PutObject(b, "logs/" + strconv.Itoa(1000 + i) + ".log", "x", s3.PutOptions{})?
+    }
+    var page = await c.ListObjectsV2(b, s3.ListOptions{Prefix: "logs/", MaxKeys: 10})?
+    println("page", len(page.Objects), page.IsTruncated, page.Objects[0].Key)
+    var it = c.ListWith(b, s3.ListOptions{Prefix: "logs/", MaxKeys: 10})
+    var n = 0
+    for o in it {
+        if o.Size == 1 {
+            n += 1
+        }
+    }
+    println("all", n, "pages", it.Pages())
+    var top []string = []
+    for o in c.List(b, "", "/") {
+        top = append(top, o.Key)
+    }
+    slices.Sort(top)
+    println("top level", top)
+
+    // copy
+    _ = await c.CopyObject(b, key, b, "copy.txt", s3.PutOptions{})?
+    var ci = await c.HeadObject(b, "copy.txt")?
+    println("copy keeps metadata", ci.Metadata["owner"], strings.FromBytes(await c.GetObjectBytes(b, "copy.txt")?))
+    _ = await c.CopyObject(b, key, b, "copy2.txt", s3.PutOptions{ContentType: "text/x-note", Metadata: map[string]string{"owner": "bob"}})?
+    var c2 = await c.HeadObject(b, "copy2.txt")?
+    println("copy replaces metadata", c2.Metadata["owner"], c2.ContentType)
+
+    // multipart: 12 MB in 5 MB parts, 3 in flight; from an async reader too
+    var data = strings.Bytes(strings.Repeat("abcdefghijklmnopqrstuvwxyz012345", 393216))
+    var up = await c.Upload(b, "video.bin", io.NewBytesReader(data), 5 << 20, 3)?
+    println("multipart", strings.HasSuffix(up.ETag, "-3\""))
+    var vi = await c.HeadObject(b, "video.bin")?
+    println("multipart size", vi.Size == len(data))
+    var back = await c.GetObjectBytes(b, "video.bin")?
+    println("multipart content", crypto.hash.Sha256Hex(strings.FromBytes(back)) == crypto.hash.Sha256Hex(strings.FromBytes(data)))
+    var id = await c.CreateMultipartUpload(b, "aborted.bin", s3.PutOptions{})?
+    _ = await c.UploadPart(b, "aborted.bin", id, 1, strings.Bytes("part"))?
+    await c.AbortMultipartUpload(b, "aborted.bin", id)?
+    try await c.HeadObject(b, "aborted.bin") catch err {
+        println("aborted upload left nothing:", errors.Is(err, s3.ErrNoSuchKey))
+    }
+
+    // presigned URLs
+    var r1 = await net.http.Get(c.Presign("GET", b, key, 120)?)?
+    println("presigned get", r1.Status, r1.Body)
+    var putURL = c.Presign("PUT", b, "via-url.txt", 120)?
+    var r2 = await net.http.NewRequest("PUT", putURL).Body("uploaded with a presigned URL").Send()?
+    println("presigned put", r2.Status, strings.FromBytes(await c.GetObjectBytes(b, "via-url.txt")?))
+
+    // blob over MinIO
+    var bk = cloud.blob.OpenS3(c, b, "blob/")
+    await bk.Write("a/1.txt", strings.Bytes("one"), "text/plain")?
+    await bk.Write("a/2.txt", strings.Bytes("two!"), "text/plain")?
+    var keys []string = []
+    for a in await bk.List("a/")? {
+        keys = append(keys, a.Key + "=" + strconv.Itoa(a.Size))
+    }
+    println("blob", keys, strings.FromBytes(await bk.Read("a/2.txt")?), await bk.Exists("a/3.txt")?)
+    var signed = bk.SignedURL("a/1.txt", "GET", 60)?
+    println("blob signed url", (await net.http.Get(signed)?).Body)
+    try await bk.Read("a/3.txt") catch err {
+        println("blob missing:", errors.Is(err, cloud.blob.ErrNotFound))
+    }
+
+    // cleanup: a bucket with objects cannot be deleted
+    try await c.DeleteBucket(b) catch err {
+        println("not empty:", s3.ErrorCode(err))
+    }
+    var all []string = []
+    for o in c.List(b, "", "") {
+        all = append(all, o.Key)
+    }
+    var failed = await c.DeleteObjects(b, all)?
+    println("deleted", len(all), "failed", len(failed))
+    await c.DeleteBucket(b)?
+    println("exists after", await c.BucketExists(b)?)
+}

@@ -3,11 +3,11 @@
 // run-flags: --leak-check
 namespace spec.stdlib.tls_trace13
 
-import std.io
 import std
-import std.net
 import std.crypto
 import std.encoding
+import std.io
+import std.net
 
 // The records of the connection documented at https://tls13.xargs.org
 // (github.com/syncsynchalt/illustrated-tls13, captures/caps): every
@@ -55,11 +55,24 @@ func main() void! {
     var sh = body(serverHello)
     // the server key share is the last 32 bytes of the ServerHello
     var serverShare = sh[len(sh) - 32..]
-    println("server share matches:", hex.Encode(serverShare) == hex.Encode(x25519.PublicKey(serverPriv)?))
+    println(
+        "server share matches:",
+        hex.Encode(serverShare) == hex.Encode(x25519.PublicKey(serverPriv)?),
+    )
     var shared = x25519.SharedSecret(clientPriv, serverShare)?
-    println("both sides agree:", hex.Encode(shared) == hex.Encode(x25519.SharedSecret(serverPriv, x25519.PublicKey(clientPriv)?)?))
+    println(
+        "both sides agree:",
+        hex.Encode(shared) ==
+            hex.Encode(x25519.SharedSecret(serverPriv, x25519.PublicKey(clientPriv)?)?),
+    )
     var empty = crypto.hash.Sum(hh, [])?
-    var e0 = hkdf.Extract(hh, [], h("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))?
+    var e0 = hkdf.Extract(
+        hh,
+        [],
+        h(
+            "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    )?
     var hs = hkdf.Extract(hh, tls.DeriveSecret(hh, e0, "derived", empty)?, shared)?
     var transcript = join(ch, sh)
     var thSH = crypto.hash.Sum(hh, transcript)?
@@ -81,14 +94,31 @@ func main() void! {
     var cert = tls.OpenRecord(0x1302, sKey, sIV, 1, h(encCertificate))?
     var cv = tls.OpenRecord(0x1302, sKey, sIV, 2, h(encCertVerify))?
     var fin = tls.OpenRecord(0x1302, sKey, sIV, 3, h(encServerFinished))?
-    println("inner types:", ee[0], cert[0], cv[0], fin[0], "messages:", ee[1], cert[1], cv[1], fin[1])
+    println(
+        "inner types:",
+        ee[0],
+        cert[0],
+        cv[0],
+        fin[0],
+        "messages:",
+        ee[1],
+        cert[1],
+        cv[1],
+        fin[1],
+    )
     show("EncryptedExtensions", ee[1..])
     transcript = join(transcript, ee[1..])
     // Certificate: type(1) len(3) context(1) list(3) cert_len(3) cert ...
     var certMsg = cert[1..]
     var certLen = int(certMsg[8]) * 65536 + int(certMsg[9]) * 256 + int(certMsg[10])
     var leaf = x509.ParseDER(certMsg[11..11 + certLen])?
-    println("server certificate:", leaf.Subject.CommonName, leaf.PublicKeyAlgorithm, len(leaf.PublicKey) * 8, "bits")
+    println(
+        "server certificate:",
+        leaf.Subject.CommonName,
+        leaf.PublicKeyAlgorithm,
+        len(leaf.PublicKey) * 8,
+        "bits",
+    )
     transcript = join(transcript, certMsg)
     // CertificateVerify over the transcript through Certificate
     var cvMsg = cv[1..]
@@ -97,7 +127,12 @@ func main() void! {
     var content = strings.Bytes(strings.Repeat(" ", 64) + "TLS 1.3, server CertificateVerify")
     content = join(content, h("00"))
     content = join(content, crypto.hash.Sum(hh, transcript)?)
-    println("CertificateVerify scheme:", fmt.Sprintf("0x%04x", scheme), "signature bytes:", len(sig))
+    println(
+        "CertificateVerify scheme:",
+        fmt.Sprintf("0x%04x", scheme),
+        "signature bytes:",
+        len(sig),
+    )
     leaf.CheckSignature("SHA256-RSAPSS", content, sig)?
     println("CertificateVerify signature: ok")
     transcript = join(transcript, cvMsg)
@@ -108,7 +143,13 @@ func main() void! {
 
     // application secrets
     var hs2 = tls.DeriveSecret(hh, hs, "derived", empty)?
-    var master = hkdf.Extract(hh, hs2, h("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))?
+    var master = hkdf.Extract(
+        hh,
+        hs2,
+        h(
+            "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    )?
     var thSF = crypto.hash.Sum(hh, transcript)?
     var sAP = tls.DeriveSecret(hh, master, "s ap traffic", thSF)?
     var cAP = tls.DeriveSecret(hh, master, "c ap traffic", thSF)?
@@ -130,6 +171,14 @@ func main() void! {
     var ping = tls.OpenRecord(0x1302, caKey, caIV, 0, h(encClientData))?
     // the server's data record follows its two NewSessionTicket records
     var pong = tls.OpenRecord(0x1302, saKey, saIV, 2, h(encServerData))?
-    println("client sent:", strings.FromBytes(ping[1..]), "server sent:", strings.FromBytes(pong[1..]))
-    println("client data record identical:", hex.Encode(tls.SealRecord(0x1302, caKey, caIV, 0, 23, ping[1..])?) == encClientData)
+    println(
+        "client sent:",
+        strings.FromBytes(ping[1..]),
+        "server sent:",
+        strings.FromBytes(pong[1..]),
+    )
+    println(
+        "client data record identical:",
+        hex.Encode(tls.SealRecord(0x1302, caKey, caIV, 0, 23, ping[1..])?) == encClientData,
+    )
 }

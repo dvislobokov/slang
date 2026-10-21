@@ -1,0 +1,41 @@
+exists false
+buckets [logs@2026 photos@2026] true
+put "bf23ea50d77ee96ece2b71f7d905bfe8"
+head 8 image/jpeg x100 true 2026
+get JPEGDATA
+range EGD 8
+streamed 200000
+get missing: true NoSuchKey
+true 404 req-1 photos/nope.jpg
+head missing: true
+no bucket: true
+if-none-match: true
+wrong secret: SignatureDoesNotMatch s3: SignatureDoesNotMatch: signature mismatch
+page 10 true app/00.log app/09.log 4
+all 25 app/24.log true
+delimited [readme app/(dir) db/(dir)]
+copy JPEGDATA
+delete objects failed 1 locked AccessDenied left 1
+multipart true parallel parts true 0
+multipart content true
+upload failure: InvalidPart pending uploads 0 aborted upload-2
+small upload is one PUT true
+after SlowDown tiny retries 2
+gave up: SlowDown
+presigned get 200 tiny
+presigned put 200 via presigned
+tampered 403 true
+s3 read alpha true false
+s3 list [notes/a.txt=5 notes/sub/b.txt=4]
+s3 copy notes/c.txt 5
+s3 missing: true
+s3 after delete 0
+dir read alpha true false
+dir list [notes/a.txt=5 notes/sub/b.txt=4]
+dir copy notes/c.txt 5
+dir missing: true
+dir after delete 0
+blob: invalid key "../escape"
+blob: signed URLs are not supported by a directory bucket
+deleted twice: true
+rejected requests: rejected GET /: signature mismatch

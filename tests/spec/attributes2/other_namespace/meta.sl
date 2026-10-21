@@ -11,6 +11,6 @@ struct Table {
 
 @attribute(targets: [reflect.Target.Field])
 struct Column {
-    Name string
+    Name     string
     Nullable bool = true
 }

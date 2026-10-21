@@ -2,12 +2,12 @@
 // status: passing
 namespace spec.async.mutex_counter
 
-import std.io
 import std
+import std.io
 
 struct Shared {
     Mu task.Mutex
-    N int
+    N  int
 }
 
 async func Bump(s *Shared, times int) {

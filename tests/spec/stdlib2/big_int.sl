@@ -14,7 +14,14 @@ func main() {
     println((a / b).String(), (a % b).String(), a.DivEuclid(b).String(), a.Mod(b).String())
     var m7 = big.NewInt(-7)
     var d2 = big.NewInt(2)
-    println(m7.Quo(d2).String(), (m7 % d2).String(), m7.DivEuclid(d2).String(), m7.Mod(d2).String(), m7.Rsh(1).String(), big.NewInt(7).Rsh(1).String())
+    println(
+        m7.Quo(d2).String(),
+        (m7 % d2).String(),
+        m7.DivEuclid(d2).String(),
+        m7.Mod(d2).String(),
+        m7.Rsh(1).String(),
+        big.NewInt(7).Rsh(1).String(),
+    )
     println(m7 / d2 == m7.Quo(d2), -m7 > d2, -(-m7) != m7, m7 <= m7)
     var f = big.NewInt(1)
     for i in 1..31 {
@@ -23,8 +30,17 @@ func main() {
     println("30! =", f.String(), f.BitLen(), f.TrailingZeroBits())
     var two = big.NewInt(2)
     var p = two.Pow(521) - big.NewInt(1)
-    println(p.Text(16) == "1" + strings.Repeat("ff", 65), p.ProbablyPrime(10), (p - two).ProbablyPrime(10))
-    println(big.NewInt(97).ProbablyPrime(5), big.NewInt(91).ProbablyPrime(5), big.NewInt(2).ProbablyPrime(0), big.NewInt(1).ProbablyPrime(0))
+    println(
+        p.Text(16) == "1" + strings.Repeat("ff", 65),
+        p.ProbablyPrime(10),
+        (p - two).ProbablyPrime(10),
+    )
+    println(
+        big.NewInt(97).ProbablyPrime(5),
+        big.NewInt(91).ProbablyPrime(5),
+        big.NewInt(2).ProbablyPrime(0),
+        big.NewInt(1).ProbablyPrime(0),
+    )
     var c = big.MustParseInt("561")
     println("carmichael 561 prime:", c.ProbablyPrime(1))
     var x = try big.NewInt(4).Exp(big.NewInt(13), big.NewInt(497)) else big.Int{}
@@ -53,9 +69,22 @@ func init2() {
     println(digest(q), digest(r))
     println(q * (big.NewInt(5).Pow(1800) + big.NewInt(1)) + r == p - big.NewInt(12345))
     println(digest(p.Sqrt()), p.Sqrt() * p.Sqrt() <= p)
-    println(big.NewInt(12).GCD(big.NewInt(-18)).String(), big.NewInt(-5).Abs().String(), big.NewInt(0).Sign(), big.NewInt(-3).Sign())
+    println(
+        big.NewInt(12).GCD(big.NewInt(-18)).String(),
+        big.NewInt(-5).Abs().String(),
+        big.NewInt(0).Sign(),
+        big.NewInt(-3).Sign(),
+    )
     var h = try big.ParseInt("-0xDEAD_beef", 0) else big.Int{}
-    println(h.String(), h.Text(16), h.Text(2), h.Int64(), h.IsInt64(), big.FromUint64(18446744073709551615).String(), big.FromUint64(18446744073709551615).IsInt64())
+    println(
+        h.String(),
+        h.Text(16),
+        h.Text(2),
+        h.Int64(),
+        h.IsInt64(),
+        big.FromUint64(18446744073709551615).String(),
+        big.FromUint64(18446744073709551615).IsInt64(),
+    )
     var bad = try big.ParseInt("12x", 10) catch err {
         println(err)
         return

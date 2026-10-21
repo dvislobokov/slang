@@ -74,7 +74,11 @@ func Decode(u []uint16) []char {
     var i = 0
     for i < len(u) {
         var a = int(u[i])
-        if a >= 0xD800 && a < 0xDC00 && i + 1 < len(u) && int(u[i + 1]) >= 0xDC00 && int(u[i + 1]) < 0xE000 {
+        if a >= 0xD800 &&
+            a < 0xDC00 &&
+            i + 1 < len(u) &&
+            int(u[i + 1]) >= 0xDC00 &&
+            int(u[i + 1]) < 0xE000 {
             out = append(out, DecodeRune(char(a), char(int(u[i + 1]))))
             i += 2
         } else {

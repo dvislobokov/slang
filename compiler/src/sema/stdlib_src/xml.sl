@@ -23,8 +23,8 @@ enum Kind {
 // A name: Space is the namespace URI (or the unresolved prefix), Local
 // the local part, Prefix the prefix as written.
 struct Name {
-    Space string
-    Local string
+    Space  string
+    Local  string
     Prefix string
 
     // prefix:local as written.
@@ -37,7 +37,7 @@ struct Name {
 }
 
 struct Attr {
-    Name Name
+    Name  Name
     Value string
 }
 
@@ -50,11 +50,11 @@ func A(name string, value string) Attr {
 // for EndElement); Text holds character data, comment and directive text,
 // and the instruction of a ProcInst (Name.Local is its target).
 struct Token {
-    Kind Kind
-    Name Name
+    Kind  Kind
+    Name  Name
     Attrs []Attr
-    Text string
-    Line int
+    Text  string
+    Line  int
 
     // The value of the attribute with local name `name` ("" if none).
     func Attr(name string) string {
@@ -71,17 +71,17 @@ struct Token {
 // at the end. Set Strict = false before the first Next to keep unknown
 // entities as text instead of failing.
 struct Reader {
-    Strict bool = true
-    text string
-    toks []string
-    scanned bool
-    pos int
-    stack []Name
-    nsPrefix []string
-    nsURI []string
-    nsCount []int
+    Strict     bool = true
+    text       string
+    toks       []string
+    scanned    bool
+    pos        int
+    stack      []Name
+    nsPrefix   []string
+    nsURI      []string
+    nsCount    []int
     pendingEnd bool
-    line int
+    line       int
 
     func Next() Token! {
         if !this.scanned {
@@ -94,7 +94,11 @@ struct Reader {
         }
         if this.pos >= len(this.toks) {
             if len(this.stack) > 0 {
-                return error("xml: unexpected end of input: element <" + this.stack[len(this.stack) - 1].String() + "> not closed")
+                return error(
+                    "xml: unexpected end of input: element <" +
+                        this.stack[len(this.stack) - 1].String() +
+                        "> not closed",
+                )
             }
             return Token{Kind: Kind.EOF, Line: this.line}
         }
@@ -135,7 +139,13 @@ struct Reader {
                 var an = raw[i * 2]
                 for a in attrs {
                     if a.Name.String() == an {
-                        return error(std.fmt.Format("xml: duplicate attribute {0} on line {1}", an, this.line))
+                        return error(
+                            std.fmt.Format(
+                                "xml: duplicate attribute {0} on line {1}",
+                                an,
+                                this.line,
+                            ),
+                        )
                     }
                 }
                 attrs = append(attrs, Attr{Name: this.resolve(an, false), Value: raw[i * 2 + 1]})
@@ -148,11 +158,24 @@ struct Reader {
         if k == 69 {
             var qname = t
             if len(this.stack) == 0 {
-                return error(std.fmt.Format("xml: unexpected end element </{0}> on line {1}", qname, this.line))
+                return error(
+                    std.fmt.Format(
+                        "xml: unexpected end element </{0}> on line {1}",
+                        qname,
+                        this.line,
+                    ),
+                )
             }
             var top = this.stack[len(this.stack) - 1]
             if top.String() != qname {
-                return error(std.fmt.Format("xml: element <{0}> closed by </{1}> on line {2}", top.String(), qname, this.line))
+                return error(
+                    std.fmt.Format(
+                        "xml: element <{0}> closed by </{1}> on line {2}",
+                        top.String(),
+                        qname,
+                        this.line,
+                    ),
+                )
             }
             return this.closeTop()
         }
@@ -236,11 +259,11 @@ func EscapeAttr(s string) string {
 // A node of a document tree: an element (Kind StartElement) with its
 // attributes and children, or a CharData / Comment / ProcInst node.
 struct Value {
-    Kind Kind
-    Name Name
-    Attrs []Attr
+    Kind     Kind
+    Name     Name
+    Attrs    []Attr
     Children []Value
-    Text string
+    Text     string
 
     func IsElement() bool {
         return this.Kind == Kind.StartElement
@@ -368,7 +391,13 @@ func parseTree(text string, keepSpace bool) Value! {
         }
         if t.Kind == Kind.StartElement {
             if len(stack) == 0 && haveRoot {
-                return error(std.fmt.Format("xml: a second root element <{0}> on line {1}", t.Name.String(), t.Line))
+                return error(
+                    std.fmt.Format(
+                        "xml: a second root element <{0}> on line {1}",
+                        t.Name.String(),
+                        t.Line,
+                    ),
+                )
             }
             stack = append(stack, Value{Kind: Kind.StartElement, Name: t.Name, Attrs: t.Attrs})
         } else if t.Kind == Kind.EndElement {
@@ -387,9 +416,15 @@ func parseTree(text string, keepSpace bool) Value! {
             if t.Kind == Kind.Directive {
                 continue
             }
-            stack[len(stack) - 1].Children = append(stack[len(stack) - 1].Children, Value{Kind: t.Kind, Name: t.Name, Text: t.Text})
+            stack[len(stack) - 1].Children = append(stack[len(stack) - 1].Children, Value{
+                Kind: t.Kind,
+                Name: t.Name,
+                Text: t.Text,
+            })
         } else if t.Kind == Kind.CharData && std.strings.Trim(t.Text) != "" {
-            return error(std.fmt.Format("xml: character data outside the root element on line {0}", t.Line))
+            return error(
+                std.fmt.Format("xml: character data outside the root element on line {0}", t.Line),
+            )
         }
     }
     if !haveRoot {
@@ -406,9 +441,9 @@ func parseTree(text string, keepSpace bool) Value! {
 struct Writer {
     Indent string
     Prefix string
-    b std.strings.Builder
-    stack []string
-    open bool
+    b      std.strings.Builder
+    stack  []string
+    open   bool
     // per open element: 0 empty, 1 has text, 2 has child elements
     content []int
 
@@ -671,14 +706,22 @@ func decodeText<F>(s string, path string, out *F) void! {
         } else {
             return textError(path, "invalid bool " + std.encoding.json.Quote(s))
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
         var v = try std.strings.ToInt(std.strings.Trim(s)) catch err {
             return textError(path, "invalid integer " + std.encoding.json.Quote(s))
         }
         *out = try std.encoding.intAs<F>(v) catch err {
             return textError(path, err.Message())
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
         var v = try std.strings.ToFloat(std.strings.Trim(s)) catch err {
             return textError(path, "invalid number " + std.encoding.json.Quote(s))
         }
@@ -799,7 +842,8 @@ func encodeElem<T>(w *Writer, name string, ns string, v T) {
 }
 
 func encodeField<F>(w *Writer, name string, ns string, x F) {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Array {
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Array {
         for e in x {
             encodeField(w, name, ns, e)
         }
@@ -826,7 +870,19 @@ func textOf<F>(x F) string {
             parts = append(parts, textOf(e))
         }
         return std.strings.Join(parts, " ")
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Enum || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Char || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 || std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
+    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Enum ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Char ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
         return std.fmt.Format("{0}", x)
     } else {
         return ""

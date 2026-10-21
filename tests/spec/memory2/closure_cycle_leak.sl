@@ -8,7 +8,7 @@ namespace spec.memory2.closure_cycle_leak
 import std.io
 
 struct Button {
-    Label string
+    Label   string
     OnClick func()
 }
 

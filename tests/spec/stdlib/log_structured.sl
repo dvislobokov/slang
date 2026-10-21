@@ -15,9 +15,20 @@ func clock() int {
 }
 
 func main() {
-    var logger = log.New().Clock(clock).Enrich.WithProperty("App", "spec").Enrich.FromContext().WriteTo.Console(log.ConsoleOptions{Template: "{Level:u3} {Message:lj} {Properties}{NewLine}", Stdout: true}).WriteTo.Json(log.JsonOptions{Stdout: true}).CreateLogger()
+    var logger = log.New().Clock(clock).Enrich.WithProperty(
+        "App",
+        "spec",
+    ).Enrich.FromContext().WriteTo.Console(log.ConsoleOptions{
+        Template: "{Level:u3} {Message:lj} {Properties}{NewLine}",
+        Stdout: true,
+    }).WriteTo.Json(log.JsonOptions{Stdout: true}).CreateLogger()
     var s = log.Context.Push("Req", 7)
-    logger.Info("{@Card} pays {Sum:0.00} as {Name}", Card{Holder: "Ann", Number: "4111"}, 3.14159, "ann")
+    logger.Info(
+        "{@Card} pays {Sum:0.00} as {Name}",
+        Card{Holder: "Ann", Number: "4111"},
+        3.14159,
+        "ann",
+    )
     s.Pop()
     logger.Debug("hidden {X}", 1)
     logger.Warning("{N,4}|{H:x}|{$V}", 5, 255, [1, 2])

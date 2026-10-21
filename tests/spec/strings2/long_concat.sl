@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.long_concat
 
-import std.io
 import std
+import std.io
 
 func main() {
     var s = ""

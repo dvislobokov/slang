@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http2_h2c
 
-import std.io
 import std
+import std.io
 import std.net
 
 async func main() void! {
@@ -14,7 +14,10 @@ async func main() void! {
         res.Text(200, "hello " + req.Param("name") + " via " + req.Proto + "\n")
     })
     r.Post("/echo", async func(req *http.Request, res *http.Response) void! {
-        res.Text(200, fmt.Format("{0} bytes, last {1}", len(req.Body), req.Body[len(req.Body) - 3..]))
+        res.Text(
+            200,
+            fmt.Format("{0} bytes, last {1}", len(req.Body), req.Body[len(req.Body) - 3..]),
+        )
     })
     r.Get("/big", async func(req *http.Request, res *http.Response) void! {
         res.Text(200, strings.Repeat("0123456789", 30000))

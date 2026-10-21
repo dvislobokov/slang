@@ -1,0 +1,23 @@
+// error: duplicate route GET /api/items/{key}
+// status: passing
+namespace spec.web.err_duplicate_route
+
+import std.web
+
+@route("/api/items")
+struct ItemsController {
+    @get("{id}")
+    func Get(id int) string {
+        return "item"
+    }
+
+    @get("{key}")
+    func ByKey(key string) string {
+        return key
+    }
+}
+
+func main() {
+    var app = NewApp()
+    app.MapController<ItemsController>()
+}

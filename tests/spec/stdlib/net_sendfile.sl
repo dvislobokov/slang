@@ -3,12 +3,12 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_sendfile
 
-import std.io
 import std
+import std.io
 
 async func main() void! {
     var path = fs.Join(fs.TempDir(), fmt.Format("slang-net-sendfile-{0}.txt", os.Pid()))
-    var body = strings.Repeat("0123456789", 100000)   // 1 MB
+    var body = strings.Repeat("0123456789", 100000) // 1 MB
     io.WriteFile(path, body)?
 
     var l = net.Listen("127.0.0.1:0")?

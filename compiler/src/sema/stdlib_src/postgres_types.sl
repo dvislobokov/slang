@@ -10,20 +10,20 @@ struct Error {
     // ERROR, FATAL, PANIC (errors); WARNING, NOTICE, INFO, LOG, DEBUG (notices).
     Severity string
     // SQLSTATE, e.g. "23505" (unique_violation).
-    Code string
-    Msg string
-    Detail string
-    Hint string
-    Position int
-    Where string
-    Schema string
-    Table string
-    Column string
-    DataType string
+    Code       string
+    Msg        string
+    Detail     string
+    Hint       string
+    Position   int
+    Where      string
+    Schema     string
+    Table      string
+    Column     string
+    DataType   string
     Constraint string
-    File string
-    Line int
-    Routine string
+    File       string
+    Line       int
+    Routine    string
 
     func Message() string {
         var s = "postgres: " + this.Severity + ": " + this.Msg + " (SQLSTATE " + this.Code + ")"
@@ -99,9 +99,9 @@ func parseError(p []byte) Error {
 struct Config {
     // Host name, IP, or a directory holding the Unix socket
     // (".s.PGSQL.<port>").
-    Host string = "localhost"
-    Port int = 5432
-    User string
+    Host     string = "localhost"
+    Port     int = 5432
+    User     string
     Password string
     Database string
     // disable, allow, prefer (default), require, verify-ca, verify-full.
@@ -287,13 +287,21 @@ func ParseDSN(dsn string) Config! {
             c.SSLRootCert = v
         } else if key == "connect_timeout" {
             c.ConnectTimeout = 1000 * std.strconv.Atoi(v)?("postgres: connect_timeout")
-        } else if key == "sslcert" || key == "sslkey" || key == "sslpassword" || key == "target_session_attrs" {
+        } else if key == "sslcert" ||
+            key == "sslkey" ||
+            key == "sslpassword" ||
+            key == "target_session_attrs" {
             // accepted, not used
         } else {
             c.Params[key] = v
         }
     }
-    if c.SSLMode != "disable" && c.SSLMode != "allow" && c.SSLMode != "prefer" && c.SSLMode != "require" && c.SSLMode != "verify-ca" && c.SSLMode != "verify-full" {
+    if c.SSLMode != "disable" &&
+        c.SSLMode != "allow" &&
+        c.SSLMode != "prefer" &&
+        c.SSLMode != "require" &&
+        c.SSLMode != "verify-ca" &&
+        c.SSLMode != "verify-full" {
         return error("postgres: invalid sslmode \"" + c.SSLMode + "\"")
     }
     if c.User == "" {
@@ -377,7 +385,24 @@ func arrayElem(oid int) int {
 
 // Whether results of this type are requested in binary.
 func binaryResult(oid int) bool {
-    return oid == 16 || oid == 17 || oid == 20 || oid == 21 || oid == 23 || oid == 26 || oid == 700 || oid == 701 || oid == 2950 || oid == 1114 || oid == 1184 || oid == 1082 || oid == 25 || oid == 1043 || oid == 19 || oid == 1042 || oid == 114 || oid == 3802
+    return oid == 16 ||
+        oid == 17 ||
+        oid == 20 ||
+        oid == 21 ||
+        oid == 23 ||
+        oid == 26 ||
+        oid == 700 ||
+        oid == 701 ||
+        oid == 2950 ||
+        oid == 1114 ||
+        oid == 1184 ||
+        oid == 1082 ||
+        oid == 25 ||
+        oid == 1043 ||
+        oid == 19 ||
+        oid == 1042 ||
+        oid == 114 ||
+        oid == 3802
 }
 
 // ---- decoding ------------------------------------------------------------------

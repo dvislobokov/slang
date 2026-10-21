@@ -11,31 +11,54 @@ enum Status {
 }
 
 struct Author {
-    @xml(attr: true) id int
+    @xml(attr: true) id   int
     @xml(text: true) Name string
 }
 
 @xml(name: "book", ns: "urn:books")
 struct Book {
-    @xml(attr: true) isbn string
+    @xml(attr: true)               isbn string
     @xml(attr: true, name: "tags") Tags []string
-    Title string
+    Title   string
     Authors []Author
     @xml(name: "price") Price float
     InPrint bool
-    Status Status
+    Status  Status
     @serde(name: "editor") Editor *Author
-    @xml(omitEmpty: true) Note string
-    @xml(skip: true) cache int
+    @xml(omitEmpty: true)  Note   string
+    @xml(skip: true)       cache  int
     Chapters []string
 }
 
 func main() void! {
-    var b = Book{isbn: "978-0", Tags: ["sci", "fi"], Title: "Dune & Co", Authors: [Author{id: 1, Name: "Frank"}, Author{id: 2, Name: "Brian"}], Price: 9.5, InPrint: true, Status: Status.Published, Chapters: ["One", "Two <2>"], cache: 42}
+    var b = Book{
+        isbn: "978-0",
+        Tags: ["sci", "fi"],
+        Title: "Dune & Co",
+        Authors: [Author{id: 1, Name: "Frank"}, Author{id: 2, Name: "Brian"}],
+        Price: 9.5,
+        InPrint: true,
+        Status: Status.Published,
+        Chapters: ["One", "Two <2>"],
+        cache: 42,
+    }
     var text = encoding.xml.Format(b)
     println(text)
     var back = encoding.xml.Parse<Book>(text)?
-    println(back.isbn, back.Tags, back.Title, len(back.Authors), back.Authors[1].id, back.Authors[1].Name, back.Price, back.InPrint, back.Status, back.Editor == nil, back.Chapters, back.cache)
+    println(
+        back.isbn,
+        back.Tags,
+        back.Title,
+        len(back.Authors),
+        back.Authors[1].id,
+        back.Authors[1].Name,
+        back.Price,
+        back.InPrint,
+        back.Status,
+        back.Editor == nil,
+        back.Chapters,
+        back.cache,
+    )
     back.Editor = &Author{id: 9, Name: "Ed"}
     back.Note = "signed"
     print(encoding.xml.FormatIndent(back, "  "))
@@ -54,14 +77,25 @@ func main() void! {
         println(err.Message())
     }
 
-    var v = encoding.xml.ParseValue("<cfg version=\"2\">\n  <server host=\"a\" port=\"80\"/>\n  <server host=\"b\"/>\n  <name>Main <b>bold</b> text</name>\n</cfg>")?
-    println(v.Name.Local, v.Attr("version"), v.HasAttr("nope"), len(v.Elements("server")), len(v.Elements("")))
+    var v = encoding.xml.ParseValue(
+        "<cfg version=\"2\">\n  <server host=\"a\" port=\"80\"/>\n  <server host=\"b\"/>\n  <name>Main <b>bold</b> text</name>\n</cfg>",
+    )?
+    println(
+        v.Name.Local,
+        v.Attr("version"),
+        v.HasAttr("nope"),
+        len(v.Elements("server")),
+        len(v.Elements("")),
+    )
     for s in v.Elements("server") {
         println(" ", s.Attr("host"), s.Attr("port") == "")
     }
     println(v.Child("name").InnerText(), v.Child("missing") == nil)
     println(v.Format())
-    var built = encoding.xml.NewElement("list", [encoding.xml.A("n", "2")], [encoding.xml.NewElement("i", [], [encoding.xml.NewText("a&b")]), encoding.xml.NewElement("i", [], [])])
+    var built = encoding.xml.NewElement("list", [encoding.xml.A("n", "2")], [
+        encoding.xml.NewElement("i", [], [encoding.xml.NewText("a&b")]),
+        encoding.xml.NewElement("i", [], []),
+    ])
     print(built.FormatIndent("\t") + "\n")
     var a = encoding.xml.Decode<Author>(encoding.xml.ParseValue("<x id=\"5\">Zed</x>")?)?
     println(a.id, a.Name)

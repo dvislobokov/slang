@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.async.channel_close_wakes
 
-import std.io
 import std
+import std.io
 
 async func Wait(ch task.Channel<int>) string {
     var v = try await ch.Recv() catch err {

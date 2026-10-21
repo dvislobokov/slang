@@ -19,7 +19,10 @@ func main() void! {
     for gg in date.GroupsAll("released 2024-05-17 and 2025-01-02T10:30") {
         println(gg.At(0), gg.Matched(4), gg.At(5), gg.At(6))
     }
-    var swapped = date.ReplaceGroupsFunc("on 2024-05-17.", (x *regex.Groups) => x.Get("day") + "/" + x.Get("month") + "/" + x.Get("year"))
+    var swapped = date.ReplaceGroupsFunc(
+        "on 2024-05-17.",
+        (x *regex.Groups) => x.Get("day") + "/" + x.Get("month") + "/" + x.Get("year"),
+    )
     println(swapped)
 
     var word = regex.Compile(`\w+`)?

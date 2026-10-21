@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors2.wrap_chain_unwrap_loop
 
-import std.io
 import std
+import std.io
 
 const ErrDisk = error("disk full")
 

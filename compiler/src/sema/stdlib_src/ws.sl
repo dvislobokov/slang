@@ -38,7 +38,7 @@ func Binary(b []byte) Message {
 // peer's close code (CloseNoStatus if it sent none, CloseAbnormal if the
 // TCP connection ended without a close frame) and reason.
 struct CloseError {
-    Code int
+    Code   int
     Reason string
 
     func Message() string {
@@ -72,21 +72,21 @@ func IsCloseError(err error, codes []int) bool {
 }
 
 struct connState {
-    rc std.net.http.RawConn
-    client bool
-    wmu std.task.Mutex
-    guard int
-    sentClose bool
-    gotClose bool
-    closeCode int
+    rc          std.net.http.RawConn
+    client      bool
+    wmu         std.task.Mutex
+    guard       int
+    sentClose   bool
+    gotClose    bool
+    closeCode   int
     closeReason string
-    tcpClosed bool
+    tcpClosed   bool
     // reassembly of a fragmented message
     fragType int
-    frag []byte
+    frag     []byte
     fragging bool
-    maxSize int
-    pongs int
+    maxSize  int
+    pongs    int
 }
 
 // Conn is one WebSocket connection (copies share it).
@@ -369,7 +369,10 @@ async func recv(st *connState) Message! {
                     if code == 1005 {
                         echo = 0
                     }
-                    try await sendRaw(st, encodeFrame(st, 8, closePayload(echo, ""), true)) catch err {}
+                    try await sendRaw(
+                        st,
+                        encodeFrame(st, 8, closePayload(echo, ""), true),
+                    ) catch err {}
                 }
                 if !st.client {
                     st.tcpClosed = true
@@ -447,7 +450,9 @@ async func closeConn(st *connState, code int, reason string) void! {
 // ---- handshake ----------------------------------------------------------------
 
 func acceptKey(key string) string {
-    return std.encoding.base64.Encode(std.crypto.hash.Sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+    return std.encoding.base64.Encode(
+        std.crypto.hash.Sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"),
+    )
 }
 
 // Server handshake options (UpgradeWith).
@@ -467,9 +472,15 @@ func Upgrade(req *std.net.http.Request, res *std.net.http.Response) Task<Conn!> 
     return UpgradeWith(req, res, UpgradeOptions{})
 }
 
-async func UpgradeWith(req *std.net.http.Request, res *std.net.http.Response, opts UpgradeOptions) Conn! {
+async func UpgradeWith(
+    req *std.net.http.Request,
+    res *std.net.http.Response,
+    opts UpgradeOptions,
+) Conn! {
     var h = req.Headers
-    if req.Method != "GET" || !std.net.http.HasToken(h["Connection"], "upgrade") || !std.net.http.HasToken(h["Upgrade"], "websocket") {
+    if req.Method != "GET" ||
+        !std.net.http.HasToken(h["Connection"], "upgrade") ||
+        !std.net.http.HasToken(h["Upgrade"], "websocket") {
         res.Text(400, "400 Bad Request: not a WebSocket handshake\n")
         return ErrBadHandshake
     }
@@ -505,7 +516,9 @@ async func UpgradeWith(req *std.net.http.Request, res *std.net.http.Response, op
         }
     }
     var rc = res.Hijack()?
-    var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + acceptKey(key) + "\r\n"
+    var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " +
+        acceptKey(key) +
+        "\r\n"
     if proto != "" {
         head += "Sec-WebSocket-Protocol: " + proto + "\r\n"
     }
@@ -523,9 +536,9 @@ async func UpgradeWith(req *std.net.http.Request, res *std.net.http.Response, op
 
 // Client handshake options (DialWith).
 struct DialOptions {
-    Headers map[string]string
+    Headers      map[string]string
     Subprotocols []string
-    TLS *std.net.tls.Config
+    TLS          *std.net.tls.Config
     // Milliseconds for the connect and the handshake (default 30000).
     Timeout int
 }
@@ -547,7 +560,13 @@ async func DialWith(url string, opts DialOptions) Conn! {
     var rc = await std.net.http.DialRaw(u, opts.TLS, ms)?
     rc.SetTimeout(ms)
     var key = std.encoding.base64.Encode(std.random.Bytes(16))
-    var req = "GET " + u.RequestURI() + " HTTP/1.1\r\nHost: " + u.Host + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 13\r\n"
+    var req = "GET " +
+        u.RequestURI() +
+        " HTTP/1.1\r\nHost: " +
+        u.Host +
+        "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " +
+        key +
+        "\r\nSec-WebSocket-Version: 13\r\n"
     if len(opts.Subprotocols) > 0 {
         req += "Sec-WebSocket-Protocol: " + std.strings.Join(opts.Subprotocols, ", ") + "\r\n"
     }
@@ -560,15 +579,25 @@ async func DialWith(url string, opts DialOptions) Conn! {
         var res = await rc.ReadResponseHead()?
         if res.Status != 101 {
             rc.Close()
-            return std.errors.Wrap(ErrBadHandshake, "websocket: " + url + ": status " + std.fmt.Format("{0}", res.Status))
+            return std.errors.Wrap(
+                ErrBadHandshake,
+                "websocket: " + url + ": status " + std.fmt.Format("{0}", res.Status),
+            )
         }
-        if !std.net.http.HasToken(res.Headers["Upgrade"], "websocket") || !std.net.http.HasToken(res.Headers["Connection"], "upgrade") {
+        if !std.net.http.HasToken(res.Headers["Upgrade"], "websocket") ||
+            !std.net.http.HasToken(res.Headers["Connection"], "upgrade") {
             rc.Close()
-            return std.errors.Wrap(ErrBadHandshake, "websocket: " + url + ": missing Upgrade headers")
+            return std.errors.Wrap(
+                ErrBadHandshake,
+                "websocket: " + url + ": missing Upgrade headers",
+            )
         }
         if res.Headers["Sec-Websocket-Accept"] != acceptKey(key) {
             rc.Close()
-            return std.errors.Wrap(ErrBadHandshake, "websocket: " + url + ": wrong Sec-WebSocket-Accept")
+            return std.errors.Wrap(
+                ErrBadHandshake,
+                "websocket: " + url + ": wrong Sec-WebSocket-Accept",
+            )
         }
         rc.SetTimeout(0)
         return newConn(rc, true, res.Headers["Sec-Websocket-Protocol"])

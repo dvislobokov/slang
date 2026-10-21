@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.namespace_as_value
 
-import std.io
 import std
+import std.io
 
 func main() {
     var x = std

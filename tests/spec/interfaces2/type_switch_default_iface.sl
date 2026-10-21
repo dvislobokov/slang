@@ -18,7 +18,8 @@ struct Rock {}
 func Try(x any) {
     switch x {
         case Named n: println(n.Shout())
-        default: println("nameless")
+        default:
+            println("nameless")
     }
 }
 

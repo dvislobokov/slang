@@ -303,6 +303,9 @@ pub struct StdFunc {
     pub ret: &'static str,
     /// C runtime symbol.
     pub symbol: &'static str,
+    /// Documentation (the optional sixth argument of `f!`; empty: see
+    /// [`StdFunc::doc`] for the fallback table).
+    pub doc: &'static str,
 }
 
 /// Stdlib functions that the compiler lowers itself.
@@ -623,7 +626,10 @@ pub const CONSTS: &[(&str, &str, StdConst)] = &[
 
 macro_rules! f {
     ($ns:literal, $name:literal, $params:literal, $ret:literal, $sym:literal) => {
-        StdFunc { ns: $ns, name: $name, params: $params, ret: $ret, symbol: $sym }
+        StdFunc { ns: $ns, name: $name, params: $params, ret: $ret, symbol: $sym, doc: "" }
+    };
+    ($ns:literal, $name:literal, $params:literal, $ret:literal, $sym:literal, $doc:literal) => {
+        StdFunc { ns: $ns, name: $name, params: $params, ret: $ret, symbol: $sym, doc: $doc }
     };
 }
 
@@ -1259,6 +1265,14 @@ impl StdFunc {
     /// Full Slang path, e.g. `std.strings.Split`.
     pub fn path(&self) -> String {
         format!("{}.{}", self.ns, self.name)
+    }
+
+    /// The documentation: the row's own, else [`super::stdlib_docs::DOCS`].
+    pub fn doc(&self) -> Option<&'static str> {
+        if !self.doc.is_empty() {
+            return Some(self.doc);
+        }
+        super::stdlib_docs::doc_of(&self.path()).map(|(_, d)| d)
     }
 }
 

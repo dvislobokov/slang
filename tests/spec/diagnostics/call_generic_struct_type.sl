@@ -4,7 +4,9 @@ namespace spec.diagnostics.call_generic_struct_type
 
 import std.io
 
-struct Box<T> { V T }
+struct Box<T> {
+    V T
+}
 
 func main() {
     var b = Box<int>(1)

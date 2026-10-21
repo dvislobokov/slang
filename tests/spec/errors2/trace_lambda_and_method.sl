@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.errors2.trace_lambda_and_method
 
-import std.io
 import std
+import std.io
 
 struct Cache {
     func Get(k string) string! {

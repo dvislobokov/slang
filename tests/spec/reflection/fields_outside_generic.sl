@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.reflection.fields_outside_generic
 
-import std.io
 import std
+import std.io
 
 struct P {
     X int

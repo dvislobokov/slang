@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_tcp_echo
 
-import std.io
 import std
+import std.io
 
 async func Echo(c net.Conn) void! {
     var total = 0
@@ -37,7 +37,11 @@ async func main() void! {
     await srv?
     println("closed", c.IsClosed())
     var e = try await c.Read(1) catch err {
-        println("read after close:", errors.Is(err, net.ErrClosed), strings.HasSuffix(err.Message(), ": use of closed network connection"))
+        println(
+            "read after close:",
+            errors.Is(err, net.ErrClosed),
+            strings.HasSuffix(err.Message(), ": use of closed network connection"),
+        )
         l.Close()
         return
     }

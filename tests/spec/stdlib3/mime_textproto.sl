@@ -6,7 +6,11 @@ import std
 import std.io
 
 func main() void! {
-    println(net.textproto.CanonicalKey("content-type"), net.textproto.CanonicalKey("X-FORWARDED-FOR"), net.textproto.CanonicalKey("bad key"))
+    println(
+        net.textproto.CanonicalKey("content-type"),
+        net.textproto.CanonicalKey("X-FORWARDED-FOR"),
+        net.textproto.CanonicalKey("bad key"),
+    )
     var text = "From: ann@example.org\r\nTo: bob@example.org,\r\n  carol@example.org\r\nreceived: a\r\nReceived: b\r\n\r\nbody text"
     var hr = net.textproto.ReadHeader(text, 0)?
     var h = hr.Header
@@ -21,19 +25,35 @@ func main() void! {
     var dotted = net.textproto.DotEncode("Hi\n.hidden\n..two\nend\n")
     println(encoding.json.Quote(dotted))
     var back = net.textproto.DotDecode(dotted + "NEXT")?
-    println(encoding.json.Quote(back.Body), dotted + "NEXT" == dotted + "NEXT"[0..0] + "NEXT", (dotted + "NEXT")[back.End..])
-    var resp = net.textproto.ReadResponse("250-mail.example.org\r\n250-SIZE 1000\r\n250 OK\r\n", 0, 2)?
+    println(
+        encoding.json.Quote(back.Body),
+        dotted + "NEXT" == dotted + "NEXT"[0..0] + "NEXT",
+        (dotted + "NEXT")[back.End..],
+    )
+    var resp = net.textproto.ReadResponse(
+        "250-mail.example.org\r\n250-SIZE 1000\r\n250 OK\r\n",
+        0,
+        2,
+    )?
     println(resp.Code, encoding.json.Quote(resp.Message))
     try net.textproto.ReadResponse("550 no such user\r\n", 0, 2) catch err {
         println(err.Message())
     }
 
     mime.AddExtensionType(".slx", "application/x-slang-pkg")?
-    println(mime.TypeByExtension(".SLX"), mime.ExtensionsByType("image/jpeg")?, mime.ExtensionsByType("application/x-slang-pkg")?)
+    println(
+        mime.TypeByExtension(".SLX"),
+        mime.ExtensionsByType("image/jpeg")?,
+        mime.ExtensionsByType("application/x-slang-pkg")?,
+    )
     try mime.AddExtensionType("noDot", "a/b") catch err {
         println(err.Message())
     }
-    println(mime.DecodeHeader("=?utf-8?q?caf=C3=A9_au_lait?= =?UTF-8?B?4oKs?= and =?iso-8859-1?q?=E9t=E9?=")?)
+    println(
+        mime.DecodeHeader(
+            "=?utf-8?q?caf=C3=A9_au_lait?= =?UTF-8?B?4oKs?= and =?iso-8859-1?q?=E9t=E9?=",
+        )?,
+    )
     println(mime.EncodeWord("plain"), mime.EncodeWord("Grüße, Jürgen"))
     println(mime.DecodeHeader(mime.EncodeWord("Grüße, Jürgen"))?)
 
@@ -41,7 +61,13 @@ func main() void! {
     var form = mime.multipart.ReadForm(body, "b0")?
     println(form.Get("title"), form.Value["tags"], form.Get("missing") == "")
     var f = form.File["doc"][0]
-    println(f.Filename, f.Size(), strings.FromBytes(f.Content), f.Header.Get("Content-Type"), f.Header.Has("Content-Transfer-Encoding"))
+    println(
+        f.Filename,
+        f.Size(),
+        strings.FromBytes(f.Content),
+        f.Header.Get("Content-Type"),
+        f.Header.Has("Content-Transfer-Encoding"),
+    )
     try mime.multipart.ReadForm("no boundary here", "zz") catch err {
         println(err.Message())
     }

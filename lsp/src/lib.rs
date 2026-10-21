@@ -6,6 +6,12 @@
 //! and workspace symbols; `.sl` files created or deleted on disk are
 //! picked up through `workspace/didChangeWatchedFiles`.
 //!
+//! Library sources are part of the project, read-only (docs/TOOLING.md):
+//! the standard library from `std/` ([`slang::sema::stdfs::std_dir`],
+//! indexed by [`slang::stdindex::StdIndex`]) and the module dependencies
+//! that `slang.lock` lists, from `.slang/deps/` (or `vendor/`). Definition,
+//! hover, references and workspace symbols reach into them; rename refuses.
+//!
 //! The server is synchronous (`lsp-server`): one thread reads messages;
 //! document changes mark the session dirty and analysis runs ~100 ms after
 //! the last change (or immediately before answering a request), after which
@@ -139,6 +145,8 @@ pub fn capabilities() -> ServerCapabilities {
 /// Server state.
 struct Server {
     sender: Sender<Message>,
+    /// The standard library sources (read-only, never analysed as project files).
+    std_dir: Option<PathBuf>,
     session: Session,
     analysis: Option<Analysis>,
     /// Time of the last unanalysed change.
@@ -163,9 +171,13 @@ fn path_of(uri: &Url) -> String {
 
 impl Server {
     fn new(sender: Sender<Message>) -> Server {
+        let mut session = Session::new();
+        let std_dir = slang::sema::stdfs::std_dir();
+        session.set_std_index(std_dir.as_deref().map(|d| std::sync::Arc::new(slang::stdindex::StdIndex::load(d))));
         Server {
             sender,
-            session: Session::new(),
+            std_dir,
+            session,
             analysis: None,
             dirty: None,
             roots: Vec::new(),
@@ -216,8 +228,39 @@ impl Server {
                 self.session.update_file(key, text);
             }
         }
+        if has_manifest {
+            self.add_dependencies(&root);
+        }
         self.roots.push(root);
         self.dirty.get_or_insert_with(Instant::now);
+    }
+
+    /// Loads the sources of the modules `slang.lock` lists, from
+    /// `vendor/` when vendored, else `.slang/deps/` (read-only).
+    fn add_dependencies(&mut self, root: &Path) {
+        let Some(lock) = std::fs::read_to_string(root.join("slang.lock")).ok().and_then(|t| slang::package::lock::LockFile::parse(&t).ok()) else { return };
+        let vendored = root.join("vendor/modules.yaml").is_file();
+        for p in &lock.packages {
+            let Some(module) = &p.module else { continue };
+            let name = format!("{}@{}", slang::package::store::escape_path(module), p.version);
+            let dir = if vendored { root.join("vendor").join(&name) } else { root.join(".slang/deps").join(&name) };
+            let mut files = Vec::new();
+            collect_sl(&dir.join("src"), &mut files);
+            files.sort();
+            for f in files {
+                let key = f.display().to_string();
+                if let (Ok(text), Ok(uri)) = (std::fs::read_to_string(&f), Url::from_file_path(&f)) {
+                    self.uris.insert(key.clone(), uri);
+                    self.session.update_file(key.clone(), text);
+                    self.session.set_read_only(&key, true);
+                }
+            }
+        }
+    }
+
+    /// A file of the standard library sources (handled by the std index).
+    fn is_std_file(&self, path: &Path) -> bool {
+        self.std_dir.as_ref().is_some_and(|d| path.starts_with(d))
     }
 
     /// For a file outside every known root, loads the project whose
@@ -271,6 +314,9 @@ impl Server {
         let mut now = HashSet::new();
         let mut out = Vec::new();
         for (i, f) in a.files.iter().enumerate() {
+            if a.is_read_only(i) {
+                continue; // library files: their problems are not the user's to fix
+            }
             let Some(uri) = self.uris.get(&f.path).cloned() else { continue };
             let diags: Vec<Diagnostic> = a.diagnostics_for(i).map(|d| self.to_lsp_diag(a, d)).collect();
             if !diags.is_empty() {
@@ -342,6 +388,9 @@ impl Server {
                 let Ok(p) = serde_json::from_value::<DidOpenTextDocumentParams>(n.params) else { return };
                 let key = path_of(&p.text_document.uri);
                 if let Ok(path) = p.text_document.uri.to_file_path() {
+                    if self.is_std_file(&path) {
+                        return;
+                    }
                     self.discover_for(&path);
                 }
                 self.open.insert(key.clone());
@@ -352,6 +401,9 @@ impl Server {
             notification::DidChangeTextDocument::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidChangeTextDocumentParams>(n.params) else { return };
                 let key = path_of(&p.text_document.uri);
+                if !self.session.contains(&key) && self.session.is_read_only(&key) {
+                    return;
+                }
                 // Full sync: the last change carries the whole text.
                 if let Some(c) = p.content_changes.into_iter().last() {
                     if c.range.is_none() {
@@ -362,6 +414,9 @@ impl Server {
             }
             notification::DidSaveTextDocument::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidSaveTextDocumentParams>(n.params) else { return };
+                if !self.session.contains(&path_of(&p.text_document.uri)) {
+                    return;
+                }
                 if let Some(text) = p.text {
                     self.session.update_file(path_of(&p.text_document.uri), text);
                     self.changed();
@@ -400,6 +455,9 @@ impl Server {
                 let Ok(p) = serde_json::from_value::<DidCloseTextDocumentParams>(n.params) else { return };
                 let key = path_of(&p.text_document.uri);
                 self.open.remove(&key);
+                if !self.session.contains(&key) {
+                    return;
+                }
                 let on_disk = p.text_document.uri.to_file_path().ok().filter(|p| self.in_roots(p)).and_then(|p| std::fs::read_to_string(p).ok());
                 match on_disk {
                     Some(text) => self.session.update_file(key, text),
@@ -549,6 +607,9 @@ impl Server {
         let sym = a.index.symbol(sym_id);
         if sym.is_std || sym.loc.is_none() {
             return Err(format!("{} is part of the standard library or a builtin and cannot be renamed", sym.name));
+        }
+        if sym.loc.is_some_and(|l| a.is_read_only(l.file)) || a.is_read_only(file) {
+            return Err(format!("{} is declared in a read-only dependency (.slang/deps) and cannot be renamed", sym.name));
         }
         let span = a.name_span_at(file, off).ok_or("no name at this position")?;
         Ok((sym_id, span))

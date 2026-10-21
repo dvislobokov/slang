@@ -89,7 +89,7 @@ struct Result {
 
 // A named argument: sql.Named("id", 5) binds :id.
 struct NamedArg {
-    Name string
+    Name  string
     Value any
 }
 
@@ -146,7 +146,7 @@ func Some<T>(v T) Null<T> {
 
 struct driverEntry {
     name string = ""
-    d Driver
+    d    Driver
 }
 
 struct registry {
@@ -210,7 +210,9 @@ func lookupDriver(name string) Driver! {
     }
     std.diag.rtUnlock()
     if !found {
-        return error("sql: unknown driver \"" + name + "\" (forgotten sql.Register(\"" + name + "\", ...)?)")
+        return error(
+            "sql: unknown driver \"" + name + "\" (forgotten sql.Register(\"" + name + "\", ...)?)",
+        )
     }
     return d
 }
@@ -235,11 +237,11 @@ func nowMs() int {
 
 // A pooled connection with its prepared-statement cache.
 struct poolConn {
-    c DriverConn
-    created int
+    c        DriverConn
+    created  int
     lastUsed int
-    stmts map[string]DriverStmt
-    order []string
+    stmts    map[string]DriverStmt
+    order    []string
 
     func stmt(query string, limit int) Task<DriverStmt!> {
         return this.stmtAsync(query, limit)
@@ -293,33 +295,33 @@ struct waiter {
 // Pool statistics (DB.Stats).
 struct Stats {
     MaxOpenConnections int
-    OpenConnections int
-    InUse int
-    Idle int
+    OpenConnections    int
+    InUse              int
+    Idle               int
     // Times a caller had to wait for a connection.
     WaitCount int
     // Connections closed because of SetMaxIdleConns / idle time / lifetime.
-    MaxIdleClosed int
+    MaxIdleClosed     int
     MaxIdleTimeClosed int
     MaxLifetimeClosed int
 }
 
 struct dbState {
-    guard int
-    driver Driver
-    dsn string
-    idle []*poolConn
-    numOpen int
-    waiters []waiter
-    nextWaiter int
-    closed bool
-    maxOpen int
-    maxIdle int = 2
+    guard       int
+    driver      Driver
+    dsn         string
+    idle        []*poolConn
+    numOpen     int
+    waiters     []waiter
+    nextWaiter  int
+    closed      bool
+    maxOpen     int
+    maxIdle     int = 2
     maxIdleTime int
     maxLifetime int
     healthCheck int = 30000
-    stmtCache int = 64
-    stats Stats
+    stmtCache   int = 64
+    stats       Stats
 
     func lock() {
         std.task.rtLock(&this.guard)
@@ -691,7 +693,7 @@ struct DB {
 
 // A statement handle (DB.Prepare).
 struct Stmt {
-    db *DB
+    db    *DB
     query string
 
     func Exec(args []any) Task<Result!> {
@@ -714,8 +716,7 @@ struct Stmt {
         return this.db.QueryOne<T>(this.query, args)
     }
 
-    func Close() {
-    }
+    func Close() {}
 }
 
 // ---- running statements -----------------------------------------------------
@@ -765,12 +766,12 @@ func closeStmt(s DriverStmt) {
 struct rowsState {
     db *dbState
     pc *poolConn
-    r DriverRows
+    r  DriverRows
     // The rows release pc to the pool when closed (false inside a Tx/Conn).
-    owned bool
-    cols []string
-    vals []any
-    closed bool
+    owned   bool
+    cols    []string
+    vals    []any
+    closed  bool
     started bool
 
     async func close() void! {
@@ -837,7 +838,12 @@ struct Rows {
             return error("sql: Scan called without calling Next")
         }
         if len(dest) != len(this.st.cols) {
-            return error("sql: expected " + std.fmt.Format("{0}", len(this.st.cols)) + " destination arguments in Scan, not " + std.fmt.Format("{0}", len(dest)))
+            return error(
+                "sql: expected " +
+                    std.fmt.Format("{0}", len(this.st.cols)) +
+                    " destination arguments in Scan, not " +
+                    std.fmt.Format("{0}", len(dest)),
+            )
         }
         for i, d in dest {
             scanAny(d, this.st.vals[i], this.st.cols[i])?
@@ -896,7 +902,7 @@ async func rowsNext(st *rowsState) bool! {
 
 // A single row (QueryRow).
 struct Row {
-    err error
+    err  error
     cols []string
     vals []any
 
@@ -910,7 +916,12 @@ struct Row {
             return this.err
         }
         if len(dest) != len(this.cols) {
-            return error("sql: expected " + std.fmt.Format("{0}", len(this.cols)) + " destination arguments in Scan, not " + std.fmt.Format("{0}", len(dest)))
+            return error(
+                "sql: expected " +
+                    std.fmt.Format("{0}", len(this.cols)) +
+                    " destination arguments in Scan, not " +
+                    std.fmt.Format("{0}", len(dest)),
+            )
         }
         for i, d in dest {
             scanAny(d, this.vals[i], this.cols[i])?
@@ -962,9 +973,9 @@ async func collectOne<T>(rows Rows) T! {
 // ---- transactions and dedicated connections ---------------------------------
 
 struct txState {
-    db *dbState
-    pc *poolConn
-    tx DriverTx
+    db   *dbState
+    pc   *poolConn
+    tx   DriverTx
     done bool
 }
 
@@ -1028,8 +1039,8 @@ struct Tx {
 }
 
 struct connState {
-    db *dbState
-    pc *poolConn
+    db     *dbState
+    pc     *poolConn
     closed bool
 }
 
@@ -1206,7 +1217,10 @@ func rewriteNamed(query string, args []any, style int) (string, []any)! {
             i += 2
             continue
         }
-        if c == 58 && i + 1 < n && isIdentStart(int(query[i + 1])) && (i == 0 || int(query[i - 1]) != 58) {
+        if c == 58 &&
+            i + 1 < n &&
+            isIdentStart(int(query[i + 1])) &&
+            (i == 0 || int(query[i - 1]) != 58) {
             var j = i + 1
             for j < n && isIdentChar(int(query[j])) {
                 j += 1
@@ -1352,7 +1366,9 @@ func convError(col string, v any, want string) error {
     if v == nil {
         return error(where + "cannot store NULL in " + want + " (use a pointer or sql.Null<T>)")
     }
-    return error(where + "cannot convert " + typeName(v) + " " + std.fmt.Format("{0}", v) + " to " + want)
+    return error(
+        where + "cannot convert " + typeName(v) + " " + std.fmt.Format("{0}", v) + " to " + want,
+    )
 }
 
 func toInt(v any, col string, want string) int! {
@@ -1385,7 +1401,9 @@ func toInt(v any, col string, want string) int! {
 func toIntRange(v any, col string, want string, lo int, hi int) int! {
     var n = toInt(v, col, want)?
     if n < lo || n > hi {
-        return error("sql: column \"" + col + "\": value " + std.fmt.Format("{0}", n) + " overflows " + want)
+        return error(
+            "sql: column \"" + col + "\": value " + std.fmt.Format("{0}", n) + " overflows " + want,
+        )
     }
     return n
 }
@@ -1402,7 +1420,9 @@ func toFloat(v any, col string) float! {
             }
             return f
         case []byte b:
-            var f = try std.strconv.ParseFloat(std.strings.Trim(std.strings.FromBytes(b))) catch err {
+            var f = try std.strconv.ParseFloat(
+                std.strings.Trim(std.strings.FromBytes(b)),
+            ) catch err {
                 return convError(col, v, "float")
             }
             return f
@@ -1469,7 +1489,16 @@ func toBytes(v any, col string) []byte! {
 // protocols).
 func ParseTimeText(s string) std.time.Time! {
     var t = std.strings.Trim(s)
-    var layouts = ["2006-01-02 15:04:05.999999999Z07:00", "2006-01-02T15:04:05.999999999Z07:00", "2006-01-02 15:04:05.999999999Z07", "2006-01-02 15:04:05.999999999", "2006-01-02T15:04:05.999999999", "2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02"]
+    var layouts = [
+        "2006-01-02 15:04:05.999999999Z07:00",
+        "2006-01-02T15:04:05.999999999Z07:00",
+        "2006-01-02 15:04:05.999999999Z07",
+        "2006-01-02 15:04:05.999999999",
+        "2006-01-02T15:04:05.999999999",
+        "2006-01-02 15:04",
+        "2006-01-02T15:04",
+        "2006-01-02",
+    ]
     for l in layouts {
         var r = try std.time.ParseTime(l, t) catch err {
             continue
@@ -1507,7 +1536,9 @@ func toDecimal(v any, col string) std.math.big.Decimal! {
             }
             return d
         case []byte b:
-            var d = try std.math.big.ParseDecimal(std.strings.Trim(std.strings.FromBytes(b))) catch err {
+            var d = try std.math.big.ParseDecimal(
+                std.strings.Trim(std.strings.FromBytes(b)),
+            ) catch err {
                 return convError(col, v, "big.Decimal")
             }
             return d
@@ -1534,7 +1565,9 @@ func convertInto<F>(p *F, v any, col string) void! {
         *p = std.encoding.json.ParseValue(text)?("sql: column \"" + col + "\"")
         return
     }
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Struct && !(std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.time.Time>()) && !(std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.math.big.Decimal>()) {
+    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Struct &&
+        !(std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.time.Time>()) &&
+        !(std.reflect.TypeOf<F>() == std.reflect.TypeOf<std.math.big.Decimal>()) {
         // A Scanner (sql.Null<T>, user types): scanned into a fresh value
         // so that p itself does not escape.
         var probe F
@@ -1545,7 +1578,13 @@ func convertInto<F>(p *F, v any, col string) void! {
                 *p = probe
                 return
         }
-        return error("sql: column \"" + col + "\": unsupported destination type " + std.reflect.TypeOf<F>().Name + " (implement sql.Scanner)")
+        return error(
+            "sql: column \"" +
+                col +
+                "\": unsupported destination type " +
+                std.reflect.TypeOf<F>().Name +
+                " (implement sql.Scanner)",
+        )
     }
     if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Any {
         *p = v
@@ -1604,11 +1643,18 @@ func convertInto<F>(p *F, v any, col string) void! {
         var t = std.reflect.TypeOf<F>()
         var variant = t.Variant(name)
         if variant == nil || len(variant.Fields) > 0 {
-            return error("sql: column \"" + col + "\": unknown " + t.Name + " value \"" + name + "\"")
+            return error(
+                "sql: column \"" + col + "\": unknown " + t.Name + " value \"" + name + "\"",
+            )
         }
         std.reflect.storeTag(p, variant.Index)
     } else {
-        return error("sql: column \"" + col + "\": unsupported destination type " + std.reflect.TypeOf<F>().Name)
+        return error(
+            "sql: column \"" +
+                col +
+                "\": unsupported destination type " +
+                std.reflect.TypeOf<F>().Name,
+        )
     }
 }
 
@@ -1687,9 +1733,11 @@ func scanAny(d any, v any, col string) void! {
         case *[]float p:
             convertInto(p, v, col)?
         case nil:
-            // a nil destination discards the column
+        // a nil destination discards the column
         default:
-            return error("sql: column \"" + col + "\": unsupported Scan destination (want a pointer)")
+            return error(
+                "sql: column \"" + col + "\": unsupported Scan destination (want a pointer)",
+            )
     }
 }
 
@@ -1729,7 +1777,10 @@ func SnakeCase(name string) string {
 // T a single entry 0.
 func fieldMap<T>(cols []string) []int {
     var m []int = []
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.time.Time>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.math.big.Decimal>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.encoding.json.Value>()) {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct &&
+        !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.time.Time>()) &&
+        !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.math.big.Decimal>()) &&
+        !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.encoding.json.Value>()) {
         for f in std.reflect.Fields<T>() {
             var tag = f.Attribute<column>()
             var idx = -1
@@ -1767,7 +1818,10 @@ func fieldMap<T>(cols []string) []int {
 }
 
 func mapRow<T>(out *T, vals []any, cols []string, m []int) void! {
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.time.Time>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.math.big.Decimal>()) && !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.encoding.json.Value>()) {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct &&
+        !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.time.Time>()) &&
+        !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.math.big.Decimal>()) &&
+        !(std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.encoding.json.Value>()) {
         var a any = out
         switch a {
             case Scanner s:
@@ -1787,7 +1841,12 @@ func mapRow<T>(out *T, vals []any, cols []string, m []int) void! {
         }
     } else {
         if len(vals) != 1 {
-            return error("sql: query returned " + std.fmt.Format("{0}", len(vals)) + " columns for a scalar result type " + std.reflect.TypeOf<T>().Name)
+            return error(
+                "sql: query returned " +
+                    std.fmt.Format("{0}", len(vals)) +
+                    " columns for a scalar result type " +
+                    std.reflect.TypeOf<T>().Name,
+            )
         }
         convertInto(out, vals[0], cols[0])?
     }

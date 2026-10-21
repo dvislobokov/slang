@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.strings2.case_cyrillic
 
-import std.io
 import std
+import std.io
 
 func main() {
     println(strings.ToUpper("привет, мир"))

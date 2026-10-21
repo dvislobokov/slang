@@ -33,14 +33,18 @@ func Decompress(data []byte) []byte! {
 
 // Reports whether data starts with a zstd frame magic number.
 func IsFrame(data []byte) bool {
-    return len(data) >= 4 && int(data[0]) == 40 && int(data[1]) == 181 && int(data[2]) == 47 && int(data[3]) == 253
+    return len(data) >= 4 &&
+        int(data[0]) == 40 &&
+        int(data[1]) == 181 &&
+        int(data[2]) == 47 &&
+        int(data[3]) == 253
 }
 
 // A streaming decompressor: Feed chunks; Read returns the content of the
 // frames completed so far.
 struct Reader {
-    buf []byte
-    out []byte
+    buf    []byte
+    out    []byte
     frames int
 
     func Feed(chunk []byte) void! {

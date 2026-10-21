@@ -339,7 +339,15 @@ impl<'a> Sema<'a> {
             }
             Member::StdConst(i) => SymKey::Std(format!("{}.{}", stdlib::CONSTS[i].0, stdlib::CONSTS[i].1)),
             Member::Ns(n) => SymKey::Ns(self.nss[n].path.clone()),
-            Member::Generic(_) => return None,
+            // Stdlib templates (`http.Get`, `task.Channel`) by path, so
+            // tools can find their source in `std/` (crate::stdindex).
+            Member::Generic(t) => {
+                let tm = &self.gen.templates[t as usize];
+                if !tm.is_std {
+                    return None;
+                }
+                SymKey::Std(format!("{}.{}", self.nss[tm.ns].path, tm.name))
+            }
         })
     }
 
@@ -493,6 +501,11 @@ impl<'a> Sema<'a> {
                         }
                         Member::Special(_) => Some((SymbolKind::Func, special_sig(&ns.path, name))),
                         Member::StdConst(i) => Some((SymbolKind::Const, format!("const {} = {}", name, stdlib::CONSTS[*i].2))),
+                        Member::Generic(t) => Some(match self.gen.templates[*t as usize].decl {
+                            super::generics::TmplDecl::Struct(_) => (SymbolKind::Struct, format!("struct {name}")),
+                            super::generics::TmplDecl::Enum(_) => (SymbolKind::Enum, format!("enum {name}")),
+                            _ => (SymbolKind::Func, format!("func {name}")),
+                        }),
                         _ => None,
                     };
                     if let Some(info) = info {
@@ -564,7 +577,7 @@ pub fn func_signature(p: &Program, fid: u32, qualify: bool) -> String {
 
 /// The `//` comment block directly above `start` (attribute lines between
 /// the comment and the declaration are skipped).
-fn doc_comment(text: &str, start: u32) -> Option<String> {
+pub fn doc_comment(text: &str, start: u32) -> Option<String> {
     let start = (start as usize).min(text.len());
     let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
     let mut lines = Vec::new();

@@ -2,13 +2,13 @@
 // status: passing
 namespace spec.reflection.value_field_set_get
 
-import std.io
 import std
+import std.io
 
 struct User {
-    Name string
+    Name  string
     Email string
-    Age int
+    Age   int
 }
 
 func main() {

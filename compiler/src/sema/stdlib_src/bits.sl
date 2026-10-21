@@ -15,7 +15,8 @@ func Add64(x uint, y uint, carry uint) (uint, uint) {
 // x - y - borrow (borrow must be 0 or 1): (diff, borrowOut).
 func Sub64(x uint, y uint, borrow uint) (uint, uint) {
     var diff = x - y - borrow
-    var borrowOut = (((x ^ 18446744073709551615) & y) | (((x ^ y) ^ 18446744073709551615) & diff)) >> 63
+    var borrowOut = (((x ^ 18446744073709551615) & y) |
+        (((x ^ y) ^ 18446744073709551615) & diff)) >> 63
     return (diff, borrowOut)
 }
 
