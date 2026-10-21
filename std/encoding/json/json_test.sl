@@ -1,0 +1,41 @@
+// Examples for std.encoding.json.
+namespace json_test
+
+import std
+import std.encoding
+import std.io
+
+struct Item {
+    Name  string
+    Price float
+    @json(name: "in_stock") InStock bool
+    @json(omitEmpty: true)  Note    string
+}
+
+func ExampleFormat() {
+    println(json.Format(Item{Name: "pen", Price: 1.5, InStock: true}))
+    println(json.Format([1, 2, 3]), json.Format("a\"b"))
+    // Output:
+    // {"Name":"pen","Price":1.5,"in_stock":true}
+    // [1,2,3] "a\"b"
+}
+
+func ExampleParse() void! {
+    var items = json.Parse<[]Item>(`[{"Name": "cup", "Price": 3, "in_stock": false}]`)?
+    println(len(items), items[0].Name, items[0].Price, items[0].InStock)
+    // Errors name the path of the bad value.
+    try json.Parse<Item>(`{"Price": "free"}`) catch err {
+        println(err)
+    }
+    // Output:
+    // 1 cup 3 false
+    // Price: expected number, found string
+}
+
+func ExampleParseValue() void! {
+    var v = json.ParseValue(`{"user": {"name": "ann", "tags": ["a", "b"]}}`)?
+    var user = v.Get("user")
+    println(user.Get("name").String()?, user.Get("tags").Len(), v.Has("missing"))
+    // Output:
+    // ann 2 false
+}

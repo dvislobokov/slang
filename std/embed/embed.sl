@@ -1,10 +1,9 @@
-namespace std.embed
-
 // std.embed: files embedded at compile time. `@embed("path")` on a global
 // (resolved relative to the source file) gives `var X string` (UTF-8
 // text), `var X []byte`, `const X = ""` (text, the placeholder is
 // replaced), or `var X embed.FS` for a directory ("assets": every file,
 // recursively) or a glob ("templates/*.html").
+namespace std.embed
 
 // A read-only set of embedded files, by slash-separated path relative to
 // the declaring source file (as written in the @embed pattern).

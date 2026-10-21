@@ -1,9 +1,8 @@
-namespace std.mime.quotedprintable
-
 // Quoted-printable (RFC 2045 section 6.7), as Go's mime/quotedprintable:
 // lines of at most 76 characters with soft breaks ("=\r\n"), "=XX" for
 // '=' and non-printable bytes, trailing white space encoded, hard line
 // breaks as \r\n (or encoded too in binary mode).
+namespace std.mime.quotedprintable
 
 // Encodes text data (its line breaks stay line breaks, written as \r\n).
 func Encode(data string) string {

@@ -12,7 +12,7 @@ static int g_panicking;
 
 static SLANG_NORETURN void die(const char *msg, int64_t len) {
     /* The debug agent stops here first (exception breakpoint "panic"). */
-    if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED)) slang__dbg_panic(msg, len);
+    if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED) && slang__dbg_panic_fn) slang__dbg_panic_fn(msg, len);
     /* A second panic (e.g. inside a destructor run during the first) aborts quietly. */
     if (__atomic_exchange_n(&g_panicking, 1, __ATOMIC_SEQ_CST)) {
         for (;;) slang__plat_sleep_ns((int64_t)1000000000);  /* another thread is printing the first panic and will _exit */

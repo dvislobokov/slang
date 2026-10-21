@@ -1,5 +1,3 @@
-namespace std.web
-
 // The DI container. A service is keyed by the full name of its type
 // (reflect.TypeOf<T>().FullName): AddSingleton<T>() / AddScoped<T>() /
 // AddTransient<T>() register `*T` (built by `static func New(deps...)`
@@ -12,6 +10,7 @@ namespace std.web
 // order) and shared; scoped services once per request scope (the scope
 // is released with the request, so their Drop runs then); transient
 // services on every resolution.
+namespace std.web
 
 enum Lifetime {
     Singleton

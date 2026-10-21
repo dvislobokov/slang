@@ -1,0 +1,23 @@
+  sql: UPDATE "tasks" AS t0 SET "done" = TRUE, "priority" = (t0."priority" + 10), "owner" = NULL WHERE (t0."priority" <= ?) -- [1]
+updated 4
+  sql: DELETE FROM "tasks" AS t0 WHERE t0."id" IN (SELECT t0."id" FROM "tasks" AS t0 WHERE (NOT t0."done") ORDER BY t0."id" ASC LIMIT 1)
+deleted 1
+task 1 11
+task 3 10
+task 4 11
+task 6 10
+[4]
+1 0
+3 task 3 true true
+5 TASK 5 false false
+2
+  sql: BEGIN
+  sql: INSERT INTO "settings" ("key", "value") VALUES (?, ?) ON CONFLICT ("key") DO UPDATE SET "value" = excluded."value" RETURNING "id" -- ["theme", "dark"]
+  sql: COMMIT
+  sql: BEGIN
+  sql: INSERT INTO "settings" ("key", "value") VALUES (?, ?) ON CONFLICT ("key") DO UPDATE SET "value" = excluded."value" RETURNING "id" -- ["theme", "light"]
+  sql: INSERT INTO "settings" ("key", "value", "id") VALUES (?, ?, ?) ON CONFLICT ("id") DO UPDATE SET "key" = excluded."key", "value" = excluded."value" RETURNING "id" -- ["lang", "en", 7]
+  sql: COMMIT
+1 1 light
+1 theme light
+7 lang en

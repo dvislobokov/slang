@@ -1,9 +1,8 @@
-namespace std.math.bits
-
 // std.math.bits (Go's math/bits): the single-value functions are C
 // externs over compiler builtins (runtime/src/std_math_bits.c); the
 // multi-word arithmetic with carries/borrows returns tuples:
 // `var (sum, carry) = bits.Add64(x, y, 0)`.
+namespace std.math.bits
 
 // x + y + carry (carry must be 0 or 1): (sum, carryOut).
 func Add64(x uint, y uint, carry uint) (uint, uint) {

@@ -1,7 +1,6 @@
-namespace std.net
-
 // std.net, second file (see net.sl for the overview): UDP sockets,
 // buffered reads and writes over a Conn, and network interfaces.
+namespace std.net
 
 // ---- UDP ----
 
@@ -49,6 +48,7 @@ struct UDPConn {
         return this.s.read(n)
     }
 
+    // ReadInto reads the next datagram into buf (connected sockets) and returns its length.
     func ReadInto(buf []byte) Task<int!> {
         return udpReadInto(this.s, buf)
     }
@@ -58,32 +58,39 @@ struct UDPConn {
         return writeToOn(this.s, data, "", 0)
     }
 
+    // SetTimeout sets a timeout in milliseconds for every read and write (0: none).
     func SetTimeout(ms int) {
         this.s.timeout = ms
     }
 
+    // SetReadDeadline sets an absolute read deadline in std.time.Now() milliseconds (0: none).
     func SetReadDeadline(t int) {
         this.s.rdl = t
     }
 
+    // SetWriteDeadline sets an absolute write deadline in std.time.Now() milliseconds (0: none).
     func SetWriteDeadline(t int) {
         this.s.wdl = t
     }
 
+    // Close closes the socket; pending operations fail with ErrClosed.
     func Close() {
         if this.s != nil {
             this.s.close()
         }
     }
 
+    // IsClosed reports whether Close was called.
     func IsClosed() bool {
         return this.s == nil || this.s.isClosed()
     }
 
+    // Addr returns the bound "ip:port".
     func Addr() string {
         return this.s.laddr
     }
 
+    // Local returns the bound address.
     func Local() Addr {
         return addrOf(this.s.laddr)
     }
@@ -93,10 +100,12 @@ struct UDPConn {
         return addrOf(rtRemoteAddr(this.s.h))
     }
 
+    // Port returns the bound port (useful after binding port 0).
     func Port() int {
         return rtPort(this.s.h)
     }
 
+    // Fd returns the OS socket handle.
     func Fd() int {
         return rtFd(this.s.h)
     }
@@ -114,6 +123,7 @@ struct UDPConn {
         }
     }
 
+    // LeaveGroup leaves multicast group on interface ifname (see JoinGroup).
     func LeaveGroup(group string, ifname string) void! {
         try rtMcast(this.s.h, false, group, ifname) catch err {
             return this.s.fail("leave", err)
@@ -138,14 +148,17 @@ struct UDPConn {
         this.s.setOpt(17, idx)?
     }
 
+    // SetMulticastTTL sets the TTL of outgoing multicast datagrams.
     func SetMulticastTTL(ttl int) void! {
         this.s.setOpt(16, ttl)?
     }
 
+    // SetReadBuffer sets SO_RCVBUF in bytes.
     func SetReadBuffer(n int) void! {
         this.s.setOpt(6, n)?
     }
 
+    // SetWriteBuffer sets SO_SNDBUF in bytes.
     func SetWriteBuffer(n int) void! {
         this.s.setOpt(7, n)?
     }
@@ -384,6 +397,7 @@ struct rbuf {
 struct BufferedReader {
     b *rbuf
 
+    // ReadByte returns the next byte (ErrEOF at the end of the stream).
     func ReadByte() Task<byte!> {
         return this.b.readByte()
     }
@@ -456,18 +470,22 @@ struct wbuf {
 struct BufferedWriter {
     b *wbuf
 
+    // Write buffers p, sending full buffers.
     func Write(p []byte) Task<int!> {
         return this.b.write(p)
     }
 
+    // WriteString buffers the bytes of s.
     func WriteString(s string) Task<int!> {
         return this.b.writeString(s)
     }
 
+    // Flush sends the buffered bytes.
     func Flush() Task<void!> {
         return this.b.flush()
     }
 
+    // Buffered returns the number of bytes waiting to be flushed.
     func Buffered() int {
         return this.b.n
     }
@@ -489,6 +507,7 @@ struct IPNet {
     IP   IP
     Bits int
 
+    // String returns "ip/bits".
     func String() string {
         return std.fmt.Format("{0}/{1}", this.IP.String(), this.Bits)
     }

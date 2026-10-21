@@ -1,5 +1,3 @@
-namespace std.encoding.asn1
-
 // std.encoding.asn1: a DER reader and writer (the subset X.509, PKCS and
 // most protocols use). The element scanner and OID decoder are the ones
 // std.crypto.x509 uses (its reader in x509.sl); this module adds the
@@ -7,6 +5,7 @@ namespace std.encoding.asn1
 // OBJECT IDENTIFIER, OCTET STRING, BIT STRING, UTF8/Printable/IA5/
 // Numeric/T61/BMP strings, UTCTime, GeneralizedTime, SEQUENCE, SET and
 // context-specific [n] tags; and a Builder that writes the same.
+namespace std.encoding.asn1
 
 // One encoded element. Tag is the whole identifier byte (class bits,
 // constructed bit and tag number < 31), as in x509.
@@ -20,6 +19,7 @@ struct RawValue {
         return this.Tag >> 6
     }
 
+    // Constructed reports whether the constructed bit of the tag is set.
     func Constructed() bool {
         return (this.Tag & 32) != 0
     }
@@ -113,6 +113,7 @@ struct Reader {
         return v.Bytes
     }
 
+    // ReadBool reads a BOOLEAN.
     func ReadBool() bool! {
         var v = this.expect(1, "BOOLEAN")?
         if len(v.Bytes) != 1 || (v.Bytes[0] != 0 && v.Bytes[0] != 255) {
@@ -121,6 +122,7 @@ struct Reader {
         return v.Bytes[0] == 255
     }
 
+    // ReadNull reads a NULL.
     func ReadNull() void! {
         var v = this.expect(5, "NULL")?
         if len(v.Bytes) != 0 {
@@ -177,11 +179,13 @@ struct Reader {
         return std.crypto.x509.oidString(v.Bytes)?
     }
 
+    // ReadOctetString reads an OCTET STRING.
     func ReadOctetString() []byte! {
         var v = this.expect(4, "OCTET STRING")?
         return v.Bytes
     }
 
+    // ReadBitString reads a BIT STRING.
     func ReadBitString() BitString! {
         var v = this.expect(3, "BIT STRING")?
         if len(v.Bytes) == 0 || v.Bytes[0] > 7 || (len(v.Bytes) == 1 && v.Bytes[0] != 0) {
@@ -314,6 +318,7 @@ struct Builder {
         }
     }
 
+    // AddBool appends a BOOLEAN.
     func AddBool(v bool) {
         if v {
             this.AddTagged(1, [byte(255)])
@@ -322,19 +327,23 @@ struct Builder {
         }
     }
 
+    // AddNull appends a NULL.
     func AddNull() {
         var empty []byte = []
         this.AddTagged(5, empty)
     }
 
+    // AddInt appends an INTEGER.
     func AddInt(v int) {
         this.AddTagged(2, intBytes(v))
     }
 
+    // AddEnum appends an ENUMERATED.
     func AddEnum(v int) {
         this.AddTagged(10, intBytes(v))
     }
 
+    // AddBigInt appends an INTEGER of arbitrary size.
     func AddBigInt(v std.math.big.Int) {
         if v.Sign() >= 0 {
             var b = v.Bytes()
@@ -382,10 +391,12 @@ struct Builder {
         this.AddTagged(6, body)
     }
 
+    // AddOctetString appends an OCTET STRING.
     func AddOctetString(b []byte) {
         this.AddTagged(4, b)
     }
 
+    // AddBitString appends a BIT STRING.
     func AddBitString(b BitString) {
         var body = [byte(b.UnusedBits)]
         for c in b.Bytes {
@@ -394,14 +405,17 @@ struct Builder {
         this.AddTagged(3, body)
     }
 
+    // AddUTF8String appends a UTF8String.
     func AddUTF8String(s string) {
         this.AddTagged(12, std.strings.Bytes(s))
     }
 
+    // AddPrintableString appends a PrintableString.
     func AddPrintableString(s string) {
         this.AddTagged(19, std.strings.Bytes(s))
     }
 
+    // AddIA5String appends an IA5String.
     func AddIA5String(s string) {
         this.AddTagged(22, std.strings.Bytes(s))
     }
@@ -423,6 +437,7 @@ struct Builder {
         this.AddTagged(0x30, inner.buf)
     }
 
+    // AddSet appends a SET whose contents fill writes.
     func AddSet(fill func(*Builder)) {
         var inner = new Builder{}
         fill(inner)

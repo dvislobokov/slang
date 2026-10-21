@@ -1,5 +1,3 @@
-namespace std.regex
-
 // std.regex: regular expressions with RE2 syntax and a linear-time
 // guarantee (no backtracking, no backreferences, no lookaround).
 //
@@ -21,6 +19,7 @@ namespace std.regex
 //   state; a pattern that is one literal is searched with memmem only;
 // * the DFA cache is shared by copies of a Regex; a search that finds it
 //   in use by another thread runs the Pike VM instead.
+namespace std.regex
 
 // A compiled regular expression. Copies share the program and its cache;
 // a Regex is safe to use from several tasks.

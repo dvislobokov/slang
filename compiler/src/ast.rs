@@ -242,6 +242,9 @@ pub enum TypeKind {
     Tuple(Vec<TypeExpr>),
     /// A type that failed to parse (error recovery).
     Error,
+    /// No type written: a lambda parameter `(u) => u.Email`, typed from
+    /// the function type the lambda is converted to.
+    Infer,
 }
 
 // ---------------------------------------------------------------------------

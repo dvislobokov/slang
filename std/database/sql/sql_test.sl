@@ -1,0 +1,50 @@
+// Examples for std.database.sql (with the in-memory SQLite driver).
+namespace sql_test
+
+import std
+import std.database
+import std.io
+
+struct User {
+    Id   int
+    Name string
+    Age  int
+}
+
+async func ExampleDB_Query() void! {
+    var db = sqlite.Open(":memory:")
+    defer db.Close()
+    _ = await db.Exec("create table users (id integer primary key, name text, age integer)", [])?
+    _ = await db.Exec("insert into users (name, age) values (?, ?), (?, ?)", [
+        "ann",
+        31,
+        "bob",
+        27,
+    ])?
+    // Columns map to fields by name.
+    var users = await db.Query<User>("select * from users order by age", [])?
+    for u in users {
+        println(u.Id, u.Name, u.Age)
+    }
+    // Output:
+    // 2 bob 27
+    // 1 ann 31
+}
+
+async func ExampleDB_Begin() void! {
+    var db = sqlite.Open(":memory:")
+    defer db.Close()
+    _ = await db.Exec("create table kv (k text primary key, v integer)", [])?
+    var tx = await db.Begin()?
+    defer tx.Rollback()
+    _ = await tx.Exec("insert into kv values (:k, :v)", [sql.Named("k", "a"), sql.Named("v", 1)])?
+    await tx.Commit()?
+    var n = await db.QueryOne<int>("select count(*) from kv", [])?
+    println(n)
+    try await db.QueryOne<int>("select v from kv where k = ?", ["zzz"]) catch err {
+        println(errors.Is(err, sql.ErrNoRows))
+    }
+    // Output:
+    // 1
+    // true
+}

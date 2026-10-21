@@ -1,11 +1,10 @@
-namespace std.diag
-
 // std.diag: metrics (Prometheus text), tracing (OpenTelemetry-compatible
 // spans propagated through the task context, W3C traceparent), CPU and
 // heap profiles in pprof format (docs/FRAMEWORK.md section 5). See
 // sema/stdsrc.rs for the rules of these sources. Global state (registry,
 // tracer) lives in the runtime's slot map (rtSlots, guarded by rtLock);
 // the current span is a task-context frame with the reserved key -102.
+namespace std.diag
 
 // ---- process-wide slots ---------------------------------------------------
 
@@ -251,6 +250,7 @@ struct Counter {
     f      *family
     values []string
 
+    // Inc adds 1.
     func Inc() {
         this.f.add(this.values, 1.0)
     }
@@ -267,6 +267,7 @@ struct Counter {
         return Counter{f: this.f, values: values}
     }
 
+    // Value returns the current value of the series.
     func Value() float {
         return this.f.read(this.values)
     }
@@ -277,30 +278,37 @@ struct Gauge {
     f      *family
     values []string
 
+    // Set sets the gauge to v.
     func Set(v float) {
         this.f.set(this.values, v)
     }
 
+    // Inc adds 1.
     func Inc() {
         this.f.add(this.values, 1.0)
     }
 
+    // Dec subtracts 1.
     func Dec() {
         this.f.add(this.values, -1.0)
     }
 
+    // Add adds d.
     func Add(d float) {
         this.f.add(this.values, d)
     }
 
+    // Sub subtracts d.
     func Sub(d float) {
         this.f.add(this.values, -d)
     }
 
+    // With returns the series for these label values (in label order).
     func With(values []string) Gauge {
         return Gauge{f: this.f, values: values}
     }
 
+    // Value returns the current value of the series.
     func Value() float {
         return this.f.read(this.values)
     }
@@ -311,10 +319,12 @@ struct Histogram {
     f      *family
     values []string
 
+    // Observe records one observation.
     func Observe(v float) {
         this.f.observe(this.values, v)
     }
 
+    // With returns the series for these label values (in label order).
     func With(values []string) Histogram {
         return Histogram{f: this.f, values: values}
     }
@@ -330,6 +340,7 @@ func NewCounter(name string, help string, labels []string) Counter {
     return Counter{f: register(name, help, "counter", labels, [])}
 }
 
+// NewGauge registers a gauge with the given label names (nil or [] for none).
 func NewGauge(name string, help string, labels []string) Gauge {
     return Gauge{f: register(name, help, "gauge", labels, [])}
 }
@@ -358,6 +369,7 @@ struct RuntimeStats {
     Workers int
 }
 
+// Runtime returns the current runtime statistics.
 func Runtime() RuntimeStats {
     return RuntimeStats{
         LiveObjects: rtLiveObjects(),
@@ -457,10 +469,13 @@ func MetricsHandler() std.net.http.Handler {
 
 // ---- tracing --------------------------------------------------------------
 
+// SpanKind is the OpenTelemetry kind of a span.
 enum SpanKind { Internal, Server, Client, Producer, Consumer }
 
+// StatusCode is the status of a span.
 enum StatusCode { Unset, Ok, Error }
 
+// Attribute is a key/value pair of a span.
 struct Attribute {
     Key   string
     Value any
@@ -487,6 +502,7 @@ struct Span {
     prev      map[string]any
     startMono int
 
+    // SetAttribute sets (or replaces) attribute key.
     func SetAttribute(key string, value any) {
         for i, a in this.Attributes {
             if a.Key == key {
@@ -497,6 +513,7 @@ struct Span {
         this.Attributes = append(this.Attributes, Attribute{Key: key, Value: value})
     }
 
+    // SetStatus sets the status of the span and its message.
     func SetStatus(code StatusCode, message string) {
         this.Status = code
         this.StatusMessage = message
@@ -551,7 +568,9 @@ struct Span {
 
 // Receives finished spans.
 interface Exporter {
+    // Export receives one finished span.
     func Export(s *std.diag.Span)
+    // Shutdown flushes pending spans.
     func Shutdown() Task<void>
 }
 
@@ -659,6 +678,7 @@ func StartSpan(name string) *Span {
     return StartSpanKind(name, SpanKind.Internal)
 }
 
+// StartSpanKind is StartSpan with a span kind.
 func StartSpanKind(name string, kind SpanKind) *Span {
     var parent = CurrentSpan()
     var t = tracerOf()
@@ -760,6 +780,7 @@ struct ConsoleExporter {
     // Print the duration (off for reproducible output).
     ShowDuration bool
 
+    // Export prints the span.
     func Export(s *Span) {
         var parent = s.ParentSpanId
         if parent == "" {
@@ -796,6 +817,7 @@ struct ConsoleExporter {
         println(line)
     }
 
+    // Shutdown does nothing.
     func Shutdown() Task<void> {
         return std.task.Delay(0)
     }
@@ -902,6 +924,7 @@ struct OtlpExporter {
     LastStatus int
     LastError  string
 
+    // Export queues the span, sending a batch when BatchSize spans are queued.
     func Export(s *Span) {
         var j = OtlpSpanJson(s)
         std.task.rtLock(&this.guard)
@@ -920,6 +943,7 @@ struct OtlpExporter {
         }
     }
 
+    // Shutdown sends the queued spans.
     func Shutdown() Task<void> {
         return otlpShutdown(this)
     }
@@ -950,6 +974,7 @@ async func post(e *OtlpExporter, body string) {
     e.LastStatus = res.Status
 }
 
+// NewOtlpExporter returns an exporter for endpoint (batches of 64).
 func NewOtlpExporter(endpoint string) *OtlpExporter {
     return new OtlpExporter{Endpoint: endpoint, BatchSize: 64}
 }
@@ -962,6 +987,7 @@ func StartCPUProfile(path string) void! {
     rtStartCPUProfile(path, 100)?
 }
 
+// StartCPUProfileRate is StartCPUProfile with hz samples per CPU second.
 func StartCPUProfileRate(path string, hz int) void! {
     rtStartCPUProfile(path, hz)?
 }

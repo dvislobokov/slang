@@ -30,8 +30,31 @@ static int64_t count_nonoverlapping(const slang_string *s, const slang_string *s
     return c;
 }
 
+/* SWAR helpers for single-byte searches: bit 7 of each byte of the result
+ * is set exactly where x has a zero byte. */
+#define ONES 0x0101010101010101ULL
+#define HIGHS 0x8080808080808080ULL
+static inline uint64_t zero_bytes(uint64_t x) {
+    return ~(((x & ~HIGHS) + ~HIGHS) | x) & HIGHS;
+}
+
+/* Occurrences of byte c in p[0..n). */
+static int64_t count_byte(const char *p, int64_t n, unsigned char c) {
+    int64_t cnt = 0, i = 0;
+    uint64_t pat = ONES * c;
+    for (; i + 8 <= n; i += 8) {
+        uint64_t x;
+        memcpy(&x, p + i, 8);
+        cnt += __builtin_popcountll(zero_bytes(x ^ pat));
+    }
+    for (; i < n; i++) cnt += (unsigned char)p[i] == c;
+    return cnt;
+}
+
 /* ---- Split / Join ---- */
 
+/* Split's pieces are views of s in one view block (ABI.md 4.1): no copy and
+ * one allocation for all of them; empty pieces are NULL. */
 void slang_strings_split(const slang_string *s, const slang_string *sep, slang_slice *out) {
     int64_t n = slen(s), m = slen(sep);
     const char *p = sdata(s);
@@ -40,23 +63,49 @@ void slang_strings_split(const slang_string *s, const slang_string *sep, slang_s
         int64_t count = slang_string_rune_count(s);
         slang_slice_new_ops(out, 8, count, count, &slang_ops_ref);
         slang_string **slots = out->data;
+        slang__vblock *b = slang__vblock_new(s, count);
         for (int64_t i = 0, k = 0; i < n; k++) {
             int64_t w = rune_width(s, i);
-            slots[k] = slang_string_new(p + i, w);
+            slots[k] = slang__vblock_add(b, p + i, w);
             i += w;
         }
+        if (b) slang__vblock_done(b);
         return;
     }
     /* Count first so the result slice is allocated once, then cut. */
-    int64_t count = count_nonoverlapping(s, sep) + 1;
+    int64_t count = (m == 1 ? count_byte(p, n, (unsigned char)sep->data[0]) : count_nonoverlapping(s, sep)) + 1;
     slang_slice_new_ops(out, 8, count, count, &slang_ops_ref);
     slang_string **slots = out->data;
-    const char *q = sdata(sep), *start = p, *end = p + n;
+    slang__vblock *b = slang__vblock_new(s, count);
+    const char *start = p, *end = p + n;
     int64_t k = 0;
-    for (const char *f; k < count - 1 && (f = slang__memmem(start, end - start, q, m)) != NULL;
-         start = f + m)
-        slots[k++] = slang_string_new(start, f - start);
-    slots[k] = slang_string_new(start, end - start);
+    if (m == 1) {
+        unsigned char c = (unsigned char)sep->data[0];
+        uint64_t pat = ONES * c;
+        int64_t i = 0;
+        for (; i + 8 <= n; i += 8) {
+            uint64_t x;
+            memcpy(&x, p + i, 8);
+            for (uint64_t z = zero_bytes(x ^ pat); z; z &= z - 1) {
+                const char *f = p + i + (__builtin_ctzll(z) >> 3);
+                slots[k++] = slang__vblock_add(b, start, f - start);
+                start = f + 1;
+            }
+        }
+        for (; i < n; i++) {
+            if ((unsigned char)p[i] == c) {
+                slots[k++] = slang__vblock_add(b, start, p + i - start);
+                start = p + i + 1;
+            }
+        }
+    } else {
+        const char *q = sdata(sep);
+        for (const char *f; k < count - 1 && (f = slang__memmem(start, end - start, q, m)) != NULL;
+             start = f + m)
+            slots[k++] = slang__vblock_add(b, start, f - start);
+    }
+    slots[k] = slang__vblock_add(b, start, end - start);
+    if (b) slang__vblock_done(b);
 }
 
 slang_string *slang_strings_join(const slang_slice *parts, const slang_string *sep) {
@@ -108,7 +157,7 @@ slang_string *slang_strings_trim(const slang_string *s) {
         hi = st;
     }
     if (lo == 0 && hi == n) return same(s);
-    return slang_string_new((const char *)p + lo, hi - lo);
+    return slang__string_sub(s, lo, hi);
 }
 
 /* ---- predicates / search (thin wrappers) ---- */

@@ -1,5 +1,3 @@
-namespace std.crypto.password
-
 // std.crypto.password: password hashing in the PHC string format with
 // Argon2id (RFC 9106). Hash picks a random 16-byte salt;
 // Verify recomputes the hash with the parameters stored in the string and
@@ -7,6 +5,7 @@ namespace std.crypto.password
 // parameters other than the current defaults.
 //
 //   $argon2id$v=19$m=65536,t=3,p=4$<salt, base64 without padding>$<hash>
+namespace std.crypto.password
 
 // Argon2id parameters (defaults: RFC 9106 4, second recommended option).
 struct Params {

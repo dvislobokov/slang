@@ -2,17 +2,28 @@
  * (one-shot level-triggered arming, wake-ups, EINTR), the socket handles
  * of std_net.c (close races, double close, ErrClosed, error sentinels),
  * addresses, Unix sockets, UDP, sendfile and the resolver pool. Built
- * with -fsanitize=thread by `make tsan`. */
+ * with -fsanitize=thread by `make tsan`. Portable: sockets go through the
+ * platform layer (slang__plat_sock_*), so the same file runs under Wine
+ * (`make CROSS=x86_64-w64-mingw32 test-wine`, poll_iocp.c); the EINTR
+ * check is POSIX-only. */
 #include "test.h"
 #include "../src/platform/platform.h"
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
-#include <sys/socket.h>
 #include <time.h>
+#if !defined(_WIN32)
+#include <sys/socket.h>
+#endif
 
 int64_t slang__io_shard_of(int64_t fd);
 int64_t slang__io_shards(void);
+
+#if defined(_WIN32)
+#define NULL_DEVICE "NUL"
+#else
+#define NULL_DEVICE "/dev/null"
+#endif
 
 static int64_t now_ms(void) { return slang__plat_mono_ns() / 1000000; }
 
@@ -22,7 +33,50 @@ static int64_t wait_code(slang_task *t) {
     return r;
 }
 
+#if defined(__linux__)
 static void pair(int sv[2]) { assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, sv) == 0); }
+#elif !defined(_WIN32)
+static void pair(int sv[2]) {  /* macOS/BSD: no SOCK_NONBLOCK on macOS */
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+    for (int i = 0; i < 2; i++) assert(fcntl(sv[i], F_SETFL, fcntl(sv[i], F_GETFL) | O_NONBLOCK) == 0);
+}
+#else
+/* A connected pair of non-blocking loopback TCP sockets. */
+static void pair(int sv[2]) {
+    int64_t l = slang__plat_sock_open(SLANG_PLAT_AF_INET, SLANG_PLAT_STREAM);
+    assert(l >= 0);
+    unsigned char lo[4] = { 127, 0, 0, 1 };
+    slang__plat_addr a;
+    assert(slang__plat_addr_ip(&a, lo, 4, 0, 0));
+    assert(slang__plat_sock_bind(l, &a) == 0 && slang__plat_sock_listen(l, 4) == 0);
+    assert(slang__plat_sock_name(l, false, &a));
+    int64_t c = slang__plat_sock_open(SLANG_PLAT_AF_INET, SLANG_PLAT_STREAM);
+    int64_t rc = slang__plat_sock_connect(c, &a);
+    assert(rc == 0 || rc == -SLANG_PLAT_EAGAIN);
+    int64_t s;
+    while ((s = slang__plat_sock_accept(l, NULL)) == -SLANG_PLAT_EAGAIN) Sleep(1);
+    assert(s >= 0);
+    slang__plat_sock_close(l);
+    for (int i = 0; i < 2000 && slang__plat_sock_send(c, "", 0) < 0; i++) Sleep(1);  /* connected */
+    sv[0] = (int)s;
+    sv[1] = (int)c;
+    slang__plat_sock_setopt(s, SLANG_PLAT_OPT_NODELAY, 1);
+    slang__plat_sock_setopt(c, SLANG_PLAT_OPT_NODELAY, 1);
+}
+#endif
+/* Socket I/O through the platform layer (sockets are not CRT descriptors on Windows). */
+static int64_t sock_write(int fd, const char *b, int64_t n) { return slang__plat_sock_send(fd, b, n); }
+static int64_t sock_read(int fd, char *b, int64_t n) { return slang__plat_sock_recv(fd, b, n); }
+static void sock_close(int fd) { slang__plat_sock_close(fd); }
+
+static const char *tmp_dir(void) {
+#if defined(_WIN32)
+    const char *t = getenv("TEMP");
+    return t ? t : ".";
+#else
+    return "/tmp";
+#endif
+}
 
 static bool msg_has(slang_error *e, const char *needle) {
     slang_string *m = slang_error_message(e);
@@ -38,7 +92,7 @@ TEST(poller_oneshot_level) {
     int sv[2];
     pair(sv);
     slang__plat_event ev[8];
-    assert(write(sv[1], "ab", 2) == 2);
+    assert(sock_write(sv[1], "ab", 2) == 2);
     /* data already there: reported at once (level-triggered) */
     assert(slang__plat_poller_arm(p, sv[0], SLANG_PLAT_READ, 5, false) == 0);
     assert(slang__plat_poller_wait(p, ev, 8, 1000) == 1 && ev[0].token == 5);
@@ -51,17 +105,22 @@ TEST(poller_oneshot_level) {
     assert(slang__plat_poller_arm(p, sv[0], 0, 7, true) == 0);
     assert(slang__plat_poller_wait(p, ev, 8, 20) == 0);
     /* peer hang-up reports readability (end of stream) */
-    close(sv[1]);
+    sock_close(sv[1]);
     assert(slang__plat_poller_arm(p, sv[0], SLANG_PLAT_READ, 8, true) == 0);
     assert(slang__plat_poller_wait(p, ev, 8, 1000) == 1 && (ev[0].events & SLANG_PLAT_READ));
     slang__plat_poller_remove(p, sv[0]);
-    close(sv[0]);
+    sock_close(sv[0]);
     /* a regular file cannot be polled; a closed fd is EBADF */
-    int f = open("/dev/null", O_RDONLY);
+    int f = open(NULL_DEVICE, O_RDONLY);
     int rc = slang__plat_poller_arm(p, f, SLANG_PLAT_READ, 9, false);
     assert(rc == 0 || rc == SLANG_PLAT_ENOTPOLLABLE);
     close(f);
-    assert(slang__plat_poller_arm(p, 1000000, SLANG_PLAT_READ, 9, false) == EBADF);
+    rc = slang__plat_poller_arm(p, 1000000, SLANG_PLAT_READ, 9, false);
+#if defined(_WIN32)
+    assert(rc == EBADF || rc == SLANG_PLAT_ENOTPOLLABLE);  /* a number that is no handle at all */
+#else
+    assert(rc == EBADF);
+#endif
     slang__plat_poller_free(p);
 }
 
@@ -71,14 +130,18 @@ typedef struct waker_arg {
     int mode;  /* 0 = wake, 1 = signal (EINTR) */
 } waker_arg;
 
+#if !defined(_WIN32)
 static void on_usr1(int sig) { (void)sig; }
+#endif
 
 static void *waker(void *a) {
     waker_arg *w = a;
     struct timespec ts = { 0, 30 * 1000000 };
     nanosleep(&ts, NULL);
     if (w->mode == 0) slang__plat_poller_wake(w->p);
+#if !defined(_WIN32)
     else pthread_kill(w->target, SIGUSR1);
+#endif
     return NULL;
 }
 
@@ -97,6 +160,7 @@ TEST(poller_wake_and_eintr) {
     for (int i = 0; i < 100; i++) slang__plat_poller_wake(p);
     assert(slang__plat_poller_wait(p, ev, 4, 1000) == 1);
     assert(slang__plat_poller_wait(p, ev, 4, 10) == 0);
+#if !defined(_WIN32)
     /* a signal (EINTR) returns 0 events instead of failing */
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
@@ -109,6 +173,7 @@ TEST(poller_wake_and_eintr) {
     assert(n == 0 && now_ms() - t0 < 4000);
     pthread_join(th, NULL);
     signal(SIGUSR1, SIG_DFL);
+#endif
     slang__plat_poller_free(p);
 }
 
@@ -133,8 +198,8 @@ TEST(io_shards_balance) {
     for (int i = 0; i < N; i++) {
         slang_io_forget(sv[i][0]);
         assert(slang__io_shard_of(sv[i][0]) == -1);
-        close(sv[i][0]);
-        close(sv[i][1]);
+        sock_close(sv[i][0]);
+        sock_close(sv[i][1]);
     }
 }
 
@@ -146,11 +211,11 @@ TEST(io_two_readers_and_timeouts) {
     slang_task *c = slang_io_wait_readable(sv[0], 20);   /* times out first */
     assert(wait_code(c) == 1);
     assert(!slang_task_is_done(a) && !slang_task_is_done(b));
-    assert(write(sv[1], "x", 1) == 1);
+    assert(sock_write(sv[1], "x", 1) == 1);
     assert(wait_code(a) == 0 && wait_code(b) == 0);      /* every waiter is woken */
     /* deadlines in any order complete in deadline order */
     char buf[4];
-    assert(read(sv[0], buf, 4) == 1);
+    assert(sock_read(sv[0], buf, 4) == 1);
     slang_task *t[5];
     int64_t ms[5] = { 80, 20, 60, 40, 10 };
     for (int i = 0; i < 5; i++) t[i] = slang_io_wait_readable(sv[0], ms[i]);
@@ -160,8 +225,8 @@ TEST(io_two_readers_and_timeouts) {
         assert(now_ms() - t0 >= ms[i] - 1);
     }
     slang_io_forget(sv[0]);
-    close(sv[0]);
-    close(sv[1]);
+    sock_close(sv[0]);
+    sock_close(sv[1]);
 }
 
 typedef struct stress_arg {
@@ -180,16 +245,16 @@ static void *stress_thread(void *a) {
         slang_task *rd = slang_io_wait_readable(sv[0], 2000);
         slang_task *wr = slang_io_wait_writable(sv[1], 2000);
         assert(wait_code(wr) == 0);
-        assert(write(sv[1], "z", 1) == 1);
+        assert(sock_write(sv[1], "z", 1) == 1);
         assert(wait_code(rd) == 0);
         /* close race: a wait on a descriptor forgotten right away */
         slang_task *late = slang_io_wait_readable(sv[1], 2000);
         slang_io_forget(sv[1]);
         int64_t code = wait_code(late);
         assert(code == 2 || code == 0);
-        close(sv[1]);
+        sock_close(sv[1]);
         slang_io_forget(sv[0]);
-        close(sv[0]);
+        sock_close(sv[0]);
         s->done++;
     }
     return NULL;
@@ -213,9 +278,9 @@ TEST(io_multithread_stress) {
 static void ping_worker(slang_task *t, void *ctx) {
     int *sv = ctx;
     for (int i = 0; i < 200; i++) {
-        assert(write(sv[1], "p", 1) == 1);
+        assert(sock_write(sv[1], "p", 1) == 1);
         char c;
-        while (read(sv[1], &c, 1) != 1) assert(wait_code(slang_io_wait_readable(sv[1], 5000)) == 0);
+        while (sock_read(sv[1], &c, 1) != 1) assert(wait_code(slang_io_wait_readable(sv[1], 5000)) == 0);
     }
     slang_task_complete(t, NULL);
 }
@@ -224,8 +289,8 @@ static void pong_worker(slang_task *t, void *ctx) {
     int *sv = ctx;
     for (int i = 0; i < 200; i++) {
         char c;
-        while (read(sv[0], &c, 1) != 1) assert(wait_code(slang_io_wait_readable(sv[0], 5000)) == 0);
-        assert(write(sv[0], "q", 1) == 1);
+        while (sock_read(sv[0], &c, 1) != 1) assert(wait_code(slang_io_wait_readable(sv[0], 5000)) == 0);
+        assert(sock_write(sv[0], "q", 1) == 1);
     }
     slang_task_complete(t, NULL);
 }
@@ -241,8 +306,8 @@ TEST(io_worker_ping_pong) {
     slang_release(b);
     slang_io_forget(sv[0]);
     slang_io_forget(sv[1]);
-    close(sv[0]);
-    close(sv[1]);
+    sock_close(sv[0]);
+    sock_close(sv[1]);
 }
 
 TEST(io_cancel_wakes_wait) {
@@ -262,8 +327,8 @@ TEST(io_cancel_wakes_wait) {
     assert(wait_code(w) == 3);
     slang_release(scope);
     slang_io_forget(sv[0]);
-    close(sv[0]);
-    close(sv[1]);
+    sock_close(sv[0]);
+    sock_close(sv[1]);
 }
 
 static void pending_at_shutdown(void) {
@@ -432,19 +497,30 @@ TEST(net_close_race) {
 
 TEST(net_unix_udp_sendfile) {
     slang_error *err = NULL;
-    char path[64];
-    snprintf(path, sizeof path, "/tmp/slang-test-%d.sock", (int)getpid());
+    char path[512];
+    snprintf(path, sizeof path, "%s/slang-test-%d.sock", tmp_dir(), (int)getpid());
     slang_string *ps = S(path);
     int64_t l = slang_net_rt_listen_unix(ps, 0, &err);
+    bool unix_ok = true;
+#if defined(_WIN32)
+    if (err && msg_has(err, "address family not supported")) {
+        /* Wine (9.0) has no AF_UNIX; Windows 10 1803+ does: sendfile over TCP */
+        printf("  (AF_UNIX unsupported here: sendfile over loopback TCP)\n");
+        slang_release(err);
+        err = NULL;
+        unix_ok = false;
+        l = listen_lo();
+    }
+#endif
     assert(!err && l != -1);
-    assert(access(path, F_OK) == 0);
-    int64_t c = slang_net_rt_dial_unix(ps, &err);
+    if (unix_ok) assert(access(path, F_OK) == 0);
+    int64_t c = unix_ok ? slang_net_rt_dial_unix(ps, &err) : dial_lo(slang_net_rt_port(l));
     assert(!err && c != -1);
     int64_t a = accept_one(l);
     /* sendfile from a temp file */
-    char fpath[64];
-    snprintf(fpath, sizeof fpath, "/tmp/slang-test-%d.dat", (int)getpid());
-    FILE *f = fopen(fpath, "w");
+    char fpath[512];
+    snprintf(fpath, sizeof fpath, "%s/slang-test-%d.dat", tmp_dir(), (int)getpid());
+    FILE *f = fopen(fpath, "wb");
     for (int i = 0; i < 10000; i++) fputc('a' + i % 26, f);
     fclose(f);
     slang_string *fp = S(fpath);
@@ -472,7 +548,7 @@ TEST(net_unix_udp_sendfile) {
     slang_net_rt_free(a);
     slang_net_rt_free(c);
     slang_net_rt_close(l);
-    assert(access(path, F_OK) != 0);  /* the listener removed its file */
+    if (unix_ok) assert(access(path, F_OK) != 0);  /* the listener removed its file */
     slang_net_rt_free(l);
     slang_release(ps);
     slang_release(fp);
@@ -531,10 +607,15 @@ TEST(net_addresses_and_options) {
     slang__plat_addr_format(&a, buf, sizeof buf);
     assert(strcmp(buf, "@abstract") == 0);
 #endif
-    assert(slang__plat_err_class(ECONNREFUSED) == SLANG_PLAT_E_REFUSED);
-    assert(slang__plat_err_class(EPIPE) == SLANG_PLAT_E_RESET);
+#if defined(_WIN32)
+    enum { E_REFUSED = 10061 /* WSAECONNREFUSED */, E_RESET = 10054 /* WSAECONNRESET */ };
+#else
+    enum { E_REFUSED = ECONNREFUSED, E_RESET = EPIPE };
+#endif
+    assert(slang__plat_err_class(E_REFUSED) == SLANG_PLAT_E_REFUSED);
+    assert(slang__plat_err_class(E_RESET) == SLANG_PLAT_E_RESET);
     char eb[64];
-    assert(strcmp(slang__plat_strerror(ECONNREFUSED, eb, sizeof eb), "connection refused") == 0);
+    assert(strcmp(slang__plat_strerror(E_REFUSED, eb, sizeof eb), "connection refused") == 0);
     /* options round-trip */
     int64_t l = listen_lo();
     int64_t c = dial_lo(slang_net_rt_port(l));
@@ -556,6 +637,7 @@ TEST(net_addresses_and_options) {
     int64_t l2 = slang_net_rt_listen(lo, slang_net_rt_port(l1), 0, 1, &err);
     assert(l2 == -1 && err == slang_net_err_addr_in_use());
     err = NULL;
+#if !defined(_WIN32)
     /* SO_REUSEPORT: two listeners share the port */
     int64_t r1 = slang_net_rt_listen(lo, 0, 0, 2, &err);
     assert(!err);
@@ -563,6 +645,13 @@ TEST(net_addresses_and_options) {
     assert(!err && r2 != -1);
     slang_net_rt_free(r1);
     slang_net_rt_free(r2);
+#else
+    /* Windows has no SO_REUSEPORT: the listen fails instead of sharing */
+    int64_t r1 = slang_net_rt_listen(lo, 0, 0, 2, &err);
+    assert(r1 == -1 && err);
+    slang_release(err);
+    err = NULL;
+#endif
     slang_net_rt_free(l1);
     slang_release(lo);
 }
@@ -618,6 +707,11 @@ TEST(resolver_pool) {
 
 int main(int argc, char **argv) {
     printf("test_net\n");
+    {
+        slang__plat_poller *p = slang__plat_poller_new();
+        printf("  poller backend: %s\n", slang__plat_poller_backend(p));
+        slang__plat_poller_free(p);
+    }
     setenv("SLANG_WORKERS", "4", 1);
     setenv("SLANG_IO_POLLERS", "3", 1);
     int64_t live = slang_live_objects();

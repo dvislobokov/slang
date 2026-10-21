@@ -1,9 +1,8 @@
-namespace std.debug
-
 // std.debug, part 2: the program's tables, frames and values seen through
 // std.unsafe (runtime/ABI.md section 23), the value formatter (like
 // tools/lldb/slang_formatters.py) and the v1 expression evaluator
 // (variable paths and comparisons).
+namespace std.debug
 
 func rd(addr int) int {
     return std.unsafe.ReadInt(addr, 8)
@@ -292,6 +291,11 @@ func dynamic(addr int, ti int) child {
     var k = tiKind(ti)
     if k == kAny() {
         var t = rd(addr + 8)
+        var tk = tiKind(t)
+        if t != 0 && tk >= kBool() && tk <= kChar() {
+            // A scalar is held inline: the data word is the value.
+            return child{name: "", addr: addr, ti: t}
+        }
         return child{name: "", addr: rd(addr), ti: t}
     }
     var vt = rd(addr + 8)

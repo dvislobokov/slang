@@ -173,6 +173,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Calls runtime function `name`.
     pub(crate) fn call_rt(&mut self, name: &str, args: &[BasicMetadataValueEnum<'ctx>]) -> Option<BasicValueEnum<'ctx>> {
+        if let Some(f) = self.rc_inline_fn(name) {
+            self.b.build_call(f, args, "").unwrap();
+            return None;
+        }
         let f = self.rt(name);
         self.call_c(f, args)
     }

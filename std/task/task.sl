@@ -1,11 +1,10 @@
-namespace std.task
-
 // The Slang-source part of std.task (see sema/stdsrc.rs for the rules).
 // Delay, Yield, All and Any are runtime functions (stdlib.rs); the types
 // here are built from three runtime primitives: signals (rtSignal: a
 // pending Task<void> that rtFire completes once), per-object spin locks
 // (rtLock/rtUnlock on an int field, held only for a few statements, never
 // across an await) and the task context slot (rtGetCtx/rtSetCtx).
+namespace std.task
 
 // Mutex is an async mutual-exclusion lock. The zero value is unlocked;
 // `await m.Lock()` waits until the caller owns it, `m.Unlock()` hands it
@@ -15,6 +14,7 @@ struct Mutex {
     locked  bool
     waiters []Task<void>
 
+    // Lock waits until the mutex is free and takes it (FIFO among waiters).
     func Lock() Task<void> {
         rtLock(&this.guard)
         if !this.locked {
@@ -28,6 +28,7 @@ struct Mutex {
         return s
     }
 
+    // TryLock takes the mutex if it is free; reports whether it did.
     func TryLock() bool {
         rtLock(&this.guard)
         var ok = !this.locked
@@ -36,6 +37,7 @@ struct Mutex {
         return ok
     }
 
+    // Unlock releases the mutex, handing it to the oldest waiter; it panics if not locked.
     func Unlock() {
         rtLock(&this.guard)
         if !this.locked {
@@ -64,6 +66,7 @@ struct WaitGroup {
     n       int
     waiters []Task<void>
 
+    // Add adds n (may be negative) to the counter; it panics if the counter goes negative.
     func Add(n int) {
         rtLock(&this.guard)
         this.n += n
@@ -83,10 +86,12 @@ struct WaitGroup {
         }
     }
 
+    // Done decrements the counter by one.
     func Done() {
         this.Add(-1)
     }
 
+    // Count returns the current counter.
     func Count() int {
         rtLock(&this.guard)
         var n = this.n
@@ -94,6 +99,7 @@ struct WaitGroup {
         return n
     }
 
+    // Wait waits until the counter is zero.
     func Wait() Task<void> {
         rtLock(&this.guard)
         if this.n == 0 {
@@ -116,6 +122,7 @@ struct WaitGroup {
 struct Channel<T> {
     st *chanState<T>
 
+    // New makes a channel with a buffer of capacity values (0: unbuffered); the same as `task.Channel<T>(capacity)`.
     static func New(capacity int) Channel<T> {
         if capacity < 0 {
             panic("negative channel capacity")
@@ -123,10 +130,12 @@ struct Channel<T> {
         return Channel<T>{st: new chanState<T>{capacity: capacity}}
     }
 
+    // Send waits for room (or a receiver) and sends v; it panics on a closed channel.
     func Send(v T) Task<void> {
         return this.st.send(v)
     }
 
+    // Recv waits for a value; it fails once the channel is closed and drained.
     func Recv() Task<T!> {
         return this.st.recv()
     }
@@ -141,6 +150,7 @@ struct Channel<T> {
         return (v, true)
     }
 
+    // Close closes the channel: pending and later receives drain the buffer, then fail.
     func Close() {
         this.st.close()
     }
@@ -153,10 +163,12 @@ struct Channel<T> {
         return n
     }
 
+    // Cap returns the buffer capacity.
     func Cap() int {
         return this.st.capacity
     }
 
+    // IsClosed reports whether Close was called.
     func IsClosed() bool {
         rtLock(&this.st.guard)
         var c = this.st.closed
@@ -335,6 +347,7 @@ async func Timeout<T>(t Task<T>, ms int) bool {
 struct Key<T> {
     id int
 
+    // New returns a fresh key (the same as `task.Key<T>()`).
     static func New() Key<T> {
         return Key<T>{id: rtNextKey()}
     }
@@ -426,10 +439,12 @@ func RunWith<T>(c Context, f func() Task<T>) Task<T> {
 struct CancelHandle {
     Context Context
 
+    // Cancel cancels the context and every task started in it.
     func Cancel() {
         rtCancel(this.Context.scope)
     }
 
+    // IsCancelled reports whether Cancel was called.
     func IsCancelled() bool {
         return rtScopeCancelled(this.Context.scope)
     }

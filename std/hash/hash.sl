@@ -1,11 +1,11 @@
-namespace std.hash
-
 // std.hash: the streaming hash interfaces (Go's hash.Hash, Hash32,
 // Hash64) implemented by std.hash.fnv, crc32, crc64, adler32 and
 // maphash, plus Combine for building hash keys from several values.
+namespace std.hash
 
 // A streaming hash: Write data (never fails), then Sum.
 interface Hasher {
+    // Write adds p to the hash; it never fails.
     func Write(p []byte) int!
     // Default: Write of the string's bytes (implementations may override).
     func WriteString(s string) int! {
@@ -14,37 +14,51 @@ interface Hasher {
     // The hash of everything written so far (big-endian bytes); does not
     // change the state.
     func Sum() []byte
+    // Reset restores the initial state.
     func Reset()
     // Number of bytes Sum returns.
     func Size() int
+    // BlockSize returns the hash's underlying block size in bytes.
     func BlockSize() int
 }
 
 // A Hasher with a 32-bit result.
 interface Hash32 {
+    // Write adds p to the hash; it never fails.
     func Write(p []byte) int!
     // Default: Write of the string's bytes (implementations may override).
     func WriteString(s string) int! {
         return this.Write(std.strings.Bytes(s))?
     }
+    // Sum returns the hash as big-endian bytes.
     func Sum() []byte
+    // Reset restores the initial state.
     func Reset()
+    // Size returns the number of bytes Sum returns.
     func Size() int
+    // BlockSize returns the hash's underlying block size in bytes.
     func BlockSize() int
+    // Sum32 returns the 32-bit hash.
     func Sum32() uint32
 }
 
 // A Hasher with a 64-bit result.
 interface Hash64 {
+    // Write adds p to the hash; it never fails.
     func Write(p []byte) int!
     // Default: Write of the string's bytes (implementations may override).
     func WriteString(s string) int! {
         return this.Write(std.strings.Bytes(s))?
     }
+    // Sum returns the hash as big-endian bytes.
     func Sum() []byte
+    // Reset restores the initial state.
     func Reset()
+    // Size returns the number of bytes Sum returns.
     func Size() int
+    // BlockSize returns the hash's underlying block size in bytes.
     func BlockSize() int
+    // Sum64 returns the 64-bit hash.
     func Sum64() uint
 }
 

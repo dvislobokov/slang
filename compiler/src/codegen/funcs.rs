@@ -31,11 +31,24 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         // a drop flag.
         let mut slots = Vec::with_capacity(f.locals.len());
         let mut flags = Vec::with_capacity(f.locals.len());
-        for l in &f.locals {
-            let cell = l.captured || l.address_taken;
-            let ty = if cell { self.ptr_ty().into() } else { self.llty(l.ty) };
-            let p = self.entry_alloca(ty, &l.name, true);
-            slots.push(Some(LocalSlot { ptr: p, cell }));
+        // Escape analysis: address-taken locals and `new` objects that do
+        // not escape live on the stack, in allocas with an immortal header.
+        let stack = crate::hir::ownership::stack_locals(self.prog, f, &self.strict_facts);
+        for (i, l) in f.locals.iter().enumerate() {
+            let cell = (l.captured || l.address_taken) && stack[i] != crate::hir::ownership::StackKind::Cell;
+            let (p, stack_obj) = match stack[i] {
+                crate::hir::ownership::StackKind::Cell => (self.stack_object(l.ty, &l.name), None),
+                crate::hir::ownership::StackKind::New => {
+                    let crate::types::Type::Pointer(t) = self.ty(l.ty).clone() else { unreachable!("stack new of a non-pointer") };
+                    let obj = self.stack_object(t, &format!("{}.obj", l.name));
+                    (self.entry_alloca(self.ptr_ty().into(), &l.name, true), Some(obj))
+                }
+                crate::hir::ownership::StackKind::Normal => {
+                    let ty = if cell { self.ptr_ty().into() } else { self.llty(l.ty) };
+                    (self.entry_alloca(ty, &l.name, true), None)
+                }
+            };
+            slots.push(Some(LocalSlot { ptr: p, cell, stack_obj }));
             flags.push(if !cell && self.has_dtor(l.ty) { Some(self.entry_alloca(self.ctx.bool_type().into(), "dflag", true)) } else { None });
         }
         self.fs_mut().locals = slots;
@@ -125,7 +138,24 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if self.fs().borrowed.get(l.0 as usize).copied().unwrap_or(false) {
             return;
         }
-        if slot.cell {
+        if let (Some(_), crate::types::Type::Pointer(t)) = (slot.stack_obj, self.ty(info.ty).clone()) {
+            // A stack `new` object: release its fields (running `Drop`), not
+            // the object; NULL when not initialised (or already released).
+            let p = self.b.build_load(self.ptr_ty(), slot.ptr, "sobj").unwrap().into_pointer_value();
+            if self.needs_rc(t) {
+                let rel = self.block("sobj.drop");
+                let done = self.block("sobj.done");
+                let nn = self.b.build_is_not_null(p, "").unwrap();
+                self.b.build_conditional_branch(nn, rel, done).unwrap();
+                self.b.position_at_end(rel);
+                self.rc_slot(t, p, false);
+                self.b.build_unconditional_branch(done).unwrap();
+                self.b.position_at_end(done);
+            }
+            if zero {
+                self.b.build_store(slot.ptr, self.ptr_ty().const_null()).unwrap();
+            }
+        } else if slot.cell {
             let c = self.b.build_load(self.ptr_ty(), slot.ptr, "cell").unwrap();
             self.call_rt("slang_release", &[c.into()]);
             if zero {
@@ -219,6 +249,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     fn local_info(&self, l: LocalId) -> (&'a hir::Local, LocalSlot<'ctx>) {
         let f = self.fs().hir.expect("codegen: local outside a function");
         (&f.locals[l.0 as usize], self.fs().locals[l.0 as usize].expect("codegen: local without slot"))
+    }
+
+    /// A stack object `{i64 -1, ptr null, T}` (immortal header, zeroed
+    /// payload) in the entry block; returns the payload address.
+    pub(crate) fn stack_object(&mut self, t: TypeId, name: &str) -> PointerValue<'ctx> {
+        let st = self.ctx.struct_type(&[self.i64_ty().into(), self.ptr_ty().into(), self.llty(t)], false);
+        let obj = self.entry_alloca(st.into(), name, true);
+        // The header is written once, at function entry, like the zeroing.
+        let ib = &self.fs().init_b;
+        ib.build_store(obj, self.i64_ty().const_all_ones()).unwrap();
+        unsafe { ib.build_in_bounds_gep(self.ctx.i8_type(), obj, &[self.i64_ty().const_int(16, false)], "") }.unwrap()
     }
 
     /// Address of the value of local `l`.

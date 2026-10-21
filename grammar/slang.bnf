@@ -86,7 +86,8 @@ attribute_arg ::= ((IDENTIFIER | DEFAULT) COLON)? expr
 // Declarations
 // ---------------------------------------------------------------------------
 
-struct_decl ::= STRUCT IDENTIFIER generic_params? implements_clause? LBRACE struct_member* RBRACE
+// `default` is allowed as a struct name (the `@default("now()")` attribute of std.data)
+struct_decl ::= STRUCT (IDENTIFIER | DEFAULT) generic_params? implements_clause? LBRACE struct_member* RBRACE
 // `implements` is a contextual keyword (an IDENTIFIER spelled "implements").
 implements_clause ::= IDENTIFIER type (COMMA type)*
 struct_member ::= attribute* (method_decl | field_decl | embed_decl) eos?
@@ -183,7 +184,9 @@ try_expr ::= TRY expr (CATCH var_name block | ELSE else_value)
 else_value ::= CONTINUE | BREAK | return_stmt | expr
 // `async` lambdas return Task<T> when called.
 lambda_expr ::= ASYNC? FUNC LPAREN param_list? RPAREN type? block
-              | ASYNC? LPAREN param_list? RPAREN ARROW (block | expr)
+              | ASYNC? LPAREN (param_list | lambda_names)? RPAREN ARROW (block | expr)
+// `(u) => ...`: parameter types from the expected function type (sema)
+lambda_names ::= IDENTIFIER (COMMA IDENTIFIER)*
 
 or_expr ::= and_expr (OROR and_expr)*
 and_expr ::= cmp_expr (ANDAND cmp_expr)*

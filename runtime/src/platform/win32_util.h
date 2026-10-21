@@ -1,5 +1,6 @@
 /* win32_util.h - helpers shared by the Windows files of the platform layer
- * (win32.c, fs_win32.c, proc_win32.c, net_win32.c, poll_wsapoll.c). Only
+ * (win32.c, fs_win32.c, proc_win32.c, net_win32.c, poll_iocp.c,
+ * poll_wsapoll.c, prof_win32.c, tz_win32.c, certroots.c, sqlite_win32.c). Only
  * included on _WIN32. */
 #ifndef SLANG_WIN32_UTIL_H
 #define SLANG_WIN32_UTIL_H
@@ -37,5 +38,26 @@ SLANG_PLAT_HIDDEN void slang__w32_console_fd_write(int64_t fd, const char *p, si
 SLANG_PLAT_HIDDEN void slang__w32_wsa_init(void);
 /* A connected pair of loopback TCP sockets (not inherited); 0 or a WSA error. */
 SLANG_PLAT_HIDDEN int slang__w32_socketpair(SOCKET sv[2]);
+
+/* Child-process pipes of proc_win32.c for poll_iocp.c: the parent's handle
+ * of pipe descriptor fd and its direction (false: not such a pipe); whether
+ * its write is still in flight; whether ov is the OVERLAPPED of a pipe's
+ * write (and which descriptor). */
+SLANG_PLAT_HIDDEN bool slang__w32_pipe_of(int64_t fd, HANDLE *h, bool *write);
+SLANG_PLAT_HIDDEN bool slang__w32_pipe_write_busy(int64_t fd);
+SLANG_PLAT_HIDDEN bool slang__w32_pipe_write_ov(const void *ov, int64_t *fd);
+/* True if the pollers are IOCP ones, which can wait on named pipes
+ * (proc_win32.c then uses them instead of relay threads). */
+SLANG_PLAT_HIDDEN bool slang__w32_poller_waits_pipes(void);
+
+/* The WSAPoll poller (poll_wsapoll.c), the fallback of poll_iocp.c; same
+ * contract as slang__plat_poller_*. */
+typedef struct slang__w32_wsapoll slang__w32_wsapoll;
+SLANG_PLAT_HIDDEN slang__w32_wsapoll *slang__w32_wsapoll_new(void);
+SLANG_PLAT_HIDDEN void slang__w32_wsapoll_free(slang__w32_wsapoll *p);
+SLANG_PLAT_HIDDEN int slang__w32_wsapoll_arm(slang__w32_wsapoll *p, int64_t fd, int32_t interest, uint64_t token, bool registered);
+SLANG_PLAT_HIDDEN void slang__w32_wsapoll_remove(slang__w32_wsapoll *p, int64_t fd);
+SLANG_PLAT_HIDDEN int slang__w32_wsapoll_wait(slang__w32_wsapoll *p, slang__plat_event *evs, int max, int64_t timeout_ms);
+SLANG_PLAT_HIDDEN void slang__w32_wsapoll_wake(slang__w32_wsapoll *p);
 
 #endif

@@ -6,8 +6,66 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int64_t g_live_objects;
-static int64_t g_total_objects; /* objects ever allocated (std.diag) */
+/* ---- object counts ----
+ * Live and total object counts are kept per thread (no shared atomic on
+ * the allocation path) and summed on demand: every thread that allocates
+ * registers its counters once; an exiting thread folds them into g_dead. */
+typedef struct obj_stats {
+    int64_t live, total;           /* written by the owner thread, read by others */
+    struct obj_stats *next, *prev;
+    int reg;
+} obj_stats;
+static _Thread_local obj_stats t_stats;
+static obj_stats g_stats_head = { 0, 0, &g_stats_head, &g_stats_head, 1 };
+static int64_t g_dead_live, g_dead_total;   /* exited threads (g_stats_mu) */
+static slang__plat_mutex g_stats_mu = SLANG_PLAT_MUTEX_INIT;
+static slang__plat_once g_stats_once = SLANG_PLAT_ONCE_INIT;
+static slang__plat_tls_key g_stats_key;
+static int g_stats_keyed;
+
+/* Set before the process gets a second thread (slang_threaded, ABI.md 3.2). */
+uint8_t slang_threaded;
+
+static void stats_exit(void *arg) {
+    obj_stats *st = arg;
+    slang__plat_mutex_lock(&g_stats_mu);
+    st->prev->next = st->next;
+    st->next->prev = st->prev;
+    g_dead_live += st->live;
+    g_dead_total += st->total;
+    st->live = st->total = 0;
+    st->reg = 0;
+    slang__plat_mutex_unlock(&g_stats_mu);
+}
+
+static void stats_key_init(void) { g_stats_keyed = slang__plat_tls_new(&g_stats_key, stats_exit); }
+
+__attribute__((noinline, cold)) static void stats_register(void) {
+    slang__plat_once_run(&g_stats_once, stats_key_init);
+    if (g_stats_keyed) slang__plat_tls_set(g_stats_key, &t_stats);
+    slang__plat_mutex_lock(&g_stats_mu);
+    t_stats.next = g_stats_head.next;
+    t_stats.prev = &g_stats_head;
+    g_stats_head.next->prev = &t_stats;
+    g_stats_head.next = &t_stats;
+    t_stats.reg = 1;
+    slang__plat_mutex_unlock(&g_stats_mu);
+}
+
+static inline void stats_add(int64_t live, int64_t total) {
+    if (__builtin_expect(!t_stats.reg, 0)) stats_register();
+    __atomic_store_n(&t_stats.live, t_stats.live + live, __ATOMIC_RELAXED);
+    if (total) __atomic_store_n(&t_stats.total, t_stats.total + total, __ATOMIC_RELAXED);
+}
+
+static int64_t stats_sum(int which) {
+    slang__plat_mutex_lock(&g_stats_mu);
+    int64_t n = which ? g_dead_total : g_dead_live;
+    for (obj_stats *st = g_stats_head.next; st != &g_stats_head; st = st->next)
+        n += __atomic_load_n(which ? &st->total : &st->live, __ATOMIC_RELAXED);
+    slang__plat_mutex_unlock(&g_stats_mu);
+    return n;
+}
 
 /* ---- leak tracking ----
  * Mode 0: off. Mode 1: count live objects and report the count at shutdown.
@@ -22,10 +80,16 @@ static int g_track; /* prefix in use (fixed before the first allocation) */
 static track g_track_head = { &g_track_head, &g_track_head };
 static slang__plat_mutex g_track_mu = SLANG_PLAT_MUTEX_INIT;
 
+static void leak_report(void);
+/* Set by slang_leak_check_enable, so programs built without --leak-check do
+ * not link the report. */
+static void (*g_leak_report)(void);
+
 void slang_leak_check_enable(int32_t mode) {
     g_leak_mode = mode;
+    g_leak_report = leak_report;
     /* The prefix can only be used if no object exists yet. */
-    if (mode >= 2 && __atomic_load_n(&g_live_objects, __ATOMIC_RELAXED) == 0) g_track = 1;
+    if (mode >= 2 && stats_sum(0) == 0) g_track = 1;
 }
 
 static void track_add(slang_object *o) {
@@ -282,8 +346,7 @@ static inline slang_object *object_alloc(const slang_type_info *type, int64_t si
     }
     o->refcount = 1;
     o->type = type;
-    __atomic_add_fetch(&g_live_objects, 1, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&g_total_objects, 1, __ATOMIC_RELAXED);
+    stats_add(1, 1);
     return o;
 }
 
@@ -298,7 +361,7 @@ slang_object *slang__object_new_uninit(const slang_type_info *type, int64_t size
 }
 
 static void object_free(slang_object *o) {
-    __atomic_sub_fetch(&g_live_objects, 1, __ATOMIC_RELAXED);
+    stats_add(-1, 0);
     if (SLAB_ENABLED && slab_is(o)) {
         slab_free(o);
     } else if (g_track) {
@@ -343,26 +406,49 @@ slang_object *slang__object_resize(slang_object *o, int64_t size) {
 void slang__object_immortalize(slang_object *o) {
     if (o->refcount < 0) return;
     o->refcount = SLANG_RC_IMMORTAL;
-    __atomic_sub_fetch(&g_live_objects, 1, __ATOMIC_RELAXED);
+    stats_add(-1, 0);
     if (g_track) track_remove(o);
+}
+
+/* The view block a view's refcount word forwards to (ABI.md 4.1). */
+static inline slang_object *view_block(int64_t rc) {
+    return (slang_object *)(uintptr_t)(rc & ~SLANG_RC_VIEW);
 }
 
 void slang_retain(void *obj) {
     if (!obj) return;
     slang_object *o = obj;
-    if (__atomic_load_n(&o->refcount, __ATOMIC_RELAXED) < 0) return;
-    __atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED);
+    int64_t n = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
+    if (n < 0) {
+        if (!slang_rc_is_view(n)) return;
+        o = view_block(n);
+        n = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
+    }
+    if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED))
+        __atomic_store_n(&o->refcount, n + 1, __ATOMIC_RELAXED);   /* one thread: no RMW */
+    else
+        __atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED);
 }
+
 
 void slang_release(void *obj) {
     if (!obj) return;
     slang_object *o = obj;
     int64_t n = __atomic_load_n(&o->refcount, __ATOMIC_ACQUIRE);
-    if (n < 0) return;
+    if (n < 0) {
+        if (!slang_rc_is_view(n)) return;
+        o = view_block(n);   /* blocks are never views or immortal */
+        n = __atomic_load_n(&o->refcount, __ATOMIC_ACQUIRE);
+    }
     if (n != 1) {
-        /* Shared (or has a weak box): the decrement must be atomic. A count
-         * of exactly 1 with no weak flag means the caller holds the only
-         * reference and nobody else can retain it, so the RMW is skipped. */
+        /* Shared (or has a weak box): the decrement must be atomic unless
+         * the process has one thread. A count of exactly 1 with no weak
+         * flag means the caller holds the only reference and nobody else
+         * can retain it, so the RMW is skipped. */
+        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && n > 1 && !(n & SLANG_RC_WEAK_FLAG)) {
+            __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
+            return;
+        }
         n = __atomic_sub_fetch(&o->refcount, 1, __ATOMIC_ACQ_REL);
         if ((n & SLANG_RC_COUNT_MASK) != 0) return;
         /* Weak references are cleared before the destructor runs. */
@@ -377,16 +463,13 @@ void slang_release(void *obj) {
 int64_t slang_refcount(const void *obj) {
     if (!obj) return 0;
     int64_t rc = __atomic_load_n(&((const slang_object *)obj)->refcount, __ATOMIC_RELAXED);
+    if (slang_rc_is_view(rc)) rc = __atomic_load_n(&view_block(rc)->refcount, __ATOMIC_RELAXED);
     return rc < 0 ? rc : (rc & SLANG_RC_COUNT_MASK);
 }
 
-int64_t slang_live_objects(void) {
-    return __atomic_load_n(&g_live_objects, __ATOMIC_RELAXED);
-}
+int64_t slang_live_objects(void) { return stats_sum(0); }
 
-int64_t slang__total_objects(void) {
-    return __atomic_load_n(&g_total_objects, __ATOMIC_RELAXED);
-}
+int64_t slang__total_objects(void) { return stats_sum(1); }
 
 bool slang__heap_each(void (*cb)(const char *type, int64_t bytes, void *arg), void *arg) {
     if (!g_track) return false;
@@ -429,6 +512,10 @@ static int cmp_count(const void *a, const void *b) {
 }
 
 void slang__leak_report(void) {
+    if (g_leak_report) g_leak_report();
+}
+
+static void leak_report(void) {
     if (!g_leak_mode) return;
     int64_t live = slang_live_objects();
     if (live <= 0) return;

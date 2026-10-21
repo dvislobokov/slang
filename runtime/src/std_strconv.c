@@ -16,11 +16,7 @@ slang_string *slang_strconv_rt_format_float(double f, int64_t fmt, int64_t prec)
 double slang_strconv_rt_parse_float(const slang_string *s, slang_error **err);
 
 #define SENTINEL(fn, text)                                                                 \
-    static struct {                                                                        \
-        slang_object hdr;                                                                  \
-        int64_t len;                                                                       \
-        char data[sizeof text];                                                            \
-    } fn##_msg = {{SLANG_RC_IMMORTAL, &slang_type_string}, sizeof text - 1, text};         \
+    static SLANG_STRING_STORAGE(sizeof text) fn##_msg = SLANG_STRING_INIT(fn##_msg, text); \
     static slang_error fn##_err = {                                                        \
         .hdr = {SLANG_RC_IMMORTAL, &slang_type_error}, .message = (slang_string *)&fn##_msg, \
     };                                                                                     \
@@ -81,7 +77,7 @@ slang_string *slang_strconv_rt_format_float(double f, int64_t fmt, int64_t prec)
  * +-Inf with ErrRange, as in Go. */
 double slang_strconv_rt_parse_float(const slang_string *s, slang_error **err) {
     if (err) *err = NULL;
-    const char *p = s ? s->data : "";
+    const char *p = slang_string_cstr(s);
     int64_t n = s ? s->len : 0;
     if (n == 0 || (int64_t)strlen(p) != n || p[0] == ' ' || (p[0] >= '\t' && p[0] <= '\r')) {
         if (err) *err = slang_strconv_err_syntax();

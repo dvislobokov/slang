@@ -131,6 +131,15 @@ var (x, y) = Swap(1, 2)
 - Несколько возвращаемых значений — кортеж.
 - Замыкания: `var f = func(x int) int { return x * 2 }`, короткая форма
   `var f = (x int) => x * 2`.
+- У параметров короткой лямбды тип можно опустить, если он следует из
+  ожидаемого функционального типа (аргумент вызова, типизированная
+  переменная, поле): `var g func(string) bool = (s) => s != ""`,
+  `slices.Map(xs, (x) => x * 2)` (в вызове generic-функции — после вывода
+  параметров типа из остальных аргументов), `ctx.Users.Where((u) => u.Age >
+  18)`. Блочная лямбда без типа результата берёт его из ожидаемого типа
+  (`ctx.Transaction(async () => { ...; await ctx.SaveChanges()? })` —
+  `void!`). Без ожидаемого типа — ошибка `cannot infer the type of lambda
+  parameter u`.
 - Функции — значения первого класса, тип `func(int) int`.
 
 ## Структуры и методы
@@ -165,7 +174,8 @@ var q = Point{X: 3, Y: 4}
   как в Go) или `static func`.
 - Поля с заглавной буквы — публичные, со строчной — приватные.
 - Встраивание (композиция) как в Go: поле без имени `Base` поднимает его
-  поля и методы.
+  поля и методы (в том числе generic-методы: `ctx.Raw<User>(...)` при
+  встроенном `data.Context`).
 - Поле может иметь значение по умолчанию — константу: `Port int = 8080`.
   Оно подставляется в литерал, где поле не указано, и в `var c Config`
   без инициализатора; остальные нулевые значения (`new Config`, элементы
@@ -1274,9 +1284,22 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   на стеке, копируются при присваивании.
 - `new T{}`, срезы, map, строки, замыкания, фреймы корутин, ошибки,
   значения в интерфейсах — в куче, со счётчиком ссылок в заголовке.
+- Строки неизменяемы, поэтому подстрока (`s[a..b]`, `strings.Split`,
+  `Fields`, `TrimSpace`, `Cut`, тексты совпадений regex) может быть
+  *видом* — делить байты исходной строки без копии, как в Go; вид
+  удерживает байты родителя, пока жив сам (короткие куски дешевле
+  скопировать, и они копируются). Представление — `runtime/ABI.md` §4.1.
 - `&local`: переменная, адрес которой берётся, живёт в heap-ячейке со
-  счётчиком (в v0.1 всегда; перенос обратно на стек для адресов, которые не
-  покидают функцию, — будущая оптимизация).
+  счётчиком, если адрес может убежать. **Анализ убегания** оставляет на
+  стеке переменную, чей адрес только читается или передаётся неубегающим
+  параметрам (не сохраняется, не возвращается, не захватывается, не
+  уходит в рантайм, `defer`, интерфейс или `weak`, от неё не берутся
+  срезы и сохраняемые внутренние указатели), и так же — объект
+  `var p = new T{...}`, если `p` не переприсваивается и не убегает: тогда
+  объект лежит в кадре функции, а выход из области видимости `p`
+  освобождает его поля (с `Drop`), как освободил бы последний `release`.
+  Такой стековый объект несёт неумирающий заголовок, поэтому `*T` на него
+  выглядит как обычный. В `async`-функциях анализ не применяется.
 
 ### Указатели и владение
 
@@ -1382,12 +1405,16 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 - временные значения, живые в момент раннего выхода (`?`,
   `try ... else return/break/continue`), освобождаются на этом пути.
 
-Планируется: объекты, не убегающие из функции, без счётчика (на стеке) и
-общий перенос владения при последнем использовании переменной.
+Объекты, не убегающие из функции, живут на стеке без счётчика (см. «Что
+где живёт»). Планируется: общий перенос владения при последнем
+использовании переменной.
 
 Счётчик реально меняется только там, где объект действительно разделяется
 между несколькими владельцами. Операции атомарные, потому что задачи
-выполняются на нескольких потоках.
+выполняются на нескольких потоках; пока в процессе один поток (планировщик
+запускается при первой задаче), счётчик меняется без атомарных инструкций
+(`slang_threaded`, `runtime/ABI.md` §3.2); при `-O3` этот быстрый путь
+`retain`/`release` компилятор вставляет прямо в код.
 
 ### Циклы
 
@@ -1894,6 +1921,7 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 | `std.regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Slang |
 | `std.unicode` | классификация символов, нормализация (✓ классы и регистр по таблицам Unicode 15, `utf8`, `utf16`; нет нормализации) |
 | `std.database.sql` | единый асинхронный интерфейс к SQL с пулом и `Query<T>`; драйверы `std.database.postgres` (на Slang) и `std.database.sqlite` (системная libsqlite3) — ✓ (см. `docs/FRAMEWORK.md` §3); MySQL позже |
+| `std.data` | ORM уровня EF Core (`slang.data`) — ✓: модель из атрибутов и соглашений, `data.Context` с `data.Set<T>`, запросы с лямбдами, переведёнными в SQL при компиляции, change tracking, миграции (`slang data ...`); PostgreSQL и SQLite (см. `docs/FRAMEWORK.md` §3) |
 | `std.data.redis` | клиент Redis на Slang (уровень 3б `docs/STDLIB.md`) — ✓: RESP2/RESP3 (`HELLO 3` с откатом на RESP2), `redis.Connect(url)` (`redis://`, `rediss://`, `unix://`, AUTH, SELECT, параметры пула в URL), типизированные команды методами (`Get/Set/SetEx/SetNX/Del/Exists/Incr/Expire/TTL/MGet/MSet/H*/L*/S*/Z*/PF*/XAdd/XRange/Keys/Scan/Publish/Eval/EvalSha/Script*`; несколько значений — срезом, вариадиков нет) и `Do(args []any) Reply!`; отсутствующее значение — `redis.Nil`, ошибка сервера — `redis.Error{Code, Text}`; пул с проверкой простаивающих (PING), сроком жизни, ожиданием с таймаутом (`ErrPoolTimeout`), повторами с backoff; `Pipeline()` — задачи команд завершаются после `Exec` (одна запись в сокет); `TxPipeline` (MULTI/EXEC), `Watch(keys, fn)` (`ErrTxFailed`); `NewScript` + `Run` (EVALSHA → EVAL при NOSCRIPT); `Subscribe/PSubscribe` с `for msg in sub` и переподключением; таймауты через контекст задачи; **Sentinel** (`ConnectSentinel`: поиск мастера, подписка на `+switch-master`, повторный опрос при READONLY/сетевой ошибке, чтение с реплик); **Cluster** (`ConnectCluster`: карта слотов из `CLUSTER SLOTS`, CRC16 и hash tags, MOVED/ASK, многоключевые команды в одном слоте — иначе `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE); `GetJSON<T>/SetJSON<T>` и `redis.Get<T>/Set<T>`. Проверено на redis-server 7.0 (TLS, Sentinel с отказом мастера, Cluster из 3 узлов с миграцией слота) |
 | `std.data.kafka` | клиент Kafka на Slang без C — ✓: протокол (ApiVersions 0, Metadata 1, Produce 7/3, Fetch 10/4, ListOffsets 1, FindCoordinator 1, JoinGroup 2, SyncGroup 1, Heartbeat 1, LeaveGroup 1, OffsetCommit 2, OffsetFetch 1, SaslHandshake 1, SaslAuthenticate 0, CreateTopics 2, DeleteTopics 1, InitProducerId 0), record batch v2 (CRC-32C, gzip, zstd; snappy/lz4 нет), `NewProducer(brokers, opts)` с батчами по размеру и `LingerMs`, acks, идемпотентностью (producer id + последовательности), разбиением по murmur2 как в Java-клиенте и round-robin, `Send(topic, key, value) Task<RecordMetadata!>`; `NewConsumer(brokers, group, topics)` — группы (range/round-robin, ребаланс, heartbeat в фоновой задаче, авто- и ручной commit), `for rec in consumer`, `Poll`, `Seek`; `NewAdmin` (create/delete/list/describe); TLS, SASL PLAIN/SCRAM-SHA-256/512, обновление метаданных при смене лидера, повторы с backoff. Проверено на Kafka 3.7 (KRaft) |
 | `std.cloud.s3`, `std.cloud.blob` | клиент S3 на Slang — ✓: AWS Signature V4 (заголовки и presigned URL; векторы AWS и botocore), `s3.NewClient(Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle})` для AWS, MinIO, R2, GCS; `PutObject` (тип, метаданные, ACL, `If-None-Match`), `GetObject` потоком и диапазоном, `GetObjectBytes`, `HeadObject`, `DeleteObject(s)`, `ListObjectsV2` и итератор `List` с префиксами и разделителем, `CopyObject`, бакеты (`Create/Delete/List/Exists`), multipart `Upload(bucket, key, reader, partSize, concurrency)` с параллельными частями и отменой при ошибке, `Presign`, типизированные ошибки (`s3.Error`, `ErrNoSuchKey`…), повторы при 5xx/SlowDown, учётные данные из env, `~/.aws/credentials` и IMDSv2; `std.cloud.blob.Bucket` поверх S3 (`OpenS3`) и каталога (`OpenDir`). Проверено на MinIO |
@@ -1909,7 +1937,7 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 Поверх стандартной библиотеки строится фреймворк уровня ASP.NET Core:
 `slang.web` (маршруты через атрибуты, DI, middleware, OpenAPI),
 `slang.data` (ORM уровня EF Core с переводом лямбд в SQL при компиляции и
-миграциями), `slang.log` (структурированный логгер уровня Serilog с sinks и
+миграциями; реализован как `std.data`, см. ниже), `slang.log` (структурированный логгер уровня Serilog с sinks и
 enrichers), `slang.diag` (профилировщик CPU/памяти/задач в формате pprof,
 метрики, OpenTelemetry, `slang tool pprof`). Подробно: `docs/FRAMEWORK.md`.
 
@@ -1923,6 +1951,28 @@ enrichers), `slang.diag` (профилировщик CPU/памяти/задач
 зависимость, которую программа нигде не регистрирует, — ошибки компиляции.
 Внутри таких экземпляров `T.New(...)` с параметром типа, связанным со
 структурой, вызывает её статический метод.
+
+**Перевод лямбд в SQL при компиляции (`std.data`).** `slang.data` тоже
+живёт в stdlib как `std.data` (docs/FRAMEWORK.md §3). Лямбда, переданная
+литералом в `Where`, `OrderBy`, `Select`, `GroupBy`, `Join`, `Sum`,
+`ExecuteUpdate`, ... у получателя `data.Set<T>`/`data.Query<T>`, не
+становится замыканием: компилятор (`sema/orm_sql.rs`) обходит её тело, где
+параметр означает строку таблицы (`t0`), и строит фрагмент SQL сразу для
+обоих диалектов (PostgreSQL и SQLite): поля — столбцы по модели
+(атрибуты `@table/@key/@column/...`, соглашения, `Configure`), операторы,
+`&&`/`||`/`!`, `nil`-проверки, строковые `Contains/StartsWith/EndsWith/
+ToUpper/ToLower`, `len`, `slices.Contains` (`IN`), навигации (`EXISTS`,
+скалярные подзапросы). Каждое подвыражение, не упоминающее параметр
+(захваченные переменные, вызовы вроде `time.Now()`), вычисляется один раз
+в объемлющей области и уходит в запрос параметром. В HIR вызов становится
+вызовом метода библиотеки с SQL в виде строковых констант (`{?i}` —
+место параметра) и срезом аргументов; `Select` ещё порождает типизированный
+маппер строки в кортеж, структуру или скаляр, а `data.Open<C>()` и
+`modelOf<T>()` — модель и доступ к полям без рефлексии во время
+выполнения. Всё, что нельзя перевести (вызов своей функции, метод без
+SQL-аналога, `await`, сравнение несовместимых типов), — ошибка компиляции
+`expression cannot be translated to SQL: ...` с подсказкой про
+`AsEnumerable()`, а не тихая загрузка таблицы в память.
 
 ### GUI
 
@@ -2135,7 +2185,8 @@ range       = [ expr ] ".." [ expr ] ;
 primary     = literal | ident | path [ typeargs ] "{" [ fields ] "}" | "new" primary
             | "(" expr ")" | "(" exprs ")" | lambda ;
 lambda      = [ "async" ] "func" "(" [ params ] ")" [ type ] block
-            | [ "async" ] "(" [ params ] ")" "=>" ( block | expr ) ;
+            | [ "async" ] "(" [ params | idents ] ")" "=>" ( block | expr ) ;
+                                              (* untyped "(u) =>": types from the expected func type *)
 ```
 
 ## Этапы реализации

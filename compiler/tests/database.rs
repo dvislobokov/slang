@@ -11,84 +11,23 @@
 //! `openssl` the test is skipped with a note; the protocol is still covered
 //! by the mock-server spec test `tests/spec/stdlib4/postgres_mock.sl`.
 
-use std::net::TcpListener;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
-}
-
-fn pg_bindir() -> Option<PathBuf> {
-    if let Ok(o) = Command::new("pg_config").arg("--bindir").output() {
-        if o.status.success() {
-            let d = PathBuf::from(String::from_utf8_lossy(&o.stdout).trim());
-            if d.join("initdb").is_file() {
-                return Some(d);
-            }
-        }
-    }
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir("/usr/lib/postgresql").ok()?.filter_map(|e| e.ok()).map(|e| e.path().join("bin")).filter(|p| p.join("initdb").is_file()).collect();
-    dirs.sort();
-    dirs.pop()
-}
-
-fn is_root() -> bool {
-    Command::new("id").arg("-u").output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0").unwrap_or(false)
-}
-
-/// Runs a PostgreSQL tool (as `postgres` when root).
-fn pg(bin: &Path, tool: &str, args: &[&str], root: bool) -> std::process::Output {
-    let exe = bin.join(tool);
-    let mut cmd = if root {
-        let mut c = Command::new("runuser");
-        c.arg("-u").arg("postgres").arg("--").arg(&exe);
-        c
-    } else {
-        Command::new(&exe)
-    };
-    cmd.args(args).stdin(Stdio::null()).output().expect("cannot run a PostgreSQL tool")
-}
-
-struct Cluster {
-    bin: PathBuf,
-    data: PathBuf,
-    root: bool,
-}
-
-impl Drop for Cluster {
-    fn drop(&mut self) {
-        let d = self.data.to_string_lossy().to_string();
-        let _ = pg(&self.bin, "pg_ctl", &["-D", &d, "-m", "immediate", "-w", "stop"], self.root);
-    }
-}
+#[path = "support/pgcluster.rs"]
+mod pgcluster;
+use pgcluster::{pg, repo};
 
 #[test]
 fn postgres_real_server() {
-    let Some(bin) = pg_bindir() else {
-        eprintln!("skipping: PostgreSQL binaries (initdb, pg_ctl) not found");
-        return;
-    };
+    let Some(bin) = pgcluster::available() else { return };
     if Command::new("openssl").arg("version").output().map(|o| !o.status.success()).unwrap_or(true) {
         eprintln!("skipping: openssl not found");
         return;
     }
-    let root = is_root();
-    if root && Command::new("id").arg("postgres").output().map(|o| !o.status.success()).unwrap_or(true) {
-        eprintln!("skipping: running as root without a postgres user");
-        return;
-    }
+    let root = pgcluster::is_root();
     let dir = std::env::temp_dir().join(format!("slang_pgtest_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    if root {
-        assert!(Command::new("chown").arg("postgres").arg(&dir).status().unwrap().success());
-    }
+    let cluster = pgcluster::init(&dir);
     let ds = dir.to_string_lossy().to_string();
-    let data = dir.join("data");
-    let dd = data.to_string_lossy().to_string();
-    let out = pg(&bin, "initdb", &["-D", &dd, "-A", "trust", "-U", "postgres", "--no-sync"], root);
-    assert!(out.status.success(), "initdb failed:\n{}", String::from_utf8_lossy(&out.stderr));
     let ok = Command::new("openssl")
         .current_dir(&dir)
         .args(["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-keyout", "server.key", "-out", "server.crt", "-days", "3650", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"])
@@ -99,17 +38,9 @@ fn postgres_real_server() {
         Command::new("chown").arg("postgres").arg(dir.join("server.key")).arg(dir.join("server.crt")).status().unwrap();
     }
     Command::new("chmod").arg("600").arg(dir.join("server.key")).status().unwrap();
-    std::fs::write(
-        data.join("pg_hba.conf"),
-        "local all all trust\nhost all md5u 127.0.0.1/32 md5\nhost all scramu 127.0.0.1/32 scram-sha-256\nhost all pwu 127.0.0.1/32 password\nhostssl all sslu 127.0.0.1/32 trust\nhostnossl all sslu 127.0.0.1/32 reject\nhost all all 127.0.0.1/32 trust\n",
-    )
-    .unwrap();
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port().to_string();
-    let opts = format!("-p {port} -k {ds} -c listen_addresses=127.0.0.1 -c ssl=on -c ssl_cert_file={ds}/server.crt -c ssl_key_file={ds}/server.key -c fsync=off");
-    let log = format!("{ds}/server.log");
-    let start = pg(&bin, "pg_ctl", &["-D", &dd, "-o", &opts, "-l", &log, "-w", "-t", "30", "start"], root);
-    let _cluster = Cluster { bin: bin.clone(), data: data.clone(), root };
-    assert!(start.status.success(), "pg_ctl start failed:\n{}\n{}", String::from_utf8_lossy(&start.stderr), std::fs::read_to_string(&log).unwrap_or_default());
+    let hba = "local all all trust\nhost all md5u 127.0.0.1/32 md5\nhost all scramu 127.0.0.1/32 scram-sha-256\nhost all pwu 127.0.0.1/32 password\nhostssl all sslu 127.0.0.1/32 trust\nhostnossl all sslu 127.0.0.1/32 reject\nhost all all 127.0.0.1/32 trust\n";
+    let _cluster = cluster.launch(Some(hba), &format!("-c ssl=on -c ssl_cert_file={ds}/server.crt -c ssl_key_file={ds}/server.key"));
+    let port = _cluster.port.clone();
     let setup = pg(
         &bin,
         "psql",

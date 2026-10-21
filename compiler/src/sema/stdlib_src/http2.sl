@@ -1,5 +1,3 @@
-namespace std.net.http
-
 // HTTP/2 (RFC 9113) over a `conn`: frames, streams, flow control, SETTINGS,
 // PING, GOAWAY (priority signals are ignored, server push is not
 // implemented and disabled), header compression by std.net.http.hpack.
@@ -11,6 +9,7 @@ namespace std.net.http
 // in hostPool.h2); there is no background reader task: a request that
 // waits for its response reads and dispatches frames itself while it holds
 // the connection's reader token, and hands the token over when it is done.
+namespace std.net.http
 
 // ---- frames -----------------------------------------------------------------
 

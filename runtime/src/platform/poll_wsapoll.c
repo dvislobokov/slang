@@ -1,16 +1,12 @@
-/* poll_wsapoll.c - readiness poller on Windows (platform.h), version 1:
+/* poll_wsapoll.c - fallback readiness poller on Windows (platform.h):
  * WSAPoll over the armed sockets of the poller plus a loopback UDP socket
  * as the wake-up channel.
  *
- * Why not IOCP yet: the interface is readiness-based (arm one-shot, report,
- * caller retries the non-blocking call), and IOCP is completion-based. The
- * planned adapter (docs/PLATFORMS.md) emulates readiness with zero-byte
- * WSARecv/WSASend or IOCTL_AFD_POLL operations whose completions carry the
- * token; it keeps this file's contract, so task_io.c and std_net.c do not
- * change. WSAPoll gives the same semantics today with far less machinery,
- * at the cost of O(armed sockets) per wait and one wake-up per arm while a
- * wait is in progress; that is fine for clients and moderate servers, the
- * IOCP backend is for high connection counts.
+ * The default backend is poll_iocp.c (IOCP + IOCTL_AFD_POLL); it falls
+ * back to this one when \Device\Afd cannot be opened, or on request with
+ * SLANG_POLLER=wsapoll (for comparisons). Both keep the same contract.
+ * WSAPoll costs O(armed sockets) per wait and one wake-up per arm while a
+ * wait is in progress; fine for clients and moderate servers.
  *
  * One-shot level triggering: arm() records the interest and token; wait()
  * snapshots the armed sockets, polls them, and reports (and disarms) each
@@ -34,21 +30,22 @@ typedef struct entry {
     int32_t interest;  /* 0 = disarmed */
 } entry;
 
-struct slang__plat_poller {
+struct slang__w32_wsapoll {
     slang__plat_mutex mu;
     entry *e;
     int n, cap;
     SOCKET wake;          /* UDP socket connected to itself */
     volatile LONG waiting;  /* a wait is between snapshot and WSAPoll return */
     volatile LONG woken;    /* a wake datagram is in flight */
+    volatile LONG epoch;    /* bumped whenever a WSAPoll call returns */
     WSAPOLLFD *pfd;       /* scratch of the waiting thread */
     uint64_t *ptok;
     int pcap;
 };
 
-slang__plat_poller *slang__plat_poller_new(void) {
+slang__w32_wsapoll *slang__w32_wsapoll_new(void) {
     slang__w32_wsa_init();
-    slang__plat_poller *p = calloc(1, sizeof *p);
+    slang__w32_wsapoll *p = calloc(1, sizeof *p);
     if (!p) return NULL;
     slang__plat_mutex_init(&p->mu);
     SOCKET s = WSASocketW(AF_INET, SOCK_DGRAM, 0, NULL, 0, 0x80 /* WSA_FLAG_NO_HANDLE_INHERIT */);
@@ -69,7 +66,7 @@ slang__plat_poller *slang__plat_poller_new(void) {
     return p;
 }
 
-void slang__plat_poller_free(slang__plat_poller *p) {
+void slang__w32_wsapoll_free(slang__w32_wsapoll *p) {
     if (!p) return;
     closesocket(p->wake);
     free(p->e);
@@ -78,20 +75,20 @@ void slang__plat_poller_free(slang__plat_poller *p) {
     free(p);
 }
 
-static void wake_if_waiting(slang__plat_poller *p) {
+static void wake_if_waiting(slang__w32_wsapoll *p) {
     if (InterlockedCompareExchange(&p->waiting, 0, 0) && !InterlockedExchange(&p->woken, 1)) {
         char b = 1;
         send(p->wake, &b, 1, 0);
     }
 }
 
-static int find(slang__plat_poller *p, SOCKET s) {
+static int find(slang__w32_wsapoll *p, SOCKET s) {
     for (int i = 0; i < p->n; i++)
         if (p->e[i].s == s) return i;
     return -1;
 }
 
-int slang__plat_poller_arm(slang__plat_poller *p, int64_t fd, int32_t interest, uint64_t token, bool registered) {
+int slang__w32_wsapoll_arm(slang__w32_wsapoll *p, int64_t fd, int32_t interest, uint64_t token, bool registered) {
     (void)registered;
     SOCKET s = (SOCKET)fd;
     int type = 0, tl = sizeof type;
@@ -119,15 +116,26 @@ int slang__plat_poller_arm(slang__plat_poller *p, int64_t fd, int32_t interest, 
     return 0;
 }
 
-void slang__plat_poller_remove(slang__plat_poller *p, int64_t fd) {
+/* The caller closes fd next: a WSAPoll that is still waiting on the old
+ * snapshot must not see the handle closed under it (Wine's WSAPoll can then
+ * miss its timeout), so remove() wakes it and waits until it has returned. */
+void slang__w32_wsapoll_remove(slang__w32_wsapoll *p, int64_t fd) {
     slang__plat_mutex_lock(&p->mu);
     int i = find(p, (SOCKET)fd);
     if (i >= 0) p->e[i] = p->e[--p->n];
+    LONG e0 = InterlockedCompareExchange(&p->epoch, 0, 0);
+    bool waiting = InterlockedCompareExchange(&p->waiting, 0, 0) != 0;
     slang__plat_mutex_unlock(&p->mu);
+    if (!waiting) return;
     wake_if_waiting(p);
+    for (int spins = 0; InterlockedCompareExchange(&p->epoch, 0, 0) == e0 && InterlockedCompareExchange(&p->waiting, 0, 0); spins++) {
+        if (spins > 100000) break;  /* never block a close for good */
+        if (spins > 64) Sleep(0);
+        else YieldProcessor();
+    }
 }
 
-int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int max, int64_t timeout_ms) {
+int slang__w32_wsapoll_wait(slang__w32_wsapoll *p, slang__plat_event *evs, int max, int64_t timeout_ms) {
     slang__plat_mutex_lock(&p->mu);
     int need = p->n + 1;
     if (need > p->pcap) {
@@ -156,6 +164,7 @@ int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int m
     int t = timeout_ms < 0 ? -1 : timeout_ms > 0x7fffffff ? 0x7fffffff : (int)timeout_ms;
     int r = WSAPoll(p->pfd, (ULONG)k, t);
     InterlockedExchange(&p->waiting, 0);
+    InterlockedIncrement(&p->epoch);
     if (r <= 0) return 0;
     int out = 0;
     slang__plat_mutex_lock(&p->mu);
@@ -185,7 +194,7 @@ int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int m
     return out;
 }
 
-void slang__plat_poller_wake(slang__plat_poller *p) {
+void slang__w32_wsapoll_wake(slang__w32_wsapoll *p) {
     if (!InterlockedExchange(&p->woken, 1)) {
         char b = 1;
         send(p->wake, &b, 1, 0);

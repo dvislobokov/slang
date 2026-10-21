@@ -8,8 +8,7 @@
 #include "rt_internal.h"
 
 #define INFRA_SENTINEL(fn, lit)                                                       \
-    static struct { slang_object hdr; int64_t len; char data[sizeof(lit)]; } fn##_msg = \
-        { { SLANG_RC_IMMORTAL, &slang_type_string }, (int64_t)(sizeof(lit) - 1), lit };  \
+    static SLANG_STRING_STORAGE(sizeof(lit)) fn##_msg = SLANG_STRING_INIT(fn##_msg, lit); \
     static slang_error fn##_err = { .hdr = { SLANG_RC_IMMORTAL, &slang_type_error },     \
                                     .message = (slang_string *)&fn##_msg };              \
     slang_error *fn(void) { return &fn##_err; }

@@ -62,6 +62,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             StmtKind::Let { local, init } => {
                 match init {
                     Some(e) if self.is_interior_local(*local) => self.store_interior(*local, e, true)?,
+                    Some(Expr { kind: ExprKind::New(inner), .. }) if self.fs().locals[local.0 as usize].and_then(|s| s.stack_obj).is_some() => {
+                        // `var p = new T{...}` that does not escape: the
+                        // object is the function's stack object.
+                        let v = self.expr_owned(inner)?;
+                        self.dbg_declare(*local);
+                        self.release_local(*local, false);
+                        let slot = self.fs().locals[local.0 as usize].unwrap();
+                        let obj = slot.stack_obj.unwrap();
+                        self.b.build_store(obj, v).unwrap();
+                        self.b.build_store(slot.ptr, obj).unwrap();
+                    }
                     Some(e) => {
                         let v = self.expr(e)?;
                         self.assign_local(*local, v, true)?;
@@ -471,7 +482,15 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                         _ => {}
                     }
                 }
-                self.block_stmts(&case.body)?;
+                let known = self.switch_known_dyn(sw, case);
+                if let Some(k) = known {
+                    self.fs_mut().known_dyn.push(k);
+                }
+                let r = self.block_stmts(&case.body);
+                if known.is_some() {
+                    self.fs_mut().known_dyn.pop();
+                }
+                r?;
                 self.pop_scope(cd);
                 self.br(end);
                 self.b.position_at_end(after);
@@ -486,6 +505,36 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         r?;
         self.b.position_at_end(end);
         Ok(())
+    }
+
+    /// Devirtualisation: `case T x:` (a single type pattern) of a switch on
+    /// an interface local that is never reassigned fixes that local's
+    /// dynamic type to `T` inside the arm.
+    fn switch_known_dyn(&self, sw: &Switch, case: &crate::hir::Case) -> Option<(LocalId, TypeId)> {
+        let [Pattern::Type { ty, .. }] = case.patterns.as_slice() else { return None };
+        let (_, e) = sw.subject.as_ref()?;
+        let ExprKind::Local(x) = e.kind else { return None };
+        if !matches!(self.ty(e.ty), Type::Interface(_)) || self.fs().locals.get(x.0 as usize).copied().flatten().is_none_or(|s| s.cell) {
+            return None;
+        }
+        let dyn_ok = match self.ty(*ty) {
+            Type::Struct(_) | Type::Enum(_) => true,
+            Type::Pointer(p) => matches!(self.ty(*p), Type::Struct(_)),
+            _ => false,
+        };
+        if !dyn_ok {
+            return None;
+        }
+        let f = self.fs().hir?;
+        let mut assigned = false;
+        crate::hir::ownership::walk_function(self.prog, f, &mut |ex, pos| {
+            if pos == crate::hir::ownership::Pos::Target {
+                if let ExprKind::Local(l) = ex.kind {
+                    assigned |= l == x;
+                }
+            }
+        });
+        (!assigned).then_some((x, *ty))
     }
 
     /// Tests pattern `p`; on a match binds and branches to `body`, else to

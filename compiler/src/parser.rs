@@ -480,7 +480,8 @@ impl Parser<'_> {
     /// `struct Name { fields, embeds, methods }`
     fn struct_decl(&mut self) -> PResult<StructDecl> {
         let start = self.expect(&TokenKind::Struct)?;
-        let name = self.ident()?;
+        // `default` is allowed as a name for attribute structs (`@default("now()")`).
+        let name = self.field_decl_name()?;
         let generics = self.generic_params()?;
         let implements = self.implements_clause()?;
         self.expect(&TokenKind::LBrace)?;
@@ -712,6 +713,12 @@ impl Parser<'_> {
 
     /// `(a int, b, c string)`; names without a type take the next type (Go style).
     fn params(&mut self) -> PResult<Vec<Param>> {
+        self.params_ext(false)
+    }
+
+    /// Parameters; with `untyped` (short lambdas), trailing names without
+    /// a type (`(u) =>`, `(a, b) =>`) get [`TypeKind::Infer`].
+    fn params_ext(&mut self, untyped: bool) -> PResult<Vec<Param>> {
         self.expect(&TokenKind::LParen)?;
         let mut params = Vec::new();
         // Names (with their attributes and start span) still waiting for a type.
@@ -737,7 +744,13 @@ impl Parser<'_> {
             }
         }
         if !pending.is_empty() {
-            return Err(self.unexpected("parameter type"));
+            if !untyped || !params.is_empty() {
+                return Err(self.unexpected("parameter type"));
+            }
+            for (attrs, name, start) in pending.drain(..) {
+                let ty = TypeExpr { kind: TypeKind::Infer, span: name.span };
+                params.push(Param { span: start.to(name.span), attrs, name, ty });
+            }
         }
         self.expect(&TokenKind::RParen)?;
         Ok(params)
@@ -1605,7 +1618,7 @@ impl Parser<'_> {
     fn paren_or_lambda(&mut self) -> PResult<Expr> {
         let start = self.span();
         if self.lambda_ahead() {
-            let params = self.params()?;
+            let params = self.params_ext(true)?;
             let ret = if !self.at(&TokenKind::Arrow) && starts_type(self.peek()) {
                 Some(Box::new(self.parse_type()?))
             } else {

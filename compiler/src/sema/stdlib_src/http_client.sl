@@ -1,10 +1,9 @@
-namespace std.net.http
-
 // The HTTP client (see http.sl for the file layout): Client, the request
 // builder, Transport with its per-host connection pool (keep-alive, TLS
 // session reuse, HTTP/2 multiplexing via ALPN), proxies (HTTP_PROXY /
 // HTTPS_PROXY / NO_PROXY, CONNECT for https), transparent gzip, cookies
 // (CookieJar) and streamed response bodies (BodyReader).
+namespace std.net.http
 
 // ---- the request builder -----------------------------------------------------
 

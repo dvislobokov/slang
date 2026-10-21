@@ -1,6 +1,5 @@
-namespace std.hash.adler32
-
 // std.hash.adler32: Adler-32 (RFC 1950, Go's hash/adler32).
+namespace std.hash.adler32
 
 // The Adler-32 checksum of data.
 func Checksum(data []byte) uint32 {
@@ -14,6 +13,7 @@ struct Digest {
     a uint32
     b uint32
 
+    // Write adds p to the checksum; it never fails.
     func Write(p []byte) int! {
         var a = this.a
         var b = this.b
@@ -37,32 +37,39 @@ struct Digest {
         return len(p)
     }
 
+    // WriteString adds the bytes of s to the checksum.
     func WriteString(s string) int! {
         return this.Write(std.strings.Bytes(s))?
     }
 
+    // Sum32 returns the checksum.
     func Sum32() uint32 {
         return (this.b << 16) | this.a
     }
 
+    // Sum returns the checksum as 4 big-endian bytes.
     func Sum() []byte {
         return std.hash.Bytes32(this.Sum32())
     }
 
+    // Reset restores the initial state.
     func Reset() {
         this.a = 1
         this.b = 0
     }
 
+    // Size returns 4.
     func Size() int {
         return 4
     }
 
+    // BlockSize returns 4.
     func BlockSize() int {
         return 4
     }
 }
 
+// New returns a streaming Adler-32 checksum.
 func New() Digest {
     return Digest{a: 1, b: 0}
 }

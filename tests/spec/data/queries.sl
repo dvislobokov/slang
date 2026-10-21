@@ -1,0 +1,95 @@
+// test: std.data queries translated at compile time: Where with comparisons, &&/||/!, arithmetic, string Contains/StartsWith/EndsWith/ToUpper/ToLower/len, nil checks and nullable fields, time comparisons, captured variables and calls as parameters, slices.Contains as IN, navigation Any/Count subqueries, OrderBy/ThenByDescending, Skip/Take, Distinct; ToSql for SQLite and PostgreSQL and the results
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.queries
+
+import std
+import std.io
+
+struct User {
+    Id        int
+    Name      string
+    Email     string
+    Age       *int
+    Joined    time.Time
+    Admin     bool
+    Orders    []*Order
+}
+
+struct Order {
+    Id     int
+    UserId int
+    Total  float
+}
+
+struct Shop {
+    data.Context
+    Users  data.Set<User>
+    Orders data.Set<Order>
+}
+
+func age(n int) *int {
+    var x = n
+    return &x
+}
+
+func cutoff() time.Time {
+    return time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC())
+}
+
+async func main() void! {
+    var ctx = data.Open<Shop>(data.Provider.Sqlite, ":memory:")?
+    var pg = data.OpenDB<Shop>(data.Provider.Postgres, ctx.DB())
+    await ctx.EnsureCreated()?
+    var t = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC())
+    var ann = new User{Name: "Ann", Email: "ann@a.io", Age: age(34), Joined: t, Admin: true}
+    var bob = new User{Name: "Bob", Email: "bob@b.io", Age: nil, Joined: t.AddDate(0, 3, 0)}
+    var cid = new User{Name: "Cid", Email: "cid@a.io", Age: age(16), Joined: t.AddDate(0, 6, 0)}
+    var dee = new User{Name: "Dee", Email: "dee@b.io", Age: age(51), Joined: t.AddDate(1, 0, 0)}
+    ctx.Users.AddRange([ann, bob, cid, dee])
+    _ = await ctx.SaveChanges()?
+    ctx.Orders.AddRange([new Order{UserId: ann.Id, Total: 120}, new Order{UserId: ann.Id, Total: 5}, new Order{UserId: dee.Id, Total: 70}])
+    _ = await ctx.SaveChanges()?
+
+    var minAge = 18
+    var q = ctx.Users.Where((u) => u.Age != nil && *u.Age >= minAge && !u.Admin || u.Name.StartsWith("A"))
+    println(q.ToSql())
+    println(pg.Users.Where((u) => u.Age != nil && *u.Age >= minAge && !u.Admin || u.Name.StartsWith("A")).ToSql())
+    for u in await q.OrderBy((u) => u.Name).ToList()? {
+        println(" ", u.Name)
+    }
+
+    var domain = "@a.io"
+    var q2 = ctx.Users.Where((u) => u.Email.EndsWith(domain) && u.Joined < cutoff() && len(u.Name) == 3)
+    println(q2.ToSql(), q2.Args())
+    println(pg.Users.Where((u) => u.Email.EndsWith(domain) && u.Joined < cutoff() && len(u.Name) == 3).ToSql())
+    println((await q2.Single()?).Name)
+
+    var q3 = ctx.Users.Where((u) => u.Name.ToLower().Contains("e") || u.Email.ToUpper() == "BOB@B.IO")
+    println(q3.ToSql())
+    println(pg.Users.Where((u) => u.Name.ToLower().Contains("e") || u.Email.ToUpper() == "BOB@B.IO").ToSql())
+    println(await q3.Count()?)
+
+    var ids = [bob.Id, cid.Id, 99]
+    var q4 = ctx.Users.Where((u) => slices.Contains(ids, u.Id) && u.Age == nil)
+    println(q4.ToSql(), q4.Args())
+    println(pg.Users.Where((u) => slices.Contains(ids, u.Id) && u.Age == nil).ToSql())
+    println((await q4.First()?).Name)
+
+    var q5 = ctx.Users.Where((u) => u.Orders.Any((o) => o.Total * 2 > 200) || u.Orders.Count() >= 1 && !u.Admin)
+    println(q5.ToSql())
+    for u in await q5.OrderBy((u) => u.Id).ToList()? {
+        println(" ", u.Name)
+    }
+
+    var q6 = ctx.Users.OrderBy((u) => u.Admin).ThenByDescending((u) => u.Joined).Skip(1).Take(2)
+    println(q6.ToSql())
+    println(pg.Users.OrderBy((u) => u.Admin).ThenByDescending((u) => u.Joined).Skip(1).Take(2).ToSql())
+    for u in await q6.ToList()? {
+        println(" ", u.Name)
+    }
+    println(ctx.Users.Skip(3).ToSql())
+    var domains = await ctx.Users.Select((u) => u.Email.EndsWith("@a.io")).Distinct().ToList()?
+    println(len(domains))
+    println(await ctx.Users.Where((u) => u.Id % 2 == 0 && u.Id - 1 >= 1).Select((u) => u.Name).ToList()?)
+}

@@ -1,10 +1,9 @@
-namespace std.crypto.kdf
-
 // std.crypto.kdf: key derivation. Pbkdf2 (RFC 8018) and Scrypt (RFC 7914)
 // are runtime functions (crypto/kdf.c); Argon2 (RFC 9106, version 0x13)
 // runs in C as well (std_argon2.c); Hkdf wraps std.crypto.hkdf.
 // Passwords and salts are []byte (std.strings.Bytes for strings); memory
 // is in KiB.
+namespace std.crypto.kdf
 
 // Argon2id(password, salt, time, memory KiB, threads, keyLen): the
 // recommended password hash (RFC 9106 4: t=3, m=65536, p=4 or t=1,

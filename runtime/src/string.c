@@ -11,6 +11,107 @@
 
 const slang_type_info slang_type_string = { "string", 0, NULL };
 
+/* ---- views (ABI.md 4.1) ----
+ * A view shares the bytes of another string. Standalone views are ordinary
+ * objects {hdr, len, data, owner} whose drop releases the owner; views made
+ * in bulk (Split, Fields, regex matches) live in a view block, and their
+ * refcount word forwards to the block (SLANG_RC_VIEW | block). The owner is
+ * always the object that holds the bytes inline (never another view), or
+ * NULL for the bytes of an immortal string. */
+
+static void sview_drop(void *o) { slang_release(((slang__sview *)o)->owner); }
+const slang_type_info slang_type_string_view = { "string", 0, sview_drop };
+
+static void vblock_drop(void *o) { slang_release(((slang__vblock *)o)->owner); }
+static const slang_type_info vblock_type = { "string views", 0, vblock_drop };
+
+/* Views of a string of len < VIEW_MIN bytes are copies: a small copy costs
+ * less than the owner's refcount traffic and does not keep a big parent
+ * alive. */
+#define VIEW_MIN 64
+
+/* The bytes owner of s for a new view: sets *owner (NULL for static bytes)
+ * and returns 1, or returns 0 when s cannot be viewed (arena strings, whose
+ * bytes die with the arena). */
+static int view_owner(const slang_string *s, slang_object **owner) {
+    int64_t rc = __atomic_load_n(&s->hdr.refcount, __ATOMIC_RELAXED);
+    if (rc == SLANG_RC_IMMORTAL) {
+        *owner = NULL;
+    } else if (rc == SLANG_RC_ARENA) {
+        return 0;
+    } else if (slang_rc_is_view(rc)) {
+        *owner = ((slang__vblock *)(uintptr_t)(rc & ~SLANG_RC_VIEW))->owner;
+    } else if (s->hdr.type == &slang_type_string_view) {
+        *owner = ((const slang__sview *)s)->owner;
+    } else {
+        *owner = (slang_object *)&s->hdr;
+    }
+    return 1;
+}
+
+slang_string *slang__string_sub(const slang_string *s, int64_t lo, int64_t hi) {
+    int64_t n = hi - lo;
+    if (n <= 0) return slang__string_alloc_uninit(0);
+    slang_object *owner;
+    if (n < VIEW_MIN || !view_owner(s, &owner)) return slang_string_new(s->data + lo, n);
+    slang__sview *v = (slang__sview *)slang__object_new_uninit(&slang_type_string_view, (int64_t)sizeof(slang__sview));
+    v->s.len = n;
+    v->s.data = s->data + lo;
+    v->owner = owner;
+    slang_retain(owner);
+    return &v->s;
+}
+
+slang__vblock *slang__vblock_new(const slang_string *parent, int64_t cap) {
+    slang_object *owner;
+    if (!parent || cap <= 0 || !view_owner(parent, &owner)) return NULL;
+    slang__vblock *b = (slang__vblock *)slang__object_new_uninit(
+        &vblock_type, (int64_t)sizeof(slang__vblock) + cap * (int64_t)sizeof(slang_string));
+    b->owner = owner;
+    slang_retain(owner);
+    b->n = 0;
+    b->cap = cap;
+    return b;
+}
+
+slang_string *slang__vblock_add(slang__vblock *b, const char *p, int64_t n) {
+    if (n <= 0) return NULL;
+    if (!b || b->n == b->cap) return slang_string_new(p, n);
+    slang_string *v = &b->v[b->n++];
+    v->hdr.refcount = SLANG_RC_VIEW | (int64_t)(uintptr_t)b;
+    v->hdr.type = &slang_type_string;
+    v->len = n;
+    v->data = (char *)p;
+    b->hdr.refcount++;   /* still private to the caller: no atomics needed */
+    return v;
+}
+
+void slang__vblock_done(slang__vblock *b) { slang_release(b); }
+
+/* ---- C strings ---- */
+
+#define CSTR_RING 16
+static _Thread_local struct { char *buf[CSTR_RING]; size_t cap[CSTR_RING]; unsigned next; } t_cstr;
+
+const char *slang_string_cstr(const slang_string *s) {
+    if (!s) return "";
+    if (s->data[s->len] == '\0') return s->data;
+    unsigned i = t_cstr.next++ % CSTR_RING;
+    size_t need = (size_t)s->len + 1;
+    if (t_cstr.cap[i] < need) {
+        size_t cap = need < 64 ? 64 : need;
+        char *nb = realloc(t_cstr.buf[i], cap);
+        if (!nb) slang__panicf("out of memory (requested %zu bytes)", cap);
+        t_cstr.buf[i] = nb;
+        t_cstr.cap[i] = cap;
+    }
+    memcpy(t_cstr.buf[i], s->data, (size_t)s->len);
+    t_cstr.buf[i][s->len] = '\0';
+    return t_cstr.buf[i];
+}
+
+/* ---- allocation ---- */
+
 static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
 static inline const char *sdata(const slang_string *s) { return s ? s->data : ""; }
 
@@ -19,6 +120,8 @@ slang_string *slang__string_alloc(int64_t len) {
     slang_string *s = slang_object_new(&slang_type_string,
                                        (int64_t)sizeof(slang_string) + len + 1);
     s->len = len;
+    s->data = (char *)(s + 1);
+    s->data[len] = SLANG__STR_END;
     return s;
 }
 
@@ -27,7 +130,8 @@ slang_string *slang__string_alloc_uninit(int64_t len) {
     slang_string *s = (slang_string *)slang__object_new_uninit(
         &slang_type_string, (int64_t)sizeof(slang_string) + len + 1);
     s->len = len;
-    s->data[len] = 0;
+    s->data = (char *)(s + 1);
+    s->data[len] = SLANG__STR_END;
     return s;
 }
 
@@ -44,6 +148,7 @@ slang_string *slang_string_from_cstr(const char *cstr) {
 
 slang_string *slang_string_literal(const char *bytes, int64_t len) {
     slang_string *s = slang_string_new(bytes, len);
+    s->data[len] = '\0';
     slang__object_immortalize(&s->hdr);
     return s;
 }
@@ -118,8 +223,8 @@ slang_string *slang_string_concat(const slang_string *a, const slang_string *b) 
 slang_string *slang_string_append(slang_string *a, const slang_string *b) {
     int64_t la = slen(a), lb = slen(b);
     if (lb == 0) return a;
-    if (!a || __atomic_load_n(&a->hdr.refcount, __ATOMIC_ACQUIRE) != 1) {
-        /* Shared, immortal or empty: copy. */
+    if (!a || __atomic_load_n(&a->hdr.refcount, __ATOMIC_ACQUIRE) != 1 || a->data != (char *)(a + 1)) {
+        /* Shared, immortal, a view or empty: copy. */
         slang_string *s = slang_string_concat(a, b);
         slang_release(a);
         return s;
@@ -131,10 +236,11 @@ slang_string *slang_string_append(slang_string *a, const slang_string *b) {
     if (slang__object_capacity(&a->hdr) < need) {
         int64_t cap = need + need / 2 + 16;
         a = (slang_string *)slang__object_resize(&a->hdr, cap);
+        a->data = (char *)(a + 1);
     }
     memcpy(a->data + la, self ? a->data : b->data, (size_t)lb);
     a->len = la + lb;
-    a->data[a->len] = 0;
+    a->data[a->len] = SLANG__STR_END;
     return a;
 }
 
@@ -166,7 +272,11 @@ uint64_t slang_string_hash(const slang_string *s) { return slang_hash_bytes(sdat
 slang_string *slang_string_slice(const slang_string *s, int64_t lo, int64_t hi) {
     int64_t n = slen(s);
     if (lo < 0 || hi < lo || hi > n) slang_panic_slice_bounds(lo, hi, n);
-    return slang_string_new(sdata(s) + lo, hi - lo);
+    if (lo == 0 && hi == n && s) {
+        slang_retain((void *)s);
+        return (slang_string *)s;
+    }
+    return slang__string_sub(s, lo, hi);
 }
 
 uint8_t slang_string_byte_at(const slang_string *s, int64_t i) {
@@ -356,13 +466,13 @@ slang_string *slang_string_from_rune(int32_t r) {
 static void set_err(slang_error **err, const char *fmt, const slang_string *s) {
     if (!err) return;
     char buf[256];
-    snprintf(buf, sizeof buf, fmt, sdata(s));
+    snprintf(buf, sizeof buf, fmt, slang_string_cstr(s));
     *err = slang_error_new_cstr(buf);
 }
 
 int64_t slang_string_to_int(const slang_string *s, slang_error **err) {
     if (err) *err = NULL;
-    const char *p = sdata(s);
+    const char *p = slang_string_cstr(s);
     int64_t n = slen(s);
     if (n == 0) { set_err(err, "invalid integer: \"%s\"", s); return 0; }
     /* reject leading whitespace / embedded NULs that strtoll would accept */
@@ -379,7 +489,7 @@ int64_t slang_string_to_int(const slang_string *s, slang_error **err) {
 
 double slang_string_to_float(const slang_string *s, slang_error **err) {
     if (err) *err = NULL;
-    const char *p = sdata(s);
+    const char *p = slang_string_cstr(s);
     int64_t n = slen(s);
     if (n == 0 || (int64_t)strlen(p) != n || isspace((unsigned char)p[0])) {
         set_err(err, "invalid float: \"%s\"", s); return 0;

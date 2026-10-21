@@ -1,5 +1,3 @@
-namespace std.encoding.csv
-
 // CSV (RFC 4180) with Go's encoding/csv semantics: quoted fields with ""
 // escapes and embedded newlines, a custom delimiter, comment lines, lazy
 // quotes, leading-space trimming and a fixed or free field count; the
@@ -7,6 +5,7 @@ namespace std.encoding.csv
 // with compile-time reflection: a column per field, named by @csv(name:)
 // or the field name, or placed by @csv(index:); @csv(skip: true) and
 // @serde(name:, skip:) also apply.
+namespace std.encoding.csv
 
 // A CSV reader over a text: Read() returns one record at a time. Lines
 // end with \n or \r\n (a quoted \r\n becomes \n).

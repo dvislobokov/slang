@@ -1,5 +1,3 @@
-namespace std.regex
-
 // The parser of std.regex: RE2 syntax -> syntax tree (see regex.sl for the
 // engine overview). The tree lives in an arena of `node`s addressed by
 // index. Every character test is a rune class (sorted, merged [lo, hi]
@@ -12,6 +10,7 @@ namespace std.regex
 // (subs[0], min, max (-1 = unbounded), greedy).
 // Parser flags: 1 (?i) fold case, 2 (?m) multi-line, 4 (?s) dot matches
 // \n, 8 (?U) ungreedy.
+namespace std.regex
 
 struct node {
     op     int

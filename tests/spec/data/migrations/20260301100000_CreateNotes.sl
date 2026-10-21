@@ -1,0 +1,21 @@
+// test: std.data migrations as code applied by ctx.Migrate() (see main.sl)
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.migrations.history
+
+import std.data
+
+@migration("20260301100000_CreateNotes")
+struct CreateNotes {
+    func Up(m *Migrator) {
+        m.CreateTable("notes", [
+            Column{Name: "id", Type: "int64", Key: true, Auto: true},
+            Column{Name: "title", Type: "string", MaxLength: 100},
+        ], [])
+        m.CreateIndex("notes", "ix_notes_title", ["title"], false)
+    }
+
+    func Down(m *Migrator) {
+        m.DropTable("notes")
+    }
+}

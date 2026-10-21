@@ -1,0 +1,26 @@
+// error: navigation Blog.Posts: Post has no foreign key field BlogId
+// status: passing
+namespace spec.data.err_missing_fk
+
+import std
+import std.io
+
+struct Blog {
+    Id    int
+    Posts []Post
+}
+
+struct Post {
+    Id    int
+    Title string
+}
+
+struct Blogs {
+    data.Context
+    Blogs data.Set<Blog>
+}
+
+func main() {
+    var ctx = data.OpenDB<Blogs>(data.Provider.Sqlite, database.sqlite.Open(":memory:"))
+    println(ctx.Blogs.TableName())
+}

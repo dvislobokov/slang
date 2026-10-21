@@ -1,5 +1,3 @@
-namespace std.regex
-
 // Compilation of the syntax tree to a byte-level program, the Pike VM and
 // the lazy DFA of std.regex (overview in regex.sl).
 //
@@ -9,6 +7,7 @@ namespace std.regex
 // `flagsAt`), 5 match, 6 no-op jump, 7 fail. Rune classes are compiled to
 // alternations of UTF-8 byte-range sequences (a trie on the leading
 // ranges), so both engines consume bytes.
+namespace std.regex
 
 struct prog {
     op      []int

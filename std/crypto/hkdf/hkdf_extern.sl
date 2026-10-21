@@ -2,8 +2,12 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.hkdf implemented by the C runtime.
 namespace std.crypto.hkdf
 
+// Extract returns the HKDF pseudorandom key of ikm (RFC 5869; an empty salt is HashLen zeros).
+//
 // C: slang_crypto_hkdf_extract (runtime/src/std_*.c).
-extern func Extract(a string, b []byte, c []byte) []byte!
+extern func Extract(alg string, salt []byte, ikm []byte) []byte!
 
+// Expand derives n bytes from prk and info (n at most 255 times the hash length).
+//
 // C: slang_crypto_hkdf_expand (runtime/src/std_*.c).
-extern func Expand(a string, b []byte, c []byte, d int) []byte!
+extern func Expand(alg string, prk []byte, info []byte, n int) []byte!

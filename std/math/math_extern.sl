@@ -142,8 +142,12 @@ extern func Float64bits(f float) uint
 // C: slang_math_float64frombits (runtime/src/std_*.c).
 extern func Float64frombits(b uint) float
 
+// Float32bits returns the IEEE 754 bits of f.
+//
 // C: slang_math_float32bits (runtime/src/std_*.c).
-extern func Float32bits(a float32) uint32
+extern func Float32bits(f float32) uint32
 
+// Float32frombits returns the float32 with IEEE 754 bits b.
+//
 // C: slang_math_float32frombits (runtime/src/std_*.c).
-extern func Float32frombits(a uint32) float32
+extern func Float32frombits(b uint32) float32

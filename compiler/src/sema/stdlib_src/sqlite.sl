@@ -1,5 +1,3 @@
-namespace std.database.sqlite
-
 // std.database.sqlite: the SQLite driver of std.database.sql over the
 // system libsqlite3 (runtime/src/std_sqlite.c; the compiler links
 // -lsqlite3 only into programs that use this namespace). SQLite calls are
@@ -15,6 +13,7 @@ namespace std.database.sqlite
 // the declared column type contains DATE or TIME and the text parses),
 // BLOB -> []byte, NULL -> nil; a BOOLEAN column gives bool. Arguments:
 // bool binds 0/1, time.Time binds text "2006-01-02 15:04:05.999999999-07:00".
+namespace std.database.sqlite
 
 // A SQLite error with its (extended) result code.
 struct Error {

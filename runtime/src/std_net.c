@@ -24,8 +24,7 @@
 /* ---- sentinel errors (std.net.Err*) ---- */
 
 #define SENTINEL(cname, text)                                                                 \
-    static struct { slang_object hdr; int64_t len; char data[sizeof text]; } cname##_msg =    \
-        { { SLANG_RC_IMMORTAL, &slang_type_string }, (int64_t)sizeof text - 1, text };       \
+    static SLANG_STRING_STORAGE(sizeof text) cname##_msg = SLANG_STRING_INIT(cname##_msg, text); \
     static slang_error cname##_err = { .hdr = { SLANG_RC_IMMORTAL, &slang_type_error },       \
                                        .message = (slang_string *)&cname##_msg };             \
     slang_error *slang_net_err_##cname(void) { return &cname##_err; }
@@ -193,7 +192,7 @@ static bool parse_ip_zone(const char *text, int64_t port, slang__plat_addr *a) {
 void slang_net_rt_parse_ip(const slang_string *s, slang_slice *out) {
     memset(out, 0, sizeof *out);
     unsigned char b[16];
-    int len = slang__plat_parse_ip(slang_string_data(s), b);
+    int len = slang__plat_parse_ip(slang_string_cstr(s), b);
     if (!len) return;
     slang_slice_new(out, 1, len, len);
     memcpy(out->data, b, (size_t)len);
@@ -205,9 +204,9 @@ slang_string *slang_net_rt_format_ip(const slang_slice *b) {
     return slang_string_from_cstr(t);
 }
 
-bool slang_net_rt_is_ip(const slang_string *s) { return slang__plat_is_ip(slang_string_data(s)); }
+bool slang_net_rt_is_ip(const slang_string *s) { return slang__plat_is_ip(slang_string_cstr(s)); }
 
-int64_t slang_net_rt_if_index(const slang_string *name) { return slang__plat_if_index(slang_string_data(name)); }
+int64_t slang_net_rt_if_index(const slang_string *name) { return slang__plat_if_index(slang_string_cstr(name)); }
 
 slang_string *slang_net_rt_if_name(int64_t index) {
     char b[64];
@@ -275,7 +274,7 @@ static int family_of(const slang__plat_addr *a) { return slang__plat_addr_family
 
 /* Optional local bind: lip == "" and lport == 0 mean none. */
 static int64_t bind_local(int64_t fd, const slang_string *lip, int64_t lport, int fam) {
-    const char *l = slang_string_data(lip);
+    const char *l = slang_string_cstr(lip);
     if (!*l && lport == 0) return 0;
     slang__plat_addr la;
     if (*l) {
@@ -290,7 +289,7 @@ static int64_t bind_local(int64_t fd, const slang_string *lip, int64_t lport, in
 
 int64_t slang_net_rt_dial(const slang_string *ip, int64_t port, const slang_string *lip, int64_t lport, slang_error **err) {
     slang__plat_addr a;
-    if (!parse_ip_zone(slang_string_data(ip), port, &a)) {
+    if (!parse_ip_zone(slang_string_cstr(ip), port, &a)) {
         set_msg(err, "invalid address");
         return -1;
     }
@@ -320,7 +319,7 @@ int64_t slang_net_rt_dial(const slang_string *ip, int64_t port, const slang_stri
 
 int64_t slang_net_rt_dial_unix(const slang_string *path, slang_error **err) {
     slang__plat_addr a;
-    if (!slang__plat_addr_unix(&a, slang_string_data(path))) {
+    if (!slang__plat_addr_unix(&a, slang_string_cstr(path))) {
         set_msg(err, "invalid unix socket path");
         return -1;
     }
@@ -374,7 +373,7 @@ static int64_t open_bound(const slang__plat_addr *a, int type, int64_t flags, bo
 
 /* ip "" = every interface: "::" dual-stack, or 0.0.0.0 without IPv6. */
 static bool listen_addr(const slang_string *ip, int64_t port, slang__plat_addr *a, bool *dual) {
-    const char *s = slang_string_data(ip);
+    const char *s = slang_string_cstr(ip);
     *dual = false;
     if (!*s) {
         unsigned char zero[16] = { 0 };
@@ -409,7 +408,7 @@ int64_t slang_net_rt_listen(const slang_string *ip, int64_t port, int64_t backlo
 
 int64_t slang_net_rt_listen_unix(const slang_string *path, int64_t backlog, slang_error **err) {
     slang__plat_addr a;
-    const char *p = slang_string_data(path);
+    const char *p = slang_string_cstr(path);
     if (!slang__plat_addr_unix(&a, p)) {
         set_msg(err, "invalid unix socket path");
         return -1;
@@ -572,9 +571,9 @@ void slang_net_rt_shutdown(int64_t h, int64_t how, slang_error **err) {
 /* ---- files and sendfile ---- */
 
 int64_t slang_net_rt_open_file(const slang_string *path, slang_error **err) {
-    int64_t fd = slang__plat_file_open(slang_string_data(path));
+    int64_t fd = slang__plat_file_open(slang_string_cstr(path));
     if (fd < 0) {
-        if (err) *err = slang_error_errno("open", slang_string_data(path), (int)-fd);
+        if (err) *err = slang_error_errno("open", slang_string_cstr(path), (int)-fd);
         return -1;
     }
     return fd;
@@ -634,11 +633,11 @@ int64_t slang_net_rt_get_opt(int64_t h, int64_t opt, slang_error **err) {
 
 void slang_net_rt_mcast(int64_t h, bool join, const slang_string *group, const slang_string *ifname, slang_error **err) {
     unsigned char b[16];
-    int len = slang__plat_parse_ip(slang_string_data(group), b);
+    int len = slang__plat_parse_ip(slang_string_cstr(group), b);
     if (!len) { set_msg(err, "invalid multicast group"); return; }
     uint32_t idx = 0;
     if (slang_string_len(ifname) > 0) {
-        idx = slang__plat_if_index(slang_string_data(ifname));
+        idx = slang__plat_if_index(slang_string_cstr(ifname));
         if (!idx) { set_msg(err, "no such network interface"); return; }
     }
     ACQUIRE_OR(s, h, err, );
@@ -673,7 +672,7 @@ int64_t slang_net_rt_udp(const slang_string *ip, int64_t port, int64_t flags, sl
 
 int64_t slang_net_rt_udp_dial(const slang_string *ip, int64_t port, const slang_string *lip, int64_t lport, slang_error **err) {
     slang__plat_addr a;
-    if (!parse_ip_zone(slang_string_data(ip), port, &a)) {
+    if (!parse_ip_zone(slang_string_cstr(ip), port, &a)) {
         set_msg(err, "invalid address");
         return -1;
     }
@@ -760,7 +759,7 @@ bool slang_net_rt_last_trunc(void) { return t_trunc; }
 int64_t slang_net_rt_send_to(int64_t h, const slang_slice *data, const slang_string *ip, int64_t port, slang_error **err) {
     slang__plat_addr a, *to = NULL;
     if (slang_string_len(ip) > 0) {
-        if (!parse_ip_zone(slang_string_data(ip), port, &a)) {
+        if (!parse_ip_zone(slang_string_cstr(ip), port, &a)) {
             set_msg(err, "invalid address");
             return -1;
         }
@@ -806,7 +805,7 @@ void slang_net_rt_interfaces(slang_slice *out, slang_error **err) {
 }
 
 int64_t slang_net_rt_lookup_port(const slang_string *network, const slang_string *service) {
-    return slang__plat_lookup_port(slang_string_data(network), slang_string_data(service));
+    return slang__plat_lookup_port(slang_string_cstr(network), slang_string_cstr(service));
 }
 
 /* ---- name resolution: getaddrinfo on a small resolver pool ----
@@ -901,7 +900,7 @@ static slang_task *submit(int kind, const slang_string *host, int64_t flags) {
     if (!r) slang_panic("out of memory (resolve)");
     r->kind = kind;
     r->flags = (int)flags;
-    r->host = strdup(slang_string_data(host));
+    r->host = strdup(slang_string_cstr(host));
     if (!r->host) slang_panic("out of memory (resolve)");
     if (kind == 0) {
         unsigned char b[16];
@@ -926,6 +925,7 @@ static slang_task *submit(int kind, const slang_string *host, int64_t flags) {
     if (rs_tail) rs_tail->next = r; else rs_head = r;
     rs_tail = r;
     if (rs_idle == 0 && rs_threads < resolver_max()) {
+        slang__net_stop_fn = slang__net_stop;  /* shutdown stops the pool */
         if (slang__plat_thread_start_detached(resolver_main, (void *)(uintptr_t)rs_gen)) rs_threads++;
         else if (rs_threads == 0) {
             /* no thread at all: fail the lookup now */
@@ -980,7 +980,7 @@ void slang_net_rt_resolve_take(int64_t handle, slang_slice *out, slang_error **e
 void slang_net_rt_resolve_sync(const slang_string *host, int64_t flags, slang_slice *out, slang_error **err) {
     resolve_req *r = calloc(1, sizeof *r);
     if (!r) slang_panic("out of memory (resolve)");
-    r->host = strdup(slang_string_data(host));
+    r->host = strdup(slang_string_cstr(host));
     if (!r->host) slang_panic("out of memory (resolve)");
     r->flags = (int)flags;
     req_run(r);

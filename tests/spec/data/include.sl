@@ -1,0 +1,116 @@
+// test: std.data navigations: Include of has-many, belongs-to, has-one and many-to-many as LEFT JOINs (one query, deduplicated) or split queries (AsSplitQuery), with Where/OrderBy/Take on the root, value and pointer collections, explicit loading with Entry(e).Collection/Reference(...).Load(), reference columns in queries, and no leaks with both directions loaded
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.include
+
+import std
+import std.io
+
+struct Author {
+    Id      int
+    Name    string
+    Books   []*Book
+    Profile *Profile
+    @data.manyToMany Tags []Tag
+}
+
+struct Book {
+    Id       int
+    AuthorId *int
+    Title    string
+    Author   *Author
+}
+
+struct Profile {
+    Id       int
+    AuthorId int
+    Bio      string
+}
+
+struct Tag {
+    Id    int
+    Label string
+}
+
+struct Library {
+    data.Context
+    Authors  data.Set<Author>
+    Books    data.Set<Book>
+    Profiles data.Set<Profile>
+    Tags     data.Set<Tag>
+}
+
+func id(n int) *int {
+    var x = n
+    return &x
+}
+
+func titles(bs []*Book) string {
+    var out []string = []
+    for b in bs {
+        out = append(out, b.Title)
+    }
+    return strings.Join(out, ",")
+}
+
+async func main() void! {
+    var ctx = data.Open<Library>(data.Provider.Sqlite, ":memory:")?
+    await ctx.EnsureCreated()?
+    var le = new Author{Name: "Le Guin"}
+    var ba = new Author{Name: "Banks"}
+    var no = new Author{Name: "Nobody"}
+    ctx.Authors.AddRange([le, ba, no])
+    var sf = new Tag{Label: "sf"}
+    var fa = new Tag{Label: "fantasy"}
+    ctx.Tags.AddRange([sf, fa])
+    _ = await ctx.SaveChanges()?
+    ctx.Books.AddRange([
+        new Book{AuthorId: id(le.Id), Title: "Earthsea"},
+        new Book{AuthorId: id(le.Id), Title: "Dispossessed"},
+        new Book{AuthorId: id(ba.Id), Title: "Excession"},
+        new Book{AuthorId: nil, Title: "Anonymous"},
+    ])
+    ctx.Profiles.Add(new Profile{AuthorId: ba.Id, Bio: "Scottish"})
+    _ = await ctx.SaveChanges()?
+    _ = await ctx.ExecuteSql("insert into author_tags (author_id, tag_id) values (?, ?), (?, ?), (?, ?)", [le.Id, sf.Id, le.Id, fa.Id, ba.Id, sf.Id])?
+    ctx.ClearTracker()
+
+    var q = ctx.Authors.Include((a) => a.Books).Include((a) => a.Profile).Include((a) => a.Tags).OrderBy((a) => a.Name)
+    println(q.ToSql())
+    for a in await q.ToList()? {
+        var bio = "-"
+        if a.Profile != nil {
+            bio = a.Profile.Bio
+        }
+        println(a.Name, titles(a.Books), bio, len(a.Tags))
+    }
+    var paged = ctx.Authors.Include((a) => a.Books).OrderBy((a) => a.Id).Take(1)
+    println(paged.ToSql())
+    var first = await paged.ToList()?
+    println(len(first), first[0].Name, len(first[0].Books))
+
+    ctx.LogTo((s) => println("  sql:", s))
+    var split = await ctx.Authors.AsNoTracking().Include((a) => a.Books).Include((a) => a.Tags).AsSplitQuery().Where((a) => a.Name != "Nobody").OrderBy((a) => a.Id).ToList()?
+    for a in split {
+        println(a.Name, titles(a.Books), len(a.Tags))
+    }
+    var books = await ctx.Books.Include((b) => b.Author).OrderBy((b) => b.Title).ToList()?
+    for b in books {
+        var who = "?"
+        if b.Author != nil {
+            who = b.Author.Name
+        }
+        println(b.Title, who)
+    }
+    ctx.LogTo((s) => {})
+    var byName = await ctx.Books.Where((b) => b.Author.Name == "Banks" || b.Author == nil).OrderBy((b) => b.Id).Select((b) => b.Title).ToList()?
+    println(byName)
+
+    var nobody = await ctx.Authors.FirstOrDefault((a) => a.Name == "Nobody")?
+    await ctx.Entry(nobody).Collection("Books").Load()?
+    println(nobody.Name, len(nobody.Books))
+    var exc = await ctx.Books.FirstOrDefault((b) => b.Title == "Excession")?
+    exc.Author = nil
+    await ctx.Entry(exc).Reference("Author").Load()?
+    println(exc.Author.Name, exc.Author.Id == ba.Id, ctx.Entry(exc).State())
+}

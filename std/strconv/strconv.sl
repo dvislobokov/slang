@@ -1,10 +1,9 @@
-namespace std.strconv
-
 // std.strconv: conversions between strings and numbers/bools, Go's
 // strconv with T! results. Errors wrap the sentinels ErrSyntax / ErrRange
 // (errors.Is works) and name the function and input, as in Go:
 // `strconv.ParseInt: parsing "12a": invalid syntax`. Float formatting and
 // parsing are C (runtime/src/std_strconv.c); the rest is here.
+namespace std.strconv
 
 func fail(fn string, s string, e error) error {
     return std.errors.Wrap(e, "strconv." + fn + ": parsing " + Quote(s))

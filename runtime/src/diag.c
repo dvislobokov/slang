@@ -52,12 +52,12 @@ int64_t slang_diag_rt_mono_nanos(void) { return slang__plat_mono_ns(); }
 static void file_err(slang_error **err, const char *op, const slang_string *path, int e) {
     if (!err) return;
     char buf[600];
-    snprintf(buf, sizeof buf, "%s %.400s: %s", op, slang_string_data(path), strerror(e));
+    snprintf(buf, sizeof buf, "%s %.400s: %s", op, slang_string_cstr(path), strerror(e));
     *err = slang_error_new_cstr(buf);
 }
 
 int64_t slang_log_rt_open(const slang_string *path, slang_error **err) {
-    int64_t fd = slang__plat_open(slang_string_data(path), SLANG_PLAT_O_WRONLY | SLANG_PLAT_O_CREATE | SLANG_PLAT_O_APPEND, 0644);
+    int64_t fd = slang__plat_open(slang_string_cstr(path), SLANG_PLAT_O_WRONLY | SLANG_PLAT_O_CREATE | SLANG_PLAT_O_APPEND, 0644);
     if (fd < 0) {
         file_err(err, "open", path, (int)-fd);
         return -1;
@@ -67,7 +67,7 @@ int64_t slang_log_rt_open(const slang_string *path, slang_error **err) {
 }
 
 void slang_log_rt_write(int64_t fd, const slang_string *s, slang_error **err) {
-    const char *p = slang_string_data(s);
+    const char *p = slang_string_cstr(s);
     int64_t n = slang_string_len(s);
     int e = slang__plat_write_all(fd, p, n);
     if (e) {

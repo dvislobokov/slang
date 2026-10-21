@@ -2,11 +2,17 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.thread implemented by the C runtime.
 namespace std.thread
 
+// Spawn starts f on a new OS thread outside the task scheduler and returns a handle for Join.
+//
 // C: slang_thread_spawn (runtime/src/std_*.c).
-extern func Spawn(a func()) int
+extern func Spawn(f func()) int
 
+// Join waits for the thread h to finish.
+//
 // C: slang_thread_join (runtime/src/std_*.c).
-extern func Join(a int)
+extern func Join(h int)
 
+// Sleep blocks the calling thread for ms milliseconds.
+//
 // C: slang_thread_sleep (runtime/src/std_*.c).
-extern func Sleep(a int)
+extern func Sleep(ms int)

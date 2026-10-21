@@ -340,6 +340,7 @@ static void io_start(void) {
         }
         io_shards = s;
         io_nshards = n;
+        slang__io_stop_fn = slang__io_stop;  /* shutdown stops the shards */
         for (int32_t i = 0; i < n; i++)
             if (!slang__plat_thread_start(&s[i].thread, io_main, &s[i])) slang_panic("cannot create an I/O poller thread");
         __atomic_store_n(&io_running, 1, __ATOMIC_RELEASE);

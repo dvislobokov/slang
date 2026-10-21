@@ -1,0 +1,45 @@
+state Added
+  sql: BEGIN
+  sql: INSERT INTO "products" ("name", "price", "stock", "note") VALUES (?, ?, ?, ?), (?, ?, ?, ?) RETURNING "id" -- ["pen", 1.5, 10, NULL, "ink", 4, 3, NULL]
+  sql: COMMIT
+saved 2 1 2 Unchanged
+find (tracked, no query):
+true
+changed: [price] Modified
+  sql: BEGIN
+  sql: UPDATE "products" SET "price" = ? WHERE "id" = ? -- [2, 1]
+  sql: COMMIT
+saved 1
+nothing to save: 0
+query returns the tracked instances:
+  sql: SELECT t0."id", t0."name", t0."price", t0."stock", t0."note" FROM "products" AS t0 ORDER BY t0."id" ASC
+true true 2
+  sql: BEGIN
+  sql: UPDATE "products" SET "stock" = ?, "note" = ? WHERE "id" = ? -- [1, "low", 2]
+  sql: COMMIT
+saved 1
+no tracking:
+  sql: SELECT t0."id", t0."name", t0."price", t0."stock", t0."note" FROM "products" AS t0 WHERE (t0."id" = ?) LIMIT 1 -- [2]
+false 1 low 2
+saved 0
+update a detached entity (all columns):
+  other: BEGIN
+  other: UPDATE "products" SET "name" = ?, "price" = ?, "stock" = ?, "note" = ? WHERE "id" = ? -- ["pen", 3, 8, NULL, 1]
+  other: COMMIT
+saved 1
+attach, then change:
+  other: BEGIN
+  other: UPDATE "products" SET "name" = ? WHERE "id" = ? -- ["blue ink", 2]
+  other: COMMIT
+saved 1
+remove:
+state Deleted
+  sql: BEGIN
+  sql: DELETE FROM "products" WHERE "id" = ? -- [1]
+  sql: COMMIT
+saved 1 Detached 1
+  sql: SELECT t0."id", t0."name", t0."price", t0."stock", t0."note" FROM "products" AS t0 WHERE t0."id" = ? LIMIT 1 -- [1]
+true
+add+remove saves nothing: 0
+  sql: SELECT t0."name" FROM "products" AS t0
+[blue ink]

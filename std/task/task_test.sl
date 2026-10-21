@@ -1,0 +1,70 @@
+// Examples for std.task.
+namespace task_test
+
+import std
+import std.io
+
+async func square(x int) int {
+    await task.Delay(1)
+    return x * x
+}
+
+async func ExampleChannel() {
+    var ch = task.Channel<int>(2)
+    var producer = async func() {
+        for i in 1..4 {
+            await ch.Send(i)
+        }
+        ch.Close()
+    }
+    var p = producer()
+    for {
+        var v = try await ch.Recv() else break
+        println("got", v)
+    }
+    await p
+    // Output:
+    // got 1
+    // got 2
+    // got 3
+}
+
+async func ExampleWaitGroup() {
+    var wg = task.WaitGroup{}
+    var mu = task.Mutex{}
+    var total = 0
+    for i in 1..6 {
+        wg.Add(1)
+        var t = async func() {
+            await mu.Lock()
+            total += i
+            mu.Unlock()
+            wg.Done()
+        }
+        _ = t()
+    }
+    await wg.Wait()
+    println(total)
+    // Output:
+    // 15
+}
+
+async func ExampleAll() {
+    // Calling an async function starts it; await task.All waits for all.
+    var (a, b) = await task.All(square(3), square(4))
+    println(a, b)
+    // Output:
+    // 9 16
+}
+
+async func ExampleWithTimeout() {
+    try await task.WithTimeout(20, async func() string! {
+        await task.Delay(10000)
+        task.CheckCancelled()?
+        return "done"
+    }) catch err {
+        println("timed out:", errors.Is(err, task.ErrCancelled))
+    }
+    // Output:
+    // timed out: true
+}

@@ -71,6 +71,10 @@ impl<'a> Sema<'a> {
     /// Checks arguments without a signature (after an earlier error).
     pub(crate) fn check_args_loose(&mut self, args: &[ast::Expr]) {
         for a in args {
+            // `(u) => ...` cannot be typed without a callee (already reported)
+            if matches!(&expr::strip_parens(a).kind, ast::ExprKind::Lambda { params, .. } if params.iter().any(|p| matches!(p.ty.kind, ast::TypeKind::Infer))) {
+                continue;
+            }
             self.expr(a, None);
         }
     }
@@ -193,10 +197,31 @@ impl<'a> Sema<'a> {
             Ok(e) => return e,
             Err(b) => b,
         };
+        // std.data: query lambdas translated to SQL at compile time (orm.rs).
+        let base = match self.orm_method_call(base, name, targs, args, span) {
+            Ok(e) => return e,
+            Err(b) => b,
+        };
         if let Some(sid) = self.struct_of(base.ty) {
             if let Some(&t) = self.gen.methods.get(&(sid, name.name.clone())) {
                 let recv = if matches!(self.tt.get(base.ty), Type::Pointer(_)) { base } else { self.addr_of(base) };
                 return self.generic_call(t, targs, Some(recv), args, span);
+            }
+            // A generic method promoted through embedded fields (`ctx.Raw<T>()`
+            // with `data.Context` embedded).
+            if self.find_method(sid, &name.name).is_none() {
+                if let Some((t, path)) = self.promoted_generic_method(sid, &name.name, 0) {
+                    let mut b = base;
+                    for idx in path {
+                        let d = self.auto_deref(b);
+                        let Type::Struct(sd) = *self.tt.get(d.ty) else { unreachable!() };
+                        let fty = self.structs[sd.0 as usize].fields[idx as usize].ty;
+                        let sp = d.span;
+                        b = mk(ExprKind::Field { base: Box::new(d), index: idx }, fty, sp);
+                    }
+                    let recv = if matches!(self.tt.get(b.ty), Type::Pointer(_)) { b } else { self.addr_of(b) };
+                    return self.generic_call(t, targs, Some(recv), args, span);
+                }
             }
             if targs.is_some() {
                 let sname = self.structs[sid as usize].name.clone();
@@ -298,6 +323,31 @@ impl<'a> Sema<'a> {
         self.err_help(format!("cannot call method {} on value of type {}", name.name, self.tn(base.ty)), name.span, help);
         self.check_args_loose(args);
         self.invalid(span)
+    }
+
+    /// The template of generic method `name` reachable through embedded
+    /// fields of struct `sid`, with the field path (shortest first).
+    fn promoted_generic_method(&self, sid: u32, name: &str, depth: usize) -> Option<(u32, Vec<u32>)> {
+        if depth > 8 {
+            return None;
+        }
+        let mut best: Option<(u32, Vec<u32>)> = None;
+        for (i, f) in self.structs[sid as usize].fields.iter().enumerate().filter(|(_, f)| f.embedded) {
+            let Type::Struct(d) = *self.tt.get(f.ty) else { continue };
+            let found = match self.gen.methods.get(&(d.0, name.to_string())) {
+                Some(&t) => Some((t, vec![i as u32])),
+                None => self.promoted_generic_method(d.0, name, depth + 1).map(|(t, mut p)| {
+                    p.insert(0, i as u32);
+                    (t, p)
+                }),
+            };
+            if let Some(x) = found {
+                if best.as_ref().is_none_or(|b| x.1.len() < b.1.len()) {
+                    best = Some(x);
+                }
+            }
+        }
+        best
     }
 
     /// Calls default method `name` of interface `iface` on `base` (a struct

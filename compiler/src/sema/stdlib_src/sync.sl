@@ -1,11 +1,10 @@
-namespace std.sync
-
 // std.sync: synchronization beyond std.task's Mutex, WaitGroup and
 // Channel: RwMutex (async), Semaphore (async), Barrier (async), Once,
 // AtomicInt / AtomicBool (lock-free, runtime/src/std_sync.c), Atomic<T>
 // (any comparable value) and Pool<T>. The async primitives are built like
 // task.Mutex: a per-object spin lock held for a few statements and waker
 // tasks fired in FIFO order; nothing blocks a worker thread.
+namespace std.sync
 
 // A reader/writer lock: many readers or one writer. Writers are
 // preferred: once a writer waits, new readers queue behind it.
@@ -31,6 +30,7 @@ struct RwMutex {
         return s
     }
 
+    // TryRLock takes read access without waiting; false if a writer holds or waits for the lock.
     func TryRLock() bool {
         std.task.rtLock(&this.guard)
         var ok = !this.writer && this.waitingWriters == 0
@@ -41,6 +41,7 @@ struct RwMutex {
         return ok
     }
 
+    // RUnlock releases read access; it panics without a matching RLock.
     func RUnlock() {
         std.task.rtLock(&this.guard)
         if this.readers <= 0 {
@@ -66,6 +67,7 @@ struct RwMutex {
         return s
     }
 
+    // TryLock takes write access without waiting; false if the lock is held.
     func TryLock() bool {
         std.task.rtLock(&this.guard)
         var ok = !this.writer && this.readers == 0
@@ -76,6 +78,7 @@ struct RwMutex {
         return ok
     }
 
+    // Unlock releases write access, waking the next writer or the waiting readers; it panics if not locked.
     func Unlock() {
         std.task.rtLock(&this.guard)
         if !this.writer {
@@ -142,6 +145,7 @@ struct Semaphore {
         return s
     }
 
+    // TryAcquire takes a unit without waiting; false if none is free.
     func TryAcquire() bool {
         std.task.rtLock(&this.guard)
         var ok = this.avail > 0
@@ -191,6 +195,7 @@ struct Barrier {
         return Barrier{st: new barrierState{n: n}}
     }
 
+    // Wait waits until n tasks are waiting; true in the last task to arrive.
     func Wait() Task<bool> {
         return barrierWait(*this)
     }
@@ -214,6 +219,7 @@ struct barrierState {
 struct Once {
     state int
 
+    // Do calls f if no call of Do has run yet on this Once.
     func Do(f func()) {
         if rtLoad(&this.state) == 2 {
             return
@@ -228,6 +234,7 @@ struct Once {
         }
     }
 
+    // Done reports whether f has finished.
     func Done() bool {
         return rtLoad(&this.state) == 2
     }
@@ -237,10 +244,12 @@ struct Once {
 struct AtomicInt {
     v int
 
+    // Load returns the value.
     func Load() int {
         return rtLoad(&this.v)
     }
 
+    // Store sets the value.
     func Store(x int) {
         rtStore(&this.v, x)
     }
@@ -255,6 +264,7 @@ struct AtomicInt {
         return rtSwap(&this.v, x)
     }
 
+    // CompareAndSwap sets the value to next if it equals old; reports whether it did.
     func CompareAndSwap(old int, next int) bool {
         return rtCas(&this.v, old, next)
     }
@@ -264,18 +274,22 @@ struct AtomicInt {
 struct AtomicBool {
     v int
 
+    // Load returns the value.
     func Load() bool {
         return rtLoad(&this.v) != 0
     }
 
+    // Store sets the value.
     func Store(x bool) {
         rtStore(&this.v, b2i(x))
     }
 
+    // Swap sets the value and returns the old one.
     func Swap(x bool) bool {
         return rtSwap(&this.v, b2i(x)) != 0
     }
 
+    // CompareAndSwap sets the value to next if it equals old; reports whether it did.
     func CompareAndSwap(old bool, next bool) bool {
         return rtCas(&this.v, b2i(old), b2i(next))
     }
@@ -294,6 +308,7 @@ struct Atomic<T: Comparable> {
     guard int
     v     T
 
+    // Load returns the value.
     func Load() T {
         std.task.rtLock(&this.guard)
         var x = this.v
@@ -301,12 +316,14 @@ struct Atomic<T: Comparable> {
         return x
     }
 
+    // Store sets the value.
     func Store(x T) {
         std.task.rtLock(&this.guard)
         this.v = x
         std.task.rtUnlock(&this.guard)
     }
 
+    // Swap sets the value and returns the old one.
     func Swap(x T) T {
         std.task.rtLock(&this.guard)
         var old = this.v
@@ -315,6 +332,7 @@ struct Atomic<T: Comparable> {
         return old
     }
 
+    // CompareAndSwap sets the value to next if it equals old; reports whether it did.
     func CompareAndSwap(old T, next T) bool {
         std.task.rtLock(&this.guard)
         var ok = this.v == old
@@ -339,6 +357,7 @@ struct Pool<T> {
         return Pool<T>{newFn: newFn, max: 64}
     }
 
+    // Get returns a pooled value, or a new one from newFn (the zero value without one).
     func Get() T {
         std.task.rtLock(&this.guard)
         var n = len(this.items)
@@ -358,6 +377,7 @@ struct Pool<T> {
         return this.newFn()
     }
 
+    // Put returns x to the pool (dropped when 64 are already idle).
     func Put(x T) {
         std.task.rtLock(&this.guard)
         if this.max == 0 || len(this.items) < this.max {

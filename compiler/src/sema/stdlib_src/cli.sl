@@ -1,5 +1,3 @@
-namespace std.cli
-
 // std.cli: command-line apps with subcommands, typed flags from struct
 // fields (compile-time reflection), env fallbacks, generated help,
 // "did you mean" suggestions and shell completion scripts.
@@ -25,6 +23,7 @@ namespace std.cli
 // unset flags fall back to their env variable, then to that default. -h/--help on any command and `help [command]`
 // print help; --version prints the version. Exit codes of App.Run: 0 ok,
 // 1 the command failed, 2 usage error.
+namespace std.cli
 
 // Field attribute of a flags struct (all parameters optional). The flag
 // name defaults to the field name in kebab-case (MaxConns -> max-conns).

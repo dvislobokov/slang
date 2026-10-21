@@ -1,10 +1,9 @@
-namespace std.cloud.blob
-
 // std.cloud.blob: one interface for object storage (docs/STDLIB.md level
 // 3b), implemented over std.cloud.s3 (OpenS3) and over a local directory
 // (OpenDir), so code and tests can switch between a bucket and the file
 // system. Keys are "/"-separated; a missing key fails with
 // blob.ErrNotFound (errors.Is) in both implementations.
+namespace std.cloud.blob
 
 // Metadata of a blob.
 struct Attributes {
@@ -17,13 +16,19 @@ struct Attributes {
 
 // A bucket of blobs.
 interface Bucket {
+    // Write stores data under key with a content type.
     func Write(key string, data []byte, contentType string) Task<void!>
+    // Read returns the contents of key (ErrNotFound if it is missing).
     func Read(key string) Task<[]byte!>
+    // Delete removes key.
     func Delete(key string) Task<void!>
+    // Exists reports whether key exists.
     func Exists(key string) Task<bool!>
+    // Attributes returns the size, content type and modification time of key.
     func Attributes(key string) Task<std.cloud.blob.Attributes!>
     // Every blob whose key starts with prefix, sorted by key.
     func List(prefix string) Task<[]std.cloud.blob.Attributes!>
+    // Copy copies src to dst within the bucket.
     func Copy(dst string, src string) Task<void!>
     // A URL that grants method on key for expires seconds (S3 only).
     func SignedURL(key string, method string, expires int) string!
@@ -41,39 +46,48 @@ struct S3Bucket {
     bucket string
     prefix string
 
+    // Write stores data under key with a content type (PutObject).
     func Write(key string, data []byte, contentType string) Task<void!> {
         return s3Write(this, key, data, contentType)
     }
 
+    // Read returns the contents of key (ErrNotFound if it is missing).
     func Read(key string) Task<[]byte!> {
         return s3Read(this, key)
     }
 
+    // Delete removes key.
     func Delete(key string) Task<void!> {
         return this.c.DeleteObject(this.bucket, this.prefix + key)
     }
 
+    // Exists reports whether key exists (HeadObject).
     func Exists(key string) Task<bool!> {
         return s3Exists(this, key)
     }
 
+    // Attributes returns the attributes of key.
     func Attributes(key string) Task<Attributes!> {
         return s3Attrs(this, key)
     }
 
+    // List returns every blob whose key starts with prefix, sorted by key.
     func List(prefix string) Task<[]Attributes!> {
         return s3List(this, prefix)
     }
 
+    // Copy copies src to dst within the bucket (CopyObject).
     func Copy(dst string, src string) Task<void!> {
         return s3Copy(this, dst, src)
     }
 
+    // SignedURL returns a presigned URL granting method on key for expires seconds.
     func SignedURL(key string, method string, expires int) string! {
         return this.c.Presign(method, this.bucket, this.prefix + key, expires)?
     }
 }
 
+// OpenS3 returns a bucket over an S3 client; keys are relative to prefix.
 func OpenS3(c *std.cloud.s3.Client, bucket string, prefix string) *S3Bucket {
     return new S3Bucket{c: c, bucket: bucket, prefix: prefix}
 }
@@ -154,34 +168,42 @@ struct DirBucket {
         return this.dir + "/" + key
     }
 
+    // Write stores data in the file for key (creating directories).
     func Write(key string, data []byte, contentType string) Task<void!> {
         return dirWrite(this, key, data)
     }
 
+    // Read returns the contents of the file for key (ErrNotFound if it is missing).
     func Read(key string) Task<[]byte!> {
         return dirRead(this, key)
     }
 
+    // Delete removes the file for key.
     func Delete(key string) Task<void!> {
         return dirDelete(this, key)
     }
 
+    // Exists reports whether the file for key exists.
     func Exists(key string) Task<bool!> {
         return dirExists(this, key)
     }
 
+    // Attributes returns the attributes of the file for key.
     func Attributes(key string) Task<Attributes!> {
         return dirAttrs(this, key)
     }
 
+    // List returns every blob whose key starts with prefix, sorted by key.
     func List(prefix string) Task<[]Attributes!> {
         return dirList(this, prefix)
     }
 
+    // Copy copies the file for src to dst.
     func Copy(dst string, src string) Task<void!> {
         return dirCopy(this, dst, src)
     }
 
+    // SignedURL is not supported by a directory bucket and always fails.
     func SignedURL(key string, method string, expires int) string! {
         return error("blob: signed URLs are not supported by a directory bucket")
     }

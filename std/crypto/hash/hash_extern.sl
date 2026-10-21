@@ -2,41 +2,65 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.hash implemented by the C runtime.
 namespace std.crypto.hash
 
+// Sha256 returns the SHA-256 digest of data.
+//
 // C: slang_crypto_hash_sha256 (runtime/src/std_*.c).
-extern func Sha256(a string) []byte
+extern func Sha256(data string) []byte
 
+// Sha256Hex returns the SHA-256 digest of data in lowercase hex.
+//
 // C: slang_crypto_hash_sha256_hex (runtime/src/std_*.c).
-extern func Sha256Hex(a string) string
+extern func Sha256Hex(data string) string
 
+// Sha512 returns the SHA-512 digest of data.
+//
 // C: slang_crypto_hash_sha512 (runtime/src/std_*.c).
-extern func Sha512(a string) []byte
+extern func Sha512(data string) []byte
 
+// Sha512Hex returns the SHA-512 digest of data in lowercase hex.
+//
 // C: slang_crypto_hash_sha512_hex (runtime/src/std_*.c).
-extern func Sha512Hex(a string) string
+extern func Sha512Hex(data string) string
 
+// Sha1 returns the SHA-1 digest of data.
+//
 // C: slang_crypto_hash_sha1 (runtime/src/std_*.c).
-extern func Sha1(a string) []byte
+extern func Sha1(data string) []byte
 
+// Sha1Hex returns the SHA-1 digest of data in lowercase hex.
+//
 // C: slang_crypto_hash_sha1_hex (runtime/src/std_*.c).
-extern func Sha1Hex(a string) string
+extern func Sha1Hex(data string) string
 
+// Md5 returns the MD5 digest of data (not for security).
+//
 // C: slang_crypto_hash_md5 (runtime/src/std_*.c).
-extern func Md5(a string) []byte
+extern func Md5(data string) []byte
 
+// Md5Hex returns the MD5 digest of data in lowercase hex.
+//
 // C: slang_crypto_hash_md5_hex (runtime/src/std_*.c).
-extern func Md5Hex(a string) string
+extern func Md5Hex(data string) string
 
+// Crc32 returns the IEEE CRC-32 of data.
+//
 // C: slang_crypto_hash_crc32 (runtime/src/std_*.c).
-extern func Crc32(a string) int
+extern func Crc32(data string) int
 
+// Sha384 returns the SHA-384 digest of data.
+//
 // C: slang_crypto_hash_sha384 (runtime/src/std_*.c).
-extern func Sha384(a string) []byte
+extern func Sha384(data string) []byte
 
+// Sha384Hex returns the SHA-384 digest of data in lowercase hex.
+//
 // C: slang_crypto_hash_sha384_hex (runtime/src/std_*.c).
-extern func Sha384Hex(a string) string
+extern func Sha384Hex(data string) string
 
+// Sum returns the digest of data with alg ("md5", "sha1", "sha256", "sha384", "sha512").
+//
 // C: slang_crypto_hash_sum (runtime/src/std_*.c).
-extern func Sum(a string, b []byte) []byte!
+extern func Sum(alg string, data []byte) []byte!
 
 // Internal runtime primitive (used by the Slang sources of this namespace).
 // C: slang_crypto_hash_rt_new (runtime/src/std_*.c).
@@ -50,5 +74,7 @@ extern func rtWrite(a []byte, b []byte)
 // C: slang_crypto_hash_rt_sum (runtime/src/std_*.c).
 extern func rtSum(a []byte) []byte
 
+// Blake2b returns the BLAKE2b digest of data (RFC 7693) with size 1..64 bytes and an optional key of up to 64 bytes.
+//
 // C: slang_crypto_hash_blake2b (runtime/src/std_*.c).
-extern func Blake2b(a []byte, b int, c []byte) []byte!
+extern func Blake2b(data []byte, size int, key []byte) []byte!

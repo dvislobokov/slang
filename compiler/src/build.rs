@@ -188,14 +188,20 @@ pub fn parse_args(args: &[String]) -> Result<(BuildOptions, Vec<String>), String
 }
 
 /// Locates `libslang_rt.a`: `$SLANG_RUNTIME` (the archive or its
-/// directory), next to the compiler (`<exe>/../../runtime`), then the
-/// repository the compiler was built from.
+/// directory), an installed toolchain's `targets/<host triple>/` (and
+/// `$SLANG_TARGETS/<host triple>/`), next to the compiler
+/// (`<exe>/../../runtime`), then the repository the compiler was built from.
 pub fn find_runtime() -> Result<PathBuf, String> {
     let mut cands = Vec::new();
     if let Ok(p) = std::env::var("SLANG_RUNTIME") {
         let p = PathBuf::from(p);
         cands.push(if p.is_dir() { p.join("libslang_rt.a") } else { p });
     }
+    let host = crate::target::Target::host().triple;
+    if let Some(b) = crate::toolchain::bundled_targets_dir() {
+        cands.push(b.join(&host).join("libslang_rt.a"));
+    }
+    cands.push(crate::toolchain::targets_dir().join(&host).join("libslang_rt.a"));
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             cands.push(dir.join("../../runtime/libslang_rt.a"));
@@ -215,12 +221,20 @@ pub fn find_runtime() -> Result<PathBuf, String> {
 }
 
 fn find_clang() -> Result<String, String> {
-    for c in ["clang-18", "clang"] {
-        if Command::new(c).arg("--version").output().is_ok_and(|o| o.status.success()) {
-            return Ok(c.to_string());
-        }
-    }
-    Err("cannot find clang (tried clang-18, clang)".into())
+    // Probed once per process (each probe is a process start).
+    static CLANG: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    CLANG
+        .get_or_init(|| ["clang-18", "clang"].into_iter().find(|c| Command::new(c).arg("--version").output().is_ok_and(|o| o.status.success())).map(str::to_string))
+        .clone()
+        .ok_or_else(|| "cannot find clang (tried clang-18, clang)".into())
+}
+
+/// Whether host links use lld (`SLANG_LINKER=lld`, Linux, `ld.lld` on PATH).
+fn use_lld() -> bool {
+    static LLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *LLD.get_or_init(|| {
+        cfg!(target_os = "linux") && std::env::var("SLANG_LINKER").is_ok_and(|v| v == "lld") && Command::new("ld.lld").arg("--version").output().is_ok_and(|o| o.status.success())
+    })
 }
 
 /// Default output path of a plain build: the input's stem (or directory
@@ -447,7 +461,23 @@ pub fn check(opts: &BuildOptions, dump_hir: bool, dev: bool) -> Result<usize, St
 
 // -- front end ------------------------------------------------------------------
 
+/// `SLANG_TIME=1`: prints the duration of each build phase to stderr
+/// (compile-time measurements, benchmarks/README.md).
+pub(crate) struct PhaseTimer(&'static str, std::time::Instant);
+
+impl Drop for PhaseTimer {
+    fn drop(&mut self) {
+        eprintln!("slang: time {:<10} {:9.1} ms", self.0, self.1.elapsed().as_secs_f64() * 1e3);
+    }
+}
+
+pub(crate) fn phase(name: &'static str) -> Option<PhaseTimer> {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    ON.get_or_init(|| std::env::var_os("SLANG_TIME").is_some()).then(|| PhaseTimer(name, std::time::Instant::now()))
+}
+
 fn front_end_plain(input: &Path) -> Result<(Vec<crate::span::SourceFile>, Program), String> {
+    let _t = phase("front-end");
     let paths = driver::collect_files(input).map_err(|e| format!("cannot read {}: {e}", input.display()))?;
     if paths.is_empty() {
         return Err(format!("no .sl files in {}", input.display()));
@@ -465,6 +495,7 @@ fn front_end_plain(input: &Path) -> Result<(Vec<crate::span::SourceFile>, Progra
 }
 
 fn front_end_package(project: &Project, target: PkgId, dev: bool) -> Result<(package::Checked, Program), String> {
+    let _t = phase("front-end");
     let mut diags = Diagnostics::new();
     let mut checked = package::check(project, target, dev, &mut diags)?;
     if !diags.is_empty() {
@@ -531,7 +562,7 @@ fn emit_plain(program: &Program, name: &str, output: PathBuf, opts: &BuildOption
     }
     let libs = module_link_libs(&module);
     let obj = output.with_extension(format!("{}.o", std::process::id()));
-    write_object(&machine, &module, &obj)?;
+    write_object_par(&machine, &module, &obj, opts)?;
     let r = link(&[obj.clone()], &output, &libs, opts);
     let _ = std::fs::remove_file(&obj);
     r?;
@@ -540,12 +571,13 @@ fn emit_plain(program: &Program, name: &str, output: PathBuf, opts: &BuildOption
 
 /// Codegen + verification of the whole program.
 fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path, opts: &BuildOptions) -> Result<Module<'ctx>, String> {
+    let _t = phase("codegen");
     let leak_check = match (opts.leak_check, opts.release) {
         (false, _) => 0,
         (true, true) => 1,
         (true, false) => 2,
     };
-    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace, debug_info: opts.emits_debug_info(), optimized: opts.opt > 0, debug_agent: opts.debug_agent_on() }) {
+    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace, debug_info: opts.emits_debug_info(), optimized: opts.opt > 0, inline_rc: opts.opt >= 3 || (opts.opt > 0 && std::env::var_os("SLANG_INLINE_RC").is_some()), debug_agent: opts.debug_agent_on() }) {
         Ok(m) => m,
         Err(errs) => {
             for e in &errs {
@@ -576,13 +608,33 @@ fn keep_frame_pointers(ctx: &Context, module: &Module) {
 }
 
 fn optimise(module: &Module, machine: &TargetMachine, opt: u8) -> Result<(), String> {
+    let _t = phase("optimise");
+    // Code generation emits every stdlib function a program could reach
+    // (over 1000 for hello); drop the unreferenced ones first, so neither
+    // the optimisation pipeline nor the code generator sees them.
+    module.run_passes("globaldce", machine, PassBuilderOptions::create()).map_err(|e| format!("internal compiler error: globaldce failed: {}", e.to_string()))?;
     let pipeline = format!("default<O{}>", opt.min(3));
     module.run_passes(&pipeline, machine, PassBuilderOptions::create()).map_err(|e| format!("internal compiler error: optimisation failed: {}", e.to_string()))?;
     codegen::dedup_declares(module);
     Ok(())
 }
 
+/// [`write_object`] for an executable's object: on several threads when
+/// the module is large ([`crate::parcodegen`]).
+fn write_object_par(machine: &TargetMachine, module: &Module, path: &Path, opts: &BuildOptions) -> Result<(), String> {
+    {
+        let _t = phase("object-par");
+        match crate::parcodegen::write_object_parallel(module, opt_level(opts.opt), path, || find_clang().ok()) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => log(opts, format!("parallel code generation failed, retrying serially: {e}")),
+        }
+    }
+    write_object(machine, module, path)
+}
+
 fn write_object(machine: &TargetMachine, module: &Module, path: &Path) -> Result<(), String> {
+    let _t = phase("object");
     machine.write_to_file(module, FileType::Object, path).map_err(|e| format!("cannot write {}: {}", path.display(), e.to_string()))
 }
 
@@ -596,6 +648,7 @@ fn module_link_libs(module: &Module) -> Vec<&'static str> {
 /// Links `objs` with the runtime (and the system libraries `libs`) into
 /// the executable `output`.
 fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> Result<(), String> {
+    let _t = phase("link");
     let target = crate::target::current();
     if !target.is_host() || target.os == "windows" {
         // Cross link (docs/PLATFORMS.md): the target's runtime and toolchain
@@ -620,6 +673,12 @@ fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> 
         cmd.arg(format!("-l{l}"));
     }
     cmd.arg("-lpthread").arg("-lm").arg("-o").arg(output);
+    if use_lld() {
+        // Opt-in: lld links faster and lays out smaller executables (no
+        // page padding between segments: hello 10 KB instead of 15 KB), but
+        // its code layout cost 15% on benchmarks/fib, so it is not the default.
+        cmd.arg("-fuse-ld=lld");
+    }
     if opts.release {
         cmd.arg("-Wl,--gc-sections");
     } else if !opts.static_link {
@@ -632,7 +691,7 @@ fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> 
     if opts.static_link {
         cmd.arg("-static");
     }
-    log(opts, format!("linking {} ({} object(s))", output.display(), objs.len()));
+    log(opts, format!("linking {} ({} object(s), runtime {})", output.display(), objs.len(), rt.display()));
     let out = cmd.output().map_err(|e| format!("cannot run {clang}: {e}"))?;
     if !out.status.success() {
         return Err(format!("linking failed:\n{}", String::from_utf8_lossy(&out.stderr)));
@@ -689,7 +748,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
             log(opts, format!("compiling {name} -> {}", obj.display()));
             optimise(&part, &machine, opts.opt)?;
             let tmp = obj.with_extension(format!("{}.tmp", std::process::id()));
-            write_object(&machine, &part, &tmp)?;
+            write_object_par(&machine, &part, &tmp, opts)?;
             std::fs::rename(&tmp, &obj).map_err(|e| format!("cannot write {}: {e}", obj.display()))?;
         }
         objs.push(obj);
@@ -729,6 +788,7 @@ fn compiler_id() -> String {
 ///   IR is byte-identical to the current part. Unreferenced helpers are
 ///   then dropped by `globaldce`.
 fn split_module<'ctx>(module: &Module<'ctx>, program: &Program, file_pkg: &[usize], pkg: usize, name: &str) -> Result<Module<'ctx>, String> {
+    let _t = phase("split");
     let part = module.clone();
     part.set_name(name);
     part.set_source_file_name(name);

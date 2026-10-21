@@ -1,5 +1,3 @@
-namespace std.math.big
-
 // std.math.big: arbitrary-precision Int, Rat and Decimal.
 //
 // Values are immutable: every operation returns a new value (unlike Go's
@@ -9,6 +7,7 @@ namespace std.math.big
 // work on Int, Rat and Decimal (DESIGN.md "Перегрузка операторов"). Magnitudes are []uint32 limbs; the limb arithmetic (Karatsuba
 // multiplication, Knuth division, base conversion) is C
 // (runtime/src/std_math_big.c).
+namespace std.math.big
 
 // An arbitrary-precision integer. The zero value is 0.
 struct Int {
@@ -26,10 +25,12 @@ struct Int {
         return 1
     }
 
+    // IsZero reports whether x == 0.
     func IsZero() bool {
         return len(this.mag) == 0
     }
 
+    // Add returns x + y.
     func Add(y Int) Int {
         if this.neg == y.neg {
             return mk(this.neg, rtAdd(this.mag, y.mag))
@@ -44,10 +45,12 @@ struct Int {
         return mk(y.neg, rtSub(y.mag, this.mag))
     }
 
+    // Sub returns x - y.
     func Sub(y Int) Int {
         return this.Add(y.Neg())
     }
 
+    // Mul returns x * y.
     func Mul(y Int) Int {
         return mk(this.neg != y.neg, rtMul(this.mag, y.mag))
     }
@@ -102,6 +105,7 @@ struct Int {
         return r
     }
 
+    // Neg returns -x.
     func Neg() Int {
         if len(this.mag) == 0 {
             return *this
@@ -109,6 +113,9 @@ struct Int {
         return Int{neg: !this.neg, mag: this.mag}
     }
 
+    // Abs returns
+    // x
+    // .
     func Abs() Int {
         return Int{neg: false, mag: this.mag}
     }
@@ -138,6 +145,7 @@ struct Int {
         return rtCmp(this.mag, y.mag)
     }
 
+    // Equals reports whether x == y.
     func Equals(y Int) bool {
         return this.Cmp(y) == 0
     }
@@ -516,14 +524,17 @@ struct Rat {
         return this.den
     }
 
+    // Sign returns -1, 0 or 1 for a negative, zero or positive number.
     func Sign() int {
         return this.num.Sign()
     }
 
+    // IsInt reports whether the denominator is 1.
     func IsInt() bool {
         return this.Denom().Equals(NewInt(1))
     }
 
+    // Add returns x + y.
     func Add(y Rat) Rat {
         return RatFromInts(
             this.num.Mul(y.Denom()).Add(y.num.Mul(this.Denom())),
@@ -531,10 +542,12 @@ struct Rat {
         )
     }
 
+    // Sub returns x - y.
     func Sub(y Rat) Rat {
         return this.Add(y.Neg())
     }
 
+    // Mul returns x * y.
     func Mul(y Rat) Rat {
         return RatFromInts(this.num.Mul(y.num), this.Denom().Mul(y.Denom()))
     }
@@ -547,10 +560,14 @@ struct Rat {
         return RatFromInts(this.num.Mul(y.Denom()), this.Denom().Mul(y.num))
     }
 
+    // Neg returns -x.
     func Neg() Rat {
         return Rat{num: this.num.Neg(), den: this.Denom()}
     }
 
+    // Abs returns
+    // x
+    // .
     func Abs() Rat {
         return Rat{num: this.num.Abs(), den: this.Denom()}
     }
@@ -560,14 +577,17 @@ struct Rat {
         return RatFromInts(this.Denom(), this.num)
     }
 
+    // Cmp returns -1, 0 or 1 comparing x and y.
     func Cmp(y Rat) int {
         return this.num.Mul(y.Denom()).Cmp(y.num.Mul(this.Denom()))
     }
 
+    // Compare is Cmp (the operator protocol: `<`, `>`).
     func Compare(y Rat) int {
         return this.Cmp(y)
     }
 
+    // Equals reports whether x == y.
     func Equals(y Rat) bool {
         return this.Cmp(y) == 0
     }
@@ -702,10 +722,12 @@ struct Decimal {
         return this.unscaled
     }
 
+    // Sign returns -1, 0 or 1 for a negative, zero or positive number.
     func Sign() int {
         return this.unscaled.Sign()
     }
 
+    // IsZero reports whether the value is zero.
     func IsZero() bool {
         return this.unscaled.IsZero()
     }
@@ -715,6 +737,7 @@ struct Decimal {
         return this.Round(s, RoundingMode.HalfUp)
     }
 
+    // Add returns x + y exactly (the larger scale of the two).
     func Add(y Decimal) Decimal {
         var s = this.scale
         if y.scale > s {
@@ -723,6 +746,7 @@ struct Decimal {
         return Decimal{unscaled: this.up(s).Add(y.up(s)), scale: s}
     }
 
+    // Sub returns x - y exactly.
     func Sub(y Decimal) Decimal {
         return this.Add(y.Neg())
     }
@@ -786,10 +810,14 @@ struct Decimal {
         return Decimal{unscaled: this.up(s).Rem(y.up(s)), scale: s}
     }
 
+    // Neg returns -x.
     func Neg() Decimal {
         return Decimal{unscaled: this.unscaled.Neg(), scale: this.scale}
     }
 
+    // Abs returns
+    // x
+    // .
     func Abs() Decimal {
         return Decimal{unscaled: this.unscaled.Abs(), scale: this.scale}
     }
@@ -826,10 +854,12 @@ struct Decimal {
         return this.up(s).Cmp(y.up(s))
     }
 
+    // Compare is Cmp (the operator protocol: `<`, `>`).
     func Compare(y Decimal) int {
         return this.Cmp(y)
     }
 
+    // Equals reports whether x and y are numerically equal (1.0 == 1.00).
     func Equals(y Decimal) bool {
         return this.Cmp(y) == 0
     }

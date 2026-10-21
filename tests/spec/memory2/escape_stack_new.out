@@ -1,0 +1,13 @@
+drop local-box
+9
+drop local-box
+-1
+drop cell
+42
+iter 0
+drop loop0
+drop loop1
+drop loop2
+kept 7
+drop escaped
+end

@@ -2,32 +2,52 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.unsafe implemented by the C runtime.
 namespace std.unsafe
 
+// ReadInt reads a signed integer of size bytes (1, 2, 4, 8) at addr. Nothing is checked.
+//
 // C: slang_unsafe_read_int (runtime/src/std_*.c).
-extern func ReadInt(a int, b int) int
+extern func ReadInt(addr int, size int) int
 
+// ReadUint reads an unsigned integer of size bytes at addr. Nothing is checked.
+//
 // C: slang_unsafe_read_uint (runtime/src/std_*.c).
-extern func ReadUint(a int, b int) int
+extern func ReadUint(addr int, size int) int
 
+// ReadFloat reads a float of size bytes (4 or 8) at addr. Nothing is checked.
+//
 // C: slang_unsafe_read_float (runtime/src/std_*.c).
-extern func ReadFloat(a int, b int) float
+extern func ReadFloat(addr int, size int) float
 
+// WriteInt writes v as an integer of size bytes at addr. Nothing is checked.
+//
 // C: slang_unsafe_write_int (runtime/src/std_*.c).
-extern func WriteInt(a int, b int, c int)
+extern func WriteInt(addr int, size int, v int)
 
+// ReadBytes copies n bytes starting at addr. Nothing is checked.
+//
 // C: slang_unsafe_read_bytes (runtime/src/std_*.c).
-extern func ReadBytes(a int, b int) []byte
+extern func ReadBytes(addr int, n int) []byte
 
+// WriteBytes copies b to addr. Nothing is checked.
+//
 // C: slang_unsafe_write_bytes (runtime/src/std_*.c).
-extern func WriteBytes(a int, b []byte)
+extern func WriteBytes(addr int, b []byte)
 
+// CString copies the NUL-terminated C string at addr.
+//
 // C: slang_unsafe_c_string (runtime/src/std_*.c).
-extern func CString(a int) string
+extern func CString(addr int) string
 
+// AddrOf returns the data word of the `any` value x.
+//
 // C: slang_unsafe_addr_of (runtime/src/std_*.c).
-extern func AddrOf(a any) int
+extern func AddrOf(x any) int
 
+// TypeOf returns the type word of the `any` value x.
+//
 // C: slang_unsafe_type_of (runtime/src/std_*.c).
-extern func TypeOf(a any) int
+extern func TypeOf(x any) int
 
+// CallFunc calls the C function at addr with up to 8 integer arguments and returns its integer result.
+//
 // C: slang_unsafe_call_func (runtime/src/std_*.c).
-extern func CallFunc(a int, b []int) int
+extern func CallFunc(addr int, args []int) int

@@ -1,5 +1,3 @@
-namespace std.encoding.binary
-
 // std.encoding.binary: fixed-size integers in big/little endian, varints,
 // and Encode/Decode/Read/Write of whole structs through compile-time
 // reflection (each instance is straight-line code for its type).
@@ -8,6 +6,7 @@ namespace std.encoding.binary
 // binary.LittleEndian.PutUint16(b, v). As a value (for Encode/Read):
 // binary.ByteOrder.BigEndian / LittleEndian. A struct or field can override the order
 // with the attribute @binary(endian: "big") / "little".
+namespace std.encoding.binary
 
 // Per-struct or per-field byte order: @binary(endian: "big" | "little").
 @attribute(targets: [std.reflect.Target.Struct, std.reflect.Target.Field])
@@ -71,16 +70,19 @@ func need(b []byte, n int) {
 
 // Big-endian (network order) access to byte slices.
 struct BigEndian {
+    // Uint16 decodes b[0..2]; it panics if b is shorter.
     static func Uint16(b []byte) uint16 {
         need(b, 2)
         return (uint16(b[0]) << 8) | uint16(b[1])
     }
 
+    // Uint32 decodes b[0..4]; it panics if b is shorter.
     static func Uint32(b []byte) uint32 {
         need(b, 4)
         return (uint32(b[0]) << 24) | (uint32(b[1]) << 16) | (uint32(b[2]) << 8) | uint32(b[3])
     }
 
+    // Uint64 decodes b[0..8]; it panics if b is shorter.
     static func Uint64(b []byte) uint {
         need(b, 8)
         var v uint = 0
@@ -90,12 +92,14 @@ struct BigEndian {
         return v
     }
 
+    // PutUint16 encodes v into b[0..2]; it panics if b is shorter.
     static func PutUint16(b []byte, v uint16) {
         need(b, 2)
         b[0] = byte(v >> 8)
         b[1] = byte(v & 255)
     }
 
+    // PutUint32 encodes v into b[0..4]; it panics if b is shorter.
     static func PutUint32(b []byte, v uint32) {
         need(b, 4)
         b[0] = byte(v >> 24)
@@ -104,6 +108,7 @@ struct BigEndian {
         b[3] = byte(v & 255)
     }
 
+    // PutUint64 encodes v into b[0..8]; it panics if b is shorter.
     static func PutUint64(b []byte, v uint) {
         need(b, 8)
         for i in 0..8 {
@@ -111,11 +116,13 @@ struct BigEndian {
         }
     }
 
+    // AppendUint16 appends the 2 bytes of v to b.
     static func AppendUint16(b []byte, v uint16) []byte {
         var out = append(b, byte(v >> 8))
         return append(out, byte(v & 255))
     }
 
+    // AppendUint32 appends the 4 bytes of v to b.
     static func AppendUint32(b []byte, v uint32) []byte {
         var out = b
         var shift = 24
@@ -126,6 +133,7 @@ struct BigEndian {
         return out
     }
 
+    // AppendUint64 appends the 8 bytes of v to b.
     static func AppendUint64(b []byte, v uint) []byte {
         var out = b
         var shift = 56
@@ -139,16 +147,19 @@ struct BigEndian {
 
 // Little-endian access to byte slices.
 struct LittleEndian {
+    // Uint16 decodes b[0..2]; it panics if b is shorter.
     static func Uint16(b []byte) uint16 {
         need(b, 2)
         return uint16(b[0]) | (uint16(b[1]) << 8)
     }
 
+    // Uint32 decodes b[0..4]; it panics if b is shorter.
     static func Uint32(b []byte) uint32 {
         need(b, 4)
         return uint32(b[0]) | (uint32(b[1]) << 8) | (uint32(b[2]) << 16) | (uint32(b[3]) << 24)
     }
 
+    // Uint64 decodes b[0..8]; it panics if b is shorter.
     static func Uint64(b []byte) uint {
         need(b, 8)
         var v uint = 0
@@ -160,12 +171,14 @@ struct LittleEndian {
         return v
     }
 
+    // PutUint16 encodes v into b[0..2]; it panics if b is shorter.
     static func PutUint16(b []byte, v uint16) {
         need(b, 2)
         b[0] = byte(v & 255)
         b[1] = byte(v >> 8)
     }
 
+    // PutUint32 encodes v into b[0..4]; it panics if b is shorter.
     static func PutUint32(b []byte, v uint32) {
         need(b, 4)
         for i in 0..4 {
@@ -173,6 +186,7 @@ struct LittleEndian {
         }
     }
 
+    // PutUint64 encodes v into b[0..8]; it panics if b is shorter.
     static func PutUint64(b []byte, v uint) {
         need(b, 8)
         for i in 0..8 {
@@ -180,11 +194,13 @@ struct LittleEndian {
         }
     }
 
+    // AppendUint16 appends the 2 bytes of v to b.
     static func AppendUint16(b []byte, v uint16) []byte {
         var out = append(b, byte(v & 255))
         return append(out, byte(v >> 8))
     }
 
+    // AppendUint32 appends the 4 bytes of v to b.
     static func AppendUint32(b []byte, v uint32) []byte {
         var out = b
         for i in 0..4 {
@@ -193,6 +209,7 @@ struct LittleEndian {
         return out
     }
 
+    // AppendUint64 appends the 8 bytes of v to b.
     static func AppendUint64(b []byte, v uint) []byte {
         var out = b
         for i in 0..8 {

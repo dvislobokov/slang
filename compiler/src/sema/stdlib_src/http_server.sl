@@ -1,11 +1,10 @@
-namespace std.net.http
-
 // The HTTP server (see http.sl for the file layout): Router with
 // middleware, Server with the HTTP/1.1 keep-alive loop (one task per
 // connection, requests on it served in order), streaming responses
 // (Response.Flush), SendFile and connection hijacking (WebSockets).
 // HTTP/2 connections (TLS ALPN "h2", or H2C prior knowledge) are handed to
 // serveH2 in http2.sl.
+namespace std.net.http
 
 // ---- routing ---------------------------------------------------------------
 
@@ -49,6 +48,7 @@ struct Router {
         return this.t
     }
 
+    // Handle registers h for method ("*" for any) and pattern.
     func Handle(method string, pattern string, h func(*Request, *Response) Task<void!>) {
         var parts = splitPath(pattern)
         var isStatic = true
@@ -67,26 +67,32 @@ struct Router {
         })
     }
 
+    // Get registers h for GET (and HEAD) requests to pattern.
     func Get(pattern string, h func(*Request, *Response) Task<void!>) {
         this.Handle("GET", pattern, h)
     }
 
+    // Post registers h for POST requests to pattern.
     func Post(pattern string, h func(*Request, *Response) Task<void!>) {
         this.Handle("POST", pattern, h)
     }
 
+    // Put registers h for PUT requests to pattern.
     func Put(pattern string, h func(*Request, *Response) Task<void!>) {
         this.Handle("PUT", pattern, h)
     }
 
+    // Delete registers h for DELETE requests to pattern.
     func Delete(pattern string, h func(*Request, *Response) Task<void!>) {
         this.Handle("DELETE", pattern, h)
     }
 
+    // Patch registers h for PATCH requests to pattern.
     func Patch(pattern string, h func(*Request, *Response) Task<void!>) {
         this.Handle("PATCH", pattern, h)
     }
 
+    // Options registers h for OPTIONS requests to pattern.
     func Options(pattern string, h func(*Request, *Response) Task<void!>) {
         this.Handle("OPTIONS", pattern, h)
     }
@@ -109,6 +115,7 @@ struct Router {
         this.hasChain = false
     }
 
+    // Serve dispatches req through the middleware and the routes (Router is a Handler).
     func Serve(req *Request, res *Response) Task<void!> {
         if len(this.mws) == 0 {
             return dispatch(this.table(), req, res)
@@ -620,6 +627,7 @@ struct RequestBody {
     // HTTP/2: the request stream
     h2 *h2stream
 
+    // Read returns up to n bytes of the body; an empty slice at its end.
     func Read(n int) Task<[]byte!> {
         return reqBodyRead(this, n)
     }
@@ -1047,30 +1055,37 @@ struct RawConn {
         return readHead(this.c, this.b)
     }
 
+    // Write writes data to the connection.
     func Write(data []byte) Task<int!> {
         return this.c.write(data)
     }
 
+    // WriteString writes s to the connection.
     func WriteString(s string) Task<int!> {
         return this.c.writeString(s)
     }
 
+    // SetTimeout sets a timeout in milliseconds for every read and write (0: none).
     func SetTimeout(ms int) {
         this.c.setTimeout(ms)
     }
 
+    // Close closes the connection.
     func Close() {
         this.c.close()
     }
 
+    // IsClosed reports whether Close was called.
     func IsClosed() bool {
         return this.c.isClosed()
     }
 
+    // RemoteAddr returns the peer's "ip:port".
     func RemoteAddr() string {
         return this.c.remoteAddr()
     }
 
+    // LocalAddr returns the local "ip:port".
     func LocalAddr() string {
         return this.c.localAddr()
     }

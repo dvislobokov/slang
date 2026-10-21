@@ -2,8 +2,10 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.encoding.json implemented by the C runtime.
 namespace std.encoding.json
 
+// Quote returns s as a JSON string literal, with quotes and escapes.
+//
 // C: slang_encoding_json_quote (runtime/src/std_*.c).
-extern func Quote(a string) string
+extern func Quote(s string) string
 
 // C: slang_encoding_json_scan (runtime/src/std_*.c).
 extern func scan(a string) []string!

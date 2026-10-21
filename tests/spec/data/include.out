@@ -1,0 +1,19 @@
+SELECT t0."id", t0."name", i_books."id", i_books."author_id", i_books."title", i_profile."id", i_profile."author_id", i_profile."bio", i_tags."id", i_tags."label" FROM "authors" AS t0 LEFT JOIN "books" AS i_books ON i_books."author_id" = t0."id" LEFT JOIN "profiles" AS i_profile ON i_profile."author_id" = t0."id" LEFT JOIN "author_tags" AS j_tags ON j_tags."author_id" = t0."id" LEFT JOIN "tags" AS i_tags ON i_tags."id" = j_tags."tag_id" ORDER BY t0."name" ASC, t0."id"
+Banks Excession Scottish 1
+Le Guin Earthsea,Dispossessed - 2
+Nobody  - 0
+SELECT t0."id", t0."name", i_books."id", i_books."author_id", i_books."title" FROM (SELECT t0."id", t0."name" FROM "authors" AS t0 ORDER BY t0."id" ASC LIMIT 1) AS t0 LEFT JOIN "books" AS i_books ON i_books."author_id" = t0."id" ORDER BY t0."id" ASC, t0."id"
+1 Le Guin 2
+  sql: SELECT t0."id", t0."name" FROM "authors" AS t0 WHERE (t0."name" <> ?) ORDER BY t0."id" ASC -- ["Nobody"]
+  sql: SELECT t0."id", t0."author_id", t0."title" FROM "books" AS t0 WHERE t0."author_id" IN (?, ?) ORDER BY t0."id" -- [1, 2]
+  sql: SELECT t0."id", t0."label", j."author_id" FROM "tags" AS t0 JOIN "author_tags" AS j ON j."tag_id" = t0."id" WHERE j."author_id" IN (?, ?) ORDER BY t0."id" -- [1, 2]
+Le Guin Earthsea,Dispossessed 2
+Banks Excession 1
+  sql: SELECT t0."id", t0."author_id", t0."title", i_author."id", i_author."name" FROM "books" AS t0 LEFT JOIN "authors" AS i_author ON i_author."id" = t0."author_id" ORDER BY t0."title" ASC, t0."id"
+Anonymous ?
+Dispossessed Le Guin
+Earthsea Le Guin
+Excession Banks
+[Excession Anonymous]
+Nobody 0
+Banks true Unchanged

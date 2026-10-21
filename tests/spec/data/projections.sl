@@ -1,0 +1,103 @@
+// test: std.data projections and aggregates: Select to tuples, structs and scalars (with expressions and navigation counts), Join, GroupBy with Key/Count/Sum/Average and Where as HAVING, composite group keys, Count/Any/All/Sum/Min/Max/Average with and without rows, First/Single errors
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.projections
+
+import std
+import std.io
+
+struct Customer {
+    Id     int
+    Name   string
+    City   string
+    Orders []*Order
+}
+
+struct Order {
+    Id         int
+    CustomerId int
+    Product    string
+    Qty        int
+    Price      float
+}
+
+struct Line {
+    Who    string
+    Amount float
+}
+
+struct Stats {
+    City   string
+    Orders int
+}
+
+struct Shop {
+    data.Context
+    Customers data.Set<Customer>
+    Orders    data.Set<Order>
+}
+
+async func main() void! {
+    var ctx = data.Open<Shop>(data.Provider.Sqlite, ":memory:")?
+    await ctx.EnsureCreated()?
+    var a = new Customer{Name: "Ann", City: "Oslo"}
+    var b = new Customer{Name: "Bob", City: "Rome"}
+    var c = new Customer{Name: "Cid", City: "Oslo"}
+    ctx.Customers.AddRange([a, b, c])
+    _ = await ctx.SaveChanges()?
+    ctx.Orders.AddRange([
+        new Order{CustomerId: a.Id, Product: "pen", Qty: 3, Price: 1.5},
+        new Order{CustomerId: a.Id, Product: "ink", Qty: 1, Price: 4},
+        new Order{CustomerId: b.Id, Product: "pen", Qty: 10, Price: 1.25},
+    ])
+    _ = await ctx.SaveChanges()?
+
+    var tuples = await ctx.Orders.OrderBy((o) => o.Id).Select((o) => (o.Product, float(o.Qty) * o.Price, o.Qty > 2)).ToList()?
+    for x in tuples {
+        var (p, total, many) = x
+        println(p, total, many)
+    }
+    var names = await ctx.Customers.OrderBy((x) => x.Name).Select((x) => x.Name + " (" + x.City + ")").ToList()?
+    println(names)
+    var stats = await ctx.Customers.OrderBy((x) => x.Id).Select((x) => Stats{City: x.City, Orders: x.Orders.Count()}).ToList()?
+    for s in stats {
+        println(s.City, s.Orders)
+    }
+    var cities = ctx.Customers.Select((x) => x.City).Distinct()
+    println(cities.ToSql(), await cities.Count()?)
+
+    var lines = ctx.Customers.Where((x) => x.City == "Oslo").Join(ctx.Orders, (x) => x.Id, (o) => o.CustomerId, (x, o) => Line{Who: x.Name, Amount: o.Price * float(o.Qty)})
+    println(lines.ToSql())
+    for l in await lines.ToList()? {
+        println(l.Who, l.Amount)
+    }
+
+    var byProduct = ctx.Orders.GroupBy((o) => o.Product).Where((g) => g.Sum((o) => o.Qty) > 3).OrderBy((g) => g.Key).Select((g) => (g.Key, g.Count(), g.Sum((o) => o.Qty), g.Average((o) => o.Price)))
+    println(byProduct.ToSql())
+    for x in await byProduct.ToList()? {
+        var (p, n, qty, avg) = x
+        println(p, n, qty, avg)
+    }
+    var byPair = await ctx.Orders.GroupBy((o) => (o.CustomerId, o.Product)).OrderBy((g) => g.Max((o) => o.Qty)).Select((g) => (g.Key, g.Max((o) => o.Qty))).ToList()?
+    println(len(byPair))
+    var (key, mx) = byPair[0]
+    var (cust, prod) = key
+    println(cust, prod, mx)
+
+    println(await ctx.Orders.Count()?, await ctx.Orders.Any((o) => o.Qty > 5)?, await ctx.Orders.All((o) => o.Price < 5)?)
+    println(await ctx.Orders.Sum((o) => o.Qty)?, await ctx.Orders.Min((o) => o.Price)?, await ctx.Orders.Max((o) => o.Product)?, await ctx.Orders.Average((o) => o.Qty)?)
+    var none = ctx.Orders.Where((o) => o.Qty > 100)
+    println(await none.Sum((o) => o.Price)?, await none.Count()?, await none.Any()?, await none.All((o) => o.Qty > 1000)?)
+    try await none.Max((o) => o.Price) catch err {
+        println(err)
+    }
+    try await none.First() catch err {
+        println(err)
+    }
+    try await ctx.Orders.Single((o) => o.Product == "pen") catch err {
+        println(err)
+    }
+    println((await ctx.Orders.Where((o) => o.Product == "ink").Select((o) => o.Price).Single()?))
+    var nothing = await none.Select((o) => o.Product).FirstOrDefault()?
+    println("[" + nothing + "]")
+}

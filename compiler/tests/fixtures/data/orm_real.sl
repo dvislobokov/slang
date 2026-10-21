@@ -1,0 +1,169 @@
+// std.data against a real PostgreSQL server (compiler/tests/data.rs) and
+// SQLite: the same unit of work, queries, includes, aggregates,
+// concurrency and transactions run on both providers and must print the
+// same lines. PGTEST_DSN names the server.
+namespace ormreal
+
+import std
+import std.data
+import std.io
+
+enum Kind { Paper, Ebook }
+
+struct Author {
+    Id      int
+    Name    string
+    Born    time.Time
+    Books   []*Book
+    Profile *Profile
+    Tags    []*Tag
+}
+
+struct Book {
+    Id       int
+    AuthorId *int
+    Title    string
+    Kind     Kind
+    Price    math.big.Decimal
+    Meta     encoding.json.Value
+    InPrint  bool
+    Cover    []byte
+    @concurrencyToken Version int
+    Author   *Author
+}
+
+struct Profile {
+    Id       int
+    AuthorId int
+    Bio      string
+}
+
+struct Tag {
+    Id      int
+    Label   string
+    Authors []*Author
+}
+
+struct Library {
+    Context
+    Authors  Set<Author>
+    Books    Set<Book>
+    Profiles Set<Profile>
+    Tags     Set<Tag>
+
+    func Configure(m *ModelBuilder) {
+        m.Entity<Book>().HasIndex((b) => (b.Title, b.Kind)).IsUnique()
+        m.Entity<Profile>().Property((p) => p.Bio).HasMaxLength(500).HasDefaultSql("'none'")
+    }
+}
+
+func pid(n int) *int {
+    var x = n
+    return &x
+}
+
+func titles(bs []*Book) string {
+    var out []string = []
+    for b in bs {
+        out = append(out, b.Title)
+    }
+    return strings.Join(out, ",")
+}
+
+async func run(ctx *Library, label string) void! {
+    println("==", label)
+    await ctx.EnsureCreated()?
+    var t = time.Date(1929, 10, 21, 0, 0, 0, 0, time.UTC())
+    var le = new Author{Name: "Le Guin", Born: t}
+    var ba = new Author{Name: "Banks", Born: t.AddDate(25, 0, 0)}
+    ctx.Authors.AddRange([le, ba])
+    var sf = new Tag{Label: "sf"}
+    var fa = new Tag{Label: "fantasy"}
+    ctx.Tags.AddRange([sf, fa])
+    _ = await ctx.SaveChanges()?
+    var price = math.big.ParseDecimal("9.99")?
+    for i in 0..120 {
+        ctx.Books.Add(new Book{AuthorId: pid(ba.Id), Title: fmt.Format("Culture {0}", i), Kind: Kind.Ebook, Price: price, Meta: encoding.json.NewNull(), InPrint: i % 2 == 0, Cover: [byte(i)]})
+    }
+    ctx.Books.Add(new Book{AuthorId: pid(le.Id), Title: "Earthsea", Kind: Kind.Paper, Price: math.big.ParseDecimal("12.50")?, Meta: encoding.json.ParseValue("{\"pages\":200}")?, InPrint: true, Cover: [1, 2]})
+    ctx.Books.Add(new Book{AuthorId: nil, Title: "Beowulf", Kind: Kind.Paper, Price: math.big.ParseDecimal("0.50")?, Meta: encoding.json.NewNull()})
+    var prof = new Profile{AuthorId: ba.Id}
+    ctx.Profiles.Add(prof)
+    println("saved", await ctx.SaveChanges()?, prof.Bio)
+    for p in [[le.Id, sf.Id], [le.Id, fa.Id], [ba.Id, sf.Id]] {
+        _ = await ctx.ExecuteSql("insert into author_tags (author_id, tag_id) values (:a, :t)", [std.database.sql.Named("a", p[0]), std.database.sql.Named("t", p[1])])?
+    }
+    ctx.ClearTracker()
+
+    var since = t.AddDate(10, 0, 0)
+    var young = await ctx.Authors.Where((a) => a.Born > since && a.Name.Contains("an")).Select((a) => a.Name).ToList()?
+    println("young", young)
+    var paper = await ctx.Books.Where((b) => b.Kind == Kind.Paper && (b.Author == nil || b.Author.Name.StartsWith("Le"))).OrderBy((b) => b.Title).Select((b) => (b.Title, b.Price, b.InPrint)).ToList()?
+    for x in paper {
+        var (ti, pr, ip) = x
+        println(" ", ti, pr.String(), ip)
+    }
+    println("count", await ctx.Books.Count()?, await ctx.Books.Count((b) => b.InPrint)?, await ctx.Books.Any((b) => b.Title.EndsWith("119"))?)
+    println("sum", await ctx.Books.Sum((b) => len(b.Title))?, (await ctx.Books.Min((b) => b.Price)?).String(), await ctx.Books.Max((b) => b.Title)?, (await ctx.Authors.Min((a) => a.Born)?).Year())
+    var groups = await ctx.Books.GroupBy((b) => b.Kind).OrderBy((g) => g.Count()).Select((g) => (g.Key, g.Count(), g.Max((b) => b.Version))).ToList()?
+    for g in groups {
+        var (k, n, v) = g
+        println(" ", k, n, v)
+    }
+    var page = await ctx.Books.Where((b) => b.Author.Name == "Banks").OrderByDescending((b) => b.Id).Skip(5).Take(3).Select((b) => b.Title).ToList()?
+    println("page", page)
+    var authors = await ctx.Authors.Include((a) => a.Books).Include((a) => a.Profile).Include((a) => a.Tags).OrderBy((a) => a.Name).ToList()?
+    for a in authors {
+        var bio = "-"
+        if a.Profile != nil {
+            bio = a.Profile.Bio
+        }
+        println(" ", a.Name, len(a.Books), bio, len(a.Tags))
+    }
+    var tags = await ctx.Tags.AsNoTracking().Include((g) => g.Authors).AsSplitQuery().OrderBy((g) => g.Label).ToList()?
+    for g in tags {
+        println(" ", g.Label, len(g.Authors))
+    }
+    var es = await ctx.Books.Include((b) => b.Author).Where((b) => b.Title == "Earthsea").Single()?
+    println("earthsea", es.Author.Name, es.Meta.Format(), es.Cover, es.Kind)
+    es.InPrint = false
+    es.Price = math.big.ParseDecimal("13")?
+    println("changed", ctx.Entry(es).ChangedColumns())
+    _ = await ctx.SaveChanges()?
+    println("version", es.Version)
+    var n = await ctx.Books.Where((b) => b.Kind == Kind.Ebook && !b.InPrint).ExecuteUpdate((s) => s.Set((b) => b.InPrint, true).Set((b) => b.Version, (b) => b.Version + 1))?
+    println("bulk", n)
+    // a second context changes the book: the first one gets a conflict
+    var other = OpenDB<Library>(ctx.Provider(), ctx.DB())
+    var es2 = await other.Books.Find(es.Id)?
+    es2.Title = "A Wizard of Earthsea"
+    _ = await other.SaveChanges()?
+    es.Title = "Earthsea!"
+    try await ctx.SaveChanges() catch err {
+        println("conflict", IsConcurrencyError(err))
+    }
+    await ctx.Entry(es).Reload()?
+    println("reloaded", es.Title, es.Version)
+    try await ctx.Transaction(async () => {
+        _ = await ctx.Books.Where((b) => b.Kind == Kind.Ebook).ExecuteDelete()?
+        println("inside", await ctx.Books.Count()?)
+        return error("undo")
+    }) catch err {
+        println("rolled back", err)
+    }
+    println("after", await ctx.Books.Count()?)
+    var raw = await ctx.Raw<int>("select count(*) from books where in_print", [])?
+    println("raw", raw)
+    ctx.ClearTracker()
+    ctx.Tags.Upsert(new Tag{Id: sf.Id, Label: "science fiction"})
+    ctx.Tags.Upsert(new Tag{Id: 100, Label: "poetry"})
+    _ = await ctx.SaveChanges()?
+    println("upsert", await ctx.Tags.OrderBy((g) => g.Id).Select((g) => g.Label).ToList()?)
+}
+
+async func main() void! {
+    var lite = Open<Library>(Provider.Sqlite, ":memory:")?
+    await run(lite, "sqlite")?
+    var pg = Open<Library>(Provider.Postgres, os.Getenv("PGTEST_DSN"))?
+    await run(pg, "postgres")?
+}

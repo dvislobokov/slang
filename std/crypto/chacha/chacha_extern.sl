@@ -2,8 +2,12 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.chacha implemented by the C runtime.
 namespace std.crypto.chacha
 
+// Seal encrypts and authenticates with ChaCha20-Poly1305 (RFC 8439; 32-byte key, 12-byte nonce); the result is the ciphertext followed by the tag.
+//
 // C: slang_crypto_chacha_seal (runtime/src/std_*.c).
-extern func Seal(a []byte, b []byte, c []byte, d []byte) []byte!
+extern func Seal(key []byte, nonce []byte, plaintext []byte, aad []byte) []byte!
 
+// Open decrypts and verifies the output of Seal; a bad tag is an error.
+//
 // C: slang_crypto_chacha_open (runtime/src/std_*.c).
-extern func Open(a []byte, b []byte, c []byte, d []byte) []byte!
+extern func Open(key []byte, nonce []byte, ciphertext []byte, aad []byte) []byte!

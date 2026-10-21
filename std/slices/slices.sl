@@ -1,8 +1,7 @@
-namespace std.slices
-
 // std.slices: generic algorithms over []T (Go's slices + sort).
 // Sorting is stable (bottom-up merge sort with insertion-sorted runs).
 // Functions that build a new slice say so; the others work in place.
+namespace std.slices
 
 // A pair of values (the elements of Zip).
 struct Pair<A, B> {

@@ -1,5 +1,3 @@
-namespace std.io
-
 // std.io stream interfaces and helpers (Go's io and bufio). The older
 // functions of std.io (println, ReadFile, ReadAll() from stdin, ...) are
 // runtime externs and unchanged; the Go names that clash are:
@@ -10,66 +8,97 @@ namespace std.io
 // writes everything or fails. Errors are ordinary errors; io.EOF is the
 // sentinel for "end of stream" where a function must report it
 // (ReadFull, ReadByte, BufferedReader.ReadLine ...).
+namespace std.io
 
+// Reader is the interface of synchronous byte sources.
 interface Reader {
+    // Read fills up to len(buf) bytes and returns the count; 0 means the end of the stream.
     func Read(buf []byte) int!
 }
 
+// Writer is the interface of synchronous byte sinks.
 interface Writer {
+    // Write writes all of buf or fails; it returns len(buf).
     func Write(buf []byte) int!
 }
 
+// Closer is implemented by streams that hold a resource.
 interface Closer {
+    // Close releases the stream; using it afterwards is an error.
     func Close() void!
 }
 
 // Seek sets the offset for the next Read/Write: whence 0 (SeekStart),
 // 1 (SeekCurrent) or 2 (SeekEnd); returns the new offset.
 interface Seeker {
+    // Seek moves the offset and returns the new one.
     func Seek(offset int, whence int) int!
 }
 
+// ReadWriter groups Read and Write.
 interface ReadWriter {
+    // Read reads up to len(buf) bytes (see Reader).
     func Read(buf []byte) int!
+    // Write writes all of buf (see Writer).
     func Write(buf []byte) int!
 }
 
+// ReadCloser groups Read and Close.
 interface ReadCloser {
+    // Read reads up to len(buf) bytes (see Reader).
     func Read(buf []byte) int!
+    // Close releases the stream.
     func Close() void!
 }
 
+// WriteCloser groups Write and Close.
 interface WriteCloser {
+    // Write writes all of buf (see Writer).
     func Write(buf []byte) int!
+    // Close flushes and releases the stream.
     func Close() void!
 }
 
+// ReadWriteCloser groups Read, Write and Close.
 interface ReadWriteCloser {
+    // Read reads up to len(buf) bytes (see Reader).
     func Read(buf []byte) int!
+    // Write writes all of buf (see Writer).
     func Write(buf []byte) int!
+    // Close releases the stream.
     func Close() void!
 }
 
+// ReadSeeker groups Read and Seek.
 interface ReadSeeker {
+    // Read reads up to len(buf) bytes (see Reader).
     func Read(buf []byte) int!
+    // Seek moves the offset (see Seeker).
     func Seek(offset int, whence int) int!
 }
 
+// StringWriter is implemented by writers that take strings without a copy to bytes.
 interface StringWriter {
+    // WriteString writes s and returns len(s).
     func WriteString(s string) int!
 }
 
+// ByteReader reads one byte at a time.
 interface ByteReader {
+    // ReadByte returns the next byte, or io.EOF at the end of the stream.
     func ReadByte() byte!
 }
 
 // Asynchronous streams (std.net.Conn implements both): Read(n) yields up
 // to n bytes, an empty slice at the end of the stream.
 interface AsyncReader {
+    // Read returns up to n bytes; an empty slice means the end of the stream.
     func Read(n int) Task<[]byte!>
 }
 
+// AsyncWriter is the asynchronous counterpart of Writer (std.net.Conn implements it).
 interface AsyncWriter {
+    // Write writes all of data and returns its length.
     func Write(data []byte) Task<int!>
 }
 
@@ -213,6 +242,7 @@ struct StringReader {
     s   string
     off int
 
+    // Read copies up to len(buf) bytes from the current offset.
     func Read(buf []byte) int! {
         var n = 0
         for n < len(buf) && this.off < len(this.s) {
@@ -223,6 +253,7 @@ struct StringReader {
         return n
     }
 
+    // ReadByte returns the next byte, or io.EOF at the end.
     func ReadByte() byte! {
         if this.off >= len(this.s) {
             return EOF
@@ -231,6 +262,7 @@ struct StringReader {
         return this.s[this.off - 1]
     }
 
+    // Seek moves the offset (whence: SeekStart, SeekCurrent, SeekEnd); a negative result is an error.
     func Seek(offset int, whence int) int! {
         var base = 0
         if whence == 1 {
@@ -254,6 +286,7 @@ struct StringReader {
     }
 }
 
+// NewStringReader returns a reader over s.
 func NewStringReader(s string) *StringReader {
     return new StringReader{s: s}
 }
@@ -263,6 +296,7 @@ struct BytesReader {
     b   []byte
     off int
 
+    // Read copies up to len(buf) bytes from the current offset.
     func Read(buf []byte) int! {
         var n = 0
         for n < len(buf) && this.off < len(this.b) {
@@ -273,6 +307,7 @@ struct BytesReader {
         return n
     }
 
+    // ReadByte returns the next byte, or io.EOF at the end.
     func ReadByte() byte! {
         if this.off >= len(this.b) {
             return EOF
@@ -281,6 +316,7 @@ struct BytesReader {
         return this.b[this.off - 1]
     }
 
+    // Seek moves the offset (whence: SeekStart, SeekCurrent, SeekEnd); a negative result is an error.
     func Seek(offset int, whence int) int! {
         var base = 0
         if whence == 1 {
@@ -295,6 +331,7 @@ struct BytesReader {
         return this.off
     }
 
+    // Len returns the number of unread bytes.
     func Len() int {
         if this.off >= len(this.b) {
             return 0
@@ -303,6 +340,7 @@ struct BytesReader {
     }
 }
 
+// NewBytesReader returns a reader over b (the slice is shared, not copied).
 func NewBytesReader(b []byte) *BytesReader {
     return new BytesReader{b: b}
 }
@@ -311,6 +349,7 @@ func NewBytesReader(b []byte) *BytesReader {
 struct BytesWriter {
     buf []byte
 
+    // Write appends p to the buffer.
     func Write(p []byte) int! {
         for c in p {
             this.buf = append(this.buf, c)
@@ -318,6 +357,7 @@ struct BytesWriter {
         return len(p)
     }
 
+    // WriteString appends the bytes of s to the buffer.
     func WriteString(s string) int! {
         for i in 0..len(s) {
             this.buf = append(this.buf, s[i])
@@ -325,23 +365,28 @@ struct BytesWriter {
         return len(s)
     }
 
+    // Bytes returns the buffered bytes (shared with the writer).
     func Bytes() []byte {
         return this.buf
     }
 
+    // String returns the buffered bytes as a string.
     func String() string {
         return std.strings.FromBytes(this.buf)
     }
 
+    // Len returns the number of buffered bytes.
     func Len() int {
         return len(this.buf)
     }
 
+    // Reset empties the buffer.
     func Reset() {
         this.buf = nil
     }
 }
 
+// NewBytesWriter returns an empty in-memory writer.
 func NewBytesWriter() *BytesWriter {
     return new BytesWriter{}
 }
@@ -366,6 +411,7 @@ struct LimitedReader {
     R std.io.Reader
     N int
 
+    // Read reads up to min(len(buf), N) bytes from R and decreases N.
     func Read(buf []byte) int! {
         if this.N <= 0 {
             return 0
@@ -380,6 +426,7 @@ struct LimitedReader {
     }
 }
 
+// LimitReader returns a reader that reads at most n bytes from r.
 func LimitReader(r std.io.Reader, n int) *LimitedReader {
     return new LimitedReader{R: r, N: n}
 }
@@ -400,6 +447,7 @@ struct multiReader {
     }
 }
 
+// MultiReader returns a reader that reads the readers one after another.
 func MultiReader(rs []std.io.Reader) std.io.Reader {
     return new multiReader{rs: rs}
 }
@@ -416,6 +464,7 @@ struct multiWriter {
     }
 }
 
+// MultiWriter returns a writer that duplicates every write to all of ws.
 func MultiWriter(ws []std.io.Writer) std.io.Writer {
     return multiWriter{ws: ws}
 }
@@ -434,6 +483,7 @@ struct teeReader {
     }
 }
 
+// TeeReader returns a reader that writes everything it reads from r to w.
 func TeeReader(r std.io.Reader, w std.io.Writer) std.io.Reader {
     return new teeReader{r: r, w: w}
 }
@@ -486,6 +536,7 @@ func rtUnlockPipe(g *int) {
 struct PipeReader {
     st *pipeState
 
+    // Read returns up to len(buf) buffered bytes: 0 once the writer closed and the buffer is empty, an error on an empty open pipe.
     func Read(buf []byte) int! {
         var s = this.st
         std.task.rtLock(&s.guard)
@@ -521,6 +572,7 @@ struct PipeReader {
 struct PipeWriter {
     st *pipeState
 
+    // Write appends p to the pipe without blocking; it fails on a closed pipe and, on a BoundedPipe, when p does not fit.
     func Write(p []byte) int! {
         var s = this.st
         std.task.rtLock(&s.guard)
@@ -546,6 +598,7 @@ struct PipeWriter {
         return pipeWriterSend(*this, p)
     }
 
+    // WriteString writes the bytes of t (see Write).
     func WriteString(t string) int! {
         return this.Write(std.strings.Bytes(t))?
     }
@@ -617,6 +670,7 @@ struct BufferedReader {
         return this.end - this.start
     }
 
+    // Read reads up to len(p) bytes, from the buffer first; large reads bypass it.
     func Read(p []byte) int! {
         if len(p) == 0 {
             return 0
@@ -644,6 +698,7 @@ struct BufferedReader {
         return n
     }
 
+    // ReadByte returns the next byte, or io.EOF at the end of the stream.
     func ReadByte() byte! {
         for this.start == this.end {
             if this.eof {
@@ -714,6 +769,7 @@ struct BufferedReader {
         }
     }
 
+    // ReadString is ReadBytes as a string.
     func ReadString(delim byte) string! {
         return std.strings.FromBytes(this.ReadBytes(delim)?)
     }
@@ -745,6 +801,7 @@ func NewBufferedReader(r std.io.Reader) *BufferedReader {
     return NewBufferedReaderSize(r, 4096)
 }
 
+// NewBufferedReaderSize returns a BufferedReader with a buffer of size bytes (at least 16).
 func NewBufferedReaderSize(r std.io.Reader, size int) *BufferedReader {
     var n = size
     if n < 16 {
@@ -759,6 +816,7 @@ struct BufferedWriter {
     buf []byte
     n   int
 
+    // Write buffers p, flushing as needed; writes larger than the buffer go straight through.
     func Write(p []byte) int! {
         if len(p) >= len(this.buf) {
             this.Flush()?
@@ -774,10 +832,12 @@ struct BufferedWriter {
         return len(p)
     }
 
+    // WriteString writes the bytes of s (see Write).
     func WriteString(s string) int! {
         return this.Write(std.strings.Bytes(s))?
     }
 
+    // WriteByte buffers one byte.
     func WriteByte(c byte) void! {
         if this.n == len(this.buf) {
             this.Flush()?
@@ -795,19 +855,23 @@ struct BufferedWriter {
         }
     }
 
+    // Buffered returns the number of bytes waiting to be flushed.
     func Buffered() int {
         return this.n
     }
 
+    // Available returns the free space in the buffer.
     func Available() int {
         return len(this.buf) - this.n
     }
 }
 
+// NewBufferedWriter returns a BufferedWriter with a 4096-byte buffer.
 func NewBufferedWriter(w std.io.Writer) *BufferedWriter {
     return NewBufferedWriterSize(w, 4096)
 }
 
+// NewBufferedWriterSize returns a BufferedWriter with a buffer of size bytes (at least 16).
 func NewBufferedWriterSize(w std.io.Writer, size int) *BufferedWriter {
     var n = size
     if n < 16 {

@@ -1,10 +1,9 @@
-namespace std.net.tls
-
 // TLS client handshake (part of std.net.tls, see tls.sl): TLS 1.3 with
 // HelloRetryRequest, PSK resumption from tickets, client certificates and
 // the middlebox-compatibility change_cipher_spec; TLS 1.2 ECDHE + AEAD
 // with extended_master_secret (required), RFC 5077 tickets and the
 // RFC 8446 4.1.3 downgrade sentinel check.
+namespace std.net.tls
 
 // SHA-256("HelloRetryRequest"), the ServerHello.random of a HelloRetryRequest.
 func hrrRandom() []byte {

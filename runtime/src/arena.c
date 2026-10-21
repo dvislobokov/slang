@@ -102,6 +102,7 @@ slang_string *slang_arena_string(int64_t h, const slang_string *s) {
     if (len == 0) return NULL;
     slang_string *r = slang_arena_object(h, &slang_type_string, (int64_t)sizeof(slang_string) + len + 1);
     r->len = len;
+    r->data = (char *)(r + 1);
     memcpy(r->data, s->data, (size_t)len);
     r->data[len] = 0;
     return r;

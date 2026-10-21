@@ -11,7 +11,8 @@
 //!   row's own doc or `src/sema/stdlib_docs.rs`).
 //!
 //! Files are only rewritten when their contents change, and `.sl` files
-//! of `std/` that are no longer generated are removed.
+//! of `std/` that are no longer generated are removed, except the
+//! hand-written tests and examples `std/**/*_test.sl` (`slang test std`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -179,7 +180,7 @@ fn main() {
             if p.is_dir() {
                 prune(&p, root, keep);
                 let _ = std::fs::remove_dir(&p);
-            } else if p.extension().is_some_and(|x| x == "sl") && !keep.contains_key(p.strip_prefix(root).unwrap()) {
+            } else if p.extension().is_some_and(|x| x == "sl") && !p.to_string_lossy().ends_with("_test.sl") && !keep.contains_key(p.strip_prefix(root).unwrap()) {
                 let _ = std::fs::remove_file(&p);
             }
         }

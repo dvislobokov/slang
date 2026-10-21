@@ -1,8 +1,7 @@
-namespace std.net.textproto
-
 // Text protocols (SMTP, HTTP/1, MIME): MIME headers with canonical keys
 // and continuation lines, dot-encoding of message bodies, and numeric
 // response lines ("250-..."/"250 ...").
+namespace std.net.textproto
 
 // A MIME header: keys in canonical form, several values per key, keys
 // kept in first-seen order.

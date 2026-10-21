@@ -1,12 +1,13 @@
 /* win32.c - Windows implementation of the platform layer (platform.h):
  * threads (CreateThread), SRWLOCK / CONDITION_VARIABLE / INIT_ONCE / FLS,
  * clocks (QueryPerformanceCounter, GetSystemTimePreciseAsFileTime),
- * entropy (BCryptGenRandom), aligned memory, backtraces
- * (CaptureStackBackTrace), dynamic loading (LoadLibraryW), the UTF-8
+ * entropy (BCryptGenRandom), aligned memory, dynamic loading
+ * (LoadLibraryW), the UTF-8
  * command line and console (WriteConsoleW), environment, signals
  * (SetConsoleCtrlHandler) and the current user. Files are in fs_win32.c,
  * processes in proc_win32.c, sockets in net_win32.c, the poller in
- * poll_wsapoll.c. */
+ * poll_iocp.c, backtraces / CPU profiling / symbols in prof_win32.c, the
+ * time zone in tz_win32.c. */
 #include "platform.h"
 
 #if defined(_WIN32)
@@ -90,9 +91,13 @@ static DWORD WINAPI thread_entry(LPVOID p) {
     return 0;
 }
 
+/* mem.c: refcounts switch to atomic RMW for good before a second thread runs. */
+extern uint8_t slang_threaded;
+
 static HANDLE start(slang__plat_thread_fn fn, void *arg) {
     trampoline *t = malloc(sizeof *t);
     if (!t) return NULL;
+    __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
     t->fn = fn;
     t->arg = arg;
     HANDLE h = CreateThread(NULL, 0, thread_entry, t, 0, NULL);
@@ -248,75 +253,7 @@ bool slang__plat_random_bytes(void *buf, size_t n) {
     return true;
 }
 
-/* ---- diagnostics ------------------------------------------------------------- */
-
-void slang__plat_backtrace(int fd, int skip) {
-    void *frames[62];
-    USHORT n = CaptureStackBackTrace((DWORD)(skip > 0 ? skip : 0), 62, frames, NULL);
-    for (USHORT i = 0; i < n; i++) {
-        char line[600];
-        HMODULE mod = NULL;
-        wchar_t wpath[MAX_PATH];
-        const char *name = "?";
-        char *u = NULL;
-        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               (LPCWSTR)frames[i], &mod) &&
-            GetModuleFileNameW(mod, wpath, MAX_PATH)) {
-            u = slang__w32_utf8(wpath, -1);
-            if (u) {
-                char *b = strrchr(u, '\\');
-                name = b ? b + 1 : u;
-            }
-        }
-        int k = snprintf(line, sizeof line, "%s(+0x%llx) [0x%llx]\n", name,
-                         (unsigned long long)((uintptr_t)frames[i] - (uintptr_t)mod), (unsigned long long)(uintptr_t)frames[i]);
-        free(u);
-        if (k > 0) slang__plat_write_all(fd, line, k < (int)sizeof line ? k : (int)sizeof line - 1);
-    }
-}
-
-static _Thread_local uintptr_t t_stack_lo, t_stack_hi;
-
-void slang__plat_thread_stack_init(void) {
-    if (t_stack_hi) return;
-    ULONG_PTR lo = 0, hi = 0;
-    GetCurrentThreadStackLimits(&lo, &hi);
-    t_stack_lo = lo;
-    t_stack_hi = hi;
-}
-
-/* The SIGPROF sampler has no Windows counterpart yet (a sampling thread
- * with SuspendThread/GetThreadContext is the plan). */
-bool slang__plat_prof_start(int hz, slang__plat_prof_fn fn) {
-    (void)hz;
-    (void)fn;
-    return false;
-}
-void slang__plat_prof_stop(void) {}
-
-bool slang__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) {
-    (void)pc;
-    (void)buf;
-    (void)cap;
-    (void)start;
-    return false;  /* DWARF of mingw builds is not read by DbgHelp; PDB (msvc ABI) later */
-}
-
-bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap) {
-    HMODULE m = GetModuleHandleW(NULL);
-    if (!m) return false;
-    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)m;
-    const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)((const char *)m + dos->e_lfanew);
-    *lo = (uintptr_t)m;
-    *hi = (uintptr_t)m + nt->OptionalHeader.SizeOfImage;
-    wchar_t w[MAX_PATH];
-    char *u = GetModuleFileNameW(NULL, w, MAX_PATH) ? slang__w32_utf8(w, -1) : NULL;
-    snprintf(path, cap, "%s", u ? u : "");
-    free(u);
-    return true;
-}
-
-void slang__plat_symbolize_done(void) {}
+/* Diagnostics (backtraces, CPU sampler, symbols) are in prof_win32.c. */
 
 /* ---- dynamic loading ------------------------------------------------------------ */
 

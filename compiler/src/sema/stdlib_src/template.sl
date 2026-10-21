@@ -1,5 +1,3 @@
-namespace std.text.template
-
 // Typed text templates with Go text/template syntax: {{.Field.Sub}},
 // {{$}}, {{$x := pipeline}}, pipelines with | and builtin or custom
 // functions, {{if}}/{{else if}}/{{else}}, {{range [$i, $e :=] ...}} (with
@@ -16,6 +14,7 @@ namespace std.text.template
 // std.html.template uses this engine with contextual escaping: every
 // action is escaped for where it appears (text, attribute, URL, JS, CSS),
 // as Go's html/template does (see htmlctx.sl).
+namespace std.text.template
 
 // A dynamic value: nil, bool, int, float, string, list, map (sorted keys),
 // struct (fields in order), or safe HTML / URL / JS text (html templates).
@@ -31,6 +30,7 @@ struct Value {
     // maps: the zero value of the element type (for missing keys)
     zero []Value
 
+    // IsNil reports whether the value is nil (missing).
     func IsNil() bool {
         return this.kind == 0
     }
@@ -50,6 +50,7 @@ struct Value {
         return Value{}
     }
 
+    // Len returns the length of a string or list (0 otherwise).
     func Len() int {
         if this.kind == 4 {
             return len(this.s)
@@ -57,6 +58,7 @@ struct Value {
         return len(this.items)
     }
 
+    // Index returns element i of a list (nil if out of range).
     func Index(i int) Value {
         if (this.kind == 5) && i >= 0 && i < len(this.items) {
             return this.items[i]
@@ -64,6 +66,7 @@ struct Value {
         return Value{}
     }
 
+    // Int returns the value as an int; an error for non-numbers.
     func Int() int! {
         if this.kind == 2 {
             return this.i
@@ -74,6 +77,7 @@ struct Value {
         return error("template: " + kindName(this.kind) + " is not an int")
     }
 
+    // Float returns the value as a float; an error for non-numbers.
     func Float() float! {
         if this.kind == 2 {
             return float(this.i)
@@ -84,35 +88,43 @@ struct Value {
         return error("template: " + kindName(this.kind) + " is not a number")
     }
 
+    // Bool returns the truth of the value (false, 0, "", nil and empty lists are false).
     func Bool() bool {
         return truth(*this)
     }
 
+    // Items returns the elements of a list.
     func Items() []Value {
         return this.items
     }
 }
 
+// Str returns a string value.
 func Str(s string) Value {
     return Value{kind: 4, s: s}
 }
 
+// Int returns an int value.
 func Int(i int) Value {
     return Value{kind: 2, i: i}
 }
 
+// Float returns a float value.
 func Float(f float) Value {
     return Value{kind: 3, f: f}
 }
 
+// Bool returns a bool value.
 func Bool(b bool) Value {
     return Value{kind: 1, b: b}
 }
 
+// List returns a list value.
 func List(items []Value) Value {
     return Value{kind: 5, items: items}
 }
 
+// Nil returns the nil value.
 func Nil() Value {
     return Value{}
 }
@@ -280,6 +292,7 @@ struct Template<T> {
         return this.t.execute(n - 1, ValueOf(data))?
     }
 
+    // Name returns the template name.
     func Name() string {
         return this.t.name
     }
@@ -305,6 +318,7 @@ func Parse<T>(src string) Template<T>! {
     return ParseNamed<T>("template", src)?
 }
 
+// ParseNamed is Parse with a template name (shown in errors).
 func ParseNamed<T>(name string, src string) Template<T>! {
     var none = map[string]func([]Value) Value!{}
     var t = build(name, src, none, false)?

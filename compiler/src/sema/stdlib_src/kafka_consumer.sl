@@ -1,5 +1,3 @@
-namespace std.data.kafka
-
 // The consumer (see kafka.sl for the file layout): the consumer group
 // protocol (FindCoordinator, JoinGroup, SyncGroup with the range or
 // round-robin assignor computed by the group leader, Heartbeat in a
@@ -8,6 +6,7 @@ namespace std.data.kafka
 // and fetching from the partition leaders (one Fetch per leader, in
 // parallel). Without a Group the consumer reads every partition of its
 // topics and does not commit.
+namespace std.data.kafka
 
 // Options of a Consumer. Durations are milliseconds; zero values take the
 // defaults in brackets.

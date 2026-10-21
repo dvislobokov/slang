@@ -186,7 +186,10 @@ The refcount word holds the count in its low 62 bits
 (`SLANG_RC_COUNT_MASK`); bit 62 (`SLANG_RC_WEAK_FLAG`) marks an object that
 has a weak box (3.4). `-1` (`SLANG_RC_IMMORTAL`) is immortal; `-2`
 (`SLANG_RC_ARENA`) marks an object owned by an arena (3.6). Retain and release
-ignore every negative count.
+ignore these two; a word below `-2` is a string view inside a view block
+(`SLANG_RC_VIEW | block`, 4.1), and retain and release forward to the block.
+Inline fast paths in compiled code therefore treat every negative word as
+"call the runtime" (see `codegen/rc.rs`).
 
 ### 3.2 Functions
 
@@ -202,6 +205,7 @@ ignore every negative count.
 | `int64_t slang_live_objects(void)` | number of objects allocated with `slang_object_new` and not yet freed (leak checks in tests). Objects made immortal (`slang_string_literal`, `slang_error_sentinel`) do not count |
 | `void slang_ptr_retain(void *payload)` / `void slang_ptr_release(void *payload)` | retain / release the object whose payload (object + 16) is given: the operations on a `*T`. No-op for NULL |
 | `void slang_leak_check_enable(int32_t mode)` | leak check (3.5); call it before anything else, even before `slang_runtime_init` |
+| `uint8_t slang_threaded` (global) | 0 while the process has a single thread, 1 for good once a second thread was started (`slang__plat_thread_start*` sets it before creating the thread; C code that starts threads of its own that touch Slang objects must set it first). While it is 0 refcount updates may be plain loads and stores |
 
 **The `drop` contract.** `drop(obj)` must release every reference the object holds:
 strings, pointers, slices (`slang_slice_release`) and so on. It must **not** free
@@ -219,7 +223,22 @@ check mode 2 and with `SLANG_NO_SLAB=1`. Nothing outside the runtime may free
 or `realloc` object memory itself. `slang_release` skips the atomic
 decrement when it reads a count of exactly 1 with no weak flag (the caller
 holds the only reference, so no other thread can retain it); otherwise the
-decrement is `acq_rel`, and `slang_retain` is a relaxed increment.
+decrement is `acq_rel`, and `slang_retain` is a relaxed increment. While
+`slang_threaded == 0` both use a plain store instead of the RMW. The live and
+total object counts are per-thread counters summed on demand (no shared
+atomic per allocation). The scheduler's worker and timer threads start with
+the first task, not in `slang_runtime_init`, so a program that never starts
+a task stays single-threaded.
+
+**Inline fast paths (compiler-side, `codegen/rc.rs`).** At `-O3` (or with
+`SLANG_INLINE_RC=1`) compiled code does not call `slang_retain`/`slang_release`
+(or the `slang_ptr_*` variants) for the common single-threaded case: for a
+non-NULL object it loads the count (relaxed) and `slang_threaded`, and if
+the latter is 0 it stores `count + 1` (retain, `count >= 0`) or `count - 1`
+(release, `2 <= count < SLANG_RC_WEAK_FLAG`); every other case calls the
+runtime function, which stays the reference behaviour. Not done at `-O2`:
+it grows large programs by up to a third and their optimisation time by
+half for a few percent on refcount-heavy loops (benchmarks/README.md).
 
 **Immortal objects** (`refcount == -1`, `SLANG_RC_IMMORTAL`) are never modified or
 freed. Use them for string literals and sentinel errors emitted as LLVM globals.
@@ -323,6 +342,27 @@ pointer into the arena is dangling (not checked). `std.arena.Arena` (a
 Slang source, `compiler/src/sema/stdlib_src/arena.sl`) holds the handle in
 a refcounted object whose `Drop` destroys the arena.
 
+### 3.7 Interface and `any` values (compiler-side)
+
+An interface value is `{ptr data, ptr vtable}` with vtable
+`{ptr typeid, i64 boxed, ptr method0, ...}`; an `any` is
+`{ptr data, ptr typeid}`. `data` is the payload of a heap box holding the
+value (or, for an interface holding a `*S`, the pointer itself). **Exception:
+an `any` holding a `bool`, an integer type, `float`, `float32` or `char`
+keeps the value in the data word itself** (zero-extended, floats as their
+bit pattern, little-endian, so the value can be read at the address of the
+word), with no box: boxing a scalar into `any` allocates nothing. Code that
+releases an `any` asks `any.inline(typeid)` (a per-module function) whether
+the data word is a box; `std.reflect.ValueOf` copies an inline scalar into
+a box (`anyBox`) so that a `Value` has an address; `std.unsafe.AddrOf(x)`
+returns the word as is (the value bits for a scalar). The debug agent and
+the lldb/gdb formatters read an inline scalar at the address of the data
+word.
+
+Inside the arm `case T x:` of a type switch on an interface local that is
+never reassigned, method calls through that local use `T`'s vtable (a
+constant global), so LLVM calls (and can inline) the method directly.
+
 ---
 
 ## 4. Strings
@@ -333,29 +373,71 @@ A string is a **single pointer** to an immutable heap object. **NULL is `""`.**
 
 ```c
 typedef struct slang_string {
-    slang_object hdr;   // +0   type = &slang_type_string
-    int64_t      len;   // +16  length in BYTES, excluding the terminator
-    char         data[];// +24  len bytes of UTF-8, then one NUL byte
-} slang_string;         // sizeof == 24 + len + 1
+    slang_object hdr;   // +0   type = &slang_type_string (or _view, below)
+    int64_t      len;   // +16  length in BYTES
+    char        *data;  // +24  the bytes
+} slang_string;         // 32 bytes; an owned string's bytes follow inline at +32
 ```
 
-The bytes are UTF-8 but not validated. `data[len]` is always `'\0'`, so `data` can
-be passed to C, although an embedded NUL is possible. A string's length and bytes
-never change after creation.
+The bytes are UTF-8 but not validated. A string's length and bytes never change
+after creation (`slang_string_append` may extend a uniquely referenced owned
+string in place; see 4.2).
+
+**Owned strings** keep their `len` bytes inline at +32 followed by a NUL, and
+`data` points there (`data == (char *)s + 32`).
+
+**Views** share the bytes of another string, so substrings cost no copy (Go's
+`s[a:b]` semantics; like Go, a view keeps its parent's bytes alive). Their
+`data` points into the parent's bytes and is **not NUL-terminated**. The byte
+`data[len]` is always readable (it is the next byte of the parent, or the
+parent's NUL), so `data[len] == '\0'` tells whether `data` can be passed to C
+as is; C APIs that need a terminated string call `slang_string_cstr(s)`. There
+are two kinds:
+
+- a **standalone view** `{hdr, len, data, slang_object *owner @32}` (40 bytes),
+  an ordinary refcounted object whose type is `slang_type_string_view`; its
+  `drop` releases `owner`. `s[lo:hi]` (`slang_string_slice`), `TrimSpace`,
+  `Trim*`, `TrimPrefix/Suffix`, `SplitN` pieces, and everything written in
+  Slang on top of `s[a:b]` (`Cut`, regex match texts, ...) return one when
+  the piece is at least 64 bytes long; shorter pieces are copied (a small copy
+  is cheaper than the owner's refcount traffic and does not pin a large
+  parent);
+- a **block view**: bulk results (`Split`, `Fields`) put all their views in
+  one *view block* object `{hdr, owner, n, cap, slang_string views[cap]}`; a
+  block view's refcount word is `SLANG_RC_VIEW | (int64_t)block`
+  (`SLANG_RC_VIEW` = `INT64_MIN`), so it is negative and below
+  `SLANG_RC_ARENA` (`slang_rc_is_view(rc)` = `rc < SLANG_RC_ARENA`), and
+  `slang_retain`/`slang_release` apply to the block instead. The block holds
+  one count per live view handed out, and releases its owner when it dies.
+  Empty pieces are NULL.
+
+`owner` is always the object that holds the bytes inline (views of views are
+flattened), or NULL for the bytes of an immortal string. Strings in an arena
+(3.6) are never viewed (a view would outlive `Free`); slicing them copies.
+Code that tests "uniquely referenced" (`refcount == 1`) before mutating a
+string in place must also check `data == (char *)s + 32`.
 
 **Literals.** The compiler emits each literal as an immortal constant global and
 uses its address directly. There is no runtime call and nothing to release:
 
 ```llvm
-@.str.hello = private unnamed_addr constant { i64, ptr, i64, [6 x i8] }
-    { i64 -1, ptr @slang_type_string, i64 5, [6 x i8] c"hello\00" }, align 8
+@.str.hello = private unnamed_addr constant { i64, ptr, i64, ptr, [6 x i8] }
+    { i64 -1, ptr @slang_type_string, i64 5,
+      ptr getelementptr inbounds ({ i64, ptr, i64, ptr, [6 x i8] }, ptr @.str.hello, i32 0, i32 4),
+      [6 x i8] c"hello\00" }, align 8
 ; use: ptr @.str.hello
 ```
 
 (retain and release on it are no-ops). `slang_string_literal(bytes, len)` creates
 the same kind of immortal string at run time. Call it at most once per literal, for
 example in a module initialiser, because each call leaks one object by design. In
-C, `SLANG_STATIC_STRING(name, "lit")` declares a static literal.
+C, `SLANG_STATIC_STRING(name, "lit")` declares a static literal, and
+`static SLANG_STRING_STORAGE(N) x = SLANG_STRING_INIT(x, "lit");` one with
+storage of its own (N = bytes + 1).
+
+The runtime's test build `make CFLAGS_EXTRA=-DSLANG_STRESS_NONUL` writes a
+non-NUL byte at `data[len]` of every owned string it creates, so tests catch
+code that relies on the terminator.
 
 ### 4.2 Functions
 
@@ -367,7 +449,8 @@ and may be NULL.
 | `slang_string_new(const char *bytes, int64_t len)` | copy of `len` bytes |
 | `slang_string_from_cstr(const char *s)` | copy of a NUL-terminated C string (NULL gives `""`) |
 | `slang_string_literal(const char *bytes, int64_t len)` | immortal copy (see above) |
-| `const char *slang_string_data(s)` | **[borrowed]** pointer to the bytes, NUL-terminated. `""` for NULL |
+| `const char *slang_string_data(s)` | **[borrowed]** pointer to the bytes (`s->data`), **not** NUL-terminated for a view. `""` for NULL |
+| `const char *slang_string_cstr(s)` | the bytes NUL-terminated, for C APIs (paths, `strtod`, `getaddrinfo`, `%s`): `s->data` itself when `data[len] == 0`, otherwise a copy in a per-thread ring of 16 buffers, valid until the 16th next call on the same thread (use it within one C call; do not keep it). `""` for NULL |
 | `int64_t slang_string_len(s)` | length in bytes (`len(s)`) |
 | `int64_t slang_string_rune_count(s)` | number of code points. Each invalid byte counts as 1 |
 | `slang_string_concat(a, b)` | `a + b`. Always returns a new object |
@@ -375,7 +458,7 @@ and may be NULL.
 | `int32_t slang_string_compare(a, b)` | bytewise comparison, returns -1, 0 or 1 (for `<`, `<=` and so on) |
 | `bool slang_string_eq(a, b)` | byte equality (`==`). `NULL == ""` |
 | `uint64_t slang_string_hash(s)` | 64-bit FNV-1a of the bytes. Stable within a process |
-| `slang_string_slice(s, lo, hi)` | `s[lo:hi]` by **bytes**, as a copy. Panics unless `0 <= lo <= hi <= len` |
+| `slang_string_slice(s, lo, hi)` | `s[lo:hi]` by **bytes**: `s` itself (retained) for the whole string, a view for pieces of at least 64 bytes, else a copy (4.1). Panics unless `0 <= lo <= hi <= len` |
 | `uint8_t slang_string_byte_at(s, i)` | `s[i]`. Panics on out-of-bounds |
 | `int32_t slang_string_decode_rune(s, i, int64_t *width)` | decodes the UTF-8 rune starting at byte `i` and stores its byte width (1..4) in `*width` (which may be NULL). An invalid sequence gives `U+FFFD` with width 1. Panics if `i` is out of range. Use it to lower `for i, c in str`: advance `i += width` |
 | `int64_t slang_string_index(s, sub)` | byte offset of the first occurrence, or -1. An empty `sub` gives 0 |
@@ -997,6 +1080,27 @@ Rules and guarantees:
   earlier deadline than the one the shard sleeps toward, or at shutdown.
 - A descriptor that cannot be polled (a regular file) is always ready (the
   wait completes with 0 at once); a closed one completes with 2.
+- **io_uring backend (Linux 6.0+, `src/platform/poll_uring.c`, opt-in with
+  `SLANG_IO_BACKEND=io_uring`)**: when `io_uring_setup` works (and the kernel has `IORING_FEAT_EXT_ARG`,
+  `NODROP` and `IORING_REGISTER_SYNC_CANCEL`), each shard's poller is an io_uring instead of an epoll
+  instance, with the same semantics: an arm submits one
+  `IORING_OP_POLL_ADD` (one-shot, level: completes at once if already
+  ready), a changed interest replaces the pending poll
+  (`IORING_OP_POLL_REMOVE` + a new add; a per-fd sequence number in
+  `user_data` drops completions of replaced polls), the wait is
+  `io_uring_enter(GETEVENTS | EXT_ARG)` with a timeout, and the wake-up
+  channel is an eventfd polled the same way. `slang_io_forget` cancels a
+  pending poll synchronously (`IORING_REGISTER_SYNC_CANCEL`): a pending
+  poll holds a reference to the file, so after an asynchronous remove a
+  closed listening socket could still accept for a moment. The first arm of a descriptor
+  `fstat`s it so that regular files and closed descriptors get the
+  synchronous answers of epoll. Raw system calls; no liburing.
+  `slang__plat_poller_backend` reports `io_uring` or `epoll`. It is not
+  the default: it measured no faster than one-shot epoll (one submission
+  per wait instead of one `epoll_ctl`), and the kernel releases a
+  completed poll's file reference lazily, so a listening socket closed
+  right after its poll completed can still accept for a moment (then reset
+  the connection).
 - **Shutdown with pending waits**: the shard threads are woken and joined;
   waits still pending are released without completing (the scheduler has
   stopped, nobody would run their continuations), like pending timers.
@@ -1351,7 +1455,8 @@ internal `rt*` externs are only called by the stdlib sources.
 | `std_math_bits.c` | `slang_math_bits_*` (uint64/uint32), `slang_math_bits_rt_mul_hi`, `rt_div_quo/rem` (panic on y == 0 or overflow), `slang_math_float64bits/frombits`, `float32bits/frombits` | |
 | `std_math_big.c` | `slang_math_big_rt_{add,sub,cmp,mul,divmod,shl,shr,bit_len,format,parse,from_bytes,to_bytes,from_uint}` | normalized little-endian `[]uint32` magnitudes (zero = empty); `divmod` writes `[len(q), q..., r...]`; Karatsuba above 48 limbs |
 | `std_hash.c` | `slang_hash_maphash_rt_sip13(k0, k1, []byte)`, `_str(k0, k1, string)` | SipHash-1-3 |
-| `std_time_zone.c` | `slang_time_rt_local_tzif(err)` | TZif bytes of `$TZ` / `/etc/localtime`, read once; `""` = UTC |
+| `std_time_zone.c` | `slang_time_rt_local_tzif(err)` | TZif bytes of `$TZ` / `/etc/localtime` (Windows: synthesized from the registry), read once; `""` = UTC |
+| `std_time_zone.c` | `slang_time_rt_zone_tzif(name, err)` | TZif bytes of an IANA zone from a non-file zone database (Windows registry, `platform/tz_win32.c`); `""` where zones are tzdata files |
 | `std_os_file.c` | `slang_os_rt_{open,read,pread,write,write_str,seek,close,sync,truncate,fstat,stat,read_dir,chmod}`, `slang_io_err_eof()` (= `slang_err_eof`) | blocking file descriptors; `rt_read` fills the caller's `[]byte` in place; `fstat`/`stat` give `[size, perm, kind, mtime_s, mtime_ns]`; writes to fd 1/2 flush stdio first |
 | `std_os_signal.c` | `slang_os_signal_rt_{wait,catch,ignore,reset,raise,pending}` | `rt_wait` returns a `Task<void>` completed by a dedicated thread reading a self-pipe written by the `sigaction` handler; deliveries without waiters are counted |
 | `std_process.c` | `slang_process_rt_{spawn,read,write,close,wait_pid,kill,executable,wait_readable,wait_writable}` | fork/exec, pipe ends non-blocking and `FD_CLOEXEC`; `rt_spawn` returns `[pid, pidfd, stdin, stdout, stderr]` (-1 = none); `rt_read`/`rt_write` return -1 for "would block", then the Slang side awaits `slang_io_wait_readable/writable` (10.9) |
@@ -1368,18 +1473,22 @@ see `docs/PLATFORMS.md`.
 
 | File | Contents |
 |---|---|
-| `platform/posix.c` | threads (`slang__plat_thread_start[_detached]`, `_join`), `cpu_count`, `yield`, monotonic clock `mono_ns`, entropy `random_bytes` (`getrandom`/`getentropy`, then `/dev/urandom`), `backtrace` (execinfo) |
+| `platform/posix.c` | threads (`slang__plat_thread_start[_detached]`, `_join`), `cpu_count`, `yield`, monotonic clock `mono_ns`, entropy `random_bytes` (`getrandom`/`getentropy`, then `/dev/urandom`), `backtrace` (execinfo, or a frame-pointer walk without it, as on musl; frames named from the executable's ELF `.symtab` / Mach-O `LC_SYMTAB`), the `SIGPROF` CPU sampler and the symbolizer, `tz_tzif` (always false: tzdata files) |
 | `platform/poll_epoll.c` | the readiness poller on Linux: level-triggered one-shot epoll (`EPOLLONESHOT`, re-armed per wait) plus an eventfd for wake-ups (`poller_new/free/arm/remove/wait/wake`; events carry a 64-bit token) |
-| `platform/poll_kqueue.c` | the same poller on macOS and the BSDs: `EVFILT_READ`/`EVFILT_WRITE` with `EV_ONESHOT` (no `EV_CLEAR`), `EVFILT_USER` wake-ups (a self-pipe where it does not exist). Compiles only there; syntax-checked on Linux with stub headers (docs/PLATFORMS.md) |
+| `platform/poll_kqueue.c` | the same poller on macOS and the BSDs: `EVFILT_READ`/`EVFILT_WRITE` with `EV_ONESHOT` (no `EV_CLEAR`), `EVFILT_USER` wake-ups (a self-pipe where it does not exist). Compiles only there; compile-checked on Linux against `runtime/stub-sdk/macos` (`make CROSS=aarch64-apple-darwin`, docs/PLATFORMS.md) |
 | `platform/net_posix.c` | `process_init` (SIGPIPE ignored, open-files soft limit raised to the hard one), socket addresses (`addr_ip/unix/family/parts/format`, `parse_ip`, `format_ip`, interface name/index), non-blocking sockets (`sock_open/connect/error/bind/listen/accept/recv/send/sendv/recvfrom/sendto/shutdown/close/name`), options (`sock_setopt/getopt`: TCP_NODELAY, keep-alive idle/interval/count, SO_RCVBUF/SNDBUF, SO_LINGER, SO_REUSEADDR/PORT, SO_BROADCAST, TCP_CORK/TCP_NOPUSH, IPV6_V6ONLY, TCP_FASTOPEN, multicast loop/TTL/interface; `sock_mcast` join/leave), `sendfile` (sendfile(2) on Linux/FreeBSD/macOS, pread+send elsewhere), `file_open/size/close`, `unlink`, blocking `resolve` (getaddrinfo, RFC 6724 order or IPv4 first), `reverse` (getnameinfo), `lookup_port`, `interfaces` (getifaddrs), `err_class` (errno to the std.net sentinel classes), `strerror` (lower case). Results are `>= 0` or `-errno`; "would block" is `-SLANG_PLAT_EAGAIN` |
-| `platform/certroots.c` | `cert_bundle_path`: the PEM bundle of trusted roots (`$SSL_CERT_FILE`, then the Linux/BSD distribution paths; macOS/Windows: only the variable), used by `std.crypto.x509.SystemRoots` (section 19) |
+| `platform/certroots.c` | `cert_bundle_path`: the PEM bundle of trusted roots (`$SSL_CERT_FILE`, then the Linux/BSD/macOS bundle paths; Windows: the `ROOT` system store exported once per process to `%LOCALAPPDATA%\slang\roots.pem`), used by `std.crypto.x509.SystemRoots` (section 19) |
 | `platform/platform.h` (inline, POSIX) / `platform/win32.c` | `slang__plat_mutex`/`_cond`/`_once`/`_tls_key` with `SLANG_PLAT_*_INIT` static initialisers (pthreads; SRWLOCK, CONDITION_VARIABLE, INIT_ONCE, FLS); `cond_wait_ns` (relative timeout, CLOCK_MONOTONIC for conds made by `cond_init` where the system allows); `flockfile` wrappers |
 | `platform/posix.c` (more) / `win32.c` | `wall_ns`, `sleep_ns`, `strftime`/`strptime`, `localtime_path`/`zoneinfo_dir`, `aligned_alloc`/`aligned_free`/`alloc_size`, `runtime_init` (Windows: UTF-8 argv from `CommandLineToArgvW`), `stream_write` (Windows console: `WriteConsoleW`), `pid`, `getenv`/`setenv`/`environ` (UTF-8; UTF-16 on Windows), `hostname`, `temp_dir`, `path_sep`, signals (`sig_start/catch/ignore/default/raise`: self-pipe thread / `SetConsoleCtrlHandler`), users (`user_lookup`, `group_lookup`, `uid`) |
 | `platform/fs_posix.c` / `fs_win32.c` | files on descriptors (`open` with the std.os flag bits, `read`, `pread`, `write`, `write_all`, `seek`, `close`, `fsync`, `ftruncate`, `fstat`, `stat_path` into `slang__plat_stat`), `isatty`, `mkdir`, `rmdir`, `unlink_file`, `remove`, `rename`, `chmod`, `getcwd`, `chdir`, `is_executable`, directory iteration (`dir_open/next/close`). POSIX errno values on every platform (Win32 errors are mapped). On Windows: `CreateFileW` + `_open_osfhandle`, UTF-16 paths, `/` and `\` |
-| `platform/fs_posix.c` / `proc_win32.c` | child processes: `spawn` (fork/exec, pidfd; `CreateProcessW` with a quoted command line, pipes relayed to pollable loopback sockets), `pipe_read/write/close`, `wait_pid`, `kill` |
-| `platform/poll_wsapoll.c` | the readiness poller on Windows, version 1: `WSAPoll` over the armed sockets plus a loopback UDP wake-up socket, one-shot by disarming on report (IOCP-based readiness is the next step, docs/PLATFORMS.md) |
-| `platform/net_win32.c` | the `net_posix.c` functions on Winsock2 (`WSASocketW` overlapped + non-inheritable, `FIONBIO`, `WSAPoll`-compatible), WSA error codes with POSIX-style messages, `GetAdaptersAddresses`; `process_init` = `WSAStartup` |
-| `platform/timefmt.c` | calendar arithmetic for all platforms (`utc_tm`, `timegm`) and the "C"-locale `strftime`/`strptime` used on Windows (`*_portable`, tested against glibc on Linux) |
+| `platform/fs_posix.c` / `proc_win32.c` | child processes: `spawn` (fork/exec, pidfd; `CreateProcessW` with a quoted command line; Windows pipes: overlapped named pipes waited on by the IOCP poller, descriptors `0x400000 + slot`, or with the WSAPoll fallback relayed to pollable loopback sockets), `pipe_read/write/close`, `wait_pid`, `kill` |
+| `platform/poll_iocp.c` | the readiness poller on Windows: a completion port per poller with readiness from one `IOCTL_AFD_POLL` per armed socket (zero-byte overlapped `ReadFile` / write completion for child pipes), `PostQueuedCompletionStatus` wake-ups, `GetQueuedCompletionStatusEx` waits; falls back to `poll_wsapoll.c` (or `SLANG_POLLER=wsapoll`); `poller_backend` names the backend |
+| `platform/poll_wsapoll.c` | the fallback poller on Windows: `WSAPoll` over the armed sockets plus a loopback UDP wake-up socket, one-shot by disarming on report |
+| `platform/prof_win32.c` | Windows `backtrace` (CaptureStackBackTrace, names from the COFF symbol table, then DbgHelp `SymFromAddr`), the CPU sampler (sampler thread, `GetThreadTimes`, `SuspendThread` + `GetThreadContext` + `RtlVirtualUnwind`), `symbolize`, `exe_range`, `thread_stack_init` |
+| `platform/tz_win32.c` | `tz_tzif` on Windows: TZif v2 synthesized from the registry's Time Zones (TZI, Dynamic DST), local zone from `GetDynamicTimeZoneInformation`, IANA names by a CLDR table |
+| `platform/sqlite_dyn.h`, `sqlite_win32.c` | std.database.sqlite on Windows without `<sqlite3.h>`: the used SQLite API as function pointers bound from `sqlite3.dll` or `winsqlite3.dll` at run time |
+| `platform/net_win32.c` | the `net_posix.c` functions on Winsock2 (`WSASocketW` overlapped + non-inheritable, `FIONBIO`), WSA error codes with POSIX-style messages, `GetAdaptersAddresses`, `sendfile` = overlapped `TransmitFile` (pread+send fallback); `process_init` = `WSAStartup` |
+| `platform/timefmt.c` | calendar arithmetic for all platforms (`utc_tm`, `timegm`) and the "C"-locale `strftime`/`strptime` used on Windows and musl (`*_portable`, tested against glibc on Linux; `SLANG_PLAT_LIBC_TIMEFMT` marks the C libraries whose own are used) |
 
 Users of the layer: every OS call of the runtime. `task.c`, `task_io.c`,
 `mem.c`, `weak.c`, `leak.c`, `debug.c` and the `std_*.c` modules use the

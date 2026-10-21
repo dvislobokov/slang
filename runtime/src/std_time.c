@@ -86,14 +86,14 @@ int64_t slang_time_parse(const slang_string *s, const slang_string *layout, slan
     memset(&tm, 0, sizeof tm);
     tm.tm_mday = 1;
     tm.tm_year = 70;
-    const char *p = slang_string_data(s);
+    const char *p = slang_string_cstr(s);
     long off = 0;   /* set by %z, 0 otherwise */
-    const char *end = slang__plat_strptime(p, slang_string_data(layout), &tm, &off);
+    const char *end = slang__plat_strptime(p, slang_string_cstr(layout), &tm, &off);
     if (!end || *end != 0 || (int64_t)strlen(p) != slang_string_len(s)) {
         if (err) {
             char buf[256];
             snprintf(buf, sizeof buf, "time: cannot parse \"%.100s\" as \"%.100s\"", p,
-                     slang_string_data(layout));
+                     slang_string_cstr(layout));
             *err = slang_error_new_cstr(buf);
         }
         return 0;

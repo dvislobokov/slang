@@ -27,7 +27,7 @@ static void expect_error(const char *text, const char *msg) {
     assert(out.len == 0 && out.backing == NULL);
     slang_string *m = slang_error_message(err);
     if (!STR_IS(m, msg)) {
-        fprintf(stderr, "got [%s] want [%s]\n", slang_string_data(m), msg);
+        fprintf(stderr, "got [%s] want [%s]\n", slang_string_cstr(m), msg);
         assert(0);
     }
     slang_release(m);

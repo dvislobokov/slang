@@ -112,11 +112,39 @@ pub(crate) fn hover_markdown(a: &Analysis, id: SymbolId) -> String {
     out.push_str(&line);
     out.push('\n');
     if let Some(doc) = &s.doc {
+        // the `slang doc` pipeline: fenced code, Deprecated tag, symbol links
+        let link = |t: &str| symbol_link(a, s, t);
         out.push_str("\n---\n\n");
-        out.push_str(doc);
+        out.push_str(&slang::doc::markdown::to_markdown(&slang::doc::markdown::parse(doc), &link));
         out.push('\n');
     }
+    // the first example of a std symbol (std/**/*_test.sl), collapsed
+    if s.is_std {
+        if let Some(e) = slang::doc::std_examples().get(&s.full_name).and_then(|v| v.first()) {
+            out.push('\n');
+            out.push_str(&slang::doc::example_markdown(e));
+        }
+    }
     out
+}
+
+/// `[`text`](file:///path#L12)` target of a code span in the doc of `s`
+/// that names a symbol with a source location: tried as written, in the
+/// namespace of `s` and under `std.`.
+fn symbol_link(a: &Analysis, s: &Symbol, text: &str) -> Option<String> {
+    let text = text.trim_end_matches("()");
+    if text.is_empty() || !text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+        return None;
+    }
+    let ns = s.full_name.rsplit_once('.').map_or("", |x| x.0);
+    let parent_ns = ns.rsplit_once('.').map_or("", |x| x.0);
+    let cands = [text.to_string(), format!("{ns}.{text}"), format!("{parent_ns}.{text}"), format!("std.{text}")];
+    let sym = cands.iter().find_map(|c| a.index.symbols.iter().find(|x| x.full_name == *c && x.loc.is_some() && x.kind != SymbolKind::Local))?;
+    let loc = sym.loc.as_ref()?;
+    let f = a.files.get(loc.file)?;
+    let (line, _) = f.line_col(loc.name_span.start);
+    let url = lsp_types::Url::from_file_path(&f.path).ok()?;
+    Some(format!("{url}#L{line}"))
 }
 
 pub(crate) fn lsp_kind(k: SymbolKind) -> lsp_types::SymbolKind {

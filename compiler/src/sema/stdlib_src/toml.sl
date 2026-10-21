@@ -1,5 +1,3 @@
-namespace std.encoding.toml
-
 // TOML 1.0: parsing to a dynamic Value tree with the full set of value
 // types (strings in all four forms, integers in all bases, floats with
 // inf/nan, booleans, offset/local datetimes, local dates and times,
@@ -8,6 +6,7 @@ namespace std.encoding.toml
 // with @toml(name:, omitEmpty:, skip:, inline:) and @serde; and Document,
 // a parsed file that keeps comments, order and layout for in-place edits
 // (Set / Delete change only the affected lines).
+namespace std.encoding.toml
 
 // A TOML value. Datetimes keep their text (DateKind tells which form).
 struct Value {
@@ -21,30 +20,37 @@ struct Value {
     dt     int
     inline bool
 
+    // IsString reports whether the value is a string.
     func IsString() bool {
         return this.kind == 1
     }
 
+    // IsInt reports whether the value is an integer.
     func IsInt() bool {
         return this.kind == 2
     }
 
+    // IsFloat reports whether the value is a float.
     func IsFloat() bool {
         return this.kind == 3
     }
 
+    // IsBool reports whether the value is a boolean.
     func IsBool() bool {
         return this.kind == 4
     }
 
+    // IsDateTime reports whether the value is a date, time or datetime.
     func IsDateTime() bool {
         return this.kind == 5
     }
 
+    // IsArray reports whether the value is an array.
     func IsArray() bool {
         return this.kind == 6
     }
 
+    // IsTable reports whether the value is a table.
     func IsTable() bool {
         return this.kind == 7
     }
@@ -71,6 +77,7 @@ struct Value {
         return "local-time"
     }
 
+    // String returns the string; an error for other kinds.
     func String() string! {
         if this.kind != 1 {
             return error("toml: " + kindName(this.kind) + " is not a string")
@@ -78,6 +85,7 @@ struct Value {
         return this.s
     }
 
+    // Int returns the integer; an error for other kinds.
     func Int() int! {
         if this.kind != 2 {
             return error("toml: " + kindName(this.kind) + " is not an integer")
@@ -85,6 +93,7 @@ struct Value {
         return this.i
     }
 
+    // Float returns the number (integers convert); an error for other kinds.
     func Float() float! {
         if this.kind == 2 {
             return float(this.i)
@@ -95,6 +104,7 @@ struct Value {
         return this.f
     }
 
+    // Bool returns the boolean; an error for other kinds.
     func Bool() bool! {
         if this.kind != 4 {
             return error("toml: " + kindName(this.kind) + " is not a bool")
@@ -110,6 +120,7 @@ struct Value {
         return this.s
     }
 
+    // Len returns the number of elements of an array or keys of a table (0 otherwise).
     func Len() int {
         if this.kind == 6 || this.kind == 7 {
             return len(this.items)
@@ -117,6 +128,7 @@ struct Value {
         return 0
     }
 
+    // Index returns element i of an array (the zero Value if out of range).
     func Index(i int) Value {
         if this.kind == 6 && i >= 0 && i < len(this.items) {
             return this.items[i]
@@ -143,6 +155,7 @@ struct Value {
         return v
     }
 
+    // Has reports whether a table has key.
     func Has(key string) bool {
         return this.find(key) >= 0
     }
@@ -158,6 +171,7 @@ struct Value {
         return -1
     }
 
+    // Keys returns the keys of a table in document order.
     func Keys() []string {
         var out []string = []
         for k in this.keys {
@@ -166,6 +180,7 @@ struct Value {
         return out
     }
 
+    // Items returns the elements of an array (or the values of a table) as a new slice.
     func Items() []Value {
         var out []Value = []
         for x in this.items {
@@ -185,22 +200,27 @@ struct Value {
     }
 }
 
+// NewString returns a string value.
 func NewString(s string) Value {
     return Value{kind: 1, s: s}
 }
 
+// NewInt returns an integer value.
 func NewInt(i int) Value {
     return Value{kind: 2, i: i}
 }
 
+// NewFloat returns a float value.
 func NewFloat(f float) Value {
     return Value{kind: 3, f: f}
 }
 
+// NewBool returns a boolean value.
 func NewBool(b bool) Value {
     return Value{kind: 4, b: b}
 }
 
+// NewArray returns an array of copies of items.
 func NewArray(items []Value) Value {
     var c []Value = []
     for x in items {
@@ -1462,6 +1482,7 @@ func Parse<T>(text string) T! {
     return out
 }
 
+// Decode maps a parsed Value into a T (the rules of Parse).
 func Decode<T>(v Value) T! {
     var out T
     decode(v, "", &out)?
@@ -1752,6 +1773,7 @@ struct Document {
         return v.At(path)
     }
 
+    // Has reports whether the dotted path exists in the document.
     func Has(path string) bool {
         var segs = try parseKeyText(path) else []
         if len(segs) == 0 {

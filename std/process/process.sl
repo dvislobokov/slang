@@ -1,5 +1,3 @@
-namespace std.process
-
 // std.process: running child processes (Go's os/exec), asynchronously.
 //
 //   var r = await process.Run("git", ["status", "--short"])?
@@ -15,6 +13,7 @@ namespace std.process
 // the scheduler's poller; no worker thread blocks). Cancelling the task
 // that waits (task.WithTimeout, Options.Timeout) kills the child.
 // Runtime: runtime/src/std_process.c.
+namespace std.process
 
 // Stream modes for Options.Stdin/Stdout/Stderr.
 // Inherit (0): the parent's stream; Pipe (1): a pipe to this process;

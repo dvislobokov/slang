@@ -1,0 +1,50 @@
+== sqlite
+saved 123 none
+young [Banks]
+  Beowulf 0.50 false
+  Earthsea 12.50 true
+count 122 61 true
+sum 1225 0.50 Earthsea 1929
+  Paper 2 0
+  Ebook 120 0
+page [Culture 114 Culture 113 Culture 112]
+  Banks 120 none 1
+  Le Guin 1 - 2
+  fantasy 1
+  sf 2
+earthsea Le Guin {"pages":200} [1 2] Paper
+changed [price in_print]
+version 1
+bulk 60
+conflict true
+reloaded A Wizard of Earthsea 2
+inside 2
+rolled back undo
+after 122
+raw [120]
+upsert [science fiction fantasy poetry]
+== postgres
+saved 123 none
+young [Banks]
+  Beowulf 0.50 false
+  Earthsea 12.50 true
+count 122 61 true
+sum 1225 0.50 Earthsea 1929
+  Paper 2 0
+  Ebook 120 0
+page [Culture 114 Culture 113 Culture 112]
+  Banks 120 none 1
+  Le Guin 1 - 2
+  fantasy 1
+  sf 2
+earthsea Le Guin {"pages":200} [1 2] Paper
+changed [price in_print]
+version 1
+bulk 60
+conflict true
+reloaded A Wizard of Earthsea 2
+inside 2
+rolled back undo
+after 122
+raw [120]
+upsert [science fiction fantasy poetry]

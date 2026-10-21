@@ -1,9 +1,8 @@
-namespace std.html.template
-
 // HTML templates: the std.text.template engine with contextual
 // auto-escaping (see std.text.template's htmlctx.sl). Values of the
 // HTML, URL and JS types are trusted and inserted as they are where
 // their kind of content is expected.
+namespace std.html.template
 
 // Trusted HTML markup (not escaped in text context).
 struct HTML {

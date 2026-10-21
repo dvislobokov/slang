@@ -1,6 +1,5 @@
-namespace std.cloud.s3
-
 // Multipart uploads and presigned URLs (see s3.sl for the file layout).
+namespace std.cloud.s3
 
 // Where Upload reads its data from: a std.io.Reader or an AsyncReader.
 interface partSource {

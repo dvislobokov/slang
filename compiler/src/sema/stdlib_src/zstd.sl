@@ -1,9 +1,8 @@
-namespace std.compress.zstd
-
 // Zstandard (RFC 8878); the decoder (runtime/src/std_zstd.c) and the
 // encoder (std_zstd_enc.c) are C. Frames are decoded whole: the streaming
 // Reader emits a frame's content once all of it has arrived. Dictionaries
 // are not supported.
+namespace std.compress.zstd
 
 // Compresses data into one zstd frame with a content checksum. Levels
 // 1 (fastest) .. 19 (more match search); 0 or negative means 3. The

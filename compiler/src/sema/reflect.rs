@@ -70,7 +70,7 @@ const ATTR_STRUCT_NAMES: &[(&str, &str)] = &[("log", "logAttr"), ("csv", "csvAtt
 const ALIAS_SPELLINGS: &[&str] = &["int64", "uint", "uint8", "float64"];
 
 /// Intrinsic functions of `std.reflect` (non-generic and generic).
-const INTRINSIC_FUNCS: &[&str] = &["anyType", "anyAddr", "errType", "loadAddr", "newOf", "invokeMethod"];
+const INTRINSIC_FUNCS: &[&str] = &["anyType", "anyAddr", "anyBox", "errType", "loadAddr", "newOf", "invokeMethod"];
 const INTRINSIC_TEMPLATES: &[&str] = &["TypeOf", "ifaceType", "load", "store", "asFunc", "storeTag"];
 
 /// The parsed [`MODULES`] (parsed once per process).
@@ -796,6 +796,7 @@ impl<'a> Sema<'a> {
                 let k = match *n {
                     "anyType" => Intrinsic::AnyType,
                     "anyAddr" => Intrinsic::AnyAddr,
+                    "anyBox" => Intrinsic::AnyBox,
                     "errType" => Intrinsic::ErrType,
                     "loadAddr" => Intrinsic::LoadAddr,
                     "newOf" => Intrinsic::New,

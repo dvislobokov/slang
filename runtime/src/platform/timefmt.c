@@ -58,7 +58,8 @@ int64_t slang__plat_timegm(const struct tm *tm) {
 
 /* ---- strftime / strptime in the "C" locale -------------------------------
  * Always compiled (the POSIX build tests them against the C library);
- * they are the platform's slang__plat_strftime/strptime on Windows. */
+ * they are the platform's slang__plat_strftime/strptime on Windows and
+ * musl (!SLANG_PLAT_LIBC_TIMEFMT). */
 
 static const char *const g_days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 static const char *const g_mons[] = {"January", "February", "March", "April", "May", "June",
@@ -267,7 +268,7 @@ const char *slang__plat_strptime_portable(const char *s, const char *f, struct t
     return end;
 }
 
-#if defined(_WIN32)
+#if !defined(SLANG_PLAT_LIBC_TIMEFMT)
 size_t slang__plat_strftime(char *buf, size_t cap, const char *f, const struct tm *tm) {
     return slang__plat_strftime_portable(buf, cap, f, tm);
 }

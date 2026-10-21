@@ -1,11 +1,10 @@
-namespace std.arena
-
 // Arenas (DESIGN.md "Арены", runtime/ABI.md 3.6): objects allocated with
 // a.New<T>() and slices with a.Alloc<T>(n) live in the arena and are all
 // released by a.Free() (or when the last copy of the Arena is gone). Their
 // retain/release are no-ops; pointers into a freed arena are invalid (not
 // checked). Strings and slices made by ordinary code are never arena
 // allocated; a.String(s) copies a string into the arena.
+namespace std.arena
 
 // The runtime arena; destroyed with its last reference.
 struct region {

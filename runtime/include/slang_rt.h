@@ -87,6 +87,9 @@ void  slang_free(void *p);                    /* raw; NULL ok */
 void *slang_object_new(const slang_type_info *type, int64_t size); /* rc=1, zeroed, size includes header */
 void  slang_retain(void *obj);                /* NULL / immortal: no-op */
 void  slang_release(void *obj);               /* NULL / immortal: no-op; at 0: drop + free */
+/* 0 while the process has only one thread (refcounts may then be updated
+ * without atomic RMW); set for good before the second thread starts. */
+extern uint8_t slang_threaded;
 int64_t slang_refcount(const void *obj);      /* debugging / tests; 0 for NULL */
 int64_t slang_live_objects(void);             /* number of live slang_object_new objects */
 
@@ -127,23 +130,43 @@ void *slang_weak_get(void *box);              /* +1 payload pointer, or NULL if 
 
 typedef struct slang_string {
     slang_object hdr;   /* +0  */
-    int64_t len;        /* +16 length in bytes, excluding the trailing NUL */
-    char data[];        /* +24 len bytes of UTF-8 followed by a NUL byte */
-} slang_string;
+    int64_t len;        /* +16 length in bytes */
+    char *data;         /* +24 the bytes. data[len] is always readable and is
+                         *     '\0' except in a view (ABI.md 4.1): use the
+                         *     length, or slang_string_cstr() for C APIs */
+} slang_string;         /* 32 bytes; an owned string's bytes follow at +32 */
 
 extern const slang_type_info slang_type_string;
+/* Type of a standalone view {hdr, len, data, owner @32}: its drop releases
+ * the owner (ABI.md 4.1). */
+extern const slang_type_info slang_type_string_view;
+
+/* Refcount word of a view stored inside a view block (strings.Split...):
+ * SLANG_RC_VIEW | address of the block; retain/release go to the block.
+ * Every such word is < SLANG_RC_ARENA. */
+#define SLANG_RC_VIEW ((int64_t)INT64_MIN)
+static inline int slang_rc_is_view(int64_t rc) { return rc < SLANG_RC_ARENA; }
+
+/* Static storage of an immortal string literal of N bytes (N includes the
+ * NUL) and its initializer; `self` names the variable being defined. */
+#define SLANG_STRING_STORAGE(N) struct { slang_object hdr; int64_t len; char *data; char bytes[N]; }
+#define SLANG_STRING_INIT(self, lit) \
+    { { SLANG_RC_IMMORTAL, &slang_type_string }, (int64_t)(sizeof(lit) - 1), (self).bytes, lit }
 
 /* Static literal for C code. The compiler emits the equivalent LLVM global. */
-#define SLANG_STATIC_STRING(name, lit)                                         \
-    static struct { slang_object hdr; int64_t len; char data[sizeof(lit)]; }   \
-        name##_storage = { { SLANG_RC_IMMORTAL, &slang_type_string },          \
-                           (int64_t)(sizeof(lit) - 1), lit };                  \
+#define SLANG_STATIC_STRING(name, lit)                                          \
+    static SLANG_STRING_STORAGE(sizeof(lit)) name##_storage =                   \
+        SLANG_STRING_INIT(name##_storage, lit);                                 \
     static slang_string *const name = (slang_string *)&name##_storage
 
 slang_string *slang_string_new(const char *bytes, int64_t len);   /* owned copy */
 slang_string *slang_string_from_cstr(const char *cstr);           /* owned copy */
 slang_string *slang_string_literal(const char *bytes, int64_t len); /* immortal copy, never freed */
-const char   *slang_string_data(const slang_string *s);  /* [borrowed] NUL-terminated, "" for NULL */
+const char   *slang_string_data(const slang_string *s);  /* [borrowed] bytes (NOT NUL-terminated for a view), "" for NULL */
+/* [borrowed-ish] NUL-terminated bytes for C APIs: s->data when it is
+ * terminated, else a copy in a per-thread ring of 16 buffers, valid until
+ * the 16th next call on this thread (use it within one C call). */
+const char   *slang_string_cstr(const slang_string *s);
 int64_t slang_string_len(const slang_string *s);         /* bytes */
 int64_t slang_string_rune_count(const slang_string *s);  /* code points; invalid byte = 1 rune */
 slang_string *slang_string_concat(const slang_string *a, const slang_string *b);

@@ -1,22 +1,25 @@
-namespace std.math.complex
-
 // std.math.complex (Go's complex128 + math/cmplx): Complex{Re, Im} with
 // arithmetic methods (Add, Sub, Mul, Div, Neg: the operator-interface
 // names, so `+ - * /` can map onto them once operator overloading lands)
 // and the cmplx functions.
+namespace std.math.complex
 
+// Complex is a complex number with float parts.
 struct Complex {
     Re float
     Im float
 
+    // Add returns x + o.
     func Add(o Complex) Complex {
         return Complex{Re: this.Re + o.Re, Im: this.Im + o.Im}
     }
 
+    // Sub returns x - o.
     func Sub(o Complex) Complex {
         return Complex{Re: this.Re - o.Re, Im: this.Im - o.Im}
     }
 
+    // Mul returns x * o.
     func Mul(o Complex) Complex {
         return Complex{Re: this.Re * o.Re - this.Im * o.Im, Im: this.Re * o.Im + this.Im * o.Re}
     }
@@ -40,6 +43,7 @@ struct Complex {
         return Complex{Re: (a * r + b) / den, Im: (b * r - a) / den}
     }
 
+    // Neg returns -x.
     func Neg() Complex {
         return Complex{Re: -this.Re, Im: -this.Im}
     }
@@ -49,6 +53,7 @@ struct Complex {
         return Complex{Re: this.Re * k, Im: this.Im * k}
     }
 
+    // Conj returns the complex conjugate.
     func Conj() Complex {
         return Complex{Re: this.Re, Im: -this.Im}
     }
@@ -63,6 +68,7 @@ struct Complex {
         return std.math.Atan2(this.Im, this.Re)
     }
 
+    // Equals reports whether both parts are equal.
     func Equals(o Complex) bool {
         return this.Re == o.Re && this.Im == o.Im
     }
@@ -92,14 +98,19 @@ func Polar(c Complex) (float, float) {
     return (c.Abs(), c.Phase())
 }
 
+// Abs returns the modulus
+// c
+// .
 func Abs(c Complex) float {
     return c.Abs()
 }
 
+// Phase returns the argument of c in [-Pi, Pi].
 func Phase(c Complex) float {
     return c.Phase()
 }
 
+// Conj returns the complex conjugate of c.
 func Conj(c Complex) Complex {
     return c.Conj()
 }
@@ -153,10 +164,12 @@ func Pow(x Complex, y Complex) Complex {
     return Exp(y.Mul(Log(x)))
 }
 
+// Sin returns the complex sine of c.
 func Sin(c Complex) Complex {
     return Complex{Re: std.math.Sin(c.Re) * cosh(c.Im), Im: std.math.Cos(c.Re) * sinh(c.Im)}
 }
 
+// Cos returns the complex cosine of c.
 func Cos(c Complex) Complex {
     return Complex{Re: std.math.Cos(c.Re) * cosh(c.Im), Im: -std.math.Sin(c.Re) * sinh(c.Im)}
 }

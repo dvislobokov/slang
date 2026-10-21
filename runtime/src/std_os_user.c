@@ -29,12 +29,12 @@ void slang_os_user_rt_lookup(const slang_string *name, int64_t uid, bool by_id, 
     if (err) *err = NULL;
     memset(out, 0, sizeof *out);
     slang__plat_user u;
-    int e = slang__plat_user_lookup(name ? name->data : "", uid, by_id, &u);
+    int e = slang__plat_user_lookup(slang_string_cstr(name), uid, by_id, &u);
     if (e) {
         char m[512];
         if (e > 0) snprintf(m, sizeof m, "user: lookup failed: %s", strerror(e));
         else if (by_id) snprintf(m, sizeof m, "user: unknown userid %lld", (long long)uid);
-        else snprintf(m, sizeof m, "user: unknown user %.400s", name ? name->data : "");
+        else snprintf(m, sizeof m, "user: unknown user %.400s", slang_string_cstr(name));
         if (err) *err = slang_error_new_cstr(m);
         return;
     }
@@ -51,12 +51,12 @@ void slang_os_user_rt_group(const slang_string *name, int64_t gid, bool by_id, s
     memset(out, 0, sizeof *out);
     int64_t g = 0;
     char gname[256];
-    int e = slang__plat_group_lookup(name ? name->data : "", gid, by_id, &g, gname, sizeof gname);
+    int e = slang__plat_group_lookup(slang_string_cstr(name), gid, by_id, &g, gname, sizeof gname);
     if (e) {
         char m[512];
         if (e > 0) snprintf(m, sizeof m, "user: lookup failed: %s", strerror(e));
         else if (by_id) snprintf(m, sizeof m, "group: unknown groupid %lld", (long long)gid);
-        else snprintf(m, sizeof m, "group: unknown group %.400s", name ? name->data : "");
+        else snprintf(m, sizeof m, "group: unknown group %.400s", slang_string_cstr(name));
         if (err) *err = slang_error_new_cstr(m);
         return;
     }

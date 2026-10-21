@@ -1,0 +1,75 @@
+// Examples for std.slices.
+namespace slices_test
+
+import std
+import std.io
+
+func ExampleSort() {
+    var xs = [5, 2, 8, 1]
+    slices.Sort(xs)
+    println(xs)
+    // Output:
+    // [1 2 5 8]
+}
+
+func ExampleSortFunc() {
+    var words = ["banana", "kiwi", "apple"]
+    slices.SortFunc(words, (a string, b string) => len(a) < len(b))
+    println(words)
+    // Output:
+    // [kiwi apple banana]
+}
+
+func ExampleContains() {
+    var xs = ["a", "b", "c"]
+    println(slices.Contains(xs, "b"), slices.Index(xs, "c"), slices.Index(xs, "z"))
+    // Output:
+    // true 2 -1
+}
+
+func ExampleMap() {
+    var lens = slices.Map(["go", "slang", "c"], (s string) => len(s))
+    println(lens)
+    // Output:
+    // [2 5 1]
+}
+
+func ExampleFilter() {
+    var even = slices.Filter([1, 2, 3, 4, 5, 6], (x int) => x % 2 == 0)
+    println(even)
+    // Output:
+    // [2 4 6]
+}
+
+func ExampleReduce() {
+    var sum = slices.Reduce([1, 2, 3, 4], 0, (acc int, x int) => acc + x)
+    println(sum)
+    // Output:
+    // 10
+}
+
+func ExampleReverse() {
+    var xs = [1, 2, 3]
+    slices.Reverse(xs)
+    println(xs)
+    // Output:
+    // [3 2 1]
+}
+
+func ExampleUnique() {
+    println(slices.Unique([3, 1, 3, 2, 1]))
+    // Output:
+    // [3 1 2]
+}
+
+func ExampleMax() {
+    println(slices.Max([4, 9, 2]), slices.Min([4, 9, 2]), slices.Sum([4, 9, 2]))
+    // Output:
+    // 9 2 15
+}
+
+func ExampleChunk() {
+    println(slices.Chunk([1, 2, 3, 4, 5], 2))
+    // Output:
+    // [[1 2] [3 4] [5]]
+}

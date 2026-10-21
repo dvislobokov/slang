@@ -1,5 +1,3 @@
-namespace std.database.postgres
-
 // std.database.postgres: a PostgreSQL driver for std.database.sql written
 // in Slang over std.net (and std.net.tls for sslmode): frontend/backend
 // protocol 3.0, startup and authentication (trust, cleartext password,
@@ -11,6 +9,7 @@ namespace std.database.postgres
 // Postgres types and Slang values: see decodeBinary/decodeText
 // (postgres_types.sl); numeric, uuid, json/jsonb, interval and unknown
 // types come as strings, arrays as []any.
+namespace std.database.postgres
 
 // The driver: sql.Register("postgres", postgres.Driver{}). OnNotice gets
 // NOTICE/WARNING messages, OnNotification LISTEN/NOTIFY messages.

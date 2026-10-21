@@ -17,6 +17,7 @@ and every change must match it or update it.
 | `lsp/` | `slang-lsp` binary (lsp-server) | `docs/TOOLING.md` |
 | `editors/vscode/` | TextMate grammar + LSP client | — |
 | `grammar/slang.bnf` | canonical Grammar-Kit grammar (IDEA plugin); keep in sync with parser and `DESIGN.md` EBNF | — |
+| `docs/guide/` | user guides in English (tour, errors, async, memory, packages, testing, debugging, web, faq); every ```slang block is compiled and run by `compiler/tests/guide.rs` | — |
 | `examples/` | runnable `.sl` + byte-exact `.out`; `errors_compile/` must fail; `README.md` lists output rules and assumptions | — |
 | `tests/spec/` | spec corpus, `// status: passing|pending` per file (TDD: pending tests must fail; flip when implemented) | `tests/spec/README.md` |
 | `benchmarks/` | Slang vs Go programs; `scripts/bench-perf.sh`, `scripts/bench-size.sh` | `benchmarks/README.md` |
@@ -27,6 +28,8 @@ and every change must match it or update it.
 ./scripts/setup.sh                 # once: llvm-18-dev, clang, lld (Ubuntu)
 make -C runtime && make -C runtime test     # C runtime (-Werror), `make asan` for sanitizers
 make -C runtime CROSS=x86_64-w64-mingw32 test-wine  # Windows runtime (mingw-w64, -Werror) + C tests under wine
+make -C runtime CROSS=aarch64-linux-gnu test-cross  # linux-arm64 runtime + C tests under qemu (also CROSS=x86_64-linux-musl)
+make -C runtime CROSS=aarch64-apple-darwin          # macOS: compile check against runtime/stub-sdk/macos (no SDK here)
 cd compiler && cargo build && cargo test    # unit, parser, sema, package, run_examples, spec
 cargo build --release && ./target/release/slang run examples/hello.sl
 ./target/release/slang check --dump-hir file.sl   # inspect typed HIR

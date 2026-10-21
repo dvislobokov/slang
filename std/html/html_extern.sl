@@ -2,8 +2,12 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.html implemented by the C runtime.
 namespace std.html
 
+// Escape replaces <, >, &, ' and " with HTML entities.
+//
 // C: slang_html_escape (runtime/src/std_*.c).
-extern func Escape(a string) string
+extern func Escape(s string) string
 
+// Unescape replaces HTML entities with the characters they stand for.
+//
 // C: slang_html_unescape (runtime/src/std_*.c).
-extern func Unescape(a string) string
+extern func Unescape(s string) string

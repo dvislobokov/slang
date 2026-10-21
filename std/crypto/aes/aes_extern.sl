@@ -2,35 +2,57 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.aes implemented by the C runtime.
 namespace std.crypto.aes
 
+// GcmSeal encrypts and authenticates plaintext with AES-GCM (16/24/32-byte key, 12-byte nonce); the result is the ciphertext followed by the 16-byte tag.
+//
 // C: slang_crypto_aes_gcm_seal (runtime/src/std_*.c).
-extern func GcmSeal(a []byte, b []byte, c []byte, d []byte) []byte!
+extern func GcmSeal(key []byte, nonce []byte, plaintext []byte, aad []byte) []byte!
 
+// GcmOpen decrypts and verifies the output of GcmSeal; a wrong key, nonce, aad or tag is an error.
+//
 // C: slang_crypto_aes_gcm_open (runtime/src/std_*.c).
-extern func GcmOpen(a []byte, b []byte, c []byte, d []byte) []byte!
+extern func GcmOpen(key []byte, nonce []byte, ciphertext []byte, aad []byte) []byte!
 
+// EncryptBlock encrypts one raw 16-byte block.
+//
 // C: slang_crypto_aes_encrypt_block (runtime/src/std_*.c).
-extern func EncryptBlock(a []byte, b []byte) []byte!
+extern func EncryptBlock(key []byte, block []byte) []byte!
 
+// HasHardware reports whether AES-NI and carry-less multiplication are used.
+//
 // C: slang_crypto_aes_has_hardware (runtime/src/std_*.c).
 extern func HasHardware() bool
 
+// DecryptBlock decrypts one raw 16-byte block.
+//
 // C: slang_crypto_aes_decrypt_block (runtime/src/std_*.c).
-extern func DecryptBlock(a []byte, b []byte) []byte!
+extern func DecryptBlock(key []byte, block []byte) []byte!
 
+// CbcEncrypt encrypts plaintext in CBC mode with PKCS#7 padding (16-byte iv).
+//
 // C: slang_crypto_aes_cbc_encrypt (runtime/src/std_*.c).
-extern func CbcEncrypt(a []byte, b []byte, c []byte) []byte!
+extern func CbcEncrypt(key []byte, iv []byte, plaintext []byte) []byte!
 
+// CbcDecrypt decrypts CBC ciphertext and removes the PKCS#7 padding (checked in constant time).
+//
 // C: slang_crypto_aes_cbc_decrypt (runtime/src/std_*.c).
-extern func CbcDecrypt(a []byte, b []byte, c []byte) []byte!
+extern func CbcDecrypt(key []byte, iv []byte, ciphertext []byte) []byte!
 
+// CbcEncryptRaw encrypts in CBC mode without padding; the length must be a multiple of 16.
+//
 // C: slang_crypto_aes_cbc_encrypt_raw (runtime/src/std_*.c).
-extern func CbcEncryptRaw(a []byte, b []byte, c []byte) []byte!
+extern func CbcEncryptRaw(key []byte, iv []byte, plaintext []byte) []byte!
 
+// CbcDecryptRaw decrypts CBC ciphertext without removing padding.
+//
 // C: slang_crypto_aes_cbc_decrypt_raw (runtime/src/std_*.c).
-extern func CbcDecryptRaw(a []byte, b []byte, c []byte) []byte!
+extern func CbcDecryptRaw(key []byte, iv []byte, ciphertext []byte) []byte!
 
+// Pkcs7Pad appends PKCS#7 padding for a block size.
+//
 // C: slang_crypto_aes_pkcs7_pad (runtime/src/std_*.c).
-extern func Pkcs7Pad(a []byte, b int) []byte!
+extern func Pkcs7Pad(data []byte, block int) []byte!
 
+// Pkcs7Unpad removes PKCS#7 padding; invalid padding is an error.
+//
 // C: slang_crypto_aes_pkcs7_unpad (runtime/src/std_*.c).
-extern func Pkcs7Unpad(a []byte, b int) []byte!
+extern func Pkcs7Unpad(data []byte, block int) []byte!

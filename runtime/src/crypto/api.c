@@ -38,7 +38,7 @@ static int hash_alg(const slang_string *name, slang_error **err) {
     int alg = slang__hash_by_name(sdata(name), (size_t)slen_(name));
     if (!alg) {
         char buf[96];
-        snprintf(buf, sizeof buf, "crypto: unknown hash \"%.40s\" (want sha256, sha384, sha512 or sha1)", sdata(name));
+        snprintf(buf, sizeof buf, "crypto: unknown hash \"%.*s\" (want sha256, sha384, sha512 or sha1)", (int)(slen_(name) < 40 ? slen_(name) : 40), sdata(name));
         set_err(err, buf);
     }
     return alg;

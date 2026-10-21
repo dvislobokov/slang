@@ -54,6 +54,11 @@ pub mod stdlib;
 // >>> std.web (docs/FRAMEWORK.md section 2)
 mod web;
 // <<< std.web
+// >>> std.data (docs/FRAMEWORK.md section 3)
+mod orm;
+mod orm_model;
+mod orm_sql;
+// <<< std.data
 pub mod stdlib_docs;
 
 use crate::ast;
@@ -71,6 +76,18 @@ pub use resolve::{ImportPolicy, PackageScope};
 /// ([`Diagnostic::file`]). Returns `None` if any error was reported.
 pub fn analyze(files: &[ast::File], diags: &mut Diagnostics) -> Option<hir::Program> {
     analyze_with_policy(files, diags, None)
+}
+
+/// Analyses `files` like [`analyze`] and returns the `std.data` model of
+/// every context as JSON (the migrations snapshot, see `crate::datacli`),
+/// or `None` if any error was reported.
+pub fn analyze_data_model(files: &[ast::File], diags: &mut Diagnostics) -> Option<String> {
+    let mut s = Sema::new(files, diags);
+    s.run();
+    if s.diags.has_errors() {
+        return None;
+    }
+    Some(s.orm_model_json())
 }
 
 /// [`analyze`] with an optional [`ImportPolicy`] restricting which root
@@ -318,6 +335,8 @@ pub(crate) struct Sema<'a> {
     pub(crate) refl: reflect::ReflState,
     /// std.web compile-time expansion (route tables, DI factories).
     pub(crate) web: web::WebState,
+    /// std.data compile-time expansion (models, query translation).
+    pub(crate) orm: orm_model::OrmState,
 }
 
 impl<'a> Sema<'a> {
@@ -362,6 +381,7 @@ impl<'a> Sema<'a> {
             gen: generics::GenState::default(),
             refl: reflect::ReflState::default(),
             web: web::WebState::default(),
+            orm: orm_model::OrmState::default(),
         }
     }
 

@@ -1,0 +1,92 @@
+// test: std.data optimistic concurrency and units of work: an integer @concurrencyToken is checked and incremented by UPDATE and checked by DELETE, a conflict fails SaveChanges with ConcurrencyError and saves nothing, Reload discards changes; SaveChanges is atomic (a failing statement rolls back the whole batch); ctx.Transaction commits or rolls back everything inside it, nested calls join it
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.concurrency
+
+import std
+import std.io
+
+struct Account {
+    Id      int
+    @data.index(unique: true) Owner string
+    Balance int
+    @data.concurrencyToken Version int
+}
+
+struct Bank {
+    data.Context
+    Accounts data.Set<Account>
+}
+
+async func total(ctx *Bank) int! {
+    return await ctx.Accounts.AsNoTracking().Sum((a) => a.Balance)?
+}
+
+async func main() void! {
+    var a = data.Open<Bank>(data.Provider.Sqlite, ":memory:")?
+    await a.EnsureCreated()?
+    var b = data.OpenDB<Bank>(data.Provider.Sqlite, a.DB())
+    a.LogTo((s) => println("  a:", s))
+    var acc = new Account{Owner: "ann", Balance: 100}
+    a.Accounts.Add(acc)
+    _ = await a.SaveChanges()?
+    println(acc.Id, acc.Version)
+
+    var copy = await b.Accounts.Find(acc.Id)?
+    copy.Balance = 150
+    _ = await b.SaveChanges()?
+    println("b saved, version", copy.Version)
+
+    acc.Balance = 90
+    var other = new Account{Owner: "bob", Balance: 5}
+    a.Accounts.Add(other)
+    try await a.SaveChanges() catch err {
+        println("conflict:", data.IsConcurrencyError(err))
+        println(err)
+    }
+    println("nothing saved:", await total(b)?, other.Id, await b.Accounts.Count((x) => x.Owner == "bob")?)
+    await a.Entry(acc).Reload()?
+    println("reloaded", acc.Balance, acc.Version, a.Entry(acc).State())
+    acc.Balance = 80
+    _ = await a.SaveChanges()?
+    println("saved", acc.Version, await total(b)?)
+
+    b.ClearTracker()
+    var stale = await b.Accounts.AsNoTracking().FirstOrDefault((x) => x.Id == acc.Id)?
+    stale.Version = 1
+    b.Accounts.Attach(stale)
+    b.Accounts.Remove(stale)
+    try await b.SaveChanges() catch err {
+        println("delete conflict:", data.IsConcurrencyError(err))
+    }
+
+    a.LogTo((s) => {})
+    // atomic batch: the second insert violates the unique index
+    a.Accounts.Add(new Account{Owner: "cid", Balance: 1})
+    a.Accounts.Add(new Account{Owner: "ann", Balance: 1})
+    try await a.SaveChanges() catch err {
+        println("batch failed:", strings.Contains(err.Message(), "UNIQUE"))
+    }
+    println(await b.Accounts.Count()?)
+    a.ClearTracker()
+
+    // transactions
+    try await a.Transaction(async () => {
+        a.Accounts.Add(new Account{Owner: "dan", Balance: 10})
+        _ = await a.SaveChanges()?
+        await a.Transaction(async () => {
+            _ = await a.Accounts.Where((x) => x.Owner == "ann").ExecuteUpdate((s) => s.Set((x) => x.Balance, (x) => x.Balance - 10))?
+        })?
+        println("inside:", await a.Accounts.Count()?, await total(a)?)
+        return error("abort")
+    }) catch err {
+        println("rolled back:", err)
+    }
+    println("after:", await b.Accounts.Count()?, await total(b)?)
+    a.ClearTracker()
+    await a.Transaction(async () => {
+        a.Accounts.Add(new Account{Owner: "eve", Balance: 20})
+        _ = await a.SaveChanges()?
+    })?
+    println("committed:", await b.Accounts.Count()?, await total(b)?)
+}

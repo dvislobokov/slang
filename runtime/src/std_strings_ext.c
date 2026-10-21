@@ -17,7 +17,7 @@ static slang_string *same(const slang_string *s) {
 
 static slang_string *sub(const slang_string *s, int64_t lo, int64_t hi) {
     if (lo == 0 && hi == slen(s)) return same(s);
-    return slang_string_new(sdata(s) + lo, hi - lo);
+    return slang__string_sub(s, lo, hi);
 }
 
 static bool is_space(int32_t r) {
@@ -43,26 +43,49 @@ static int64_t rune_start_before(const slang_string *s, int64_t hi, int32_t *r) 
     return st;
 }
 
-static void push(slang_slice *out, const char *p, int64_t n) {
-    slang_string *x = slang_string_new(p, n);
+/* Appends s[off:off+n] (a view or a copy) to out. */
+static void push(slang_slice *out, const slang_string *s, int64_t off, int64_t n) {
+    slang_string *x = slang__string_sub(s, off, off + n);
     slang_slice_append(out, 8, &slang_ops_ref, &x);
     slang_release(x);
 }
 
 /* ---- Fields ---- */
 
+static inline bool field_space(const slang_string *s, int64_t i, int64_t *w) {
+    unsigned char c = (unsigned char)s->data[i];
+    if (c < 0x80) {
+        *w = 1;
+        return c == ' ' || (c >= '\t' && c <= '\r');
+    }
+    int32_t r = slang_string_decode_rune(s, i, w);
+    return is_space(r) && !(r == 0xFFFD && *w == 1);
+}
+
+/* Fields' pieces are views in one view block, like Split's. */
 void slang_strings_fields(const slang_string *s, slang_slice *out) {
-    slang_slice_new_ops(out, 8, 0, 4, &slang_ops_ref);
-    int64_t n = slen(s), start = -1;
+    int64_t n = slen(s), count = 0;
+    for (int64_t i = 0, in = 0; i < n;) {
+        int64_t w;
+        bool sp = field_space(s, i, &w);
+        if (!sp && !in) count++;
+        in = !sp;
+        i += w;
+    }
+    slang_slice_new_ops(out, 8, count, count, &slang_ops_ref);
+    if (count == 0) return;
+    slang_string **slots = out->data;
+    slang__vblock *b = slang__vblock_new(s, count);
+    int64_t start = -1, k = 0;
     for (int64_t i = 0; i < n;) {
         int64_t w;
-        int32_t r = slang_string_decode_rune(s, i, &w);
-        bool sp = is_space(r) && !(r == 0xFFFD && w == 1);
-        if (sp && start >= 0) { push(out, sdata(s) + start, i - start); start = -1; }
+        bool sp = field_space(s, i, &w);
+        if (sp && start >= 0) { slots[k++] = slang__vblock_add(b, s->data + start, i - start); start = -1; }
         if (!sp && start < 0) start = i;
         i += w;
     }
-    if (start >= 0) push(out, sdata(s) + start, n - start);
+    if (start >= 0) slots[k++] = slang__vblock_add(b, s->data + start, n - start);
+    if (b) slang__vblock_done(b);
 }
 
 /* ---- Count / LastIndex ---- */
@@ -147,22 +170,22 @@ void slang_strings_split_n(const slang_string *s, const slang_string *sep, int64
         while (i < len && out->len < n - 1) {
             int64_t w;
             slang_string_decode_rune(s, i, &w);
-            push(out, p + i, w);
+            push(out, s, i, w);
             i += w;
         }
-        if (i < len) push(out, p + i, len - i);
+        if (i < len) push(out, s, i, len - i);
         return;
     }
     while (out->len < n - 1 && i + m <= len) {
         if (memcmp(p + i, q, (size_t)m) == 0) {
-            push(out, p + start, i - start);
+            push(out, s, start, i - start);
             i += m;
             start = i;
         } else {
             i++;
         }
     }
-    push(out, p + start, len - start);
+    push(out, s, start, len - start);
 }
 
 /* ---- EqualFold / Compare ---- */

@@ -10,7 +10,7 @@
 //! | `float` / `float32` | `double` / `float` | |
 //! | `bool` | `i1` | `zeroext` at every C call boundary; 1 byte in memory |
 //! | `char` | `i32` | code point |
-//! | `string` | `ptr` | runtime `slang_string*`, NULL is `""`; literals are immortal constant globals |
+//! | `string` | `ptr` | runtime `slang_string*` (`{hdr, len, data ptr}`, ABI.md §4.1: owned or a view), NULL is `""`; literals are immortal constant globals whose `data` points at their own bytes |
 //! | `*T` | `ptr` | address of the `T` itself: the **payload** of a heap object (object + 16), owning one reference; see "Pointers" |
 //! | `weak *T` | `ptr` | runtime weak box (ABI.md §3.4), NULL = nil |
 //! | struct | named LLVM struct by value | fields in HIR order |
@@ -23,7 +23,7 @@
 //! | plain enum | `i32` tag | variant index |
 //! | data enum | `{i32 tag, [W x i64] payload}` | payload is the variant's fields as an anonymous struct, 8-aligned |
 //! | interface | `{ptr data, ptr vtable}` | vtable `{ptr typeid, i64 boxed, ptr method0, ...}` (methods in interface order) |
-//! | `any` | `{ptr data, ptr typeinfo}` | always boxed |
+//! | `any` | `{ptr data, ptr typeinfo}` | boxed, except bool/integers/floats/char, whose value bits are the data word (ABI.md §3.7) |
 //! | `func(..)` | `{ptr fn, ptr env}` | `fn(env, args...)`; `env` is NULL or an env object |
 //! | `Task<T>` | `ptr` | runtime `slang_task*` |
 //!
@@ -79,8 +79,19 @@
 //! values get a thunk `fn(env, args) -> f(args)`. Lifted lambdas take the
 //! env pointer as an extra first parameter.
 //!
-//! **Address-taken locals** (`Local::address_taken`) also live in cells
-//! (no escape analysis yet), so `&x` is a whole-object pointer.
+//! **Address-taken locals** (`Local::address_taken`) also live in cells,
+//! so `&x` is a whole-object pointer, unless escape analysis
+//! ([`crate::hir::ownership::stack_locals`]) proves the address does not
+//! escape: then the local (`StackKind::Cell`), or the object of a
+//! non-escaping `var p = new T{...}` (`StackKind::New`), is an entry alloca
+//! `{i64 -1, ptr null, T}` with an immortal header, and `&x` / `p` point at
+//! its payload. Leaving the scope of such a `p` releases the fields.
+//!
+//! **Reference counting fast paths.** With `Options::inline_rc` (`-O3`)
+//! `call_rt` routes `slang_retain`/`slang_release`/`slang_ptr_*` to internal
+//! `alwaysinline` helpers (`rc.rs`, `rc_inline_fn`) that update the count
+//! inline while the process is single-threaded and call the runtime
+//! otherwise (ABI.md 3.2).
 //!
 //! **Fallible results** travel as first-class aggregates between Slang
 //! functions. Stdlib externs follow `slang_rt.h`: `[]T` params as
@@ -228,6 +239,9 @@ pub(crate) struct LocalSlot<'ctx> {
     /// The alloca: holds the value, or (for cells) the cell pointer.
     pub ptr: PointerValue<'ctx>,
     pub cell: bool,
+    /// `StackKind::New` (escape analysis): the payload of the stack object
+    /// that `var p = new T{...}` initialises; the slot holds it or NULL.
+    pub stack_obj: Option<PointerValue<'ctx>>,
 }
 
 /// A `break`/`continue` target.
@@ -280,6 +294,11 @@ pub struct Options {
     pub debug_info: bool,
     /// The module will be optimised (`DW_AT_..._optimized` in the debug info).
     pub optimized: bool,
+    /// Emit the reference-counting fast paths inline (`rc.rs`,
+    /// `rc_inline_fn`): `-O3`, or `SLANG_INLINE_RC=1` (they grow large
+    /// programs' code by up to a third and their optimisation time by half,
+    /// for a few percent on refcount-heavy loops; benchmarks/README.md).
+    pub inline_rc: bool,
     /// Hooks and tables of the in-process debug agent (`--debug-agent`,
     /// [`debug_agent`], runtime/ABI.md §22).
     pub debug_agent: bool,
@@ -324,6 +343,10 @@ pub(crate) struct FnState<'a, 'ctx> {
     pub try_targets: Vec<TryTarget<'ctx>>,
     /// Interior pointer variables and their pins (`interior.rs`).
     pub interior: Option<Box<interior::InteriorState<'a, 'ctx>>>,
+    /// Interface locals whose dynamic type is known here (inside the arm
+    /// of a type switch on them): calls through them use the constant
+    /// vtable of that type, which LLVM turns into direct calls.
+    pub known_dyn: Vec<(hir::LocalId, TypeId)>,
 }
 
 /// The code generator.
@@ -356,6 +379,9 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) default_thunks: HashMap<(TypeId, FuncId), FunctionValue<'ctx>>,
     /// Dynamic types stored in an `any` (candidates of `case I x:` on `any`).
     pub(crate) any_dyn_tys: Vec<TypeId>,
+    /// Scalar types stored inline in an `any` somewhere in the module
+    /// (`iface::make_any`; the body of `any.inline` tests for them).
+    pub(crate) any_inline_tys: Vec<TypeId>,
     /// `--leak-check` with type names: registers the `*T` fields of every
     /// struct type info (`slang_leak_fields`); body emitted last.
     pub(crate) leak_fields_fn: Option<FunctionValue<'ctx>>,
@@ -374,6 +400,9 @@ pub struct CodeGen<'a, 'ctx> {
     pub(crate) opts: Options,
     /// Parameter modes (owned / borrowed / moved) and escapes.
     pub(crate) facts: hir::ownership::ParamFacts,
+    /// Escape facts that also treat runtime-call arguments as escaping
+    /// (for stack allocation, [`hir::ownership::stack_locals`]).
+    pub(crate) strict_facts: hir::ownership::ParamFacts,
     /// Memoised [`rc::RcKind`] per type.
     pub(crate) rc_cache: std::cell::RefCell<HashMap<TypeId, rc::RcKind>>,
     /// Debug-info state when [`Options::debug_info`] is set.
@@ -461,6 +490,7 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         vtables: HashMap::new(),
         default_thunks: HashMap::new(),
         any_dyn_tys: Vec::new(),
+        any_inline_tys: Vec::new(),
         leak_fields_fn: None,
         thunks: HashMap::new(),
         method_thunks: HashMap::new(),
@@ -474,6 +504,7 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         counter: 0,
         opts,
         facts: hir::ownership::param_facts(program),
+        strict_facts: hir::ownership::strict_param_facts(program),
         rc_cache: Default::default(),
         dbg: None,
         dbga: None,
@@ -512,6 +543,9 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         errors.push(e);
     }
     if let Err(e) = cg.finish_iface_convs() {
+        errors.push(e);
+    }
+    if let Err(e) = cg.finish_any_inline() {
         errors.push(e);
     }
     if let Err(e) = cg.finish_leak_fields() {
@@ -590,6 +624,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             flags: Vec::new(),
             try_targets: Vec::new(),
             interior: None,
+            known_dyn: Vec::new(),
         };
         let saved = self.f.replace(st);
         self.b.position_at_end(body);

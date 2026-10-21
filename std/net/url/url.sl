@@ -1,9 +1,8 @@
-namespace std.net.url
-
 // URLs (RFC 3986) with Go's net/url semantics: Parse, String, escaping
 // per component, query Values, ResolveReference with dot-segment removal,
 // JoinPath. Unlike Go, the host and the port are separate fields (Host
 // holds no brackets; HostPort() joins them back).
+namespace std.net.url
 
 // User name and optional password of a URL.
 struct Userinfo {
@@ -11,6 +10,7 @@ struct Userinfo {
     Password    string
     HasPassword bool
 
+    // String returns "user" or "user:password", escaped.
     func String() string {
         var s = escape(this.Username, 4)
         if this.HasPassword {
@@ -20,10 +20,12 @@ struct Userinfo {
     }
 }
 
+// User returns user information with a name and no password.
 func User(name string) *Userinfo {
     return &Userinfo{Username: name}
 }
 
+// UserPassword returns user information with a name and a password.
 func UserPassword(name string, password string) *Userinfo {
     return &Userinfo{Username: name, Password: password, HasPassword: true}
 }
@@ -57,6 +59,7 @@ struct URL {
         return h
     }
 
+    // IsAbs reports whether the URL has a scheme.
     func IsAbs() bool {
         return this.Scheme != ""
     }
@@ -75,6 +78,7 @@ struct URL {
         return escape(this.Path, 1)
     }
 
+    // EscapedFragment returns the escaped fragment (RawFragment when it is a valid encoding of Fragment).
     func EscapedFragment() string {
         if this.RawFragment != "" && validEncoded(this.RawFragment, 6) {
             var f = try unescape(this.RawFragment, 6) else ""
@@ -723,6 +727,7 @@ func QueryEscape(s string) string {
     return escape(s, 5)
 }
 
+// QueryUnescape decodes a query component ("+" is a space).
 func QueryUnescape(s string) string! {
     return unescape(s, 5)?
 }
@@ -732,6 +737,7 @@ func PathEscape(s string) string {
     return escape(s, 2)
 }
 
+// PathUnescape decodes a path segment ("+" stays as is).
 func PathUnescape(s string) string! {
     return unescape(s, 2)?
 }
@@ -743,6 +749,7 @@ struct Values {
     keys []string
     vals [][]string
 
+    // Get returns the first value of key ("" if absent).
     func Get(key string) string {
         var i = this.index(key)
         if i < 0 || len(this.vals[i]) == 0 {
@@ -751,6 +758,7 @@ struct Values {
         return this.vals[i][0]
     }
 
+    // Values returns every value of key.
     func Values(key string) []string {
         var i = this.index(key)
         var out []string = []
@@ -762,10 +770,12 @@ struct Values {
         return out
     }
 
+    // Has reports whether key is present.
     func Has(key string) bool {
         return this.index(key) >= 0
     }
 
+    // Set replaces the values of key with value.
     func Set(key string, value string) {
         var i = this.index(key)
         if i < 0 {
@@ -776,6 +786,7 @@ struct Values {
         this.vals[i] = [value]
     }
 
+    // Add appends value to the values of key.
     func Add(key string, value string) {
         var i = this.index(key)
         if i < 0 {
@@ -786,6 +797,7 @@ struct Values {
         this.vals[i] = append(this.vals[i], value)
     }
 
+    // Del removes key.
     func Del(key string) {
         var i = this.index(key)
         if i < 0 {

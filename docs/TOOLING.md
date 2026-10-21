@@ -248,7 +248,21 @@ TestX(t *testing.T)` (и `@test func X()`), бенчмарки `@bench func Benc
 ## Прочие инструменты
 
 - `slang doc` — документация из комментариев перед объявлениями
-  (markdown), HTML и JSON для IDE.
+  (markdown), HTML и JSON для IDE. ✅ Реализовано (`compiler/src/doc.rs`,
+  `doc/{markdown,html,site}.rs`): `slang doc strings.Split` / `std.time` /
+  путь проекта / модуль зависимости — текст в терминале; `--json`;
+  `--html out/` — статический сайт (страница на пространство имён, поиск,
+  исходники с якорями строк); `--check [--min N]` — покрытие экспортируемых
+  имён документацией; `--site out/ [--base /slang/]` — сайт проекта для
+  GitHub Pages (README, `docs/guide`, дизайн-документы, справочник std;
+  `.github/workflows/docs.yml`). Соглашения: блок `//` над объявлением,
+  первое предложение — краткое описание, Markdown, абзац `Deprecated:`;
+  документация пространства имён — комментарий над `namespace`. Примеры —
+  `func ExampleSplit()` в `*_test.sl` (`ExampleT_Method`, суффикс
+  `_second`), с хвостовым `// Output:` их запускает `slang test`
+  (`slang test std` — примеры стандартной библиотеки в `std/**/*_test.sl`);
+  hover в LSP рисует тот же Markdown и первый пример символа std. API-
+  документация пишется по-английски.
 - `slang vet` — статические проверки сверх компилятора (неиспользуемые
   результаты, подозрительные сравнения), общий движок с quick fixes LSP.
 - `slang build --emit=llvm-ir|asm` — для отладки компилятора.

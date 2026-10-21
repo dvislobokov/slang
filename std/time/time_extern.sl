@@ -70,3 +70,7 @@ extern func Weekday(t int) int
 // Internal runtime primitive (used by the Slang sources of this namespace).
 // C: slang_time_rt_local_tzif (runtime/src/std_*.c).
 extern func rtLocalTZif() string!
+
+// Internal runtime primitive (used by the Slang sources of this namespace).
+// C: slang_time_rt_zone_tzif (runtime/src/std_*.c).
+extern func rtZoneTZif(a string) string!

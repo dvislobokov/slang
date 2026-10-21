@@ -1,5 +1,3 @@
-namespace std.debug
-
 // std.debug: the in-process debug agent (docs/DEBUGGER.md stage 2). A
 // program built with `--debug-agent` (the default for debug builds) and
 // started with SLANG_DEBUG=[host]:port[,wait] runs AgentMain before main:
@@ -13,6 +11,7 @@ namespace std.debug
 //
 // Files: debug.sl (start-up, stop decisions, DAP requests), debug_dap.sl
 // (framing and JSON output), debug_vars.sl (tables, values, expressions).
+namespace std.debug
 
 // Reasons passed to the hook (ABI.md 23.3).
 func rBp() int { return 1 }

@@ -1,5 +1,3 @@
-namespace std.data.redis
-
 // Client and the typed command set (see redis.sl for the file layout).
 //
 // Every command method returns a started Task: `await c.Get("k")?`. The
@@ -10,6 +8,7 @@ namespace std.data.redis
 // (strings and []byte as they are, numbers in decimal, bools as 1/0);
 // several values are a slice (`c.Del(["a", "b"])`, `c.LPush("l", [1, 2])`),
 // there are no variadic parameters.
+namespace std.data.redis
 
 // What the command methods send to: the router (Client), a pipeline queue
 // or a transaction connection.
@@ -204,14 +203,17 @@ struct Cmds {
 
     // ---- connection and server ----
 
+    // Ping sends PING and returns the reply ("PONG").
     func Ping() Task<string!> {
         return toText(this.x.process(["PING"]))
     }
 
+    // Echo returns message as echoed by the server.
     func Echo(message string) Task<string!> {
         return toText(this.x.process(["ECHO", message]))
     }
 
+    // Info returns the INFO text of section ("" for the default sections).
     func Info(section string) Task<string!> {
         if section == "" {
             return toText(this.x.process(["INFO"]))
@@ -219,32 +221,39 @@ struct Cmds {
         return toText(this.x.process(["INFO", section]))
     }
 
+    // DBSize returns the number of keys in the current database.
     func DBSize() Task<int!> {
         return toInt(this.x.process(["DBSIZE"]))
     }
 
+    // FlushDB deletes every key of the current database.
     func FlushDB() Task<void!> {
         return toOK(this.x.process(["FLUSHDB"]))
     }
 
+    // FlushAll deletes every key of every database.
     func FlushAll() Task<void!> {
         return toOK(this.x.process(["FLUSHALL"]))
     }
 
+    // ConfigGet returns the configuration parameters matching parameter (a glob).
     func ConfigGet(parameter string) Task<map[string]string!> {
         return toMap(this.x.process(["CONFIG", "GET", parameter]))
     }
 
+    // ConfigSet sets a configuration parameter (CONFIG SET).
     func ConfigSet(parameter string, value string) Task<void!> {
         return toOK(this.x.process(["CONFIG", "SET", parameter, value]))
     }
 
     // ---- keys ----
 
+    // Del deletes keys and returns how many existed.
     func Del(keys []string) Task<int!> {
         return toInt(this.x.process(withKeys(["DEL"], keys)))
     }
 
+    // Unlink deletes keys in the background (UNLINK) and returns how many existed.
     func Unlink(keys []string) Task<int!> {
         return toInt(this.x.process(withKeys(["UNLINK"], keys)))
     }
@@ -254,14 +263,17 @@ struct Cmds {
         return toInt(this.x.process(withKeys(["EXISTS"], keys)))
     }
 
+    // Expire sets a TTL of seconds on key; false if the key does not exist.
     func Expire(key string, seconds int) Task<bool!> {
         return toBool(this.x.process(["EXPIRE", key, seconds]))
     }
 
+    // PExpire sets a TTL of ms milliseconds on key; false if the key does not exist.
     func PExpire(key string, ms int) Task<bool!> {
         return toBool(this.x.process(["PEXPIRE", key, ms]))
     }
 
+    // ExpireAt makes key expire at a Unix time in seconds; false if the key does not exist.
     func ExpireAt(key string, unixSeconds int) Task<bool!> {
         return toBool(this.x.process(["EXPIREAT", key, unixSeconds]))
     }
@@ -271,26 +283,32 @@ struct Cmds {
         return toInt(this.x.process(["TTL", key]))
     }
 
+    // PTTL returns the time to live in milliseconds: -1 without expiry, -2 for a missing key.
     func PTTL(key string) Task<int!> {
         return toInt(this.x.process(["PTTL", key]))
     }
 
+    // Persist removes the TTL of key; false if it had none or does not exist.
     func Persist(key string) Task<bool!> {
         return toBool(this.x.process(["PERSIST", key]))
     }
 
+    // Type returns the type of the value at key (`string`, `list`, `hash`, ... or `none`).
     func Type(key string) Task<string!> {
         return toText(this.x.process(["TYPE", key]))
     }
 
+    // Rename renames key to newKey, replacing newKey if it exists.
     func Rename(key string, newKey string) Task<void!> {
         return toOK(this.x.process(["RENAME", key, newKey]))
     }
 
+    // RenameNX renames key to newKey only if newKey does not exist.
     func RenameNX(key string, newKey string) Task<bool!> {
         return toBool(this.x.process(["RENAMENX", key, newKey]))
     }
 
+    // Keys returns the keys matching a glob pattern (KEYS; use Scan or Iter on large databases).
     func Keys(pattern string) Task<[]string!> {
         return toStrings(this.x.process(["KEYS", pattern]))
     }
@@ -309,16 +327,19 @@ struct Cmds {
         return toScan(this.x.process(a))
     }
 
+    // RandomKey returns a random key (Nil for an empty database).
     func RandomKey() Task<string!> {
         return toText(this.x.process(["RANDOMKEY"]))
     }
 
     // ---- strings ----
 
+    // Get returns the value of key, or the error Nil if it does not exist.
     func Get(key string) Task<string!> {
         return toText(this.x.process(["GET", key]))
     }
 
+    // Set stores value at key (any value is sent as its string form).
     func Set(key string, value any) Task<void!> {
         return toOK(this.x.process(["SET", key, value]))
     }
@@ -360,42 +381,52 @@ struct Cmds {
         return toSetOK(this.x.process(a))
     }
 
+    // GetSet stores value at key and returns the old value (Nil if there was none).
     func GetSet(key string, value any) Task<string!> {
         return toText(this.x.process(["GETSET", key, value]))
     }
 
+    // GetDel returns the value of key and deletes it (Nil if missing).
     func GetDel(key string) Task<string!> {
         return toText(this.x.process(["GETDEL", key]))
     }
 
+    // GetRange returns the substring of the value between byte offsets start and end (inclusive, negative from the end).
     func GetRange(key string, start int, end int) Task<string!> {
         return toText(this.x.process(["GETRANGE", key, start, end]))
     }
 
+    // Append appends value to the string at key and returns the new length.
     func Append(key string, value any) Task<int!> {
         return toInt(this.x.process(["APPEND", key, value]))
     }
 
+    // StrLen returns the length of the string at key (0 if missing).
     func StrLen(key string) Task<int!> {
         return toInt(this.x.process(["STRLEN", key]))
     }
 
+    // Incr increments the integer at key by one and returns the new value.
     func Incr(key string) Task<int!> {
         return toInt(this.x.process(["INCR", key]))
     }
 
+    // Decr decrements the integer at key by one and returns the new value.
     func Decr(key string) Task<int!> {
         return toInt(this.x.process(["DECR", key]))
     }
 
+    // IncrBy adds n to the integer at key and returns the new value.
     func IncrBy(key string, n int) Task<int!> {
         return toInt(this.x.process(["INCRBY", key, n]))
     }
 
+    // DecrBy subtracts n from the integer at key and returns the new value.
     func DecrBy(key string, n int) Task<int!> {
         return toInt(this.x.process(["DECRBY", key, n]))
     }
 
+    // IncrByFloat adds f to the number at key and returns the new value.
     func IncrByFloat(key string, f float) Task<float!> {
         return toFloat(this.x.process(["INCRBYFLOAT", key, f]))
     }
@@ -405,6 +436,7 @@ struct Cmds {
         return toReplies(this.x.process(withKeys(["MGET"], keys)))
     }
 
+    // MSet sets all pairs atomically.
     func MSet(pairs map[string]any) Task<void!> {
         var a []any = ["MSET"]
         for k, v in pairs {
@@ -414,6 +446,7 @@ struct Cmds {
         return toOK(this.x.process(a))
     }
 
+    // MSetNX sets all pairs only if none of the keys exists; reports whether it did.
     func MSetNX(pairs map[string]any) Task<bool!> {
         var a []any = ["MSETNX"]
         for k, v in pairs {
@@ -425,6 +458,7 @@ struct Cmds {
 
     // ---- hashes ----
 
+    // HGet returns field of the hash at key, or Nil.
     func HGet(key string, field string) Task<string!> {
         return toText(this.x.process(["HGET", key, field]))
     }
@@ -444,84 +478,104 @@ struct Cmds {
         return toInt(this.x.process(a))
     }
 
+    // HSetNX sets field only if it does not exist yet; reports whether it did.
     func HSetNX(key string, field string, value any) Task<bool!> {
         return toBool(this.x.process(["HSETNX", key, field, value]))
     }
 
+    // HMGet returns the values of fields (Nil replies for missing ones).
     func HMGet(key string, fields []string) Task<[]Reply!> {
         return toReplies(this.x.process(withKeys(["HMGET", key], fields)))
     }
 
+    // HGetAll returns all fields and values of the hash at key.
     func HGetAll(key string) Task<map[string]string!> {
         return toMap(this.x.process(["HGETALL", key]))
     }
 
+    // HDel deletes fields and returns how many existed.
     func HDel(key string, fields []string) Task<int!> {
         return toInt(this.x.process(withKeys(["HDEL", key], fields)))
     }
 
+    // HExists reports whether the hash at key has field.
     func HExists(key string, field string) Task<bool!> {
         return toBool(this.x.process(["HEXISTS", key, field]))
     }
 
+    // HIncrBy adds n to the integer field and returns the new value.
     func HIncrBy(key string, field string, n int) Task<int!> {
         return toInt(this.x.process(["HINCRBY", key, field, n]))
     }
 
+    // HIncrByFloat adds f to the number field and returns the new value.
     func HIncrByFloat(key string, field string, f float) Task<float!> {
         return toFloat(this.x.process(["HINCRBYFLOAT", key, field, f]))
     }
 
+    // HKeys returns the field names of the hash at key.
     func HKeys(key string) Task<[]string!> {
         return toStrings(this.x.process(["HKEYS", key]))
     }
 
+    // HVals returns the values of the hash at key.
     func HVals(key string) Task<[]string!> {
         return toStrings(this.x.process(["HVALS", key]))
     }
 
+    // HLen returns the number of fields of the hash at key.
     func HLen(key string) Task<int!> {
         return toInt(this.x.process(["HLEN", key]))
     }
 
     // ---- lists ----
 
+    // LPush prepends values to the list at key and returns its new length.
     func LPush(key string, values []any) Task<int!> {
         return toInt(this.x.process(withValues(["LPUSH", key], values)))
     }
 
+    // RPush appends values to the list at key and returns its new length.
     func RPush(key string, values []any) Task<int!> {
         return toInt(this.x.process(withValues(["RPUSH", key], values)))
     }
 
+    // LPop removes and returns the first element of the list (Nil if empty).
     func LPop(key string) Task<string!> {
         return toText(this.x.process(["LPOP", key]))
     }
 
+    // RPop removes and returns the last element of the list (Nil if empty).
     func RPop(key string) Task<string!> {
         return toText(this.x.process(["RPOP", key]))
     }
 
+    // LLen returns the length of the list at key.
     func LLen(key string) Task<int!> {
         return toInt(this.x.process(["LLEN", key]))
     }
 
+    // LRange returns the elements between start and stop (inclusive; negative from the end).
     func LRange(key string, start int, stop int) Task<[]string!> {
         return toStrings(this.x.process(["LRANGE", key, start, stop]))
     }
 
+    // LIndex returns the element at index (negative from the end), or Nil.
     func LIndex(key string, index int) Task<string!> {
         return toText(this.x.process(["LINDEX", key, index]))
     }
 
+    // LSet replaces the element at index.
     func LSet(key string, index int, value any) Task<void!> {
         return toOK(this.x.process(["LSET", key, index, value]))
     }
 
+    // LRem removes count occurrences of value (count < 0: from the tail, 0: all) and returns how many were removed.
     func LRem(key string, count int, value any) Task<int!> {
         return toInt(this.x.process(["LREM", key, count, value]))
     }
 
+    // LTrim keeps only the elements between start and stop.
     func LTrim(key string, start int, stop int) Task<void!> {
         return toOK(this.x.process(["LTRIM", key, start, stop]))
     }
@@ -533,12 +587,14 @@ struct Cmds {
         return toPop(this.x.process(a))
     }
 
+    // BRPop is BLPop popping from the tail.
     func BRPop(timeout float, keys []string) Task<[]string!> {
         var a = withKeys(["BRPOP"], keys)
         a = append(a, timeout)
         return toPop(this.x.process(a))
     }
 
+    // RPopLPush moves the last element of source to the head of destination and returns it.
     func RPopLPush(source string, destination string) Task<string!> {
         return toText(this.x.process(["RPOPLPUSH", source, destination]))
     }
@@ -550,52 +606,64 @@ struct Cmds {
 
     // ---- sets ----
 
+    // SAdd adds members to the set at key and returns how many were new.
     func SAdd(key string, members []any) Task<int!> {
         return toInt(this.x.process(withValues(["SADD", key], members)))
     }
 
+    // SRem removes members from the set and returns how many were present.
     func SRem(key string, members []any) Task<int!> {
         return toInt(this.x.process(withValues(["SREM", key], members)))
     }
 
+    // SMembers returns all members of the set at key.
     func SMembers(key string) Task<[]string!> {
         return toStrings(this.x.process(["SMEMBERS", key]))
     }
 
+    // SIsMember reports whether member is in the set at key.
     func SIsMember(key string, member any) Task<bool!> {
         return toBool(this.x.process(["SISMEMBER", key, member]))
     }
 
+    // SCard returns the number of members of the set.
     func SCard(key string) Task<int!> {
         return toInt(this.x.process(["SCARD", key]))
     }
 
+    // SPop removes and returns a random member (Nil for an empty set).
     func SPop(key string) Task<string!> {
         return toText(this.x.process(["SPOP", key]))
     }
 
+    // SRandMember returns a random member without removing it.
     func SRandMember(key string) Task<string!> {
         return toText(this.x.process(["SRANDMEMBER", key]))
     }
 
+    // SInter returns the intersection of the sets at keys.
     func SInter(keys []string) Task<[]string!> {
         return toStrings(this.x.process(withKeys(["SINTER"], keys)))
     }
 
+    // SUnion returns the union of the sets at keys.
     func SUnion(keys []string) Task<[]string!> {
         return toStrings(this.x.process(withKeys(["SUNION"], keys)))
     }
 
+    // SDiff returns the members of the first set that are in none of the others.
     func SDiff(keys []string) Task<[]string!> {
         return toStrings(this.x.process(withKeys(["SDIFF"], keys)))
     }
 
+    // SMove moves member from source to destination; false if it was not in source.
     func SMove(source string, destination string, member any) Task<bool!> {
         return toBool(this.x.process(["SMOVE", source, destination, member]))
     }
 
     // ---- sorted sets ----
 
+    // ZAdd adds or updates members with their scores and returns how many were new.
     func ZAdd(key string, members []Z) Task<int!> {
         var a []any = ["ZADD", key]
         for m in members {
@@ -605,26 +673,32 @@ struct Cmds {
         return toInt(this.x.process(a))
     }
 
+    // ZIncrBy adds increment to the score of member and returns the new score.
     func ZIncrBy(key string, increment float, member string) Task<float!> {
         return toFloat(this.x.process(["ZINCRBY", key, increment, member]))
     }
 
+    // ZScore returns the score of member, or Nil.
     func ZScore(key string, member string) Task<float!> {
         return toScoreOrNil(this.x.process(["ZSCORE", key, member]))
     }
 
+    // ZRank returns the 0-based rank of member by ascending score (Nil if absent).
     func ZRank(key string, member string) Task<int!> {
         return toInt(this.x.process(["ZRANK", key, member]))
     }
 
+    // ZRevRank returns the rank of member by descending score (Nil if absent).
     func ZRevRank(key string, member string) Task<int!> {
         return toInt(this.x.process(["ZREVRANK", key, member]))
     }
 
+    // ZRem removes members and returns how many existed.
     func ZRem(key string, members []any) Task<int!> {
         return toInt(this.x.process(withValues(["ZREM", key], members)))
     }
 
+    // ZCard returns the number of members of the sorted set.
     func ZCard(key string) Task<int!> {
         return toInt(this.x.process(["ZCARD", key]))
     }
@@ -634,44 +708,54 @@ struct Cmds {
         return toInt(this.x.process(["ZCOUNT", key, min, max]))
     }
 
+    // ZRange returns the members between ranks start and stop (ascending).
     func ZRange(key string, start int, stop int) Task<[]string!> {
         return toStrings(this.x.process(["ZRANGE", key, start, stop]))
     }
 
+    // ZRangeWithScores is ZRange with the scores.
     func ZRangeWithScores(key string, start int, stop int) Task<[]Z!> {
         return toZ(this.x.process(["ZRANGE", key, start, stop, "WITHSCORES"]))
     }
 
+    // ZRevRange returns the members between ranks start and stop by descending score.
     func ZRevRange(key string, start int, stop int) Task<[]string!> {
         return toStrings(this.x.process(["ZREVRANGE", key, start, stop]))
     }
 
+    // ZRangeByScore returns the members with min <= score <= max ("-inf", "(1.5", "+inf" ...).
     func ZRangeByScore(key string, min string, max string) Task<[]string!> {
         return toStrings(this.x.process(["ZRANGEBYSCORE", key, min, max]))
     }
 
+    // ZRangeByScoreWithScores is ZRangeByScore with the scores.
     func ZRangeByScoreWithScores(key string, min string, max string) Task<[]Z!> {
         return toZ(this.x.process(["ZRANGEBYSCORE", key, min, max, "WITHSCORES"]))
     }
 
+    // ZRevRangeByScore returns the members with max >= score >= min, highest first.
     func ZRevRangeByScore(key string, max string, min string) Task<[]string!> {
         return toStrings(this.x.process(["ZREVRANGEBYSCORE", key, max, min]))
     }
 
+    // ZRemRangeByScore removes the members with min <= score <= max and returns how many.
     func ZRemRangeByScore(key string, min string, max string) Task<int!> {
         return toInt(this.x.process(["ZREMRANGEBYSCORE", key, min, max]))
     }
 
+    // ZPopMin removes and returns up to count members with the lowest scores.
     func ZPopMin(key string, count int) Task<[]Z!> {
         return toZ(this.x.process(["ZPOPMIN", key, count]))
     }
 
     // ---- HyperLogLog ----
 
+    // PFAdd adds elements to the HyperLogLog at key; 1 if its estimate changed.
     func PFAdd(key string, elements []any) Task<int!> {
         return toInt(this.x.process(withValues(["PFADD", key], elements)))
     }
 
+    // PFCount returns the approximate cardinality of the union of the HyperLogLogs at keys.
     func PFCount(keys []string) Task<int!> {
         return toInt(this.x.process(withKeys(["PFCOUNT"], keys)))
     }
@@ -688,10 +772,12 @@ struct Cmds {
         return toText(this.x.process(a))
     }
 
+    // XLen returns the number of entries of a stream.
     func XLen(stream string) Task<int!> {
         return toInt(this.x.process(["XLEN", stream]))
     }
 
+    // XRange returns the stream entries with IDs between start and end ("-" and "+" for the ends).
     func XRange(stream string, start string, end string) Task<[]XMessage!> {
         return toXRange(this.x.process(["XRANGE", stream, start, end]))
     }
@@ -703,10 +789,12 @@ struct Cmds {
         return toInt(this.x.process(["PUBLISH", channel, message]))
     }
 
+    // Eval runs a Lua script with keys (KEYS) and args (ARGV) and returns its reply.
     func Eval(script string, keys []string, args []any) Task<Reply!> {
         return toReply(this.x.process(evalArgs("EVAL", script, keys, args)))
     }
 
+    // EvalSha runs a script from the script cache by its SHA1 (see ScriptLoad).
     func EvalSha(sha string, keys []string, args []any) Task<Reply!> {
         return toReply(this.x.process(evalArgs("EVALSHA", sha, keys, args)))
     }
@@ -716,10 +804,12 @@ struct Cmds {
         return toText(this.x.process(["SCRIPT", "LOAD", script]))
     }
 
+    // ScriptExists reports for each SHA1 whether the script is cached.
     func ScriptExists(shas []string) Task<[]bool!> {
         return toBools(this.x.process(withKeys(["SCRIPT", "EXISTS"], shas)))
     }
 
+    // ScriptFlush empties the script cache.
     func ScriptFlush() Task<void!> {
         return toOK(this.x.process(["SCRIPT", "FLUSH"]))
     }
@@ -876,6 +966,7 @@ async func ConnectSentinel(sentinels []string, master string) *Client! {
     return await ConnectSentinelWith(SentinelOptions{Sentinels: sentinels, MasterName: master})?
 }
 
+// ConnectSentinelWith is ConnectSentinel with options (sentinels, master name, client options).
 async func ConnectSentinelWith(so SentinelOptions) *Client! {
     if len(so.Sentinels) == 0 {
         return error("redis: no sentinel addresses")
@@ -905,6 +996,7 @@ async func ConnectCluster(nodes []string) *Client! {
     return await ConnectClusterWith(ClusterOptions{Nodes: nodes})?
 }
 
+// ConnectClusterWith is ConnectCluster with options (seed nodes, client options).
 async func ConnectClusterWith(co ClusterOptions) *Client! {
     if len(co.Nodes) == 0 {
         return error("redis: no cluster nodes")
@@ -957,6 +1049,7 @@ struct Script {
     }
 }
 
+// NewScript returns a Script for the Lua source src with its SHA1; Run uses EVALSHA and falls back to EVAL.
 func NewScript(src string) *Script {
     return new Script{Src: src, Hash: std.crypto.hash.Sha1Hex(src)}
 }
@@ -1111,6 +1204,7 @@ struct Tx {
         return newPipeline(this.st.c, this.st, false)
     }
 
+    // Unwatch forgets all watched keys.
     func Unwatch() Task<void!> {
         return toOK(this.st.process(["UNWATCH"]))
     }
@@ -1169,6 +1263,7 @@ struct ScanIterator {
     done bool
     err error
 
+    // Next returns the next key and true, or false at the end (or after a failed page; see Err).
     async func Next() (string, bool) {
         for {
             if len(this.buf) > 0 {
@@ -1309,18 +1404,22 @@ struct Subscription {
     // the subscription's read timeout for acknowledgements
     ackTimeout int
 
+    // Subscribe subscribes to channels and waits for the server's confirmation.
     func Subscribe(channels []string) Task<void!> {
         return subCmd(this.st, "SUBSCRIBE", channels, this.ackTimeout)
     }
 
+    // PSubscribe subscribes to glob patterns of channels.
     func PSubscribe(patterns []string) Task<void!> {
         return subCmd(this.st, "PSUBSCRIBE", patterns, this.ackTimeout)
     }
 
+    // Unsubscribe unsubscribes from channels (an empty list does nothing).
     func Unsubscribe(channels []string) Task<void!> {
         return subCmd(this.st, "UNSUBSCRIBE", channels, this.ackTimeout)
     }
 
+    // PUnsubscribe unsubscribes from patterns (an empty list does nothing).
     func PUnsubscribe(patterns []string) Task<void!> {
         return subCmd(this.st, "PUNSUBSCRIBE", patterns, this.ackTimeout)
     }
@@ -1353,6 +1452,7 @@ struct Subscription {
         return c
     }
 
+    // Patterns returns the subscribed patterns.
     func Patterns() []string {
         this.st.lock()
         var p = this.st.patterns

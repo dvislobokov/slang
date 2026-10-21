@@ -1,0 +1,78 @@
+// test: std.data change tracking: batched INSERT with RETURNING keys, the identity map (Find without a query, one instance per row), snapshot diffs that UPDATE only the changed columns, Attach/Update/Remove, Entry state and changed columns, AsNoTracking, nothing to save, statement log
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.tracking
+
+import std
+import std.io
+
+struct Product {
+    Id    int
+    Name  string
+    Price float
+    Stock int
+    Note  *string
+}
+
+struct Shop {
+    data.Context
+    Products data.Set<Product>
+}
+
+async func main() void! {
+    var ctx = data.Open<Shop>(data.Provider.Sqlite, ":memory:")?
+    await ctx.EnsureCreated()?
+    ctx.LogTo((s) => println("  sql:", s))
+    var pen = new Product{Name: "pen", Price: 1.5, Stock: 10}
+    var ink = new Product{Name: "ink", Price: 4, Stock: 3}
+    ctx.Products.AddRange([pen, ink])
+    println("state", ctx.Entry(pen).State())
+    println("saved", await ctx.SaveChanges()?, pen.Id, ink.Id, ctx.Entry(pen).State())
+
+    println("find (tracked, no query):")
+    var p = await ctx.Products.Find(pen.Id)?
+    println(p == pen)
+    p.Price = 2
+    println("changed:", ctx.Entry(p).ChangedColumns(), ctx.Entry(p).State())
+    println("saved", await ctx.SaveChanges()?)
+    println("nothing to save:", await ctx.SaveChanges()?)
+
+    println("query returns the tracked instances:")
+    var all = await ctx.Products.OrderBy((x) => x.Id).ToList()?
+    println(all[0] == pen, all[1] == ink, ctx.Tracked())
+    var note = "low"
+    ink.Stock = 1
+    ink.Note = &note
+    println("saved", await ctx.SaveChanges()?)
+
+    println("no tracking:")
+    var copy = await ctx.Products.AsNoTracking().FirstOrDefault((x) => x.Id == ink.Id)?
+    println(copy == ink, copy.Stock, *copy.Note, ctx.Tracked())
+    copy.Stock = 99
+    println("saved", await ctx.SaveChanges()?)
+
+    println("update a detached entity (all columns):")
+    var other = data.OpenDB<Shop>(data.Provider.Sqlite, ctx.DB())
+    other.LogTo((s) => println("  other:", s))
+    var detached = new Product{Id: pen.Id, Name: "pen", Price: 3, Stock: 8}
+    other.Products.Update(detached)
+    println("saved", await other.SaveChanges()?)
+    println("attach, then change:")
+    var att = new Product{Id: ink.Id, Name: "ink", Price: 4, Stock: 1, Note: &note}
+    other.Products.Attach(att)
+    att.Name = "blue ink"
+    println("saved", await other.SaveChanges()?)
+
+    println("remove:")
+    ctx.Products.Remove(pen)
+    println("state", ctx.Entry(pen).State())
+    println("saved", await ctx.SaveChanges()?, ctx.Entry(pen).State(), ctx.Tracked())
+    var gone = await ctx.Products.Find(pen.Id)?
+    println(gone == nil)
+    var added = new Product{Name: "tmp"}
+    ctx.Products.Add(added)
+    ctx.Products.Remove(added)
+    println("add+remove saves nothing:", await ctx.SaveChanges()?)
+    var names = await ctx.Products.Select((x) => x.Name).ToList()?
+    println(names)
+}

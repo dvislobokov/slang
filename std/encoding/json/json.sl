@@ -1,10 +1,9 @@
-namespace std.encoding.json
-
 // json.Format / json.Parse use compile-time reflection: inside these generic
 // functions `reflect.Fields<T>()` loops are unrolled per field and the
 // `if reflect.TypeOf<T>().Kind == ...` tests are resolved at compile time,
 // so every instance is straight-line code for its type. Library code names
 // other namespaces by their full path (it is instantiated in user scope).
+namespace std.encoding.json
 
 // A dynamic JSON value (json.ParseValue).
 struct Value {
@@ -15,26 +14,32 @@ struct Value {
     items []Value
     keys  []string
 
+    // IsNull reports whether the value is null (also the zero Value).
     func IsNull() bool {
         return this.kind == 0
     }
 
+    // IsBool reports whether the value is a boolean.
     func IsBool() bool {
         return this.kind == 1
     }
 
+    // IsNumber reports whether the value is a number.
     func IsNumber() bool {
         return this.kind == 2
     }
 
+    // IsString reports whether the value is a string.
     func IsString() bool {
         return this.kind == 3
     }
 
+    // IsArray reports whether the value is an array.
     func IsArray() bool {
         return this.kind == 4
     }
 
+    // IsObject reports whether the value is an object.
     func IsObject() bool {
         return this.kind == 5
     }
@@ -44,6 +49,7 @@ struct Value {
         return kindName(this.kind)
     }
 
+    // Bool returns the boolean; an error for other kinds.
     func Bool() bool! {
         if this.kind != 1 {
             return error("json: " + kindName(this.kind) + " is not a bool")
@@ -51,6 +57,7 @@ struct Value {
         return this.b
     }
 
+    // Float returns the number; an error for other kinds.
     func Float() float! {
         if this.kind != 2 {
             return error("json: " + kindName(this.kind) + " is not a number")
@@ -58,6 +65,7 @@ struct Value {
         return this.n
     }
 
+    // Int returns the number as an int; an error for other kinds.
     func Int() int! {
         if this.kind != 2 {
             return error("json: " + kindName(this.kind) + " is not a number")
@@ -65,6 +73,7 @@ struct Value {
         return integral(this.n, "")?
     }
 
+    // String returns the string; an error for other kinds.
     func String() string! {
         if this.kind != 3 {
             return error("json: " + kindName(this.kind) + " is not a string")
@@ -98,6 +107,7 @@ struct Value {
         return this.items[i]
     }
 
+    // Has reports whether an object has key.
     func Has(key string) bool {
         return this.find(key) >= 0
     }
@@ -142,22 +152,27 @@ struct Value {
     }
 }
 
+// NewNull returns the null value.
 func NewNull() Value {
     return Value{}
 }
 
+// NewBool returns a boolean value.
 func NewBool(b bool) Value {
     return Value{kind: 1, b: b}
 }
 
+// NewNumber returns a number value.
 func NewNumber(n float) Value {
     return Value{kind: 2, n: n}
 }
 
+// NewString returns a string value.
 func NewString(s string) Value {
     return Value{kind: 3, s: s}
 }
 
+// NewArray returns an array of copies of items.
 func NewArray(items []Value) Value {
     var copy []Value = []
     for x in items {
@@ -166,6 +181,7 @@ func NewArray(items []Value) Value {
     return Value{kind: 4, items: copy}
 }
 
+// NewObject returns an object of keys to values (in that order); an error if the lengths differ.
 func NewObject(keys []string, values []Value) Value! {
     if len(keys) != len(values) {
         return error("json.NewObject: keys and values differ in length")

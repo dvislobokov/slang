@@ -74,6 +74,10 @@ enum { STEP_NONE = 0, STEP_NEXT = 1, STEP_IN = 2, STEP_OUT = 3 };
 
 /* Read by compiled code before every hook (hidden symbol: one load). */
 SLANG_HIDDEN uint8_t slang_dbg_on;
+/* panic.c / error.c call the agent through these (set by slang_dbg_boot),
+ * so programs without the agent do not link it. */
+void (*slang__dbg_panic_fn)(const char *msg, int64_t len);
+void (*slang__dbg_error_fn)(const slang_error *err);
 
 static const slang_dbg_tables *g_tables;
 static _Thread_local slang_dbg_frame *t_top;
@@ -464,6 +468,8 @@ void slang_dbg_boot(const void *tables, void (*entry)(void)) {
     const char *env = getenv("SLANG_DEBUG");
     if (!env || !*env || !entry || !tables) return;
     g_tables = tables;
+    slang__dbg_panic_fn = slang__dbg_panic;
+    slang__dbg_error_fn = slang__dbg_error;
     __atomic_store_n(&slang_dbg_on, 1, __ATOMIC_RELEASE);
     t_no_hooks = 1;
     entry();
@@ -764,7 +770,7 @@ static bool wait_fd(int64_t fd, int32_t interest, int64_t timeout_ms) {
 /* A listening TCP socket on host:port (port 0: any free port). */
 int64_t slang_debug_rt_listen(const slang_string *host, int64_t port, slang_error **err) {
     unsigned char ip[16];
-    int len = slang__plat_parse_ip(slang_string_len(host) ? slang_string_data(host) : "127.0.0.1", ip);
+    int len = slang__plat_parse_ip(slang_string_len(host) ? slang_string_cstr(host) : "127.0.0.1", ip);
     slang__plat_addr a;
     if (!len || !slang__plat_addr_ip(&a, ip, len, port, 0)) {
         *err = slang_error_new_cstr("slang-debug: bad listen address (want a numeric IP)");

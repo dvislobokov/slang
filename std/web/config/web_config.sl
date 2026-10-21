@@ -1,5 +1,3 @@
-namespace std.web.config
-
 // Configuration for std.web applications (FRAMEWORK.md "Конфигурация"):
 // layered key/value sources with ASP.NET Core precedence, lowest first:
 //
@@ -14,6 +12,7 @@ namespace std.web.config
 // scalars converted like route parameters) and checks @web.validate;
 // Options<T> keeps the bound value and reloads it when a file changes
 // (polling sizes and mtimes: CheckForChanges, Watch).
+namespace std.web.config
 
 struct LoadOptions {
     // Directory of the appsettings files (default ".").

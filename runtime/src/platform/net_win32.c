@@ -8,9 +8,8 @@
  *
  * Sockets are created with WSA_FLAG_OVERLAPPED (ready for the IOCP step,
  * docs/PLATFORMS.md) and WSA_FLAG_NO_HANDLE_INHERIT, and switched to
- * non-blocking mode with FIONBIO. sendfile is a read + send loop for now:
- * TransmitFile on a non-blocking socket needs an OVERLAPPED completion,
- * which comes with the IOCP poller. */
+ * non-blocking mode with FIONBIO. sendfile is TransmitFile (overlapped,
+ * one chunk per call), with a pread + send loop as the fallback. */
 #include "platform.h"
 
 #if defined(_WIN32)
@@ -20,6 +19,8 @@
 #include <afunix.h>
 #include <errno.h>
 #include <iphlpapi.h>
+#include <io.h>
+#include <mswsock.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -550,13 +551,74 @@ void slang__plat_file_close(int64_t fd) {
     if (fd >= 0) slang__plat_close(fd);
 }
 
-int64_t slang__plat_sendfile(int64_t sock, int64_t fd, int64_t off, int64_t n) {
-    if (n <= 0) return 0;
+static int64_t sendfile_copy(int64_t sock, int64_t fd, int64_t off, int64_t n) {
     char buf[65536];
     int64_t want = n > (int64_t)sizeof buf ? (int64_t)sizeof buf : n;
     int64_t got = slang__plat_pread(fd, buf, want, off);
     if (got <= 0) return got;
     return slang__plat_sock_send(sock, buf, got);
+}
+
+static LPFN_TRANSMITFILE g_transmit;
+static slang__plat_once g_transmit_once = SLANG_PLAT_ONCE_INIT;
+static SOCKET g_transmit_probe = INVALID_SOCKET;
+
+static void transmit_load(void) {
+    GUID id = WSAID_TRANSMITFILE;
+    DWORD got = 0;
+    LPFN_TRANSMITFILE fn = NULL;
+    if (WSAIoctl(g_transmit_probe, SIO_GET_EXTENSION_FUNCTION_POINTER, &id, sizeof id, &fn, sizeof fn, &got, NULL, NULL) == 0) g_transmit = fn;
+}
+
+/* TransmitFile of one chunk (up to 64 KiB, the default send buffer) from
+ * offset off, as an overlapped request completed through an event: the
+ * socket is not associated with a completion port (poll_iocp.c polls
+ * through the AFD handle), and the caller waited for writability, so the
+ * kernel takes the chunk at once; a peer that stops reading for 30 s
+ * cancels it and the bytes already sent are reported. Falls back to
+ * pread + send where TransmitFile is missing (Wine without mswsock) or
+ * refuses the handle. */
+int64_t slang__plat_sendfile(int64_t sock, int64_t fd, int64_t off, int64_t n) {
+    if (n <= 0) return 0;
+    g_transmit_probe = (SOCKET)sock;
+    slang__plat_once_run(&g_transmit_once, transmit_load);
+    HANDLE file = (HANDLE)_get_osfhandle((int)fd);
+    if (!g_transmit || file == INVALID_HANDLE_VALUE) return sendfile_copy(sock, fd, off, n);
+    LARGE_INTEGER size;
+    if (!GetFileSizeEx(file, &size)) return sendfile_copy(sock, fd, off, n);
+    if (off >= size.QuadPart) return 0;
+    int64_t want = n > 65536 ? 65536 : n;
+    if (want > size.QuadPart - off) want = size.QuadPart - off;
+    static _Thread_local HANDLE ev;
+    if (!ev) ev = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!ev) return sendfile_copy(sock, fd, off, n);
+    /* TransmitFile reads at the file position on synchronous handles */
+    LARGE_INTEGER pos;
+    pos.QuadPart = off;
+    if (!SetFilePointerEx(file, pos, NULL, FILE_BEGIN)) return sendfile_copy(sock, fd, off, n);
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof ov);
+    ov.Offset = (DWORD)((uint64_t)off & 0xffffffffu);
+    ov.OffsetHigh = (DWORD)((uint64_t)off >> 32);
+    ResetEvent(ev);
+    ov.hEvent = ev;
+    if (!g_transmit((SOCKET)sock, file, (DWORD)want, 0, &ov, NULL, 0)) {
+        int e = WSAGetLastError();
+        if (e != WSA_IO_PENDING && e != ERROR_IO_PENDING) {
+            if (e == WSAEWOULDBLOCK) return -SLANG_PLAT_EAGAIN;
+            if (e == WSAEOPNOTSUPP || e == WSAEINVAL || e == ERROR_INVALID_FUNCTION || e == ERROR_NOT_SUPPORTED) return sendfile_copy(sock, fd, off, n);
+            return neg(e);
+        }
+        if (WaitForSingleObject(ev, 30000) != WAIT_OBJECT_0) CancelIoEx((HANDLE)sock, &ov);
+    }
+    DWORD sent = 0, flags = 0;
+    if (!WSAGetOverlappedResult((SOCKET)sock, &ov, &sent, TRUE, &flags)) {
+        int e = WSAGetLastError();
+        if (sent > 0) return (int64_t)sent;
+        if (e == WSA_OPERATION_ABORTED || e == ERROR_OPERATION_ABORTED) return -SLANG_PLAT_EAGAIN;
+        return neg(e);
+    }
+    return (int64_t)sent;
 }
 
 void slang__plat_unlink(const char *path) {

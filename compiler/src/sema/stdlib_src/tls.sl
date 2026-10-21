@@ -1,5 +1,3 @@
-namespace std.net.tls
-
 // The Slang-source std.net.tls (see sema/stdsrc.rs for the rules): TLS 1.3
 // (RFC 8446) and TLS 1.2 restricted to ECDHE + AEAD (RFC 5246, 5288, 7905,
 // 7627), client and server, over std.net TCP connections. This file holds
@@ -15,6 +13,7 @@ namespace std.net.tls
 // 12 server_key_exchange, 13 certificate_request, 14 server_hello_done,
 // 15 certificate_verify, 16 client_key_exchange, 20 finished,
 // 24 key_update, 254 message_hash.
+namespace std.net.tls
 
 // ---- byte helpers -------------------------------------------------------------
 
@@ -870,6 +869,7 @@ struct ConnectionState {
     Resumed           bool
     HandshakeComplete bool
 
+    // VersionName returns the negotiated version as "TLS 1.3" or "TLS 1.2".
     func VersionName() string {
         return versionName(this.Version)
     }
@@ -927,6 +927,7 @@ struct SessionCache {
     }
 }
 
+// NewSessionCache returns an empty client session cache (for resumption).
 func NewSessionCache() *SessionCache {
     return new SessionCache{m: map[string]*session{}}
 }
@@ -963,6 +964,7 @@ struct Conn {
         return this.c.read(n)
     }
 
+    // ReadString is Read as a string.
     func ReadString(n int) Task<string!> {
         return this.c.readString(n)
     }
@@ -972,6 +974,7 @@ struct Conn {
         return this.c.write(data)
     }
 
+    // WriteString writes text.
     func WriteString(text string) Task<int!> {
         return this.c.write(bytesOf(text))
     }
@@ -981,6 +984,7 @@ struct Conn {
         this.c.close()
     }
 
+    // IsClosed reports whether the connection is closed.
     func IsClosed() bool {
         return this.c.closed
     }
@@ -990,14 +994,17 @@ struct Conn {
         this.c.raw.SetTimeout(ms)
     }
 
+    // LocalAddr returns the local "ip:port".
     func LocalAddr() string {
         return this.c.raw.LocalAddr()
     }
 
+    // RemoteAddr returns the peer's "ip:port".
     func RemoteAddr() string {
         return this.c.raw.RemoteAddr()
     }
 
+    // ConnectionState returns the negotiated parameters of the handshake.
     func ConnectionState() ConnectionState {
         return this.c.state()
     }
@@ -1544,14 +1551,17 @@ struct Listener {
         return acceptTLS(this.l, this.st)
     }
 
+    // Close stops listening.
     func Close() {
         this.l.Close()
     }
 
+    // Addr returns the bound "ip:port".
     func Addr() string {
         return this.l.Addr()
     }
 
+    // Port returns the bound port.
     func Port() int {
         return this.l.Port()
     }

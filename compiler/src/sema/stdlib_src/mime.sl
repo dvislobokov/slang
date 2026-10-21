@@ -1,10 +1,9 @@
-namespace std.mime
-
 // MIME types (Go's mime package): extension <-> type lookup (built-in
 // table in runtime/src/std_mime.c, extendable at run time), media type
 // parsing and formatting with RFC 2231 parameter continuations and
 // charsets, and RFC 2047 encoded words in headers. Multipart bodies are
 // std.mime.multipart, quoted-printable std.mime.quotedprintable.
+namespace std.mime
 
 // The media type for a file extension (".html" -> "text/html;
 // charset=utf-8"); "" if unknown. The lookup is case-insensitive.

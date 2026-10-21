@@ -1,9 +1,8 @@
-namespace std.mime.multipart
-
 // MIME multipart bodies (RFC 2046, RFC 7578 form-data), as Go's
 // mime/multipart: a Writer that builds a body part by part, a Reader
 // that walks the parts of a body, and ReadForm for form submissions.
 // Parts with Content-Transfer-Encoding: quoted-printable are decoded.
+namespace std.mime.multipart
 
 // One part: its header and body.
 struct Part {

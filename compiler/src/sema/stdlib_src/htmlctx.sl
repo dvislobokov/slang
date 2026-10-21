@@ -1,5 +1,3 @@
-namespace std.text.template
-
 // Contextual escaping for std.html.template. After parsing, the static
 // text of the template is run through an HTML tokenizer state machine;
 // every action is given the escaper of the context it appears in:
@@ -17,6 +15,7 @@ namespace std.text.template
 //
 // Branches of {{if}}/{{with}}/{{range}} must end in the same context.
 // {{template}} calls are assumed to be made from text context.
+namespace std.text.template
 
 // Context: state 0 text, 1 tag name, 2 in tag, 3 attribute name, 4 after
 // attribute name, 5 before value, 6 attribute value, 7 script, 8 style,

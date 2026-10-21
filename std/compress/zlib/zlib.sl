@@ -1,7 +1,6 @@
-namespace std.compress.zlib
-
 // zlib streams (RFC 1950): a 2-byte header, raw DEFLATE, the Adler-32 of
 // the data (big-endian). Preset dictionaries are not supported.
+namespace std.compress.zlib
 
 // Compresses data at level 0..9 (-1: default).
 func Compress(data []byte, level int) []byte {
@@ -44,21 +43,25 @@ struct Writer {
     started bool
     closed  bool
 
+    // Write compresses p (writing the header first).
     func Write(p []byte) {
         this.start()
         this.adler = std.compress.Adler32(this.adler, p)
         this.d.Write(p)
     }
 
+    // WriteString compresses the bytes of s.
     func WriteString(s string) {
         this.Write(std.strings.Bytes(s))
     }
 
+    // Flush emits everything written so far (a deflate sync flush).
     func Flush() {
         this.start()
         this.d.Flush()
     }
 
+    // Close finishes the stream and appends the Adler-32 trailer.
     func Close() {
         if this.closed {
             return
@@ -88,6 +91,7 @@ struct Writer {
     }
 }
 
+// NewWriter returns a compressor with level (0-9, -1 for the default).
 func NewWriter(level int) *Writer {
     return &Writer{d: std.compress.deflate.NewWriter(level), adler: 1}
 }
@@ -102,6 +106,7 @@ struct Reader {
     out   []byte
     rest  []byte
 
+    // Feed decompresses the next chunk of input; bytes after the stream are kept for Rest.
     func Feed(chunk []byte) void! {
         if this.state == 3 {
             this.rest = std.compress.rtConcat(this.rest, chunk)
@@ -159,10 +164,12 @@ struct Reader {
         return this.state == 3
     }
 
+    // Rest returns the input that followed the end of the stream.
     func Rest() []byte {
         return this.rest
     }
 
+    // Close fails if the stream did not end.
     func Close() void! {
         if this.state != 3 {
             return error("zlib: unexpected end of compressed data")
@@ -170,6 +177,7 @@ struct Reader {
     }
 }
 
+// NewReader returns a decompressor.
 func NewReader() *Reader {
     return &Reader{d: std.compress.deflate.NewReader(), adler: 1}
 }

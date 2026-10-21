@@ -1,0 +1,402 @@
+namespace std.data
+
+// SaveChanges: the unit of work. Added entities are inserted (consecutive
+// ones of the same table and column set in one multi-row INSERT, with
+// RETURNING for generated keys and database defaults), modified ones are
+// updated with only the columns whose value differs from the snapshot
+// taken when they were loaded or last saved (plus the incremented
+// concurrency token), deleted ones are deleted; everything in one
+// transaction (or the caller's ctx.Transaction). Concurrency tokens are
+// part of the WHERE of UPDATE/DELETE: no row affected is a conflict.
+
+// Rows per multi-row INSERT.
+func batchSize() int {
+    return 100
+}
+
+// The columns an insert of e writes: all but generated ones and defaulted
+// columns whose value is zero (left to the database).
+func insertCols(e *entry, vals []any) []int {
+    var out []int = []
+    for i, c in e.meta.Columns {
+        if c.Auto {
+            continue
+        }
+        if c.Default != "" && isZero(vals[i]) {
+            continue
+        }
+        out = append(out, i)
+    }
+    return out
+}
+
+// The columns RETURNING reads back after an insert of e.
+func returnCols(e *entry, vals []any) []int {
+    var out []int = []
+    for i, c in e.meta.Columns {
+        if c.Auto || (c.Default != "" && isZero(vals[i])) {
+            out = append(out, i)
+        }
+    }
+    return out
+}
+
+func sameInts(a []int, b []int) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i, x in a {
+        if b[i] != x {
+            return false
+        }
+    }
+    return true
+}
+
+func isIntType(t string) bool {
+    return t == "int64" || t == "int32" || t == "int16"
+}
+
+// Inserts a batch of added entries of one table and column set.
+async func insertBatch(st *ctxState, batch []*entry, allVals [][]any, cols []int, ret []int) void! {
+    var m = batch[0].meta
+    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    w.raw("INSERT INTO " + quoteIdent(m.Table))
+    if len(cols) == 0 {
+        if len(batch) > 1 && !st.pg() {
+            // SQLite has no multi-row DEFAULT VALUES
+            for i, e in batch {
+                await insertBatch(st, [e], [allVals[i]], cols, ret)?
+            }
+            return
+        }
+        w.raw(" DEFAULT VALUES")
+    } else {
+        w.raw(" (")
+        for i, c in cols {
+            if i > 0 {
+                w.raw(", ")
+            }
+            w.raw(quoteIdent(m.Columns[c].Name))
+        }
+        w.raw(") VALUES ")
+        for r, vals in allVals {
+            if r > 0 {
+                w.raw(", ")
+            }
+            w.raw("(")
+            for i, c in cols {
+                if i > 0 {
+                    w.raw(", ")
+                }
+                w.ph(vals[c])
+            }
+            w.raw(")")
+        }
+    }
+    if len(ret) == 0 {
+        _ = await st.exec(w.text(), w.args)?
+        return
+    }
+    w.raw(" RETURNING ")
+    for i, c in ret {
+        if i > 0 {
+            w.raw(", ")
+        }
+        w.raw(quoteIdent(m.Columns[c].Name))
+    }
+    var rows = await st.all(w.text(), w.args)?
+    if len(rows) != len(batch) {
+        return error("data: INSERT INTO " + m.Table + " returned " + std.fmt.Format("{0}", len(rows)) + " rows for " + std.fmt.Format("{0}", len(batch)) + " entities")
+    }
+    for r, e in batch {
+        for i, c in ret {
+            e.set(c, rows[r][i])?
+        }
+    }
+}
+
+// INSERT ... ON CONFLICT (target) DO UPDATE SET (the other columns) = excluded.
+async func upsertEntry(st *ctxState, e *entry) void! {
+    var m = e.meta
+    var vals = e.values()
+    var cols = insertCols(e, vals)
+    if len(e.conflict) == 0 {
+        return error("data: Upsert " + m.Entity + ": no conflict target (the entity has no key: use UpsertBy)")
+    }
+    for c in e.conflict {
+        var i = m.Column(c)
+        if i >= 0 && m.Columns[i].Auto && isZero(vals[i]) {
+            return error("data: Upsert " + m.Entity + ": the key is not set (use UpsertBy with a unique column)")
+        }
+    }
+    for i, c in m.Columns {
+        if c.Auto && !isZero(vals[i]) {
+            var have = false
+            for x in cols {
+                if x == i {
+                    have = true
+                }
+            }
+            if !have {
+                cols = append(cols, i)
+            }
+        }
+    }
+    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    w.raw("INSERT INTO " + quoteIdent(m.Table) + " (")
+    for i, c in cols {
+        if i > 0 {
+            w.raw(", ")
+        }
+        w.raw(quoteIdent(m.Columns[c].Name))
+    }
+    w.raw(") VALUES (")
+    for i, c in cols {
+        if i > 0 {
+            w.raw(", ")
+        }
+        w.ph(vals[c])
+    }
+    w.raw(") ON CONFLICT (")
+    for i, c in e.conflict {
+        if i > 0 {
+            w.raw(", ")
+        }
+        w.raw(quoteIdent(c))
+    }
+    w.raw(")")
+    var sets []string = []
+    for c in cols {
+        var name = m.Columns[c].Name
+        if c != m.Key && !contains(e.conflict, name) {
+            sets = append(sets, quoteIdent(name) + " = excluded." + quoteIdent(name))
+        }
+    }
+    if len(sets) == 0 {
+        w.raw(" DO NOTHING")
+    } else {
+        w.raw(" DO UPDATE SET " + std.strings.Join(sets, ", "))
+    }
+    if m.Key < 0 {
+        _ = await st.exec(w.text(), w.args)?
+        return
+    }
+    w.raw(" RETURNING " + quoteIdent(m.Columns[m.Key].Name))
+    var rows = await st.all(w.text(), w.args)?
+    if len(rows) == 1 {
+        e.set(m.Key, rows[0][0])?
+    }
+}
+
+// The SQL of the key (and concurrency token) condition of e.
+func keyWhere(w *sqlw, e *entry) {
+    var m = e.meta
+    w.raw(" WHERE " + quoteIdent(m.Columns[m.Key].Name) + " = ")
+    w.ph(e.snap[m.Key])
+    if m.Token >= 0 {
+        if e.snap[m.Token] == nil {
+            w.raw(" AND " + quoteIdent(m.Columns[m.Token].Name) + " IS NULL")
+        } else {
+            w.raw(" AND " + quoteIdent(m.Columns[m.Token].Name) + " = ")
+            w.ph(e.snap[m.Token])
+        }
+    }
+}
+
+func conflict(e *entry) ConcurrencyError {
+    return ConcurrencyError{Entity: e.meta.Entity, Key: keyText(e.snap[e.meta.Key])}
+}
+
+// Updates the changed columns of e; false if nothing changed.
+async func updateEntry(st *ctxState, e *entry) bool! {
+    var m = e.meta
+    if m.Key < 0 {
+        return false
+    }
+    var cur = e.values()
+    var changed []int = []
+    for i, c in m.Columns {
+        if i == m.Key || c.Auto {
+            continue
+        }
+        if e.state == 2 || !sameValue(cur[i], e.snap[i]) {
+            changed = append(changed, i)
+        }
+    }
+    if len(changed) == 0 {
+        return false
+    }
+    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    w.raw("UPDATE " + quoteIdent(m.Table) + " SET ")
+    var next any = nil
+    var bump = m.Token >= 0 && isIntType(m.Columns[m.Token].Type)
+    var n = 0
+    for c in changed {
+        if bump && c == m.Token {
+            continue
+        }
+        if n > 0 {
+            w.raw(", ")
+        }
+        w.raw(quoteIdent(m.Columns[c].Name) + " = ")
+        w.ph(cur[c])
+        n += 1
+    }
+    if bump {
+        var old = 0
+        std.database.sql.convertInto(&old, e.snap[m.Token], m.Columns[m.Token].Name)?
+        next = old + 1
+        if n > 0 {
+            w.raw(", ")
+        }
+        w.raw(quoteIdent(m.Columns[m.Token].Name) + " = ")
+        w.ph(next)
+    }
+    keyWhere(&w, e)
+    var r = await st.exec(w.text(), w.args)?
+    if r.RowsAffected == 0 {
+        if m.Token >= 0 {
+            return conflict(e)
+        }
+        return error("data: UPDATE " + m.Table + ": no row with key " + keyText(e.snap[m.Key]))
+    }
+    if bump {
+        e.set(m.Token, next)?
+    }
+    return true
+}
+
+async func deleteEntry(st *ctxState, e *entry) void! {
+    var m = e.meta
+    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    w.raw("DELETE FROM " + quoteIdent(m.Table))
+    keyWhere(&w, e)
+    var r = await st.exec(w.text(), w.args)?
+    if r.RowsAffected == 0 && m.Token >= 0 {
+        return conflict(e)
+    }
+}
+
+// Runs the writes; returns the number of entities written.
+async func saveAll(st *ctxState) int! {
+    var count = 0
+    // inserts, in Add order, batched
+    var batch []*entry = []
+    var batchVals [][]any = []
+    var bcols []int = []
+    var bret []int = []
+    for e in st.entries {
+        if e.state != 1 {
+            continue
+        }
+        var vals = e.values()
+        var cols = insertCols(e, vals)
+        var ret = returnCols(e, vals)
+        if len(batch) > 0 && (batch[0].meta != e.meta || !sameInts(cols, bcols) || !sameInts(ret, bret) || len(batch) >= batchSize()) {
+            await insertBatch(st, batch, batchVals, bcols, bret)?
+            batch = []
+            batchVals = []
+        }
+        batch = append(batch, e)
+        batchVals = append(batchVals, vals)
+        bcols = cols
+        bret = ret
+        count += 1
+    }
+    if len(batch) > 0 {
+        await insertBatch(st, batch, batchVals, bcols, bret)?
+    }
+    for e in st.entries {
+        if e.state == 5 {
+            await upsertEntry(st, e)?
+            count += 1
+        }
+    }
+    for e in st.entries {
+        if e.state == 0 || e.state == 2 {
+            if await updateEntry(st, e)? {
+                count += 1
+            }
+        }
+    }
+    var n = len(st.entries)
+    for i in 0..n {
+        var e = st.entries[n - 1 - i]
+        if e.state == 3 {
+            await deleteEntry(st, e)?
+            count += 1
+        }
+    }
+    return count
+}
+
+async func saveChanges(st *ctxState) int! {
+    var n = 0
+    if st.inTx {
+        n = await saveAll(st)?
+    } else {
+        var pending = false
+        for e in st.entries {
+            if e.state != 0 {
+                pending = true
+            } else if !pending {
+                var cur = e.values()
+                for i, v in cur {
+                    if !sameValue(v, e.snap[i]) {
+                        pending = true
+                    }
+                }
+            }
+        }
+        if !pending {
+            return 0
+        }
+        var tx = await st.db.Begin()?
+        defer tx.Rollback()
+        st.tx = tx
+        st.inTx = true
+        st.trace("BEGIN", [])
+        n = try await saveAll(st) catch err {
+            st.inTx = false
+            st.trace("ROLLBACK", [])
+            // keys generated by the rolled-back inserts are void
+            for e in st.entries {
+                if e.state == 1 && e.meta.Key >= 0 && e.meta.Columns[e.meta.Key].Auto {
+                    try e.set(e.meta.Key, 0) catch err2 {}
+                }
+            }
+            return err
+        }
+        st.inTx = false
+        st.trace("COMMIT", [])
+        await tx.Commit()?
+    }
+    // accept the changes
+    var keep []*entry = []
+    for e in st.entries {
+        if e.state == 3 {
+            if e.key != "" && st.ids[e.key] == e {
+                delete(st.ids, e.key)
+            }
+            e.state = 4
+            st.orphans = append(st.orphans, e.unlink)
+            continue
+        }
+        e.snap = e.values()
+        e.state = 0
+        if e.meta.Key >= 0 {
+            var k = idKey(e.meta, e.snap[e.meta.Key])
+            if k != e.key {
+                if e.key != "" && st.ids[e.key] == e {
+                    delete(st.ids, e.key)
+                }
+                e.key = k
+                st.ids[k] = e
+            }
+        }
+        keep = append(keep, e)
+    }
+    st.entries = keep
+    return n
+}

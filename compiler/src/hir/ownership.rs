@@ -592,3 +592,220 @@ pub fn param_facts(p: &Program) -> ParamFacts {
     }
     facts
 }
+
+/// Where a local lives (escape analysis, DESIGN.md "Память"): instead of a
+/// heap object, a local can sit on the stack in an alloca that carries an
+/// immortal object header (so a `*T` to it still has a header 16 bytes
+/// before the payload, and a stray retain/release is a no-op).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackKind {
+    /// The default: a plain slot, or a heap cell if captured / address-taken.
+    Normal,
+    /// An address-taken local (`&x`) whose address never escapes: a stack
+    /// slot instead of a heap cell.
+    Cell,
+    /// `var p = new T{...}` where `p` never escapes: the object is an
+    /// alloca, and leaving `p`'s scope releases the fields instead of the
+    /// object.
+    New,
+}
+
+/// Parameter escape facts that also count arguments of runtime (extern)
+/// calls as escaping: the runtime may retain and keep them (channels,
+/// tasks), which is harmless for heap objects but not for a stack object.
+pub fn strict_param_facts(p: &Program) -> ParamFacts {
+    let mut facts = param_facts(p);
+    let n = p.funcs.len();
+    let mut param_of: Vec<Vec<Option<usize>>> = Vec::with_capacity(n);
+    let mut kept: Vec<std::collections::HashSet<*const Expr>> = Vec::with_capacity(n);
+    for f in &p.funcs {
+        let mut m = vec![None; f.locals.len()];
+        for (k, l) in f.params.iter().enumerate() {
+            m[l.0 as usize] = Some(k);
+        }
+        param_of.push(m);
+        kept.push(kept_reads(p, f));
+    }
+    loop {
+        let mut changed = false;
+        for (fi, f) in p.funcs.iter().enumerate() {
+            let po = &param_of[fi];
+            let mut marks = Vec::new();
+            {
+                let esc = &facts.escapes;
+                let kp = &kept[fi];
+                walk_function(p, f, &mut |e, pos| {
+                    if let ExprKind::Local(l) = &e.kind {
+                        if let Some(k) = po[l.0 as usize] {
+                            let escapes = match pos {
+                                Pos::Store | Pos::Target => true,
+                                Pos::Arg(g, i) => esc.get(g.0 as usize).and_then(|v| v.get(i)).copied().unwrap_or(true),
+                                Pos::Read => kp.contains(&(e as *const Expr)),
+                                Pos::AddrOf => false,
+                            };
+                            if escapes {
+                                marks.push(k);
+                            }
+                        }
+                    }
+                });
+            }
+            for k in marks {
+                if !facts.escapes[fi][k] {
+                    facts.escapes[fi][k] = true;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    facts
+}
+
+/// Expressions of `f` in a `Read` position that the consumer may still
+/// keep: arguments of runtime (extern) calls and operands of conversions.
+fn kept_reads(p: &Program, f: &Function) -> std::collections::HashSet<*const Expr> {
+    let mut out = std::collections::HashSet::new();
+    walk_function(p, f, &mut |e, _| match &e.kind {
+        ExprKind::Call { callee: Callee::Extern(_), args } => {
+            for a in args {
+                out.insert(a as *const Expr);
+            }
+        }
+        ExprKind::Convert { value, .. } => {
+            out.insert(&**value as *const Expr);
+        }
+        _ => {}
+    });
+    out
+}
+
+/// The local reached from place `e` through fields, array elements and
+/// dereferences (`p.f`, `(*p).a[i]`, `x.f`): the owner of an address taken
+/// of `e`.
+fn place_owner(e: &Expr) -> Option<LocalId> {
+    match &e.kind {
+        ExprKind::Local(l) => Some(*l),
+        ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => place_owner(base),
+        ExprKind::Deref(x) => place_owner(x),
+        _ => None,
+    }
+}
+
+/// [`StackKind`] of every local of `f` (`facts` from
+/// [`strict_param_facts`]). A local qualifies when every use of its address
+/// (or, for `new`, of the pointer) is only read through or passed to a
+/// parameter that does not escape; it is never captured, stored, returned,
+/// reassigned, converted, passed to the runtime, used in a `defer` or
+/// sub-sliced, and no interior pointer into it is kept. `async` functions
+/// keep everything on the heap.
+pub fn stack_locals(p: &Program, f: &Function, facts: &ParamFacts) -> Vec<StackKind> {
+    let n = f.locals.len();
+    let mut kind = vec![StackKind::Normal; n];
+    // SLANG_NO_ESCAPE=1 turns the analysis off (for measurements).
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if f.is_async || *OFF.get_or_init(|| std::env::var_os("SLANG_NO_ESCAPE").is_some()) {
+        return kind;
+    }
+    for (i, l) in f.locals.iter().enumerate() {
+        if l.captured {
+            continue;
+        }
+        if l.address_taken && !matches!(l.kind, LocalKind::This | LocalKind::Temp) {
+            kind[i] = StackKind::Cell;
+        }
+    }
+    // `var p = new T{...}`: exactly one Let, no other assignment.
+    let mut lets = vec![0u32; n];
+    walk_function_stmts(p, f, &mut |s| match &s.kind {
+        StmtKind::Let { local, init } => {
+            let li = local.0 as usize;
+            lets[li] += 1;
+            let l = &f.locals[li];
+            let is_new = matches!(init, Some(Expr { kind: ExprKind::New(_), .. }));
+            if is_new && lets[li] == 1 && l.kind == LocalKind::Var && !l.captured && !l.address_taken && matches!(p.types.get(l.ty), Type::Pointer(_)) {
+                kind[li] = StackKind::New;
+            } else if kind[li] == StackKind::New {
+                kind[li] = StackKind::Normal;
+            }
+        }
+        StmtKind::LetTuple { locals, .. } => {
+            for l in locals.iter().flatten() {
+                if kind[l.0 as usize] == StackKind::New {
+                    kind[l.0 as usize] = StackKind::Normal;
+                }
+            }
+        }
+        _ => {}
+    });
+    if kind.iter().all(|k| *k == StackKind::Normal) {
+        return kind;
+    }
+    let kept = kept_reads(p, f);
+    // Everything under a `defer` runs at function exit, after the scope.
+    let mut deferred = std::collections::HashSet::new();
+    walk_function_stmts(p, f, &mut |s| {
+        if let StmtKind::Defer(e) = &s.kind {
+            walk_expr(p, e, Pos::Store, &mut |x, _| {
+                deferred.insert(x as *const Expr);
+            });
+        }
+    });
+    let ok = |e: &Expr, pos: Pos| -> bool {
+        if deferred.contains(&(e as *const Expr)) {
+            return false;
+        }
+        match pos {
+            Pos::Read => !kept.contains(&(e as *const Expr)),
+            Pos::Arg(g, i) => !facts.escapes(g, i),
+            _ => false,
+        }
+    };
+    let mut reject = vec![false; n];
+    walk_function(p, f, &mut |e, pos| match &e.kind {
+        ExprKind::AddrOf(inner) => {
+            if let Some(o) = place_owner(inner) {
+                let o = o.0 as usize;
+                // `&x...` of a stack cell, or `&p.f...` into a stack object.
+                let direct = value_place_root(p, inner).map(|r| r.0 as usize) == Some(o);
+                if (kind[o] == StackKind::Cell && direct) || (kind[o] == StackKind::New && !direct) {
+                    if !ok(e, pos) {
+                        reject[o] = true;
+                    }
+                }
+            }
+        }
+        ExprKind::SubSlice { base, .. } => {
+            if let Some(o) = place_owner(base) {
+                if kind[o.0 as usize] != StackKind::Normal {
+                    reject[o.0 as usize] = true;
+                }
+            }
+        }
+        ExprKind::Local(l) => {
+            let li = l.0 as usize;
+            match kind[li] {
+                StackKind::New => {
+                    if !ok(e, pos) {
+                        reject[li] = true;
+                    }
+                }
+                StackKind::Cell => {
+                    if deferred.contains(&(e as *const Expr)) {
+                        reject[li] = true;
+                    }
+                }
+                StackKind::Normal => {}
+            }
+        }
+        _ => {}
+    });
+    for i in 0..n {
+        if reject[i] {
+            kind[i] = StackKind::Normal;
+        }
+    }
+    kind
+}

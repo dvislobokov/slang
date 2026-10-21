@@ -1,7 +1,6 @@
-namespace std.unicode.utf16
-
 // std.unicode.utf16: UTF-16 encoding and decoding of code points
 // (Go's unicode/utf16). Unpaired surrogates decode to U+FFFD.
+namespace std.unicode.utf16
 
 // True if r is a surrogate half (U+D800..U+DFFF).
 func IsSurrogate(r char) bool {

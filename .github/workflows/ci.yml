@@ -1,6 +1,9 @@
 # CI matrix of docs/PLATFORMS.md: the compiler and the runtime on every
 # tier-1 host, plus cross builds from Linux (Windows executables run under
-# Wine, macOS objects without an SDK).
+# Wine, linux-arm64 under QEMU, static musl binaries natively, macOS objects
+# and a stub-SDK compile check of the runtime without an SDK). Every host
+# job packages its toolchain (scripts/package-toolchain.sh) as an artifact;
+# the cross job adds the runtime archives that `slang target add` fetches.
 name: ci
 
 on:
@@ -37,6 +40,12 @@ jobs:
         run: cargo build --workspace && cargo test --workspace
       - name: Hello world size
         run: cargo build --release && ./scripts/bench-size.sh
+      - name: Toolchain archive
+        run: ./scripts/package-toolchain.sh --no-build --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slang-linux-${{ matrix.arch }}
+          path: dist/
 
   macos:
     name: macos-${{ matrix.arch }}
@@ -62,6 +71,14 @@ jobs:
         run: make -C runtime CC=clang -j"$(sysctl -n hw.ncpu)" && make -C runtime CC=clang test
       - name: Compiler, examples, spec corpus
         run: cargo build --workspace && cargo test --workspace
+      - name: macOS port checks (kqueue, sampler, symbols, tz, roots, processes, packaging)
+        run: cargo build --release && ./scripts/macos-verify.sh --quick
+      - name: Toolchain archive
+        run: ./scripts/package-toolchain.sh --no-build --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slang-macos-${{ matrix.arch }}
+          path: dist/
 
   windows:
     name: windows-amd64
@@ -81,9 +98,12 @@ jobs:
             mingw-w64-x86_64-lld
             mingw-w64-x86_64-llvm
       - name: Runtime (MinGW ABI) and its C tests, natively
-        # CROSS selects the Windows build (win32.c, net_win32.c, the WSAPoll
+        # CROSS selects the Windows build (win32.c, net_win32.c, the IOCP
         # poller); WINE= runs the test binaries directly instead of under Wine.
-        run: make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)" && make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
+        run: |
+          make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)"
+          make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
+          SLANG_POLLER=wsapoll make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
       - name: LLVM 18 for the compiler
         uses: KyleMayes/install-llvm-action@v2
         with:
@@ -101,16 +121,16 @@ jobs:
           cargo test --workspace
 
   cross:
-    name: cross (linux -> windows, macos)
+    name: cross (linux -> windows, linux-arm64, musl, macos)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Toolchain (LLVM 18, mingw-w64, Wine)
+      - name: Toolchain (LLVM 18, mingw-w64, Wine, aarch64 gcc + QEMU, musl)
         run: |
           sudo ./scripts/setup.sh
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y mingw-w64 wine64
+          sudo apt-get install -y mingw-w64 wine64 gcc-aarch64-linux-gnu qemu-user-static musl-tools
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Runtime for Windows (-Werror) and its C tests under Wine
@@ -118,7 +138,19 @@ jobs:
           make -C runtime -j"$(nproc)"
           make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)"
           make -C runtime CROSS=x86_64-w64-mingw32 test-wine
-      - name: Examples built for windows-amd64 and run under Wine; macos-arm64 objects
+      - name: Runtime for linux-arm64 (C tests under QEMU) and linux-amd64-musl (static)
+        run: |
+          make -C runtime CROSS=aarch64-linux-gnu -j"$(nproc)" && make -C runtime CROSS=aarch64-linux-gnu test-cross
+          make -C runtime CROSS=x86_64-linux-musl -j"$(nproc)" && make -C runtime CROSS=x86_64-linux-musl test-cross
+      - name: macOS runtime compile check against runtime/stub-sdk/macos (no SDK here)
+        run: make -C runtime CROSS=aarch64-apple-darwin -j"$(nproc)" && make -C runtime CROSS=x86_64-apple-darwin -j"$(nproc)"
+      - name: Examples for windows-amd64 (Wine, IOCP and WSAPoll), linux-arm64 (QEMU), musl; macos objects
         run: cargo test -p slang --test cross -- --include-ignored
-      - name: Windows hello world size
+      - name: Cross hello world sizes
         run: cargo build --release && ./scripts/bench-size.sh
+      - name: Runtime archives for `slang target add`
+        run: ./scripts/package-toolchain.sh --no-build --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slang-runtimes
+          path: dist/slang-runtime-*

@@ -1,5 +1,3 @@
-namespace std.os
-
 // std.os files (Go's os.File): Open/Create/OpenFile return a File that
 // implements std.io.Reader, Writer, Closer, Seeker (and ReadWriteCloser);
 // Stat/Lstat give FileInfo; ReadDir gives DirEntry values. The older
@@ -7,6 +5,7 @@ namespace std.os
 //
 // Flag bits for OpenFile (combine with |): RDONLY, WRONLY, RDWR, APPEND,
 // CREATE, EXCL, SYNC, TRUNC (the constants std.os.O_RDONLY ...).
+namespace std.os
 
 // The descriptor; closed when the last File copy is gone (or by Close).
 struct fileState {
@@ -23,6 +22,7 @@ struct fileState {
     }
 }
 
+// File is an open file; copies share it.
 struct File {
     st *fileState
 
@@ -61,6 +61,7 @@ struct File {
         return rtWrite(fd, buf)?("write " + this.st.name)
     }
 
+    // WriteString writes s at the current offset.
     func WriteString(s string) int! {
         var fd = this.fd()?
         return rtWriteStr(fd, s)?("write " + this.st.name)
@@ -72,6 +73,7 @@ struct File {
         return rtSeek(fd, offset, whence)?("seek " + this.st.name)
     }
 
+    // Close closes the file; a second Close is an error.
     func Close() void! {
         var fd = this.fd()?
         this.st.fd = -1
@@ -90,6 +92,7 @@ struct File {
         rtTruncate(fd, size)?("truncate " + this.st.name)
     }
 
+    // Stat returns the metadata of the open file.
     func Stat() FileInfo! {
         var fd = this.fd()?
         var v = rtFstat(fd)?("stat " + this.st.name)
@@ -115,10 +118,12 @@ struct FileInfo {
 
     kind int
 
+    // IsRegular reports whether the entry is a regular file.
     func IsRegular() bool {
         return this.kind == 0
     }
 
+    // ModTime returns the modification time.
     func ModTime() std.time.Time {
         return std.time.Unix(0, this.ModTimeNanos)
     }
@@ -144,6 +149,7 @@ struct DirEntry {
     // Full path of the entry (dir + "/" + Name).
     Path string
 
+    // Info returns the metadata of the entry (without following a symlink).
     func Info() FileInfo! {
         return Lstat(this.Path)?
     }
@@ -203,10 +209,12 @@ func Stdin() File {
     return File{st: new fileState{fd: 0, name: "/dev/stdin", keep: true}}
 }
 
+// Stdout returns standard output as a File.
 func Stdout() File {
     return File{st: new fileState{fd: 1, name: "/dev/stdout", keep: true}}
 }
 
+// Stderr returns standard error as a File.
 func Stderr() File {
     return File{st: new fileState{fd: 2, name: "/dev/stderr", keep: true}}
 }

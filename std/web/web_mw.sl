@@ -1,9 +1,8 @@
-namespace std.web
-
 // Built-in middleware of App (each `UseX` adds one, in call order) and the
 // health-check endpoint. Middleware of std.net.http (`http.Gzip`,
 // `http.CORS`, `http.TimeoutHandler`) wraps the whole application through
 // UseHttp; the others are web middleware that see the Context.
+namespace std.web
 
 // Options of UseRateLimit: a token bucket per client IP that refills
 // Rate tokens per second up to Burst; a request takes one token or gets

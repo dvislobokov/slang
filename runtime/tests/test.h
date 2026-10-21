@@ -30,9 +30,13 @@ static inline int symlink(const char *target, const char *path) {
 }
 #endif
 #include "slang_rt.h"
+#include <pthread.h>  /* Windows (test-wine): mingw's winpthreads */
+/* Threads the tests start themselves touch refcounts too: switch the
+ * runtime to atomic refcounting first (slang_threaded, ABI.md 3.2). */
+#define pthread_create(...) (__atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST), pthread_create(__VA_ARGS__))
 
 #define S(lit) slang_string_new((lit), (int64_t)strlen(lit))
-#define STR_IS(s, lit) (strcmp(slang_string_data(s), (lit)) == 0 && slang_string_len(s) == (int64_t)strlen(lit))
+#define STR_IS(s, lit) (slang_string_len(s) == (int64_t)strlen(lit) && memcmp(slang_string_data(s), (lit), strlen(lit)) == 0)
 
 #define TEST(name) static void name(void)
 #define RUN(name) do { name(); printf("  ok  %s\n", #name); } while (0)

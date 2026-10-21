@@ -1,10 +1,9 @@
-namespace std.web.auth.jwt
-
 // JSON Web Tokens (RFC 7519) with JWS compact serialization (RFC 7515):
 // HS256 (HMAC-SHA256), RS256 (RSASSA-PKCS1-v1_5 with SHA-256) and ES256
 // (ECDSA P-256 with SHA-256, raw r||s signatures) on std.crypto. Verify
 // checks the algorithm against the key (no "none", no alg confusion), the
 // signature, exp/nbf (with leeway), and iss/aud when asked to.
+namespace std.web.auth.jwt
 
 // A signing or verification key (HS256, RS256, ES256, RS256Public,
 // ES256Public).

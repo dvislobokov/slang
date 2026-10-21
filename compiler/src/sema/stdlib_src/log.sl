@@ -1,5 +1,3 @@
-namespace std.log
-
 // std.log: structured logging in the style of Serilog (docs/FRAMEWORK.md
 // section 4). See sema/stdsrc.rs for the rules of these sources.
 //
@@ -18,6 +16,7 @@ namespace std.log
 // (std.diag.rtSlots, guarded by std.diag.rtLock). Context properties
 // (log.Context.Push) are frames of the task context (ABI.md 10.8) with the
 // reserved key -101; diag spans use -102.
+namespace std.log
 
 // Severity of an event, from the most verbose to the most severe.
 enum Level { Verbose, Debug, Information, Warning, Error, Fatal }
@@ -49,6 +48,7 @@ struct Event {
         return out
     }
 
+    // Has reports whether the event has property name.
     func Has(name string) bool {
         for k in this.keys {
             if k == name {
@@ -58,6 +58,7 @@ struct Event {
         return false
     }
 
+    // Get returns property name, or nil.
     func Get(name string) any {
         return this.Properties[name]
     }
@@ -108,6 +109,7 @@ struct Structure {
     Names   []string
     Values  []any
 
+    // Get returns the value of field name, or nil.
     func Get(name string) any {
         for i, n in this.Names {
             if n == name {
@@ -128,21 +130,29 @@ struct Dictionary {
 // category). `logger.Info("...", args)` and the other level methods are
 // compiled templates available on every Logger.
 interface Logger {
+    // IsEnabled reports whether events of level would be written.
     func IsEnabled(level std.log.Level) bool
+    // Write sends a complete event through the logger's enrichers, filters and sinks.
     func Write(e *std.log.Event)
+    // ForContext returns a logger that adds property name = value to every event.
     func ForContext(name string, value any) std.log.Logger
+    // ForCategory returns a logger whose events have the SourceContext category.
     func ForCategory(category string) std.log.Logger
+    // Close flushes and closes the logger's sinks.
     func Close() Task<void>
 }
 
 // A destination of events.
 interface Sink {
+    // Emit writes one event.
     func Emit(e *std.log.Event)
+    // Close flushes buffered events and releases the sink.
     func Close() Task<void>
 }
 
 // Adds properties to events.
 interface Enricher {
+    // Enrich adds or changes properties of e.
     func Enrich(e *std.log.Event)
 }
 
@@ -151,11 +161,13 @@ interface Enricher {
 struct LevelSwitch {
     MinimumLevel Level
 
+    // Set changes the minimum level.
     func Set(level Level) {
         this.MinimumLevel = level
     }
 }
 
+// NewLevelSwitch returns a switch starting at level (pass it to MinimumLevel.ControlledBy).
 func NewLevelSwitch(level Level) *LevelSwitch {
     return new LevelSwitch{MinimumLevel: level}
 }
@@ -190,6 +202,7 @@ struct Configuration {
     WriteTo SinkConfiguration
     Filter  FilterConfiguration
 
+    // MinimumLevel sets the minimum level of the logger (default Information).
     func MinimumLevel(level Level) Configuration {
         this.st.min = level
         return wrap(this.st)
@@ -214,6 +227,7 @@ struct Configuration {
         return wrap(this.st)
     }
 
+    // CreateLogger builds the logger.
     func CreateLogger() Logger {
         var st = this.st
         var p = new Pipeline{min: st.min, sw: st.sw, clock: st.clock}
@@ -253,9 +267,11 @@ func New() Configuration {
     return wrap(new cfgState{min: Level.Information})
 }
 
+// EnrichConfiguration adds enrichers (Configuration.Enrich).
 struct EnrichConfiguration {
     st *cfgState
 
+    // WithProperty adds property name = value to every event.
     func WithProperty(name string, value any) Configuration {
         return this.With(new propertyEnricher{name: name, value: value})
     }
@@ -277,6 +293,7 @@ struct EnrichConfiguration {
         return this.With(new contextEnricher{})
     }
 
+    // With adds a custom enricher.
     func With(e Enricher) Configuration {
         this.st.enrichers = append(this.st.enrichers, e)
         return wrap(this.st)
@@ -288,6 +305,7 @@ struct EnrichConfiguration {
     }
 }
 
+// SinkConfiguration adds sinks (Configuration.WriteTo).
 struct SinkConfiguration {
     st *cfgState
 
@@ -308,6 +326,7 @@ struct SinkConfiguration {
         return this.Sink(NewJsonSink(opts))
     }
 
+    // Sink adds a custom sink.
     func Sink(s Sink) Configuration {
         this.st.sinks = append(this.st.sinks, s)
         return wrap(this.st)
@@ -319,6 +338,7 @@ struct SinkConfiguration {
     }
 }
 
+// FilterConfiguration adds filters (Configuration.Filter).
 struct FilterConfiguration {
     st *cfgState
 
@@ -352,6 +372,7 @@ struct Pipeline {
     category  string
     props     []prop
 
+    // IsEnabled reports whether events of level pass the minimum level (or the level switch).
     func IsEnabled(level Level) bool {
         var m = this.min
         if this.sw != nil && !this.fixed {
@@ -360,6 +381,7 @@ struct Pipeline {
         return int(level) >= int(m)
     }
 
+    // Write timestamps, enriches and filters e and emits it to every sink.
     func Write(e *Event) {
         if this.clock != nil {
             e.Timestamp = this.clock()
@@ -406,6 +428,7 @@ struct Pipeline {
         return p
     }
 
+    // ForContext returns a logger that adds property name = value to every event.
     func ForContext(name string, value any) Logger {
         var p = this.derive()
         p.props = append(p.props, prop{name: name, value: value})
@@ -503,30 +526,37 @@ func Verbose(message string) {
     write(Global(), Level.Verbose, message)
 }
 
+// Debug logs a message template at Debug level through the default logger.
 func Debug(message string) {
     write(Global(), Level.Debug, message)
 }
 
+// Information logs a message template at Information level through the default logger.
 func Information(message string) {
     write(Global(), Level.Information, message)
 }
 
+// Info is Information.
 func Info(message string) {
     write(Global(), Level.Information, message)
 }
 
+// Warning logs a message template at Warning level through the default logger.
 func Warning(message string) {
     write(Global(), Level.Warning, message)
 }
 
+// Warn is Warning.
 func Warn(message string) {
     write(Global(), Level.Warning, message)
 }
 
+// Error logs a message template at Error level through the default logger.
 func Error(message string) {
     write(Global(), Level.Error, message)
 }
 
+// Fatal logs a message template at Fatal level through the default logger.
 func Fatal(message string) {
     write(Global(), Level.Fatal, message)
 }
@@ -705,6 +735,7 @@ func sortStrings(s []string) {
 // the current task (and in tasks it starts) until the returned scope is
 // popped: `var s = log.Context.Push("RequestId", id); defer s.Pop()`.
 struct Context {
+    // Push adds property name = value to the events of the current task until the scope is popped.
     static func Push(name string, value any) ContextScope {
         var old = std.task.rtGetCtx()
         var c = std.task.CurrentContext()
@@ -741,6 +772,7 @@ struct Context {
 struct ContextScope {
     old map[string]any
 
+    // Pop removes the property (restores the context of before Push).
     func Pop() {
         std.task.rtSetCtx(this.old)
     }
@@ -1309,6 +1341,7 @@ func clef(e *Event) string {
 
 // ---- sinks ----------------------------------------------------------------
 
+// ConsoleOptions configures NewConsoleSink.
 struct ConsoleOptions {
     // Output template; "" = "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}".
     Template string
@@ -1318,11 +1351,13 @@ struct ConsoleOptions {
     Colors bool
 }
 
+// ConsoleSink writes rendered text lines to stderr or stdout.
 struct ConsoleSink {
     segs   []segment
     stdout bool
     colors bool
 
+    // Emit renders e with the output template and writes it.
     func Emit(e *Event) {
         var s = renderOutput(this.segs, e, this.colors)
         if this.stdout {
@@ -1332,11 +1367,13 @@ struct ConsoleSink {
         }
     }
 
+    // Close does nothing (the console is not buffered).
     func Close() Task<void> {
         return std.task.Delay(0)
     }
 }
 
+// NewConsoleSink returns a console sink with opts (the default template when Template is "").
 func NewConsoleSink(opts ConsoleOptions) *ConsoleSink {
     var t = opts.Template
     if t == "" {
@@ -1348,6 +1385,7 @@ func NewConsoleSink(opts ConsoleOptions) *ConsoleSink {
 // How a file sink starts new files.
 enum RollingInterval { Infinite, Day, Hour, Month, Year }
 
+// FileOptions configures NewFileSink: template or JSON, rolling and size limits.
 struct FileOptions {
     // Output template ("" = "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}").
     Template string
@@ -1362,6 +1400,7 @@ struct FileOptions {
     Retain int
 }
 
+// FileSink appends events to a file, rolling to new files by interval or size.
 struct FileSink {
     guard   int
     base    string
@@ -1449,6 +1488,7 @@ struct FileSink {
         return ""
     }
 
+    // Emit appends e as one line (text or CLEF JSON).
     func Emit(e *Event) {
         var line = ""
         if this.opts.Json {
@@ -1476,6 +1516,7 @@ struct FileSink {
         std.task.rtUnlock(&this.guard)
     }
 
+    // Close closes the current file.
     func Close() Task<void> {
         std.task.rtLock(&this.guard)
         if this.fd >= 0 {
@@ -1492,6 +1533,7 @@ struct FileSink {
     }
 }
 
+// NewFileSink returns a sink appending to path with opts.
 func NewFileSink(path string, opts FileOptions) *FileSink {
     var t = opts.Template
     if t == "" {
@@ -1500,6 +1542,7 @@ func NewFileSink(path string, opts FileOptions) *FileSink {
     return new FileSink{base: path, opts: opts, segs: parseOutput(t), fd: -1}
 }
 
+// JsonOptions configures NewJsonSink.
 struct JsonOptions {
     // File to append to ("" = the console).
     Path string
@@ -1507,10 +1550,12 @@ struct JsonOptions {
     Stdout bool
 }
 
+// JsonSink writes compact JSON (CLEF) lines to a file or the console.
 struct JsonSink {
     file   *FileSink
     stdout bool
 
+    // Emit writes e as one CLEF JSON line.
     func Emit(e *Event) {
         if this.file != nil {
             this.file.Emit(e)
@@ -1524,6 +1569,7 @@ struct JsonSink {
         }
     }
 
+    // Close closes the file, if any.
     func Close() Task<void> {
         if this.file != nil {
             return this.file.Close()
@@ -1532,6 +1578,7 @@ struct JsonSink {
     }
 }
 
+// NewJsonSink returns a JSON sink with opts.
 func NewJsonSink(opts JsonOptions) *JsonSink {
     var s = new JsonSink{stdout: opts.Stdout}
     if opts.Path != "" {
@@ -1547,12 +1594,14 @@ struct AsyncSink {
     done   Task<void>
     closed bool
 
+    // Emit queues e for the background task (dropped after Close).
     func Emit(e *Event) {
         if !this.closed {
             _ = this.ch.Send(e)
         }
     }
 
+    // Close stops accepting events, drains the queue and closes the inner sink.
     func Close() Task<void> {
         if !this.closed {
             this.closed = true
@@ -1570,6 +1619,7 @@ async func pump(ch std.task.Channel<*Event>, inner Sink) {
     await inner.Close()
 }
 
+// NewAsyncSink wraps inner with a queue of capacity events (default 1024 when <= 0).
 func NewAsyncSink(inner Sink, capacity int) *AsyncSink {
     var n = capacity
     if n <= 0 {

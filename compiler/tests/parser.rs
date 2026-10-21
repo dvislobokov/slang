@@ -147,6 +147,7 @@ fn named(t: &TypeExpr) -> String {
         ),
         TypeKind::Tuple(ts) => format!("({})", ts.iter().map(named).collect::<Vec<_>>().join(", ")),
         TypeKind::Error => "<error>".into(),
+        TypeKind::Infer => "_".into(),
     }
 }
 
@@ -898,6 +899,16 @@ fn lambdas_and_parens() {
     assert_eq!(show(&expr("(a)")), "[a]");
     assert_eq!(show(&expr("apply((x int) => x, 1)")), "apply(lambda/1, 1)");
     assert_eq!(show(&expr("func() {}")), "lambda/0");
+    // untyped parameters (typed from the expected function type by sema)
+    assert_eq!(show(&expr("where((u) => u.Age > 18)")), "where(lambda/1)");
+    match expr("(a, b) => a + b").kind {
+        ExprKind::Lambda { params, .. } => {
+            assert_eq!(params.len(), 2);
+            assert!(params.iter().all(|p| matches!(p.ty.kind, TypeKind::Infer)));
+        }
+        k => panic!("not a lambda: {k:?}"),
+    }
+    assert!(matches!(expr("async () => { }").kind, ExprKind::Lambda { is_async: true, .. }));
 }
 
 // ---------------------------------------------------------------------------

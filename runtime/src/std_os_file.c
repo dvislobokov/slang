@@ -28,7 +28,8 @@ void slang_os_rt_chmod(const slang_string *path, int64_t mode, slang_error **err
 
 slang_error *slang_io_err_eof(void) { return slang_err_eof; }
 
-static const char *sdata(const slang_string *s) { return s ? s->data : ""; }
+/* NUL-terminated: these bytes go to C APIs (views are copied, ABI.md 4.1). */
+static const char *sdata(const slang_string *s) { return slang_string_cstr(s); }
 /* With a path: "<op> <path>: <strerror>"; without (descriptor ops, the
  * Slang side adds "<op> <name>" context): just the strerror text. */
 static void set_err(slang_error **err, const char *op, const char *path, int e) {
@@ -168,7 +169,9 @@ void slang_os_rt_stat(const slang_string *path, bool follow, slang_slice *out, s
 
 static int cmp_names(const void *a, const void *b) {
     const slang_string *x = *(slang_string *const *)a, *y = *(slang_string *const *)b;
-    return strcmp(x->data + 1, y->data + 1);
+    int64_t n = (x->len < y->len ? x->len : y->len) - 1;
+    int c = n > 0 ? memcmp(x->data + 1, y->data + 1, (size_t)n) : 0;
+    return c ? c : (x->len > y->len) - (x->len < y->len);
 }
 
 /* Entries sorted by name; each is "<kind><name>" with kind 'f' (file),

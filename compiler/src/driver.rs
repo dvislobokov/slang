@@ -73,7 +73,10 @@ pub fn apply_cfg(asts: &mut [ast::File], files: &[SourceFile], env: &crate::cfg:
 
 /// Parses and analyses a project (for the current target, no features).
 pub fn check(files: &[SourceFile], diags: &mut Diagnostics) -> Option<Program> {
-    let mut asts = parse_all(files, diags)?;
+    let mut asts = {
+        let _t = crate::build::phase("parse");
+        parse_all(files, diags)?
+    };
     if !apply_cfg(&mut asts, files, &crate::cfg::CfgEnv::current(), diags) {
         return None;
     }
@@ -98,7 +101,10 @@ pub fn check_with_policy(
     env: &crate::cfg::CfgEnv,
     prepare: impl FnOnce(&[ast::File], &mut Diagnostics),
 ) -> Option<Program> {
-    let mut asts = parse_all(files, diags)?;
+    let mut asts = {
+        let _t = crate::build::phase("parse");
+        parse_all(files, diags)?
+    };
     prepare(&asts, diags);
     if !apply_cfg(&mut asts, files, env, diags) {
         return None;

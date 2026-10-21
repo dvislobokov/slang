@@ -12,7 +12,8 @@
 #include <string.h>
 
 static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
-static inline const char *sdata(const slang_string *s) { return s ? s->data : ""; }
+/* NUL-terminated: these bytes go to C APIs (views are copied, ABI.md 4.1). */
+static inline const char *sdata(const slang_string *s) { return slang_string_cstr(s); }
 
 static slang_error *mkerr(const char *op, const char *path, int e) {
     return slang_error_errno(op, path, e);

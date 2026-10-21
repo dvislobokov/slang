@@ -1,8 +1,7 @@
-namespace std.encoding.pem
-
 // std.encoding.pem: PEM blocks (RFC 7468 / RFC 1421, Go's encoding/pem)
 // with optional "Key: Value" headers. std.crypto.x509 keeps its own
 // header-less PEM reader (x509.DecodePEM) for certificates.
+namespace std.encoding.pem
 
 // One block: -----BEGIN Type----- headers, base64 Bytes, -----END Type-----.
 struct Block {

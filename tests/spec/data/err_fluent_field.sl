@@ -1,0 +1,24 @@
+// error: HasIndex: User has no field Mail
+// status: passing
+namespace spec.data.err_fluent_field
+
+import std
+
+struct User {
+    Id    int
+    Email string
+}
+
+struct Shop {
+    data.Context
+    Users data.Set<User>
+
+    func Configure(m *data.ModelBuilder) {
+        m.Entity<User>().HasIndex((u) => u.Mail).IsUnique()
+    }
+}
+
+async func main() void! {
+    var ctx = data.Open<Shop>(data.Provider.Sqlite, ":memory:")?
+    await ctx.EnsureCreated()?
+}

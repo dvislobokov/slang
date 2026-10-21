@@ -142,11 +142,11 @@ void slang_diag_rt_start_cpu_profile(const slang_string *path, int64_t hz, slang
         if (err) *err = slang_error_new_cstr("diag.StartCPUProfile: profiling already enabled");
         return;
     }
-    FILE *probe = fopen(slang_string_data(path), "wb");
+    FILE *probe = fopen(slang_string_cstr(path), "wb");
     if (!probe) {
         if (err) {
             char m[600];
-            snprintf(m, sizeof m, "diag.StartCPUProfile: create %.400s: %s", slang_string_data(path), strerror(errno));
+            snprintf(m, sizeof m, "diag.StartCPUProfile: create %.400s: %s", slang_string_cstr(path), strerror(errno));
             *err = slang_error_new_cstr(m);
         }
         return;
@@ -208,12 +208,12 @@ static uint64_t loc_id(loc_map *m, uintptr_t addr) {
 typedef struct { int64_t name; } fn_ent;
 
 static bool write_file(const slang_string *path, const pbuf *b, slang_error **err, const char *what) {
-    FILE *f = fopen(slang_string_data(path), "wb");
+    FILE *f = fopen(slang_string_cstr(path), "wb");
     if (!f || b->oom || fwrite(b->p, 1, b->len, f) != b->len) {
         if (f) fclose(f);
         if (err) {
             char m[600];
-            snprintf(m, sizeof m, "%s: write %.400s: %s", what, slang_string_data(path), b->oom ? "out of memory" : strerror(errno));
+            snprintf(m, sizeof m, "%s: write %.400s: %s", what, slang_string_cstr(path), b->oom ? "out of memory" : strerror(errno));
             *err = slang_error_new_cstr(m);
         }
         return false;

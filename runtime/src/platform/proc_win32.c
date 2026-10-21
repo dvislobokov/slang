@@ -1,15 +1,26 @@
 /* proc_win32.c - Windows child processes for the platform layer
  * (platform.h): CreateProcessW with a quoted UTF-16 command line and
- * environment block.
+ * environment block. Process handles are kept in a table by pid until
+ * reaped.
  *
- * Anonymous pipes cannot be waited on by the readiness poller (WSAPoll
- * takes sockets only), so a piped stream is relayed: the child gets the
- * pipe end, a relay thread copies between the parent's pipe end and one
- * end of a loopback socket pair, and the parent works with the other
- * socket end, which is non-blocking and pollable like any socket. EOF
+ * Piped streams, with the IOCP poller (poll_iocp.c, the default): the
+ * parent's end is an overlapped named pipe (\\.\pipe\slang-<pid>-<n>, one
+ * instance, local clients only), the child's end a synchronous handle to
+ * it. The parent's descriptor is PIPE_FD_BASE + a slot of the pipe table
+ * (never a socket, CRT or HANDLE value). The poller waits on it directly:
+ * readability is a zero-byte overlapped ReadFile completing on the shard's
+ * port (libuv's "zero read"), writability the completion of the one write
+ * in flight. Reads are non-blocking (PeekNamedPipe, then a ReadFile of what
+ * is there); a write hands up to 64 KiB to an overlapped WriteFile and
+ * returns, the next one waits (EAGAIN) until it has completed. No thread
+ * per pipe.
+ *
+ * With the WSAPoll fallback poller (sockets only), a piped stream is
+ * relayed instead: the child gets an anonymous pipe, a relay thread copies
+ * between the parent's pipe end and one end of a loopback socket pair,
+ * and the parent works with the other, non-blocking socket end. EOF
  * propagates both ways (the relay shuts its socket down when the child
- * closes its end, and closes the pipe when the parent closes its socket).
- * Process handles are kept in a table by pid until reaped. */
+ * closes its end, and closes the pipe when the parent closes its socket). */
 #include "platform.h"
 
 #if defined(_WIN32)
@@ -160,6 +171,169 @@ static SOCKET start_relay(HANDLE h, bool to_child) {
     return sv[1];
 }
 
+/* ---- overlapped named pipes (IOCP poller) ------------------------------------------------ */
+
+#define PIPE_FD_BASE 0x400000
+#define PIPE_SLOTS 4096
+#define PIPE_CHUNK 65536
+
+typedef struct pipe_slot {
+    HANDLE h;          /* the parent's end; NULL = free slot */
+    bool write;        /* the parent writes (the child's stdin) */
+    bool wpending;     /* wov is in flight */
+    OVERLAPPED wov;    /* the write in flight (its packet tells the poller) */
+    HANDLE wev;
+    char *wbuf;
+} pipe_slot;
+
+static pipe_slot g_pipes[PIPE_SLOTS];
+static slang__plat_mutex g_pipes_mu = SLANG_PLAT_MUTEX_INIT;
+static volatile LONG g_pipe_seq;
+
+static pipe_slot *pipe_slot_of(int64_t fd) {
+    if (fd < PIPE_FD_BASE || fd >= PIPE_FD_BASE + PIPE_SLOTS) return NULL;
+    pipe_slot *s = &g_pipes[fd - PIPE_FD_BASE];
+    return s->h ? s : NULL;
+}
+
+bool slang__w32_pipe_of(int64_t fd, HANDLE *h, bool *write) {
+    pipe_slot *s = pipe_slot_of(fd);
+    if (!s) return false;
+    *h = s->h;
+    *write = s->write;
+    return true;
+}
+
+bool slang__w32_pipe_write_busy(int64_t fd) {
+    pipe_slot *s = pipe_slot_of(fd);
+    return s && s->wpending && !HasOverlappedIoCompleted(&s->wov);
+}
+
+bool slang__w32_pipe_write_ov(const void *ov, int64_t *fd) {
+    const char *p = ov, *lo = (const char *)g_pipes, *hi = (const char *)(g_pipes + PIPE_SLOTS);
+    if (p < lo || p >= hi) return false;
+    size_t i = (size_t)(p - lo) / sizeof(pipe_slot);
+    if ((const void *)&g_pipes[i].wov != ov) return false;
+    *fd = PIPE_FD_BASE + (int64_t)i;
+    return true;
+}
+
+/* A named pipe pair: *parent (overlapped, not inherited) and *child
+ * (inheritable, synchronous). to_child: the parent writes. */
+static int named_pipe(bool to_child, HANDLE *parent, HANDLE *child) {
+    wchar_t name[96];
+    _snwprintf(name, 95, L"\\\\.\\pipe\\slang-%lu-%ld-%lu", (unsigned long)GetCurrentProcessId(),
+               (long)InterlockedIncrement(&g_pipe_seq), (unsigned long)GetTickCount());
+    name[95] = 0;
+    HANDLE p = CreateNamedPipeW(name, (to_child ? PIPE_ACCESS_OUTBOUND : PIPE_ACCESS_INBOUND) | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | 0x8 /* PIPE_REJECT_REMOTE_CLIENTS */, 1, PIPE_CHUNK,
+                                PIPE_CHUNK, 0, NULL);
+    if (p == INVALID_HANDLE_VALUE) return slang__w32_errno(GetLastError());
+    SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
+    HANDLE c = CreateFileW(name, to_child ? GENERIC_READ : GENERIC_WRITE, 0, &sa, OPEN_EXISTING, 0, NULL);
+    if (c == INVALID_HANDLE_VALUE) {
+        int e = slang__w32_errno(GetLastError());
+        CloseHandle(p);
+        return e;
+    }
+    *parent = p;
+    *child = c;
+    return 0;
+}
+
+/* Registers parent end h: its descriptor, or -1. */
+static int64_t pipe_register(HANDLE h, bool write) {
+    slang__plat_mutex_lock(&g_pipes_mu);
+    int64_t fd = -1;
+    for (int i = 0; i < PIPE_SLOTS; i++) {
+        if (g_pipes[i].h) continue;
+        pipe_slot *s = &g_pipes[i];
+        memset(s, 0, sizeof *s);
+        if (write) {
+            s->wev = CreateEventW(NULL, TRUE, FALSE, NULL);
+            s->wbuf = malloc(PIPE_CHUNK);
+            if (!s->wev || !s->wbuf) {
+                if (s->wev) CloseHandle(s->wev);
+                free(s->wbuf);
+                memset(s, 0, sizeof *s);
+                break;
+            }
+        }
+        s->write = write;
+        s->h = h;
+        fd = PIPE_FD_BASE + i;
+        break;
+    }
+    slang__plat_mutex_unlock(&g_pipes_mu);
+    return fd;
+}
+
+static _Thread_local HANDLE t_read_ev;
+
+static int64_t named_read(pipe_slot *s, void *buf, int64_t n) {
+    DWORD avail = 0;
+    if (!PeekNamedPipe(s->h, NULL, 0, NULL, &avail, NULL)) {
+        DWORD e = GetLastError();
+        return e == ERROR_BROKEN_PIPE || e == ERROR_PIPE_NOT_CONNECTED ? 0 : -EIO;
+    }
+    if (avail == 0) return -SLANG_PLAT_EAGAIN;
+    DWORD want = n > (int64_t)avail ? avail : (DWORD)n;
+    if (!t_read_ev) t_read_ev = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!t_read_ev) return -EIO;
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof ov);
+    /* low bit set: no packet on the poller's port for this read */
+    ov.hEvent = (HANDLE)((uintptr_t)t_read_ev | 1);
+    DWORD got = 0;
+    if (!ReadFile(s->h, buf, want, &got, &ov)) {
+        DWORD e = GetLastError();
+        if (e == ERROR_IO_PENDING) {
+            if (!GetOverlappedResult(s->h, &ov, &got, TRUE)) e = GetLastError();
+            else return got;
+        }
+        return e == ERROR_BROKEN_PIPE || e == ERROR_PIPE_NOT_CONNECTED ? 0 : -EIO;
+    }
+    return got;
+}
+
+static int64_t named_write(pipe_slot *s, const void *buf, int64_t n) {
+    if (s->wpending) {
+        if (!HasOverlappedIoCompleted(&s->wov)) return -SLANG_PLAT_EAGAIN;
+        DWORD w = 0;
+        BOOL ok = GetOverlappedResult(s->h, &s->wov, &w, FALSE);
+        s->wpending = false;
+        if (!ok) return -EPIPE;  /* the child closed its stdin */
+    }
+    if (n <= 0) return 0;
+    DWORD k = n > PIPE_CHUNK ? PIPE_CHUNK : (DWORD)n;
+    memcpy(s->wbuf, buf, k);
+    memset(&s->wov, 0, sizeof s->wov);
+    ResetEvent(s->wev);
+    s->wov.hEvent = s->wev;
+    if (WriteFile(s->h, s->wbuf, k, NULL, &s->wov)) {
+        s->wpending = true;  /* done; collected by the next write */
+        return k;
+    }
+    DWORD e = GetLastError();
+    if (e == ERROR_IO_PENDING) {
+        s->wpending = true;
+        return k;
+    }
+    return -EPIPE;  /* ERROR_NO_DATA / ERROR_BROKEN_PIPE: the reader is gone */
+}
+
+static void named_close(pipe_slot *s) {
+    /* the last write still belongs to the child: let it drain (bounded) */
+    if (s->wpending && !HasOverlappedIoCompleted(&s->wov) && WaitForSingleObject(s->wev, 10000) != WAIT_OBJECT_0)
+        CancelIoEx(s->h, &s->wov);
+    CloseHandle(s->h);
+    if (s->wev) CloseHandle(s->wev);
+    slang__plat_mutex_lock(&g_pipes_mu);
+    free(s->wbuf);
+    memset(s, 0, sizeof *s);
+    slang__plat_mutex_unlock(&g_pipes_mu);
+}
+
 /* ---- spawn --------------------------------------------------------------------------- */
 
 static HANDLE inheritable(HANDLE h) {
@@ -186,9 +360,13 @@ int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, con
     HANDLE child_h[3] = {NULL, NULL, NULL}, parent_h[3] = {NULL, NULL, NULL};
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
     int err = 0;
+    bool named = slang__w32_poller_waits_pipes();
     slang__plat_mutex_lock(&g_spawn_mu);
     for (int i = 0; i < 3 && !err; i++) {
-        if (modes[i] == SLANG_PLAT_STDIO_PIPE) {
+        if (modes[i] == SLANG_PLAT_STDIO_PIPE && named) {
+            err = named_pipe(i == 0, &parent_h[i], &child_h[i]);
+            if (err) *op = "pipe";
+        } else if (modes[i] == SLANG_PLAT_STDIO_PIPE) {
             HANDLE rd, wr;
             if (!CreatePipe(&rd, &wr, &sa, 0)) { err = slang__w32_errno(GetLastError()); *op = "pipe"; break; }
             child_h[i] = i == 0 ? rd : wr;
@@ -232,6 +410,11 @@ int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, con
     for (int i = 0; i < 3; i++) {
         out->fds[i] = -1;
         if (!parent_h[i]) continue;
+        if (named) {
+            out->fds[i] = pipe_register(parent_h[i], i == 0);
+            if (out->fds[i] < 0) CloseHandle(parent_h[i]);
+            continue;
+        }
         SOCKET s = start_relay(parent_h[i], i == 0);
         if (s == INVALID_SOCKET) {
             CloseHandle(parent_h[i]);
@@ -254,7 +437,7 @@ int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, con
     return 0;
 }
 
-/* ---- pipe ends (sockets) --------------------------------------------------------------- */
+/* ---- pipe ends (named pipes, or relay sockets) ------------------------------------------ */
 
 static int64_t sock_result(int r) {
     if (r >= 0) return r;
@@ -265,15 +448,24 @@ static int64_t sock_result(int r) {
 }
 
 int64_t slang__plat_pipe_read(int64_t fd, void *buf, int64_t n) {
+    pipe_slot *ps = pipe_slot_of(fd);
+    if (ps) return named_read(ps, buf, n);
     int64_t r = sock_result(recv((SOCKET)fd, buf, n > 0x40000000 ? 0x40000000 : (int)n, 0));
     return r == -EPIPE ? 0 : r;  /* the relay went away: EOF */
 }
 
 int64_t slang__plat_pipe_write(int64_t fd, const void *buf, int64_t n) {
+    pipe_slot *ps = pipe_slot_of(fd);
+    if (ps) return named_write(ps, buf, n);
     return sock_result(send((SOCKET)fd, buf, n > 0x40000000 ? 0x40000000 : (int)n, 0));
 }
 
 void slang__plat_pipe_close(int64_t fd) {
+    pipe_slot *ps = pipe_slot_of(fd);
+    if (ps) {
+        named_close(ps);
+        return;
+    }
     if (fd >= 0) closesocket((SOCKET)fd);
 }
 

@@ -1,8 +1,7 @@
-namespace std.compress.gzip
-
 // gzip files (RFC 1952): members of header + raw DEFLATE + CRC-32 and
 // size. Decompress and Reader read concatenated members as one stream,
 // like gzip -d.
+namespace std.compress.gzip
 
 // The optional header fields of a member. ModTime is Unix seconds (0:
 // unset); OS is the RFC 1952 operating system byte (255: unknown).
@@ -165,6 +164,7 @@ struct Writer {
     started bool
     closed  bool
 
+    // Write compresses p (writing the header first).
     func Write(p []byte) {
         this.start()
         this.crc = std.compress.Crc32(this.crc, p)
@@ -172,15 +172,18 @@ struct Writer {
         this.d.Write(p)
     }
 
+    // WriteString compresses the bytes of s.
     func WriteString(s string) {
         this.Write(std.strings.Bytes(s))
     }
 
+    // Flush emits everything written so far (a deflate sync flush); read it with Bytes.
     func Flush() {
         this.start()
         this.d.Flush()
     }
 
+    // Close finishes the stream and appends the trailer (CRC-32 and size).
     func Close() {
         if this.closed {
             return
@@ -211,6 +214,7 @@ struct Writer {
     }
 }
 
+// NewWriter returns a compressor with level (0-9, -1 for the default).
 func NewWriter(level int) *Writer {
     return &Writer{d: std.compress.deflate.NewWriter(level)}
 }
@@ -227,6 +231,7 @@ struct Reader {
     header  Header
     out     []byte
 
+    // Feed decompresses the next chunk of input; read the output with Bytes.
     func Feed(chunk []byte) void! {
         var input = chunk
         for {
@@ -306,6 +311,7 @@ struct Reader {
         return this.members > 0 && this.state == 0 && len(this.buf) == 0
     }
 
+    // Close fails if the input ended in the middle of a member.
     func Close() void! {
         if !this.Done() {
             return error("gzip: unexpected end of compressed data")
@@ -313,6 +319,7 @@ struct Reader {
     }
 }
 
+// NewReader returns a decompressor.
 func NewReader() *Reader {
     return &Reader{}
 }
@@ -327,6 +334,7 @@ struct StreamReader {
     pos     int
     eof     bool
 
+    // Read returns up to len(buf) decompressed bytes; 0 at the end.
     func Read(buf []byte) int! {
         for this.pos >= len(this.pending) {
             if this.eof {
@@ -360,14 +368,17 @@ struct StreamReader {
     }
 }
 
+// NewStreamReader returns a reader of the decompressed data of src.
 func NewStreamReader(src std.io.Reader) *StreamReader {
     return &StreamReader{src: src, z: NewReader()}
 }
 
+// StreamWriter compresses to an io.Writer.
 struct StreamWriter {
     dst std.io.Writer
     z   *Writer
 
+    // Write compresses buf and writes the output produced so far to dst.
     func Write(buf []byte) int! {
         this.z.Write(buf)
         var b = this.z.Bytes()
@@ -377,21 +388,25 @@ struct StreamWriter {
         return len(buf)
     }
 
+    // Flush flushes the compressor and writes the output to dst.
     func Flush() void! {
         this.z.Flush()
         std.io.WriteAll(this.dst, this.z.Bytes())?
     }
 
+    // Close finishes the stream and writes the rest (with the trailer) to dst.
     func Close() void! {
         this.z.Close()
         std.io.WriteAll(this.dst, this.z.Bytes())?
     }
 
+    // SetHeader sets the gzip header (before the first Write).
     func SetHeader(h Header) {
         this.z.Header = h
     }
 }
 
+// NewStreamWriter returns a writer that gzips everything written to it into dst.
 func NewStreamWriter(dst std.io.Writer, level int) *StreamWriter {
     return &StreamWriter{dst: dst, z: NewWriter(level)}
 }

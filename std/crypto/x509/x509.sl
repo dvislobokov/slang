@@ -1,5 +1,3 @@
-namespace std.crypto.x509
-
 // The Slang-source std.crypto.x509 (see sema/stdsrc.rs for the rules):
 // X.509 v3 certificates (RFC 5280) in DER and PEM, private keys (PKCS#8,
 // PKCS#1, SEC 1), chain building and verification against a pool of
@@ -8,6 +6,7 @@ namespace std.crypto.x509
 // key usage and the dNSName part of name constraints. Signature checks use
 // the C primitives of std.crypto.{rsa,ecdsa,ed25519}. Times are Unix
 // milliseconds (std.time).
+namespace std.crypto.x509
 
 // ---- DER --------------------------------------------------------------------
 

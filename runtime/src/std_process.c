@@ -27,7 +27,8 @@ bool slang_process_rt_executable(const slang_string *path);
 slang_task *slang_process_rt_wait_readable(int64_t fd, int64_t ms);
 slang_task *slang_process_rt_wait_writable(int64_t fd, int64_t ms);
 
-static const char *sdata(const slang_string *s) { return s ? s->data : ""; }
+/* NUL-terminated: these bytes go to C APIs (views are copied, ABI.md 4.1). */
+static const char *sdata(const slang_string *s) { return slang_string_cstr(s); }
 
 static char *dupstr(const slang_string *s) {
     int64_t n = s ? s->len : 0;

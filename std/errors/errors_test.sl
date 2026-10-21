@@ -1,0 +1,59 @@
+// Examples for std.errors.
+namespace errors_test
+
+import std
+import std.io
+
+const ErrNotFound = error("not found")
+
+struct ValidationError {
+    Field string
+
+    func Message() string {
+        return "invalid " + this.Field
+    }
+}
+
+func find(key string) string! {
+    if key != "a" {
+        return ErrNotFound
+    }
+    return "found"
+}
+
+func ExampleNew() {
+    var err = errors.New("disk full")
+    println(err)
+    // Output:
+    // disk full
+}
+
+func ExampleIs() {
+    // `?("context")` and errors.Wrap add context; errors.Is sees through it.
+    var err = try find("b") catch e {
+        println(e, "|", errors.Is(e, ErrNotFound))
+        return
+    }
+    println(err)
+    // Output:
+    // not found | true
+}
+
+func ExampleWrap() {
+    var err = errors.Wrap(ErrNotFound, "load config")
+    println(err)
+    println(errors.Unwrap(err), errors.Is(err, ErrNotFound))
+    // Output:
+    // load config: not found
+    // not found true
+}
+
+func ExampleAs() {
+    var err error = ValidationError{Field: "email"}
+    var ve ValidationError
+    if errors.As(err, &ve) {
+        println("field:", ve.Field)
+    }
+    // Output:
+    // field: email
+}

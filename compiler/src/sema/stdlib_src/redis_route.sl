@@ -1,5 +1,3 @@
-namespace std.data.redis
-
 // The router behind a Client (see redis.sl for the file layout): which
 // server a command goes to and what happens when it fails.
 //
@@ -19,6 +17,7 @@ namespace std.data.redis
 //
 // Retries (Options.MaxRetries, exponential backoff): network errors and
 // LOADING, TRYAGAIN, CLUSTERDOWN, MASTERDOWN, READONLY replies.
+namespace std.data.redis
 
 // ---- commands and keys ----------------------------------------------------------
 

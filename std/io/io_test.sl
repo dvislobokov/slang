@@ -1,0 +1,43 @@
+// Examples for std.io.
+namespace io_test
+
+import std
+import std.io
+
+func ExampleReadAllString() void! {
+    var r = io.NewStringReader("hello, reader")
+    println(io.ReadAllString(r)?)
+    // Output:
+    // hello, reader
+}
+
+func ExampleScanner() {
+    var sc = io.NewScanner(io.NewStringReader("one\ntwo\nthree\n"))
+    var n = 0
+    for sc.Scan() {
+        n += 1
+        println(n, sc.Text())
+    }
+    // Output:
+    // 1 one
+    // 2 two
+    // 3 three
+}
+
+func ExampleCopy() void! {
+    var w = io.NewBytesWriter()
+    var n = io.Copy(w, io.NewStringReader("copied bytes"))?
+    println(n, w.String())
+    // Output:
+    // 12 copied bytes
+}
+
+func ExampleMultiWriter() void! {
+    var a = io.NewBytesWriter()
+    var b = io.NewBytesWriter()
+    var w = io.MultiWriter([a, b])
+    _ = io.WriteString(w, "twice")?
+    println(a.String(), b.String())
+    // Output:
+    // twice twice
+}

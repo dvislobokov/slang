@@ -2,29 +2,47 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.ecdsa implemented by the C runtime.
 namespace std.crypto.ecdsa
 
+// GenerateKey returns a random P-256 private key (32-byte scalar).
+//
 // C: slang_crypto_ecdsa_generate_key (runtime/src/std_*.c).
 extern func GenerateKey() []byte!
 
+// PublicKey returns the 65-byte uncompressed P-256 public key of priv.
+//
 // C: slang_crypto_ecdsa_public_key (runtime/src/std_*.c).
-extern func PublicKey(a []byte) []byte!
+extern func PublicKey(priv []byte) []byte!
 
+// Sign returns an ASN.1 DER P-256 signature of digest (RFC 6979 nonces hedged with randomness).
+//
 // C: slang_crypto_ecdsa_sign (runtime/src/std_*.c).
-extern func Sign(a []byte, b []byte) []byte!
+extern func Sign(priv []byte, digest []byte) []byte!
 
+// Verify reports whether sig (strict DER) is a valid P-256 signature of digest by pub.
+//
 // C: slang_crypto_ecdsa_verify (runtime/src/std_*.c).
-extern func Verify(a []byte, b []byte, c []byte) bool
+extern func Verify(pub []byte, digest []byte, sig []byte) bool
 
+// GenerateKeyP384 returns a random P-384 private key (48-byte scalar).
+//
 // C: slang_crypto_ecdsa_generate_key_p384 (runtime/src/std_*.c).
 extern func GenerateKeyP384() []byte!
 
+// PublicKeyP384 returns the 97-byte uncompressed P-384 public key of priv.
+//
 // C: slang_crypto_ecdsa_public_key_p384 (runtime/src/std_*.c).
-extern func PublicKeyP384(a []byte) []byte!
+extern func PublicKeyP384(priv []byte) []byte!
 
+// SignP384 returns an ASN.1 DER P-384 signature of digest.
+//
 // C: slang_crypto_ecdsa_sign_p384 (runtime/src/std_*.c).
-extern func SignP384(a []byte, b []byte) []byte!
+extern func SignP384(priv []byte, digest []byte) []byte!
 
+// SignP384Raw returns a deterministic RFC 6979 P-384 signature as r||s (for test vectors).
+//
 // C: slang_crypto_ecdsa_sign_p384_raw (runtime/src/std_*.c).
-extern func SignP384Raw(a []byte, b []byte) []byte!
+extern func SignP384Raw(priv []byte, digest []byte) []byte!
 
+// VerifyP384 reports whether sig (DER) is a valid P-384 signature of digest by pub.
+//
 // C: slang_crypto_ecdsa_verify_p384 (runtime/src/std_*.c).
-extern func VerifyP384(a []byte, b []byte, c []byte) bool
+extern func VerifyP384(pub []byte, digest []byte, sig []byte) bool

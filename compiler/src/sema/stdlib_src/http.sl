@@ -1,5 +1,3 @@
-namespace std.net.http
-
 // The Slang-source std.net.http (see sema/stdsrc.rs for the rules), split
 // over several files of this namespace:
 //   http.sl          shared helpers, Request/Response, URLs, connections
@@ -11,6 +9,7 @@ namespace std.net.http
 // heads, WebSocket masking, HPACK Huffman) are C in runtime/src/std_http.c
 // (the rt* externs, runtime/ABI.md 16.5). Bodies are strings (byte strings:
 // any bytes are allowed); https and Server.TLS use std.net.tls.
+namespace std.net.http
 
 // ---- shared helpers ---------------------------------------------------
 
@@ -538,10 +537,12 @@ struct Request {
     // Values set by middleware for later handlers (Set/Value).
     values map[string]any
 
+    // Header returns request header name (case-insensitive; "" if absent).
     func Header(name string) string {
         return this.Headers[CanonicalHeader(name)]
     }
 
+    // Param returns the path parameter name matched by the router ("" if absent).
     func Param(name string) string {
         return this.Params[name]
     }
@@ -625,10 +626,12 @@ struct Response {
     // flushes so far (recorders count them too)
     flushes int
 
+    // Header returns response header name (case-insensitive; "" if absent).
     func Header(name string) string {
         return this.Headers[CanonicalHeader(name)]
     }
 
+    // SetHeader sets response header name (canonical case).
     func SetHeader(name string, value string) {
         if this.Headers == nil {
             this.Headers = map[string]string{}
@@ -644,6 +647,7 @@ struct Response {
         addHeader(this.Headers, name, value)
     }
 
+    // DelHeader removes response header name.
     func DelHeader(name string) {
         if this.Headers != nil {
             delete(this.Headers, CanonicalHeader(name))
@@ -884,6 +888,7 @@ struct URL {
         return this.Path + "?" + this.RawQuery
     }
 
+    // String returns the absolute URL.
     func String() string {
         return this.Scheme + "://" + this.Host + this.RequestURI()
     }
@@ -983,6 +988,7 @@ func resolveRef(u URL, location string) string {
 // cannot declare async methods); they return the task of an async call,
 // e.g. `func Serve(req, res) Task<void!> { return this.serve(req, res) }`.
 interface Handler {
+    // Serve handles one request.
     func Serve(req *std.net.http.Request, res *std.net.http.Response) Task<void!>
 }
 
@@ -990,6 +996,7 @@ interface Handler {
 struct HandlerFunc {
     F func(*Request, *Response) Task<void!>
 
+    // Serve calls F.
     func Serve(req *Request, res *Response) Task<void!> {
         return this.F(req, res)
     }

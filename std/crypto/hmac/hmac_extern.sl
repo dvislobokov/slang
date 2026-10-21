@@ -2,14 +2,22 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.hmac implemented by the C runtime.
 namespace std.crypto.hmac
 
+// Sha256 returns HMAC-SHA256 of data with key.
+//
 // C: slang_crypto_hmac_sha256 (runtime/src/std_*.c).
-extern func Sha256(a string, b string) []byte
+extern func Sha256(key string, data string) []byte
 
+// Sha256Hex returns HMAC-SHA256 of data with key in lowercase hex.
+//
 // C: slang_crypto_hmac_sha256_hex (runtime/src/std_*.c).
-extern func Sha256Hex(a string, b string) string
+extern func Sha256Hex(key string, data string) string
 
+// Equal compares two MACs in constant time.
+//
 // C: slang_crypto_hmac_equal (runtime/src/std_*.c).
 extern func Equal(a []byte, b []byte) bool
 
+// Sum returns the HMAC of data with key using hash alg ("sha256", ...).
+//
 // C: slang_crypto_hmac_sum (runtime/src/std_*.c).
-extern func Sum(a string, b []byte, c []byte) []byte!
+extern func Sum(alg string, key []byte, data []byte) []byte!

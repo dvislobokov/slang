@@ -1,0 +1,75 @@
+// test: `new T{}` and `&local` that do not escape live on the stack (escape analysis): destructors, early exits and loops behave as for heap objects
+// status: passing
+namespace spec.memory2.escape_stack_new
+
+import std.io
+
+struct R {
+    Name string
+    func Drop() { println("drop", this.Name) }
+}
+
+struct Box {
+    Inner R
+    N     int
+
+    func Bump() { this.N += 1 }
+}
+
+func use(b *Box) int {
+    return b.N
+}
+
+func Check(n int) int! {
+    if n < 0 {
+        return error("negative")
+    }
+    return n
+}
+
+// The object of `b` never escapes: on the stack, dropped at scope exit.
+func Local(n int) int! {
+    var b = new Box{Inner: R{Name: "local" + "-box"}, N: n}
+    b.Bump()
+    var v = Check(n)?
+    return v + use(b)
+}
+
+// `&c` is only passed to a non-escaping parameter: no heap cell.
+func Cell() int {
+    var c = Box{Inner: R{Name: "cell"}, N: 40}
+    c.Bump()
+    return use(&c) + 1
+}
+
+var kept *Box = nil
+
+func keep(b *Box) {
+    kept = b
+}
+
+// Escapes through a global: stays on the heap.
+func Escapes() {
+    var e = new Box{Inner: R{Name: "escaped"}, N: 7}
+    keep(e)
+}
+
+func main() {
+    println(try Local(4) else -1)
+    println(try Local(-4) else -1)
+    println(Cell())
+    for i in 0..3 {
+        var t = new Box{Inner: R{Name: "loop" + string(char(48 + i))}, N: i}
+        if i == 1 {
+            continue
+        }
+        if i == 2 {
+            break
+        }
+        println("iter", use(t))
+    }
+    Escapes()
+    println("kept", kept.N)
+    kept = nil
+    println("end")
+}

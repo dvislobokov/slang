@@ -1,7 +1,6 @@
-namespace std.hash.crc64
-
 // std.hash.crc64: CRC-64 with the ISO or ECMA polynomial (Go's
 // hash/crc64): crc64.Checksum(data, crc64.MakeTable(crc64.ECMA)).
+namespace std.hash.crc64
 
 // A precomputed table for one polynomial (reversed form).
 struct Table {
@@ -45,32 +44,39 @@ struct Digest {
     crc uint
     tab Table
 
+    // Write adds p to the checksum; it never fails.
     func Write(p []byte) int! {
         this.crc = Update(this.crc, this.tab, p)
         return len(p)
     }
 
+    // WriteString adds the bytes of s to the checksum.
     func WriteString(s string) int! {
         this.crc = Update(this.crc, this.tab, std.strings.Bytes(s))
         return len(s)
     }
 
+    // Sum64 returns the checksum.
     func Sum64() uint {
         return this.crc
     }
 
+    // Sum returns the checksum as 8 big-endian bytes.
     func Sum() []byte {
         return std.hash.Bytes64(this.crc)
     }
 
+    // Reset restores the initial state.
     func Reset() {
         this.crc = 0
     }
 
+    // Size returns 8.
     func Size() int {
         return 8
     }
 
+    // BlockSize returns 1.
     func BlockSize() int {
         return 1
     }

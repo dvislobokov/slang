@@ -2,11 +2,15 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.kdf implemented by the C runtime.
 namespace std.crypto.kdf
 
+// Pbkdf2 derives keyLen bytes with PBKDF2 (RFC 8018) over HMAC with hash ("sha1", "sha256", "sha384", "sha512").
+//
 // C: slang_crypto_kdf_pbkdf2 (runtime/src/std_*.c).
-extern func Pbkdf2(a []byte, b []byte, c int, d int, e string) []byte!
+extern func Pbkdf2(password []byte, salt []byte, iterations int, keyLen int, hash string) []byte!
 
+// Scrypt derives keyLen bytes with scrypt (RFC 7914); n is a power of two and the memory used is 128*r*n bytes.
+//
 // C: slang_crypto_kdf_scrypt (runtime/src/std_*.c).
-extern func Scrypt(a []byte, b []byte, c int, d int, e int, f int) []byte!
+extern func Scrypt(password []byte, salt []byte, n int, r int, p int, keyLen int) []byte!
 
 // Internal runtime primitive (used by the Slang sources of this namespace).
 // C: slang_crypto_kdf_rt_argon2 (runtime/src/std_*.c).

@@ -1,10 +1,9 @@
-namespace std.archive.tar
-
 // tar archives (POSIX.1-2001 ustar/pax, GNU long names and base-256
 // numbers on read): reading and writing in memory. Long or non-ASCII
 // names, big sizes and big ids are written as pax extended headers.
 // ExtractTo / FromDir move archives to and from directories (regular
 // files and directories; links are listed but not created).
+namespace std.archive.tar
 
 // Entry types (Header.Type) are the constants tar.TypeReg ('0'),
 // TypeLink ('1'), TypeSymlink ('2'), TypeDir ('5').

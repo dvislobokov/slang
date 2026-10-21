@@ -18,23 +18,23 @@ static void set_err(slang_error **err, const char *op, const char *arg, int e) {
 
 /* Slang strings may contain NUL bytes; C APIs cannot take them. */
 static bool has_nul(const slang_string *s) {
-    return (int64_t)strlen(slang_string_data(s)) != slang_string_len(s);
+    return (int64_t)strlen(slang_string_cstr(s)) != slang_string_len(s);
 }
 
 slang_string *slang_os_getenv(const slang_string *name) {
-    char *v = has_nul(name) ? NULL : slang__plat_getenv(slang_string_data(name));
+    char *v = has_nul(name) ? NULL : slang__plat_getenv(slang_string_cstr(name));
     slang_string *r = slang_string_from_cstr(v ? v : "");
     free(v);
     return r;
 }
 
 void slang_os_setenv(const slang_string *name, const slang_string *value, slang_error **err) {
-    const char *n = slang_string_data(name);
+    const char *n = slang_string_cstr(name);
     if (slang_string_len(name) == 0 || strchr(n, '=') || has_nul(name) || has_nul(value)) {
         set_err(err, "setenv", n, EINVAL);
         return;
     }
-    int e = slang__plat_setenv(n, slang_string_data(value));
+    int e = slang__plat_setenv(n, slang_string_cstr(value));
     if (e) set_err(err, "setenv", n, e);
 }
 
@@ -65,7 +65,7 @@ slang_string *slang_os_cwd(slang_error **err) {
 }
 
 void slang_os_chdir(const slang_string *path, slang_error **err) {
-    if (has_nul(path)) { set_err(err, "chdir", slang_string_data(path), EINVAL); return; }
-    int e = slang__plat_chdir(slang_string_data(path));
-    if (e) set_err(err, "chdir", slang_string_data(path), e);
+    if (has_nul(path)) { set_err(err, "chdir", slang_string_cstr(path), EINVAL); return; }
+    int e = slang__plat_chdir(slang_string_cstr(path));
+    if (e) set_err(err, "chdir", slang_string_cstr(path), e);
 }

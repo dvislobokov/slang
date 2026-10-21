@@ -1,5 +1,3 @@
-namespace std.data.redis
-
 // std.data.redis: a Redis client written in Slang over std.net and
 // std.net.tls (docs/STDLIB.md level 3b). Four files share the namespace:
 //
@@ -19,6 +17,7 @@ namespace std.data.redis
 // errors are those of std.net. The sentinels Nil, ErrClosed, ErrTxFailed,
 // ErrPoolTimeout and ErrCrossSlot are compiler constants (sema/stdlib.rs,
 // runtime/src/std_infra.c).
+namespace std.data.redis
 
 // ---- replies ------------------------------------------------------------------
 

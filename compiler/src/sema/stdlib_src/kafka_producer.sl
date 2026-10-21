@@ -1,5 +1,3 @@
-namespace std.data.kafka
-
 // The producer (see kafka.sl for the file layout). Records are collected
 // per partition into batches that are sent when they reach BatchSize
 // bytes or LingerMs after their first record; one batch per partition is
@@ -8,6 +6,7 @@ namespace std.data.kafka
 // the metadata (leader changes) and retry with backoff; an idempotent
 // producer retries with the same sequence, so a retry is never
 // duplicated (DUPLICATE_SEQUENCE_NUMBER counts as success).
+namespace std.data.kafka
 
 // Options of a Producer. Durations are milliseconds; zero values take the
 // defaults in brackets.

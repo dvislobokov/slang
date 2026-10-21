@@ -5,7 +5,7 @@ use super::{CodeGen, Val};
 use crate::types::{Type, TypeId};
 use inkwell::module::Linkage;
 use inkwell::types::StructType;
-use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::IntPredicate;
 
 /// How a value of some type holds references.
@@ -156,6 +156,92 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
     }
 
+    /// The inline fast path of `slang_retain` / `slang_release` (and the
+    /// `slang_ptr_*` variants on a payload pointer): an internal
+    /// `alwaysinline` function that `call_rt` uses instead of the runtime
+    /// symbol when `Options::inline_rc` (runtime/ABI.md 3.2).
+    ///
+    /// While `slang_threaded == 0`: retain with count >= 0 stores `+1`,
+    /// release with 2 <= count < weak flag stores `-1`; NULL does nothing;
+    /// everything else (other threads exist, immortal/arena/view counts,
+    /// the last reference, a weak box) calls the runtime function.
+    pub(crate) fn rc_inline_fn(&mut self, name: &str) -> Option<FunctionValue<'ctx>> {
+        let (retain, ptr) = match name {
+            "slang_retain" => (true, false),
+            "slang_release" => (false, false),
+            "slang_ptr_retain" => (true, true),
+            "slang_ptr_release" => (false, true),
+            _ => return None,
+        };
+        if !self.opts.inline_rc {
+            return None;
+        }
+        let fname = format!("slang.rc.{name}");
+        if let Some(f) = self.module.get_function(&fname) {
+            return Some(f);
+        }
+        let i64t = self.i64_ty();
+        let fty = self.ctx.void_type().fn_type(&[self.ptr_ty().into()], false);
+        let f = self.module.add_function(&fname, fty, Some(Linkage::Internal));
+        f.add_attribute(inkwell::attributes::AttributeLoc::Function, self.attr("alwaysinline"));
+        f.add_attribute(inkwell::attributes::AttributeLoc::Function, self.attr("nounwind"));
+        let slow_name = if retain { "slang_retain" } else { "slang_release" };
+        let slow = self.rt(slow_name);
+        let mt_g = match self.module.get_global("slang_threaded") {
+            Some(g) => g,
+            None => {
+                let g = self.module.add_global(self.ctx.i8_type(), None, "slang_threaded");
+                g.set_linkage(Linkage::External);
+                g
+            }
+        };
+        let b = self.ctx.create_builder();
+        let entry = self.ctx.append_basic_block(f, "entry");
+        let chk = self.ctx.append_basic_block(f, "chk");
+        let plain = self.ctx.append_basic_block(f, "plain");
+        let call_slow = self.ctx.append_basic_block(f, "slow");
+        let done = self.ctx.append_basic_block(f, "done");
+        b.position_at_end(entry);
+        let p = f.get_nth_param(0).unwrap().into_pointer_value();
+        let isnull = b.build_is_null(p, "").unwrap();
+        b.build_conditional_branch(isnull, done, chk).unwrap();
+        b.position_at_end(chk);
+        let obj = if ptr {
+            unsafe { b.build_gep(self.ctx.i8_type(), p, &[i64t.const_int((-16i64) as u64, true)], "obj") }.unwrap()
+        } else {
+            p
+        };
+        let ld = b.build_load(i64t, obj, "rc").unwrap();
+        let ldi = ld.as_instruction_value().unwrap();
+        ldi.set_alignment(8).unwrap();
+        ldi.set_atomic_ordering(inkwell::AtomicOrdering::Monotonic).unwrap();
+        let rc = ld.into_int_value();
+        // Fast: one thread and retain: rc >= 0; release: 2 <= rc < WEAK_FLAG.
+        let count_ok = if retain {
+            b.build_int_compare(IntPredicate::SGE, rc, i64t.const_zero(), "").unwrap()
+        } else {
+            let m2 = b.build_int_sub(rc, i64t.const_int(2, false), "").unwrap();
+            b.build_int_compare(IntPredicate::ULT, m2, i64t.const_int((1u64 << 62) - 2, false), "").unwrap()
+        };
+        let mt = b.build_load(self.ctx.i8_type(), mt_g.as_pointer_value(), "mt").unwrap().into_int_value();
+        let mtz = b.build_int_compare(IntPredicate::EQ, mt, self.ctx.i8_type().const_zero(), "").unwrap();
+        let fast = b.build_and(count_ok, mtz, "").unwrap();
+        b.build_conditional_branch(fast, plain, call_slow).unwrap();
+        b.position_at_end(plain);
+        let one = i64t.const_int(1, false);
+        let nv = if retain { b.build_int_add(rc, one, "").unwrap() } else { b.build_int_sub(rc, one, "").unwrap() };
+        let st = b.build_store(obj, nv).unwrap();
+        st.set_alignment(8).unwrap();
+        st.set_atomic_ordering(inkwell::AtomicOrdering::Monotonic).unwrap();
+        b.build_unconditional_branch(done).unwrap();
+        b.position_at_end(call_slow);
+        b.build_call(slow, &[obj.into()], "").unwrap();
+        b.build_unconditional_branch(done).unwrap();
+        b.position_at_end(done);
+        b.build_return(None).unwrap();
+        Some(f)
+    }
+
     fn rc_val(&mut self, t: TypeId, v: BasicValueEnum<'ctx>, retain: bool) {
         match self.rc_kind(t) {
             RcKind::None => {}
@@ -238,7 +324,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match self.ty(t).clone() {
             Type::Interface(_) | Type::Any => {
                 // A non-nil interface value always owns its data: a box
-                // payload (struct values, `any`) or a `*S` payload.
+                // payload (struct values, `any`) or a `*S` payload; an
+                // `any` holding a scalar inline owns nothing.
                 let data = self.b.build_load(self.ptr_ty(), p, "data").unwrap().into_pointer_value();
                 let vp = self.byte_gep(p, 8);
                 let vt = self.b.build_load(self.ptr_ty(), vp, "vt").unwrap().into_pointer_value();
@@ -247,6 +334,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let nn = self.b.build_is_not_null(vt, "").unwrap();
                 self.b.build_conditional_branch(nn, has, done).unwrap();
                 self.b.position_at_end(has);
+                if matches!(self.ty(t), Type::Any) {
+                    let f = self.any_inline_fn();
+                    let inl = self.b.build_call(f, &[vt.into()], "").unwrap().try_as_basic_value().left().unwrap().into_int_value();
+                    let boxed = self.block("boxed");
+                    self.b.build_conditional_branch(inl, done, boxed).unwrap();
+                    self.b.position_at_end(boxed);
+                }
                 self.call_rt(Self::ptr_rc_name(retain), &[data.into()]);
                 self.b.build_unconditional_branch(done).unwrap();
                 self.b.position_at_end(done);
@@ -485,22 +579,28 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         g.as_pointer_value()
     }
 
-    /// An immortal string literal (ABI.md §4.1); borrowed.
+    /// An immortal string literal (ABI.md §4.1); borrowed:
+    /// `{ i64 -1, ptr @slang_type_string, i64 len, ptr <bytes>, [len+1 x i8] }`
+    /// whose data pointer (+24) addresses its own bytes (+32).
     pub(crate) fn str_lit(&mut self, s: &str) -> PointerValue<'ctx> {
         if let Some(p) = self.strings.get(s) {
             return *p;
         }
         let bytes = self.ctx.const_string(s.as_bytes(), true);
-        let st = self.ctx.struct_type(&[self.i64_ty().into(), self.ptr_ty().into(), self.i64_ty().into(), bytes.get_type().into()], false);
+        let st = self.ctx.struct_type(&[self.i64_ty().into(), self.ptr_ty().into(), self.i64_ty().into(), self.ptr_ty().into(), bytes.get_type().into()], false);
         let tis = self.rt_global("slang_type_string");
+        let n = self.fresh();
+        let g = self.module.add_global(st, None, &format!(".str.{n}"));
+        let i32t = self.ctx.i32_type();
+        // SAFETY: a constant in-bounds GEP to field 4 of the global itself.
+        let data = unsafe { g.as_pointer_value().const_in_bounds_gep(st, &[i32t.const_zero(), i32t.const_int(4, false)]) };
         let init = st.const_named_struct(&[
             self.i64_ty().const_int(u64::MAX, true).into(),
             tis.into(),
             self.i64_ty().const_int(s.len() as u64, false).into(),
+            data.into(),
             bytes.into(),
         ]);
-        let n = self.fresh();
-        let g = self.module.add_global(st, None, &format!(".str.{n}"));
         g.set_linkage(Linkage::Private);
         g.set_constant(true);
         g.set_unnamed_addr(true);

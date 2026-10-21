@@ -1,8 +1,7 @@
-namespace std.maps
-
 // std.maps: generic helpers over the builtin map[K]V. Builtin maps have
 // no defined iteration order, so Keys and Values come back in an
 // unspecified order; SortedKeys sorts them.
+namespace std.maps
 
 // The keys of m (unspecified order).
 func Keys<K: Comparable, V>(m map[K]V) []K {

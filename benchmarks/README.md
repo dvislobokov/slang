@@ -18,6 +18,129 @@ The script builds both with release settings and reports wall time, CPU time
 | `http_hello` | std.net.http server answering a keep-alive load generator (64 connections, 200k `GET /` in all); `run.sh` cross-measures both servers with both load generators in separate processes, then HTTP/2 over TLS (`--server-tls` / `-server-tls`) with Go's h2 client (`-load2`) |
 | `regex` | std.regex: `FindAll` of an e-mail pattern over a 10 MB generated text (lazy DFA with prefix acceleration vs Go's `regexp`) |
 | `gzip` | std.compress.gzip: level-6 compression and decompression of 20 MB of mixed text, round trip checked |
+| `alloc_heavy` | binary trees of small heap nodes (depth 4..16) and 4M rounds of non-escaping temporaries (`new Stats{}`, `&acc` passed to a method) |
+
+## Results, performance pass 2 (2026-10-21, 4 vCPU x86-64, clang/LLVM 18, go 1.24, `--release`)
+
+Wall time, best of 5 runs with the three binaries of a benchmark run
+alternately (`before` = the compiler and runtime of commit ec01e80, `after`
+= this tree). The machine is shared, so differences under about 8% are
+noise (map, struct_map: repeated runs give either one ahead).
+
+| bench | before s | after s | go s | after / go |
+|---|---|---|---|---|
+| fib | 0.115 | 0.110 | 0.223 | 0.49 |
+| sieve | 0.318 | 0.304 | 0.605 | 0.50 |
+| map | 0.208 | 0.224 | 0.331 | 0.68 |
+| strings | 0.225 | **0.072** | 0.199 | **0.36** |
+| nbody | 0.473 | 0.458 | 0.481 | 0.95 |
+| json_like | 0.225 | 0.213 | 0.306 | 0.70 |
+| struct_map | 0.206 | 0.212 | 0.226 | 0.94 |
+| alloc_heavy (new) | 1.119 | **0.398** | 0.598 | **0.67** |
+| regex | 0.266 | 0.230 | 0.610 | 0.38 |
+| gzip | 1.931 | 1.881 | 2.093 | 0.90 |
+
+Networking (same session): `tcp_echo` 0.463 s before, 0.466 s after (epoll),
+0.456 s with the io_uring backend, Go 0.540 s; `http_hello` with Go's load
+generator, best of 3 rounds: 101 000 req/s before, 101 300 after (epoll),
+104 500 (io_uring), Go 110 800 (rounds vary by ±8%).
+
+Startup of `hello` (`--release`, 300 runs): 1.45 ms -> 1.08 ms (min), 1.81 ms
+-> 1.30 ms (median). Sizes (`--release`, stripped): `hello` 35 584 -> 14 840
+bytes (10 320 with `SLANG_LINKER=lld`), `http_server` 1 203 680 -> 1 232 968
+(the stdlib grew in between), `web_app` 1 756 672 (the old compiler cannot
+build today's `web_app`).
+
+Compile time (`slang build`, best of 3, wall / CPU):
+
+| program | before | after | after, 1 codegen thread |
+|---|---|---|---|
+| hello (debug) | 0.82 s | 0.65 s | 0.63 s |
+| hello `--release` | 1.35 s | **0.31 s** | 0.30 s |
+| http_server (debug) | 3.63 s | **1.94 s** (CPU 4.3 s) | 3.23 s |
+| http_server `--release` | 11.6 s | 7.9 s (CPU 11.2 s) | 11.7 s |
+| web_app (debug) | ~3.0 s (start of the session) | 2.62 s (CPU 5.5 s) | 4.08 s |
+| web_app `--release` | ~9.8 s (start of the session) | 9.6 s (CPU 13.0 s) | 12.5 s |
+
+A small debug build (a spec test) takes 0.72 -> 0.67 s. Building the whole
+spec corpus 4 at a time took 133 s before and 159 s after on the shared
+machine (load 4-6 from other jobs; the old compiler builds only 500 of the
+820 files with today's stdlib, the new one 509), so that comparison is
+inconclusive. `SLANG_TIME=1` prints the duration of each build phase.
+
+What changed, by work item:
+
+1. **Strings: views instead of copies** (runtime/ABI.md 4.1). `slang_string`
+   is now `{hdr, len, char *data}` (32 bytes, owned bytes inline at +32), so
+   a string can point into another string's bytes. `Split`/`Fields` put all
+   their pieces into one *view block* (one allocation; each piece's refcount
+   word forwards to the block), `s[a:b]`, `Trim*`, `SplitN` (and everything
+   built on `s[a..b]` in Slang: `Cut`, regex match texts) return standalone
+   views for pieces of 64 bytes or more and copies below. Views are not
+   NUL-terminated: C APIs go through `slang_string_cstr`, and the runtime's
+   test build `-DSLANG_STRESS_NONUL` (no terminator on any string) passes the
+   C tests, the examples and the spec corpus. `Split` with a one-byte
+   separator counts and cuts 8 bytes at a time. `strings` 0.225 -> 0.072 s
+   (Go 0.199 s). The other big part of that gain is general: object counts
+   are per-thread counters instead of two shared `lock xadd` per allocation
+   and one per free, and refcounts are updated without atomic instructions
+   while the process has one thread (next item). JSON one-byte tokens are
+   immortal statics. HTTP heads are parsed from a reused `[]byte` buffer, so
+   they cannot be views (they were already copy-free C helpers).
+2. **Reference counting fast paths.** The scheduler (workers and timer
+   thread) now starts with the first task, so a program without tasks stays
+   single-threaded; until a second thread starts (`slang_threaded`, set by
+   the platform's thread start), `slang_retain`/`slang_release` use plain
+   stores instead of atomic RMW. The compiler can emit that fast path inline
+   (`codegen/rc.rs`), but only does so at `-O3` / `SLANG_INLINE_RC=1`: inline
+   it gave json_like 7% and struct_map 2%, and grew `http_server` by 30% and
+   its `--release` compile time by 70%.
+3. **Escape analysis** (`hir::ownership::stack_locals`, DESIGN.md
+   "Память"): an address-taken local whose address is only read through or
+   passed to non-escaping parameters (escape facts that also count runtime
+   calls as escaping), and `var p = new T{...}` whose `p` never escapes, live
+   in an entry alloca with an immortal header; leaving the scope releases
+   the fields (running `Drop`). alloc_heavy: 0.395 -> 0.301 s from escape
+   analysis alone (`SLANG_NO_ESCAPE=1` turns it off), 1.12 -> 0.40 s in all
+   (the binary trees part is allocator/refcount bound). nbody's only boxing
+   (`for b in bodies { b.Energy() }`) runs 5 times, so it stays at parity: it
+   is bound by `sqrt` and division latency.
+4. **Interfaces and `any`.** Inside `case T x:` of a type switch on an
+   interface local, calls through that local use `T`'s constant vtable and
+   become direct (inlinable) calls. `any` holds bool/integers/floats/char
+   inline in its data word (ABI.md 3.7): a loop boxing ints into `any` and
+   switching on them went from 0.9 s to nothing (LLVM folds it).
+5. **io_uring** (`runtime/src/platform/poll_uring.c`, Linux 6.0+, raw
+   system calls): readiness polls (`IORING_OP_POLL_ADD`) with the epoll
+   backend's one-shot level-triggered semantics, synchronous cancel on
+   forget. Opt-in (`SLANG_IO_BACKEND=io_uring`): it is not faster than
+   one-shot epoll here (one submission per wait, like one `epoll_ctl`), and
+   the kernel drops a completed poll's file reference lazily, so a listening
+   socket closed right after its poll completed may still accept briefly
+   (seen in 2% of `examples/tcp_echo` runs). Multishot accept/recv was not
+   attempted.
+6. **Startup and size.** Lazy scheduler start, lazy `os.Args`, and
+   shutdown/panic/leak-report/debug-agent hooks reached through function
+   pointers set by the subsystems when they start, so `hello` links none of
+   the I/O poller, resolver, debug agent or leak report code (text 24.6 KB
+   -> 6.5 KB). `--gc-sections` already dropped unused stdlib code.
+   `SLANG_LINKER=lld` saves another 4.5 KB but is not the default: its
+   layout made fib 15% slower.
+7. **Compile time.** The biggest hotspot was LLVM working on the whole
+   stdlib: code generation emits every stdlib function a program could reach
+   (1012 functions, 5.8 MB of IR for `hello`), and `-O2` spent a second on
+   them before dropping them; a `globaldce` pass now runs first (`hello
+   --release` 1.35 -> 0.31 s, debug object emission 465 -> 265 ms). Large
+   modules (over 60k instructions after optimisation) are compiled to
+   machine code on up to 8 threads (`compiler/src/parcodegen.rs`: the
+   optimised module is split by function, each thread re-parses the bitcode
+   and keeps its part, the objects are merged with `clang -r`;
+   `SLANG_CODEGEN_THREADS=1` turns it off; it costs about 30% more CPU). The
+   stdlib sources are parsed on several threads (168 -> 37 ms per build).
+   Generic instantiation was not a hotspot. The 2x target is reached for
+   debug builds of large programs (http_server 1.87x) and small release
+   builds, not for large release builds (1.46x), where the serial `-O2`
+   pipeline on the whole module dominates.
 
 ## Results (2026-10-20, x86-64, clang/LLVM 18, go 1.24, `--release`)
 
@@ -154,3 +277,43 @@ Peak RSS is higher for Slang (46 / 104 MB vs 27 / 76 MB): the inputs are
 built by appending, and the gzip program keeps the input, output and
 round-trip copy alive.
 
+
+## Final results (2026-10-21, commit after the last wave, x86-64 Linux, clang/LLVM 18, go 1.24)
+
+Best of several runs on an otherwise idle machine; `--release` for Slang, default build for Go.
+
+| bench | Slang s | Go s | Slang/Go | Slang RSS | Go RSS |
+|---|---|---|---|---|---|
+| strings (Split/ToUpper/Join, 1.2 MB) | 0.07 | 0.19 | **0.37x** | 23 MB | 21 MB |
+| regex (FindAll e-mails, 10 MB) | 0.21 | 0.58 | **0.36x** | 47 MB | 27 MB |
+| fib(38) | 0.10 | 0.22 | **0.45x** | 11 MB | 11 MB |
+| json_like (format 100k records) | 0.19 | 0.36 | **0.53x** | 23 MB | 27 MB |
+| alloc_heavy (tree of small nodes) | 0.35 | 0.60 | **0.58x** | 11 MB | 14 MB |
+| sieve (5 x 10M) | 0.28 | 0.46 | **0.61x** | 13 MB | 45 MB |
+| map (4M int ops) | 0.19 | 0.30 | **0.63x** | 53 MB | 47 MB |
+| tcp_echo (1000 conns x 1 MB) | 0.51 | 0.69 | **0.74x** | 55 MB | 109 MB |
+| gzip (20 MB, level 6) | 1.68 | 2.03 | **0.83x** | 105 MB | 75 MB |
+| nbody (5M steps) | 0.43 | 0.43 | 1.0x | 11 MB | 11 MB |
+| struct_map | 0.23 | 0.22 | 1.0x | 12 MB | 13 MB |
+
+HTTP (`benchmarks/http_hello/run.sh`, Go load generator, 64 keep-alive connections):
+
+| server | HTTP/1.1 req/s | HTTP/2 over TLS req/s (64 streams) |
+|---|---|---|
+| Slang `std.net.http` | **116,507** | 26,290 |
+| Go `net/http` | 101,979 | 29,389 |
+
+The Slang load generator itself is slower than Go's (76k vs 117k req/s against the same server): client-side request building is the next thing to optimise.
+
+Hello-world binary sizes (`scripts/bench-size.sh`, stripped release):
+
+| target | size |
+|---|---|
+| Slang linux-amd64 (dynamic libc) | 14 KB |
+| Slang linux-arm64 | 13 KB |
+| Slang linux-musl (fully static) | 58 KB |
+| Slang windows-amd64 | 68 KB |
+| C (dynamic libc) | 15 KB |
+| Go (stripped) | 1404 KB |
+
+Summary: Slang is faster than Go on 9 of 11 CPU/memory benchmarks and on the HTTP/1.1 server, at parity on nbody and struct_map, and slightly behind on HTTP/2 over TLS. Memory use is lower or equal everywhere except regex (lazy DFA cache), gzip and map.

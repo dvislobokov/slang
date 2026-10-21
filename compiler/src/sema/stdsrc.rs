@@ -123,6 +123,12 @@ const MODULES: &[(&str, &str, &str)] = &[
     ("std.web.auth.jwt", "web_jwt.sl", include_str!("stdlib_src/web_jwt.sl")),
     ("std.encoding.json", "web_schema.sl", include_str!("stdlib_src/web_schema.sl")),
     // <<< std.web
+    // >>> std.data (docs/FRAMEWORK.md section 3)
+    ("std.data", "data.sl", include_str!("stdlib_src/data.sl")),
+    ("std.data", "data_query.sl", include_str!("stdlib_src/data_query.sl")),
+    ("std.data", "data_save.sl", include_str!("stdlib_src/data_save.sl")),
+    ("std.data", "data_migrate.sl", include_str!("stdlib_src/data_migrate.sl")),
+    // <<< std.data
     // tier 0/1 stdlib (docs/STDLIB.md)
     ("std.slices", "slices.sl", include_str!("stdlib_src/slices.sl")),
     ("std.maps", "maps.sl", include_str!("stdlib_src/maps.sl")),
@@ -161,42 +167,53 @@ const MODULES: &[(&str, &str, &str)] = &[
 fn module_asts() -> &'static [ast::File] {
     static ASTS: OnceLock<Vec<ast::File>> = OnceLock::new();
     ASTS.get_or_init(|| {
-        MODULES
-            .iter()
-            .map(|(ns, name, embedded)| {
-                // From `std/` on disk when installed (sema/stdfs.rs).
-                let text = super::stdfs::load(ns, name, embedded);
-                let src: &str = &text;
-                let mut diags = crate::diagnostics::Diagnostics::new();
-                let tokens = crate::lexer::lex(src, &mut diags);
-                let file = crate::parser::parse(tokens, &mut diags);
-                match file {
-                    Some(mut f) if !diags.has_errors() && f.namespace.to_string() == *ns => {
-                        // Interfaces are resolved like user declarations (in
-                        // the first user file's scope): without spans, so the
-                        // IDE index records nothing for them.
-                        for d in &mut f.decls {
-                            if let ast::Decl::Interface(it) = d {
-                                erase_spans(it);
-                            }
-                        }
-                        f
-                    }
-                    _ => {
-                        let errs: Vec<String> = diags
-                            .items
-                            .iter()
-                            .map(|d| {
-                                let line = src[..(d.span.start as usize).min(src.len())].matches('\n').count() + 1;
-                                format!("{name}:{line}: {}", d.message)
-                            })
-                            .collect();
-                        panic!("internal error: stdlib source {name} does not parse: {errs:?}")
-                    }
-                }
-            })
-            .collect()
+        let _t = crate::build::phase("std-parse");
+        // From `std/` on disk when installed (sema/stdfs.rs), in order (the
+        // origins log keeps it); then lexed and parsed on several threads.
+        let texts: Vec<std::borrow::Cow<'static, str>> = MODULES.iter().map(|(ns, name, embedded)| super::stdfs::load(ns, name, embedded)).collect();
+        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).clamp(1, 8);
+        let chunk = MODULES.len().div_ceil(n).max(1);
+        let idx: Vec<usize> = (0..MODULES.len()).collect();
+        std::thread::scope(|sc| {
+            let hs: Vec<_> = idx.chunks(chunk).map(|is| {
+                let texts = &texts;
+                sc.spawn(move || is.iter().map(|&i| parse_module(i, &texts[i])).collect::<Vec<ast::File>>())
+            }).collect();
+            hs.into_iter().flat_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))).collect()
+        })
     })
+}
+
+/// Parses stdlib module `MODULES[i]` from `src`; panics on errors.
+fn parse_module(i: usize, src: &str) -> ast::File {
+    let (ns, name, _) = MODULES[i];
+    let mut diags = crate::diagnostics::Diagnostics::new();
+    let tokens = crate::lexer::lex(src, &mut diags);
+    let file = crate::parser::parse(tokens, &mut diags);
+    match file {
+        Some(mut f) if !diags.has_errors() && f.namespace.to_string() == ns => {
+            // Interfaces are resolved like user declarations (in
+            // the first user file's scope): without spans, so the
+            // IDE index records nothing for them.
+            for d in &mut f.decls {
+                if let ast::Decl::Interface(it) = d {
+                    erase_spans(it);
+                }
+            }
+            f
+        }
+        _ => {
+            let errs: Vec<String> = diags
+                .items
+                .iter()
+                .map(|d| {
+                    let line = src[..(d.span.start as usize).min(src.len())].matches('\n').count() + 1;
+                    format!("{name}:{line}: {}", d.message)
+                })
+                .collect();
+            panic!("internal error: stdlib source {name} does not parse: {errs:?}")
+        }
+    }
 }
 
 /// Replaces every span of an interface declaration with [`Span::DUMMY`].

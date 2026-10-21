@@ -552,7 +552,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 cg.b.position_at_end(good);
                 let d = cg.b.build_extract_value(pair, 0, "").unwrap().into_pointer_value();
                 let lt = cg.llty(*pt);
-                let v = cg.b.build_load(lt, d, "").unwrap();
+                let v = if cg.any_inline(*pt) { cg.any_word_value(*pt, d) } else { cg.b.build_load(lt, d, "").unwrap() };
                 let k = i + usize::from(recv_ty.is_some());
                 if cg.facts.moved(fid, k) {
                     cg.retain_val(*pt, v);
@@ -585,10 +585,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 cg.b.position_at_end(fo);
             }
             if let Some((vt, v)) = val_ty {
-                let obj = cg.new_box(vt, v);
-                let pl = cg.payload(obj);
-                let ti = cg.type_info(vt);
-                let pair = cg.make_pair(pl, ti);
+                let pair = cg.make_any(vt, v);
                 res = cg.b.build_insert_value(res, pair, 0, "").unwrap().into_struct_value();
             }
             cg.b.build_store(out, res).unwrap();
@@ -611,6 +608,35 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let ret: Option<BasicValueEnum<'ctx>> = match k {
                 Intrinsic::TypeOf(t) => Some(cg.type_info(t).into()),
                 Intrinsic::AnyType => Some(cg.b.build_extract_value(p(0).into_struct_value(), 1, "").unwrap()),
+                Intrinsic::AnyBox => {
+                    // Returned +1: the same value retained, or a new box.
+                    let x = p(0).into_struct_value();
+                    let data = cg.b.build_extract_value(x, 0, "").unwrap().into_pointer_value();
+                    let ti = cg.b.build_extract_value(x, 1, "").unwrap().into_pointer_value();
+                    let any_t = cg.prog.types.any;
+                    let has = cg.block("has");
+                    let same = cg.block("same");
+                    let isnull = cg.b.build_is_null(ti, "").unwrap();
+                    cg.b.build_conditional_branch(isnull, same, has).unwrap();
+                    cg.b.position_at_end(has);
+                    let f = cg.any_inline_fn();
+                    let inl = cg.b.build_call(f, &[ti.into()], "").unwrap().try_as_basic_value().left().unwrap().into_int_value();
+                    let boxit = cg.block("box");
+                    cg.b.build_conditional_branch(inl, boxit, same).unwrap();
+                    cg.b.position_at_end(boxit);
+                    // A heap copy of the word, typed as an internal holder
+                    // (not a scalar type, so the `any` owns and releases it).
+                    let holder = cg.any_box_type_info();
+                    let obj = cg.call_rt_v("slang_object_new", &[holder.into(), cg.i64_ty().const_int(24, false).into()]).into_pointer_value();
+                    let pl = cg.payload(obj);
+                    let w = cg.b.build_ptr_to_int(data, cg.i64_ty(), "").unwrap();
+                    cg.b.build_store(pl, w).unwrap();
+                    let bx = cg.make_pair(pl, holder);
+                    cg.b.build_return(Some(&bx)).unwrap();
+                    cg.b.position_at_end(same);
+                    cg.retain_val(any_t, x.into());
+                    Some(x.into())
+                }
                 Intrinsic::AnyAddr => {
                     let d = cg.b.build_extract_value(p(0).into_struct_value(), 0, "").unwrap().into_pointer_value();
                     Some(cg.b.build_ptr_to_int(d, cg.i64_ty(), "").unwrap().into())
@@ -702,6 +728,21 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             };
             Ok(())
         })
+    }
+
+    /// Type info of the boxes `anyBox` makes for inline scalars: the `any`
+    /// it returns only keeps the copy alive (`reflect.Value.owner`).
+    fn any_box_type_info(&mut self) -> PointerValue<'ctx> {
+        if let Some(g) = self.module.get_global("any.box.ti") {
+            return g.as_pointer_value();
+        }
+        let tity = self.type_info_ty();
+        let name = self.cstr("any box");
+        let g = self.module.add_global(tity, None, "any.box.ti");
+        g.set_linkage(inkwell::module::Linkage::Internal);
+        g.set_constant(true);
+        g.set_initializer(&tity.const_named_struct(&[name.into(), self.i64_ty().const_int(24, false).into(), self.ptr_ty().const_null().into()]));
+        g.as_pointer_value()
     }
 
     /// Byte offset of field `name` in the `TypeInfo` payload.

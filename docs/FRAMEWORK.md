@@ -495,6 +495,110 @@ await ctx.SaveChanges()?        // change tracking: UPDATE только изме
   (`db.Query<T>(sql, args)`) без трекинга.
 - NoSQL: `slang.data.redis`, `slang.data.mongo` отдельными пакетами.
 
+#### Статус реализации (`std.data`)
+
+Реализовано как `std.data` (пока нет реестра пакетов; `import std.data` —
+короткие имена `@table`, `Context`, `Set<T>`, или `import std` и
+`data.X`). Исходники — `compiler/src/sema/stdlib_src/data*.sl`
+(контекст, запросы, сохранение, миграции), раскрытие при компиляции —
+`compiler/src/sema/orm.rs` (вызовы), `orm_model.rs` (модель),
+`orm_sql.rs` (перевод лямбд), CLI — `compiler/src/datacli.rs`; тесты —
+`tests/spec/data/` и `compiler/tests/data.rs` (настоящий PostgreSQL 16 и
+CLI миграций), пример — `examples/web_app` (API пользователей).
+
+- ✓ **Модель при компиляции.** Атрибуты `@table("users")`, `@key`
+  (`@key(generated: false)`), `@autoincrement`, `@column("email", type:
+  "varchar(20)")`, `@index` / `@index(unique: true, name:)`,
+  `@maxLength(n)`, `@required`, `@default("now()")`, `@concurrencyToken`,
+  `@ignore`, `@hasMany(foreignKey:)`, `@hasOne(foreignKey:)`,
+  `@belongsTo(foreignKey:)`, `@manyToMany(through:)`. Соглашения: ключ —
+  `Id` или `<Тип>Id` (целый ключ генерируется базой), таблица — snake_case
+  во множественном числе (`OrderLine` → `order_lines`), столбцы —
+  snake_case, внешний ключ — `<Сущность>Id` (у `[]Order` — `Order.UserId`,
+  у `*User` — `UserId` этой сущности), коллекции с обеих сторон без
+  внешнего ключа — многие-ко-многим через `<a>_<bs>`; индексы на внешних
+  ключах, `ON DELETE CASCADE` (`SET NULL` для nullable). Типы столбцов:
+  целые, `float`, `bool`, `string`, `[]byte`, `time.Time`, `big.Decimal`,
+  `json.Value`, простые enum (по имени), nullable — `*T` и `sql.Null<T>`.
+  Метод `Configure(m *data.ModelBuilder)` контекста читается компилятором
+  из исходника (литеральные цепочки: `m.Entity<User>().HasIndex((u) =>
+  u.Email).IsUnique()`, `ToTable`, `HasKey`, `Ignore`, `Property(...)`
+  с `HasColumnName/HasMaxLength/IsRequired/HasDefaultSql/IsConcurrencyToken/
+  HasColumnType/ValueGeneratedOnAdd/Never`, `HasIndex(...)` с
+  `IsUnique/HasName`, `HasMany/HasOne/BelongsTo/HasManyToMany(...)` с
+  `WithForeignKey/UsingTable`) и во время выполнения не вызывается.
+  Ошибки модели (неотображаемый тип поля, нет внешнего ключа, несовместимые
+  типы ключей, неизвестное поле в лямбде) — ошибки компиляции.
+- ✓ **Контекст и наборы.** `data.Open<C>(provider, dsn) *C!` и
+  `data.OpenDB<C>(provider, *sql.DB) *C` (у SQLite `:memory:` — одно
+  соединение); `ctx.Users.Add/AddRange/Attach/Update/Remove`,
+  `Find(key)` (сначала карта идентичности), `Local()`, `Upsert(e)` и
+  `UpsertBy(e, (u) => u.Email)` (`INSERT ... ON CONFLICT ... DO UPDATE`),
+  `await ctx.SaveChanges()` — единица работы в одной транзакции:
+  вставки пакетами до 100 строк одним `INSERT ... VALUES (...), (...)
+  RETURNING` (ключи и значения `@default` читаются обратно), обновления
+  только изменившихся столбцов (сравнение со снимком значений, снятым при
+  загрузке или последнем сохранении), удаления; оптимистичная блокировка
+  `@concurrencyToken` (целый токен увеличивается при каждом UPDATE; нет
+  затронутой строки — `data.ConcurrencyError`, `data.IsConcurrencyError`,
+  ничего не сохраняется). `ctx.Transaction(async () => { ... })` (вложенные
+  присоединяются), `AsNoTracking()`, `ctx.Entry(e)` (`State()`,
+  `ChangedColumns()`, `Reload()`, `Detach()`,
+  `Collection("Orders").Load()`, `Reference("User").Load()`),
+  `ClearTracker()`, `LogTo(func(string))` — журнал SQL с аргументами,
+  `ctx.Raw<T>(sql, args)` (Dapper-стиль через `sql.Query<T>`, без
+  трекинга), `ExecuteSql`, `EnsureCreated()`, `CreateScript()`.
+- ✓ **Запросы, переведённые при компиляции** (DESIGN.md, «Перевод лямбд в
+  SQL»): `Where`, `OrderBy/OrderByDescending/ThenBy/ThenByDescending`
+  (значение или кортеж), `Skip/Take` (`LIMIT/OFFSET`), `Distinct`,
+  `Select` в кортеж, структуру или скаляр, `Include` (по умолчанию
+  `LEFT JOIN` с подзапросом при постраничной выборке и дедупликацией,
+  `AsSplitQuery()` — отдельный запрос `IN (...)` на навигацию),
+  `ToList/First/FirstOrDefault/Single/SingleOrDefault/Count/Any` (с
+  предикатом и без), `All`, `Sum/Min/Max/Average`, `GroupBy(...)` с
+  `Select((g) => (g.Key, g.Count(), g.Sum(...)))` и `Where` как `HAVING`,
+  `Join(ctx.Orders, outerKey, innerKey, result)`,
+  `ExecuteUpdate((s) => s.Set((u) => u.Name, v).Set((u) => u.N, (u) => u.N +
+  1))`, `ExecuteDelete()`, `ToSql()`/`Args()`, `AsEnumerable()` — дальше
+  обычные функции в памяти. В лямбдах: сравнения, `&&`/`||`/`!`,
+  арифметика, `+` строк (`||`), `nil`-проверки и `*u.Age` у nullable,
+  `time.Time` (`<`, `Before/After`), строковые `Contains/StartsWith/
+  EndsWith/ToUpper/ToLower/Trim` (и `strings.*`), `len`, `float()/int()`,
+  `slices.Contains(ids, u.Id)` / `ids.Contains(u.Id)` (`IN`), навигации
+  (`u.Orders.Any(pred)`, `.All`, `.Count()`, `.Sum(...)`, `o.User.Name`,
+  `o.User == nil`), захваченные значения — параметры. Неподдерживаемое —
+  ошибка `expression cannot be translated to SQL: <почему>`.
+- ✓ **Провайдеры** PostgreSQL и SQLite: кавычки идентификаторов,
+  `$n`/`?`, `LIMIT/OFFSET` (`LIMIT -1` в SQLite), `RETURNING`, `ON
+  CONFLICT`, `strpos`/`instr`, `starts_with`/`substr`, приведения сумм и
+  средних в PostgreSQL, типы DDL (`bigint GENERATED BY DEFAULT AS
+  IDENTITY`/`INTEGER PRIMARY KEY AUTOINCREMENT`, `timestamptz`, `numeric`,
+  `jsonb`, `bytea`, `boolean`, `varchar(n)`), `now()` → `CURRENT_TIMESTAMP`.
+- ✓ **Миграции.** `slang data migration add AddUsers` (`--project`,
+  `--dir`, `--context`) сравнивает модель со снимком
+  `migrations/snapshot.json` и пишет `migrations/<время>_AddUsers.sl` —
+  структуру с `@migration("<время>_AddUsers")` и методами `Up/Down(m
+  *data.Migrator)` (`CreateTable` со столбцами и внешними ключами,
+  `DropTable`, `RenameTable`, `AddColumn`, `DropColumn`, `RenameColumn`,
+  `AlterColumn`, `CreateIndex`, `DropIndex`, `AddForeignKey`,
+  `DropForeignKey`, `Sql`, `SqlFor`); `slang data update [цель|0]` применяет
+  или откатывает (`Down`) миграции, каждую в транзакции, с учётом в таблице
+  `__migrations`; `slang data list`, `slang data script` (SQL для
+  провайдера); `ctx.Migrate()` и `data.Migrations()` во время выполнения
+  (список `@migration`-структур программы составляет компилятор).
+- Нет (пока): MySQL и шаблона провайдера, составных ключей, ленивой
+  загрузки, `ThenInclude`, сохранения графов (вставка связанных сущностей и
+  строк join-таблиц вместе с владельцем), исправления обратных навигаций,
+  `Where`/`OrderBy` после `Select` (до проекции — можно), анонимных записей
+  в `Select` (кортежи и структуры есть), составного `g.Key` вне `Select`,
+  compiled queries в виде кэша планов (фрагменты — константы, склейка при
+  каждом вызове), интеграции журнала с `std.log`, `AlterColumn` в SQLite
+  (комментарий в скрипте). Суммы `big.Decimal` в SQLite считаются в
+  `REAL`. Отслеживаемые сущности, загруженные в обе стороны
+  (`u.Orders[i].User == u`), держат друг друга (сборщика мусора нет):
+  когда контекст освобождается, ссылочные и многие-ко-многим навигации его
+  сущностей (и отсоединённых им) сбрасываются, чтобы разорвать циклы.
+
 ## 4. Логирование: `slang.log` уровня Serilog
 
 ```slang
@@ -730,7 +834,7 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 2. `std.encoding.json` (+ Value, Reader/Writer), `std.net` async-сокеты,
    `std.net.http` 1.1, `slang.log` с Console/File/JSON.
 3. `slang.web`: маршруты, биндинг, middleware, DI, конфигурация, OpenAPI.
-4. `std.database.sql` + PostgreSQL/SQLite, `slang.data` базовый
+4. `std.database.sql` + PostgreSQL/SQLite, `slang.data` базовый (✓ как `std.data`)
    (запросы, трекинг, миграции).
 5. `slang.diag`: CPU/heap/tasks профили в формате pprof, метрики,
    OpenTelemetry; `slang tool pprof/trace/counters`.

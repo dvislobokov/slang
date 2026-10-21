@@ -1,9 +1,8 @@
-namespace std.web
-
 // The OpenAPI 3.1 document of an App, built from the endpoint metadata
 // that the compiler generates with the route table (parameters, body and
 // response schemas from json.Schema<T>(), tags, summaries, security), and
 // the /swagger page (swagger-ui from a CDN).
+namespace std.web
 
 // The OpenAPI 3.1 document (JSON) of the mapped endpoints, paths in
 // registration order.

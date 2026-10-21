@@ -1,9 +1,8 @@
-namespace std.bytes
-
 // std.bytes: the std.strings functions over []byte, and Buffer.
 // Functions returning []byte return a new slice unless they say they
 // share storage (sub-slices of the argument). Case mapping and white
 // space follow std.strings (they round-trip through it).
+namespace std.bytes
 
 // A growable byte buffer: write at the end, read from the front. The
 // zero value is an empty buffer ready to use. Implements std.io.Reader

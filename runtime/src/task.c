@@ -120,9 +120,26 @@ static int64_t worker_count(void) {
 static void timers_start(void);
 static void timers_stop(void);
 
-void slang__sched_start(void) {
+void (*slang__io_stop_fn)(void);
+void (*slang__net_stop_fn)(void);
+
+/* Stops the resolver pool and the I/O pollers if they ever started. */
+static void stop_io(void) {
+    if (slang__net_stop_fn) slang__net_stop_fn();
+    if (slang__io_stop_fn) slang__io_stop_fn();
+}
+
+/* Process-wide setup (SIGPIPE, open-files limit), at most once. */
+void slang__process_init(void) {
     static slang__plat_once proc_once = SLANG_PLAT_ONCE_INIT;
-    slang__plat_once_run(&proc_once, slang__plat_process_init);  /* SIGPIPE, open-files limit */
+    slang__plat_once_run(&proc_once, slang__plat_process_init);
+}
+
+/* Starts the workers and the timer thread. Called lazily, by the first
+ * post, await or timer: a program that never starts a task stays single-
+ * threaded (cheaper startup, non-atomic refcounts, ABI.md 3.2). */
+void slang__sched_start(void) {
+    slang__process_init();
     slang__plat_mutex_lock(&q_mu);
     if (q_started) { slang__plat_mutex_unlock(&q_mu); return; }
     q_stopping = 0;
@@ -135,14 +152,18 @@ void slang__sched_start(void) {
 
 void slang__sched_stop(void) {
     slang__plat_mutex_lock(&q_mu);
-    if (!q_started) { slang__plat_mutex_unlock(&q_mu); return; }
+    if (!q_started) {
+        slang__plat_mutex_unlock(&q_mu);
+        stop_io();   /* I/O waits may exist without a task ever running */
+        return;
+    }
     while (q_head || q_active > 0) slang__plat_cond_wait(&idle_cv, &q_mu);  /* drain */
     q_stopping = 1;
     slang__plat_cond_broadcast(&q_cv);
     while (q_alive > 0) slang__plat_cond_wait(&idle_cv, &q_mu);
     slang__plat_mutex_unlock(&q_mu);
     timers_stop();
-    slang__io_stop();
+    stop_io();
     slang__plat_mutex_lock(&q_mu);
     q_nworkers = 0;
     __atomic_store_n(&q_started, 0, __ATOMIC_RELEASE);
@@ -1173,9 +1194,7 @@ void slang_task_leave_scope(slang_task *prev) {
 }
 
 /* std.task.ErrCancelled: an immortal sentinel. */
-static struct {
-    slang_object hdr; int64_t len; char data[15];
-} cancelled_msg = { { SLANG_RC_IMMORTAL, &slang_type_string }, 14, "task cancelled" };
+static SLANG_STRING_STORAGE(15) cancelled_msg = SLANG_STRING_INIT(cancelled_msg, "task cancelled");
 
 static slang_error cancelled_error = {
     .hdr = { SLANG_RC_IMMORTAL, &slang_type_error }, .message = (slang_string *)&cancelled_msg,

@@ -49,7 +49,7 @@ static void lower(char *d, const char *s, size_t n) {
 /* The media type of an extension like ".html" ("" if unknown; the exact
  * spelling is tried first, then lower case). */
 slang_string *slang_mime_rt_type(const slang_string *ext) {
-    const char *e = slang_string_data(ext);
+    const char *e = slang_string_cstr(ext);
     size_t n = (size_t)slang_string_len(ext);
     char low[64];
     if (n == 0 || n >= sizeof low) return slang__string_alloc(0);
@@ -79,8 +79,8 @@ void slang_mime_rt_add(const slang_string *ext, const slang_string *type) {
     }
     size_t n = (size_t)slang_string_len(ext);
     added[nadded].ext = malloc(n + 1);
-    lower(added[nadded].ext, slang_string_data(ext), n);
-    added[nadded].type = strdup(slang_string_data(type));
+    lower(added[nadded].ext, slang_string_cstr(ext), n);
+    added[nadded].type = strdup(slang_string_cstr(type));
     nadded++;
     slang__plat_mutex_unlock(&mu);
 }
@@ -94,7 +94,7 @@ static int same_type(const char *t, const char *want, size_t wn) {
 
 /* The extensions known for a media type (no parameters), sorted. */
 void slang_mime_rt_exts(const slang_string *type, slang_slice *out) {
-    const char *w = slang_string_data(type);
+    const char *w = slang_string_cstr(type);
     size_t wn = strcspn(w, ";");
     while (wn > 0 && w[wn - 1] == ' ') wn--;
     slang_slice_new_ops(out, 8, 0, 4, &slang_ops_ref);

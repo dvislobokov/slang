@@ -30,7 +30,7 @@ fn mentions(p: &ast::TypeExpr, names: &[String]) -> bool {
         K::Map(k, v) => mentions(k, names) || mentions(v, names),
         K::Func { params, ret } => params.iter().any(|x| mentions(x, names)) || ret.as_ref().is_some_and(|r| mentions(r, names)),
         K::Tuple(ts) => ts.iter().any(|x| mentions(x, names)),
-        K::Error => false,
+        K::Error | K::Infer => false,
     }
 }
 
@@ -42,7 +42,41 @@ fn bare_param(p: &ast::TypeExpr, names: &[String]) -> Option<usize> {
     }
 }
 
+/// True for a short lambda with an untyped parameter (`(u) => ...`).
+fn untyped_lambda(e: &ast::Expr) -> bool {
+    matches!(&expr::strip_parens(e).kind, ast::ExprKind::Lambda { params, .. } if params.iter().any(|p| matches!(p.ty.kind, ast::TypeKind::Infer)))
+}
+
 impl<'a> Sema<'a> {
+    /// The expected type of an untyped lambda argument `a` for parameter
+    /// type `p` (`func(T) U`) once the type parameters in its parameter
+    /// types are inferred: a function type whose parameters are known (the
+    /// result is inferred from the lambda's body).
+    fn lambda_hint(&mut self, a: &ast::Expr, p: &ast::TypeExpr, names: &[String], binds: &[Option<TypeId>]) -> Option<TypeId> {
+        if !untyped_lambda(a) {
+            return None;
+        }
+        let ast::TypeKind::Func { params, .. } = &p.kind else { return None };
+        if params.iter().any(|x| mentions(x, names) && names.iter().zip(binds).any(|(n, b)| b.is_none() && mentions(x, std::slice::from_ref(n)))) {
+            return None;
+        }
+        let n = self.gen.tenv.len();
+        for (name, b) in names.iter().zip(binds) {
+            if let Some(b) = b {
+                self.gen.tenv.push((name.clone(), *b));
+            }
+        }
+        self.gen.mute += 1;
+        let ps: Vec<TypeId> = params.iter().map(|x| self.resolve_type(x)).collect();
+        self.gen.mute -= 1;
+        self.gen.tenv.truncate(n);
+        if ps.iter().any(|t| self.tt.is_invalid(*t)) {
+            return None;
+        }
+        let void = self.tt.void;
+        Some(self.tt.func(ps, void))
+    }
+
     /// Unifies written parameter type `p` with argument type `actual`,
     /// binding type parameters; `Err((param, first, second))` on a conflict.
     fn unify(&self, p: &ast::TypeExpr, actual: TypeId, names: &[String], binds: &mut [Option<TypeId>]) -> Result<(), (usize, TypeId, TypeId)> {
@@ -120,11 +154,11 @@ impl<'a> Sema<'a> {
                 if !mentions(&p.ty, &names) || typed[i].is_some() {
                     continue;
                 }
-                let untyped = self.is_untyped(a);
+                let untyped = self.is_untyped(a) || untyped_lambda(a);
                 if untyped != (pass == 1) {
                     continue;
                 }
-                let hint = bare_param(&p.ty, &names).and_then(|k| binds[k]);
+                let hint = bare_param(&p.ty, &names).and_then(|k| binds[k]).or_else(|| self.lambda_hint(a, &p.ty, &names, &binds));
                 if hint.is_none() && matches!(expr::strip_parens(a).kind, ast::ExprKind::Nil) {
                     continue;
                 }
@@ -164,6 +198,12 @@ impl<'a> Sema<'a> {
         let hint = self.gen.ret_hint.take();
         if let Some(e) = self.reflect_generic_call(t, span) {
             return e;
+        }
+        // std.data: models, contexts and migrations generated at compile time (orm.rs).
+        if recv.is_none() {
+            if let Some(e) = self.orm_generic_call(t, targs, args, span) {
+                return e;
+            }
         }
         let tm = &self.gen.templates[t as usize];
         let (decl, name) = match tm.decl {

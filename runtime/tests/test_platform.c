@@ -12,7 +12,8 @@
 /* A connected socket pair (non-blocking ends if asked). */
 static void sock_pair(int64_t sv[2], bool nonblock) {
     int v[2];
-    assert(socketpair(AF_UNIX, SOCK_STREAM | (nonblock ? SOCK_NONBLOCK : 0), 0, v) == 0);
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, v) == 0);  /* SOCK_NONBLOCK is Linux-only */
+    for (int i = 0; i < 2 && nonblock; i++) assert(fcntl(v[i], F_SETFL, fcntl(v[i], F_GETFL) | O_NONBLOCK) == 0);
     sv[0] = v[0];
     sv[1] = v[1];
 }
@@ -127,7 +128,7 @@ TEST(time_portable) {
         assert(tm.tm_wday == cases[i].wd && tm.tm_yday == cases[i].yd);
         assert(slang__plat_timegm(&tm) == cases[i].t);
     }
-#if !defined(_WIN32)
+#if defined(SLANG_PLAT_LIBC_TIMEFMT)
     for (int64_t t = -5000000000LL; t < 5000000000LL; t += 7777777) {
         time_t tt = (time_t)t;
         struct tm g;

@@ -1,0 +1,79 @@
+// test: std.data set-based and raw statements: ExecuteUpdate with constants, nil and column expressions, ExecuteDelete (with OrderBy/Take as a key subquery), Raw<T> into structs and scalars (Dapper style, not tracked), ExecuteSql, AsEnumerable for client-side filters, and upserts (INSERT ... ON CONFLICT by key or by a unique column)
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.execute
+
+import std
+import std.io
+
+struct Task {
+    Id       int
+    Title    string
+    Priority int
+    Done     bool
+    Owner    *string
+}
+
+struct Setting {
+    Id    int
+    @data.index(unique: true) Key string
+    Value string
+}
+
+struct Row {
+    Title string
+    Prio  int
+}
+
+struct Todo {
+    data.Context
+    Tasks    data.Set<Task>
+    Settings data.Set<Setting>
+}
+
+func name(s string) *string {
+    var x = s
+    return &x
+}
+
+async func main() void! {
+    var ctx = data.Open<Todo>(data.Provider.Sqlite, ":memory:")?
+    await ctx.EnsureCreated()?
+    for i in 1..7 {
+        ctx.Tasks.Add(new Task{Title: fmt.Format("task {0}", i), Priority: i % 3, Owner: name("ann")})
+    }
+    _ = await ctx.SaveChanges()?
+    ctx.ClearTracker()
+    ctx.LogTo((s) => println("  sql:", s))
+    var limit = 1
+    var n = await ctx.Tasks.Where((t) => t.Priority <= limit).ExecuteUpdate((s) => s.Set((t) => t.Done, true).Set((t) => t.Priority, (t) => t.Priority + 10).Set((t) => t.Owner, nil))?
+    println("updated", n)
+    var d = await ctx.Tasks.Where((t) => !t.Done).OrderBy((t) => t.Id).Take(1).ExecuteDelete()?
+    println("deleted", d)
+    ctx.LogTo((s) => {})
+    var rows = await ctx.Raw<Row>("select title, priority as prio from tasks where done = ? order by id", [true])?
+    for r in rows {
+        println(r.Title, r.Prio)
+    }
+    println(await ctx.Raw<int>("select count(*) from tasks where owner is null", [])?)
+    println(await ctx.ExecuteSql("update tasks set title = upper(title) where id = ?", [5])?, ctx.Tracked())
+    var odd = await ctx.Tasks.OrderBy((t) => t.Id).AsEnumerable().Where((t) => strings.HasSuffix(t.Title, "3") || t.Title == "TASK 5").ToList()?
+    for t in odd {
+        println(t.Id, t.Title, t.Done, t.Owner == nil)
+    }
+    println(await ctx.Tasks.AsEnumerable().Where((t) => t.Priority > 10).Count()?)
+
+    ctx.LogTo((s) => println("  sql:", s))
+    var theme = new Setting{Key: "theme", Value: "dark"}
+    ctx.Settings.UpsertBy(theme, (x) => x.Key)
+    _ = await ctx.SaveChanges()?
+    var again = new Setting{Key: "theme", Value: "light"}
+    ctx.Settings.UpsertBy(again, (x) => x.Key)
+    ctx.Settings.Upsert(new Setting{Id: 7, Key: "lang", Value: "en"})
+    _ = await ctx.SaveChanges()?
+    ctx.LogTo((s) => {})
+    println(theme.Id, again.Id, again.Value)
+    for x in await ctx.Settings.AsNoTracking().OrderBy((x) => x.Id).ToList()? {
+        println(x.Id, x.Key, x.Value)
+    }
+}

@@ -1,9 +1,8 @@
-namespace std.net.http.test
-
 // std.net.http.test (Go's net/http/httptest): a real server on a free
 // loopback port (NewServer, NewTLSServer, NewH2CServer) with a client set
 // up for it, a response recorder (NewRecorder) and test requests
 // (NewRequest) to call a Handler directly (Serve).
+namespace std.net.http.test
 
 // Server is a running test server. URL is its base ("http://127.0.0.1:port"
 // or https); Client talks to it (TLS servers: the test certificate is

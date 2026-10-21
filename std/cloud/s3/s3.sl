@@ -1,5 +1,3 @@
-namespace std.cloud.s3
-
 // std.cloud.s3: an S3 client written in Slang over std.net.http (docs/
 // STDLIB.md level 3b), compatible with AWS S3, MinIO, Cloudflare R2 and
 // Google Cloud Storage's XML API. Two files share the namespace:
@@ -16,6 +14,7 @@ namespace std.cloud.s3
 // over https). Errors from the service are s3.Error values; NoSuchKey,
 // NoSuchBucket, AccessDenied and PreconditionFailed also match the
 // sentinels ErrNoSuchKey... with errors.Is.
+namespace std.cloud.s3
 
 // ---- Signature V4 ----------------------------------------------------------------
 
@@ -319,6 +318,7 @@ struct Error {
     Resource string
     RequestID string
 
+    // Message returns "s3: Code: text".
     func Message() string {
         var s = "s3: " + this.Code
         if this.Text != "" {
@@ -523,6 +523,7 @@ struct Client {
         return getObject(this, bucket, key, opts)
     }
 
+    // HeadObject returns the metadata of an object without its body.
     func HeadObject(bucket string, key string) Task<ObjectInfo!> {
         return headObject(this, bucket, key)
     }
@@ -561,18 +562,22 @@ struct Client {
 
     // ---- buckets ----
 
+    // CreateBucket creates a bucket (in the client's region).
     func CreateBucket(bucket string) Task<void!> {
         return createBucket(this, bucket)
     }
 
+    // DeleteBucket deletes an empty bucket.
     func DeleteBucket(bucket string) Task<void!> {
         return simple(this, "DELETE", bucket, "", [], 204)
     }
 
+    // ListBuckets returns the buckets of the account.
     func ListBuckets() Task<[]BucketInfo!> {
         return listBuckets(this)
     }
 
+    // BucketExists reports whether a bucket exists and is accessible.
     func BucketExists(bucket string) Task<bool!> {
         return bucketExists(this, bucket)
     }
@@ -592,18 +597,22 @@ struct Client {
         return upload(this, bucket, key, asyncSource{r: r}, partSize, concurrency, opts)
     }
 
+    // CreateMultipartUpload starts a multipart upload and returns its upload ID.
     func CreateMultipartUpload(bucket string, key string, opts PutOptions) Task<string!> {
         return createMultipart(this, bucket, key, opts)
     }
 
+    // UploadPart uploads part number part (from 1) and returns its ETag.
     func UploadPart(bucket string, key string, uploadID string, part int, data []byte) Task<string!> {
         return uploadPart(this, bucket, key, uploadID, part, data)
     }
 
+    // CompleteMultipartUpload assembles the parts from their ETags (in part order).
     func CompleteMultipartUpload(bucket string, key string, uploadID string, etags []string) Task<PutResult!> {
         return completeMultipart(this, bucket, key, uploadID, etags)
     }
 
+    // AbortMultipartUpload discards an unfinished multipart upload.
     func AbortMultipartUpload(bucket string, key string, uploadID string) Task<void!> {
         return abortMultipart(this, bucket, key, uploadID)
     }
@@ -972,6 +981,7 @@ struct Object {
         return objectReadAll(this)
     }
 
+    // Close releases the connection of an unread body.
     func Close() {
         if this.body != nil {
             this.body.Close()
@@ -1117,6 +1127,7 @@ struct ObjectIterator {
     err error
     pages int
 
+    // Next returns the next object of the listing and true, or false at the end (see Err).
     async func Next() (ObjectInfo, bool) {
         var none ObjectInfo
         for {

@@ -1,9 +1,8 @@
-namespace std.crypto.rsa
-
 // RSA key generation (the signature and OAEP primitives are runtime
 // functions, crypto/rsa.c). Primes come from the runtime (random
 // candidates with the top two bits set, trial division, Miller-Rabin);
 // the key arithmetic uses std.math.big.
+namespace std.crypto.rsa
 
 // An RSA public key: modulus and exponent as big-endian bytes.
 struct PublicKey {

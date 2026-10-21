@@ -1,10 +1,9 @@
-namespace std.text.template
-
 // Run-time type check of a parsed template against its data type (the
 // same rules as the compile-time check of literal templates in
 // compiler/src/sema/tmplcheck.rs): every field path must exist in the
 // static type it is applied to; range needs a list, array, map or int.
 // Unknown types (any, interfaces, function results) end checking of a path.
+namespace std.text.template
 
 struct checker {
     t     *tmpl

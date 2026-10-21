@@ -1,5 +1,3 @@
-namespace std.encoding.xml
-
 // XML 1.0 for documents and configuration: a pull Reader (tokens with
 // namespaces resolved, tags checked), a Writer with indentation and
 // escaping, the dynamic Value tree and Parse<T>/Format<T> through
@@ -8,6 +6,7 @@ namespace std.encoding.xml
 // safety a DOCTYPE is reported as a Directive token and never interpreted:
 // no DTD is read and no entity other than the five predefined ones (and
 // character references) is expanded, so entity bombs are impossible.
+namespace std.encoding.xml
 
 // Token kinds.
 enum Kind {
@@ -36,6 +35,7 @@ struct Name {
     }
 }
 
+// Attr is an attribute of an element.
 struct Attr {
     Name  Name
     Value string
@@ -83,6 +83,7 @@ struct Reader {
     pendingEnd bool
     line       int
 
+    // Next returns the next token of the document; io.EOF at the end.
     func Next() Token! {
         if !this.scanned {
             this.toks = rtScan(this.text, this.Strict)?
@@ -240,6 +241,7 @@ struct Reader {
     }
 }
 
+// NewReader returns a reader over text (Strict is on).
 func NewReader(text string) *Reader {
     return &Reader{Strict: true, text: text}
 }
@@ -265,6 +267,7 @@ struct Value {
     Children []Value
     Text     string
 
+    // IsElement reports whether the value is an element.
     func IsElement() bool {
         return this.Kind == Kind.StartElement
     }
@@ -279,6 +282,7 @@ struct Value {
         return ""
     }
 
+    // HasAttr reports whether the element has an attribute with local name name.
     func HasAttr(name string) bool {
         for a in this.Attrs {
             if a.Name.Local == name {
@@ -351,6 +355,7 @@ func NewElement(name string, attrs []Attr, children []Value) Value {
     return Value{Kind: Kind.StartElement, Name: Name{Local: name}, Attrs: attrs, Children: children}
 }
 
+// NewText returns a character-data node.
 func NewText(text string) Value {
     return Value{Kind: Kind.CharData, Text: text}
 }
@@ -452,6 +457,7 @@ struct Writer {
         this.b.Write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
     }
 
+    // Start opens element name with attrs.
     func Start(name string, attrs []Attr) {
         this.closeStart()
         if len(this.content) > 0 {
@@ -500,6 +506,7 @@ struct Writer {
         this.End()
     }
 
+    // Text writes escaped character data.
     func Text(s string) {
         this.closeStart()
         if len(this.content) > 0 {
@@ -519,6 +526,7 @@ struct Writer {
         this.b.Write("]]>")
     }
 
+    // Comment writes <!--s-->.
     func Comment(s string) {
         this.closeStart()
         this.mark()
@@ -528,6 +536,7 @@ struct Writer {
         this.b.Write("-->")
     }
 
+    // ProcInst writes a processing instruction <?target inst?>.
     func ProcInst(target string, inst string) {
         this.closeStart()
         this.mark()
@@ -587,6 +596,7 @@ struct Writer {
     }
 }
 
+// NewWriter returns a writer with no indentation.
 func NewWriter() *Writer {
     return &Writer{}
 }

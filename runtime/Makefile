@@ -12,6 +12,13 @@
 #               $(CROSS) (or $(CROSS)-gcc without clang) against the mingw-w64 headers
 #   make CROSS=x86_64-w64-mingw32 test-wine -> the C unit tests built for Windows
 #               and run under wine (WINE=wine); prints which pass
+#   make CROSS=aarch64-apple-darwin (or x86_64-apple-darwin) -> macOS: with an SDK
+#               (SDKROOT, or xcrun on a Mac) build/<triple>/libslang_rt.a; without
+#               one, a compile check of every file against stub-sdk/macos/
+#               (objects in build/<triple>-stubcheck/, never linked)
+#   make CROSS=aarch64-linux-gnu / x86_64-linux-musl / aarch64-linux-musl -> Linux
+#               cross runtimes in build/<triple>/ (gcc-aarch64-linux-gnu sysroot,
+#               musl-gcc's headers); test-qemu runs the C tests under qemu-<arch>
 
 CC      ?= cc
 AR      ?= ar
@@ -39,15 +46,46 @@ PICFLAG :=
 OSFLAGS := -D_WIN32_WINNT=0x0A00
 LDLIBS  = -lws2_32 -liphlpapi -lbcrypt -lshell32 -ladvapi32 -lm
 RDYNAMIC :=
+else ifneq ($(findstring apple-darwin,$(CROSS)),)
+TARGET_OS := macos
+TRIPLE  := $(CROSS)
+DARWIN_ARCH := $(if $(findstring aarch64,$(CROSS)),arm64,x86_64)
+SDKROOT ?= $(shell xcrun --sdk macosx --show-sdk-path 2>/dev/null)
+ifeq ($(HAVE_CLANG),yes)
+CC      := $(CLANG) -target $(DARWIN_ARCH)-apple-macos12
+endif
+ifneq ($(SDKROOT),)
+BUILD   := build/$(CROSS)
+OSFLAGS := -isysroot $(SDKROOT)
+else
+# No SDK: compile-check against the stub headers; the objects are not a runtime.
+BUILD   := build/$(CROSS)-stubcheck
+OSFLAGS := -nostdlibinc -isystem stub-sdk/macos/include
+STUBCHECK := yes
+endif
+EXE     :=
+PICFLAG := -fPIC
+LDLIBS  = -lpthread -lm
+RDYNAMIC :=
 else
 TARGET_OS := other
 BUILD   := build/$(CROSS)
-TRIPLE  := $(CROSS)
+# the LLVM triple the compiler looks for (build/<triple>/): aarch64-linux-gnu
+# -> aarch64-unknown-linux-gnu, x86_64-linux-musl -> x86_64-unknown-linux-musl
+TRIPLE  := $(if $(findstring -unknown-,$(CROSS)),$(CROSS),$(subst -linux-,-unknown-linux-,$(CROSS)))
 EXE     :=
 PICFLAG := -fPIC
 OSFLAGS :=
 LDLIBS  = -lpthread -lm
 RDYNAMIC := -rdynamic
+# musl: clang -target x86_64-linux-musl with musl-gcc's headers (musl-tools);
+# aarch64-linux-gnu: gcc-aarch64-linux-gnu's sysroot (clang finds it).
+ifneq ($(findstring musl,$(CROSS)),)
+MUSL_INC ?= $(firstword $(wildcard /usr/include/$(subst -linux-musl,,$(CROSS))-linux-musl /usr/lib/musl/include /usr/local/musl/include))
+ifneq ($(MUSL_INC),)
+OSFLAGS := -nostdinc -isystem $(MUSL_INC) -isystem $(shell $(CLANG) -print-resource-dir)/include
+endif
+endif
 endif
 else
 TARGET_OS := host
@@ -69,13 +107,17 @@ TESTS   := $(patsubst tests/%.c,$(BUILD)/tests/%,$(wildcard tests/test_*.c))
 # sanitizer allocator lock inherited from a worker thread (intermittent hang).
 TASK_TEST_ENV ?=
 
-.PHONY: all test clean asan tsan test-wine
+.PHONY: all test clean asan tsan test-wine test-cross
 
 ifeq ($(CROSS),)
 all: libslang_rt.a
 
 libslang_rt.a: $(LIB)
 	cp $(LIB) $@
+else ifeq ($(STUBCHECK),yes)
+all: $(OBJS)
+	@for t in tests/test_*.c; do $(CC) $(CFLAGS) -fsyntax-only $$t || exit 1; done
+	@echo "macOS stub-SDK compile check passed: $(words $(OBJS)) runtime files + tests ($(BUILD)/; not a usable runtime: set SDKROOT or build on a Mac)"
 else
 all: build/$(TRIPLE)/libslang_rt.a
 
@@ -142,6 +184,33 @@ test-wine: $(LIB) | $(BUILD)/tests
 	done; \
 	echo "WINE PASS:$$pass"; echo "WINE FAIL:$$fail"; echo "WINE NOT BUILT:$$nobuild"; \
 	[ -z "$$fail" ]
+
+# The C unit tests built for a Linux cross target and run here: under
+# user-mode QEMU for another CPU (QEMU=qemu-aarch64-static, with the target's
+# loader from QEMU_LD_PREFIX=/usr/<cpu>-linux-gnu), directly for musl on the
+# same CPU (static, linked by musl-gcc). Same report as test-wine.
+CROSS_CPU := $(firstword $(subst -, ,$(CROSS)))
+HOST_CPU := $(shell uname -m)
+ifneq ($(findstring musl,$(CROSS)),)
+TEST_LINK ?= $(if $(filter $(CROSS_CPU),$(HOST_CPU)),musl-gcc,$(CC) -fuse-ld=lld) -static
+else
+TEST_LINK ?= $(CC) -fuse-ld=lld
+endif
+QEMU ?= $(if $(filter $(CROSS_CPU),$(HOST_CPU)),,qemu-$(CROSS_CPU)-static)
+QEMU_LD_PREFIX ?= /usr/$(CROSS_CPU)-linux-gnu
+test-cross: all | $(BUILD)/tests
+	@if [ -z "$(CROSS)" ]; then echo "test-cross needs CROSS=aarch64-linux-gnu or x86_64-linux-musl"; exit 2; fi
+	@pass=""; fail=""; nobuild=""; for t in $(WINE_TESTS); do \
+	  if ! $(CC) $(CFLAGS) -c tests/$$t.c -o $(BUILD)/tests/$$t.o > $(BUILD)/tests/$$t.build.log 2>&1 || \
+	     ! $(TEST_LINK) $(BUILD)/tests/$$t.o -o $(BUILD)/tests/$$t $(LIB) $(LDLIBS) >> $(BUILD)/tests/$$t.build.log 2>&1; then \
+	    nobuild="$$nobuild $$t"; echo "== $$t: does not build (see $(BUILD)/tests/$$t.build.log)"; continue; fi; \
+	  echo "== $$t ($(if $(QEMU),$(QEMU),native))"; \
+	  if QEMU_LD_PREFIX=$(QEMU_LD_PREFIX) timeout 600 $(QEMU) $(BUILD)/tests/$$t > $(BUILD)/tests/$$t.log 2>&1; then \
+	    pass="$$pass $$t"; tail -1 $(BUILD)/tests/$$t.log; \
+	  else fail="$$fail $$t"; tail -5 $(BUILD)/tests/$$t.log; fi; \
+	done; \
+	echo "CROSS PASS:$$pass"; echo "CROSS FAIL:$$fail"; echo "CROSS NOT BUILT:$$nobuild"; \
+	[ -z "$$fail" ] && [ -z "$$nobuild" ]
 
 asan:
 	$(MAKE) clean

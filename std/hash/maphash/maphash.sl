@@ -1,9 +1,8 @@
-namespace std.hash.maphash
-
 // std.hash.maphash: fast seeded hashing of byte strings for hash tables
 // (Go's hash/maphash). The function is SipHash-1-3 (C,
 // runtime/src/std_hash.c): keyed, so attackers who do not know the seed
 // cannot craft collisions. Not a cryptographic MAC.
+namespace std.hash.maphash
 
 // A random 128-bit key. Hashes are only comparable under the same Seed.
 struct Seed {
@@ -57,6 +56,7 @@ struct Hash {
         this.buf = nil
     }
 
+    // Seed returns the seed (choosing a random one on first use).
     func Seed() Seed {
         this.init()
         return this.seed
@@ -69,6 +69,7 @@ struct Hash {
         }
     }
 
+    // Write adds p to the hash; it never fails.
     func Write(p []byte) int! {
         for c in p {
             this.buf = append(this.buf, c)
@@ -76,6 +77,7 @@ struct Hash {
         return len(p)
     }
 
+    // WriteString adds the bytes of s to the hash.
     func WriteString(s string) int! {
         for i in 0..len(s) {
             this.buf = append(this.buf, s[i])
@@ -83,23 +85,28 @@ struct Hash {
         return len(s)
     }
 
+    // Sum64 returns the hash of the bytes written.
     func Sum64() uint {
         this.init()
         return Bytes(this.seed, this.buf)
     }
 
+    // Sum returns the hash as 8 big-endian bytes.
     func Sum() []byte {
         return std.hash.Bytes64(this.Sum64())
     }
 
+    // Reset discards the bytes written (the seed stays).
     func Reset() {
         this.buf = nil
     }
 
+    // Size returns 8.
     func Size() int {
         return 8
     }
 
+    // BlockSize returns 8.
     func BlockSize() int {
         return 8
     }

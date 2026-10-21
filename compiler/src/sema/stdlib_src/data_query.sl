@@ -1,0 +1,939 @@
+namespace std.data
+
+// Queries: the SQL fragments are produced by the compiler from the lambdas
+// (sema/orm.rs) for both dialects; a fragment's text references its
+// arguments as {?i} (one value) and {*i} (a list, expanded to one
+// placeholder per element). This file assembles SELECT/UPDATE/DELETE
+// statements from them, numbers the placeholders for the provider, runs
+// them and maps the rows.
+
+// A SQL fragment for both dialects and its arguments.
+struct Frag {
+    pg   string
+    lite string
+    args []any
+}
+
+func addFrag(xs []Frag, f Frag) []Frag {
+    var out []Frag = []
+    for x in xs {
+        out = append(out, x)
+    }
+    out = append(out, f)
+    return out
+}
+
+// A statement being written: text and arguments with numbered placeholders.
+struct sqlw {
+    pg     bool
+    b      std.strings.Builder
+    args   []any
+    // GROUP BY keys, referenced as {#i} by the projection of a group
+    groups []Frag
+
+    func raw(s string) {
+        this.b.Write(s)
+    }
+
+    func ph(v any) {
+        this.args = append(this.args, v)
+        if this.pg {
+            this.b.Write("$" + std.fmt.Format("{0}", len(this.args)))
+        } else {
+            this.b.Write("?")
+        }
+    }
+
+    // Appends fragment f with its markers replaced by placeholders.
+    func frag(f Frag) {
+        var s = f.lite
+        if this.pg {
+            s = f.pg
+        }
+        var n = len(s)
+        var i = 0
+        var start = 0
+        for i < n {
+            var c = int(s[i])
+            if c == 123 && i + 1 < n && (int(s[i + 1]) == 63 || int(s[i + 1]) == 42 || int(s[i + 1]) == 35) {
+                var j = i + 2
+                var idx = 0
+                for j < n && int(s[j]) >= 48 && int(s[j]) <= 57 {
+                    idx = idx * 10 + int(s[j]) - 48
+                    j += 1
+                }
+                if j < n && int(s[j]) == 125 {
+                    this.b.Write(s[start..i])
+                    var a any = nil
+                    if idx < len(f.args) {
+                        a = f.args[idx]
+                    }
+                    if int(s[i + 1]) == 63 {
+                        this.ph(a)
+                    } else if int(s[i + 1]) == 42 {
+                        this.list(a)
+                    } else if idx < len(this.groups) {
+                        this.frag(this.groups[idx])
+                    }
+                    i = j + 1
+                    start = i
+                    continue
+                }
+            }
+            i += 1
+        }
+        this.b.Write(s[start..n])
+    }
+
+    // A list argument: one placeholder per element (NULL for an empty list).
+    func list(a any) {
+        var xs []any = []
+        switch a {
+            case []any vs:
+                xs = vs
+        }
+        if len(xs) == 0 {
+            this.b.Write("NULL")
+            return
+        }
+        for i, x in xs {
+            if i > 0 {
+                this.b.Write(", ")
+            }
+            this.ph(x)
+        }
+    }
+
+    func text() string {
+        return this.b.String()
+    }
+}
+
+// The SQL parts of a query over a root table aliased t0.
+struct core {
+    st       *ctxState
+    meta     *EntityMeta
+    joins    []Frag
+    wheres   []Frag
+    orders   []Frag
+    groups   []Frag
+    havings  []Frag
+    skip     int
+    take     int
+    distinct bool
+
+    func writer() sqlw {
+        return sqlw{pg: this.st.pg(), b: std.strings.Builder{}, args: [], groups: this.groups}
+    }
+
+    func paged() bool {
+        return this.skip > 0 || this.take >= 0
+    }
+
+    // FROM ... WHERE ... GROUP BY ... HAVING ...
+    func from(w *sqlw) {
+        w.raw(" FROM " + quoteIdent(this.meta.Table) + " AS t0")
+        for j in this.joins {
+            w.frag(j)
+        }
+        this.whereGroup(w)
+    }
+
+    func whereGroup(w *sqlw) {
+        for i, f in this.wheres {
+            if i == 0 {
+                w.raw(" WHERE ")
+            } else {
+                w.raw(" AND ")
+            }
+            if len(this.wheres) > 1 {
+                w.raw("(")
+                w.frag(f)
+                w.raw(")")
+            } else {
+                w.frag(f)
+            }
+        }
+        for i, f in this.groups {
+            if i == 0 {
+                w.raw(" GROUP BY ")
+            } else {
+                w.raw(", ")
+            }
+            w.frag(f)
+        }
+        for i, f in this.havings {
+            if i == 0 {
+                w.raw(" HAVING ")
+            } else {
+                w.raw(" AND ")
+            }
+            w.raw("(")
+            w.frag(f)
+            w.raw(")")
+        }
+    }
+
+    func orderBy(w *sqlw, extra string) {
+        var n = 0
+        for f in this.orders {
+            if n == 0 {
+                w.raw(" ORDER BY ")
+            } else {
+                w.raw(", ")
+            }
+            w.frag(f)
+            n += 1
+        }
+        if extra != "" {
+            if n == 0 {
+                w.raw(" ORDER BY ")
+            } else {
+                w.raw(", ")
+            }
+            w.raw(extra)
+        }
+    }
+
+    func paging(w *sqlw) {
+        if this.take >= 0 {
+            w.raw(" LIMIT " + std.fmt.Format("{0}", this.take))
+        } else if this.skip > 0 && !this.st.pg() {
+            w.raw(" LIMIT -1")
+        }
+        if this.skip > 0 {
+            w.raw(" OFFSET " + std.fmt.Format("{0}", this.skip))
+        }
+    }
+
+    // SELECT [DISTINCT] sel FROM ... ORDER BY ... LIMIT ...
+    func selectSql(w *sqlw, sel Frag) {
+        w.raw("SELECT ")
+        if this.distinct {
+            w.raw("DISTINCT ")
+        }
+        w.frag(sel)
+        this.from(w)
+        this.orderBy(w, "")
+        this.paging(w)
+    }
+
+    // SELECT COUNT(*) ...
+    func countSql(w *sqlw, sel Frag) {
+        if this.distinct || this.paged() || len(this.groups) > 0 {
+            w.raw("SELECT COUNT(*) FROM (")
+            this.selectSql(w, sel)
+            w.raw(") AS c")
+            return
+        }
+        w.raw("SELECT COUNT(*)")
+        this.from(w)
+    }
+
+    func existsSql(w *sqlw, sel Frag) {
+        w.raw("SELECT EXISTS (")
+        if this.distinct || this.paged() || len(this.groups) > 0 {
+            this.selectSql(w, sel)
+        } else {
+            w.raw("SELECT 1")
+            this.from(w)
+        }
+        w.raw(")")
+    }
+
+    // The FROM source of an aggregate or a joined include: the table, or
+    // the paged/distinct query as a subquery aliased t0.
+    func source(w *sqlw) {
+        if this.paged() || this.distinct {
+            w.raw(" FROM (")
+            this.selectSql(w, entityCols(this.meta))
+            w.raw(") AS t0")
+        } else {
+            this.from(w)
+        }
+    }
+
+    func count(sel Frag) Task<int!> {
+        return core_count(*this, sel)
+    }
+
+    func exists(sel Frag) Task<bool!> {
+        return core_exists(*this, sel)
+    }
+}
+
+async func core_count(q core, sel Frag) int! {
+    var w = q.writer()
+    q.countSql(&w, sel)
+    var rows = await q.st.all(w.text(), w.args)?
+    var n = 0
+    if len(rows) > 0 && len(rows[0]) > 0 {
+        std.database.sql.convertInto(&n, rows[0][0], "count")?
+    }
+    return n
+}
+
+async func core_exists(q core, sel Frag) bool! {
+    var w = q.writer()
+    q.existsSql(&w, sel)
+    var rows = await q.st.all(w.text(), w.args)?
+    var b = false
+    if len(rows) > 0 && len(rows[0]) > 0 {
+        std.database.sql.convertInto(&b, rows[0][0], "exists")?
+    }
+    return b
+}
+
+func newCore(st *ctxState, m *EntityMeta) core {
+    return core{st: st, meta: m, joins: [], wheres: [], orders: [], groups: [], havings: [], skip: 0, take: -1, distinct: false}
+}
+
+func entityCols(m *EntityMeta) Frag {
+    var cols = columnList(m, "t0")
+    return Frag{pg: cols, lite: cols, args: []}
+}
+
+// A navigation loaded with the query (Include): joined into the query or
+// loaded by a second query (AsSplitQuery). Built by the compiler.
+struct Include<T> {
+    name     string
+    load     func(*ctxState, []*T, bool) Task<void!>
+    join     Frag
+    cols     string
+    ncols    int
+    childKey int
+    attach   func(*ctxState, *T, []any, int, bool) void!
+    reset    func(*T)
+}
+
+// A query of entities T (ctx.Users.Where(...)). Values are immutable: every
+// operator returns a new query.
+struct Query<T> {
+    c        core
+    ent      *Entity<T>
+    tracking bool
+    split    bool
+    includes []Include<T>
+
+    // The query without change tracking: entities are neither tracked nor
+    // taken from the identity map.
+    func AsNoTracking() Query<T> {
+        var q = *this
+        q.tracking = false
+        return q
+    }
+
+    func AsTracking() Query<T> {
+        var q = *this
+        q.tracking = true
+        return q
+    }
+
+    // Includes are loaded by one query per navigation instead of joins.
+    func AsSplitQuery() Query<T> {
+        var q = *this
+        q.split = true
+        return q
+    }
+
+    func AsSingleQuery() Query<T> {
+        var q = *this
+        q.split = false
+        return q
+    }
+
+    // Skips n rows (OFFSET).
+    func Skip(n int) Query<T> {
+        var q = *this
+        q.c.skip = n
+        return q
+    }
+
+    // At most n rows (LIMIT).
+    func Take(n int) Query<T> {
+        var q = *this
+        q.c.take = n
+        return q
+    }
+
+    func Distinct() Query<T> {
+        var q = *this
+        q.c.distinct = true
+        return q
+    }
+
+    // Client-side evaluation: the query runs as it is and the following
+    // operators (with ordinary function values) run in memory.
+    func AsEnumerable() Enumerable<T> {
+        return Enumerable<T>{q: *this, filters: []}
+    }
+
+    func where_(pg string, lite string, args []any) Query<T> {
+        var q = *this
+        q.c.wheres = addFrag(q.c.wheres, Frag{pg: pg, lite: lite, args: args})
+        return q
+    }
+
+    func order_(pg string, lite string, args []any, then bool) Query<T> {
+        var q = *this
+        if !then {
+            q.c.orders = []
+        }
+        q.c.orders = addFrag(q.c.orders, Frag{pg: pg, lite: lite, args: args})
+        return q
+    }
+
+    func include_(inc Include<T>) Query<T> {
+        var q = *this
+        var xs []Include<T> = []
+        for x in q.includes {
+            xs = append(xs, x)
+        }
+        xs = append(xs, inc)
+        q.includes = xs
+        return q
+    }
+
+    func select_<R>(pg string, lite string, args []any, m func([]any, *R) void!) Projection<R> {
+        return Projection<R>{c: this.c, sel: Frag{pg: pg, lite: lite, args: args}, m: m}
+    }
+
+    func join_<R>(jpg string, jlite string, jargs []any, pg string, lite string, args []any, m func([]any, *R) void!) Projection<R> {
+        var c = this.c
+        c.joins = addFrag(c.joins, Frag{pg: jpg, lite: jlite, args: jargs})
+        return Projection<R>{c: c, sel: Frag{pg: pg, lite: lite, args: args}, m: m}
+    }
+
+    func group_<K>(pgs []string, lites []string, args []any) Grouped<T, K> {
+        var c = this.c
+        c.groups = []
+        for i, pg in pgs {
+            c.groups = addFrag(c.groups, Frag{pg: pg, lite: lites[i], args: args})
+        }
+        return Grouped<T, K>{c: c, ent: this.ent}
+    }
+
+    // An aggregate (SUM, MIN, ...): empty 0 gives the zero value for an
+    // empty set, 1 fails with NoElementsError.
+    func scalar_<R>(pg string, lite string, args []any, empty int, what string) Task<R!> {
+        return query_scalar<T, R>(*this, pg, lite, args, empty, what)
+    }
+
+    // All(pred): NOT EXISTS (... WHERE NOT pred).
+    func all_(pg string, lite string, args []any) Task<bool!> {
+        return query_all(*this, pg, lite, args)
+    }
+
+    // ExecuteUpdate: UPDATE ... SET (generated) WHERE ...
+    func update_(pg string, lite string, args []any) Task<int!> {
+        return query_update(*this, pg, lite, args)
+    }
+
+    // The WHERE of a set-based statement (a key subquery for paged or
+    // joined queries).
+    func setScope(w *sqlw) {
+        var m = this.c.meta
+        if this.c.paged() || len(this.c.joins) > 0 || len(this.c.orders) > 0 && this.c.paged() {
+            if m.Key < 0 {
+                return
+            }
+            var k = quoteIdent(m.Columns[m.Key].Name)
+            w.raw(" WHERE t0." + k + " IN (SELECT t0." + k)
+            this.c.from(w)
+            this.c.orderBy(w, "")
+            this.c.paging(w)
+            w.raw(")")
+            return
+        }
+        this.c.whereGroup(w)
+    }
+
+    // Deletes the matching rows (set-based, without loading or tracking);
+    // returns the number of rows deleted.
+    func ExecuteDelete() Task<int!> {
+        return query_ExecuteDelete(*this)
+    }
+
+    // The SELECT statement of the query (with $n or ? placeholders).
+    func ToSql() string {
+        var w = this.c.writer()
+        this.writeSelect(&w)
+        return w.text()
+    }
+
+    // The arguments of ToSql's statement.
+    func Args() []any {
+        var w = this.c.writer()
+        this.writeSelect(&w)
+        return w.args
+    }
+
+    func joined() bool {
+        return len(this.includes) > 0 && !this.split
+    }
+
+    func writeSelect(w *sqlw) {
+        if !this.joined() {
+            this.c.selectSql(w, entityCols(this.c.meta))
+            return
+        }
+        var m = this.c.meta
+        w.raw("SELECT ")
+        w.raw(columnList(m, "t0"))
+        for inc in this.includes {
+            w.raw(", " + inc.cols)
+        }
+        var key = ""
+        if m.Key >= 0 {
+            key = "t0." + quoteIdent(m.Columns[m.Key].Name)
+        }
+        if this.c.paged() || this.c.distinct {
+            w.raw(" FROM (")
+            this.c.selectSql(w, entityCols(m))
+            w.raw(") AS t0")
+            for inc in this.includes {
+                w.frag(inc.join)
+            }
+        } else {
+            w.raw(" FROM " + quoteIdent(m.Table) + " AS t0")
+            for j in this.c.joins {
+                w.frag(j)
+            }
+            for inc in this.includes {
+                w.frag(inc.join)
+            }
+            this.c.whereGroup(w)
+        }
+        this.c.orderBy(w, key)
+    }
+
+    // Runs the query: the entities in order (tracked ones are the
+    // instances the context already tracks).
+    func ToList() Task<[]*T!> {
+        return query_ToList(*this)
+    }
+
+    // The first entity (NoElementsError if there is none).
+    func First() Task<*T!> {
+        return query_First(*this)
+    }
+
+    // The first entity, or nil.
+    func FirstOrDefault() Task<*T!> {
+        return query_FirstOrDefault(*this)
+    }
+
+    // The only entity (an error if there is none or more than one).
+    func Single() Task<*T!> {
+        return query_Single(*this)
+    }
+
+    // The only entity or nil (an error if there is more than one).
+    func SingleOrDefault() Task<*T!> {
+        return query_SingleOrDefault(*this)
+    }
+
+    // Number of matching rows (SELECT COUNT(*)).
+    func Count() Task<int!> {
+        return query_Count(*this)
+    }
+
+    // Whether any row matches (SELECT EXISTS).
+    func Any() Task<bool!> {
+        return query_Any(*this)
+    }
+}
+
+async func query_scalar<T, R>(q Query<T>, pg string, lite string, args []any, empty int, what string) R! {
+    var w = q.c.writer()
+    w.raw("SELECT ")
+    w.frag(Frag{pg: pg, lite: lite, args: args})
+    q.c.source(&w)
+    var rows = await q.c.st.all(w.text(), w.args)?
+    var r R
+    if len(rows) == 0 || len(rows[0]) == 0 || rows[0][0] == nil {
+        if empty == 1 {
+            return NoElementsError{What: what}
+        }
+        return r
+    }
+    std.database.sql.convertInto(&r, rows[0][0], what)?
+    return r
+}
+
+async func query_all<T>(q Query<T>, pg string, lite string, args []any) bool! {
+    var q2 = q.where_("NOT (" + pg + ")", "NOT (" + lite + ")", args)
+    return !await q2.c.exists(entityCols(q2.c.meta))?
+}
+
+async func query_update<T>(q Query<T>, pg string, lite string, args []any) int! {
+    var w = q.c.writer()
+    w.raw("UPDATE " + quoteIdent(q.c.meta.Table) + " AS t0 SET ")
+    w.frag(Frag{pg: pg, lite: lite, args: args})
+    q.setScope(&w)
+    var r = await q.c.st.exec(w.text(), w.args)?
+    return r.RowsAffected
+}
+
+async func query_ExecuteDelete<T>(q Query<T>) int! {
+    var w = q.c.writer()
+    w.raw("DELETE FROM " + quoteIdent(q.c.meta.Table) + " AS t0")
+    q.setScope(&w)
+    var r = await q.c.st.exec(w.text(), w.args)?
+    return r.RowsAffected
+}
+
+async func query_ToList<T>(q Query<T>) []*T! {
+    var w = q.c.writer()
+    q.writeSelect(&w)
+    var rows = await q.c.st.all(w.text(), w.args)?
+    var out []*T = []
+    var st = q.c.st
+    if q.joined() {
+        var m = q.c.meta
+        var byKey = map[string]*T{}
+        var seen = map[string]bool{}
+        for vals in rows {
+            var pk = keyText(vals[m.Key])
+            var p = byKey[pk]
+            if p == nil {
+                p = materialize(st, q.ent, vals, 0, q.tracking)?
+                byKey[pk] = p
+                for inc in q.includes {
+                    inc.reset(p)
+                }
+                out = append(out, p)
+            }
+            var off = len(m.Columns)
+            for ii, inc in q.includes {
+                var ck = vals[off + inc.childKey]
+                if ck != nil {
+                    var sk = pk + "/" + std.fmt.Format("{0}", ii) + "/" + keyText(ck)
+                    if !seen[sk] {
+                        seen[sk] = true
+                        inc.attach(st, p, vals, off, q.tracking)?
+                    }
+                }
+                off += inc.ncols
+            }
+        }
+        return out
+    }
+    for vals in rows {
+        out = append(out, materialize(st, q.ent, vals, 0, q.tracking)?)
+    }
+    if len(q.includes) > 0 && len(out) > 0 {
+        for inc in q.includes {
+            await inc.load(st, out, q.tracking)?
+        }
+    }
+    return out
+}
+
+async func query_First<T>(q Query<T>) *T! {
+    var xs = await q.Take(1).ToList()?
+    if len(xs) == 0 {
+        return NoElementsError{What: "First " + q.c.meta.Entity}
+    }
+    return xs[0]
+}
+
+async func query_FirstOrDefault<T>(q Query<T>) *T! {
+    var xs = await q.Take(1).ToList()?
+    if len(xs) == 0 {
+        return nil
+    }
+    return xs[0]
+}
+
+async func query_Single<T>(q Query<T>) *T! {
+    var xs = await q.Take(2).ToList()?
+    if len(xs) == 0 {
+        return NoElementsError{What: "Single " + q.c.meta.Entity}
+    }
+    if len(xs) > 1 {
+        return error("data: Single " + q.c.meta.Entity + ": the sequence contains more than one element")
+    }
+    return xs[0]
+}
+
+async func query_SingleOrDefault<T>(q Query<T>) *T! {
+    var xs = await q.Take(2).ToList()?
+    if len(xs) > 1 {
+        return error("data: SingleOrDefault " + q.c.meta.Entity + ": the sequence contains more than one element")
+    }
+    if len(xs) == 0 {
+        return nil
+    }
+    return xs[0]
+}
+
+async func query_Count<T>(q Query<T>) int! {
+    return await q.c.count(entityCols(q.c.meta))?
+}
+
+async func query_Any<T>(q Query<T>) bool! {
+    return await q.c.exists(entityCols(q.c.meta))?
+}
+
+// The rows of a projection (Select, Join, GroupBy(...).Select).
+struct Projection<R> {
+    c   core
+    sel Frag
+    m   func([]any, *R) void!
+
+    func Skip(n int) Projection<R> {
+        var q = *this
+        q.c.skip = n
+        return q
+    }
+
+    func Take(n int) Projection<R> {
+        var q = *this
+        q.c.take = n
+        return q
+    }
+
+    func Distinct() Projection<R> {
+        var q = *this
+        q.c.distinct = true
+        return q
+    }
+
+    func ToSql() string {
+        var w = this.c.writer()
+        this.c.selectSql(&w, this.sel)
+        return w.text()
+    }
+
+    func Args() []any {
+        var w = this.c.writer()
+        this.c.selectSql(&w, this.sel)
+        return w.args
+    }
+
+    func ToList() Task<[]R!> {
+        return projection_ToList(*this)
+    }
+
+    func First() Task<R!> {
+        return projection_First(*this)
+    }
+
+    // The first row, or the zero value.
+    func FirstOrDefault() Task<R!> {
+        return projection_FirstOrDefault(*this)
+    }
+
+    func Single() Task<R!> {
+        return projection_Single(*this)
+    }
+
+    func Count() Task<int!> {
+        return projection_Count(*this)
+    }
+
+    func Any() Task<bool!> {
+        return projection_Any(*this)
+    }
+}
+
+async func projection_ToList<R>(q Projection<R>) []R! {
+    var w = q.c.writer()
+    q.c.selectSql(&w, q.sel)
+    var rows = await q.c.st.all(w.text(), w.args)?
+    var out []R = []
+    for vals in rows {
+        var r R
+        q.m(vals, &r)?
+        out = append(out, r)
+    }
+    return out
+}
+
+async func projection_First<R>(q Projection<R>) R! {
+    var xs = await q.Take(1).ToList()?
+    if len(xs) == 0 {
+        return NoElementsError{What: "First"}
+    }
+    return xs[0]
+}
+
+async func projection_FirstOrDefault<R>(q Projection<R>) R! {
+    var xs = await q.Take(1).ToList()?
+    var r R
+    if len(xs) > 0 {
+        r = xs[0]
+    }
+    return r
+}
+
+async func projection_Single<R>(q Projection<R>) R! {
+    var xs = await q.Take(2).ToList()?
+    if len(xs) != 1 {
+        if len(xs) == 0 {
+            return NoElementsError{What: "Single"}
+        }
+        return error("data: Single: the sequence contains more than one element")
+    }
+    return xs[0]
+}
+
+async func projection_Count<R>(q Projection<R>) int! {
+    return await q.c.count(q.sel)?
+}
+
+async func projection_Any<R>(q Projection<R>) bool! {
+    return await q.c.exists(q.sel)?
+}
+
+// GroupBy(key): finished by Select((g) => (g.Key, g.Count(), g.Sum(...)));
+// Where on a group is HAVING.
+struct Grouped<T, K> {
+    c   core
+    ent *Entity<T>
+
+    func having_(pg string, lite string, args []any) Grouped<T, K> {
+        var q = *this
+        q.c.havings = addFrag(q.c.havings, Frag{pg: pg, lite: lite, args: args})
+        return q
+    }
+
+    func order_(pg string, lite string, args []any, then bool) Grouped<T, K> {
+        var q = *this
+        if !then {
+            q.c.orders = []
+        }
+        q.c.orders = addFrag(q.c.orders, Frag{pg: pg, lite: lite, args: args})
+        return q
+    }
+
+    func select_<R>(pg string, lite string, args []any, m func([]any, *R) void!) Projection<R> {
+        return Projection<R>{c: this.c, sel: Frag{pg: pg, lite: lite, args: args}, m: m}
+    }
+}
+
+// Client-side operators after AsEnumerable(): the query runs as it is,
+// the functions filter in memory.
+struct Enumerable<T> {
+    q       Query<T>
+    filters []func(*T) bool
+
+    func Where(f func(*T) bool) Enumerable<T> {
+        var e = *this
+        var fs []func(*T) bool = []
+        for x in e.filters {
+            fs = append(fs, x)
+        }
+        fs = append(fs, f)
+        e.filters = fs
+        return e
+    }
+
+    func ToList() Task<[]*T!> {
+        return enumerable_ToList(*this)
+    }
+
+    func First() Task<*T!> {
+        return enumerable_First(*this)
+    }
+
+    func Count() Task<int!> {
+        return enumerable_Count(*this)
+    }
+}
+
+async func enumerable_ToList<T>(q Enumerable<T>) []*T! {
+    var xs = await q.q.ToList()?
+    var out []*T = []
+    for x in xs {
+        var ok = true
+        for f in q.filters {
+            if ok && !f(x) {
+                ok = false
+            }
+        }
+        if ok {
+            out = append(out, x)
+        }
+    }
+    return out
+}
+
+async func enumerable_First<T>(q Enumerable<T>) *T! {
+    var xs = await q.ToList()?
+    if len(xs) == 0 {
+        return NoElementsError{What: "First"}
+    }
+    return xs[0]
+}
+
+async func enumerable_Count<T>(q Enumerable<T>) int! {
+    var xs = await q.ToList()?
+    return len(xs)
+}
+
+// The entities of m whose column col is one of keys (split includes,
+// explicit loading).
+async func loadIn<T>(st *ctxState, ent *Entity<T>, col string, keys []any, tracking bool) []*T! {
+    var out []*T = []
+    var uniq []any = []
+    var seen = map[string]bool{}
+    for k in keys {
+        if k != nil {
+            var t = keyText(k)
+            if !seen[t] {
+                seen[t] = true
+                uniq = append(uniq, k)
+            }
+        }
+    }
+    if len(uniq) == 0 {
+        return out
+    }
+    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    w.raw("SELECT " + columnList(ent.Meta, "t0") + " FROM " + quoteIdent(ent.Meta.Table) + " AS t0 WHERE t0." + quoteIdent(col) + " IN (")
+    w.list(uniq)
+    w.raw(")")
+    if ent.Meta.Key >= 0 {
+        w.raw(" ORDER BY t0." + quoteIdent(ent.Meta.Columns[ent.Meta.Key].Name))
+    }
+    var rows = await st.all(w.text(), w.args)?
+    for vals in rows {
+        out = append(out, materialize(st, ent, vals, 0, tracking)?)
+    }
+    return out
+}
+
+// Entities of a many-to-many navigation with the owner key of each.
+struct linked<T> {
+    items  []*T
+    owners []string
+}
+
+async func loadThrough<T>(st *ctxState, ent *Entity<T>, through string, ownerCol string, targetCol string, keys []any, tracking bool) linked<T>! {
+    var out = linked<T>{items: [], owners: []}
+    var uniq []any = []
+    var seen = map[string]bool{}
+    for k in keys {
+        if k != nil && !seen[keyText(k)] {
+            seen[keyText(k)] = true
+            uniq = append(uniq, k)
+        }
+    }
+    if len(uniq) == 0 || ent.Meta.Key < 0 {
+        return out
+    }
+    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    var k = quoteIdent(ent.Meta.Columns[ent.Meta.Key].Name)
+    w.raw("SELECT " + columnList(ent.Meta, "t0") + ", j." + quoteIdent(ownerCol) + " FROM " + quoteIdent(ent.Meta.Table) + " AS t0 JOIN " + quoteIdent(through) + " AS j ON j." + quoteIdent(targetCol) + " = t0." + k + " WHERE j." + quoteIdent(ownerCol) + " IN (")
+    w.list(uniq)
+    w.raw(") ORDER BY t0." + k)
+    var rows = await st.all(w.text(), w.args)?
+    var n = len(ent.Meta.Columns)
+    for vals in rows {
+        out.items = append(out.items, materialize(st, ent, vals, 0, tracking)?)
+        out.owners = append(out.owners, keyText(vals[n]))
+    }
+    return out
+}

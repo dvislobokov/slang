@@ -1,5 +1,3 @@
-namespace std.collections
-
 // More std.collections types (the core List/Map/Set/Queue/Stack are in
 // sema/collections.rs): LinkedList, Deque, Ring, Heap, PriorityQueue,
 // OrderedMap, LRU and BitSet. `for x in c` works on each through the
@@ -9,6 +7,7 @@ namespace std.collections
 // `b[i]` / `b[i] = true` (Index/IndexSet). The zero value of each is ready
 // to use except where a constructor takes a parameter (Ring,
 // PriorityQueue, LRU).
+namespace std.collections
 
 struct listNode<T> {
     value T
@@ -22,14 +21,17 @@ struct LinkedList<T> {
     tail *listNode<T>
     n    int
 
+    // New returns an empty list (the zero value works too).
     static func New() LinkedList<T> {
         return LinkedList<T>{}
     }
 
+    // Len returns the number of elements.
     func Len() int {
         return this.n
     }
 
+    // PushBack appends v.
     func PushBack(v T) {
         var node = new listNode<T>{value: v}
         if this.tail == nil {
@@ -42,6 +44,7 @@ struct LinkedList<T> {
         this.n += 1
     }
 
+    // PushFront prepends v.
     func PushFront(v T) {
         var node = new listNode<T>{value: v, next: this.head}
         if this.head == nil {
@@ -53,6 +56,7 @@ struct LinkedList<T> {
         this.n += 1
     }
 
+    // PopFront removes and returns the first element; an error if the list is empty.
     func PopFront() T! {
         if this.head == nil {
             return error("list is empty")
@@ -68,6 +72,7 @@ struct LinkedList<T> {
         return node.value
     }
 
+    // PopBack removes and returns the last element; an error if the list is empty.
     func PopBack() T! {
         if this.tail == nil {
             return error("list is empty")
@@ -84,6 +89,7 @@ struct LinkedList<T> {
         return node.value
     }
 
+    // Front returns the first element; an error if the list is empty.
     func Front() T! {
         if this.head == nil {
             return error("list is empty")
@@ -91,6 +97,7 @@ struct LinkedList<T> {
         return this.head.value
     }
 
+    // Back returns the last element; an error if the list is empty.
     func Back() T! {
         if this.tail == nil {
             return error("list is empty")
@@ -142,6 +149,7 @@ struct LinkedList<T> {
         return at.value
     }
 
+    // Get returns element i (O(n)); it panics if i is out of range.
     func Get(i int) T {
         if i < 0 || i >= this.n {
             panic("LinkedList.Get: index out of range")
@@ -157,6 +165,7 @@ struct LinkedList<T> {
         return p
     }
 
+    // Clear removes every element.
     func Clear() {
         // unlink iteratively (a long chain would recurse in release)
         var p = this.head
@@ -209,10 +218,12 @@ struct Deque<T> {
     head int
     n    int
 
+    // New returns an empty deque (the zero value works too).
     static func New() Deque<T> {
         return Deque<T>{}
     }
 
+    // Len returns the number of elements.
     func Len() int {
         return this.n
     }
@@ -234,6 +245,7 @@ struct Deque<T> {
         this.head = 0
     }
 
+    // PushBack appends v.
     func PushBack(v T) {
         if this.n == len(this.buf) {
             this.grow()
@@ -242,6 +254,7 @@ struct Deque<T> {
         this.n += 1
     }
 
+    // PushFront prepends v.
     func PushFront(v T) {
         if this.n == len(this.buf) {
             this.grow()
@@ -251,6 +264,7 @@ struct Deque<T> {
         this.n += 1
     }
 
+    // PopFront removes and returns the first element; an error if the deque is empty.
     func PopFront() T! {
         if this.n == 0 {
             return error("deque is empty")
@@ -263,6 +277,7 @@ struct Deque<T> {
         return v
     }
 
+    // PopBack removes and returns the last element; an error if the deque is empty.
     func PopBack() T! {
         if this.n == 0 {
             return error("deque is empty")
@@ -275,6 +290,7 @@ struct Deque<T> {
         return v
     }
 
+    // Front returns the first element; an error if the deque is empty.
     func Front() T! {
         if this.n == 0 {
             return error("deque is empty")
@@ -282,6 +298,7 @@ struct Deque<T> {
         return this.buf[this.head]
     }
 
+    // Back returns the last element; an error if the deque is empty.
     func Back() T! {
         if this.n == 0 {
             return error("deque is empty")
@@ -297,6 +314,7 @@ struct Deque<T> {
         return this.buf[(this.head + i) % len(this.buf)]
     }
 
+    // Set replaces element i; it panics if i is out of range.
     func Set(i int, v T) {
         if i < 0 || i >= this.n {
             panic("Deque.Set: index out of range")
@@ -304,12 +322,14 @@ struct Deque<T> {
         this.buf[(this.head + i) % len(this.buf)] = v
     }
 
+    // Clear removes every element.
     func Clear() {
         this.buf = nil
         this.head = 0
         this.n = 0
     }
 
+    // Items returns the elements front to back, as a new slice.
     func Items() []T {
         var out []T = []
         for i in 0..this.n {
@@ -339,14 +359,17 @@ struct Ring<T> {
         return Ring<T>{buf: b}
     }
 
+    // Cap returns the capacity given to Ring<T>(capacity).
     func Cap() int {
         return len(this.buf)
     }
 
+    // Len returns the number of elements held.
     func Len() int {
         return this.n
     }
 
+    // IsFull reports whether the next Push overwrites the oldest element.
     func IsFull() bool {
         return this.n == len(this.buf)
     }
@@ -387,6 +410,7 @@ struct Ring<T> {
         return this.buf[(this.head + i) % len(this.buf)]
     }
 
+    // Items returns the elements oldest first, as a new slice.
     func Items() []T {
         var out []T = []
         for i in 0..this.n {
@@ -401,6 +425,7 @@ struct Ring<T> {
 struct Heap<T: Ordered> {
     items []T
 
+    // New returns an empty heap (the zero value works too).
     static func New() Heap<T> {
         return Heap<T>{}
     }
@@ -419,15 +444,18 @@ struct Heap<T: Ordered> {
         return h
     }
 
+    // Len returns the number of elements.
     func Len() int {
         return len(this.items)
     }
 
+    // Push adds x in O(log n).
     func Push(x T) {
         this.items = append(this.items, x)
         this.up(len(this.items) - 1)
     }
 
+    // Pop removes and returns the smallest element; an error if the heap is empty.
     func Pop() T! {
         var n = len(this.items)
         if n == 0 {
@@ -442,6 +470,7 @@ struct Heap<T: Ordered> {
         return top
     }
 
+    // Peek returns the smallest element without removing it; an error if the heap is empty.
     func Peek() T! {
         if len(this.items) == 0 {
             return error("heap is empty")
@@ -505,6 +534,7 @@ struct PriorityQueue<T> {
         return PriorityQueue<T>{less: less}
     }
 
+    // Len returns the number of elements.
     func Len() int {
         return len(this.items)
     }
@@ -528,6 +558,7 @@ struct PriorityQueue<T> {
         this.seqs[j] = s
     }
 
+    // Push adds x in O(log n).
     func Push(x T) {
         if this.less == nil {
             panic("PriorityQueue: create it with PriorityQueue<T>(less)")
@@ -546,6 +577,7 @@ struct PriorityQueue<T> {
         }
     }
 
+    // Pop removes and returns the least element (FIFO among equals); an error if the queue is empty.
     func Pop() T! {
         var n = len(this.items)
         if n == 0 {
@@ -575,6 +607,7 @@ struct PriorityQueue<T> {
         return top
     }
 
+    // Peek returns the least element without removing it; an error if the queue is empty.
     func Peek() T! {
         if len(this.items) == 0 {
             return error("priority queue is empty")
@@ -589,6 +622,7 @@ struct OrderedMap<K: Ordered, V> {
     keys []K
     vals []V
 
+    // New returns an empty map (the zero value works too).
     static func New() OrderedMap<K, V> {
         return OrderedMap<K, V>{}
     }
@@ -607,10 +641,12 @@ struct OrderedMap<K: Ordered, V> {
         return lo
     }
 
+    // Len returns the number of entries.
     func Len() int {
         return len(this.keys)
     }
 
+    // Set inserts or replaces the value of k.
     func Set(k K, v V) {
         var i = this.find(k)
         if i < len(this.keys) && this.keys[i] == k {
@@ -641,6 +677,7 @@ struct OrderedMap<K: Ordered, V> {
         return zero
     }
 
+    // Has reports whether k is present.
     func Has(k K) bool {
         var i = this.find(k)
         return i < len(this.keys) && this.keys[i] == k
@@ -714,6 +751,7 @@ struct OrderedMap<K: Ordered, V> {
         return out
     }
 
+    // Keys returns the keys in ascending order, as a new slice.
     func Keys() []K {
         return std.slices.Clone(this.keys)
     }
@@ -723,10 +761,12 @@ struct OrderedMap<K: Ordered, V> {
         return orderedIter<K, V>{keys: this.keys, vals: this.vals}
     }
 
+    // Values returns the values in ascending key order, as a new slice.
     func Values() []V {
         return std.slices.Clone(this.vals)
     }
 
+    // Clear removes every entry.
     func Clear() {
         this.keys = nil
         this.vals = nil
@@ -776,10 +816,12 @@ struct LRU<K: Comparable, V> {
         return LRU<K, V>{cap: capacity, index: map[K]*lruNode<K, V>{}}
     }
 
+    // Len returns the number of entries.
     func Len() int {
         return len(this.index)
     }
 
+    // Cap returns the maximum number of entries.
     func Cap() int {
         return this.cap
     }
@@ -842,6 +884,7 @@ struct LRU<K: Comparable, V> {
         return (n.value, true)
     }
 
+    // Has reports whether k is cached, without marking it as used.
     func Has(k K) bool {
         return this.index[k] != nil
     }
@@ -874,6 +917,7 @@ struct LRU<K: Comparable, V> {
         return evicted
     }
 
+    // Remove deletes k; false if it was not cached.
     func Remove(k K) bool {
         var n = this.index[k]
         if n == nil {
@@ -901,6 +945,7 @@ struct LRU<K: Comparable, V> {
         return out
     }
 
+    // Clear removes every entry.
     func Clear() {
         var p = this.newest
         for p != nil {
@@ -934,10 +979,12 @@ struct lruIter<K, V> {
 struct BitSet {
     words []uint
 
+    // New returns an empty set (the zero value works too).
     static func New() BitSet {
         return BitSet{}
     }
 
+    // Set adds i (growing the set); it panics for a negative i.
     func Set(i int) {
         if i < 0 {
             panic("BitSet: negative index")
@@ -949,6 +996,7 @@ struct BitSet {
         this.words[w] = this.words[w] | (uint(1) << uint(i % 64))
     }
 
+    // Clear removes i.
     func Clear(i int) {
         var w = i / 64
         if i < 0 || w >= len(this.words) {
@@ -957,6 +1005,7 @@ struct BitSet {
         this.words[w] = this.words[w] & ((uint(1) << uint(i % 64)) ^ 18446744073709551615)
     }
 
+    // Has reports whether i is in the set.
     func Has(i int) bool {
         var w = i / 64
         if i < 0 || w >= len(this.words) {
@@ -995,6 +1044,7 @@ struct BitSet {
         return 0
     }
 
+    // Union returns the bits set in either set.
     func Union(o BitSet) BitSet {
         var out = BitSet{}
         var n = len(this.words)
@@ -1015,6 +1065,7 @@ struct BitSet {
         return out
     }
 
+    // Intersect returns the bits set in both sets.
     func Intersect(o BitSet) BitSet {
         var out = BitSet{}
         var n = len(this.words)
@@ -1040,6 +1091,7 @@ struct BitSet {
         return out
     }
 
+    // Equals reports whether both sets hold the same bits.
     func Equals(o BitSet) bool {
         var n = len(this.words)
         if len(o.words) > n {
@@ -1075,6 +1127,7 @@ struct BitSet {
         return out
     }
 
+    // Reset removes every bit.
     func Reset() {
         this.words = nil
     }

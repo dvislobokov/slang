@@ -180,6 +180,11 @@ void slang__plat_poller_wake(slang__plat_poller *p) {
 #endif
 }
 
+const char *slang__plat_poller_backend(slang__plat_poller *p) {
+    (void)p;
+    return "kqueue";
+}
+
 #else
 /* Not macOS/BSD: the poller comes from poll_epoll.c. */
 typedef int slang__poll_kqueue_unused;

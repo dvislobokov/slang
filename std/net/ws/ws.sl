@@ -1,5 +1,3 @@
-namespace std.net.ws
-
 // WebSockets (RFC 6455) over std.net.http: the server side upgrades a
 // request inside an http.Handler (`await ws.Upgrade(req, res)?`), the
 // client dials ws:// or wss:// URLs (`await ws.Dial(url)?`). Text and
@@ -9,16 +7,19 @@ namespace std.net.ws
 // std.net.http.rtMask). permessage-deflate (RFC 7692) is not implemented:
 // no extension is negotiated. Sends are serialized by a mutex, so several
 // tasks may send on one Conn; one task at a time should receive.
+namespace std.net.ws
 
 // A received or sent message (Type: TextMessage or BinaryMessage).
 struct Message {
     Type int
     Data []byte
 
+    // Text returns the payload as a string.
     func Text() string {
         return std.strings.FromBytes(this.Data)
     }
 
+    // IsText reports whether the message is a text message.
     func IsText() bool {
         return this.Type == 1
     }
@@ -41,6 +42,7 @@ struct CloseError {
     Code   int
     Reason string
 
+    // Message returns "websocket: close CODE reason".
     func Message() string {
         var s = "websocket: close " + std.fmt.Format("{0}", this.Code)
         if this.Reason != "" {
@@ -49,6 +51,7 @@ struct CloseError {
         return s
     }
 
+    // Unwrap returns ErrClosed.
     func Unwrap() error {
         return ErrClosed
     }
@@ -100,10 +103,12 @@ struct Conn {
         return writeFrame(this.st, m.Type, m.Data, true)
     }
 
+    // SendText sends a text message.
     func SendText(s string) Task<void!> {
         return writeFrame(this.st, 1, std.strings.Bytes(s), true)
     }
 
+    // SendBinary sends a binary message.
     func SendBinary(b []byte) Task<void!> {
         return writeFrame(this.st, 2, b, true)
     }
@@ -160,10 +165,12 @@ struct Conn {
         this.st.rc.SetTimeout(ms)
     }
 
+    // RemoteAddr returns the peer's "ip:port".
     func RemoteAddr() string {
         return this.st.rc.RemoteAddr()
     }
 
+    // IsClosed reports whether the underlying connection is closed.
     func IsClosed() bool {
         return this.st.tcpClosed || this.st.rc.IsClosed()
     }
@@ -472,6 +479,7 @@ func Upgrade(req *std.net.http.Request, res *std.net.http.Response) Task<Conn!> 
     return UpgradeWith(req, res, UpgradeOptions{})
 }
 
+// UpgradeWith is Upgrade with options (subprotocols, origin check, limits).
 async func UpgradeWith(
     req *std.net.http.Request,
     res *std.net.http.Response,
@@ -548,6 +556,7 @@ func Dial(url string) Task<Conn!> {
     return DialWith(url, DialOptions{})
 }
 
+// DialWith is Dial with options (headers, subprotocols, TLS, timeout).
 async func DialWith(url string, opts DialOptions) Conn! {
     var u = std.net.http.ParseURL(url)?
     if u.Scheme != "ws" && u.Scheme != "wss" && u.Scheme != "http" && u.Scheme != "https" {

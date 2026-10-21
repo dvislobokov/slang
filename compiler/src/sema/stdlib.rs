@@ -1111,6 +1111,7 @@ pub const FUNCS: &[StdFunc] = &[
     f!("std.hash.maphash", "rtSip13Str", "uint, uint, string", "uint", "slang_hash_maphash_rt_sip13_str"),
     // std.time types (time.sl): the local zone's TZif bytes (std_time_zone.c)
     f!("std.time", "rtLocalTZif", "", "string!", "slang_time_rt_local_tzif"),
+    f!("std.time", "rtZoneTZif", "string", "string!", "slang_time_rt_zone_tzif"),
     // std.os files (os.sl over std_os_file.c)
     f!("std.os", "rtOpen", "string, int, int", "int!", "slang_os_rt_open"),
     f!("std.os", "rtRead", "int, []byte", "int!", "slang_os_rt_read"),

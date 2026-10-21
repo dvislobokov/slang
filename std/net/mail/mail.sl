@@ -1,10 +1,9 @@
-namespace std.net.mail
-
 // std.net.mail: RFC 5322 addresses and messages, MIME building (text,
 // HTML alternatives, attachments, inline parts) and an SMTP client
 // (RFC 5321) with STARTTLS (RFC 3207) and implicit TLS (SMTPS, port 465)
 // over std.net.tls, and AUTH PLAIN, LOGIN and CRAM-MD5 (RFC 4954, 2195).
 // DKIM signing is not implemented.
+namespace std.net.mail
 
 // ---- addresses --------------------------------------------------------------------
 
@@ -375,6 +374,7 @@ struct Message {
         return out
     }
 
+    // Build returns the message in RFC 5322 form (headers, MIME parts, attachments); an error without a From address.
     func Build() string! {
         if this.From.Address == "" {
             return error("mail: message has no From address")
@@ -605,10 +605,12 @@ func PlainAuth(user string, password string) *Auth {
     return new Auth{Username: user, Password: password, Mechanism: "PLAIN"}
 }
 
+// LoginAuth returns credentials for the SMTP LOGIN mechanism.
 func LoginAuth(user string, password string) *Auth {
     return new Auth{Username: user, Password: password, Mechanism: "LOGIN"}
 }
 
+// CramMD5Auth returns credentials for the SMTP CRAM-MD5 mechanism.
 func CramMD5Auth(user string, password string) *Auth {
     return new Auth{Username: user, Password: password, Mechanism: "CRAM-MD5"}
 }
@@ -633,6 +635,7 @@ struct SMTPError {
     Code int
     Msg  string
 
+    // Message returns "smtp: CODE text".
     func Message() string {
         return "smtp: " + std.fmt.Format("{0}", this.Code) + " " + this.Msg
     }
@@ -655,6 +658,7 @@ struct Reply {
     Code  int
     Lines []string
 
+    // Text returns the lines of the reply joined with newlines.
     func Text() string {
         return std.strings.Join(this.Lines, "\n")
     }
@@ -755,6 +759,7 @@ struct Client {
         return (false, "")
     }
 
+    // IsTLS reports whether the connection is encrypted (TLS or after STARTTLS).
     func IsTLS() bool {
         return this.tls
     }
@@ -775,6 +780,7 @@ struct Client {
         await this.hello()?
     }
 
+    // Authenticate logs in with a, using a mechanism the server advertises.
     async func Authenticate(a Auth) void! {
         var (ok, mechs) = this.Extension("AUTH")
         if !ok {
@@ -816,10 +822,12 @@ struct Client {
         }
     }
 
+    // Mail sends MAIL FROM for the envelope sender.
     async func Mail(from string) void! {
         _ = await this.Cmd("MAIL FROM:<" + from + ">", 250)?
     }
 
+    // Rcpt sends RCPT TO for one envelope recipient.
     async func Rcpt(to string) void! {
         _ = await this.Cmd("RCPT TO:<" + to + ">", 250)?
     }
@@ -831,15 +839,18 @@ struct Client {
         _ = await this.Cmd("", 250)?
     }
 
+    // Reset aborts the current mail transaction (RSET).
     async func Reset() void! {
         _ = await this.Cmd("RSET", 250)?
     }
 
+    // Quit sends QUIT and closes the connection.
     async func Quit() void! {
         _ = try await this.Cmd("QUIT", 221) else Reply{}
         this.s.Close()
     }
 
+    // Close closes the connection without QUIT.
     func Close() {
         this.s.Close()
     }

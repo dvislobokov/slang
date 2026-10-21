@@ -2,50 +2,80 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.math.bits implemented by the C runtime.
 namespace std.math.bits
 
+// LeadingZeros returns the number of leading zero bits of x (64 for 0).
+//
 // C: slang_math_bits_leading_zeros (runtime/src/std_*.c).
-extern func LeadingZeros(a uint) int
+extern func LeadingZeros(x uint) int
 
+// LeadingZeros32 returns the number of leading zero bits of x (32 for 0).
+//
 // C: slang_math_bits_leading_zeros32 (runtime/src/std_*.c).
-extern func LeadingZeros32(a uint32) int
+extern func LeadingZeros32(x uint32) int
 
+// TrailingZeros returns the number of trailing zero bits of x (64 for 0).
+//
 // C: slang_math_bits_trailing_zeros (runtime/src/std_*.c).
-extern func TrailingZeros(a uint) int
+extern func TrailingZeros(x uint) int
 
+// TrailingZeros32 returns the number of trailing zero bits of x (32 for 0).
+//
 // C: slang_math_bits_trailing_zeros32 (runtime/src/std_*.c).
-extern func TrailingZeros32(a uint32) int
+extern func TrailingZeros32(x uint32) int
 
+// OnesCount returns the number of one bits of x.
+//
 // C: slang_math_bits_ones_count (runtime/src/std_*.c).
-extern func OnesCount(a uint) int
+extern func OnesCount(x uint) int
 
+// OnesCount32 returns the number of one bits of x.
+//
 // C: slang_math_bits_ones_count32 (runtime/src/std_*.c).
-extern func OnesCount32(a uint32) int
+extern func OnesCount32(x uint32) int
 
+// Len returns the minimum number of bits to represent x (0 for 0).
+//
 // C: slang_math_bits_len (runtime/src/std_*.c).
-extern func Len(a uint) int
+extern func Len(x uint) int
 
+// Len32 returns the minimum number of bits to represent x (0 for 0).
+//
 // C: slang_math_bits_len32 (runtime/src/std_*.c).
-extern func Len32(a uint32) int
+extern func Len32(x uint32) int
 
+// RotateLeft returns x rotated left by k bits (right for negative k).
+//
 // C: slang_math_bits_rotate_left (runtime/src/std_*.c).
-extern func RotateLeft(a uint, b int) uint
+extern func RotateLeft(x uint, k int) uint
 
+// RotateLeft32 returns x rotated left by k bits (right for negative k).
+//
 // C: slang_math_bits_rotate_left32 (runtime/src/std_*.c).
-extern func RotateLeft32(a uint32, b int) uint32
+extern func RotateLeft32(x uint32, k int) uint32
 
+// Reverse returns x with its bits in reverse order.
+//
 // C: slang_math_bits_reverse (runtime/src/std_*.c).
-extern func Reverse(a uint) uint
+extern func Reverse(x uint) uint
 
+// Reverse32 returns x with its bits in reverse order.
+//
 // C: slang_math_bits_reverse32 (runtime/src/std_*.c).
-extern func Reverse32(a uint32) uint32
+extern func Reverse32(x uint32) uint32
 
+// ReverseBytes returns x with its bytes in reverse order.
+//
 // C: slang_math_bits_reverse_bytes (runtime/src/std_*.c).
-extern func ReverseBytes(a uint) uint
+extern func ReverseBytes(x uint) uint
 
+// ReverseBytes32 returns x with its bytes in reverse order.
+//
 // C: slang_math_bits_reverse_bytes32 (runtime/src/std_*.c).
-extern func ReverseBytes32(a uint32) uint32
+extern func ReverseBytes32(x uint32) uint32
 
+// ReverseBytes16 returns x with its bytes in reverse order.
+//
 // C: slang_math_bits_reverse_bytes16 (runtime/src/std_*.c).
-extern func ReverseBytes16(a uint16) uint16
+extern func ReverseBytes16(x uint16) uint16
 
 // Internal runtime primitive (used by the Slang sources of this namespace).
 // C: slang_math_bits_rt_mul_hi (runtime/src/std_*.c).

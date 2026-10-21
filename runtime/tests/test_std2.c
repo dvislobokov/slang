@@ -33,7 +33,7 @@ static void strs(slang_slice *out, int n, const char *const *v) {
 static bool bytes_hex_is(const slang_slice *b, const char *hex) {
     slang_string *h = slang_encoding_hex_encode(b);
     bool ok = STR_IS(h, hex);
-    if (!ok) fprintf(stderr, "bytes %s want %s\n", slang_string_data(h), hex);
+    if (!ok) fprintf(stderr, "bytes %s want %s\n", slang_string_cstr(h), hex);
     slang_release(h);
     return ok;
 }
@@ -193,32 +193,50 @@ static slang_string *join(const char *a, const char *b) {
     return r;
 }
 
+/* Expected paths are written with '/'; std.fs gives the platform's
+ * separator (Windows: '\\'). */
+static const char *native_path(const char *lit) {
+    static char buf[4][256];
+    static int k;
+    char *b = buf[k++ & 3];
+    snprintf(b, sizeof buf[0], "%s", lit);
+#if defined(_WIN32)
+    for (char *c = b; *c; c++)
+        if (*c == '/') *c = '\\';
+#endif
+    return b;
+}
+#define EXPECT_PATH(call, lit) do { slang_string *r_ = (call); const char *w_ = native_path(lit); assert(r_ != NULL); \
+        if (!STR_IS(r_, w_)) { fprintf(stderr, "got '%s' want '%s' (%s:%d)\n", slang_string_cstr(r_), w_, __FILE__, __LINE__); assert(0); } \
+        slang_release(r_); } while (0)
+#define PATH1(fn, a, lit) do { slang_string *a_ = S(a); EXPECT_PATH(fn(a_), lit); slang_release(a_); } while (0)
+
 TEST(fs_paths) {
-    EXPECT_STR(join("a", "b"), "a/b");
-    EXPECT_STR(join("a/", "/b"), "a/b");
-    EXPECT_STR(join("a/b", "../c"), "a/c");
-    EXPECT_STR(join("/", "x"), "/x");
-    EXPECT_STR(join("", "b"), "b");
-    EXPECT_STR(join("a", ""), "a");
-    EXPECT_STR(join("", ""), "");
-    EXPECT_STR(join("a", "../.."), "..");
-    EXPECT_STR(join("/a", "../../.."), "/");
-    EXPECT_STR(join("./a/./b/", "."), "a/b");
-    EXPECT_STR(slang_fs_join(NULL, NULL), "");
+    EXPECT_PATH(join("a", "b"), "a/b");
+    EXPECT_PATH(join("a/", "/b"), "a/b");
+    EXPECT_PATH(join("a/b", "../c"), "a/c");
+    EXPECT_PATH(join("/", "x"), "/x");
+    EXPECT_PATH(join("", "b"), "b");
+    EXPECT_PATH(join("a", ""), "a");
+    EXPECT_PATH(join("", ""), "");
+    EXPECT_PATH(join("a", "../.."), "..");
+    EXPECT_PATH(join("/a", "../../.."), "/");
+    EXPECT_PATH(join("./a/./b/", "."), "a/b");
+    EXPECT_PATH(slang_fs_join(NULL, NULL), "");
 
-    STR1(slang_fs_base, "/a/b.txt", "b.txt");
-    STR1(slang_fs_base, "a/b/", "b");
-    STR1(slang_fs_base, "///", "/");
-    STR1(slang_fs_base, "", ".");
-    STR1(slang_fs_base, "x", "x");
+    PATH1(slang_fs_base, "/a/b.txt", "b.txt");
+    PATH1(slang_fs_base, "a/b/", "b");
+    PATH1(slang_fs_base, "///", "/");
+    PATH1(slang_fs_base, "", ".");
+    PATH1(slang_fs_base, "x", "x");
 
-    STR1(slang_fs_dir, "/a/b.txt", "/a");
-    STR1(slang_fs_dir, "a/b/", "a/b");
-    STR1(slang_fs_dir, "b", ".");
-    STR1(slang_fs_dir, "/", "/");
-    STR1(slang_fs_dir, "", ".");
-    STR1(slang_fs_dir, "/x", "/");
-    STR1(slang_fs_dir, "a//b", "a");
+    PATH1(slang_fs_dir, "/a/b.txt", "/a");
+    PATH1(slang_fs_dir, "a/b/", "a/b");
+    PATH1(slang_fs_dir, "b", ".");
+    PATH1(slang_fs_dir, "/", "/");
+    PATH1(slang_fs_dir, "", ".");
+    PATH1(slang_fs_dir, "/x", "/");
+    PATH1(slang_fs_dir, "a//b", "a");
 
     STR1(slang_fs_ext, "a/b.tar.gz", ".gz");
     STR1(slang_fs_ext, "a.d/b", "");
@@ -226,13 +244,19 @@ TEST(fs_paths) {
     STR1(slang_fs_ext, "noext", "");
     STR1(slang_fs_ext, "dot.", ".");
 
+#if !defined(_WIN32)
     slang_string *p = S("/x/../y/./z");
     EXPECT_STR(slang_fs_abs(p, NULL), "/y/z");
     slang_release(p);
+#else
+    slang_string *p = S("C:/x/../y/./z");  /* Windows: absolute means a drive (or UNC) */
+    EXPECT_STR(slang_fs_abs(p, NULL), "C:\\y\\z");
+    slang_release(p);
+#endif
     p = S("rel/f");
-    slang_string *a = slang_fs_abs(p, NULL), *cwd = slang_os_cwd(NULL);
-    assert(slang_string_has_prefix(a, cwd) && slang_string_has_suffix(a, p));
-    slang_release(a); slang_release(cwd); slang_release(p);
+    slang_string *a = slang_fs_abs(p, NULL), *cwd = slang_os_cwd(NULL), *q = S(native_path("rel/f"));
+    assert(slang_string_has_prefix(a, cwd) && slang_string_has_suffix(a, q));
+    slang_release(a); slang_release(cwd); slang_release(p); slang_release(q);
 
     slang_string *td = slang_fs_temp_dir();
     assert(slang_string_len(td) > 0);
@@ -248,7 +272,7 @@ static slang_string *in_dir(const slang_string *dir, const char *name) {
 static void must_ok(slang_error *e) {
     if (e) {
         slang_string *m = slang_error_message(e);
-        fprintf(stderr, "unexpected error: %s\n", slang_string_data(m));
+        fprintf(stderr, "unexpected error: %s\n", slang_string_cstr(m));
         assert(0);
     }
 }
@@ -405,7 +429,7 @@ static void read_all_child(void) {
     slang_error *e = NULL;
     slang_string *s = slang_io_read_all(&e);
     assert(e == NULL);
-    printf("[%s]%lld", slang_string_data(s), (long long)slang_string_len(s));
+    printf("[%s]%lld", slang_string_cstr(s), (long long)slang_string_len(s));
     slang_release(s);
     s = slang_io_read_all(&e);   /* at EOF: "" and no error */
     assert(e == NULL && slang_string_len(s) == 0);
@@ -841,8 +865,8 @@ static void b64_bad(const char *enc, bool url, const char *want_msg) {
     if (!e) { fprintf(stderr, "base64 '%s' decoded unexpectedly\n", enc); assert(0); }
     assert(b.len == 0);
     slang_string *m = slang_error_message(e);
-    if (want_msg && strcmp(slang_string_data(m), want_msg) != 0) {
-        fprintf(stderr, "base64 '%s': %s\n", enc, slang_string_data(m));
+    if (want_msg && strcmp(slang_string_cstr(m), want_msg) != 0) {
+        fprintf(stderr, "base64 '%s': %s\n", enc, slang_string_cstr(m));
         assert(0);
     }
     slang_release(m);
@@ -994,6 +1018,10 @@ int main(int argc, char **argv) {
     (void)argc;
     slang_runtime_init(1, argv);
     printf("test_std2\n");
+    /* os.Args is built on first use and kept by the runtime until shutdown */
+    slang_slice args0;
+    slang_os_args(&args0);
+    slang_slice_release(&args0);
     int64_t live = slang_live_objects();
     RUN(time_calendar);
     RUN(time_format_parse);

@@ -182,6 +182,10 @@ pub enum Intrinsic {
     AnyType,
     /// `anyAddr(x any) int`: address of the boxed value.
     AnyAddr,
+    /// `anyBox(x any) any`: `x` itself, or for a scalar held inline in the
+    /// data word (ABI.md 3.7) a copy in a heap box, so that it has an
+    /// address (`anyAddr`).
+    AnyBox,
     /// `ifaceType<I>(x I) *TypeInfo`: dynamic type of an interface value.
     IfaceType,
     /// `errType(e error) *TypeInfo`: dynamic type of an error (the boxed

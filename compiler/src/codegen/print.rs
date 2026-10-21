@@ -193,7 +193,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     || matches!(cg.ty(t), Type::Enum(d) if cg.prog.enums[d.0 as usize].is_plain);
                 let r = if printable {
                     let lt = cg.llty(t);
-                    let v = cg.b.build_load(lt, data, "").unwrap();
+                    let v = if cg.any_inline(t) { cg.any_word_value(t, data) } else { cg.b.build_load(lt, data, "").unwrap() };
                     match cg.stringify(t, v) {
                         // Borrowed results are immortal literals (enum names).
                         Ok(s) => s.get(),

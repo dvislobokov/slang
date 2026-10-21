@@ -1,5 +1,3 @@
-namespace std.os.signal
-
 // std.os.signal: POSIX signals as async events (Go's os/signal):
 //   await signal.Wait(signal.SIGTERM)          // one delivery
 //   var ch = signal.Notify([signal.SIGINT, signal.SIGTERM])
@@ -9,6 +7,7 @@ namespace std.os.signal
 // terminating on SIGINT) is replaced until Reset. Deliveries that arrive
 // while nobody waits are remembered (counted) and satisfy the next Wait.
 // Runtime: runtime/src/std_os_signal.c (self-pipe + a dedicated thread).
+namespace std.os.signal
 
 // Waits for the next delivery of sig.
 func Wait(sig int) Task<void> {

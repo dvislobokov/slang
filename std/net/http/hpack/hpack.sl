@@ -1,9 +1,8 @@
-namespace std.net.http.hpack
-
 // HPACK (RFC 7541), the header compression of HTTP/2: the static table,
 // a dynamic table per direction, integer and string literals, Huffman
 // coding (the C helpers rtHuff* in runtime/src/std_http.c). Decoder and
 // Encoder each keep the state of one direction of one connection.
+namespace std.net.http.hpack
 
 // A header field. Sensitive fields are never indexed (encoded as
 // "literal never indexed", and kept so by intermediaries).

@@ -1,5 +1,3 @@
-namespace std.time
-
 // std.time types (Go's time package): Duration, Time, Location, Instant,
 // Ticker and Timer. The older int-millisecond functions (time.Now(),
 // time.Format(ms, strftime), time.Year(ms), ...) are runtime externs and
@@ -18,6 +16,7 @@ namespace std.time
 //
 // Time counts seconds since January 1, year 1 UTC (like Go internally), so
 // the zero value is Go's zero time and IsZero is true for it.
+namespace std.time
 
 // ---- Duration ---------------------------------------------------------------
 
@@ -25,6 +24,7 @@ namespace std.time
 struct Duration {
     ns int
 
+    // Nanoseconds returns the duration as an integer nanosecond count.
     func Nanoseconds() int {
         return this.ns
     }
@@ -39,38 +39,47 @@ struct Duration {
         return this.ns / 1000000
     }
 
+    // Seconds returns the duration as a floating-point number of seconds.
     func Seconds() float {
         return float(this.ns / 1000000000) + float(this.ns % 1000000000) / 1000000000.0
     }
 
+    // Minutes returns the duration as a floating-point number of minutes.
     func Minutes() float {
         return float(this.ns / 60000000000) + float(this.ns % 60000000000) / 60000000000.0
     }
 
+    // Hours returns the duration as a floating-point number of hours.
     func Hours() float {
         return float(this.ns / 3600000000000) + float(this.ns % 3600000000000) / 3600000000000.0
     }
 
+    // Add returns the sum of the durations.
     func Add(d Duration) Duration {
         return Duration{ns: this.ns + d.ns}
     }
 
+    // Sub returns the difference of the durations.
     func Sub(d Duration) Duration {
         return Duration{ns: this.ns - d.ns}
     }
 
+    // Mul returns the duration times n.
     func Mul(n int) Duration {
         return Duration{ns: this.ns * n}
     }
 
+    // Div returns the duration divided by n (truncated).
     func Div(n int) Duration {
         return Duration{ns: this.ns / n}
     }
 
+    // Neg returns the negated duration.
     func Neg() Duration {
         return Duration{ns: -this.ns}
     }
 
+    // Abs returns the absolute value of the duration.
     func Abs() Duration {
         if this.ns < 0 {
             return Duration{ns: -this.ns}
@@ -105,6 +114,7 @@ struct Duration {
         return Duration{ns: this.ns + m.ns - r}
     }
 
+    // Compare returns -1, 0 or 1 comparing the durations.
     func Compare(o Duration) int {
         if this.ns < o.ns {
             return -1
@@ -115,6 +125,7 @@ struct Duration {
         return 0
     }
 
+    // Equals reports whether the durations are equal.
     func Equals(o Duration) bool {
         return this.ns == o.ns
     }
@@ -187,26 +198,32 @@ func fracText(v uint, prec int) string {
     return whole + "." + digits
 }
 
+// Nanoseconds returns a duration of n nanoseconds.
 func Nanoseconds(n int) Duration {
     return Duration{ns: n}
 }
 
+// Microseconds returns a duration of n microseconds.
 func Microseconds(n int) Duration {
     return Duration{ns: n * 1000}
 }
 
+// Milliseconds returns a duration of n milliseconds.
 func Milliseconds(n int) Duration {
     return Duration{ns: n * 1000000}
 }
 
+// Seconds returns a duration of n seconds.
 func Seconds(n int) Duration {
     return Duration{ns: n * 1000000000}
 }
 
+// Minutes returns a duration of n minutes.
 func Minutes(n int) Duration {
     return Duration{ns: n * 60000000000}
 }
 
+// Hours returns a duration of n hours.
 func Hours(n int) Duration {
     return Duration{ns: n * 3600000000000}
 }
@@ -531,8 +548,9 @@ func FixedZone(name string, offset int) *Location {
 }
 
 // The IANA zone name ("America/New_York") from the system tzdata
-// (/usr/share/zoneinfo or $ZONEINFO). "" and "UTC" give UTC, "Local" the
-// local zone.
+// (/usr/share/zoneinfo or $ZONEINFO; on Windows the registry's zones,
+// mapped from IANA names by a table of the common zones). "" and "UTC"
+// give UTC, "Local" the local zone.
 func LoadLocation(name string) *Location! {
     if name == "" || name == "UTC" {
         return UTC()
@@ -545,6 +563,14 @@ func LoadLocation(name string) *Location! {
     }
     var dir = std.os.Getenv("ZONEINFO")
     if dir == "" {
+        // Windows: zones come from the registry (platform/tz_win32.c)
+        var sys = try rtZoneTZif(name) else ""
+        if sys != "" {
+            var sl = parseTZif(name, sys)?
+            var so = new Location{}
+            *so = sl
+            return so
+        }
         dir = "/usr/share/zoneinfo"
     }
     var data = try std.io.ReadFile(dir + "/" + name) catch err {
@@ -818,10 +844,12 @@ struct Time {
         return this.sec - unixToInternal()
     }
 
+    // UnixMilli returns t as Unix time in milliseconds.
     func UnixMilli() int {
         return this.Unix() * 1000 + this.nsec / 1000000
     }
 
+    // UnixMicro returns t as Unix time in microseconds.
     func UnixMicro() int {
         return this.Unix() * 1000000 + this.nsec / 1000
     }
@@ -871,33 +899,40 @@ struct Time {
         return (s / 3600, (s / 60) % 60, s % 60)
     }
 
+    // Year returns the year of t in its location.
     func Year() int {
         var (y, _, _) = this.Date()
         return y
     }
 
+    // Month returns the month of t (1-12) in its location.
     func Month() int {
         var (_, m, _) = this.Date()
         return m
     }
 
+    // MonthName returns the English name of the month ("January").
     func MonthName() string {
         return monthNames()[this.Month() - 1]
     }
 
+    // Day returns the day of the month of t in its location.
     func Day() int {
         var (_, _, d) = this.Date()
         return d
     }
 
+    // Hour returns the hour of t (0-23) in its location.
     func Hour() int {
         return floorMod(this.localSec(), 86400) / 3600
     }
 
+    // Minute returns the minute of t (0-59).
     func Minute() int {
         return floorMod(this.localSec(), 3600) / 60
     }
 
+    // Second returns the second of t (0-59).
     func Second() int {
         return floorMod(this.localSec(), 60)
     }
@@ -907,6 +942,7 @@ struct Time {
         return floorMod(floorDiv(this.localSec(), 86400) + 4, 7)
     }
 
+    // WeekdayName returns the English name of the weekday ("Sunday").
     func WeekdayName() string {
         return dayNames()[this.Weekday()]
     }
@@ -934,10 +970,12 @@ struct Time {
         return (z.name, z.offset)
     }
 
+    // IsDST reports whether daylight saving time is in effect at t in its location.
     func IsDST() bool {
         return this.zoneNow().isDST
     }
 
+    // Location returns the location of t.
     func Location() *Location {
         return this.location()
     }
@@ -957,6 +995,7 @@ struct Time {
         return Time{sec: this.sec, nsec: this.nsec, loc: loc}
     }
 
+    // Add returns t + d.
     func Add(d Duration) Time {
         var ns = this.nsec + d.ns % 1000000000
         var sec = this.sec + d.ns / 1000000000
@@ -990,10 +1029,12 @@ struct Time {
         return Date(y + years, m + months, d + days, h, mi, s, this.nsec, this.loc)
     }
 
+    // Before reports whether t is before u.
     func Before(u Time) bool {
         return this.sec < u.sec || (this.sec == u.sec && this.nsec < u.nsec)
     }
 
+    // After reports whether t is after u.
     func After(u Time) bool {
         return this.sec > u.sec || (this.sec == u.sec && this.nsec > u.nsec)
     }
@@ -1003,10 +1044,12 @@ struct Time {
         return this.sec == u.sec && this.nsec == u.nsec
     }
 
+    // Equals reports whether t and u are the same instant (Equal).
     func Equals(u Time) bool {
         return this.Equal(u)
     }
 
+    // Compare returns -1, 0 or 1 if t is before, the same as or after u.
     func Compare(u Time) int {
         if this.Before(u) {
             return -1
@@ -1092,10 +1135,12 @@ func Unix(sec int, nsec int) Time {
     return Time{sec: s + unixToInternal(), nsec: floorMod(nsec, 1000000000), loc: nil}
 }
 
+// UnixMilli returns the UTC time of Unix milliseconds ms.
 func UnixMilli(ms int) Time {
     return Unix(floorDiv(ms, 1000), floorMod(ms, 1000) * 1000000)
 }
 
+// UnixMicro returns the UTC time of Unix microseconds us.
 func UnixMicro(us int) Time {
     return Unix(floorDiv(us, 1000000), floorMod(us, 1000000) * 1000)
 }
@@ -1150,23 +1195,28 @@ func SleepFor(d Duration) {
 struct Instant {
     ns int
 
+    // Elapsed returns the time since the instant.
     func Elapsed() Duration {
         return Duration{ns: std.diag.rtMonoNanos() - this.ns}
     }
 
+    // Sub returns the duration between two instants.
     func Sub(o Instant) Duration {
         return Duration{ns: this.ns - o.ns}
     }
 
+    // Add returns the instant d later.
     func Add(d Duration) Instant {
         return Instant{ns: this.ns + d.ns}
     }
 
+    // Before reports whether the instant is before o.
     func Before(o Instant) bool {
         return this.ns < o.ns
     }
 }
 
+// NowInstant returns a reading of the monotonic clock (for measuring intervals).
 func NowInstant() Instant {
     return Instant{ns: std.diag.rtMonoNanos()}
 }
@@ -1185,6 +1235,7 @@ struct Ticker {
         return tickerTick(*this)
     }
 
+    // Stop stops the ticker: the next Tick returns false.
     func Stop() {
         this.st.stopped = true
     }
@@ -1219,6 +1270,7 @@ func NewTicker(d Duration) Ticker {
 struct Timer {
     st *tickState
 
+    // Wait waits until the timer fires (true) or is stopped (false).
     func Wait() Task<bool> {
         return timerWait(*this)
     }
@@ -1239,6 +1291,7 @@ struct Timer {
     }
 }
 
+// NewTimer returns a timer that fires once after d.
 func NewTimer(d Duration) Timer {
     return Timer{st: new tickState{period: d.ns, next: std.diag.rtMonoNanos() + d.ns}}
 }

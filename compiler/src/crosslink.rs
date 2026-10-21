@@ -3,19 +3,27 @@
 //! linked, and how one is run on this machine (Wine for Windows).
 //!
 //! - **Runtime**: `$SLANG_TARGETS/<triple>/libslang_rt.a` (default
-//!   `~/.slang/targets/<triple>/`, the layout `slang target add` will
-//!   fill), then `runtime/build/<triple>/libslang_rt.a` next to the
+//!   `~/.slang/targets/<triple>/`, filled by `slang target add`), the
+//!   toolchain's `targets/<triple>/`, then `runtime/build/<triple>/libslang_rt.a` next to the
 //!   compiler or in the repository it was built from (`make -C runtime
 //!   CROSS=x86_64-w64-mingw32` puts the Windows archive there).
 //! - **Windows (MinGW ABI)**: `clang -target <cpu>-w64-mingw32`, which finds
 //!   the mingw-w64 CRT and import libraries (Debian/Ubuntu `mingw-w64`,
 //!   MSYS2), linking with `lld` when installed (`-fuse-ld=lld`), else the
 //!   mingw binutils `ld`. System libraries: ws2_32, iphlpapi, bcrypt,
-//!   shell32, advapi32.
+//!   shell32, advapi32 (crypt32, dbghelp, ntdll and winsqlite3 are loaded
+//!   at run time); `-lsqlite3` is dropped (winsqlite3.dll at run time).
 //! - **macOS**: needs an SDK (`$SDKROOT`, or `xcrun --show-sdk-path` on a
 //!   Mac) for `libSystem.tbd`; without one only `--emit=obj` works.
 //! - **Other ELF targets**: `clang --target=<triple> -fuse-ld=lld` with
-//!   `--sysroot=$SLANG_SYSROOT` when set.
+//!   `--sysroot=$SLANG_SYSROOT` when set (Debian/Ubuntu's
+//!   `gcc-aarch64-linux-gnu` is found without one). Run here through
+//!   `qemu-<arch>` (`$SLANG_QEMU`, `-L $SLANG_SYSROOT` or
+//!   `/usr/<cpu>-linux-gnu` for the dynamic loader).
+//! - **musl** (`linux-amd64-musl`): always `-static`; linked by `musl-gcc`
+//!   (`$SLANG_MUSL_CC`; Debian/Ubuntu `musl-tools`) when it targets the
+//!   same CPU, else clang with `--sysroot=$SLANG_SYSROOT` (a musl sysroot).
+//!   The runtime comes from `make -C runtime CROSS=x86_64-linux-musl`.
 
 use crate::target::{ObjectFormat, Target};
 use std::path::{Path, PathBuf};
@@ -25,21 +33,15 @@ use std::process::Command;
 pub const WINDOWS_LIBS: &[&str] = &["ws2_32", "iphlpapi", "bcrypt", "shell32", "advapi32"];
 
 /// The directory of prebuilt target runtimes (`$SLANG_TARGETS`, default
-/// `~/.slang/targets`).
+/// `$SLANG_HOME/targets` = `~/.slang/targets`; `slang target add` fills it).
 pub fn targets_dir() -> Option<PathBuf> {
-    if let Ok(d) = std::env::var("SLANG_TARGETS") {
-        return Some(PathBuf::from(d));
-    }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(".slang").join("targets"))
+    Some(crate::toolchain::targets_dir())
 }
 
-/// Locates `libslang_rt.a` built for `t` (not the host).
+/// Locates `libslang_rt.a` built for `t` (not the host): `$SLANG_TARGETS`,
+/// the toolchain's own `targets/`, then the repository's `runtime/build/`.
 pub fn find_runtime(t: &Target) -> Result<PathBuf, String> {
-    let mut cands = Vec::new();
-    if let Some(d) = targets_dir() {
-        cands.push(d.join(&t.triple).join("libslang_rt.a"));
-    }
+    let mut cands = crate::toolchain::runtime_candidates(&t.triple);
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             cands.push(dir.join("../../runtime/build").join(&t.triple).join("libslang_rt.a"));
@@ -54,7 +56,7 @@ pub fn find_runtime(t: &Target) -> Result<PathBuf, String> {
     }
     let hint = if t.os == "windows" { "make -C runtime CROSS=x86_64-w64-mingw32".to_string() } else { format!("make -C runtime CROSS={} (needs the target's C headers)", t.triple) };
     Err(format!(
-        "no Slang runtime for {} (build it with `{hint}`, or put libslang_rt.a in ~/.slang/targets/{}/); looked in: {}",
+        "no Slang runtime for {} (download it with `slang target add {}`, or build it with `{hint}`); looked in: {}",
         t.triple,
         t.triple,
         cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ")
@@ -90,6 +92,17 @@ fn have(tool: &str) -> bool {
     Command::new(tool).arg("--version").output().is_ok_and(|o| o.status.success())
 }
 
+/// The musl-gcc wrapper for a musl target of the host's CPU
+/// (`$SLANG_MUSL_CC`, else `musl-gcc` when installed).
+fn musl_cc(t: &Target) -> Option<String> {
+    if let Ok(cc) = std::env::var("SLANG_MUSL_CC") {
+        return Some(cc);
+    }
+    let host_cpu = std::env::consts::ARCH;
+    let cpu = t.triple.split('-').next().unwrap_or("");
+    (cpu == host_cpu && have("musl-gcc")).then(|| "musl-gcc".to_string())
+}
+
 /// The clang `-target` of `t` for linking: MinGW triples are spelled the
 /// way the mingw-w64 sysroot is named.
 fn clang_target(t: &Target) -> String {
@@ -112,10 +125,34 @@ pub struct LinkOpts<'a> {
 /// The link command for executable `output` of target `t` from `objs`, the
 /// target runtime `rt` and the system libraries `libs`.
 pub fn link_command(t: &Target, objs: &[PathBuf], rt: &Path, output: &Path, libs: &[&str], o: &LinkOpts) -> Result<Command, String> {
+    if t.is_musl() {
+        if let Some(cc) = musl_cc(t) {
+            let mut cmd = Command::new(cc);
+            cmd.args(objs).arg(rt);
+            for l in libs.iter().filter(|l| **l != "sqlite3") {
+                cmd.arg(format!("-l{l}"));
+            }
+            cmd.arg("-static").arg("-lpthread").arg("-lm");
+            if o.release {
+                cmd.arg("-Wl,--gc-sections");
+            }
+            if o.strip {
+                cmd.arg("-s");
+            }
+            cmd.arg("-o").arg(output);
+            return Ok(cmd);
+        }
+    }
     let mut cmd = Command::new(o.clang);
     cmd.arg("-target").arg(clang_target(t));
     cmd.args(objs).arg(rt);
     for l in libs {
+        // Windows: SQLite is bound at run time from winsqlite3.dll / sqlite3.dll
+        // (runtime/src/platform/sqlite_dyn.h), there is no import library to link;
+        // musl: no static libsqlite3, the runtime is built without it.
+        if (t.os == "windows" || t.is_musl()) && *l == "sqlite3" {
+            continue;
+        }
         cmd.arg(format!("-l{l}"));
     }
     match t.object_format() {
@@ -153,7 +190,7 @@ pub fn link_command(t: &Target, objs: &[PathBuf], rt: &Path, output: &Path, libs
             if o.release {
                 cmd.arg("-Wl,--gc-sections");
             }
-            if o.static_link {
+            if o.static_link || t.is_musl() {
                 cmd.arg("-static");
             }
         }
@@ -172,6 +209,26 @@ pub fn link_command(t: &Target, objs: &[PathBuf], rt: &Path, output: &Path, libs
 pub fn run_command(t: &Target, exe: &Path) -> Option<Command> {
     if t.is_host() {
         return Some(Command::new(exe));
+    }
+    let host = Target::host();
+    if t.os == "linux" && host.os == "linux" {
+        if t.arch == host.arch {
+            return Some(Command::new(exe)); // musl: a static executable
+        }
+        // another CPU: user-mode QEMU, with the target's dynamic loader
+        let cpu = t.triple.split('-').next().unwrap_or("");
+        let cands = match std::env::var("SLANG_QEMU") {
+            Ok(q) => vec![q],
+            Err(_) => vec![format!("qemu-{cpu}-static"), format!("qemu-{cpu}")],
+        };
+        let qemu = cands.into_iter().find(|q| Command::new(q).arg("--version").output().is_ok_and(|o| o.status.success()))?;
+        let mut c = Command::new(qemu);
+        let root = std::env::var("SLANG_SYSROOT").unwrap_or_else(|_| format!("/usr/{cpu}-linux-gnu"));
+        if !t.is_musl() && Path::new(&root).is_dir() {
+            c.arg("-L").arg(root);
+        }
+        c.arg(exe);
+        return Some(c);
     }
     if t.os == "windows" && t.arch == "amd64" && !cfg!(windows) {
         let wine = std::env::var("SLANG_WINE").unwrap_or_else(|_| "wine".into());

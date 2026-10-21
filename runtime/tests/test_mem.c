@@ -64,7 +64,7 @@ TEST(layout) {
     assert(sizeof(slang_map_desc) == 48);
     assert(sizeof(slang_map_iter) == 32);
     assert(sizeof(slang_error) == 224 && sizeof(slang_error_site) == 24 && sizeof(slang_error_frame) == 16);
-    assert(sizeof(slang_string) == 24);
+    assert(sizeof(slang_string) == 32);
     assert(offsetof(slang_string, len) == 16 && offsetof(slang_string, data) == 24);
     assert(offsetof(slang_slice, data) == 0 && offsetof(slang_slice, len) == 8);
     assert(offsetof(slang_slice, cap) == 16 && offsetof(slang_slice, backing) == 24);

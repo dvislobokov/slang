@@ -87,7 +87,7 @@ static void zstd_roundtrip(const uint8_t *p, size_t n, int level, int cli) {
     slang_compress_rt_zstd_encode(&in, level, true, &enc, &err);
     assert(!err);
     slang_compress_rt_zstd_decode(&enc, &dec, &err);
-    if (err) fprintf(stderr, "decode failed (n=%zu level=%d): %s\n", n, level, slang_string_data(err->message));
+    if (err) fprintf(stderr, "decode failed (n=%zu level=%d): %s\n", n, level, slang_string_cstr(err->message));
     assert(!err);
     assert(dec.len == (int64_t)n && (n == 0 || memcmp(dec.data, p, n) == 0));
     if (cli) {
@@ -292,7 +292,7 @@ TEST(aes_cbc) {
         ((uint8_t *)ct.data)[ct.len - 1] ^= 0x55;   /* corrupt the padding */
         slang_slice bad;
         slang_crypto_aes_cbc_decrypt(&key, &iv, &ct, &bad, &err);
-        assert(err && strstr(slang_string_data(err->message), "padding"));
+        assert(err && strstr(slang_string_cstr(err->message), "padding"));
         slang_release(err);
         err = NULL;
         slang_slice_release(&m);
@@ -377,7 +377,7 @@ TEST(brotli_decoder) {
             fclose(f);
             slang_slice cs = bytes(c, (size_t)len);
             slang_compress_rt_brotli_decode(&cs, &out, &err);
-            if (err) fprintf(stderr, "brotli %s: %s\n", opts[k], slang_string_data(err->message));
+            if (err) fprintf(stderr, "brotli %s: %s\n", opts[k], slang_string_cstr(err->message));
             assert(!err && out.len == (int64_t)n && memcmp(out.data, buf, n) == 0);
             slang_slice_release(&out);
             slang_slice_release(&cs);

@@ -1,9 +1,8 @@
-namespace std.compress.deflate
-
 // Raw DEFLATE (RFC 1951) streams. The coder is C (runtime/src/std_compress.c,
 // reached through the std.compress rt* externs); this file is the API:
 // one-shot Compress/Decompress and the streaming Writer/Reader, which work
 // on []byte chunks of any size.
+namespace std.compress.deflate
 
 // Compresses data at level 0 (store) .. 9 (best); -1 is the default (6).
 func Compress(data []byte, level int) []byte {

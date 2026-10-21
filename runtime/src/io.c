@@ -65,12 +65,12 @@ void slang_eprintln_str(const slang_string *s) {
 }
 
 static slang_error *errno_error(const char *op, const slang_string *path, int e) {
-    return slang_error_errno(op, slang_string_data(path), e);
+    return slang_error_errno(op, slang_string_cstr(path), e);
 }
 
 slang_string *slang_read_file(const slang_string *path, slang_error **err) {
     if (err) *err = NULL;
-    int64_t fd = slang__plat_open(slang_string_data(path), SLANG_PLAT_O_RDONLY, 0);
+    int64_t fd = slang__plat_open(slang_string_cstr(path), SLANG_PLAT_O_RDONLY, 0);
     if (fd < 0) { if (err) *err = errno_error("open", path, (int)-fd); return NULL; }
     int64_t cap = 4096, len = 0;
     char *buf = slang_alloc(cap);
@@ -93,7 +93,7 @@ slang_string *slang_read_file(const slang_string *path, slang_error **err) {
 }
 
 static slang_error *write_bytes(const slang_string *path, const void *data, int64_t n) {
-    int64_t fd = slang__plat_open(slang_string_data(path), SLANG_PLAT_O_WRONLY | SLANG_PLAT_O_CREATE | SLANG_PLAT_O_TRUNC, 0666);
+    int64_t fd = slang__plat_open(slang_string_cstr(path), SLANG_PLAT_O_WRONLY | SLANG_PLAT_O_CREATE | SLANG_PLAT_O_TRUNC, 0666);
     if (fd < 0) return errno_error("open", path, (int)-fd);
     int e = slang__plat_write_all(fd, data, n);
     if (e) {

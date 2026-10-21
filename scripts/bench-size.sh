@@ -2,7 +2,9 @@
 # Compares hello-world binary sizes: C, C++, Go and Slang (debug, --release,
 # --release --static), plus Windows (windows-amd64, MinGW ABI) builds of C and
 # Slang when the mingw-w64 cross runtime exists (make -C runtime
-# CROSS=x86_64-w64-mingw32).
+# CROSS=x86_64-w64-mingw32), a fully static musl build (linux-amd64-musl:
+# make -C runtime CROSS=x86_64-linux-musl, musl-tools) and linux-arm64
+# (make -C runtime CROSS=aarch64-linux-gnu, gcc-aarch64-linux-gnu).
 # Usage: ./scripts/bench-size.sh   (needs clang, clang++, go; slang is optional:
 #        $SLANG, else target/release/slang, else slang on PATH)
 set -e
@@ -45,10 +47,18 @@ if [ -n "$SLANG" ]; then
         "$SLANG" build --release --target windows-amd64 "$hello" -o slang_win_release.exe || true
         clang -target x86_64-w64-mingw32 -O2 -s hello.c -o c_win.exe 2>/dev/null || true
     fi
+    if [ -f "$root/runtime/build/x86_64-unknown-linux-musl/libslang_rt.a" ] && command -v musl-gcc >/dev/null 2>&1; then
+        "$SLANG" build --release --target linux-amd64-musl "$hello" -o slang_musl_static || true
+        musl-gcc -O2 -static -s hello.c -o c_musl_static 2>/dev/null || true
+    fi
+    if [ -f "$root/runtime/build/aarch64-unknown-linux-gnu/libslang_rt.a" ]; then
+        "$SLANG" build --release --target linux-arm64 "$hello" -o slang_arm64_release || true
+    fi
 fi
 
 printf '%-22s %10s\n' binary size_kb
-for f in c_dyn c_static cpp_dyn cpp_static go_stripped slang_debug slang_release slang_static c_win.exe slang_win_release.exe; do
+for f in c_dyn c_static cpp_dyn cpp_static go_stripped slang_debug slang_release slang_static c_win.exe slang_win_release.exe \
+         c_musl_static slang_musl_static slang_arm64_release; do
     [ -f "$f" ] && printf '%-22s %10d\n' "$f" "$(( $(stat -c %s "$f") / 1024 ))"
 done
 rm -rf "$dir"

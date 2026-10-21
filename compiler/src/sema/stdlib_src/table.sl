@@ -1,11 +1,11 @@
-namespace std.text.table
-
 // Text tables: columns padded to the widest cell (display width: wide
 // East Asian characters and emoji count as 2, combining marks as 0),
 // per-column alignment, and several styles: Plain (space separated, like
 // Go's tabwriter), ASCII and Unicode boxes, and Markdown. Cells may hold
 // several lines.
+namespace std.text.table
 
+// Table renders rows of text as aligned columns (Plain, ASCII, Unicode or Markdown style).
 struct Table {
     Headers []string
     // per column: Left (default), Right or Center
@@ -15,6 +15,7 @@ struct Table {
     Padding int
     rows    [][]string
 
+    // AddRow appends a row of cells.
     func AddRow(cells []string) {
         var r []string = []
         for c in cells {
@@ -23,6 +24,7 @@ struct Table {
         this.rows = append(this.rows, r)
     }
 
+    // SetAlign sets the alignment of column col: Left, Right or Center.
     func SetAlign(col int, align int) {
         for len(this.Align) <= col {
             this.Align = append(this.Align, Left)
@@ -30,10 +32,12 @@ struct Table {
         this.Align[col] = align
     }
 
+    // NumRows returns the number of rows (without the header).
     func NumRows() int {
         return len(this.rows)
     }
 
+    // String renders the table.
     func String() string {
         var ncol = len(this.Headers)
         for r in this.rows {
@@ -205,6 +209,7 @@ struct Table {
     }
 }
 
+// New returns a table with headers.
 func New(headers []string) *Table {
     var t = &Table{}
     for h in headers {
@@ -274,6 +279,7 @@ func Width(s string) int {
     return w
 }
 
+// RuneWidth returns the display width of r in columns (0 for control and combining characters, 2 for wide ones).
 func RuneWidth(r int) int {
     if r < 32 || (r >= 127 && r < 160) {
         return 0

@@ -1,5 +1,3 @@
-namespace std.encoding.yaml
-
 // YAML 1.2 for configuration files: block and flow mappings and
 // sequences, plain / single-quoted / double-quoted scalars, literal (|)
 // and folded (>) block scalars with chomping and indentation indicators,
@@ -12,6 +10,7 @@ namespace std.encoding.yaml
 //
 // Parse<T>/Format<T> map structs through compile-time reflection with
 // @yaml(name:, omitEmpty:, skip:, flow:) and @serde(name:, omitEmpty:, skip:).
+namespace std.encoding.yaml
 
 // A dynamic YAML node (kind: null, bool, int, float, string, sequence,
 // mapping). Mapping keys are strings (other scalar keys are converted).
@@ -24,30 +23,37 @@ struct Value {
     items []Value
     keys  []string
 
+    // IsNull reports whether the value is null (also the zero Value).
     func IsNull() bool {
         return this.kind == 0
     }
 
+    // IsBool reports whether the value is a boolean.
     func IsBool() bool {
         return this.kind == 1
     }
 
+    // IsInt reports whether the value is an integer.
     func IsInt() bool {
         return this.kind == 2
     }
 
+    // IsFloat reports whether the value is a float.
     func IsFloat() bool {
         return this.kind == 3
     }
 
+    // IsString reports whether the value is a string.
     func IsString() bool {
         return this.kind == 4
     }
 
+    // IsSeq reports whether the value is a sequence.
     func IsSeq() bool {
         return this.kind == 5
     }
 
+    // IsMap reports whether the value is a mapping.
     func IsMap() bool {
         return this.kind == 6
     }
@@ -57,6 +63,7 @@ struct Value {
         return kindName(this.kind)
     }
 
+    // Bool returns the boolean; an error for other kinds.
     func Bool() bool! {
         if this.kind != 1 {
             return error("yaml: " + kindName(this.kind) + " is not a bool")
@@ -64,6 +71,7 @@ struct Value {
         return this.b
     }
 
+    // Int returns the integer; an error for other kinds.
     func Int() int! {
         if this.kind != 2 {
             return error("yaml: " + kindName(this.kind) + " is not an int")
@@ -82,6 +90,7 @@ struct Value {
         return this.f
     }
 
+    // String returns the string; an error for other kinds.
     func String() string! {
         if this.kind != 4 {
             return error("yaml: " + kindName(this.kind) + " is not a string")
@@ -106,6 +115,7 @@ struct Value {
         return this.s
     }
 
+    // Len returns the number of elements of a sequence or entries of a mapping (0 otherwise).
     func Len() int {
         if this.kind == 5 || this.kind == 6 {
             return len(this.items)
@@ -113,6 +123,7 @@ struct Value {
         return 0
     }
 
+    // Index returns element i of a sequence (the zero Value if out of range).
     func Index(i int) Value {
         if this.kind == 5 && i >= 0 && i < len(this.items) {
             return this.items[i]
@@ -120,6 +131,7 @@ struct Value {
         return Value{}
     }
 
+    // Get returns the value of key in a mapping (the zero Value if absent).
     func Get(key string) Value {
         var i = this.find(key)
         if i < 0 {
@@ -128,6 +140,7 @@ struct Value {
         return this.items[i]
     }
 
+    // Has reports whether a mapping has key.
     func Has(key string) bool {
         return this.find(key) >= 0
     }
@@ -171,26 +184,32 @@ struct Value {
     }
 }
 
+// NewNull returns the null value.
 func NewNull() Value {
     return Value{}
 }
 
+// NewBool returns a boolean value.
 func NewBool(b bool) Value {
     return Value{kind: 1, b: b}
 }
 
+// NewInt returns an integer value.
 func NewInt(i int) Value {
     return Value{kind: 2, i: i}
 }
 
+// NewFloat returns a float value.
 func NewFloat(f float) Value {
     return Value{kind: 3, f: f}
 }
 
+// NewString returns a string value.
 func NewString(s string) Value {
     return Value{kind: 4, s: s}
 }
 
+// NewSeq returns a sequence of copies of items.
 func NewSeq(items []Value) Value {
     var c []Value = []
     for x in items {
@@ -199,6 +218,7 @@ func NewSeq(items []Value) Value {
     return Value{kind: 5, items: c}
 }
 
+// NewMap returns a mapping of keys to values (in that order); an error if the lengths differ.
 func NewMap(keys []string, values []Value) Value! {
     if len(keys) != len(values) {
         return error("yaml.NewMap: keys and values differ in length")

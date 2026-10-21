@@ -533,6 +533,11 @@ impl<'a> Sema<'a> {
         match &t.kind {
             // Syntax error, already reported by the parser.
             K::Error => self.tt.invalid,
+            // Untyped lambda parameter outside a typed context.
+            K::Infer => {
+                self.err("missing parameter type (write `(x T) => ...`; lambda parameters are typed from the expected function type only)", t.span);
+                self.tt.invalid
+            }
             K::Named { path, generics } => {
                 if path.segments.len() == 1 && generics.is_empty() {
                     if let Some(ty) = self.type_param(&path.segments[0].name) {

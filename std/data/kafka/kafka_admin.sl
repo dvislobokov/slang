@@ -1,8 +1,7 @@
-namespace std.data.kafka
-
 // Topic administration (see kafka.sl for the file layout): CreateTopics v2
 // and DeleteTopics v1 sent to the controller, topic listing and
 // description from Metadata v1.
+namespace std.data.kafka
 
 // A topic to create. ReplicationFactor 0 means 1; Configs are topic
 // configs ("retention.ms", "cleanup.policy"...).
@@ -17,6 +16,7 @@ struct TopicSpec {
 struct Admin {
     c *client
 
+    // CreateTopic creates a topic with partitions and replicationFactor.
     func CreateTopic(name string, partitions int, replicationFactor int) Task<void!> {
         return createTopics(this.c, [TopicSpec{Name: name, Partitions: partitions, ReplicationFactor: replicationFactor}])
     }
@@ -27,10 +27,12 @@ struct Admin {
         return createTopics(this.c, specs)
     }
 
+    // DeleteTopic deletes a topic.
     func DeleteTopic(name string) Task<void!> {
         return deleteTopics(this.c, [name])
     }
 
+    // DeleteTopics deletes topics.
     func DeleteTopics(names []string) Task<void!> {
         return deleteTopics(this.c, names)
     }
@@ -40,6 +42,7 @@ struct Admin {
         return listTopics(this.c)
     }
 
+    // DescribeTopic returns the partitions and their leaders and replicas.
     func DescribeTopic(name string) Task<TopicInfo!> {
         return describeTopic(this.c, name)
     }
@@ -58,15 +61,18 @@ struct Admin {
         return out
     }
 
+    // Close closes the connections to the brokers.
     func Close() {
         this.c.closeAll()
     }
 }
 
+// NewAdmin connects an admin client to the cluster through brokers.
 async func NewAdmin(brokers []string) *Admin! {
     return await NewAdminWith(brokers, Config{})?
 }
 
+// NewAdminWith is NewAdmin with a client configuration.
 async func NewAdminWith(brokers []string, cfg Config) *Admin! {
     var c = newClient(cfg, brokers)?
     try await refreshMetadata(c, []) catch err {

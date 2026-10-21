@@ -1,0 +1,45 @@
+// Examples for std.net.http: a server and its client in one program.
+namespace http_test
+
+import std
+import std.io
+import std.net
+
+async func ExampleRouter() void! {
+    var r = http.NewRouter()
+    r.Get("/hello/{name}", async func(req *http.Request, res *http.Response) void! {
+        res.Text(200, "hello, " + req.Param("name"))
+    })
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: r}
+    srv.Listen()?
+    var serving = srv.Serve()
+    var res = await http.Get(fmt.Format("http://127.0.0.1:{0}/hello/ann", srv.Port()))?
+    println(res.Status, res.Body)
+    var missing = await http.Get(fmt.Format("http://127.0.0.1:{0}/nope", srv.Port()))?
+    println(missing.Status)
+    await srv.Shutdown()
+    await serving?
+    // Output:
+    // 200 hello, ann
+    // 404
+}
+
+async func ExamplePost() void! {
+    var r = http.NewRouter()
+    r.Post("/echo", async func(req *http.Request, res *http.Response) void! {
+        res.Json(201, "{\"len\": " + strconv.Itoa(len(req.Body)) + "}")
+    })
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: r}
+    srv.Listen()?
+    var serving = srv.Serve()
+    var res = await http.Post(
+        fmt.Format("http://127.0.0.1:{0}/echo", srv.Port()),
+        "ping",
+        "text/plain",
+    )?
+    println(res.Status, res.Header("Content-Type"), res.Body)
+    await srv.Shutdown()
+    await serving?
+    // Output:
+    // 201 application/json {"len": 4}
+}

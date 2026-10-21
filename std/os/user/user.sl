@@ -1,8 +1,7 @@
-namespace std.os.user
-
 // std.os.user (Go's os/user): accounts from the system databases
 // (passwd/group through NSS; runtime/src/std_os_user.c). Ids are strings,
 // as in Go, so the API also fits non-numeric platforms.
+namespace std.os.user
 
 struct User {
     Uid      string

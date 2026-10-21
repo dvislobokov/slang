@@ -2,6 +2,9 @@
 #include <math.h>
 
 SLANG_STATIC_STRING(lit_hello, "hello");
+SLANG_STATIC_STRING(lit_comma, ",");
+SLANG_STATIC_STRING(lit_a_b, "a,,b");
+#define S_LIT(x) (strcmp(x, ",") == 0 ? lit_comma : lit_a_b)
 
 TEST(literals) {
     assert(slang_string_len(lit_hello) == 5);
@@ -33,7 +36,9 @@ TEST(concat_compare) {
     slang_string *a = S("foo"), *b = S("bar");
     slang_string *ab = slang_string_concat(a, b);
     assert(STR_IS(ab, "foobar"));
+#ifndef SLANG_STRESS_NONUL
     assert(ab->data[6] == 0);
+#endif
     assert(slang_string_compare(a, b) == 1);
     assert(slang_string_compare(b, a) == -1);
     slang_string *fo = S("fo");
@@ -168,6 +173,57 @@ TEST(append_in_place) {
     slang_release(s); slang_release(t); slang_release(u); slang_release(e); slang_release(x);
 }
 
+/* Views (ABI.md 4.1): Split/Fields pieces in a view block, long slices as
+ * standalone views, short ones copied; all release their parent. */
+TEST(views) {
+    int64_t live = slang_live_objects();
+    char big[200];
+    for (int i = 0; i < 199; i++) big[i] = (char)('a' + i % 26);
+    big[199] = 0;
+    big[10] = ',';
+    big[150] = ',';
+    slang_string *p = slang_string_new(big, 199);
+    slang_slice parts;
+    slang_strings_split(p, S_LIT(","), &parts);
+    assert(parts.len == 3);
+    slang_string **el = parts.data;
+    assert(slang_string_len(el[0]) == 10 && memcmp(el[0]->data, big, 10) == 0);
+    assert(el[1]->data == p->data + 11 && slang_rc_is_view(el[1]->hdr.refcount));
+    assert(el[1]->data[el[1]->len] == ',');              /* not terminated */
+    assert(strlen(slang_string_cstr(el[1])) == 139);      /* terminated copy */
+#ifndef SLANG_STRESS_NONUL
+    assert(slang_string_cstr(el[2]) == el[2]->data);      /* ends at the parent's NUL */
+#endif
+    slang_string *keep = el[1];
+    slang_retain(keep);                                    /* forwards to the block */
+    assert(slang_refcount(keep) == 4);
+    slang_release(p);                                      /* the block owns p's bytes */
+    slang_slice_release(&parts);
+    assert(slang_refcount(keep) == 1 && keep->data[0] == big[11]);
+    slang_string *k2 = slang_string_slice(keep, 1, 100);  /* view of a view: owner flattened */
+    assert(k2->hdr.type == &slang_type_string_view && k2->data == keep->data + 1);
+    slang_string *k3 = slang_string_slice(keep, 1, 5);    /* short: a copy */
+    assert(k3->hdr.type == &slang_type_string && k3->data == (char *)(k3 + 1) && STR_IS(k3, "mnop"));
+    slang_release(keep);                                   /* block gone, k2 keeps p */
+    slang_string *k4 = slang_string_append(k2, k3);        /* a view is never extended in place */
+    assert(slang_string_len(k4) == 103 && k4->data == (char *)(k4 + 1));  /* k2 consumed */
+    slang_error *e = slang_error_sentinel(k4);             /* copies a non-immortal message */
+    assert(e->message != k4);
+    slang_release(k3); slang_release(k4);
+    slang_slice f;
+    slang_string *ws = S("  alpha \t beta\ngamma  ");
+    slang_strings_fields(ws, &f);
+    slang_string **fe = f.data;
+    assert(f.len == 3 && STR_IS(fe[0], "alpha") && STR_IS(fe[1], "beta") && STR_IS(fe[2], "gamma"));
+    slang_release(ws);
+    slang_slice_release(&f);
+    slang_strings_split(S_LIT("a,,b"), S_LIT(","), &f);   /* immortal parent, empty piece NULL */
+    fe = f.data;
+    assert(f.len == 3 && STR_IS(fe[0], "a") && fe[1] == NULL && STR_IS(fe[2], "b"));
+    slang_slice_release(&f);
+    assert(slang_live_objects() == live);
+}
+
 int main(void) {
     printf("test_string\n");
     int64_t live = slang_live_objects();
@@ -180,6 +236,7 @@ int main(void) {
     RUN(int_conv);
     RUN(float_conv);
     RUN(bounds_panic);
+    RUN(views);
     /* slang_string_literal makes an immortal object, which does not count */
     assert(slang_live_objects() == live);
     return 0;

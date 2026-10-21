@@ -1,5 +1,3 @@
-namespace std.data.kafka
-
 // std.data.kafka: an Apache Kafka client written in Slang over std.net and
 // std.net.tls (docs/STDLIB.md level 3b). Files of the namespace:
 //
@@ -23,6 +21,7 @@ namespace std.data.kafka
 // They are inside the ranges of Kafka 1.0 through 4.x; zstd needs Produce 7
 // and Fetch 10 (Kafka >= 2.1). snappy and lz4 batches are not supported
 // (producing them is refused, consuming them fails with an error).
+namespace std.data.kafka
 
 // ---- errors -----------------------------------------------------------------
 
@@ -31,6 +30,7 @@ struct Error {
     Code int
     Text string
 
+    // Message returns "kafka: NAME (code): text".
     func Message() string {
         var s = "kafka: " + errorName(this.Code) + " (" + std.strconv.Itoa(this.Code) + ")"
         if this.Text != "" {
@@ -168,23 +168,28 @@ func ErrorCode(err error) int {
 struct Encoder {
     B []byte
 
+    // Int8 appends one byte.
     func Int8(v int) {
         this.B = append(this.B, byte(v & 255))
     }
 
+    // Int16 appends a big-endian 16-bit integer.
     func Int16(v int) {
         this.B = append(this.B, byte((v >> 8) & 255), byte(v & 255))
     }
 
+    // Int32 appends a big-endian 32-bit integer.
     func Int32(v int) {
         this.B = append(this.B, byte((v >> 24) & 255), byte((v >> 16) & 255), byte((v >> 8) & 255), byte(v & 255))
     }
 
+    // Int64 appends a big-endian 64-bit integer.
     func Int64(v int) {
         this.Int32(v >> 32)
         this.Int32(v)
     }
 
+    // Bool appends 1 or 0.
     func Bool(v bool) {
         if v {
             this.Int8(1)
@@ -214,10 +219,12 @@ struct Encoder {
         this.B = std.data.rtAppend(this.B, b)
     }
 
+    // NullBytes appends a null byte array (length -1).
     func NullBytes() {
         this.Int32(-1)
     }
 
+    // Raw appends b as is.
     func Raw(b []byte) {
         this.B = std.data.rtAppend(this.B, b)
     }
@@ -227,10 +234,12 @@ struct Encoder {
         this.Int32(n)
     }
 
+    // Varint appends a zig-zag varint.
     func Varint(v int) {
         this.B = std.encoding.binary.AppendVarint(this.B, v)
     }
 
+    // Uvarint appends an unsigned varint.
     func Uvarint(v int) {
         this.B = std.encoding.binary.AppendUvarint(this.B, uint(v))
     }
@@ -269,10 +278,12 @@ struct Decoder {
         return true
     }
 
+    // Remaining returns the number of unread bytes.
     func Remaining() int {
         return len(this.B) - this.Pos
     }
 
+    // Int8 reads one byte (signed).
     func Int8() int {
         if !this.need(1) {
             return 0
@@ -285,6 +296,7 @@ struct Decoder {
         return v
     }
 
+    // Int16 reads a big-endian 16-bit integer.
     func Int16() int {
         if !this.need(2) {
             return 0
@@ -297,6 +309,7 @@ struct Decoder {
         return v
     }
 
+    // Int32 reads a big-endian 32-bit integer.
     func Int32() int {
         if !this.need(4) {
             return 0
@@ -311,6 +324,7 @@ struct Decoder {
         return v
     }
 
+    // Uint32 reads a big-endian unsigned 32-bit integer.
     func Uint32() int {
         var v = this.Int32()
         if v < 0 {
@@ -319,16 +333,19 @@ struct Decoder {
         return v
     }
 
+    // Int64 reads a big-endian 64-bit integer.
     func Int64() int {
         var hi = this.Int32()
         var lo = this.Uint32()
         return (hi << 32) | lo
     }
 
+    // Bool reads one byte as a bool.
     func Bool() bool {
         return this.Int8() != 0
     }
 
+    // String reads a 16-bit length-prefixed string ("" for null).
     func String() string {
         var n = this.Int16()
         if n < 0 {
@@ -342,6 +359,7 @@ struct Decoder {
         return s
     }
 
+    // Bytes reads a 32-bit length-prefixed byte array (empty for null).
     func Bytes() []byte {
         var n = this.Int32()
         if n < 0 {
@@ -355,6 +373,7 @@ struct Decoder {
         return b
     }
 
+    // ArrayLen reads an array length, setting Err if it cannot fit in the rest of the buffer.
     func ArrayLen() int {
         var n = this.Int32()
         if n > this.Remaining() {
@@ -364,6 +383,7 @@ struct Decoder {
         return n
     }
 
+    // Varint reads a zig-zag varint.
     func Varint() int {
         if this.Pos >= len(this.B) {
             this.Err = true
@@ -379,6 +399,7 @@ struct Decoder {
         return v
     }
 
+    // VarBytes reads varint-length bytes; the bool is true for null (length -1).
     func VarBytes() ([]byte, bool) {
         var n = this.Varint()
         if n < 0 {
@@ -992,12 +1013,14 @@ struct Scram {
     authMessage string
     salted []byte
 
+    // First returns the client-first message.
     func First() string {
         var user = std.strings.Replace(std.strings.Replace(this.Username, "=", "=3D"), ",", "=2C")
         this.clientFirstBare = "n=" + user + ",r=" + this.Nonce
         return "n,," + this.clientFirstBare
     }
 
+    // Final computes the client-final message from the server-first message.
     func Final(serverFirst string) string! {
         var nonce = scramAttr(serverFirst, "r")
         var salt = std.encoding.base64.Decode(scramAttr(serverFirst, "s"))?("kafka: SCRAM salt")
@@ -1014,6 +1037,7 @@ struct Scram {
         return without + ",p=" + std.encoding.base64.Encode(xorBytes(clientKey, sig))
     }
 
+    // Verify checks the server signature of the server-final message.
     func Verify(serverFinal string) void! {
         var e = scramAttr(serverFinal, "e")
         if e != "" {
@@ -1037,6 +1061,7 @@ struct Broker {
     Port int
     Rack string
 
+    // Addr returns "host:port" of the broker.
     func Addr() string {
         return std.net.JoinHostPort(this.Host, this.Port)
     }

@@ -2,11 +2,17 @@
 // stdlib_docs.rs; DO NOT EDIT. The functions of std.crypto.rand implemented by the C runtime.
 namespace std.crypto.rand
 
+// Bytes returns n cryptographically secure random bytes.
+//
 // C: slang_crypto_rand_bytes (runtime/src/std_*.c).
-extern func Bytes(a int) []byte!
+extern func Bytes(n int) []byte!
 
+// Int returns a cryptographically secure random non-negative int.
+//
 // C: slang_crypto_rand_int (runtime/src/std_*.c).
 extern func Int() int!
 
+// Hex returns n random bytes as 2n lowercase hex characters.
+//
 // C: slang_crypto_rand_hex (runtime/src/std_*.c).
-extern func Hex(a int) string!
+extern func Hex(n int) string!

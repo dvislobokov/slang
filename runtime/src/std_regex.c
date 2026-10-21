@@ -18,7 +18,7 @@ static inline const char *sdata(const slang_string *s) { return s ? s->data : ""
  * category like "L" / "Lu" or a script like "Greek", or "Any"); an empty
  * slice if the name is unknown. */
 void slang_regex_rt_unicode(const slang_string *name, slang_slice *out) {
-    const char *n = sdata(name);
+    const char *n = slang_string_cstr(name);
     if (strcmp(n, "Any") == 0) {
         slang_slice_new(out, 8, 2, 2);
         int64_t *d = out->data;

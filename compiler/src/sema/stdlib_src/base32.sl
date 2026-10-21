@@ -1,9 +1,8 @@
-namespace std.encoding.base32
-
 // std.encoding.base32: RFC 4648 base32 (Go's encoding/base32). Encode /
 // Decode use the standard alphabet with padding, like std.encoding.base64;
 // EncodeHex / DecodeHex the "extended hex" alphabet; NewEncoding makes
 // others, with or without padding.
+namespace std.encoding.base32
 
 // An alphabet of 32 distinct ASCII characters and a padding choice.
 struct Encoding {
@@ -15,6 +14,7 @@ struct Encoding {
         return Encoding{alphabet: this.alphabet, pad: pad}
     }
 
+    // Encode returns the base32 encoding of src.
     func Encode(src []byte) string {
         var out []byte = []
         var i = 0
@@ -44,6 +44,7 @@ struct Encoding {
         return std.strings.FromBytes(out)
     }
 
+    // EncodeString returns the base32 encoding of the bytes of s.
     func EncodeString(s string) string {
         return this.Encode(std.strings.Bytes(s))
     }
@@ -102,6 +103,7 @@ struct Encoding {
         return out
     }
 
+    // DecodeString decodes s into a string.
     func DecodeString(s string) string! {
         return std.strings.FromBytes(this.Decode(s)?)
     }
@@ -125,26 +127,32 @@ func Hex() Encoding {
     return NewEncoding("0123456789ABCDEFGHIJKLMNOPQRSTUV")
 }
 
+// Encode encodes src with the standard alphabet.
 func Encode(src []byte) string {
     return Std().Encode(src)
 }
 
+// EncodeString encodes the bytes of s with the standard alphabet.
 func EncodeString(s string) string {
     return Std().EncodeString(s)
 }
 
+// Decode decodes s with the standard alphabet.
 func Decode(s string) []byte! {
     return Std().Decode(s)?
 }
 
+// DecodeString decodes s with the standard alphabet into a string.
 func DecodeString(s string) string! {
     return Std().DecodeString(s)?
 }
 
+// EncodeHex encodes src with the extended hex alphabet.
 func EncodeHex(src []byte) string {
     return Hex().Encode(src)
 }
 
+// DecodeHex decodes s with the extended hex alphabet.
 func DecodeHex(s string) []byte! {
     return Hex().Decode(s)?
 }

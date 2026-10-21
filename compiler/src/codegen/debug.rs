@@ -519,9 +519,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             "slang_string" => {
                 let ti = self.di_rt("slang_type_info*");
                 let cc = self.di_rt("cchar");
-                let data = self.di_array(cc, 8, 1, -1);
-                let ms = vec![self.di_member("refcount", i64t, 64, 0), self.di_member("type", ti, 64, 8), self.di_member("len", i64t, 64, 16), self.di_member("data", data, 0, 24)];
-                self.di_struct("slang_string", 24, 8, ms)
+                let data = self.di_ptr(cc, "");
+                let ms = vec![self.di_member("refcount", i64t, 64, 0), self.di_member("type", ti, 64, 8), self.di_member("len", i64t, 64, 16), self.di_member("data", data, 64, 24)];
+                self.di_struct("slang_string", 32, 8, ms)
             }
             "string" => {
                 let st = self.di_rt("slang_string");

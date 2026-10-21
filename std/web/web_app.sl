@@ -1,5 +1,3 @@
-namespace std.web
-
 // std.web: the web framework of docs/FRAMEWORK.md section 2 (slang.web;
 // a stdlib namespace until the package registry exists). Files:
 //
@@ -18,6 +16,7 @@ namespace std.web
 // handler)` and `app.Services.AddSingleton<T>()` are expanded at compile
 // time into calls of the helpers below (addEndpoint, bindPath, bindQuery,
 // bindBody, resolve, writeValue, ...), with every type known.
+namespace std.web
 
 // ---- attributes ---------------------------------------------------------------
 
@@ -157,6 +156,7 @@ struct App {
     listening bool
     checks []healthCheck
 
+    // IsDevelopment reports whether Environment is "development".
     func IsDevelopment() bool {
         return this.Environment == "development"
     }
@@ -395,6 +395,7 @@ struct App {
         this.listening = true
     }
 
+    // Port returns the port the app listens on after Listen (0 before).
     func Port() int {
         if this.server == nil {
             return 0
@@ -402,6 +403,7 @@ struct App {
         return this.server.Port()
     }
 
+    // URL returns "http://host:port" of the listening app ("" before Listen).
     func URL() string {
         if this.server == nil {
             return ""
@@ -446,6 +448,7 @@ func NewApp() *App {
     return NewAppWith(AppOptions{})
 }
 
+// NewAppWith makes an application with explicit options (environment, configuration).
 func NewAppWith(o AppOptions) *App {
     var env = o.Environment
     if env == "" {
@@ -655,21 +658,25 @@ struct Endpoint {
         return this
     }
 
+    // AllowAnonymous lets unauthenticated requests reach the endpoint.
     func AllowAnonymous() *Endpoint {
         this.Anonymous = true
         return this
     }
 
+    // WithName names the endpoint (OpenAPI operationId, link generation).
     func WithName(name string) *Endpoint {
         this.Name = name
         return this
     }
 
+    // WithSummary sets the OpenAPI summary of the endpoint.
     func WithSummary(text string) *Endpoint {
         this.Summary = text
         return this
     }
 
+    // WithTag groups the endpoint under tag in the OpenAPI document.
     func WithTag(tag string) *Endpoint {
         this.Tag = tag
         return this
@@ -698,6 +705,7 @@ struct Principal {
     Roles []string
     Claims std.web.auth.jwt.Claims
 
+    // IsInRole reports whether the user has role.
     func IsInRole(role string) bool {
         for r in this.Roles {
             if r == role {
@@ -727,10 +735,12 @@ struct Context {
     Items map[string]any
     errs []FieldError
 
+    // Method returns the request method.
     func Method() string {
         return this.Request.Method
     }
 
+    // Path returns the request path (without the query).
     func Path() string {
         return this.Request.Path
     }
@@ -749,22 +759,27 @@ struct Context {
         return vs[len(vs) - 1]
     }
 
+    // Header returns request header name ("" if absent).
     func Header(name string) string {
         return this.Request.Header(name)
     }
 
+    // SetHeader sets response header name.
     func SetHeader(name string, value string) {
         this.Response.SetHeader(name, value)
     }
 
+    // Status sets the response status code.
     func Status(code int) {
         this.Response.Status = code
     }
 
+    // Text writes a text/plain response.
     func Text(status int, text string) {
         this.Response.Text(status, text)
     }
 
+    // Html writes a text/html response.
     func Html(status int, text string) {
         this.Response.Html(status, text)
     }
@@ -785,6 +800,7 @@ struct Context {
         this.errs = append(this.errs, FieldError{Field: field, Message: message})
     }
 
+    // Errors returns the binding and validation errors collected so far.
     func Errors() []FieldError {
         return this.errs
     }
@@ -816,6 +832,7 @@ struct Result<T> {
     Headers map[string]string
     Problem *ProblemDetails
 
+    // WithHeader returns a copy of the result that also sets a response header.
     func WithHeader(name string, value string) Result<T> {
         var r = *this
         if r.Headers == nil {
@@ -841,10 +858,12 @@ struct Result<T> {
     }
 }
 
+// Ok returns 200 with v.
 func Ok<T>(v T) Result<T> {
     return Result<T>{Status: 200, Value: v, HasValue: true}
 }
 
+// Created returns 201 with v.
 func Created<T>(v T) Result<T> {
     return Result<T>{Status: 201, Value: v, HasValue: true}
 }
@@ -856,43 +875,52 @@ func CreatedAt<T>(location string, v T) Result<T> {
     return r
 }
 
+// Accepted returns 202 with v.
 func Accepted<T>(v T) Result<T> {
     return Result<T>{Status: 202, Value: v, HasValue: true}
 }
 
+// NoContent returns 204 without a body.
 func NoContent<T>() Result<T> {
     return Result<T>{Status: 204}
 }
 
+// StatusCode returns a result with status and no body.
 func StatusCode<T>(status int) Result<T> {
     return Result<T>{Status: status}
 }
 
+// NotFound returns 404 Problem Details.
 func NotFound<T>() Result<T> {
     var p = problemFor(404, "")
     return Result<T>{Status: 404, Problem: &p}
 }
 
+// BadRequest returns 400 Problem Details with detail.
 func BadRequest<T>(detail string) Result<T> {
     var p = problemFor(400, detail)
     return Result<T>{Status: 400, Problem: &p}
 }
 
+// Unauthorized returns 401 Problem Details.
 func Unauthorized<T>() Result<T> {
     var p = problemFor(401, "")
     return Result<T>{Status: 401, Problem: &p}
 }
 
+// Forbidden returns 403 Problem Details.
 func Forbidden<T>() Result<T> {
     var p = problemFor(403, "")
     return Result<T>{Status: 403, Problem: &p}
 }
 
+// Conflict returns 409 Problem Details with detail.
 func Conflict<T>(detail string) Result<T> {
     var p = problemFor(409, detail)
     return Result<T>{Status: 409, Problem: &p}
 }
 
+// Problem returns Problem Details with status, title ("" for the status text) and detail.
 func Problem<T>(status int, title string, detail string) Result<T> {
     var p = problemFor(status, detail)
     if title != "" {
@@ -901,6 +929,7 @@ func Problem<T>(status int, title string, detail string) Result<T> {
     return Result<T>{Status: status, Problem: &p}
 }
 
+// ValidationProblem returns 400 Problem Details listing the field errors.
 func ValidationProblem<T>(errors []FieldError) Result<T> {
     var p = ValidationProblemDetails(errors)
     return Result<T>{Status: 400, Problem: &p}
@@ -936,6 +965,7 @@ func writeVoid(c *Context) {
 
 // ---- Problem Details (RFC 9457) -----------------------------------------------------
 
+// ProblemDetails is an RFC 9457 error body (application/problem+json).
 struct ProblemDetails {
     Type string
     Title string
@@ -1013,6 +1043,7 @@ func problemFor(status int, detail string) ProblemDetails {
     return ProblemDetails{Type: "about:blank", Title: std.net.http.StatusText(status), Status: status, Detail: detail}
 }
 
+// ValidationProblemDetails returns the 400 Problem Details of field errors.
 func ValidationProblemDetails(errors []FieldError) ProblemDetails {
     return ProblemDetails{Type: "https://tools.ietf.org/html/rfc9110#section-15.5.1", Title: "One or more validation errors occurred.", Status: 400, Errors: errors}
 }
@@ -1032,6 +1063,7 @@ struct HttpError {
     Status int
     Detail string
 
+    // Message returns Detail (HttpError is an error).
     func Message() string {
         return this.Detail
     }
@@ -1090,14 +1122,17 @@ struct TestClient {
         return this.WithHeader("Authorization", "Bearer " + token)
     }
 
+    // Send sends a request with method, path, body and headers to the app.
     func Send(method string, path string, body string, headers map[string]string) Task<*std.net.http.Response> {
         return sendTest(this, method, path, body, headers)
     }
 
+    // Get sends a GET request.
     func Get(path string) Task<*std.net.http.Response> {
         return sendTest(this, "GET", path, "", nil)
     }
 
+    // Delete sends a DELETE request.
     func Delete(path string) Task<*std.net.http.Response> {
         return sendTest(this, "DELETE", path, "", nil)
     }
@@ -1107,10 +1142,12 @@ struct TestClient {
         return sendTest(this, "POST", path, json, jsonHeaders())
     }
 
+    // Put sends a PUT request with a JSON body.
     func Put(path string, json string) Task<*std.net.http.Response> {
         return sendTest(this, "PUT", path, json, jsonHeaders())
     }
 
+    // Patch sends a PATCH request with a JSON body.
     func Patch(path string, json string) Task<*std.net.http.Response> {
         return sendTest(this, "PATCH", path, json, jsonHeaders())
     }

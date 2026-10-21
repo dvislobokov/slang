@@ -1,9 +1,8 @@
-namespace std.net.http
-
 // Middleware (Recover, Logging, CORS, Gzip, BodyLimit, TimeoutHandler),
 // static files (ServeFile, ServeDir: ranges, ETag / Last-Modified,
 // sendfile) and Server-Sent Events (ServerSentEvents writer, EventSource
 // client). See http.sl for the file layout.
+namespace std.net.http
 
 // ---- middleware --------------------------------------------------------------
 

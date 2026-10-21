@@ -1,4 +1,4 @@
-// Services: the SQLite-backed user store (singleton), the token issuer
+// Services: the user store (singleton) over std.data, the token issuer
 // (singleton, built by its static New) and a per-request audit trail
 // (scoped: dropped with the request).
 namespace webapp.services
@@ -7,6 +7,7 @@ import std
 import std.database
 import std.io
 
+import webapp.db
 import webapp.models
 
 struct Database {
@@ -20,31 +21,29 @@ struct UserStore {
         return new UserStore{db: d.Db}
     }
 
-    async func Migrate() void! {
-        _ = await this.db.Exec(
-            "create table users (id integer primary key, name text not null, email text not null unique, role text not null, password text not null)",
-            [],
-        )?
+    // A data context per operation (a context tracks the entities it
+    // loads; the store is a singleton shared by all requests).
+    func ctx() *UsersDb {
+        return data.OpenDB<UsersDb>(data.Provider.Sqlite, this.db)
     }
 
+    // Applies the migrations of the program (migrations/*.sl).
+    async func Migrate() void! {
+        await this.ctx().Migrate()?
+    }
+
+    // The lambdas are translated to SQL at compile time; Select maps the
+    // rows straight to the API model.
     async func All(role string) []User! {
-        if role == "" {
-            return await this.db.Query<User>(
-                "select id, name, email, role from users order by id",
-                [],
-            )?
+        var q = this.ctx().Users.AsNoTracking().OrderBy((u) => u.Id)
+        if role != "" {
+            q = q.Where((u) => u.Role == role)
         }
-        return await this.db.Query<User>(
-            "select id, name, email, role from users where role = ? order by id",
-            [role],
-        )?
+        return await q.Select((u) => User{Id: u.Id, Name: u.Name, Email: u.Email, Role: u.Role}).ToList()?
     }
 
     async func Find(id int) *User! {
-        var users = await this.db.Query<User>(
-            "select id, name, email, role from users where id = ?",
-            [id],
-        )?
+        var users = await this.ctx().Users.Where((u) => u.Id == id).Select((u) => User{Id: u.Id, Name: u.Name, Email: u.Email, Role: u.Role}).Take(1).ToList()?
         if len(users) == 0 {
             return nil
         }
@@ -57,10 +56,10 @@ struct UserStore {
         if role == "" {
             role = "user"
         }
-        var r = try await this.db.Exec(
-            "insert into users (name, email, role, password) values (?, ?, ?, ?)",
-            [c.Name, c.Email, role, crypto.hash.Sha256Hex(c.Password)],
-        ) catch err {
+        var ctx = this.ctx()
+        var row = new UserRow{Name: c.Name, Email: c.Email, Role: role, Password: crypto.hash.Sha256Hex(c.Password)}
+        ctx.Users.Add(row)
+        try await ctx.SaveChanges() catch err {
             switch err {
                 case sqlite.Error e:
                     if e.IsConstraint() {
@@ -69,19 +68,16 @@ struct UserStore {
             }
             return err
         }
-        return User{Id: r.LastInsertId, Name: c.Name, Email: c.Email, Role: role}
+        return User{Id: row.Id, Name: row.Name, Email: row.Email, Role: row.Role}
     }
 
     async func Delete(id int) bool! {
-        var r = await this.db.Exec("delete from users where id = ?", [id])?
-        return r.RowsAffected > 0
+        return await this.ctx().Users.Where((u) => u.Id == id).ExecuteDelete()? > 0
     }
 
     async func CheckPassword(email string, password string) *User! {
-        var users = await this.db.Query<User>(
-            "select id, name, email, role from users where email = ? and password = ?",
-            [email, crypto.hash.Sha256Hex(password)],
-        )?
+        // the hash is computed once, before the query, and sent as a parameter
+        var users = await this.ctx().Users.Where((u) => u.Email == email && u.Password == crypto.hash.Sha256Hex(password)).Select((u) => User{Id: u.Id, Name: u.Name, Email: u.Email, Role: u.Role}).ToList()?
         if len(users) == 0 {
             return nil
         }

@@ -4,3 +4,5 @@ target/
 *.ll
 *.bc
 /build/
+/site/
+/dist/

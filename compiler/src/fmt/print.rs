@@ -418,6 +418,10 @@ impl<'a> Fmt<'a> {
         let first = g[0];
         let mut parts = vec![self.attrs(&first.attrs, first.name.span.start)];
         let names: Vec<&str> = g.iter().map(|p| p.name.name.as_str()).collect();
+        if matches!(first.ty.kind, TypeKind::Infer) {
+            parts.push(text(names.join(", ")));
+            return concat(parts);
+        }
         parts.push(text(format!("{} ", names.join(", "))));
         parts.push(self.ty(&first.ty));
         concat(parts)
@@ -1147,7 +1151,7 @@ impl<'a> Fmt<'a> {
     fn ty(&mut self, t: &TypeExpr) -> Doc {
         let parenthesized = match &t.kind {
             TypeKind::Fallible(inner) => t.span.start < inner.span.start,
-            TypeKind::Tuple(_) | TypeKind::Error => false,
+            TypeKind::Tuple(_) | TypeKind::Error | TypeKind::Infer => false,
             _ => self.src.as_bytes().get(t.span.start as usize) == Some(&b'('),
         };
         let d = match &t.kind {
@@ -1191,6 +1195,7 @@ impl<'a> Fmt<'a> {
                 concat(parts)
             }
             TypeKind::Error => text(self.slice(t.span)),
+            TypeKind::Infer => Doc::Nil,
         };
         if parenthesized {
             concat(vec![text("("), d, text(")")])

@@ -22,7 +22,32 @@ static void json_fail(slang_slice *res, slang_error **err, const char *what, int
     if (err) *err = slang_error_new_cstr(buf);
 }
 
+/* One-byte tokens (punctuation, true/false/null) are immortal statics. */
+#define TOK1(name, lit) static SLANG_STRING_STORAGE(2) name = SLANG_STRING_INIT(name, lit)
+TOK1(tok_lbrace, "{"); TOK1(tok_rbrace, "}"); TOK1(tok_lbrack, "["); TOK1(tok_rbrack, "]");
+TOK1(tok_colon, ":"); TOK1(tok_comma, ","); TOK1(tok_t, "t"); TOK1(tok_f, "f"); TOK1(tok_z, "z");
+
+static slang_string *token1(char c) {
+    switch (c) {
+    case '{': return (slang_string *)&tok_lbrace;
+    case '}': return (slang_string *)&tok_rbrace;
+    case '[': return (slang_string *)&tok_lbrack;
+    case ']': return (slang_string *)&tok_rbrack;
+    case ':': return (slang_string *)&tok_colon;
+    case ',': return (slang_string *)&tok_comma;
+    case 't': return (slang_string *)&tok_t;
+    case 'f': return (slang_string *)&tok_f;
+    case 'z': return (slang_string *)&tok_z;
+    default: return NULL;
+    }
+}
+
 static void push_token(slang_slice *res, const char *p, int64_t n) {
+    slang_string *t = n == 1 ? token1(p[0]) : NULL;
+    if (t) {
+        slang_slice_append(res, 8, &slang_ops_ref, &t);
+        return;
+    }
     slang_string *s = slang_string_new(p, n);
     slang_slice_append(res, 8, &slang_ops_ref, &s);
     slang_release(s);

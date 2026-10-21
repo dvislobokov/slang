@@ -128,14 +128,17 @@ struct TypeInfo {
     ptrTo    *TypeInfo
     canon    *TypeInfo
 
+    // Attribute returns the attribute of type A on the type, or nil.
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
     }
 
+    // Attributes returns every attribute of type A on the type.
     func Attributes<A>() []*A {
         return attrsOf<A>(this.attrs)
     }
 
+    // Field returns the field called name, or nil.
     func Field(name string) *FieldInfo {
         for f in this.Fields {
             if f.Name == name {
@@ -145,6 +148,7 @@ struct TypeInfo {
         return nil
     }
 
+    // Method returns the method called name, or nil.
     func Method(name string) *MethodInfo {
         for m in this.Methods {
             if m.Name == name {
@@ -154,6 +158,7 @@ struct TypeInfo {
         return nil
     }
 
+    // Variant returns the enum variant called name, or nil.
     func Variant(name string) *VariantInfo {
         for v in this.Variants {
             if v.Name == name {
@@ -163,6 +168,7 @@ struct TypeInfo {
         return nil
     }
 
+    // New returns a pointer to a new zero value of the type (as `any`); it panics if the type cannot be instantiated.
     func New() any {
         if this.ptrTo == nil {
             panic(
@@ -174,15 +180,18 @@ struct TypeInfo {
         return newOf(this)
     }
 
+    // Same reports whether both describe the same type.
     func Same(other *TypeInfo) bool {
         return sameType(this, other)
     }
 
+    // String returns the type name.
     func String() string {
         return this.Name
     }
 }
 
+// FieldInfo describes a struct field.
 struct FieldInfo {
     Name     string
     Type     *TypeInfo
@@ -192,15 +201,18 @@ struct FieldInfo {
     Exported bool
     attrs    []any
 
+    // Attribute returns the attribute of type A on the field, or nil.
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
     }
 
+    // Attributes returns every attribute of type A on the field.
     func Attributes<A>() []*A {
         return attrsOf<A>(this.attrs)
     }
 }
 
+// MethodInfo describes a method.
 struct MethodInfo {
     Name   string
     Type   *TypeInfo
@@ -209,10 +221,12 @@ struct MethodInfo {
     fnval  int
     attrs  []any
 
+    // Attribute returns the attribute of type A on the method, or nil.
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
     }
 
+    // Attributes returns every attribute of type A on the method.
     func Attributes<A>() []*A {
         return attrsOf<A>(this.attrs)
     }
@@ -223,6 +237,7 @@ struct MethodInfo {
         return invokeMethod(this.invoke, recv, args)?
     }
 
+    // Call returns the method as a function value of type F; it panics if F is not its type.
     func Call<F>() F {
         var want = TypeOf<F>()
         if want != this.Type {
@@ -239,16 +254,19 @@ struct MethodInfo {
     }
 }
 
+// VariantInfo describes an enum variant.
 struct VariantInfo {
     Name   string
     Index  int
     Fields []*FieldInfo
     attrs  []any
 
+    // Attribute returns the attribute of type A on the variant, or nil.
     func Attribute<A>() *A {
         return attrOf<A>(this.attrs)
     }
 
+    // Attributes returns every attribute of type A on the variant.
     func Attributes<A>() []*A {
         return attrsOf<A>(this.attrs)
     }
@@ -262,10 +280,12 @@ struct Value {
     Type  *TypeInfo
     name  string
 
+    // IsValid reports whether the value holds something (ValueOf(nil) is invalid).
     func IsValid() bool {
         return this.Type != nil
     }
 
+    // Field returns field name of a struct value; it panics for other values.
     func Field(name string) Value {
         var t = this.Type
         if t == nil {
@@ -289,6 +309,7 @@ struct Value {
         return Value{owner: this.owner, addr: addr + f.Offset, Type: f.Type, name: f.Name}
     }
 
+    // Get returns the value as a T; it panics if the type is not T.
     func Get<T>() T {
         var want = TypeOf<T>()
         if this.Type == nil {
@@ -300,6 +321,7 @@ struct Value {
         return load<T>(this.addr)
     }
 
+    // Set stores v; it panics if the type is not T or the value is not addressable.
     func Set<T>(v T) {
         var want = TypeOf<T>()
         if this.Type == nil {
@@ -319,12 +341,15 @@ struct Value {
     }
 }
 
+// ValueOf returns a Value for the dynamic value of x.
 func ValueOf(x any) Value {
     var t = anyType(x)
     if t == nil {
         return Value{}
     }
-    return Value{owner: x, addr: anyAddr(x), Type: t, name: t.Name}
+    // A scalar held inline in the `any` gets a heap copy to point at.
+    var o = anyBox(x)
+    return Value{owner: o, addr: anyAddr(o), Type: t, name: t.Name}
 }
 
 // Compile-time field list of struct T: only as the sequence of a for loop
@@ -367,6 +392,7 @@ func attrsOf<A>(attrs []any) []*A {
 
 // Intrinsics: code generation provides the bodies (compiler/src/codegen/reflect.rs).
 
+// TypeOf returns the type information of T (computed at compile time).
 func TypeOf<T>() *TypeInfo {
     return nil
 }
@@ -377,6 +403,10 @@ func anyType(x any) *TypeInfo {
 
 func anyAddr(x any) int {
     return 0
+}
+
+func anyBox(x any) any {
+    return x
 }
 
 func ifaceType<I>(x I) *TypeInfo {

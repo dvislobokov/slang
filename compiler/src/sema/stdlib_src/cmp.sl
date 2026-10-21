@@ -1,8 +1,7 @@
-namespace std.cmp
-
 // std.cmp: comparisons generic over the builtin Ordered constraint
 // (integers, floats, string, char). For floats, NaN compares less than
 // every other value and equal to NaN (as in Go's cmp.Compare).
+namespace std.cmp
 
 func isNaN<T: Ordered>(x T) bool {
     return x != x

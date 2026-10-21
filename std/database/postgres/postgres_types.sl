@@ -1,7 +1,6 @@
-namespace std.database.postgres
-
 // Connection strings, errors and the value codecs of the PostgreSQL
 // driver (see postgres.sl).
+namespace std.database.postgres
 
 // ---- errors -------------------------------------------------------------------
 

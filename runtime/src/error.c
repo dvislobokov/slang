@@ -26,9 +26,7 @@ static void error_drop(void *obj) {
 
 const slang_type_info slang_type_error = { "error", (int64_t)sizeof(slang_error), error_drop };
 
-static struct {
-    slang_object hdr; int64_t len; char data[4];
-} eof_msg = { { SLANG_RC_IMMORTAL, &slang_type_string }, 3, "EOF" };
+static SLANG_STRING_STORAGE(4) eof_msg = SLANG_STRING_INIT(eof_msg, "EOF");
 
 static slang_error eof_error = {
     .hdr = { SLANG_RC_IMMORTAL, &slang_type_error }, .message = (slang_string *)&eof_msg,
@@ -55,7 +53,7 @@ slang_error *slang_error_new_cstr(const char *msg) {
 slang_error *slang_error_sentinel(const slang_string *msg) {
     /* The sentinel and its message (an immortal copy) are never freed and
      * do not count as live objects. */
-    slang_string *m = (msg && msg->hdr.refcount >= 0)
+    slang_string *m = (msg && msg->hdr.refcount != SLANG_RC_IMMORTAL)
                           ? slang_string_literal(slang_string_data(msg), slang_string_len(msg))
                           : (slang_string *)msg;
     slang_error *e = slang_error_new(m);
@@ -99,8 +97,7 @@ static slang_string *own_text(const slang_error *e) {
 slang_string *slang_error_message(const slang_error *err) {
     if (!err) return slang_string_new("<nil>", 5);
     slang_string *acc = own_text(err);
-    static struct { slang_object hdr; int64_t len; char data[3]; } sep =
-        { { SLANG_RC_IMMORTAL, &slang_type_string }, 2, ": " };
+    static SLANG_STRING_STORAGE(3) sep = SLANG_STRING_INIT(sep, ": ");
     for (const slang_error *e = err->inner; e; e = e->inner) {
         slang_string *t = own_text(e);
         slang_string *a = slang_string_concat(acc, (slang_string *)&sep);
@@ -193,7 +190,7 @@ slang_error *slang_error_created(slang_error *err, const slang_error_site *site)
     if (!err || err->created || !site) return err;
     err = unshare(err);
     err->created = site;
-    if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED) && slang__dbg_error_wanted()) slang__dbg_error(err);
+    if (__atomic_load_n(&slang_dbg_on, __ATOMIC_RELAXED) && slang__dbg_error_fn) slang__dbg_error_fn(err);
     return err;
 }
 
@@ -315,17 +312,15 @@ void slang_error_frames(const slang_error *err, slang_slice *out) {
 void slang_error_report(const slang_error *err) {
     slang_string *m = slang_error_message(err);
     slang_string *t = slang_error_trace(err);
-    fprintf(stderr, "error: %s\n", slang_string_data(m));
-    if (slang_string_len(t) > 0) fprintf(stderr, "%s\n", slang_string_data(t));
+    fprintf(stderr, "error: %s\n", slang_string_cstr(m));
+    if (slang_string_len(t) > 0) fprintf(stderr, "%s\n", slang_string_cstr(t));
     fflush(stderr);
     slang_release(t);
     slang_release(m);
 }
 
 /* std.fs.ErrNotFound: an immortal sentinel; ENOENT errors wrap it. */
-static struct {
-    slang_object hdr; int64_t len; char data[26];
-} not_found_msg = { { SLANG_RC_IMMORTAL, &slang_type_string }, 25, "No such file or directory" };
+static SLANG_STRING_STORAGE(26) not_found_msg = SLANG_STRING_INIT(not_found_msg, "No such file or directory");
 
 static slang_error not_found_error = {
     .hdr = { SLANG_RC_IMMORTAL, &slang_type_error }, .message = (slang_string *)&not_found_msg,

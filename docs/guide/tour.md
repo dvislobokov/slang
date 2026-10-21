@@ -1,0 +1,537 @@
+# A tour of Slang
+
+Twenty minutes, top to bottom. Every program on this page is complete:
+copy it into a file, run `slang run file.sl`, and you get the output shown
+in its `// Output:` comment (the guides are tested by
+`compiler/tests/guide.rs`, so they stay correct).
+
+Slang is a compiled language with Go's simplicity, C#-style namespaces and
+`var` inference, methods inside structs, `T!` errors instead of
+`if err != nil`, `async`/`await` on a task scheduler, and no garbage
+collector (reference counting with compile-time ownership). The language
+spec is [DESIGN.md](../../DESIGN.md) (in Russian); this guide is the
+English introduction.
+
+## Hello, world
+
+```slang
+namespace tour.hello
+
+import std.io
+
+func main() {
+    println("Hello, Slang!")
+}
+// Output:
+// Hello, Slang!
+```
+
+Every file starts with `namespace`. `import std.io` makes the members of
+`std.io` (here `println`) available by their short names; without the
+import you would write `std.io.println`. `import std` is the common middle
+ground: then you write `io.println`, `strings.Split`, `fmt.Format`.
+Unused imports are compile errors, as in Go.
+
+## Variables and types
+
+```slang
+namespace tour.vars
+
+import std
+import std.io
+
+const Pi = 3.14159
+
+func main() {
+    var n = 42              // int (64-bit)
+    var name = "slang"      // string (immutable UTF-8)
+    var ratio = 0.5         // float (64-bit)
+    var ok = true
+    var c = 'é'             // char: a Unicode code point
+    var count int           // no initializer: the zero value
+    var xs []int = []       // the type is needed when the value does not say it
+    xs = append(xs, n, 7)
+    var ages = map[string]int{"ann": 31}
+    ages["bob"] = 27
+
+    println(n, name, ratio, ok, c, count, xs, len(ages))
+    println(fmt.Format("{0} has {1} letters, pi is {2}", name, len(name), Pi))
+    var (q, r) = divmod(17, 5)
+    println(q, r, xs[1..], name[0..2])
+}
+
+func divmod(a int, b int) (int, int) {
+    return (a / b, a % b)
+}
+// Output:
+// 42 slang 0.5 true é 0 [42 7] 2
+// slang has 5 letters, pi is 3.14159
+// 3 2 [7] sl
+```
+
+Only `var` declares variables; the type comes after the name when you
+write it. Functions return several values as a tuple. Slices (`[]T`) and
+maps work like Go's; `s[a..b]` is a sub-slice or substring.
+
+Control flow is Go's, without parentheses:
+
+```slang
+namespace tour.control
+
+import std.io
+
+func main() {
+    for i in 0..3 {
+        if i == 1 {
+            continue
+        }
+        println("i =", i)
+    }
+    var words = ["zero", "one", "two"]
+    for i, w in words {
+        switch {
+            case i == 0: println(w, "is first")
+            case len(w) == 3: println(w, "has three letters")
+        }
+    }
+    var n = 10
+    for n > 1 {
+        n /= 3
+    }
+    println("n =", n)
+}
+// Output:
+// i = 0
+// i = 2
+// zero is first
+// one has three letters
+// two has three letters
+// n = 1
+```
+
+## Structs and methods
+
+Methods live inside the struct; the receiver is `this` (a pointer, so
+methods can change the value). Exported names start with an upper-case
+letter.
+
+```slang
+namespace tour.structs
+
+import std
+import std.io
+
+struct Point {
+    X float
+    Y float
+
+    func Length() float {
+        return math.Sqrt(this.X * this.X + this.Y * this.Y)
+    }
+
+    func Move(dx float, dy float) {
+        this.X += dx
+        this.Y += dy
+    }
+
+    static func Origin() Point {
+        return Point{}
+    }
+}
+
+func main() {
+    var p = Point{X: 3, Y: 4}
+    println(p.Length())
+    p.Move(1, 1)
+    println(p.X, p.Y)
+
+    var q = p           // structs are values: q is a copy
+    q.X = 100
+    println(p.X, q.X)
+
+    var ptr = new Point{X: 1}   // *Point on the heap
+    ptr.Move(1, 0)
+    println(ptr.X, Point.Origin().Length())
+}
+// Output:
+// 5
+// 4 5
+// 4 100
+// 2 0
+```
+
+## Interfaces
+
+Interfaces are structural, as in Go: a type implements an interface by
+having its methods. A `switch` on an interface value can test the
+dynamic type.
+
+```slang
+namespace tour.interfaces
+
+import std.io
+
+interface Shape {
+    func Area() float
+    func Name() string
+}
+
+struct Rect {
+    W float
+    H float
+
+    func Area() float {
+        return this.W * this.H
+    }
+
+    func Name() string {
+        return "rect"
+    }
+}
+
+struct Circle {
+    R float
+
+    func Area() float {
+        return 3.0 * this.R * this.R
+    }
+
+    func Name() string {
+        return "circle"
+    }
+}
+
+func describe(s Shape) {
+    switch s {
+        case Circle c: println(s.Name(), "with radius", c.R, "has area", s.Area())
+        default: println(s.Name(), "has area", s.Area())
+    }
+}
+
+func main() {
+    var shapes []Shape = [Rect{W: 2, H: 3}, Circle{R: 1}]
+    for s in shapes {
+        describe(s)
+    }
+}
+// Output:
+// rect has area 6
+// circle with radius 1 has area 3
+```
+
+## Enums
+
+Plain enums and enums whose variants carry data; `switch` destructures
+them, and a `switch` that covers every variant needs no `default`.
+
+```slang
+namespace tour.enums
+
+import std.io
+
+enum Color { Red, Green, Blue }
+
+enum Shape {
+    Circle(r float)
+    Rect(w float, h float)
+    Empty
+
+    func Area() float {
+        switch this {
+            case Shape.Circle(r): return 3.0 * r * r
+            case Shape.Rect(w, h): return w * h
+            case Shape.Empty: return 0
+        }
+    }
+}
+
+func main() {
+    var c = Color.Green
+    println(c, c == Color.Green, int(Color.Blue))
+    var shapes = [Shape.Circle(2), Shape.Rect(2, 5), Shape.Empty]
+    for s in shapes {
+        println(s.Area())
+    }
+}
+// Output:
+// Green true 2
+// 12
+// 10
+// 0
+```
+
+## Generics
+
+Functions, structs, enums and methods can take type parameters,
+optionally constrained (`Ordered`, `Comparable`, an interface). They are
+compiled per type (monomorphized), so they cost nothing at run time.
+
+```slang
+namespace tour.generics
+
+import std.io
+
+func Max<T: Ordered>(a T, b T) T {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+struct Stack<T> {
+    items []T
+
+    func Push(x T) {
+        this.items = append(this.items, x)
+    }
+
+    func Pop() T! {
+        if len(this.items) == 0 {
+            return error("empty stack")
+        }
+        var x = this.items[len(this.items) - 1]
+        this.items = this.items[..len(this.items) - 1]
+        return x
+    }
+}
+
+enum Option<T> {
+    Some(value T)
+    None
+}
+
+func main() {
+    println(Max(3, 7), Max("pear", "apple"), Max<float>(1, 2.5))
+    var s = Stack<string>{}
+    s.Push("a")
+    s.Push("b")
+    println(try s.Pop() else "?", try s.Pop() else "?", try s.Pop() else "none")
+    var o = Option<int>.Some(5)
+    switch o {
+        case Option.Some(v): println("some", v)
+        case Option.None: println("none")
+    }
+}
+// Output:
+// 7 pear 2.5
+// b a none
+// some 5
+```
+
+## Errors: `T!`, `?` and `try`
+
+A function that can fail returns `T!` (`void!` when it has no value).
+`error("...")` makes an error. `?` returns the error to the caller (and
+`?("context")` adds a message); `try ... catch` and `try ... else` handle
+it on the spot. A `T!` result cannot be ignored silently. Errors carry a
+trace of where they were created and returned. See [errors.md](errors.md).
+
+```slang
+namespace tour.errors
+
+import std
+import std.io
+
+func parsePort(s string) int! {
+    var n = strings.ToInt(s)?("port " + strconv.Quote(s))
+    if n < 1 || n > 65535 {
+        return error(fmt.Format("port {0} out of range", n))
+    }
+    return n
+}
+
+func main() {
+    println(try parsePort("8080") else 0)
+    var p = try parsePort("http") catch err {
+        println("error:", err)
+        return
+    }
+    println("unreachable", p)
+}
+// Output:
+// 8080
+// error: port "http": invalid integer: "http"
+```
+
+## Async and await
+
+`async func` returns a `Task<T>`; calling it starts the task, `await`
+waits for its result. Tasks run on a pool of worker threads; waiting
+never blocks a thread. `task.All` waits for several tasks at once.
+
+```slang
+namespace tour.async
+
+import std
+import std.io
+
+async func fetch(name string, ms int) string {
+    await task.Delay(ms)
+    return name + " done"
+}
+
+async func main() {
+    var a = fetch("a", 20)      // both start now
+    var b = fetch("b", 10)
+    println(await b)
+    println(await a)
+    var (x, y) = await task.All(fetch("x", 5), fetch("y", 1))
+    println(x, y)
+}
+// Output:
+// b done
+// a done
+// x done y done
+```
+
+## Tasks, channels and cancellation
+
+`task.Channel<T>(n)` passes values between tasks (`n` is the buffer).
+Cancellation travels in the task context: `task.WithTimeout` cancels the
+code it runs (and every task started inside it) when the time is up, and
+cancelled waits fail with `task.ErrCancelled`. See [async.md](async.md).
+
+```slang
+namespace tour.tasks
+
+import std
+import std.io
+
+async func produce(ch task.Channel<int>) {
+    for i in 1..4 {
+        await ch.Send(i * 10)
+    }
+    ch.Close()
+}
+
+async func main() {
+    var ch = task.Channel<int>(0)
+    var p = produce(ch)
+    for v in ch {
+        println("received", v)
+    }
+    await p
+
+    try await task.WithTimeout(10, async func() string! {
+        await task.Delay(5000)
+        task.CheckCancelled()?
+        return "too slow"
+    }) catch err {
+        println("cancelled:", errors.Is(err, task.ErrCancelled))
+    }
+}
+// Output:
+// received 10
+// received 20
+// received 30
+// cancelled: true
+```
+
+## Collections
+
+Slices and maps are built in; `std.slices` and `std.maps` have the usual
+algorithms, and `std.collections` adds ordered maps, sets, queues, heaps,
+deques and LRU caches.
+
+```slang
+namespace tour.collections
+
+import std
+import std.io
+
+struct User {
+    Name string
+    Age  int
+}
+
+func main() {
+    var users = [User{Name: "cid", Age: 45}, User{Name: "ann", Age: 31}, User{Name: "bob", Age: 27}]
+    slices.SortBy(users, (u User) => u.Age)
+    var names = slices.Map(users, (u User) => u.Name)
+    println(names, slices.Contains(names, "ann"))
+
+    var byFirst = map[string]int{}
+    for u in users {
+        byFirst[u.Name[0..1]] += u.Age
+    }
+    println(maps.SortedKeys(byFirst))
+
+    var seen = collections.Set<string>.New()
+    for w in strings.Fields("to be or not to be") {
+        seen.Add(w)
+    }
+    println(seen.Items(), seen.Len())
+}
+// Output:
+// [bob ann cid] true
+// [a b c]
+// [to be or not] 4
+```
+
+## Packages
+
+A project is a directory with a manifest (`slang.toml`) and sources in
+`src/`; namespaces are just paths, and any file can import any namespace
+of the project. `slang init` creates one:
+
+```sh
+slang init hello && cd hello
+slang run                  # builds src/main.sl and runs it
+slang install              # after adding a dependency to slang.toml (packages.md)
+```
+
+The pieces you have seen compose: here is a small program that reads a
+file with fallible steps, in the style of a real tool:
+
+```slang
+namespace tour.packages
+
+import std
+import std.io
+
+struct Config {
+    Name string
+    Port int
+}
+
+func load(path string) Config! {
+    var text = io.ReadFile(path)?("reading config")
+    var cfg = Config{Port: 8080}
+    for line in strings.Split(text, "\n") {
+        var kv = strings.SplitN(line, "=", 2)
+        if len(kv) != 2 {
+            continue
+        }
+        switch strings.Trim(kv[0]) {
+            case "name": cfg.Name = strings.Trim(kv[1])
+            case "port": cfg.Port = strings.ToInt(strings.Trim(kv[1]))?("port")
+        }
+    }
+    return cfg
+}
+
+func main() void! {
+    io.WriteFile("app.conf", "name = demo\nport = 9000\n")?
+    var cfg = load("app.conf")?
+    println(cfg.Name, cfg.Port)
+    try load("missing.conf") catch err {
+        println(err)
+    }
+    fs.Remove("app.conf")?
+}
+// Output:
+// demo 9000
+// reading config: open missing.conf: No such file or directory
+```
+
+## Where next
+
+- [errors.md](errors.md): error values, wrapping, typed errors, traces.
+- [async.md](async.md): tasks, channels, mutexes, cancellation, timeouts.
+- [memory.md](memory.md): how memory works without a garbage collector.
+- [packages.md](packages.md): projects, dependencies, workspaces.
+- [testing.md](testing.md): `slang test`, benchmarks, examples.
+- [debugging.md](debugging.md): traces, the debugger, leak checks, profiles.
+- [web.md](web.md): HTTP services with `std.web`.
+- [faq.md](faq.md): how Slang differs from Go and C#.
+- `slang doc strings.Split`, `slang doc std --html out/`: the API reference.

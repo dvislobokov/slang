@@ -72,7 +72,10 @@ def string_at(p):
     n = _i64(p + 16)
     if n is None or n < 0:
         return None
-    raw = _read(p + 24, min(n, MAX_STRING))
+    d = _u64(p + 24) if n else 0  # data pointer (views share their parent's bytes)
+    if n and not d:
+        return None
+    raw = _read(d, min(n, MAX_STRING)) if n else b""
     if raw is None:
         return None
     return raw.decode("utf-8", errors="replace") + ("..." if n > MAX_STRING else "")
@@ -240,6 +243,11 @@ class EnumPrinter:
         return "%s(%s)" % (name, ", ".join("%s = %s" % (f.name, brief(variant[f.name])) for f in fields))
 
 
+# Scalar types an `any` stores inline, in its data word (runtime/ABI.md 3.7).
+INLINE_ANY = {"bool", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16",
+              "uint32", "uint64", "byte", "rune", "float", "float32", "float64", "char"}
+
+
 class InterfacePrinter:
     def __init__(self, v):
         self.v = v
@@ -263,6 +271,9 @@ class InterfacePrinter:
             return name, None
         if name.startswith("*") and not boxed:
             return name, gdb.Value(data).cast(typ)
+        if second != "vtable" and name in INLINE_ANY:
+            # an `any` holds bool/integer/float/char values in its data word
+            return name, self.v["data"].address.cast(typ.pointer()).dereference()
         return name, gdb.Value(data).cast(typ.pointer()).dereference()
 
     def to_string(self):

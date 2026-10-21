@@ -54,7 +54,8 @@ impl StdIndex {
                 let p = e.path();
                 if p.is_dir() {
                     walk(&p, out);
-                } else if p.extension().is_some_and(|x| x == "sl") {
+                } else if p.extension().is_some_and(|x| x == "sl") && !p.to_string_lossy().ends_with("_test.sl") {
+                    // tests and examples are not declarations (doc::std_examples reads them)
                     out.push(p);
                 }
             }

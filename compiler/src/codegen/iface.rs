@@ -405,13 +405,87 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     self.any_dyn_tys.push(from);
                 }
                 let v = self.expr_owned(value)?;
-                let obj = self.new_box(from, v);
-                let data = self.payload(obj);
-                let ti = self.type_info(from);
-                Ok(Val::owned(self.make_pair(data, ti)))
+                Ok(Val::owned(self.make_any(from, v)))
             }
             _ => unsupported(format!("conversion of {} to {}", self.type_name(from), self.type_name(to))),
         }
+    }
+
+    /// True for the types an `any` holds inline, in its data word instead of
+    /// a heap box (runtime/ABI.md 3.7): bool, the integers, floats, char.
+    pub(crate) fn any_inline(&self, t: TypeId) -> bool {
+        matches!(self.ty(t), Type::Bool | Type::Int(_) | Type::Float32 | Type::Float64 | Type::Char)
+    }
+
+    /// An `any` holding `v` (owned) of type `t`: `{payload of a box, type}`,
+    /// or `{value bits, type}` for an inline scalar.
+    pub(crate) fn make_any(&mut self, t: TypeId, v: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        let ti = self.type_info(t);
+        if self.any_inline(t) {
+            if !self.any_inline_tys.contains(&t) {
+                self.any_inline_tys.push(t);
+            }
+            let i64t = self.i64_ty();
+            let w = match v {
+                BasicValueEnum::IntValue(i) if i.get_type().get_bit_width() < 64 => self.b.build_int_z_extend(i, i64t, "").unwrap(),
+                BasicValueEnum::IntValue(i) => i,
+                BasicValueEnum::FloatValue(f) if f.get_type() == self.ctx.f32_type() => {
+                    let b = self.b.build_bit_cast(f, self.ctx.i32_type(), "").unwrap().into_int_value();
+                    self.b.build_int_z_extend(b, i64t, "").unwrap()
+                }
+                BasicValueEnum::FloatValue(f) => self.b.build_bit_cast(f, i64t, "").unwrap().into_int_value(),
+                _ => unreachable!("inline any of a non-scalar"),
+            };
+            let data = self.b.build_int_to_ptr(w, self.ptr_ty(), "anyw").unwrap();
+            return self.make_pair(data, ti);
+        }
+        let obj = self.new_box(t, v);
+        let data = self.payload(obj);
+        self.make_pair(data, ti)
+    }
+
+    /// The value of inline scalar type `t` held in an `any` data word.
+    pub(crate) fn any_word_value(&mut self, t: TypeId, data: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
+        let w = self.b.build_ptr_to_int(data, self.i64_ty(), "").unwrap();
+        match self.llty(t) {
+            inkwell::types::BasicTypeEnum::IntType(it) if it.get_bit_width() < 64 => self.b.build_int_truncate(w, it, "").unwrap().into(),
+            inkwell::types::BasicTypeEnum::IntType(_) => w.into(),
+            inkwell::types::BasicTypeEnum::FloatType(ft) if ft == self.ctx.f32_type() => {
+                let b = self.b.build_int_truncate(w, self.ctx.i32_type(), "").unwrap();
+                self.b.build_bit_cast(b, ft, "").unwrap()
+            }
+            inkwell::types::BasicTypeEnum::FloatType(ft) => self.b.build_bit_cast(w, ft, "").unwrap(),
+            _ => unreachable!("inline any of a non-scalar"),
+        }
+    }
+
+    /// `i1 any.inline(ptr typeinfo)`: whether an `any` of that dynamic type
+    /// holds its value inline; the body is emitted last
+    /// ([`finish_any_inline`](Self::finish_any_inline)).
+    pub(crate) fn any_inline_fn(&mut self) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function("any.inline") {
+            return f;
+        }
+        let fty = self.ctx.bool_type().fn_type(&[self.ptr_ty().into()], false);
+        self.module.add_function("any.inline", fty, Some(Linkage::Internal))
+    }
+
+    /// Emits `any.inline`: compares against the type info of every scalar
+    /// type the module stores inline in an `any`.
+    pub(crate) fn finish_any_inline(&mut self) -> R<()> {
+        let Some(f) = self.module.get_function("any.inline") else { return Ok(()) };
+        let tys = self.any_inline_tys.clone();
+        let tis: Vec<PointerValue<'ctx>> = tys.iter().map(|t| self.type_info(*t)).collect();
+        self.with_helper(f, |cg| {
+            let ti = f.get_nth_param(0).unwrap().into_pointer_value();
+            let mut r = cg.ctx.bool_type().const_zero();
+            for g in tis {
+                let eq = cg.ptr_eq(ti, g);
+                r = cg.b.build_or(r, eq, "").unwrap();
+            }
+            cg.b.build_return(Some(&r)).unwrap();
+            Ok(())
+        })
     }
 
     /// Dynamic call of interface method `method` on `recv`.
@@ -428,7 +502,25 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let sig = self.prog.interfaces[d.0 as usize].methods[method as usize].clone();
         let pair = rv.get().into_struct_value();
         let data = self.b.build_extract_value(pair, 0, "").unwrap();
-        let vt = self.b.build_extract_value(pair, 1, "").unwrap().into_pointer_value();
+        let known = match &recv.kind {
+            crate::hir::ExprKind::Local(x) => self.fs().known_dyn.iter().rev().find(|(l, _)| l == x).map(|(_, t)| *t),
+            _ => None,
+        };
+        let vt = match known {
+            // Inside `case T x:` of a switch on this local: T's vtable.
+            Some(dt) => {
+                let sid = match self.ty(dt).clone() {
+                    Type::Pointer(p) => match self.ty(p) {
+                        Type::Struct(s) => s.0,
+                        _ => return unsupported("devirtualised call on a non-struct pointer"),
+                    },
+                    Type::Struct(s) | Type::Enum(s) => s.0,
+                    _ => return unsupported("devirtualised call on this type"),
+                };
+                self.vtable(dt, sid, recv.ty)?
+            }
+            None => self.b.build_extract_value(pair, 1, "").unwrap().into_pointer_value(),
+        };
         self.nil_check(vt);
         let fp = self.byte_gep(vt, 16 + 8 * method as u64);
         let fnp = self.b.build_load(self.ptr_ty(), fp, "").unwrap().into_pointer_value();
@@ -554,6 +646,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     // the binding is the data pointer, so store its address.
                     let slot = self.entry_alloca(self.ptr_ty().into(), "tp", false);
                     self.b.build_store(slot, data).unwrap();
+                    self.b.build_store(datap, slot).unwrap();
+                } else if matches!(self.ty(subj_ty), Type::Any) && self.any_inline(pat) {
+                    // An inline scalar: the data word is the value.
+                    let slot = self.entry_alloca(self.i64_ty().into(), "tw", false);
+                    let w = self.b.build_ptr_to_int(data, self.i64_ty(), "").unwrap();
+                    self.b.build_store(slot, w).unwrap();
                     self.b.build_store(datap, slot).unwrap();
                 } else {
                     self.b.build_store(datap, data).unwrap();

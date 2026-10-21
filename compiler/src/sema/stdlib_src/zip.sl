@@ -1,11 +1,10 @@
-namespace std.archive.zip
-
 // ZIP archives (PKWARE APPNOTE 6.3): reading and writing in memory,
 // methods Store (0) and Deflate (8, through std.compress), Zip64 records
 // for large entries/archives (read always; written when needed or with
 // Writer.Zip64), the extended timestamp extra field for exact UTC
 // modification times, UTF-8 names. Encryption and other methods are not
 // supported. ExtractTo / FromDir move archives to and from directories.
+namespace std.archive.zip
 
 // The compression methods are the constants zip.Store (0) and
 // zip.Deflate (8).

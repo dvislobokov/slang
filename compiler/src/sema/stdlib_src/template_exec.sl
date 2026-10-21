@@ -1,6 +1,5 @@
-namespace std.text.template
-
 // Execution of parsed templates over dynamic Values (see template.sl).
+namespace std.text.template
 
 struct executor {
     t     *tmpl

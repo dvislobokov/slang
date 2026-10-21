@@ -1,10 +1,9 @@
-namespace std.net.tls
-
 // TLS server handshake (part of std.net.tls, see tls.sl): TLS 1.3 with
 // HelloRetryRequest, PSK resumption from our own tickets (psk_dhe_ke only),
 // client certificates; TLS 1.2 ECDHE + AEAD with extended_master_secret
 // (required), RFC 5077 tickets and the downgrade sentinel when 1.3 is
 // also enabled. 0-RTT is never accepted.
+namespace std.net.tls
 
 // Parsed ClientHello.
 struct clientHello {

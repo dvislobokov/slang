@@ -1,11 +1,10 @@
-namespace std.text.scanner
-
 // A tokenizer for Go-like source text (Go's text/scanner). Scan returns
 // the next token: one of the negative token constants (EOF, Ident, Int,
 // Float, Char, String, RawString, Comment) or the code of a single
 // character. Mode selects what is recognized (GoTokens by default) and
 // Whitespace the characters (< 64) that are skipped. Errors are collected
 // in Errors as "line:col: message".
+namespace std.text.scanner
 
 struct Position {
     Filename string

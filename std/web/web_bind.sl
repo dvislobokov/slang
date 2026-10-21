@@ -1,9 +1,8 @@
-namespace std.web
-
 // Parameter binding (route, query, header, form, JSON body) with type
 // conversion, and @validate. The compiler-generated endpoint handlers
 // call bind*<T> for each parameter; failures are collected on the
 // Context and answered with one 400 Problem Details listing all errors.
+namespace std.web
 
 // @validate on a body field or a parameter. Unset numbers keep their
 // sentinels (min/max: +-1e308, lengths: -1).

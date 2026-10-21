@@ -1,5 +1,3 @@
-namespace std.net
-
 // The Slang-source std.net (see sema/stdsrc.rs for the rules): TCP, UDP
 // and Unix domain sockets, addresses and name resolution, over the
 // runtime's socket handles (runtime/ABI.md section 16). Blocking points
@@ -14,6 +12,7 @@ namespace std.net
 // ErrUnreachable, ErrAddrInUse, ErrNotFound, ErrEOF (std.stdlib consts)
 // when the cause is one of those, so errors.Is(err, net.ErrRefused) works
 // through the wrap and errors.As(err, &op) finds the OpError.
+namespace std.net
 
 // ---- errors ----
 
@@ -26,10 +25,12 @@ struct OpError {
     Addr string
     Err  error
 
+    // Message returns "op net addr: cause".
     func Message() string {
         return opPrefix(this.Op, this.Net, this.Addr) + ": " + this.Err.Message()
     }
 
+    // Unwrap returns the cause.
     func Unwrap() error {
         return this.Err
     }
@@ -70,14 +71,17 @@ func IsTimeout(err error) bool {
 struct IP {
     b []byte
 
+    // IsValid reports whether ip is an IPv4 or IPv6 address (not the zero IP).
     func IsValid() bool {
         return len(this.b) == 4 || len(this.b) == 16
     }
 
+    // Is4 reports whether ip is an IPv4 (or IPv4-mapped IPv6) address.
     func Is4() bool {
         return len(this.b) == 4 || this.isMapped()
     }
 
+    // Is6 reports whether ip is an IPv6 address that is not IPv4-mapped.
     func Is6() bool {
         return len(this.b) == 16 && !this.isMapped()
     }
@@ -115,6 +119,7 @@ struct IP {
         return rtFormatIP(this.b)
     }
 
+    // Equal reports whether both are the same address (IPv4 equals its IPv4-mapped form).
     func Equal(o IP) bool {
         var a = this.To4()
         var c = o.To4()
@@ -201,11 +206,13 @@ func IPv4Zero() IP {
     return IPv4(0, 0, 0, 0)
 }
 
+// IPv6Zero returns the unspecified IPv6 address ::.
 func IPv6Zero() IP {
     var b = rtBytes(16)
     return IP{b: b}
 }
 
+// IPv6Loopback returns ::1.
 func IPv6Loopback() IP {
     var b = rtBytes(16)
     b[15] = 1
@@ -234,6 +241,7 @@ struct Addr {
         return JoinHostPort(host, this.Port)
     }
 
+    // IsUnix reports whether the address is a Unix socket path.
     func IsUnix() bool {
         return this.Path != ""
     }
@@ -814,6 +822,7 @@ struct Conn {
         return this.s.write(data)
     }
 
+    // WriteString writes text.
     func WriteString(text string) Task<int!> {
         return this.s.writeString(text)
     }
@@ -842,14 +851,17 @@ struct Conn {
         this.s.wdl = t
     }
 
+    // SetReadDeadline sets the read deadline only (see SetDeadline).
     func SetReadDeadline(t int) {
         this.s.rdl = t
     }
 
+    // SetWriteDeadline sets the write deadline only (see SetDeadline).
     func SetWriteDeadline(t int) {
         this.s.wdl = t
     }
 
+    // Close closes the connection; pending operations fail with ErrClosed.
     func Close() {
         if this.s != nil {
             this.s.close()
@@ -866,22 +878,27 @@ struct Conn {
         this.s.shutdown(1)?
     }
 
+    // IsClosed reports whether Close was called.
     func IsClosed() bool {
         return this.s == nil || this.s.isClosed()
     }
 
+    // LocalAddr returns the local "ip:port".
     func LocalAddr() string {
         return rtLocalAddr(this.s.h)
     }
 
+    // RemoteAddr returns the peer's "ip:port".
     func RemoteAddr() string {
         return rtRemoteAddr(this.s.h)
     }
 
+    // Local returns the local address.
     func Local() Addr {
         return addrOf(rtLocalAddr(this.s.h))
     }
 
+    // Remote returns the peer's address.
     func Remote() Addr {
         return addrOf(rtRemoteAddr(this.s.h))
     }
@@ -913,6 +930,7 @@ struct Conn {
         this.s.setOpt(6, n)?
     }
 
+    // SetWriteBuffer sets SO_SNDBUF in bytes.
     func SetWriteBuffer(n int) void! {
         this.s.setOpt(7, n)?
     }
@@ -945,6 +963,7 @@ struct Dialer {
     // TCP_NODELAY (default on).
     NoDelay bool = true
 
+    // Dial connects to addr ("host:port") over TCP with the dialer's options.
     func Dial(addr string) Task<Conn!> {
         return dialWith(*this, addr)
     }
@@ -1146,12 +1165,14 @@ struct Listener {
         return acceptOn(this.s)
     }
 
+    // Close stops listening; a waiting Accept fails with ErrClosed.
     func Close() {
         if this.s != nil {
             this.s.close()
         }
     }
 
+    // IsClosed reports whether Close was called.
     func IsClosed() bool {
         return this.s == nil || this.s.isClosed()
     }
@@ -1161,6 +1182,7 @@ struct Listener {
         return this.s.laddr
     }
 
+    // Local returns the bound address.
     func Local() Addr {
         return addrOf(this.s.laddr)
     }
@@ -1170,6 +1192,7 @@ struct Listener {
         return rtPort(this.s.h)
     }
 
+    // Fd returns the OS socket handle.
     func Fd() int {
         return rtFd(this.s.h)
     }

@@ -21,6 +21,9 @@ commands:
   test [path] [--filter re] [--json] [--bench] [-v] [--parallel n] [options]
                                  run the @test functions (and @test benchmarks
                                  taking *testing.B with --bench), see std.testing
+  doc [path|namespace|symbol] [--html dir] [--json] [--check [--min N]] [--private]
+                                 documentation from doc comments: `slang doc strings.Split`,
+                                 `slang doc std --html out/` (the stdlib reference), --check: coverage
   debug [--lldb|--gdb] [path] [options] [-- args]
                                  build with debug info and start lldb (default) or gdb
                                  with the Slang formatters loaded (docs/DEBUGGER.md)
@@ -44,11 +47,18 @@ commands:
   manifest schema                print the manifest JSON Schema
   manifest convert <toml|json|yaml> [dir]
                                  rewrite the manifest in another format
+  data migration add <Name> | update [target] | script | list
+                                 std.data migrations: diff the model against
+                                 migrations/snapshot.json, apply, print SQL (slang data help)
   parse <file.sl>                print the AST
   fmt [paths] [--check] [--diff] [--stdin]
                                  format .sl files in place (canonical style)
   lsp                            run the language server on stdio (execs slang-lsp)
   tool pprof [args] <profile>    inspect a std.diag profile (runs `go tool pprof`)
+  target list                    known targets and where their runtime is
+  target add <target>... [--url template]
+                                 download prebuilt runtimes into ~/.slang/targets
+                                 ($SLANG_TARGETS_URL; docs/PLATFORMS.md)
 
 build options:
   -o <path>            output file (single package)
@@ -81,6 +91,7 @@ fn main() {
             None => usage_error("parse needs a file"),
         },
         "test" => exit(testrun::run(rest)),
+        "doc" => exit(slang::doc::run(rest)),
         "check" => {
             let dump = rest.iter().any(|a| a == "--dump-hir");
             let flags: Vec<String> = rest.iter().filter(|a| *a != "--dump-hir").cloned().collect();
@@ -108,7 +119,12 @@ fn main() {
         "manifest" => manifest(rest),
         "lsp" => lsp(rest),
         "tool" => tool(rest),
+        "target" => print(slang::toolchain::run(rest)),
         "fmt" => exit(slang::fmt::cli::run(rest)),
+        "data" => match slang::datacli::run(rest) {
+            Ok(code) => exit(code),
+            Err(e) => fail(&e),
+        },
         "install" => done(package::cli::install(rest)),
         "update" => done(package::cli::update(rest)),
         "vendor" => done(package::cli::vendor(rest)),

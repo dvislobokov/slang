@@ -8,7 +8,7 @@ or let `slang debug --lldb prog.sl` do it. They rely on the DWARF the Slang
 compiler emits (compiler/src/codegen/debug.rs) and on the runtime layouts of
 runtime/ABI.md:
 
-    string      "text"                     (slang_string: len at +16, bytes at +24)
+    string      "text"                     (slang_string: len at +16, pointer to the bytes at +24)
     []T         [1, 2, 3]                  children [0], [1], ...
     map[K]V     {"a": 1, "b": 2}           children ["a"], ... (walks the table of map.c)
     error       "message"                  (wrap chains joined with ": ")
@@ -101,7 +101,10 @@ def string_at(v, p):
     n = _i64(v, p + 16)
     if n is None or n < 0:
         return None
-    raw = _read(v, p + 24, min(n, MAX_STRING))
+    d = _u64(v, p + 24) if n else 0  # data pointer (views share their parent's bytes)
+    if n and not d:
+        return None
+    raw = _read(v, d, min(n, MAX_STRING)) if n else b""
     if raw is None:
         return None
     s = raw.decode("utf-8", errors="replace")
@@ -494,6 +497,11 @@ def is_interface(t, _dict):
     return b.GetName() == "type" and t.GetName() == "any"
 
 
+# Scalar types an `any` stores inline, in its data word (runtime/ABI.md 3.7).
+INLINE_ANY = {"bool", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16",
+              "uint32", "uint64", "byte", "rune", "float", "float32", "float64", "char"}
+
+
 def dynamic_value(v):
     """(type name, SBValue or None) of an interface or `any` value, or
     (None, None) for nil."""
@@ -515,6 +523,9 @@ def dynamic_value(v):
         return name, None
     if name.startswith("*") and not boxed:
         return name, _ptr_value(v, "value", data, t)
+    if raw.GetChildAtIndex(1).GetName() != "vtable" and name in INLINE_ANY:
+        # an `any` holds bool/integer/float/char values in its data word
+        return name, _value_at(v, "value", raw.GetChildMemberWithName("data").GetLoadAddress(), t)
     return name, _value_at(v, "value", data, t)
 
 

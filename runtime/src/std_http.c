@@ -819,7 +819,7 @@ static int64_t days_from_civil(int64_t y, int64_t m, int64_t d) {
 /* rtParseHttpTime(s) int: Unix seconds of an HTTP date (IMF-fixdate,
  * RFC 850 or asctime), or -1. */
 int64_t slang_net_http_rt_parse_http_time(const slang_string *s) {
-    const char *b = slang_string_data(s);
+    const char *b = slang_string_cstr(s);
     static const char mons[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
     char mon[4] = {0};
     int d = 0, y = 0, hh = 0, mm = 0, ss = 0;
@@ -841,11 +841,7 @@ int64_t slang_net_http_rt_parse_http_time(const slang_string *s) {
 /* ---- sentinel errors (stdlib.rs CONSTS) ---- */
 
 #define SENTINEL(fn, text)                                                                 \
-    static struct {                                                                        \
-        slang_object hdr;                                                                  \
-        int64_t len;                                                                       \
-        char data[sizeof text];                                                            \
-    } fn##_msg = {{SLANG_RC_IMMORTAL, &slang_type_string}, sizeof text - 1, text};         \
+    static SLANG_STRING_STORAGE(sizeof text) fn##_msg = SLANG_STRING_INIT(fn##_msg, text); \
     static slang_error fn##_err = {                                                        \
         .hdr = {SLANG_RC_IMMORTAL, &slang_type_error}, .message = (slang_string *)&fn##_msg, \
     };                                                                                     \

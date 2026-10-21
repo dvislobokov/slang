@@ -1,7 +1,6 @@
-namespace std.debug
-
 // std.debug, part 3: Debug Adapter Protocol framing (Content-Length
 // headers over the agent's blocking socket) and JSON output helpers.
+namespace std.debug
 
 // A DAP request.
 struct request {

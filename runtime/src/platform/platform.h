@@ -8,11 +8,14 @@
  *   net_posix.c    BSD sockets (TCP/UDP/Unix, options, sendfile), names
  *   fs_posix.c     files, directories, environment, child processes,
  *                  signals, users (POSIX)
- *   win32.c        Windows: threads, locks, clocks, entropy, backtraces,
+ *   win32.c        Windows: threads, locks, clocks, entropy,
  *                  dynamic loading, console, environment, signals
+ *   prof_win32.c   Windows backtraces, CPU sampler, symbols (COFF, DbgHelp)
+ *   tz_win32.c     Windows time zones (registry -> TZif)
  *   fs_win32.c     Windows files and directories (UTF-16 at the boundary)
  *   proc_win32.c   Windows child processes (CreateProcessW)
- *   poll_wsapoll.c Windows readiness poller (WSAPoll; IOCP planned)
+ *   poll_iocp.c    Windows readiness poller (IOCP + IOCTL_AFD_POLL)
+ *   poll_wsapoll.c Windows fallback poller (WSAPoll)
  *   net_win32.c    Winsock2
  *   timefmt.c      strftime/strptime where the C library lacks them
  * Not part of the ABI: every symbol is hidden and prefixed slang__plat_
@@ -163,6 +166,13 @@ SLANG_PLAT_HIDDEN size_t slang__plat_strftime(char *buf, size_t cap, const char 
 /* strptime; *gmtoff gets the offset parsed by %z (seconds east), else 0.
  * Returns the end of the parsed input or NULL. */
 SLANG_PLAT_HIDDEN const char *slang__plat_strptime(const char *s, const char *fmt, struct tm *tm, long *gmtoff);
+/* The C library's strftime/strptime have every conversion std.time uses
+ * (%k %l %z ...) on glibc, macOS and the BSDs; elsewhere (Windows, musl)
+ * slang__plat_strftime/strptime are the portable ones below. */
+#if !defined(_WIN32) && (defined(__GLIBC__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
+                         defined(__NetBSD__) || defined(__DragonFly__))
+#define SLANG_PLAT_LIBC_TIMEFMT 1
+#endif
 /* The "C"-locale implementations behind them on Windows (timefmt.c,
  * compiled everywhere so POSIX builds test them against the C library). */
 SLANG_PLAT_HIDDEN size_t slang__plat_strftime_portable(char *buf, size_t cap, const char *fmt, const struct tm *tm);
@@ -172,6 +182,11 @@ SLANG_PLAT_HIDDEN const char *slang__plat_strptime_portable(const char *s, const
  * UTC unless $TZ and $ZONEINFO name a TZif file). */
 SLANG_PLAT_HIDDEN const char *slang__plat_localtime_path(void);
 SLANG_PLAT_HIDDEN const char *slang__plat_zoneinfo_dir(void);
+/* TZif bytes (RFC 8536 v2, malloc'd) of a zone from a system database that
+ * is not a tzdata directory: on Windows the registry's Time Zones with an
+ * IANA name table (tz_win32.c). name NULL = the local zone. false if the
+ * zone is unknown or the system has no such database (POSIX). */
+SLANG_PLAT_HIDDEN bool slang__plat_tz_tzif(const char *name, char **out, size_t *len);
 /* Fills buf with n cryptographically secure random bytes; false on failure. */
 SLANG_PLAT_HIDDEN bool slang__plat_random_bytes(void *buf, size_t n);
 
@@ -200,6 +215,17 @@ SLANG_PLAT_HIDDEN void slang__plat_prof_stop(void);
  * found. Uses the executable's own symbol table (local symbols included),
  * then the dynamic linker. Not async-signal-safe. */
 SLANG_PLAT_HIDDEN bool slang__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start);
+/* The source name of a symbol: strips the "__slp<hex>." prefix that the
+ * compiler's parallel code generation (compiler/src/parcodegen.rs) gives
+ * internal symbols it makes visible across partitions. */
+static inline const char *slang__plat_sym_clean(const char *name) {
+    if (name[0] == '_' && name[1] == '_' && name[2] == 's' && name[3] == 'l' && name[4] == 'p') {
+        const char *p = name + 5;
+        while ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f')) p++;
+        if (*p == '.' && p > name + 5) return p + 1;
+    }
+    return name;
+}
 /* Address range and path of the main executable's text (for pprof
  * mappings); false if unknown. */
 SLANG_PLAT_HIDDEN bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap);
@@ -228,8 +254,9 @@ SLANG_PLAT_HIDDEN const char *slang__plat_dl_error(void);
  * time the caller looks): callers retry the operation and wait again.
  * Every function is thread-safe; arm/remove may run while another thread
  * is inside poller_wait. Backends: poll_epoll.c (Linux), poll_kqueue.c
- * (macOS/BSD); a completion-based backend (IOCP) is adapted behind the
- * same interface, see docs/PLATFORMS.md. */
+ * (macOS/BSD), poll_iocp.c (Windows: a completion port per poller with
+ * readiness from IOCTL_AFD_POLL, falling back to poll_wsapoll.c), see
+ * docs/PLATFORMS.md. */
 
 enum { SLANG_PLAT_READ = 1, SLANG_PLAT_WRITE = 2, SLANG_PLAT_ERROR = 4 };
 
@@ -261,6 +288,8 @@ SLANG_PLAT_HIDDEN void slang__plat_poller_remove(slang__plat_poller *p, int64_t 
 SLANG_PLAT_HIDDEN int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int max, int64_t timeout_ms);
 /* Makes a concurrent or the next poller_wait return (thread-safe). */
 SLANG_PLAT_HIDDEN void slang__plat_poller_wake(slang__plat_poller *p);
+/* Name of the backend of p: "epoll", "kqueue", "iocp" or "wsapoll". */
+SLANG_PLAT_HIDDEN const char *slang__plat_poller_backend(slang__plat_poller *p);
 
 /* ---- process, console, environment (posix.c / win32.c) ---------------- */
 

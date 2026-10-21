@@ -1004,3 +1004,25 @@ fn dependencies_in_slang_deps_are_read_only_project_files() {
     // No diagnostics are published for library files.
     assert!(!c.notes.iter().any(|n| n.method == notification::PublishDiagnostics::METHOD && n.params.to_string().contains(".slang/deps")));
 }
+
+#[test]
+fn hover_renders_doc_markdown_and_std_examples() {
+    let text = "namespace app\n\nimport std\nimport std.io\n\n// Words splits s. See `strings.Fields`.\n//\n// Deprecated: use strings.Fields.\nfunc Words(s string) []string {\n    return strings.Split(s, \" \")\n}\n\nfunc main() {\n    println(Words(\"a b\"))\n}\n";
+    let (dir, uri) = project_with("main.sl", text);
+    let mut c = Client::start(&dir);
+    c.open(&uri, text);
+    let hover = |c: &mut Client, pos| -> String {
+        let h: Option<Hover> = c.request::<request::HoverRequest>(HoverParams { text_document_position_params: tdp(&uri, pos), work_done_progress_params: Default::default() });
+        match h.expect("no hover").contents {
+            HoverContents::Markup(m) => m.value,
+            other => panic!("{other:?}"),
+        }
+    };
+    // a user function: Deprecated tag and a link for the backtick symbol
+    let h = hover(&mut c, pos_of(text, "Words(\"a b\")", 0, 1));
+    assert!(h.contains("**~~Deprecated~~** use strings.Fields."), "{h}");
+    assert!(h.contains("[`strings.Fields`](file://") && h.contains("strings_extern.sl#L"), "{h}");
+    // a std function: its first example from std/strings/strings_test.sl, collapsed
+    let h = hover(&mut c, pos_of(text, "Split(s", 0, 1));
+    assert!(h.contains("<details><summary>Example</summary>") && h.contains("// Output") == false && h.contains("3 [a b c]"), "{h}");
+}

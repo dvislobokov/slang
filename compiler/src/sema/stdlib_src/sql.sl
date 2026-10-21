@@ -1,5 +1,3 @@
-namespace std.database.sql
-
 // std.database.sql: one asynchronous interface to SQL databases
 // (docs/FRAMEWORK.md section 3). A driver (std.database.postgres,
 // std.database.sqlite, or any type implementing Driver) is registered by
@@ -13,11 +11,13 @@ namespace std.database.sql
 // Cancellation and timeouts come from the task context: a cancelled
 // operation fails with task.ErrCancelled and the connection it used is
 // discarded.
+namespace std.database.sql
 
 // ---- driver interface -------------------------------------------------------
 
 // A database driver: opens connections from a data source name.
 interface Driver {
+    // Open opens one connection for a data source name.
     func Open(dsn string) Task<std.database.sql.DriverConn!>
 }
 
@@ -30,9 +30,13 @@ interface DriverConn {
     func Prepare(query string) Task<std.database.sql.DriverStmt!>
     // Runs a statement (no args: may be several statements).
     func Exec(query string, args []any) Task<std.database.sql.Result!>
+    // Query runs a query and returns its result rows.
     func Query(query string, args []any) Task<std.database.sql.DriverRows!>
+    // Begin starts a transaction on this connection.
     func Begin() Task<std.database.sql.DriverTx!>
+    // Ping checks that the connection is alive.
     func Ping() Task<void!>
+    // Close closes the connection.
     func Close() void!
     // False once the connection is unusable (I/O error, cancelled
     // operation, protocol error): the pool then discards it.
@@ -42,15 +46,21 @@ interface DriverConn {
     func Placeholder() int
 }
 
+// DriverStmt is a prepared statement of a driver.
 interface DriverStmt {
+    // Exec runs the statement with positional args.
     func Exec(args []any) Task<std.database.sql.Result!>
+    // Query runs the statement and returns its rows.
     func Query(args []any) Task<std.database.sql.DriverRows!>
     // Number of parameters (-1 if unknown).
     func NumInput() int
+    // Close releases the statement.
     func Close() void!
 }
 
+// DriverRows is a result set of a driver.
 interface DriverRows {
+    // Columns returns the column names.
     func Columns() []string
     // Database type names of the columns ("" if unknown).
     func ColumnTypes() []string
@@ -62,20 +72,25 @@ interface DriverRows {
     func Close() void!
 }
 
+// DriverTx is a driver transaction.
 interface DriverTx {
+    // Commit commits the transaction.
     func Commit() Task<void!>
+    // Rollback aborts the transaction.
     func Rollback() Task<void!>
 }
 
 // A value that converts itself to a driver value when passed as an
 // argument (sql.Null<T> implements it).
 interface Valuer {
+    // SqlValue returns the driver value to send (nil, int, float, bool, string, []byte, time.Time).
     func SqlValue() any
 }
 
 // A destination that converts a column value itself (sql.Null<T>
 // implements it); Scan, Query<T> and QueryOne<T> use it for *T.
 interface Scanner {
+    // ScanValue stores column value v (a driver value, nil for NULL).
     func ScanValue(v any) void!
 }
 
@@ -93,6 +108,7 @@ struct NamedArg {
     Value any
 }
 
+// Named binds the named parameter :name to value.
 func Named(name string, value any) NamedArg {
     return NamedArg{Name: name, Value: value}
 }
@@ -111,6 +127,7 @@ struct Null<T> {
     Value T
     Valid bool
 
+    // ScanValue stores v (NULL makes Valid false).
     func ScanValue(v any) void! {
         var z T
         this.Value = z
@@ -122,6 +139,7 @@ struct Null<T> {
         this.Valid = true
     }
 
+    // SqlValue returns Value, or nil (NULL) when not Valid.
     func SqlValue() any {
         if !this.Valid {
             return nil
@@ -129,6 +147,7 @@ struct Null<T> {
         return argOf(this.Value)
     }
 
+    // String returns the value as text, or "NULL".
     func String() string {
         if !this.Valid {
             return "NULL"
@@ -562,6 +581,7 @@ struct DB {
         this.st.unlock()
     }
 
+    // Stats returns a snapshot of the pool statistics.
     func Stats() Stats {
         this.st.lock()
         var s = this.st.stats
@@ -600,6 +620,7 @@ struct DB {
         await pc.c.Ping()?
     }
 
+    // Exec runs a statement that returns no rows (INSERT, UPDATE, DDL ...).
     async func Exec(query string, args []any) Result! {
         var pc = await this.st.acquire()?
         defer this.st.release(pc)
@@ -696,26 +717,32 @@ struct Stmt {
     db    *DB
     query string
 
+    // Exec runs the statement with args (see DB.Exec).
     func Exec(args []any) Task<Result!> {
         return this.db.Exec(this.query, args)
     }
 
+    // QueryRows runs the statement as a query (see DB.QueryRows).
     func QueryRows(args []any) Task<Rows!> {
         return this.db.QueryRows(this.query, args)
     }
 
+    // QueryRow runs the statement as a single-row query (see DB.QueryRow).
     func QueryRow(args []any) Task<Row> {
         return this.db.QueryRow(this.query, args)
     }
 
+    // Query runs the statement and maps every row to a T (see DB.Query).
     func Query<T>(args []any) Task<[]T!> {
         return this.db.Query<T>(this.query, args)
     }
 
+    // QueryOne runs the statement and maps its only row to a T (see DB.QueryOne).
     func QueryOne<T>(args []any) Task<T!> {
         return this.db.QueryOne<T>(this.query, args)
     }
 
+    // Close does nothing; cached statements are closed with their connections.
     func Close() {}
 }
 
@@ -810,6 +837,7 @@ struct rowsState {
 struct Rows {
     st *rowsState
 
+    // Columns returns the column names of the result.
     func Columns() []string {
         return this.st.cols
     }
@@ -868,6 +896,7 @@ struct Rows {
         return out
     }
 
+    // Close discards the rest of the result and returns the connection to the pool.
     func Close() Task<void!> {
         return this.st.close()
     }
@@ -911,6 +940,7 @@ struct Row {
         return this.err
     }
 
+    // Scan stores the row into pointers (see Rows.Scan); it fails with the row's error.
     func Scan(dest []any) void! {
         if this.err != nil {
             return this.err
@@ -928,6 +958,7 @@ struct Row {
         }
     }
 
+    // Columns returns the column names of the row.
     func Columns() []string {
         return this.cols
     }
@@ -991,17 +1022,20 @@ struct Tx {
         }
     }
 
+    // Exec runs a statement in the transaction.
     async func Exec(query string, args []any) Result! {
         this.check()?
         return await execOn(this.st.db, this.st.pc, query, args)?
     }
 
+    // QueryRows runs a query in the transaction.
     async func QueryRows(query string, args []any) Rows! {
         this.check()?
         var r = await queryOn(this.st.db, this.st.pc, query, args)?
         return Rows{st: new rowsState{db: this.st.db, pc: this.st.pc, r: r, cols: r.Columns()}}
     }
 
+    // QueryRow runs a single-row query in the transaction.
     async func QueryRow(query string, args []any) Row {
         var rows = try await this.QueryRows(query, args) catch err {
             return Row{err: err}
@@ -1009,16 +1043,19 @@ struct Tx {
         return await firstRow(rows)
     }
 
+    // Query runs a query in the transaction and maps every row to a T.
     async func Query<T>(query string, args []any) []T! {
         var rows = await this.QueryRows(query, args)?
         return await collect<T>(rows)?
     }
 
+    // QueryOne runs a query in the transaction and maps its only row to a T.
     async func QueryOne<T>(query string, args []any) T! {
         var rows = await this.QueryRows(query, args)?
         return await collectOne<T>(rows)?
     }
 
+    // Commit commits the transaction and returns the connection to the pool.
     async func Commit() void! {
         this.check()?
         this.st.done = true
@@ -1026,6 +1063,7 @@ struct Tx {
         await this.st.tx.Commit()?
     }
 
+    // Rollback aborts the transaction (ErrTxDone after Commit) and returns the connection.
     async func Rollback() void! {
         this.check()?
         this.st.done = true
@@ -1033,6 +1071,7 @@ struct Tx {
         await this.st.tx.Rollback()?
     }
 
+    // IsDone reports whether Commit or Rollback was called.
     func IsDone() bool {
         return this.st.done
     }
@@ -1054,17 +1093,20 @@ struct Conn {
         }
     }
 
+    // Exec runs a statement on this connection.
     async func Exec(query string, args []any) Result! {
         this.check()?
         return await execOn(this.st.db, this.st.pc, query, args)?
     }
 
+    // QueryRows runs a query on this connection.
     async func QueryRows(query string, args []any) Rows! {
         this.check()?
         var r = await queryOn(this.st.db, this.st.pc, query, args)?
         return Rows{st: new rowsState{db: this.st.db, pc: this.st.pc, r: r, cols: r.Columns()}}
     }
 
+    // QueryRow runs a single-row query on this connection.
     async func QueryRow(query string, args []any) Row {
         var rows = try await this.QueryRows(query, args) catch err {
             return Row{err: err}
@@ -1072,21 +1114,25 @@ struct Conn {
         return await firstRow(rows)
     }
 
+    // Query runs a query on this connection and maps every row to a T.
     async func Query<T>(query string, args []any) []T! {
         var rows = await this.QueryRows(query, args)?
         return await collect<T>(rows)?
     }
 
+    // QueryOne runs a query on this connection and maps its only row to a T.
     async func QueryOne<T>(query string, args []any) T! {
         var rows = await this.QueryRows(query, args)?
         return await collectOne<T>(rows)?
     }
 
+    // Ping checks that the connection is alive.
     async func Ping() void! {
         this.check()?
         await this.st.pc.c.Ping()?
     }
 
+    // Begin starts a transaction on this connection.
     async func Begin() Tx! {
         this.check()?
         var t = await this.st.pc.c.Begin()?
@@ -1095,6 +1141,7 @@ struct Conn {
         return Tx{st: new txState{db: this.st.db, pc: pc, tx: t}}
     }
 
+    // Close returns the connection to the pool.
     func Close() {
         if !this.st.closed {
             this.st.closed = true

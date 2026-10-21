@@ -1,12 +1,13 @@
-namespace std.hash.fnv
-
 // std.hash.fnv: FNV-1 and FNV-1a, 32 and 64 bit (Go's hash/fnv). Each
 // New* returns a value implementing std.hash.Hash32 / Hash64.
+namespace std.hash.fnv
 
+// Hash32 is a 32-bit FNV-1 or FNV-1a hash (New32, New32a).
 struct Hash32 {
     h uint32
     a bool
 
+    // Write adds p to the hash; it never fails.
     func Write(p []byte) int! {
         var h = this.h
         var prime uint32 = 16777619
@@ -21,6 +22,7 @@ struct Hash32 {
         return len(p)
     }
 
+    // WriteString adds the bytes of s to the hash.
     func WriteString(s string) int! {
         var h = this.h
         var prime uint32 = 16777619
@@ -35,31 +37,38 @@ struct Hash32 {
         return len(s)
     }
 
+    // Sum32 returns the hash.
     func Sum32() uint32 {
         return this.h
     }
 
+    // Sum returns the hash as 4 big-endian bytes.
     func Sum() []byte {
         return std.hash.Bytes32(this.h)
     }
 
+    // Reset restores the initial state.
     func Reset() {
         this.h = 2166136261
     }
 
+    // Size returns 4.
     func Size() int {
         return 4
     }
 
+    // BlockSize returns 1.
     func BlockSize() int {
         return 1
     }
 }
 
+// Hash64 is a 64-bit FNV-1 or FNV-1a hash (New64, New64a).
 struct Hash64 {
     h uint
     a bool
 
+    // Write adds p to the hash; it never fails.
     func Write(p []byte) int! {
         var h = this.h
         var prime uint = 1099511628211
@@ -74,6 +83,7 @@ struct Hash64 {
         return len(p)
     }
 
+    // WriteString adds the bytes of s to the hash.
     func WriteString(s string) int! {
         var h = this.h
         var prime uint = 1099511628211
@@ -88,22 +98,27 @@ struct Hash64 {
         return len(s)
     }
 
+    // Sum64 returns the hash.
     func Sum64() uint {
         return this.h
     }
 
+    // Sum returns the hash as 8 big-endian bytes.
     func Sum() []byte {
         return std.hash.Bytes64(this.h)
     }
 
+    // Reset restores the initial state.
     func Reset() {
         this.h = 14695981039346656037
     }
 
+    // Size returns 8.
     func Size() int {
         return 8
     }
 
+    // BlockSize returns 1.
     func BlockSize() int {
         return 1
     }

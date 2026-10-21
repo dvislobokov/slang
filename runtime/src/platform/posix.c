@@ -9,9 +9,16 @@
 #if defined(__unix__) || defined(__APPLE__)
 
 #include <errno.h>
+#if defined(__has_include)
+#if __has_include(<execinfo.h>)
 #include <execinfo.h>
+#define SLANG_HAVE_EXECINFO 1
+#endif
+#endif
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <sched.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,8 +37,12 @@
 
 _Static_assert(sizeof(pthread_t) <= sizeof(uintptr_t), "pthread_t must fit in uintptr_t");
 
+/* mem.c: refcounts switch to atomic RMW for good before a second thread runs. */
+extern uint8_t slang_threaded;
+
 bool slang__plat_thread_start(slang__plat_thread *t, slang__plat_thread_fn fn, void *arg) {
     pthread_t th;
+    __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
     if (pthread_create(&th, NULL, fn, arg) != 0) return false;
     t->handle = (uintptr_t)th;
     return true;
@@ -42,6 +53,7 @@ bool slang__plat_thread_start_detached(slang__plat_thread_fn fn, void *arg) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
     int rc = pthread_create(&th, &attr, fn, arg);
     pthread_attr_destroy(&attr);
     return rc == 0;
@@ -76,6 +88,7 @@ void slang__plat_sleep_ns(int64_t ns) {
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
 }
 
+#if defined(SLANG_PLAT_LIBC_TIMEFMT)
 size_t slang__plat_strftime(char *buf, size_t cap, const char *fmt, const struct tm *tm) {
     return strftime(buf, cap, fmt, tm);
 }
@@ -85,9 +98,16 @@ const char *slang__plat_strptime(const char *s, const char *fmt, struct tm *tm, 
     *gmtoff = end ? (long)tm->tm_gmtoff : 0;  /* set by %z (glibc, BSD), 0 otherwise */
     return end;
 }
+#endif /* else timefmt.c (musl: no %k/%l in strftime, no %z in strptime) */
 
 const char *slang__plat_localtime_path(void) { return "/etc/localtime"; }
 const char *slang__plat_zoneinfo_dir(void) { return "/usr/share/zoneinfo"; }
+bool slang__plat_tz_tzif(const char *name, char **out, size_t *len) {
+    (void)name;
+    (void)out;
+    (void)len;
+    return false;  /* tzdata files: std_time_zone.c and time.sl read them */
+}
 
 /* ---- memory ------------------------------------------------------------ */
 
@@ -192,11 +212,47 @@ bool slang__plat_random_bytes(void *buf, size_t n) {
     return true;
 }
 
+/* One frame in the format of glibc's backtrace_symbols_fd,
+ * "module(function+0xoff)[0xaddr]", named from the executable's own symbol
+ * table (local symbols too, unlike dladdr) where possible. */
+static bool bt_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start);
+static void bt_frame(int fd, uintptr_t pc) {
+    char sym[256], line[700];
+    uintptr_t start = 0;
+    const char *mod = "";
+    Dl_info di;
+    if (dladdr((void *)pc, &di) && di.dli_fname) mod = di.dli_fname;
+    int k;
+    /* a return address points after the call: look up pc - 1 */
+    if (!getenv("SLANG_NO_SYMBOLS") && bt_symbolize(pc - 1, sym, sizeof sym, &start) && start <= pc)
+        k = snprintf(line, sizeof line, "%s(%s+0x%lx)[0x%lx]\n", mod, sym, (unsigned long)(pc - start), (unsigned long)pc);
+    else if (di.dli_fbase && *mod)
+        k = snprintf(line, sizeof line, "%s(+0x%lx)[0x%lx]\n", mod, (unsigned long)(pc - (uintptr_t)di.dli_fbase), (unsigned long)pc);
+    else
+        k = snprintf(line, sizeof line, "[0x%lx]\n", (unsigned long)pc);
+    if (k > 0) slang__plat_write_all(fd, line, k < (int)sizeof line ? k : (int)sizeof line - 1);
+}
+
+#if defined(SLANG_HAVE_EXECINFO)
 void slang__plat_backtrace(int fd, int skip) {
     void *frames[64];
     int n = backtrace(frames, 64);
-    if (n > skip) backtrace_symbols_fd(frames + skip, n - skip, fd);
+    for (int i = skip; i < n; i++) bt_frame(fd, (uintptr_t)frames[i]);
 }
+#else
+/* No <execinfo.h> (musl): walk the frame-pointer chain (the runtime and
+ * Slang code keep frame pointers). */
+void slang__plat_backtrace(int fd, int skip) {
+    uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
+    for (int i = 0; i < 64 && fp && !(fp & (sizeof(void *) - 1)); i++) {
+        uintptr_t next = ((uintptr_t *)fp)[0], ret = ((uintptr_t *)fp)[1];
+        if (!ret) break;
+        if (i >= skip) bt_frame(fd, ret);
+        if (next <= fp) break;  /* the chain must go up the stack */
+        fp = next;
+    }
+}
+#endif
 
 /* ---- CPU profiling: SIGPROF sampler, frame-pointer walk, symbols ------- */
 
@@ -212,6 +268,9 @@ void slang__plat_backtrace(int fd, int skip) {
 #include <sys/stat.h>
 #include <ucontext.h>
 #elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#include <mach-o/nlist.h>
 #include <sys/ucontext.h>
 #endif
 
@@ -341,7 +400,7 @@ void slang__plat_prof_stop(void) {
     g_prof_on = 0;
 }
 
-/* -- symbols of the main executable (ELF .symtab on Linux) -- */
+/* -- symbols of the main executable (ELF .symtab on Linux, LC_SYMTAB on macOS) -- */
 
 typedef struct { uintptr_t addr, size; const char *name; } sym_ent;
 static sym_ent *g_syms;
@@ -434,8 +493,67 @@ static void load_syms(void) {
     munmap(m, len);
     qsort(g_syms, g_nsyms, sizeof *g_syms, sym_cmp);
 }
+#elif defined(__APPLE__) && defined(__LP64__)
+/* Mach-O: the main image's LC_SYMTAB, read from its __LINKEDIT segment,
+ * which dyld keeps mapped (no file access). */
+static int sym_cmp(const void *a, const void *b) {
+    const sym_ent *x = a, *y = b;
+    return x->addr < y->addr ? -1 : x->addr > y->addr;
+}
+
+static void load_syms(void) {
+    g_syms_loaded = 1;
+    const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
+    if (!mh || mh->magic != MH_MAGIC_64) return;
+    g_exe_bias = (uintptr_t)_dyld_get_image_vmaddr_slide(0);
+    uint32_t pcap = (uint32_t)sizeof g_exe_path;
+    if (_NSGetExecutablePath(g_exe_path, &pcap) != 0) g_exe_path[0] = 0;
+    const struct segment_command_64 *linkedit = NULL;
+    const struct symtab_command *symtab = NULL;
+    const unsigned char *lc = (const unsigned char *)(mh + 1);
+    for (uint32_t i = 0; i < mh->ncmds; i++) {
+        const struct load_command *c = (const struct load_command *)lc;
+        if (c->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *seg = (const struct segment_command_64 *)lc;
+            if (strncmp(seg->segname, "__TEXT", 16) == 0) {
+                g_exe_lo = g_exe_bias + (uintptr_t)seg->vmaddr;
+                g_exe_hi = g_exe_lo + (uintptr_t)seg->vmsize;
+            } else if (strncmp(seg->segname, "__LINKEDIT", 16) == 0) {
+                linkedit = seg;
+            }
+        } else if (c->cmd == LC_SYMTAB) {
+            symtab = (const struct symtab_command *)lc;
+        }
+        lc += c->cmdsize;
+    }
+    if (!linkedit || !symtab || !symtab->nsyms) return;
+    uintptr_t base = g_exe_bias + (uintptr_t)linkedit->vmaddr - (uintptr_t)linkedit->fileoff;
+    const struct nlist_64 *nl = (const struct nlist_64 *)(base + symtab->symoff);
+    const char *str = (const char *)(base + symtab->stroff);
+    g_syms = malloc(symtab->nsyms * sizeof *g_syms);
+    if (!g_syms) return;
+    for (uint32_t i = 0; i < symtab->nsyms; i++) {
+        if ((nl[i].n_type & N_STAB) || (nl[i].n_type & N_TYPE) != N_SECT || !nl[i].n_value) continue;
+        if (nl[i].n_un.n_strx >= symtab->strsize) continue;
+        const char *name = str + nl[i].n_un.n_strx;
+        if (name[0] == '_') name++;  /* C names carry a leading underscore */
+        g_syms[g_nsyms].addr = g_exe_bias + (uintptr_t)nl[i].n_value;
+        g_syms[g_nsyms].size = 0;
+        g_syms[g_nsyms].name = name;  /* points into the mapped __LINKEDIT */
+        g_nsyms++;
+    }
+    qsort(g_syms, g_nsyms, sizeof *g_syms, sym_cmp);
+    /* Mach-O symbols have no size: up to the next symbol (or end of text) */
+    for (size_t i = 0; i < g_nsyms; i++) {
+        uintptr_t end = i + 1 < g_nsyms ? g_syms[i + 1].addr : g_exe_hi;
+        g_syms[i].size = end > g_syms[i].addr ? end - g_syms[i].addr : 1;
+    }
+}
 #else
-static void load_syms(void) { g_syms_loaded = 1; }
+static void load_syms(void) {
+    g_syms_loaded = 1;
+    (void)g_exe_bias;
+}
 #endif
 
 bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap) {
@@ -458,19 +576,21 @@ bool slang__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start
         }
         const sym_ent *e = &g_syms[lo];
         if (pc < e->addr + (e->size ? e->size : 1 << 20)) {
-            snprintf(buf, cap, "%s", e->name);
+            snprintf(buf, cap, "%s", slang__plat_sym_clean(e->name));
             *start = e->addr;
             return true;
         }
     }
     Dl_info di;
     if (dladdr((void *)pc, &di) && di.dli_sname) {
-        snprintf(buf, cap, "%s", di.dli_sname);
+        snprintf(buf, cap, "%s", slang__plat_sym_clean(di.dli_sname));
         *start = (uintptr_t)di.dli_saddr;
         return true;
     }
     return false;
 }
+
+static bool bt_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) { return slang__plat_symbolize(pc, buf, cap, start); }
 
 void slang__plat_symbolize_done(void) {
     free(g_syms);

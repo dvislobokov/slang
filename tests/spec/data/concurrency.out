@@ -1,0 +1,26 @@
+  a: BEGIN
+  a: INSERT INTO "accounts" ("owner", "balance", "version") VALUES (?, ?, ?) RETURNING "id" -- ["ann", 100, 0]
+  a: COMMIT
+1 0
+b saved, version 1
+  a: BEGIN
+  a: INSERT INTO "accounts" ("owner", "balance", "version") VALUES (?, ?, ?) RETURNING "id" -- ["bob", 5, 0]
+  a: UPDATE "accounts" SET "balance" = ?, "version" = ? WHERE "id" = ? AND "version" = ? -- [90, 1, 1, 0]
+  a: ROLLBACK
+conflict: true
+data: concurrency conflict: Account 1 was changed or deleted by another transaction
+nothing saved: 150 0 0
+  a: SELECT t0."id", t0."owner", t0."balance", t0."version" FROM "accounts" AS t0 WHERE t0."id" = ? -- [1]
+reloaded 150 1 Unchanged
+  a: BEGIN
+  a: INSERT INTO "accounts" ("owner", "balance", "version") VALUES (?, ?, ?) RETURNING "id" -- ["bob", 5, 0]
+  a: UPDATE "accounts" SET "balance" = ?, "version" = ? WHERE "id" = ? AND "version" = ? -- [80, 2, 1, 1]
+  a: COMMIT
+saved 2 85
+delete conflict: true
+batch failed: true
+2
+inside: 3 85
+rolled back: abort
+after: 2 85
+committed: 3 105

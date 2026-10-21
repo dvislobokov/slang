@@ -7,7 +7,9 @@
  * The compiler links `-lsqlite3` only into programs that call one of these
  * functions (stdlib.rs LINK_LIBS). When the runtime is built without
  * <sqlite3.h>, every function fails with "sqlite: not available" and
- * rtAvailable() is false. */
+ * rtAvailable() is false, except where the platform binds a system DLL at
+ * run time instead (platform/sqlite_dyn.h: Windows' winsqlite3.dll or an
+ * application's sqlite3.dll; SLANG_SQLITE_DYNAMIC). */
 #include "rt_internal.h"
 
 #include <stdio.h>
@@ -18,13 +20,16 @@
 #define SLANG_HAVE_SQLITE 1
 #endif
 #endif
+#include "platform/sqlite_dyn.h"
 
 static void sq_err(slang_error **err, const char *msg) {
     if (err) *err = slang_error_new_cstr(msg);
 }
 
-#ifdef SLANG_HAVE_SQLITE
+#if defined(SLANG_HAVE_SQLITE) && !defined(SLANG_SQLITE_DYNAMIC)
 #include <sqlite3.h>
+#endif
+#ifdef SLANG_HAVE_SQLITE
 
 #define DB(h) ((sqlite3 *)(intptr_t)(h))
 #define ST(h) ((sqlite3_stmt *)(intptr_t)(h))
@@ -35,15 +40,25 @@ static void db_err(slang_error **err, sqlite3 *db, int rc) {
     *err = slang_error_new_cstr(m ? m : "unknown error");
 }
 
-bool slang_database_sqlite_rt_available(void) { return true; }
+#ifdef SLANG_SQLITE_DYNAMIC
+#define SQ_LOADED() slang__sqlite_load()
+#else
+#define SQ_LOADED() true
+#endif
 
-slang_string *slang_database_sqlite_rt_version(void) { return slang_string_from_cstr(sqlite3_libversion()); }
+bool slang_database_sqlite_rt_available(void) { return SQ_LOADED(); }
+
+slang_string *slang_database_sqlite_rt_version(void) { return slang_string_from_cstr(SQ_LOADED() ? sqlite3_libversion() : ""); }
 
 int64_t slang_database_sqlite_rt_open(const slang_string *path, int64_t flags, slang_error **err) {
+    if (!SQ_LOADED()) {
+        sq_err(err, "sqlite: not available (no sqlite3.dll or winsqlite3.dll)");
+        return 0;
+    }
     sqlite3 *db = NULL;
     int f = flags ? (int)flags : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
     f |= SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX;
-    int rc = sqlite3_open_v2(slang_string_data(path), &db, f, NULL);
+    int rc = sqlite3_open_v2(slang_string_cstr(path), &db, f, NULL);
     if (rc != SQLITE_OK) {
         db_err(err, db, rc);
         sqlite3_close_v2(db);
@@ -63,7 +78,7 @@ void slang_database_sqlite_rt_busy_timeout(int64_t h, int64_t ms) {
 }
 
 void slang_database_sqlite_rt_exec(int64_t h, const slang_string *sql, slang_error **err) {
-    int rc = sqlite3_exec(DB(h), slang_string_data(sql), NULL, NULL, NULL);
+    int rc = sqlite3_exec(DB(h), slang_string_cstr(sql), NULL, NULL, NULL);
     if (rc != SQLITE_OK) db_err(err, DB(h), rc);
 }
 
@@ -72,7 +87,7 @@ void slang_database_sqlite_rt_exec(int64_t h, const slang_string *sql, slang_err
 int64_t slang_database_sqlite_rt_prepare(int64_t h, const slang_string *sql, slang_error **err) {
     sqlite3_stmt *st = NULL;
     const char *tail = NULL;
-    const char *s = slang_string_data(sql);
+    const char *s = slang_string_cstr(sql);
     int rc = sqlite3_prepare_v2(DB(h), s, (int)slang_string_len(sql), &st, &tail);
     if (rc != SQLITE_OK) {
         db_err(err, DB(h), rc);
@@ -107,7 +122,7 @@ int64_t slang_database_sqlite_rt_param_count(int64_t st) { return sqlite3_bind_p
 
 /* Index (1-based) of a named parameter (":x", "@x", "$x"), 0 if none. */
 int64_t slang_database_sqlite_rt_param_index(int64_t st, const slang_string *name) {
-    return sqlite3_bind_parameter_index(ST(st), slang_string_data(name));
+    return sqlite3_bind_parameter_index(ST(st), slang_string_cstr(name));
 }
 
 static void bind_rc(int64_t st, int rc, slang_error **err) {
@@ -127,7 +142,7 @@ void slang_database_sqlite_rt_bind_float(int64_t st, int64_t i, double v, slang_
 }
 
 void slang_database_sqlite_rt_bind_text(int64_t st, int64_t i, const slang_string *v, slang_error **err) {
-    bind_rc(st, sqlite3_bind_text64(ST(st), (int)i, slang_string_data(v), (sqlite3_uint64)slang_string_len(v),
+    bind_rc(st, sqlite3_bind_text64(ST(st), (int)i, slang_string_cstr(v), (sqlite3_uint64)slang_string_len(v),
                                     SQLITE_TRANSIENT, SQLITE_UTF8), err);
 }
 

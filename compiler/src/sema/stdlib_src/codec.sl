@@ -1,7 +1,6 @@
-namespace std.encoding
-
 // Shared helpers of the reflection-based codecs std.encoding.{csv,xml,
 // yaml,toml} (internal; lowercase).
+namespace std.encoding
 
 // v converted to the integer or float type F, or an error naming the
 // range when it does not fit.

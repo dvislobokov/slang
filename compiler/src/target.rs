@@ -42,12 +42,19 @@ impl Target {
     }
 
     /// Parses `--target`: an alias `os-arch` (`linux-amd64`, `macos-arm64`,
-    /// `windows-amd64`) or an LLVM triple (`aarch64-apple-darwin`).
+    /// `windows-amd64`), `linux-<arch>-musl` (a fully static musl binary:
+    /// `x86_64-unknown-linux-musl`), or an LLVM triple (`aarch64-apple-darwin`).
     /// `windows-*` means the MinGW ABI (`x86_64-pc-windows-gnu`): the
     /// runtime is built with mingw-w64 headers and linked against its CRT;
     /// the MSVC ABI (`x86_64-pc-windows-msvc`, CodeView/PDB, the Windows
     /// SDK's libraries) is accepted as a triple for `check`/`--emit=obj`.
     pub fn parse(s: &str) -> Result<Target, String> {
+        if let Some(arch) = s.strip_prefix("linux-").and_then(|r| r.strip_suffix("-musl")) {
+            if KNOWN_ARCH.contains(&arch) {
+                let cpu = if arch == "amd64" { "x86_64" } else if arch == "arm64" { "aarch64" } else { arch };
+                return Ok(Target { os: "linux".into(), arch: arch.into(), triple: format!("{cpu}-unknown-linux-musl") });
+            }
+        }
         if let Some((os, arch)) = s.split_once('-') {
             if KNOWN_OS.contains(&os) && KNOWN_ARCH.contains(&arch) {
                 let cpu = match arch {
@@ -104,6 +111,11 @@ impl Target {
             "wasi" => ObjectFormat::Wasm,
             _ => ObjectFormat::Elf,
         }
+    }
+
+    /// A musl libc target (`*-linux-musl`): linked fully static.
+    pub fn is_musl(&self) -> bool {
+        self.triple.ends_with("-musl")
     }
 
     /// The MSVC ABI (`*-windows-msvc`) rather than MinGW (`*-windows-gnu`).
@@ -197,6 +209,10 @@ mod tests {
         let t = Target::parse("x86_64-unknown-linux-gnu").unwrap();
         assert_eq!((t.os.as_str(), t.arch.as_str()), ("linux", "amd64"));
         assert!(Target::parse("nonsense").is_err());
+        let t = Target::parse("linux-amd64-musl").unwrap();
+        assert_eq!((t.os.as_str(), t.arch.as_str(), t.triple.as_str(), t.is_musl()), ("linux", "amd64", "x86_64-unknown-linux-musl", true));
+        assert_eq!(Target::parse("linux-arm64-musl").unwrap().triple, "aarch64-unknown-linux-musl");
+        assert_eq!(Target::parse("linux-arm64").unwrap().triple, "aarch64-unknown-linux-gnu");
     }
 
     #[test]

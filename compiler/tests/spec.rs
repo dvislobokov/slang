@@ -35,6 +35,7 @@ const AREAS: &[&str] = &[
     "diagnostics", "programs", "attributes2", "platform", "stdlib2", "stdlib3", "stdlib4", "operators", "iteration",
     "stdlib5",
     "web",
+    "data",
 ];
 
 /// Per-process timeout for a built program (a pending feature may hang).
@@ -394,6 +395,7 @@ areas!(
     spec_iteration = "iteration",
     spec_stdlib5 = "stdlib5",
     spec_web = "web",
+    spec_data = "data",
 );
 
 #[test]

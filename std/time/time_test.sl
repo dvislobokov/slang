@@ -1,0 +1,34 @@
+// Examples for std.time.
+namespace time_test
+
+import std
+import std.io
+
+func ExampleDate() {
+    var t = time.Date(2024, 3, 9, 14, 5, 0, 0, time.UTC())
+    println(t.Year(), t.MonthName(), t.Day(), t.WeekdayName())
+    println(t.Format(time.RFC3339))
+    println(t.Format("Jan 2, 2006 at 3:04pm"))
+    // Output:
+    // 2024 March 9 Saturday
+    // 2024-03-09T14:05:00Z
+    // Mar 9, 2024 at 2:05pm
+}
+
+func ExampleParseTime() void! {
+    var t = time.ParseTime(time.DateOnly, "2024-12-31")?
+    var next = t.AddDate(0, 0, 1)
+    println(next.Format(time.DateOnly), next.Sub(t).Hours())
+    // Output:
+    // 2025-01-01 24
+}
+
+func ExampleDuration() void! {
+    var d = time.Minutes(90).Add(time.Seconds(30))
+    println(d.String(), d.Minutes())
+    var p = time.ParseDuration("1h15m")?
+    println(p.String(), p.Compare(d))
+    // Output:
+    // 1h30m30s 90.5
+    // 1h15m0s -1
+}
