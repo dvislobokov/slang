@@ -31,7 +31,9 @@ typedef struct ttable {
 #else
 #define DH_TLS _Thread_local
 #endif
-static DH_TLS ttable t_tab;
+/* The table lives on the heap: key destructors may run after the thread's
+ * thread-locals are freed (macOS frees them first). */
+static DH_TLS ttable *t_tab;
 static ttable g_head = { NULL, 0, 0, &g_head, &g_head, 1 };
 static ttable g_dead;           /* exited threads (g_mu) */
 static zell__plat_mutex g_mu = ZELL_PLAT_MUTEX_INIT;
@@ -100,28 +102,32 @@ static void thread_exit(void *arg) {
     fold(&g_dead, t);   /* g_dead is written and read under g_mu only */
     zell__plat_mutex_unlock(&g_mu);
     free(t->v);
-    t->v = NULL;
-    t->cap = t->n = 0;
-    t->reg = 0;
+    if (t_tab == t) t_tab = NULL;
+    free(t);
 }
 
 static void key_init(void) { g_keyed = zell__plat_tls_new(&g_key, thread_exit); }
 
-__attribute__((noinline)) static void reg(void) {
+__attribute__((noinline)) static ttable *reg(void) {
     zell__plat_once_run(&g_once, key_init);
-    if (g_keyed) zell__plat_tls_set(g_key, &t_tab);
+    ttable *t = calloc(1, sizeof *t);
+    if (!t) return NULL;
     zell__plat_mutex_lock(&g_mu);
-    t_tab.next = g_head.next;
-    t_tab.prev = &g_head;
-    g_head.next->prev = &t_tab;
-    g_head.next = &t_tab;
-    t_tab.reg = 1;
+    t->next = g_head.next;
+    t->prev = &g_head;
+    g_head.next->prev = t;
+    g_head.next = t;
+    t->reg = 1;
     zell__plat_mutex_unlock(&g_mu);
+    if (g_keyed) zell__plat_tls_set(g_key, t);
+    t_tab = t;
+    return t;
 }
 
 void zell__diag_heap_count(const zell_type_info *type, int64_t d) {
-    if (__builtin_expect(!t_tab.reg, 0)) reg();
-    tcount *c = slot(&t_tab, type, 0);
+    ttable *t = t_tab;
+    if (__builtin_expect(!t, 0) && !(t = reg())) return;
+    tcount *c = slot(t, type, 0);
     if (!c) return;
     __atomic_store_n(&c->live, c->live + d, __ATOMIC_RELAXED);
     if (d > 0) __atomic_store_n(&c->total, c->total + d, __ATOMIC_RELAXED);

@@ -15,7 +15,10 @@ typedef struct obj_stats {
     struct obj_stats *next, *prev;
     int reg;
 } obj_stats;
-static _Thread_local obj_stats t_stats;
+/* Per-thread counters live on the heap, not in the thread-local itself:
+ * key destructors may run after a thread's thread-locals are freed (macOS
+ * frees them first), and other threads read the list. */
+static _Thread_local obj_stats *t_stats;
 static obj_stats g_stats_head = { 0, 0, &g_stats_head, &g_stats_head, 1 };
 static int64_t g_dead_live, g_dead_total;   /* exited threads (g_stats_mu) */
 static zell__plat_mutex g_stats_mu = ZELL_PLAT_MUTEX_INIT;
@@ -33,29 +36,34 @@ static void stats_exit(void *arg) {
     st->next->prev = st->prev;
     g_dead_live += st->live;
     g_dead_total += st->total;
-    st->live = st->total = 0;
-    st->reg = 0;
     zell__plat_mutex_unlock(&g_stats_mu);
+    if (t_stats == st) t_stats = NULL;   /* a later destructor that allocates registers again */
+    free(st);
 }
 
 static void stats_key_init(void) { g_stats_keyed = zell__plat_tls_new(&g_stats_key, stats_exit); }
 
-__attribute__((noinline, cold)) static void stats_register(void) {
+__attribute__((noinline, cold)) static obj_stats *stats_register(void) {
     zell__plat_once_run(&g_stats_once, stats_key_init);
-    if (g_stats_keyed) zell__plat_tls_set(g_stats_key, &t_stats);
+    obj_stats *st = calloc(1, sizeof *st);
+    if (!st) zell__panicf("out of memory (object statistics)");
     zell__plat_mutex_lock(&g_stats_mu);
-    t_stats.next = g_stats_head.next;
-    t_stats.prev = &g_stats_head;
-    g_stats_head.next->prev = &t_stats;
-    g_stats_head.next = &t_stats;
-    t_stats.reg = 1;
+    st->next = g_stats_head.next;
+    st->prev = &g_stats_head;
+    g_stats_head.next->prev = st;
+    g_stats_head.next = st;
+    st->reg = 1;
     zell__plat_mutex_unlock(&g_stats_mu);
+    if (g_stats_keyed) zell__plat_tls_set(g_stats_key, st);
+    t_stats = st;
+    return st;
 }
 
 static inline void stats_add(int64_t live, int64_t total) {
-    if (__builtin_expect(!t_stats.reg, 0)) stats_register();
-    __atomic_store_n(&t_stats.live, t_stats.live + live, __ATOMIC_RELAXED);
-    if (total) __atomic_store_n(&t_stats.total, t_stats.total + total, __ATOMIC_RELAXED);
+    obj_stats *st = t_stats;
+    if (__builtin_expect(!st, 0)) st = stats_register();
+    __atomic_store_n(&st->live, st->live + live, __ATOMIC_RELAXED);
+    if (total) __atomic_store_n(&st->total, st->total + total, __ATOMIC_RELAXED);
 }
 
 static int64_t stats_sum(int which) {

@@ -100,6 +100,7 @@ typedef struct {
     int held;            /* atomic: the slot lock (its thread keeps it while running) */
     int live;            /* atomic: a thread has the slot */
     qnode *queue;        /* atomic: objects waiting for a merge (a stack) */
+    int owner_holds;     /* the owner holds `held` (t_held, for its exit: see thread_exit) */
 } rc_slot;
 static rc_slot g_slots[ZELL_RC_OWNER_SLOTS];
 static int g_slot_hint;
@@ -194,12 +195,14 @@ static void push(int slot, zell_object *o) {
     delegate(s);                  /* the owner is parked or gone: merge now */
 }
 
+/* The key's value is the slot: thread-locals may already be gone when key
+ * destructors run (macOS frees them first), so nothing here reads one. */
 static void thread_exit(void *arg) {
-    (void)arg;
-    int slot = t_slot;
-    if (!slot) return;
+    int slot = (int)(intptr_t)arg;
+    if (slot <= 0 || slot >= ZELL_RC_OWNER_SLOTS) return;
     rc_slot *s = &g_slots[slot];
-    if (!t_held) slot_lock(s);
+    if (!s->owner_holds) slot_lock(s);
+    s->owner_holds = 0;
     t_held = 0;
     process(s);
     t_slot = 0;
@@ -227,6 +230,7 @@ void zell__rc_thread_enable(void) {
             continue;
         slot_lock(&g_slots[i]);   /* waits for a delegate merging the slot's old objects */
         t_held = 1;
+        g_slots[i].owner_holds = 1;
         __atomic_store_n(&g_slot_hint, i, __ATOMIC_RELAXED);
         t_slot = i;
         zell_rc_owner = OWNER_TAG(i);
@@ -264,6 +268,7 @@ void zell__rc_park(int merge) {
     if (!slot || !t_held) return;
     if (merge) process(&g_slots[slot]);
     t_held = 0;
+    g_slots[slot].owner_holds = 0;
     slot_unlock(&g_slots[slot]);
     if (merge) delegate(&g_slots[slot]);
 }
@@ -273,6 +278,7 @@ void zell__rc_unpark(void) {
     if (!slot || t_held) return;
     slot_lock(&g_slots[slot]);
     t_held = 1;
+    g_slots[slot].owner_holds = 1;
 }
 
 void zell__rc_drain_all(void) {

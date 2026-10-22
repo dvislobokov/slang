@@ -375,9 +375,14 @@ typedef struct { zell_object **v; int64_t n, cap, live; } lbuf;
 #else
 #define CYC_TLS _Thread_local
 #endif
-static CYC_TLS lbuf t_buf;
+/* The buffer itself is on the heap (the key's value): key destructors may
+ * run after the thread's thread-locals are freed (macOS frees them first).
+ * Until a thread records, t_bp points at an empty buffer nobody writes. */
+static lbuf g_nobuf;
+static CYC_TLS lbuf *t_bp = &g_nobuf;
+#define t_buf (*t_bp)
 static CYC_TLS int64_t t_recorded;   /* folded into s_candidates by flush_local */
-static CYC_TLS int t_in_collect, t_keyed;
+static CYC_TLS int t_in_collect;
 /* Publication requests: in auto mode, once the roots recorded by all
  * threads since the last request reach the threshold, g_pub_req is bumped
  * and every thread publishes its buffer at its next record, so the next
@@ -436,6 +441,8 @@ static void publish(vec *live) {
         __atomic_store_n(&g_want, 1, __ATOMIC_RELAXED);
 }
 
+static void flush_buf(lbuf *t, int all);
+
 /* The buffer is full: drop its holes and zombies; keep it when that made
  * room, grow it while it is small, else publish its live entries (always
  * with `all`). */
@@ -445,7 +452,10 @@ static void flush_local(int all) {
         t_recorded = 0;
     }
     if (!t_buf.cap) return;
-    lbuf *t = &t_buf;
+    flush_buf(t_bp, all);
+}
+
+static void flush_buf(lbuf *t, int all) {
     int64_t j = 0;
     /* Close the holes left by entries that died here; zombies (entries
      * that died on another thread) are only swept when publishing. */
@@ -475,24 +485,25 @@ static void flush_local(int all) {
 }
 
 static void thread_exit(void *arg) {
-    (void)arg;
-    flush_local(1);
-    free(t_buf.v);
-    t_buf = (lbuf){ 0 };
+    lbuf *t = arg;
+    if (!t) return;
+    if (t->cap) flush_buf(t, 1);
+    free(t->v);
+    if (t_bp == t) t_bp = &g_nobuf;
+    free(t);
 }
 
 static void key_init(void) { g_key_ok = zell__plat_tls_new(&g_key, thread_exit); }
 
 __attribute__((noinline)) static void record_slow(void) {
-    if (!t_keyed) {
+    if (t_bp == &g_nobuf) {
+        lbuf *t = calloc(1, sizeof *t);
+        if (t) t->v = malloc(BUF_MIN * sizeof *t->v);
+        if (!t || !t->v) zell__panicf("out of memory (cycle collector)");
+        t->cap = BUF_MIN;
         zell__plat_once_run(&g_key_once, key_init);
-        if (g_key_ok) zell__plat_tls_set(g_key, (void *)1);
-        t_keyed = 1;
-    }
-    if (!t_buf.cap) {
-        t_buf.v = malloc(BUF_MIN * sizeof *t_buf.v);
-        if (!t_buf.v) zell__panicf("out of memory (cycle collector)");
-        t_buf.cap = BUF_MIN;
+        if (g_key_ok) zell__plat_tls_set(g_key, t);
+        t_bp = t;
     } else {
         flush_local(0);
     }
@@ -870,7 +881,7 @@ static int64_t collect(int dry, int wait) {
     g_pub_swept = 0;
     __atomic_store_n(&s_pending, 0, __ATOMIC_RELAXED);
     zell__plat_mutex_unlock(&g_pub_mu);
-    buf_take(&t_buf, &roots);
+    if (t_bp != &g_nobuf) buf_take(t_bp, &roots);
     graph g = { 0 };
     vec zombies = { 0 };
     for (int64_t i = 0; i < roots.n; i++) {
