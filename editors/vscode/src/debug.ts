@@ -1,21 +1,21 @@
-// Debugging Slang programs (docs/DEBUGGER.md).
+// Debugging Zell programs (docs/DEBUGGER.md).
 //
-// A debug configuration of `type: "slang"` is resolved here and served by
+// A debug configuration of `type: "zell"` is resolved here and served by
 // one of two adapters (`"adapter"`):
 //
 // * `"agent"` (default, stage 2): the in-process debug agent (`std.debug`,
 //   linked into every debug build). `launch` starts the program with
-//   `SLANG_DEBUG=127.0.0.1:0,wait`, reads the announced port from its
-//   stderr (`slang-debug: listening on HOST:PORT`) and connects VS Code to
+//   `ZELL_DEBUG=127.0.0.1:0,wait`, reads the announced port from its
+//   stderr (`zell-debug: listening on HOST:PORT`) and connects VS Code to
 //   it with a `DebugAdapterServer`; the program's output goes to the debug
 //   console. `attach` connects to `address` / `host` + `port` of a program
-//   started with `SLANG_DEBUG=:2345` (or `slang debug run --headless`).
+//   started with `ZELL_DEBUG=:2345` (or `zell debug run --headless`).
 // * `"lldb"` (stage 1): `lldb-dap` (`lldb-vscode` before LLVM 18) with the
-//   Slang formatters loaded through `initCommands` (`command script import
-//   tools/lldb/slang_formatters.py`, path printed by `slang debug
+//   Zell formatters loaded through `initCommands` (`command script import
+//   tools/lldb/zell_formatters.py`, path printed by `zell debug
 //   --formatters lldb`).
 //
-// The `slang` task type builds the program with debug info (`slang
+// The `zell` task type builds the program with debug info (`zell
 // build`), for `preLaunchTask`.
 
 import * as cp from "child_process";
@@ -46,12 +46,12 @@ function onPath(name: string): string | undefined {
 }
 
 function config(): vscode.WorkspaceConfiguration {
-  return vscode.workspace.getConfiguration("slang");
+  return vscode.workspace.getConfiguration("zell");
 }
 
-/** The `slang` CLI (setting `slang.path`, default `slang` on PATH). */
-function slangCli(): string {
-  return config().get<string>("path", "slang").trim() || "slang";
+/** The `zell` CLI (setting `zell.path`, default `zell` on PATH). */
+function zellCli(): string {
+  return config().get<string>("path", "zell").trim() || "zell";
 }
 
 /** The lldb-dap executable: setting, then the usual names on PATH. */
@@ -69,14 +69,14 @@ export function findLldbDap(): string | undefined {
   return undefined;
 }
 
-/** Path of the lldb formatter script: setting, else `slang debug --formatters lldb`. */
+/** Path of the lldb formatter script: setting, else `zell debug --formatters lldb`. */
 function formattersPath(): string | undefined {
   const configured = config().get<string>("debug.formatters", "").trim();
   if (configured) {
     return configured;
   }
   try {
-    const out = cp.execFileSync(slangCli(), ["debug", "--formatters", "lldb"], { encoding: "utf8", timeout: 10000 });
+    const out = cp.execFileSync(zellCli(), ["debug", "--formatters", "lldb"], { encoding: "utf8", timeout: 10000 });
     const p = out.trim();
     return p && fs.existsSync(p) ? p : undefined;
   } catch {
@@ -86,8 +86,8 @@ function formattersPath(): string | undefined {
 
 /** Default executable for a source file or project directory. */
 function defaultProgram(source: string): string {
-  const stem = path.basename(source).replace(/\.sl$/, "") || "prog";
-  const dir = path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.tmpdir(), "target", "slang-debug");
+  const stem = path.basename(source).replace(/\.zl$/, "") || "prog";
+  const dir = path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.tmpdir(), "target", "zell-debug");
   return path.join(dir, process.platform === "win32" ? `${stem}.exe` : stem);
 }
 
@@ -102,33 +102,33 @@ function envList(env: unknown): string[] | undefined {
   return undefined;
 }
 
-class SlangConfigurationProvider implements vscode.DebugConfigurationProvider {
+class ZellConfigurationProvider implements vscode.DebugConfigurationProvider {
   provideDebugConfigurations(): vscode.DebugConfiguration[] {
     return [
       {
-        type: "slang",
+        type: "zell",
         request: "launch",
-        name: "Debug Slang file",
+        name: "Debug Zell file",
         source: "${file}",
-        program: "${workspaceFolder}/target/slang-debug/${fileBasenameNoExtension}",
+        program: "${workspaceFolder}/target/zell-debug/${fileBasenameNoExtension}",
         args: [],
         cwd: "${workspaceFolder}",
-        preLaunchTask: "slang: build",
+        preLaunchTask: "zell: build",
       },
     ];
   }
 
   resolveDebugConfiguration(_folder: vscode.WorkspaceFolder | undefined, cfg: vscode.DebugConfiguration): vscode.DebugConfiguration | undefined {
-    // F5 without a launch.json: debug the active .sl file.
+    // F5 without a launch.json: debug the active .zl file.
     if (!cfg.type && !cfg.request && !cfg.name) {
       const editor = vscode.window.activeTextEditor;
-      if (!editor || editor.document.languageId !== "slang") {
-        void vscode.window.showInformationMessage("Slang: open a .sl file or add a `slang` launch configuration.");
+      if (!editor || editor.document.languageId !== "zell") {
+        void vscode.window.showInformationMessage("Zell: open a .zl file or add a `zell` launch configuration.");
         return undefined;
       }
-      cfg.type = "slang";
+      cfg.type = "zell";
       cfg.request = "launch";
-      cfg.name = "Debug Slang file";
+      cfg.name = "Debug Zell file";
       cfg.source = editor.document.uri.fsPath;
     }
     return cfg;
@@ -146,7 +146,7 @@ class SlangConfigurationProvider implements vscode.DebugConfigurationProvider {
     if (formatters) {
       init.push(`command script import "${formatters}"`);
     } else {
-      void vscode.window.showWarningMessage("Slang: formatters not found (`slang debug --formatters lldb` failed); values are shown raw.");
+      void vscode.window.showWarningMessage("Zell: formatters not found (`zell debug --formatters lldb` failed); values are shown raw.");
     }
     cfg.initCommands = [...init, ...((cfg.initCommands as string[] | undefined) ?? [])];
     if (cfg.request === "launch") {
@@ -161,7 +161,7 @@ class SlangConfigurationProvider implements vscode.DebugConfigurationProvider {
         }
       }
       if (!cfg.program) {
-        void vscode.window.showErrorMessage("Slang: the launch configuration needs `program` or `source`.");
+        void vscode.window.showErrorMessage("Zell: the launch configuration needs `program` or `source`.");
         return undefined;
       }
       const env = envList(cfg.env);
@@ -186,18 +186,18 @@ class SlangConfigurationProvider implements vscode.DebugConfigurationProvider {
 
 let buildOutput: vscode.OutputChannel | undefined;
 
-/** `slang build <source> -o <program>`; shows the diagnostics on failure. */
+/** `zell build <source> -o <program>`; shows the diagnostics on failure. */
 function build(source: string, program: string, extra: string[]): Promise<boolean> {
-  buildOutput ??= vscode.window.createOutputChannel("Slang Build");
+  buildOutput ??= vscode.window.createOutputChannel("Zell Build");
   fs.mkdirSync(path.dirname(program), { recursive: true });
   const args = ["build", source, "-o", program, ...extra];
-  buildOutput.appendLine(`$ ${slangCli()} ${args.join(" ")}`);
+  buildOutput.appendLine(`$ ${zellCli()} ${args.join(" ")}`);
   return new Promise((resolve) => {
-    cp.execFile(slangCli(), args, { cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath }, (err, stdout, stderr) => {
+    cp.execFile(zellCli(), args, { cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath }, (err, stdout, stderr) => {
       buildOutput?.append(stdout + stderr);
       if (err) {
         buildOutput?.show(true);
-        void vscode.window.showErrorMessage(`Slang: build failed (see "Slang Build" output).`);
+        void vscode.window.showErrorMessage(`Zell: build failed (see "Zell Build" output).`);
         resolve(false);
       } else {
         resolve(true);
@@ -226,12 +226,12 @@ async function resolveAgent(cfg: vscode.DebugConfiguration): Promise<vscode.Debu
       }
     }
     if (!cfg.program) {
-      void vscode.window.showErrorMessage("Slang: the launch configuration needs `program` or `source`.");
+      void vscode.window.showErrorMessage("Zell: the launch configuration needs `program` or `source`.");
       return undefined;
     }
   } else if (cfg.request === "attach") {
     if (!cfg.address && cfg.port === undefined) {
-      const a = await vscode.window.showInputBox({ prompt: "Debug agent address ([host:]port of a program started with SLANG_DEBUG)", value: ":2345" });
+      const a = await vscode.window.showInputBox({ prompt: "Debug agent address ([host:]port of a program started with ZELL_DEBUG)", value: ":2345" });
       if (!a) {
         return undefined;
       }
@@ -250,7 +250,7 @@ export function parseAddress(address: string): { host: string; port: number } {
 }
 
 /** The announcement the agent writes to stderr. */
-const LISTENING = /slang-debug: listening on (\S+):(\d+)/;
+const LISTENING = /zell-debug: listening on (\S+):(\d+)/;
 
 /** Programs started for agent `launch` sessions, by session id. */
 const launched = new Map<string, cp.ChildProcess>();
@@ -271,7 +271,7 @@ function launchUnderAgent(session: vscode.DebugSession): Promise<{ host: string;
       env[k] = String(v);
     }
   }
-  env.SLANG_DEBUG = "127.0.0.1:0,wait";
+  env.ZELL_DEBUG = "127.0.0.1:0,wait";
   const child = cp.spawn(cfg.program as string, (cfg.args as string[] | undefined) ?? [], { cwd: cfg.cwd as string | undefined, env });
   launched.set(session.id, child);
   const console = (text: string) => vscode.debug.activeDebugConsole.append(text);
@@ -316,7 +316,7 @@ function launchUnderAgent(session: vscode.DebugSession): Promise<{ host: string;
   });
 }
 
-class SlangAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
+class ZellAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   async createDebugAdapterDescriptor(session: vscode.DebugSession): Promise<vscode.DebugAdapterDescriptor | undefined> {
     const cfg = session.configuration;
     if (!usesAgent(cfg)) {
@@ -330,7 +330,7 @@ class SlangAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
       const a = await launchUnderAgent(session);
       return new vscode.DebugAdapterServer(a.port, a.host);
     } catch (e) {
-      void vscode.window.showErrorMessage(`Slang: ${(e as Error).message}`);
+      void vscode.window.showErrorMessage(`Zell: ${(e as Error).message}`);
       return undefined;
     }
   }
@@ -341,57 +341,57 @@ function lldbDescriptor(): vscode.DebugAdapterDescriptor | undefined {
   const dap = findLldbDap();
   if (!dap) {
     void vscode.window.showErrorMessage(
-      'Slang: lldb-dap not found. Install LLDB 18+ (e.g. `apt install lldb-18`) or set "slang.debug.lldbDapPath".',
+      'Zell: lldb-dap not found. Install LLDB 18+ (e.g. `apt install lldb-18`) or set "zell.debug.lldbDapPath".',
     );
     return undefined;
   }
   return new vscode.DebugAdapterExecutable(dap, []);
 }
 
-interface SlangTaskDefinition extends vscode.TaskDefinition {
+interface ZellTaskDefinition extends vscode.TaskDefinition {
   command: "build";
   source?: string;
   program?: string;
   args?: string[];
 }
 
-/** The `slang` task type: `slang build` with debug info for preLaunchTask. */
-class SlangTaskProvider implements vscode.TaskProvider {
+/** The `zell` task type: `zell build` with debug info for preLaunchTask. */
+class ZellTaskProvider implements vscode.TaskProvider {
   provideTasks(): vscode.Task[] {
-    const def: SlangTaskDefinition = { type: "slang", command: "build", source: "${file}" };
+    const def: ZellTaskDefinition = { type: "zell", command: "build", source: "${file}" };
     return [this.make(def, "build")];
   }
 
   resolveTask(task: vscode.Task): vscode.Task | undefined {
-    const def = task.definition as SlangTaskDefinition;
+    const def = task.definition as ZellTaskDefinition;
     if (def.command !== "build") {
       return undefined;
     }
     return this.make(def, task.name);
   }
 
-  private make(def: SlangTaskDefinition, name: string): vscode.Task {
+  private make(def: ZellTaskDefinition, name: string): vscode.Task {
     const source = def.source ?? "${file}";
-    const program = def.program ?? "${workspaceFolder}/target/slang-debug/${fileBasenameNoExtension}";
+    const program = def.program ?? "${workspaceFolder}/target/zell-debug/${fileBasenameNoExtension}";
     const args = ["build", source, "-o", program, ...(def.args ?? [])];
-    const exec = new vscode.ShellExecution(slangCli(), args);
-    const task = new vscode.Task(def, vscode.TaskScope.Workspace, name, "slang", exec, []);
+    const exec = new vscode.ShellExecution(zellCli(), args);
+    const task = new vscode.Task(def, vscode.TaskScope.Workspace, name, "zell", exec, []);
     task.group = vscode.TaskGroup.Build;
     return task;
   }
 }
 
-/** Registers the `slang` debugger and task types. */
+/** Registers the `zell` debugger and task types. */
 export function registerDebugging(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
-    vscode.debug.registerDebugConfigurationProvider("slang", new SlangConfigurationProvider()),
-    vscode.debug.registerDebugAdapterDescriptorFactory("slang", new SlangAdapterFactory()),
+    vscode.debug.registerDebugConfigurationProvider("zell", new ZellConfigurationProvider()),
+    vscode.debug.registerDebugAdapterDescriptorFactory("zell", new ZellAdapterFactory()),
     vscode.debug.onDidTerminateDebugSession((s) => {
       // A launched program dies with its session (the agent also exits it
       // on `disconnect` with terminateDebuggee).
       launched.get(s.id)?.kill();
       launched.delete(s.id);
     }),
-    vscode.tasks.registerTaskProvider("slang", new SlangTaskProvider()),
+    vscode.tasks.registerTaskProvider("zell", new ZellTaskProvider()),
   );
 }

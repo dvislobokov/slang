@@ -1,16 +1,16 @@
-# Инструменты Slang: LSP, редакторы, форматтер, отладчик
+# Инструменты Zell: LSP, редакторы, форматтер, отладчик
 
 Цель: компилятор с первого дня проектируется как библиотека, которой
-пользуются все инструменты. Ни один инструмент не парсит `.sl` сам.
+пользуются все инструменты. Ни один инструмент не парсит `.zl` сам.
 
 ## Архитектура компилятора как библиотеки
 
 ```
-slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
+zell (CLI)  zell-lsp  zell fmt  zell test  IDEA plugin (через LSP)
      \          |          |          |              /
       +---------+----------+----------+-------------+
                       |
-              crate `slang` (библиотека)
+              crate `zell` (библиотека)
    session -> lexer -> parser -> sema (names, types) -> codegen
 ```
 
@@ -70,7 +70,7 @@ slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
 6. **Стабильные позиции**: внутри компилятора — байтовые смещения,
    на границе LSP — конвертация в UTF-16 строка/колонка через `SourceFile`.
 
-## LSP-сервер (`slang lsp`)
+## LSP-сервер (`zell lsp`)
 
 Отдельный бинарник или подкоманда, крейт `tower-lsp` (или `lsp-server`
 из rust-analyzer). Транспорт stdio. Функции по приоритету:
@@ -81,23 +81,23 @@ slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
 | 2 | go to definition, hover (тип + документация), find references, rename | таблицы символов и типов, индекс ссылок |
 | 3 | completion (члены после `.`, имена в области видимости, импорты, ключевые слова), signature help | семантика по позиции курсора, частичный AST |
 | 4 | semantic tokens (точная подсветка), inlay hints (выведенные типы `var x = ...`, имена параметров), code actions / quick fixes | типы выражений, структурированные диагностики |
-| 5 | formatting (через `slang fmt`), workspace symbols, call hierarchy | trivia в AST, индекс проекта |
+| 5 | formatting (через `zell fmt`), workspace symbols, call hierarchy | trivia в AST, индекс проекта |
 
 Состояние (`lsp/`): этапы 1–2 целиком; этап 3 — completion и
 `textDocument/signatureHelp` (триггеры `(` и `,`, активный параметр,
 сигнатура с именами и типами, документация); этап 4 — semantic tokens,
 `textDocument/inlayHint` (выведенный тип после имени в `var x = ...` и
 `for x in ...`, имена параметров перед литеральными аргументами;
-настройки `slang.inlayHints.types.enabled` и
-`slang.inlayHints.parameterNames.enabled` через `initializationOptions` и
+настройки `zell.inlayHints.types.enabled` и
+`zell.inlayHints.parameterNames.enabled` через `initializationOptions` и
 `workspace/didChangeConfiguration`), `textDocument/codeAction` (quick fix
 из структурированных диагностик), `textDocument/documentHighlight`; этап 5
 — `textDocument/formatting`, `textDocument/rangeFormatting` (только
 изменённые строки внутри выделения), `workspace/symbol` (нечёткий поиск по
 имени). `workspace/didChangeWatchedFiles` подхватывает созданные,
-изменённые и удалённые на диске `.sl` (открытые в редакторе файлы
-главнее). Исходники `std/` и зависимостей из `.slang/deps/` (или
-`vendor/`) по `slang.lock` индексируются как файлы проекта только для
+изменённые и удалённые на диске `.zl` (открытые в редакторе файлы
+главнее). Исходники `std/` и зависимостей из `.zell/deps/` (или
+`vendor/`) по `zell.lock` индексируются как файлы проекта только для
 чтения (см. ниже). Не сделано: call hierarchy, linked editing,
 инкрементальный анализ (каждый анализ — весь проект, разбор кэшируется
 по файлам).
@@ -109,7 +109,7 @@ slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
 | `textDocument/didOpen`, `didChange`, `didSave`, `didClose` | `textDocumentSync`: `change: Incremental` (2), `save.includeText` | `lib.rs`, `sync.rs` |
 | `$/cancelRequest` | — | `lib.rs` |
 | `textDocument/publishDiagnostics` (push) | — | `lib.rs` |
-| `textDocument/diagnostic`, `workspace/diagnostic` (pull) | `diagnosticProvider { identifier: "slang", interFileDependencies, workspaceDiagnostics }` | `handlers.rs` |
+| `textDocument/diagnostic`, `workspace/diagnostic` (pull) | `diagnosticProvider { identifier: "zell", interFileDependencies, workspaceDiagnostics }` | `handlers.rs` |
 | `textDocument/definition`, `declaration` (= definition) | `definitionProvider`, `declarationProvider` | `handlers.rs` |
 | `textDocument/typeDefinition` | `typeDefinitionProvider` | `nav.rs` |
 | `textDocument/implementation` | `implementationProvider` | `nav.rs` |
@@ -126,9 +126,9 @@ slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
 | `textDocument/foldingRange`, `selectionRange` | `foldingRangeProvider`, `selectionRangeProvider` | `features.rs`, `nav.rs` |
 | `textDocument/formatting`, `rangeFormatting` | `documentFormattingProvider`, `documentRangeFormattingProvider` | `assist.rs` |
 | `workspace/didChangeWatchedFiles`, `didChangeConfiguration` | — | `lib.rs` |
-| `workspace/willRenameFiles`, `didRenameFiles` | `workspace.fileOperations { willRename, didRename }` (`**/*.sl`, папки) | `files.rs`, `lib.rs` |
+| `workspace/willRenameFiles`, `didRenameFiles` | `workspace.fileOperations { willRename, didRename }` (`**/*.zl`, папки) | `files.rs`, `lib.rs` |
 | `window/workDoneProgress/create` + `$/progress` (сервер → клиент) | если клиент объявил `window.workDoneProgress` | `lib.rs` |
-| `slang/analyzerStatus`, `slang/documentText` | служебные: счётчики планировщика, текст документа у сервера (для отладки и тестов) | `handlers.rs` |
+| `zell/analyzerStatus`, `zell/documentText` | служебные: счётчики планировщика, текст документа у сервера (для отладки и тестов) | `handlers.rs` |
 
 Подробности:
 
@@ -171,20 +171,20 @@ slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
   документацию (тот же конвейер, что hover). Подсказки inlay — tooltip в
   `inlayHint/resolve`. Quick fix'ы дешёвые и сразу с правкой:
   `codeAction/resolve` возвращает их как есть.
-- **Code lens**: на `@test`/`@bench`-функциях «▶ Run test» (`slang.runTest`)
-  и «Debug test» (`slang.debugTest`) с аргументами `[uri файла, имя]`, на
-  `main` — «▶ Run» (`slang.run`, `[uri]`); на экспортируемых объявлениях
+- **Code lens**: на `@test`/`@bench`-функциях «▶ Run test» (`zell.runTest`)
+  и «Debug test» (`zell.debugTest`) с аргументами `[uri файла, имя]`, на
+  `main` — «▶ Run» (`zell.run`, `[uri]`); на экспортируемых объявлениях
   верхнего уровня — «N references», счёт в `codeLens/resolve` (команда
-  `slang.showReferences` с `[uri, position, locations]`). Команды
-  выполняет клиент (`editors/vscode/src/extension.ts`: `slang test <пакет>
-  --filter ^Имя$ -v` и `slang run` как задачи; отладки отдельного теста в
-  `slang test` пока нет, «Debug test» запускает его с `-v`).
+  `zell.showReferences` с `[uri, position, locations]`). Команды
+  выполняет клиент (`editors/vscode/src/extension.ts`: `zell test <пакет>
+  --filter ^Имя$ -v` и `zell run` как задачи; отладки отдельного теста в
+  `zell test` пока нет, «Debug test» запускает его с `-v`).
 - **Selection range**: токен → выражения → оператор → блоки → функция →
   объявление → файл, по span'ам AST.
 - **Прогресс**: начальная индексация (загрузка std, файлы проекта, первый
   анализ) и подгрузка проекта, найденного по манифесту при открытии файла.
 - **Переименование файлов**: правки только для файлов пакета, чьё
-  пространство имён выводится из пути (`src/a/b/x.sl` пакета с корнем
+  пространство имён выводится из пути (`src/a/b/x.zl` пакета с корнем
   `app` → `namespace app.a.b`), когда путь меняет это имя: строка
   `namespace` перемещаемого файла; если пространство имён переезжает целиком
   — `import app.a.b` и `import app.a.b.T` везде; иначе — `import app.a.b.T`
@@ -196,8 +196,8 @@ slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
 Анализ инкрементальный (см. «Производительность»); диагностики
 публикуются только для файлов, где они изменились.
 
-Проект определяется файлом `slang.toml`; LSP ищет его вверх от открытого
-файла, загружает все `.sl` проекта и стандартную библиотеку (исходники
+Проект определяется файлом `zell.toml`; LSP ищет его вверх от открытого
+файла, загружает все `.zl` проекта и стандартную библиотеку (исходники
 `std` поставляются с компилятором, поэтому go-to-definition в `std` работает).
 
 ### Производительность (Performance)
@@ -244,7 +244,7 @@ sema — режим единиц `sema::units`).
   члены пространств имён совпадают.
 - **Stdlib.** Индекс std (пространства и члены, места объявлений и
   документация из `StdIndex`) строится один раз на процесс
-  (`session/stdblock.rs`). Модули stdlib на Slang разбираются целиком
+  (`session/stdblock.rs`). Модули stdlib на Zell разбираются целиком
   лениво, при первой инстанциации их шаблона: для регистрации хватает
   сводки (имена, виды, параметры типов, интерфейсы; `sema/stdsrc.rs`, так
   же и в компиляторе). В режиме единиц не проверяются тела функций stdlib,
@@ -259,13 +259,13 @@ sema — режим единиц `sema::units`).
   `Analysis::program()` анализирует полную программу (с телами) по
   требованию.
 
-Замеры (release `slang-lsp`, `didOpen` одного файла, затем на каждую
+Замеры (release `zell-lsp`, `didOpen` одного файла, затем на каждую
 правку `didChange` + `completion` + `semanticTokens/full`; RSS после
 правок; драйвер — LSP-клиент на Python, его время входит в мс/правку):
 
 | Рабочая область | До: RSS | До: мс/правку | После: RSS | После: мс/правку |
 |---|---|---|---|---|
-| 1 файл (`examples/hello.sl`) | 91–94 MB | 62 | 55 MB | 8 |
+| 1 файл (`examples/hello.zl`) | 91–94 MB | 62 | 55 MB | 8 |
 | `examples/` (71 файл, 5,4 тыс. строк) | 147–156 MB | 210–228 | 84 MB | 17 |
 | `tests/spec` (884 файла, 33 тыс. строк) | 284–307 MB | 790–830 | 142 MB (пик 164) | 55 |
 | `std/` как проект (187 файлов, 75 тыс. строк) | 224–336 MB | 880–1030 | 190 MB (пик 219) | 500 |
@@ -294,38 +294,38 @@ sema — режим единиц `sema::units`).
 Как `$GOROOT/src` у Go и `rust-src` у Rust: IDE видит исходники всего, что
 компилируется.
 
-- **Stdlib — файлы, не строки в бинарнике.** Модули на Slang лежат в
-  `std/<namespace path>/*.sl` (`std.net.http` → `std/net/http/http_client.sl`);
-  компилятор загружает их с диска — из `$SLANG_STD`, `<exe>/../std`
-  (установленный toolchain: `bin/slang` рядом с `std/`) или `std/`
+- **Stdlib — файлы, не строки в бинарнике.** Модули на Zell лежат в
+  `std/<namespace path>/*.zl` (`std.net.http` → `std/net/http/http_client.zl`);
+  компилятор загружает их с диска — из `$ZELL_STD`, `<exe>/../std`
+  (установленный toolchain: `bin/zell` рядом с `std/`) или `std/`
   репозитория, — встроенные копии только запасной вариант без каталога
-  (или без файла в нём). `slang env SLANG_STD` печатает путь
+  (или без файла в нём). `zell env ZELL_STD` печатает путь
   (`compiler/src/sema/stdfs.rs`).
 - **C-функции получают файлы-объявления.** Для каждой строки таблицы
   `FUNCS` в `stdlib.rs` генерируется `extern func Split(s string, sep string) []string`
   с doc-комментарием (из шестого аргумента `f!` или таблицы
   `sema/stdlib_docs.rs`; без документации — имена параметров `a, b, …`) в
-  `std/<ns path>/<last>_extern.sl` (`std/strings/strings_extern.sl`).
+  `std/<ns path>/<last>_extern.zl` (`std/strings/strings_extern.zl`).
   Генератор — `compiler/build.rs`: при каждой сборке компилятора копирует
-  `sema/stdlib_src/*.sl`, `sema/reflect_src/*.sl` и `std.collections` в
+  `sema/stdlib_src/*.zl`, `sema/reflect_src/*.zl` и `std.collections` в
   `std/` и пишет extern-файлы; меняет только изменившиеся файлы и удаляет
   лишние. `extern func` — объявление без тела, допустимое только в этих
   файлах. IDE показывает сигнатуру, документацию и место объявления;
   переход в реализацию (`runtime/src/std_*.c`) пока не сделан.
 - **LSP индексирует std и зависимости** как часть проекта, только для
   чтения: go-to-definition, hover с документацией, references, workspace
-  symbols; rename отказывает. Зависимости берутся по `slang.lock` из
-  `.slang/deps/` (жёсткие ссылки на хранилище), поэтому путь в IDE
+  symbols; rename отказывает. Зависимости берутся по `zell.lock` из
+  `.zell/deps/` (жёсткие ссылки на хранилище), поэтому путь в IDE
   стабилен и совпадает с тем, что компилируется. ✅ Реализовано:
-  `slang::stdindex::StdIndex` разбирает `std/` (включая extern-файлы),
+  `zell::stdindex::StdIndex` разбирает `std/` (включая extern-файлы),
   `Session::set_std_index` добавляет эти файлы в `Analysis::files`, и
   символы std получают место объявления и doc-комментарий оттуда (функции
-  рантайма — `SymKey::Std`, шаблоны на Slang вроде `http.Get` — тоже по
+  рантайма — `SymKey::Std`, шаблоны на Zell вроде `http.Get` — тоже по
   пути); файлы зависимостей — обычные файлы сессии с
   `Session::set_read_only`. Диагностики для них не публикуются, в
   workspace symbols они идут после символов проекта.
-- **Документация — комментарии перед объявлениями** в тех же `.sl`;
-  `slang doc`, hover и реестр читают один источник.
+- **Документация — комментарии перед объявлениями** в тех же `.zl`;
+  `zell doc`, hover и реестр читают один источник.
 - Отладчик и трассы ошибок показывают пути внутрь `std/` так же, как в
   пользовательский код.
 
@@ -333,8 +333,8 @@ sema — режим единиц `sema::units`).
 
 - **VS Code**: `editors/vscode/` — TextMate-грамматика для подсветки без
   сервера, плюс клиент LSP (`vscode-languageclient`), запускающий
-  `slang lsp`. Отладка через DAP (ниже).
-- **IntelliJ IDEA**: `grammar/slang.bnf` в формате Grammar-Kit генерирует
+  `zell lsp`. Отладка через DAP (ниже).
+- **IntelliJ IDEA**: `grammar/zell.bnf` в формате Grammar-Kit генерирует
   PSI-парсер и лексер; подсветка, структура файла, сворачивание, парные
   скобки делаются на PSI. Семантика (навигация, дополнение, ошибки) — через
   LSP-клиент платформы IntelliJ (LSP API доступен с 2023.2), чтобы не
@@ -343,12 +343,12 @@ sema — режим единиц `sema::units`).
   (Sublime/Zed) или tree-sitter грамматика (планируется, генерируется
   по тому же BNF) плюс LSP.
 
-Единый источник правды для синтаксиса: `grammar/slang.bnf`. При изменении
+Единый источник правды для синтаксиса: `grammar/zell.bnf`. При изменении
 синтаксиса обновляются BNF, `compiler/src/parser.rs`, TextMate и тесты.
-В CI тест проверяет, что все `examples/*.sl` разбираются и парсером
+В CI тест проверяет, что все `examples/*.zl` разбираются и парсером
 компилятора, и грамматикой из BNF (через сгенерированный парсер).
 
-## Форматтер (`slang fmt`)
+## Форматтер (`zell fmt`)
 
 Канонический стиль, без настроек (как `gofmt`): 4 пробела, фигурные
 скобки на той же строке, один пробел вокруг бинарных операторов, без
@@ -356,9 +356,9 @@ sema — режим единиц `sema::units`).
 сортировка импортов. Реализация (`compiler/src/fmt/`, сделано): AST +
 trivia лексера → документ → принтер с алгоритмом Wadler/Prettier для
 переносов длинных строк. Используется LSP для `textDocument/formatting`
-и в CI (`slang fmt --check`).
+и в CI (`zell fmt --check`).
 
-`slang fmt [пути] [--check] [--diff] [--stdin]`. Правила:
+`zell fmt [пути] [--check] [--diff] [--stdin]`. Правила:
 
 - отступ 4 пробела, `{` на той же строке, `} else {`, `case` внутри
   `switch` с отступом, тела `case` ещё на уровень глубже;
@@ -394,22 +394,22 @@ trivia лексера → документ → принтер с алгорит�
 
 Гарантии (тесты `compiler/tests/fmt.rs`): идемпотентность
 `fmt(fmt(x)) == fmt(x)` и сохранение смысла `parse(fmt(x)) == parse(x)`
-(без учёта span'ов и порядка импортов) на всех `.sl` из `examples/`,
+(без учёта span'ов и порядка импортов) на всех `.zl` из `examples/`,
 `benchmarks/`, `tests/spec/`; 10 эталонных случаев в
 `compiler/tests/fixtures/fmt/`. Форматтер сам перепарсивает результат и
 отказывается выдавать текст с другим AST или потерянным комментарием.
 Файлы с синтаксическими ошибками не форматируются.
 
-## Тесты (`slang test`)
+## Тесты (`zell test`)
 
-Функции `func TestXxx(t *testing.T)` в файлах `*_test.sl`, параллельный
+Функции `func TestXxx(t *testing.T)` в файлах `*_test.zl`, параллельный
 запуск, табличные тесты, `t.Fatal`, бенчмарки `func BenchXxx`. Вывод в
 формате, который LSP и IDE умеют показывать (JSON с `--json`), чтобы
 тесты запускались кнопкой из редактора.
 
 Реализовано (`compiler/src/testrun.rs`, `std.testing`): `@test func
 TestX(t *testing.T)` (и `@test func X()`), бенчмарки `@bench func BenchX(b
-*testing.B)` (или `@test` с `*testing.B`) для `slang test --bench`. Каждый
+*testing.B)` (или `@test` с `*testing.B`) для `zell test --bench`. Каждый
 тест идёт в своём дочернем процессе; тест, в теле которого есть оператор
 `t.Parallel()` (находится при обнаружении тестов), выполняется параллельно с
 другими такими тестами — до `--parallel N` (по умолчанию 4) процессов —
@@ -425,7 +425,7 @@ TestX(t *testing.T)` (и `@test func X()`), бенчмарки `@bench func Benc
 по-прежнему завершает тест. `testing.PanicsWith(t, fn, want)` дополнительно
 проверяет, что сообщение содержит `want`; `testing.PanicMessage()` — текст
 последней перехваченной паники. Где перехват недоступен (Windows:
-`longjmp` через кадры с SEH-раскруткой), и при `SLANG_TEST_PANICS=process`
+`longjmp` через кадры с SEH-раскруткой), и при `ZELL_TEST_PANICS=process`
 остаётся прежний путь: бинарник перезапускает текущий тест в дочернем
 процессе до этого вызова и там вызывает `fn`; код теста до вызова тогда
 выполняется ещё раз в каждом таком процессе (по одному на вызов
@@ -434,38 +434,38 @@ TestX(t *testing.T)` (и `@test func X()`), бенчмарки `@bench func Benc
 ## Отладчик
 
 См. `docs/DEBUGGER.md`: DWARF из LLVM, форматтеры lldb/gdb, DAP, затем
-собственный `slang debug` с компилируемыми условиями и выражениями,
+собственный `zell debug` с компилируемыми условиями и выражениями,
 быстрее Delve.
 
 ## Прочие инструменты
 
-- `slang doc` — документация из комментариев перед объявлениями
+- `zell doc` — документация из комментариев перед объявлениями
   (markdown), HTML и JSON для IDE. ✅ Реализовано (`compiler/src/doc.rs`,
-  `doc/{markdown,html,site}.rs`): `slang doc strings.Split` / `std.time` /
+  `doc/{markdown,html,site}.rs`): `zell doc strings.Split` / `std.time` /
   путь проекта / модуль зависимости — текст в терминале; `--json`;
   `--html out/` — статический сайт (страница на пространство имён, поиск,
   исходники с якорями строк); `--check [--min N]` — покрытие экспортируемых
-  имён документацией; `--site out/ [--base /slang/]` — сайт проекта для
+  имён документацией; `--site out/ [--base /zell/]` — сайт проекта для
   GitHub Pages (README, `docs/guide`, дизайн-документы, справочник std;
   `.github/workflows/docs.yml`). Соглашения: блок `//` над объявлением,
   первое предложение — краткое описание, Markdown, абзац `Deprecated:`;
   документация пространства имён — комментарий над `namespace`. Примеры —
-  `func ExampleSplit()` в `*_test.sl` (`ExampleT_Method`, суффикс
-  `_second`), с хвостовым `// Output:` их запускает `slang test`
-  (`slang test std` — примеры стандартной библиотеки в `std/**/*_test.sl`);
+  `func ExampleSplit()` в `*_test.zl` (`ExampleT_Method`, суффикс
+  `_second`), с хвостовым `// Output:` их запускает `zell test`
+  (`zell test std` — примеры стандартной библиотеки в `std/**/*_test.zl`);
   hover в LSP рисует тот же Markdown и первый пример символа std. API-
   документация пишется по-английски.
-- `slang vet` — статические проверки сверх компилятора (неиспользуемые
+- `zell vet` — статические проверки сверх компилятора (неиспользуемые
   результаты, подозрительные сравнения), общий движок с quick fixes LSP.
-- `slang build --emit=llvm-ir|asm` — для отладки компилятора.
-- Менеджер зависимостей: `slang add org/pkg@1.2.0`, lock-файл, реестр.
+- `zell build --emit=llvm-ir|asm` — для отладки компилятора.
+- Менеджер зависимостей: `zell add org/pkg@1.2.0`, lock-файл, реестр.
 
 ## План реализации инструментов
 
 1. Устойчивый парсер с узлами `Error` и trivia (расширение текущего парсера). — сделано.
-2. `Session` API в крейте `slang` и структурированные диагностики. — сделано.
-3. `slang lsp` этап 1-2 (на `lsp-server`); клиент для VS Code. — сделано.
-4. `slang fmt`. — сделано.
+2. `Session` API в крейте `zell` и структурированные диагностики. — сделано.
+3. `zell lsp` этап 1-2 (на `lsp-server`); клиент для VS Code. — сделано.
+4. `zell fmt`. — сделано.
 5. Semantic tokens, inlay hints, completion, signature help, code actions. — сделано.
 6. DWARF в кодогенерации, DAP-адаптер.
 7. IDEA-плагин: Grammar-Kit PSI + LSP-клиент.

@@ -1,6 +1,6 @@
-# Slang
+# Zell
 
-Slang is a compiled, statically typed language for services, tools and
+Zell is a compiled, statically typed language for services, tools and
 command-line programs. It keeps Go's small and readable core and adds
 what Go makes you write by hand:
 
@@ -16,12 +16,12 @@ what Go makes you write by hand:
 - **no garbage collector**: reference counting with compile-time
   ownership, destructors (`Drop`) and `weak` pointers, so there are no GC
   pauses and resources close deterministically;
-- a large standard library written mostly in Slang (HTTP/1.1 and 2, TLS
+- a large standard library written mostly in Zell (HTTP/1.1 and 2, TLS
   1.3, SQL with PostgreSQL and SQLite drivers, JSON/YAML/TOML/XML, regex,
   crypto, compression, structured logging, metrics and tracing, a web
   framework), compiled through LLVM 18 to native code.
 
-```slang
+```zell
 namespace hello
 
 import std
@@ -58,40 +58,40 @@ async func main() {
 
 ## Install
 
-**A prebuilt toolchain** (`bin/slang`, `bin/slang-lsp`, `std/`, the
+**A prebuilt toolchain** (`bin/zell`, `bin/zell-lsp`, `std/`, the
 runtime for the machine in `targets/<triple>/`, debugger formatters):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dvislobokov/slang/master/scripts/install.sh | sh   # Linux, macOS
-irm https://raw.githubusercontent.com/dvislobokov/slang/master/scripts/install.ps1 | iex        # Windows (PowerShell)
+curl -fsSL https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.sh | sh   # Linux, macOS
+irm https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.ps1 | iex        # Windows (PowerShell)
 ```
 
-`install.sh` unpacks `slang-<version>-<host>.tar.gz` (from the GitHub
-release, or `$SLANG_DIST_URL`, or `--from <archive>`) into
-`~/.slang/toolchain/` and links `slang` into `~/.local/bin`; `install.ps1`
-does the same under `%USERPROFILE%\.slang\toolchain` and adds `bin\` to
+`install.sh` unpacks `zell-<version>-<host>.tar.gz` (from the GitHub
+release, or `$ZELL_DIST_URL`, or `--from <archive>`) into
+`~/.zell/toolchain/` and links `zell` into `~/.local/bin`; `install.ps1`
+does the same under `%USERPROFILE%\.zell\toolchain` and adds `bin\` to
 the user `PATH`. Linking programs needs `clang` (and `lld` for cross
 targets) on `PATH`. Runtimes for other targets are downloaded on demand:
 
 ```sh
-slang target list                     # known targets and where their runtime is
-slang target add windows-amd64 linux-arm64 linux-amd64-musl   # into ~/.slang/targets
-slang build --target windows-amd64 app.sl                     # app.exe (run it with Wine: slang run --target ...)
+zell target list                     # known targets and where their runtime is
+zell target add windows-amd64 linux-arm64 linux-amd64-musl   # into ~/.zell/targets
+zell build --target windows-amd64 app.zl                     # app.exe (run it with Wine: zell run --target ...)
 ```
 
-(`$SLANG_TARGETS_URL` overrides the download URL template, see
+(`$ZELL_TARGETS_URL` overrides the download URL template, see
 `docs/PLATFORMS.md`.) A toolchain archive is made with
-`scripts/package-toolchain.sh` (plus one `slang-runtime-<version>-<triple>.tar.gz`
+`scripts/package-toolchain.sh` (plus one `zell-runtime-<version>-<triple>.tar.gz`
 per cross-built runtime).
 
 **From source** (Linux x86-64 or arm64, macOS; Windows through MSYS2). You
 need Rust, LLVM 18, clang and lld:
 
 ```sh
-git clone https://github.com/dvislobokov/slang && cd slang
+git clone https://github.com/zell-lang/zell && cd zell
 ./scripts/setup.sh                    # Ubuntu 24.04: llvm-18-dev, clang-18, lld-18 (run as root)
-make -C runtime                       # the C runtime (libslang_rt.a)
-cargo build --release                 # target/release/slang and slang-lsp
+make -C runtime                       # the C runtime (libzell_rt.a)
+cargo build --release                 # target/release/zell and zell-lsp
 export PATH="$PWD/target/release:$PATH"
 make -C runtime CROSS=x86_64-w64-mingw32   # optional: the Windows runtime (mingw-w64)
 make -C runtime CROSS=aarch64-linux-gnu    # optional: linux-arm64 (gcc-aarch64-linux-gnu)
@@ -99,44 +99,44 @@ make -C runtime CROSS=x86_64-linux-musl    # optional: static musl binaries (mus
 ```
 
 The compiler finds the standard library sources in the repository's
-`std/` (or `$SLANG_STD`, or `<prefix>/std` next to an installed
-`<prefix>/bin/slang`). Supported platforms and how each was verified:
+`std/` (or `$ZELL_STD`, or `<prefix>/std` next to an installed
+`<prefix>/bin/zell`). Supported platforms and how each was verified:
 `docs/PLATFORMS.md`.
 
 ## Hello, world
 
-```slang
+```zell
 namespace hello
 
 import std.io
 
 func main() {
-    println("Hello, Slang!")
+    println("Hello, Zell!")
 }
 // Output:
-// Hello, Slang!
+// Hello, Zell!
 ```
 
 ```sh
-slang run hello.sl                    # build and run one file
-slang init myapp && cd myapp && slang run    # a project: slang.toml + src/main.sl
-slang build --release                 # an optimized, stripped binary
+zell run hello.zl                    # build and run one file
+zell init myapp && cd myapp && zell run    # a project: zell.toml + src/main.zl
+zell build --release                 # an optimized, stripped binary
 ```
 
 ## Learn
 
 | | |
 |---|---|
-| [A tour of Slang](docs/guide/tour.md) | the language in twenty minutes |
+| [A tour of Zell](docs/guide/tour.md) | the language in twenty minutes |
 | [Errors](docs/guide/errors.md) | `T!`, `?`, `try`, typed errors, wrapping, traces |
 | [Async](docs/guide/async.md) | tasks, channels, mutexes, cancellation, timeouts |
 | [Memory](docs/guide/memory.md) | ARC, `Drop`, `weak`, arenas, interior pointers |
 | [Packages](docs/guide/packages.md) | projects, dependencies, workspaces |
-| [Testing](docs/guide/testing.md) | `slang test`, benchmarks, runnable examples |
+| [Testing](docs/guide/testing.md) | `zell test`, benchmarks, runnable examples |
 | [Debugging](docs/guide/debugging.md) | traces, logging, leak checks, the debugger, profiles |
 | [Web services](docs/guide/web.md) | `std.web` quickstart |
 | [FAQ](docs/guide/faq.md) | differences from Go and C# |
-| API reference | `slang doc strings.Split`, or `slang doc std --html out/` for a searchable site |
+| API reference | `zell doc strings.Split`, or `zell doc std --html out/` for a searchable site |
 
 Every code block in these guides is compiled and run by the test suite
 (`compiler/tests/guide.rs`). The language specification is
@@ -148,20 +148,21 @@ declarations of `std/`.
 
 ### The documentation site
 
-`slang doc --site site` builds the whole site from the repository: this
+`zell doc --site site` builds the whole site from the repository: this
 README as the landing page, the guides, the design documents under
 `design/` and the standard library reference under `std/`, with one
 search index and relative links. `scripts/docs-serve.sh` builds it and
 serves it at `http://localhost:8000/`.
 
 The workflow `.github/workflows/docs.yml` publishes it to GitHub Pages on
-every push to `master` (`slang doc --site site --base /<repo>/`). To
+every push to `master` (`zell doc --site site --base /<repo>/`). To
 enable it once: **Settings → Pages → Source: GitHub Actions**; the site
-then lives at `https://<user>.github.io/<repo>/`.
+then lives at `https://<user>.github.io/<repo>/`
+(for this repository, `https://zell-lang.github.io/zell/`).
 
 ## Status
 
-Slang is young: the language is usable and heavily tested, but not yet
+Zell is young: the language is usable and heavily tested, but not yet
 stable, and there is no binary release.
 
 | Area | Status |
@@ -183,7 +184,7 @@ stable, and there is no binary release.
 
 The test suite (`cargo test --workspace`) builds and runs 47 example
 programs byte-exact, a specification corpus of 850+ programs, the
-standard library's own examples (`slang test std`) and the guides.
+standard library's own examples (`zell test std`) and the guides.
 
 ## Performance
 
@@ -194,7 +195,7 @@ x86-64, wall time, best of 5; Go 1.24):
 |---|---|---|---|---|---|---|
 | 0.57x | 0.56x | 0.97x | 0.61x | 0.80x | 0.62x | 0.86x |
 
-(Slang time / Go time: below 1 is faster.) A TCP echo of 2 GB through
+(Zell time / Go time: below 1 is faster.) A TCP echo of 2 GB through
 1000 connections runs at about 1.9 GB/s against Go's 1.6 GB/s, and the
 `std.net.http` server handles about the same keep-alive load as Go's
 `net/http`. Details and methodology: [benchmarks/README.md](benchmarks/README.md).
@@ -202,24 +203,24 @@ x86-64, wall time, best of 5; Go 1.24):
 ## Command line
 
 ```
-slang run   [path] [options] [-- args]   # build and run (a file, a directory, or the project)
-slang build [path] [options]             # compile (default output: ./<name>, or target/<profile>/<pkg>)
-slang check [path] [--dump-hir]          # type-check only
-slang test  [path] [-v] [--filter re] [--json] [--bench] [--parallel N]   # tests, benchmarks, examples
-slang doc   [path|namespace|symbol] [--html dir] [--json] [--check]      # documentation
-slang fmt   [paths] [--check] [--diff] [--stdin]   # format in the canonical style
-slang init  [dir] [--name n] [--format toml|json|yaml] [--lib]
-slang install | update | tree | why <module> | vendor   # dependencies
-slang store verify|prune|path | env [NAME] | proxy serve --dir <cache>
-slang lsp                                # language server on stdio
-slang debug run [path] | debug attach [host:]port | debug [--lldb|--gdb] [path]
-slang tool pprof [args] <profile>        # inspect a std.diag CPU profile
-slang target list | add <target>...      # prebuilt runtimes for cross-compilation
+zell run   [path] [options] [-- args]   # build and run (a file, a directory, or the project)
+zell build [path] [options]             # compile (default output: ./<name>, or target/<profile>/<pkg>)
+zell check [path] [--dump-hir]          # type-check only
+zell test  [path] [-v] [--filter re] [--json] [--bench] [--parallel N]   # tests, benchmarks, examples
+zell doc   [path|namespace|symbol] [--html dir] [--json] [--check]      # documentation
+zell fmt   [paths] [--check] [--diff] [--stdin]   # format in the canonical style
+zell init  [dir] [--name n] [--format toml|json|yaml] [--lib]
+zell install | update | tree | why <module> | vendor   # dependencies
+zell store verify|prune|path | env [NAME] | proxy serve --dir <cache>
+zell lsp                                # language server on stdio
+zell debug run [path] | debug attach [host:]port | debug [--lldb|--gdb] [path]
+zell tool pprof [args] <profile>        # inspect a std.diag CPU profile
+zell target list | add <target>...      # prebuilt runtimes for cross-compilation
 ```
 
 `path` is a file (one program), a directory without a manifest (all its
-`.sl` files form one program) or a project (the nearest `slang.toml`,
-`slang.json` or `slang.yaml`; a `[workspace]` root builds its members).
+`.zl` files form one program) or a project (the nearest `zell.toml`,
+`zell.json` or `zell.yaml`; a `[workspace]` root builds its members).
 
 | Build option | Effect |
 |---|---|
@@ -232,26 +233,26 @@ slang target list | add <target>...      # prebuilt runtimes for cross-compilati
 | `--emit=exe\|obj\|llvm-ir` | what to produce |
 | `--leak-check` | report objects still alive at exit (exit status 66) |
 | `--workspace`, `-p <name>` | all members / one member of a workspace |
-| `--locked`, `--offline` | fail if `slang.lock` would change / use only the lock and the store |
+| `--locked`, `--offline` | fail if `zell.lock` would change / use only the lock and the store |
 
 ## Repository layout
 
 | Path | What |
 |---|---|
-| `compiler/` | the `slang` compiler (Rust, inkwell/LLVM 18): lexer, parser, semantic analysis, codegen, build, packages, `doc`, `fmt`, `test` |
+| `compiler/` | the `zell` compiler (Rust, inkwell/LLVM 18): lexer, parser, semantic analysis, codegen, build, packages, `doc`, `fmt`, `test` |
 | `runtime/` | the C runtime: allocator, refcounting, strings, slices, maps, scheduler, I/O, the C parts of the stdlib (`runtime/ABI.md`) |
-| `std/` | the standard library sources (written by `compiler/build.rs` from `compiler/src/sema/stdlib_src/`), plus its tests and examples (`*_test.sl`) |
+| `std/` | the standard library sources (written by `compiler/build.rs` from `compiler/src/sema/stdlib_src/`), plus its tests and examples (`*_test.zl`) |
 | `lsp/`, `editors/vscode/`, `grammar/` | language server, VS Code extension, Grammar-Kit grammar |
 | `examples/` | runnable programs with byte-exact expected output |
 | `tests/spec/` | the specification corpus |
-| `benchmarks/` | Slang vs Go programs and scripts |
+| `benchmarks/` | Zell vs Go programs and scripts |
 | `docs/` | design documents and the user guides (`docs/guide/`) |
 
 Contributors (human or AI) should read [CLAUDE.md](CLAUDE.md) first: it
 describes the architecture, the rules (spec first, ABI contracts, output
 format) and how to build and test.
 
-Programs link only the Slang runtime, libc, libm and pthreads, plus a
+Programs link only the Zell runtime, libc, libm and pthreads, plus a
 system library when a module needs one (`std.database.sqlite` links
 `-lsqlite3`). TLS, crypto, compression and the PostgreSQL driver are
 self-contained.

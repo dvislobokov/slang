@@ -2,17 +2,17 @@
 
 ## Cryptography and TLS have not been audited
 
-Slang ships its own cryptographic primitives (`runtime/src/crypto/`: AES and
+Zell ships its own cryptographic primitives (`runtime/src/crypto/`: AES and
 AES-GCM, ChaCha20-Poly1305, X25519, Ed25519, P-256 ECDH/ECDSA, RSA
 PKCS#1 v1.5/PSS, SHA-2, HMAC, HKDF) and its own TLS 1.3 / TLS 1.2
-implementation and X.509 verifier written in Slang
-(`compiler/src/sema/stdlib_src/{tls,tls_client,tls_server,x509}.sl`).
+implementation and X.509 verifier written in Zell
+(`compiler/src/sema/stdlib_src/{tls,tls_client,tls_server,x509}.zl`).
 No external crypto library is used.
 
 **This code has not had an external security audit.** It is tested against
 RFC, NIST and Wycheproof-style vectors (`runtime/tests/test_crypto.c`), the
-RFC 8448 key schedule (`tests/spec/stdlib/tls_rfc8448.sl`), a full TLS 1.3
-handshake capture (`tests/spec/stdlib/tls_trace13.sl`), interoperability
+RFC 8448 key schedule (`tests/spec/stdlib/tls_rfc8448.zl`), a full TLS 1.3
+handshake capture (`tests/spec/stdlib/tls_trace13.zl`), interoperability
 with OpenSSL in both directions (`compiler/tests/tls.rs`) and a fuzz smoke
 test, but tests do not prove the absence of side channels, parsing bugs or
 protocol flaws. Until an audit has happened, do not rely on it where a
@@ -38,7 +38,7 @@ short:
 - **Randomness** comes from `getrandom(2)` (`/dev/urandom` fallback) through
   the platform layer.
 - **Secrets in memory**: the C primitives wipe their stack copies, but keys
-  and traffic secrets held by Slang code live in ordinary `[]byte` objects
+  and traffic secrets held by Zell code live in ordinary `[]byte` objects
   that are freed without being wiped, and may be copied by the runtime.
 - **TLS**: no SSLv3/TLS 1.0/1.1, no RSA key exchange, no CBC or stream
   ciphers, no compression, no renegotiation, no 0-RTT; TLS 1.2 requires

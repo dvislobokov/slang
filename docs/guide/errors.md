@@ -1,6 +1,6 @@
 # Errors
 
-Slang has no exceptions. Errors are values, as in Go, but the language
+Zell has no exceptions. Errors are values, as in Go, but the language
 gives you three short forms instead of `if err != nil { return err }`:
 
 | You write | Meaning |
@@ -17,7 +17,7 @@ gives you three short forms instead of `if err != nil { return err }`:
 `error("message")` creates an error. In a `T!` function, `return` accepts
 either a `T` or an error; the compiler tells them apart by type.
 
-```slang
+```zell
 namespace guide.errors.basics
 
 import std
@@ -63,7 +63,7 @@ the `catch` block must leave the function (`return`, `continue`, `break`,
 `panic`), so the variable after it is always initialized. `try ... else`
 substitutes a default and drops the error.
 
-```slang
+```zell
 namespace guide.errors.handling
 
 import std
@@ -96,7 +96,7 @@ The block form handles several fallible steps at once: inside the block,
 `?` jumps to its `catch` instead of returning from the function, and
 execution continues after the `catch`.
 
-```slang
+```zell
 namespace guide.errors.block
 
 import std
@@ -126,7 +126,7 @@ struct with that method is an error, so errors can carry data. A type
 `switch` picks them apart; sentinel errors are constants compared with
 `errors.Is`.
 
-```slang
+```zell
 namespace guide.errors.typed
 
 import std
@@ -181,7 +181,7 @@ func main() {
 of the original error and keep it inside. `errors.Is` and `errors.As`
 search the whole chain, so wrapping never hides what happened.
 
-```slang
+```zell
 namespace guide.errors.wrap
 
 import std
@@ -227,7 +227,7 @@ step, no stack unwinding. `println(err)` prints only the message;
 `errors.Trace(err)` gives the trace as text and `errors.Frames(err)` as
 records.
 
-```slang
+```zell
 namespace guide.errors.trace
 
 import std
@@ -259,9 +259,9 @@ func main() {
 A trace printed by `errors.Trace` looks like this:
 
 ```text
-  created at   app/fs.sl:42      open
-  returned via app/config.sl:17  readConfig  ?("config")
-  returned via app/main.sl:9     main
+  created at   app/fs.zl:42      open
+  returned via app/config.zl:17  readConfig  ?("config")
+  returned via app/main.zl:9     main
 ```
 
 Build with `--no-error-trace` if you use errors for control flow in a
@@ -272,7 +272,7 @@ hot loop; `errors.Trace` then returns `""`.
 A deferred call whose result is `T!` must handle its error, because there
 is nobody to return it to. Defer a closure that does:
 
-```slang
+```zell
 namespace guide.errors.defer
 
 import std

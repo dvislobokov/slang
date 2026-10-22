@@ -1,14 +1,14 @@
-"""LLDB data formatters for Slang programs (docs/DEBUGGER.md, stage 1).
+"""LLDB data formatters for Zell programs (docs/DEBUGGER.md, stage 1).
 
 Load them with
 
-    (lldb) command script import /path/to/slang/tools/lldb/slang_formatters.py
+    (lldb) command script import /path/to/zell/tools/lldb/zell_formatters.py
 
-or let `slang debug --lldb prog.sl` do it. They rely on the DWARF the Slang
+or let `zell debug --lldb prog.zl` do it. They rely on the DWARF the Zell
 compiler emits (compiler/src/codegen/debug.rs) and on the runtime layouts of
 runtime/ABI.md:
 
-    string      "text"                     (slang_string: len at +16, pointer to the bytes at +24)
+    string      "text"                     (zell_string: len at +16, pointer to the bytes at +24)
     []T         [1, 2, 3]                  children [0], [1], ...
     map[K]V     {"a": 1, "b": 2}           children ["a"], ... (walks the table of map.c)
     error       "message"                  (wrap chains joined with ": ")
@@ -20,7 +20,7 @@ runtime/ABI.md:
     Task<T>     pending | done: <result>
     weak *T     -> (fields) | <freed> | nil
 
-The command `slang-rc <expr>` decodes the reference count of the object a
+The command `zell-rc <expr>` decodes the reference count of the object a
 value points at (unowned, biased to a thread slot, cycle-collected,
 immortal..., runtime/ABI.md 3.1).
 
@@ -34,7 +34,7 @@ import lldb
 
 MAX_ITEMS = 100
 MAX_STRING = 4096
-CATEGORY = "slang"
+CATEGORY = "zell"
 
 # --------------------------------------------------------------------------
 # helpers
@@ -99,7 +99,7 @@ def _quote(s):
 
 
 def string_at(v, p):
-    """The text of the slang_string at address p (NULL is "")."""
+    """The text of the zell_string at address p (NULL is "")."""
     if p == 0:
         return ""
     n = _i64(v, p + 16)
@@ -188,7 +188,7 @@ _type_cache = {}
 
 
 def find_type(v, name):
-    """The SBType of Slang type `name` (as in type infos: `app.Point`,
+    """The SBType of Zell type `name` (as in type infos: `app.Point`,
     `*app.Point`, `[]int`, `int`), or None."""
     target = v.GetTarget()
     key = (target.GetExecutable().fullpath, name)
@@ -231,8 +231,8 @@ def string_summary(v, _dict):
 
 
 def error_message(v, p, depth=0):
-    """The message of the slang_error at p (follows `inner` like
-    slang_error_message; typed errors show their type and value)."""
+    """The message of the zell_error at p (follows `inner` like
+    zell_error_message; typed errors show their type and value)."""
     if p == 0:
         return None
     parts = []
@@ -497,7 +497,7 @@ def is_interface(t, _dict):
     if a.GetName() != "data":
         return False
     if b.GetName() == "vtable":
-        return b.GetType().GetPointeeType().GetName() == "slang_vtable"
+        return b.GetType().GetPointeeType().GetName() == "zell_vtable"
     return b.GetName() == "type" and t.GetName() == "any"
 
 
@@ -616,21 +616,21 @@ def closure_summary(v, _dict):
     return s + (" (env 0x%x)" % env if env else "")
 
 
-# Fallback layout of struct slang_task (runtime/src/task.c, x86-64 glibc)
-# for executables without the slang_debug_task_layout table (gc'd release).
+# Fallback layout of struct zell_task (runtime/src/task.c, x86-64 glibc)
+# for executables without the zell_debug_task_layout table (gc'd release).
 _TASK_FALLBACK = (104, 208, 1)
 _task_layouts = {}
 
 
 def task_layout(v):
     """(state offset, slot offset, done value) from the runtime's
-    `slang_debug_task_layout` table (ABI.md §20)."""
+    `zell_debug_task_layout` table (ABI.md §20)."""
     target = v.GetTarget()
     key = target.GetExecutable().fullpath
     if key in _task_layouts:
         return _task_layouts[key]
     layout = None
-    for ctx in target.FindSymbols("slang_debug_task_layout"):
+    for ctx in target.FindSymbols("zell_debug_task_layout"):
         addr = ctx.GetSymbol().GetStartAddress().GetLoadAddress(target)
         if addr == lldb.LLDB_INVALID_ADDRESS:
             continue
@@ -710,7 +710,7 @@ def _next_line(frame, line):
     return best
 
 
-def slang_next(debugger, command, result, _dict):
+def zell_next(debugger, command, result, _dict):
     """`next` that follows `await`: when stepping over a statement with an
     `await` suspends the coroutine (lldb then stops in the caller or the
     scheduler), continue until the coroutine reaches its next line, on
@@ -790,8 +790,8 @@ def decode_refcount(word):
     return text + ("" if not flags else ", " + ", ".join(flags))
 
 
-def slang_rc(debugger, command, result, _dict):
-    """slang-rc <expr>: the reference count of the heap object <expr> points
+def zell_rc(debugger, command, result, _dict):
+    """zell-rc <expr>: the reference count of the heap object <expr> points
     at (a *T points at the payload: its header is 16 bytes before; strings,
     maps, errors and tasks point at the header)."""
     target = debugger.GetSelectedTarget()
@@ -828,7 +828,7 @@ def _run(debugger, cmd):
     res = lldb.SBCommandReturnObject()
     debugger.GetCommandInterpreter().HandleCommand(cmd, res)
     if not res.Succeeded():
-        print("slang_formatters: `%s` failed: %s" % (cmd, res.GetError()))
+        print("zell_formatters: `%s` failed: %s" % (cmd, res.GetError()))
 
 
 def __lldb_init_module(debugger, _dict):
@@ -856,7 +856,7 @@ def __lldb_init_module(debugger, _dict):
     ]
     for cmd in cmds:
         _run(debugger, cmd)
-    _run(debugger, "command script add -o -f %s.slang_next slang-next" % m)
-    _run(debugger, "command script add -o -f %s.slang_rc slang-rc" % m)
+    _run(debugger, "command script add -o -f %s.zell_next zell-next" % m)
+    _run(debugger, "command script add -o -f %s.zell_rc zell-rc" % m)
     # A panic stops in the debugger at the panic site.
-    _run(debugger, "breakpoint set -r '^slang_panic' -N SlangPanic")
+    _run(debugger, "breakpoint set -r '^zell_panic' -N ZellPanic")

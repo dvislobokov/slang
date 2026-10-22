@@ -1,6 +1,6 @@
 # Memory without a garbage collector
 
-Slang frees memory deterministically, with no tracing garbage collector.
+Zell frees memory deterministically, with no tracing garbage collector.
 Most of the time you do not think about it: values are freed when nothing
 refers to them any more. This page explains what happens underneath, the
 two tools you use for special cases (`Drop` and `weak`), the cycle
@@ -20,7 +20,7 @@ the middle of objects.
   (no count change on a call), and `s += x` or `xs = append(xs, x)`
   grow in place when nothing else shares the buffer.
 
-```slang
+```zell
 namespace guide.memory.values
 
 import std.io
@@ -59,7 +59,7 @@ once, as soon as the value is gone: at the end of its block for a value
 in a variable, when the last reference disappears for a heap object.
 Use it for resources: files, sockets, locks, temporary directories.
 
-```slang
+```zell
 namespace guide.memory.drop
 
 import std.io
@@ -107,7 +107,7 @@ transfers ownership; to share one, use a pointer (`&x` or `new T{}`).
 Copying one is a compile error, because two copies would close the same
 file twice:
 
-```slang
+```zell
 // error: cannot copy
 namespace guide.memory.dropcopy
 
@@ -134,7 +134,7 @@ a child that points back keeps both alive. Make the back reference
 `weak *T`: it does not keep the object alive, reads as `nil` once the
 object is gone, and converts from `*T` implicitly.
 
-```slang
+```zell
 namespace guide.memory.weak
 
 import std.io
@@ -191,7 +191,7 @@ them). What to do:
 - if the type is a tree or a list whose shape you control and it never
   forms a cycle, put `@acyclic` on it: no warning, and its objects skip
   the cycle collector entirely (plain reference counting). It is a
-  promise: break it and the cycle leaks — `slang run --leak-check` then
+  promise: break it and the cycle leaks — `zell run --leak-check` then
   reports `type Node is @acyclic but was found in a cycle`;
 - `--deny-warnings` turns warnings into errors for CI.
 
@@ -203,7 +203,7 @@ When it finds a group of such objects that only reference each other, it
 runs all their `Drop` methods (each one still sees intact fields) and
 frees them:
 
-```slang
+```zell
 namespace guide.memory.cycles
 
 import std
@@ -236,7 +236,7 @@ func main() {
 // freed 2
 ```
 
-When it runs, set with `SLANG_CYCLES` in the environment:
+When it runs, set with `ZELL_CYCLES` in the environment:
 
 - `auto` (the default): by itself, once enough possible cycle roots were
   recorded (a few thousand; the number adapts to how much garbage it
@@ -254,7 +254,7 @@ whose cycles you break with `weak`. Cycles through `error` values, tasks
 and (in programs with several threads) maps are not collected.
 `runtime.CycleStats()` reports what the collector did.
 
-`slang run --leak-check` reports the objects still alive at exit (and
+`zell run --leak-check` reports the objects still alive at exit (and
 exits with status 66); with the collector in `auto` mode it collects one
 last time first, and in `manual` mode it tells you how many of the leaked
 objects are cycles the collector could have freed. The test suites of the
@@ -266,7 +266,7 @@ For work with a clear lifetime (one request, one parse) `std.arena`
 allocates many objects in one region and frees them all at once. Objects
 in an arena have no reference count, so allocation is a pointer bump.
 
-```slang
+```zell
 namespace guide.memory.arena
 
 import std
@@ -315,7 +315,7 @@ them, read and write through them, pass them to a function that does
 not keep them, or store them in a local variable (which keeps the owner
 alive until the end of its block).
 
-```slang
+```zell
 namespace guide.memory.interior
 
 import std.io
@@ -345,7 +345,7 @@ a struct field, a slice, a map or a closure, return it, or pass it to a
 function that stores it. The compiler rejects those with "cannot keep an
 interior pointer"; allocate the value with `new` instead.
 
-```slang
+```zell
 // error: cannot keep an interior pointer
 namespace guide.memory.interiorerror
 

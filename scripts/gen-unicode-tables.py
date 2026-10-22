@@ -36,7 +36,7 @@ def main():
                " * {lo, hi, delta_upper, delta_lower, delta_title}, where a delta of\n"
                " * 0x110000 means alternating upper/lower pairs. */\n" % version)
     out.append('#include <stdint.h>\n')
-    out.append('const char slang__unicode_version[] = "%s";\n' % version)
+    out.append('const char zell__unicode_version[] = "%s";\n' % version)
     for name in TABLES:
         m = re.search(r"\nvar _%s = &RangeTable\{(.*?)\n\}\n" % re.escape(name), src, re.S)
         if not m:
@@ -44,7 +44,7 @@ def main():
         body = m.group(1)
         triples = re.findall(r"\{(0x[0-9a-fA-F]+), (0x[0-9a-fA-F]+), (\d+)\}", body)
         cname = name.lower()
-        out.append("\nconst uint32_t slang__unicode_%s[][3] = {" % cname)
+        out.append("\nconst uint32_t zell__unicode_%s[][3] = {" % cname)
         line = []
         for lo, hi, st in triples:
             line.append("{%s, %s, %s}" % (lo, hi, st))
@@ -54,15 +54,15 @@ def main():
         if line:
             out.append("    " + ", ".join(line) + ",")
         out.append("};")
-        out.append("const int slang__unicode_%s_len = %d;" % (cname, len(triples)))
+        out.append("const int zell__unicode_%s_len = %d;" % (cname, len(triples)))
     m = re.search(r"\nvar _CaseRanges = \[\]CaseRange\{(.*?)\n\}\n", src, re.S)
     rows = re.findall(r"\{(0x[0-9A-Fa-f]+), (0x[0-9A-Fa-f]+), d\{([^}]*)\}\}", m.group(1))
-    out.append("\nconst int32_t slang__unicode_case[][5] = {")
+    out.append("\nconst int32_t zell__unicode_case[][5] = {")
     for lo, hi, d in rows:
         ds = [x.strip().replace("UpperLower", "0x110000") for x in d.split(",")]
         out.append("    {%s, %s, %s}," % (lo, hi, ", ".join(ds)))
     out.append("};")
-    out.append("const int slang__unicode_case_len = %d;" % len(rows))
+    out.append("const int zell__unicode_case_len = %d;" % len(rows))
     here = os.path.dirname(os.path.abspath(__file__))
     dst = os.path.join(here, "..", "runtime", "src", "std_unicode_tables.c")
     with open(dst, "w", encoding="utf-8") as f:

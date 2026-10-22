@@ -1,6 +1,6 @@
 # Async programming
 
-Slang's concurrency model is tasks on a thread pool with language-level
+Zell's concurrency model is tasks on a thread pool with language-level
 `async`/`await`, like C# or Rust's Tokio, but with Go's habit of making
 the simple thing simple: the standard library's I/O (sockets, HTTP,
 files through the async APIs, timers) never blocks a worker thread.
@@ -11,7 +11,7 @@ An `async func` returns `Task<T>`. **Calling it starts it**; `await`
 waits for the result. `await` is only allowed inside `async` functions,
 and `main` may be `async`.
 
-```slang
+```zell
 namespace guide.async.tasks
 
 import std
@@ -45,7 +45,7 @@ Errors and `await` compose: `await f()?` waits and propagates an error
 of a `Task<T!>`. `task.All` of fallible tasks is itself fallible; the
 first error cancels the remaining tasks.
 
-```slang
+```zell
 namespace guide.async.errors
 
 import std
@@ -83,7 +83,7 @@ a channel share it. `Recv` fails once the channel is closed and drained,
 and `for v in ch` receives until then. Sending on a closed channel
 panics.
 
-```slang
+```zell
 namespace guide.async.channels
 
 import std
@@ -122,7 +122,7 @@ value, protect it with `task.Mutex` (its zero value is unlocked; waiters
 get it in FIFO order). `task.WaitGroup` waits for a group of tasks.
 `std.sync` adds `RwMutex`, `Semaphore`, `Once`, `Barrier` and atomics.
 
-```slang
+```zell
 namespace guide.async.mutex
 
 import std
@@ -177,7 +177,7 @@ context**, which every task inherits from the code that started it.
 - `task.Any` cancels the losers; `task.All` cancels the rest on the first
   error.
 
-```slang
+```zell
 namespace guide.async.cancel
 
 import std
@@ -229,7 +229,7 @@ with the value set, and every task started inside sees it through
 `task.Get(key)` (like C#'s `AsyncLocal`). `std.log` uses this for request
 properties and `std.diag` for the current trace span.
 
-```slang
+```zell
 namespace guide.async.context
 
 import std
@@ -262,7 +262,7 @@ and `time.NewTimer(d)` once; both are stopped with `Stop()`. In async
 code wait with `task.Delay(ms)`; `time.Sleep` and `time.SleepFor` block
 the thread and belong in synchronous code.
 
-```slang
+```zell
 namespace guide.async.timers
 
 import std

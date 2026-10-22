@@ -1,6 +1,6 @@
 # Платформы и кроссплатформенность
 
-Slang должен работать одинаково на Linux, macOS и Windows, на amd64 и
+Zell должен работать одинаково на Linux, macOS и Windows, на amd64 и
 arm64. Это требование к компилятору, рантайму, стандартной библиотеке и
 инструментам, а не задача «портировать потом».
 
@@ -22,22 +22,22 @@ arm64. Это требование к компилятору, рантайму, 
 
 ## Кросс-компиляция
 
-`slang build --target windows-amd64` работает с любой машины:
+`zell build --target windows-amd64` работает с любой машины:
 
 - LLVM генерирует код под любую цель из одного бинарника компилятора.
-- Линковщик `lld` (вшит в `slang`) умеет ELF, Mach-O и PE/COFF.
+- Линковщик `lld` (вшит в `zell`) умеет ELF, Mach-O и PE/COFF.
 - Рантайм и стандартная библиотека поставляются прекомпилированными для
-  всех платформ tier 1-2 (`~/.slang/targets/<triple>/libslang_rt.a` плюс
+  всех платформ tier 1-2 (`~/.zell/targets/<triple>/libzell_rt.a` плюс
   минимальный набор системных библиотек/импорт-библиотек: для Windows —
   `kernel32.lib`, `ws2_32.lib` и т. п. из mingw-w64 или Windows SDK; для
   macOS — `libSystem.tbd`; для Linux — glibc или musl). Недостающие цели
-  скачиваются `slang target add windows-amd64` (см. «Установка и цели»).
+  скачиваются `zell target add windows-amd64` (см. «Установка и цели»).
 - Условная компиляция: `@cfg(os: "windows")`, `@cfg(arch: "arm64")`,
   `@cfg(not(os: "linux"))`, `@cfg(any(...))`, `@cfg(all(...))`,
   `@cfg(feature: "tls")` на объявлениях (и их полях, методах, вариантах) и
-  перед `namespace` (весь файл); суффиксы файлов `foo_windows.sl`,
-  `foo_linux.sl`, `foo_macos.sl`, `foo_amd64.sl`, `foo_arm64.sl`,
-  `foo_linux_arm64.sl` как в Go. Правила — `DESIGN.md` «Платформы».
+  перед `namespace` (весь файл); суффиксы файлов `foo_windows.zl`,
+  `foo_linux.zl`, `foo_macos.zl`, `foo_amd64.zl`, `foo_arm64.zl`,
+  `foo_linux_arm64.zl` как в Go. Правила — `DESIGN.md` «Платформы».
 - Константы `os.Name` (`"linux"|"macos"|"windows"|...`), `os.Arch`
   (`"amd64"|"arm64"|...`), `os.PathSeparator`, `os.LineSeparator`.
 
@@ -80,7 +80,7 @@ arm64. Это требование к компилятору, рантайму, 
   LLVM), распространяется как один бинарник + архив рантаймов.
 - Установка: `curl ... | sh` (Linux/macOS, `scripts/install.sh`), `irm ...
   | iex` (PowerShell, `scripts/install.ps1`) — сделано, см. «Установка и
-  цели» ниже; Homebrew, winget, apt/rpm-репозитории, `slang self update` —
+  цели» ниже; Homebrew, winget, apt/rpm-репозитории, `zell self update` —
   позже.
 - LSP, `fmt`, пакетный менеджер — платформонезависимы по построению
   (Rust), хранилище пакетов использует жёсткие ссылки на NTFS/APFS/ext4
@@ -108,7 +108,7 @@ x86-64 с clang-18, mingw-w64, Wine 9.0, qemu-user 8, musl-tools; macOS и
 | linux-amd64 | 19/19 `make -C runtime test` | 49/49 (`cargo test`) | нативно |
 | linux-arm64 | 19/19 `make -C runtime CROSS=aarch64-linux-gnu test-cross` | 47/49 (`--leak-check`) | кросс-сборка + `qemu-aarch64-static -L /usr/aarch64-linux-gnu`; CI — ещё и нативно на `ubuntu-24.04-arm` |
 | linux-amd64-musl | 19/19 `make -C runtime CROSS=x86_64-linux-musl test-cross` | 47/49, полностью статические | нативно (статический ELF без `PT_INTERP`) |
-| windows-amd64 (MinGW) | 19/19 `make -C runtime CROSS=x86_64-w64-mingw32 test-wine` (IOCP и `SLANG_POLLER=wsapoll`) | 38 + 5 сетевых (IOCP и WSAPoll) + sql с `sqlite3.dll` | Wine 9.0 |
+| windows-amd64 (MinGW) | 19/19 `make -C runtime CROSS=x86_64-w64-mingw32 test-wine` (IOCP и `ZELL_POLLER=wsapoll`) | 38 + 5 сетевых (IOCP и WSAPoll) + sql с `sqlite3.dll` | Wine 9.0 |
 | macos-arm64 / amd64 | все 94 файла и C-тесты компилируются (`-Werror`) против `runtime/stub-sdk/macos` | 49/49 → Mach-O объекты | без SDK: ничего не слинковано и не запущено; на Mac — `scripts/macos-verify.sh` |
 
 Не прошедшие 2 из 49 на arm64/musl — `sql` и `web_app`: им нужен
@@ -126,12 +126,12 @@ mingw статически; C hello — 14 КБ).
 - **Слой `runtime/src/platform/` завершён**: вне `platform/` в рантайме нет
   ни одного `#ifdef` ОС и ни одного прямого вызова POSIX/Win32
   (`runtime/ABI.md` §15). Через слой идут потоки, мьютексы/условные
-  переменные/once/TLS (`slang__plat_mutex` и т. д.: pthreads inline в
+  переменные/once/TLS (`zell__plat_mutex` и т. д.: pthreads inline в
   `platform.h`; SRWLOCK/CONDITION_VARIABLE/INIT_ONCE/FLS в `win32.c`; имени
-  `slang_mutex` нет — оно занято ABI-типом `Mutex`), часы (`mono_ns`,
+  `zell_mutex` нет — оно занято ABI-типом `Mutex`), часы (`mono_ns`,
   `wall_ns`, `sleep_ns`), календарь (`utc_tm`/`timegm` на чистом C),
   `strftime`/`strptime` (свои в `timefmt.c` там, где libc неполна:
-  Windows и musl — `SLANG_PLAT_LIBC_TIMEFMT`), файлы и каталоги,
+  Windows и musl — `ZELL_PLAT_LIBC_TIMEFMT`), файлы и каталоги,
   процессы, сигналы, пользователи, окружение, консоль, aligned-память,
   сокеты, поллер, backtrace с именами функций, сэмплер CPU, часовые пояса,
   хранилище корневых сертификатов, `dlopen`.
@@ -139,17 +139,17 @@ mingw статически; C hello — 14 КБ).
 ### windows-amd64 (MinGW ABI): кросс-сборка с Linux, запуск под Wine
 
 - `make -C runtime CROSS=x86_64-w64-mingw32` собирает
-  `runtime/build/x86_64-pc-windows-gnu/libslang_rt.a` через `clang -target
+  `runtime/build/x86_64-pc-windows-gnu/libzell_rt.a` через `clang -target
   x86_64-w64-mingw32` с `-Wall -Wextra -Werror` (без clang —
   `x86_64-w64-mingw32-gcc`; clang предпочтителен: тот же native TLS, что у
   кода LLVM, gcc для mingw использует emutls).
-- `slang build --target windows-amd64 x.sl` → `x.exe` (PE32+, COFF от LLVM,
+- `zell build --target windows-amd64 x.zl` → `x.exe` (PE32+, COFF от LLVM,
   соглашение Win64; на границе ABI только скаляры и указатели). Линковка:
   `clang -target x86_64-w64-mingw32 -fuse-ld=lld` + рантайм + ws2_32,
   iphlpapi, bcrypt, shell32, advapi32; ntdll, crypt32, dbghelp и
   sqlite3/winsqlite3 загружаются во время выполнения (`LoadLibraryW`/
-  `GetProcAddress`), импорт-библиотеки им не нужны. `slang run --target
-  windows-amd64` запускает через Wine (`$SLANG_WINE`).
+  `GetProcAddress`), импорт-библиотеки им не нужны. `zell run --target
+  windows-amd64` запускает через Wine (`$ZELL_WINE`).
 - Под Wine 9.0 байт-в-байт с Linux-ными `.out` (без нормализации CRLF:
   `println` пишет `\n`, stdout/stderr в двоичном режиме): 38 примеров в
   отладочной сборке с `--leak-check` (hello, arith, control, functions,
@@ -158,8 +158,8 @@ mingw статически; C hello — 14 КБ).
   json, reflection, regex, sealed_shapes, try_block, task_context, tracing,
   log, metrics, cli_tool, stdlib_* ×6, multi, **cpuprofile**), 7 в
   `--release`, сетевые tcp_echo, http_server, tls_echo, redis,
-  http_realtime — с IOCP-поллером и ещё раз с `SLANG_POLLER=wsapoll`;
-  `sql` — с `sqlite3.dll` рядом с программой (`$SLANG_TEST_SQLITE3_DLL`,
+  http_realtime — с IOCP-поллером и ещё раз с `ZELL_POLLER=wsapoll`;
+  `sql` — с `sqlite3.dll` рядом с программой (`$ZELL_TEST_SQLITE3_DLL`,
   собран из amalgamation через mingw); процессы, часовые пояса, корневые
   сертификаты и backtrace — отдельным тестом (`cross.rs`
   `windows_processes_zones_roots_backtraces`, вывод совпадает с Linux).
@@ -170,7 +170,7 @@ mingw статически; C hello — 14 КБ).
   нет — sendfile там проверяется по loopback TCP; Windows 10 1803+ AF_UNIX
   умеет). Тестовый код (не рантайм) использует winpthreads и POSIX-шимы из
   `tests/test.h`; `run_child` вместо `fork` перезапускает тест с
-  `SLANG_TEST_CHILD`. Wine нужна UTF-8-локаль (`LC_ALL=C.UTF-8`).
+  `ZELL_TEST_CHILD`. Wine нужна UTF-8-локаль (`LC_ALL=C.UTF-8`).
 - Что есть в Windows-слое: потоки `CreateThread`; часы
   `QueryPerformanceCounter`/`GetSystemTimePreciseAsFileTime`; энтропия
   `BCryptGenRandom`; `LoadLibraryW`; argv в UTF-8 из `CommandLineToArgvW`;
@@ -182,7 +182,7 @@ mingw статически; C hello — 14 КБ).
   Новое:
   - **Поллер IOCP** (`poll_iocp.c`, ниже) вместо WSAPoll; WSAPoll остался
     запасным (`poll_wsapoll.c`: если `\Device\Afd` не открывается, или
-    `SLANG_POLLER=wsapoll`). Исправлено в нём: `remove` теперь будит
+    `ZELL_POLLER=wsapoll`). Исправлено в нём: `remove` теперь будит
     ожидающий `WSAPoll` и ждёт его возврата, прежде чем вызывающий закроет
     сокет — под Wine закрытие сокета внутри идущего `WSAPoll` вешало
     стресс-тест `test_net` (раньше `test_net` под Windows не собирался, и
@@ -193,7 +193,7 @@ mingw статически; C hello — 14 КБ).
     готовности к записи, ядро берёт кусок сразу; если пир не читает 30 с —
     `CancelIoEx`, отдаётся отправленное). Запасной путь — `pread`+`send`.
   - **Процессы без потоков-ретрансляторов**: с IOCP-поллером каналы
-    ребёнка — именованные каналы (`\\.\pipe\slang-<pid>-<n>`, один
+    ребёнка — именованные каналы (`\\.\pipe\zell-<pid>-<n>`, один
     экземпляр, `PIPE_REJECT_REMOTE_CLIENTS`), родительский конец
     OVERLAPPED. Дескриптор — `0x400000 + слот` таблицы каналов (не путается
     с сокетами, CRT-дескрипторами и HANDLE). Готовность к чтению —
@@ -216,13 +216,13 @@ mingw статически; C hello — 14 КБ).
     `ResumeThread`. Пока поток заморожен, сэмплер не выделяет память и не
     берёт локов (раскрутчик может взять лок таблиц функций загрузчика — это
     важно только для JIT с динамическими таблицами). Профиль — тот же
-    pprof, что на Linux (`examples/cpuprofile.sl` проходит;
-    `go tool pprof -top` показывает функции Slang).
+    pprof, что на Linux (`examples/cpuprofile.zl` проходит;
+    `go tool pprof -top` показывает функции Zell).
   - **Имена в backtrace и профиле**: своя COFF-таблица символов exe (lld и
     ld пишут её для mingw, если не `-s`: все функции, локальные тоже — как
     ELF `.symtab` на Linux), затем DbgHelp `SymFromAddr` (загружается по
     требованию: экспорт и PDB системных DLL, под Wine — и DWARF). Формат
-    как у glibc: `app.exe(slang_main__inner+0x101) [0x14002f7f1]`.
+    как у glibc: `app.exe(zell_main__inner+0x101) [0x14002f7f1]`.
     `--release` (без символов) — модуль+смещение. Тот же формат и та же
     таблица символов теперь и на Linux/macOS/musl (`posix.c`: ELF
     `.symtab`, Mach-O `LC_SYMTAB` из `__LINKEDIT`; без `<execinfo.h>`, как
@@ -231,7 +231,7 @@ mingw статически; C hello — 14 КБ).
     (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones\<ключ>`:
     `TZI` и `Dynamic DST` по годам) превращаются в TZif v2 (переходы за
     годы из `Dynamic DST` + POSIX-строка текущего правила для будущих лет),
-    который `time.sl` разбирает как файл tzdata. Локальная зона —
+    который `time.zl` разбирает как файл tzdata. Локальная зона —
     `GetDynamicTimeZoneInformation` (`TimeZoneKeyName`; выключенный
     переход на летнее время — круглый год стандартное). IANA-имена
     (`time.LoadLocation("Europe/Berlin")`) — по встроенной таблице из 182
@@ -245,7 +245,7 @@ mingw статически; C hello — 14 КБ).
     стандартное смещение этого года).
   - **Корневые сертификаты**: хранилище `ROOT` (`CertOpenSystemStoreW`,
     crypt32 по требованию) выгружается раз за процесс в PEM-файл
-    `%LOCALAPPDATA%\slang\roots.pem` (атомарная замена), путь которого и
+    `%LOCALAPPDATA%\zell\roots.pem` (атомарная замена), путь которого и
     отдаётся `x509.SystemRoots` (кэш по размеру/mtime работает как с любым
     бандлом). `$SSL_CERT_FILE` — в приоритете. Оговорка: Windows
     докачивает редкие корни по требованию (Automatic Root Update), корня,
@@ -273,7 +273,7 @@ READ|WRITE, token)` просит одно уведомление, `poller_wait` 
 напрямую; IOCP — модель **завершения**. Выбран адаптер готовности (а не
 перевод сокетов на настоящий overlapped-ввод-вывод с байтами в
 завершении): он меньше, сохраняет ABI и весь код `task_io.c`/`std_net.c`,
-а Slang-код и так видит только «результат или ждать». `poll_iocp.c`:
+а Zell-код и так видит только «результат или ждать». `poll_iocp.c`:
 
 1. **Порт на шард.** Каждый поллер (= шард `task_io.c`, как шарды epoll)
    создаёт свой порт завершения и открывает свой хэндл драйвера AFD
@@ -325,18 +325,18 @@ Windows (CI-джоб windows-amd64).
 
 - `make -C runtime CROSS=aarch64-linux-gnu` (clang `-target
   aarch64-linux-gnu` находит sysroot `gcc-aarch64-linux-gnu`) →
-  `runtime/build/aarch64-unknown-linux-gnu/`; `slang build --target
+  `runtime/build/aarch64-unknown-linux-gnu/`; `zell build --target
   linux-arm64` линкует `clang --target=aarch64-unknown-linux-gnu
-  -fuse-ld=lld` (с `$SLANG_SYSROOT`, если задан), `slang run --target
+  -fuse-ld=lld` (с `$ZELL_SYSROOT`, если задан), `zell run --target
   linux-arm64` запускает через `qemu-aarch64[-static] -L
-  /usr/aarch64-linux-gnu` (`$SLANG_QEMU`, `$SLANG_SYSROOT`). CI: нативный
+  /usr/aarch64-linux-gnu` (`$ZELL_QEMU`, `$ZELL_SYSROOT`). CI: нативный
   джоб `ubuntu-24.04-arm` (полный `cargo test`) и кросс-джоб (C-тесты и
   примеры под QEMU).
 - `--target linux-amd64-musl` (`x86_64-unknown-linux-musl`; также
   `linux-arm64-musl` при наличии musl-sysroot): всегда `-static`.
   Рантайм — `make -C runtime CROSS=x86_64-linux-musl` (clang с
-  заголовками musl-tools), линковка — `musl-gcc` (`$SLANG_MUSL_CC`), если
-  он для того же CPU, иначе clang с `--sysroot=$SLANG_SYSROOT`. musl нет
+  заголовками musl-tools), линковка — `musl-gcc` (`$ZELL_MUSL_CC`), если
+  он для того же CPU, иначе clang с `--sysroot=$ZELL_SYSROOT`. musl нет
   `<execinfo.h>` (backtrace — по frame pointer), его `strftime` без
   `%k`/`%l`, `strptime` без `%z` (используются свои из `timefmt.c`);
   `-lsqlite3` не передаётся.
@@ -351,14 +351,14 @@ C-тесты** (`-Wall -Wextra -Werror`, `clang -target arm64-apple-macos12
 SDK: `sys/event.h`, `mach-o/*`, `malloc/malloc.h`, `pthread.h`,
 `sys/socket.h`, `sys/_mcontext.h`…). Объекты кладутся в
 `build/<triple>-stubcheck/` и никогда не линкуются (архива в
-`build/<triple>/` нет, `slang build` его не найдёт). С `SDKROOT` или на Mac
+`build/<triple>/` нет, `zell build` его не найдёт). С `SDKROOT` или на Mac
 та же команда собирает настоящий рантайм. Найдено и исправлено:
 `SOCK_NONBLOCK` в тестах (его нет на macOS), неиспользуемая переменная в
 ветке символов; macOS-ветки `posix.c`/`fs_posix.c`/`net_posix.c` и
 `poll_kqueue.c` компилируются. Добавлено: символы из `LC_SYMTAB` главного
 образа (`_dyld_get_image_header` + `__LINKEDIT`) для профиля и backtrace,
 `exe_range` для pprof; корни — `/etc/ssl/cert.pem` (поддерживается macOS;
-пользовательские корни Keychain не входят). `slang build --target
+пользовательские корни Keychain не входят). `zell build --target
 macos-arm64|macos-amd64 --emit=obj` даёт Mach-O для всех 49 примеров.
 
 Не проверено (нужен настоящий Mac; `scripts/macos-verify.sh` делает всё
@@ -372,49 +372,49 @@ macos-arm64|macos-amd64 --emit=obj` даёт Mach-O для всех 49 прим�
    `make tsan`.
 2. Расположение структур и констант стабов против SDK (проверка — тот же
    стаб-check на Mac с `SDKROOT=`: должен проходить и дальше).
-3. Линковка `slang build` (`-isysroot`, `ld64`/`ld64.lld`,
+3. Линковка `zell build` (`-isysroot`, `ld64`/`ld64.lld`,
    `-dead_strip`) и `cargo test --workspace` (все примеры байт-в-байт).
 4. Сэмплер `SIGPROF` (`ITIMER_PROF`, регистры из `__darwin_mcontext64`)
-   и символы `LC_SYMTAB` — `examples/cpuprofile.sl` и backtrace с именами.
+   и символы `LC_SYMTAB` — `examples/cpuprofile.zl` и backtrace с именами.
 5. Часовые пояса из `/usr/share/zoneinfo`/`/etc/localtime`, корни из
    `/etc/ssl/cert.pem`, `std.process` (`posix_spawn`), сетевые примеры.
-6. `scripts/package-toolchain.sh` на Mac (архив `slang-<ver>-macos-<arch>`).
+6. `scripts/package-toolchain.sh` на Mac (архив `zell-<ver>-macos-<arch>`).
 
 ### Установка и цели (дистрибуция тулчейна)
 
 - `scripts/package-toolchain.sh [--no-build] [--out dist]` →
-  `slang-<версия>-<хост>.tar.gz` (`bin/slang`, `bin/slang-lsp`, `std/`,
-  `targets/<triple хоста>/libslang_rt.a`, `tools/` — формат-скрипты
+  `zell-<версия>-<хост>.tar.gz` (`bin/zell`, `bin/zell-lsp`, `std/`,
+  `targets/<triple хоста>/libzell_rt.a`, `tools/` — формат-скрипты
   lldb/gdb и клиент VS Code, `README.md`, `VERSION`) и по
-  `slang-runtime-<версия>-<triple>.tar.gz` (распаковывается в
-  `<triple>/libslang_rt.a`) на каждый рантайм из `runtime/build/<triple>/`,
+  `zell-runtime-<версия>-<triple>.tar.gz` (распаковывается в
+  `<triple>/libzell_rt.a`) на каждый рантайм из `runtime/build/<triple>/`,
   плюс `.sha256` и `VERSION`. CI выкладывает их артефактами.
-- Компилятор ищет рантайм хоста в `$SLANG_RUNTIME`, затем
+- Компилятор ищет рантайм хоста в `$ZELL_RUNTIME`, затем
   `<exe>/../targets/<triple>/` установленного тулчейна,
-  `$SLANG_TARGETS/<triple>/`, затем в репозитории; `std/` — в
-  `$SLANG_STD`, `<exe>/../std`, репозитории (иначе встроенные копии).
-- `slang target list` — известные цели (tier 1–2) и где лежит их рантайм;
-  `slang target add <цель>... [--url шаблон]` скачивает
-  `slang-runtime-<версия>-<triple>.tar.gz` в `$SLANG_TARGETS` (по
-  умолчанию `$SLANG_HOME/targets` = `~/.slang/targets`), сверяет с
+  `$ZELL_TARGETS/<triple>/`, затем в репозитории; `std/` — в
+  `$ZELL_STD`, `<exe>/../std`, репозитории (иначе встроенные копии).
+- `zell target list` — известные цели (tier 1–2) и где лежит их рантайм;
+  `zell target add <цель>... [--url шаблон]` скачивает
+  `zell-runtime-<версия>-<triple>.tar.gz` в `$ZELL_TARGETS` (по
+  умолчанию `$ZELL_HOME/targets` = `~/.zell/targets`), сверяет с
   `<url>.sha256`, если он есть, и распаковывает системным `tar`. Шаблон —
-  `$SLANG_TARGETS_URL`, по умолчанию
-  `https://github.com/dvislobokov/slang/releases/download/v{version}/slang-runtime-{version}-{triple}.tar.gz`
+  `$ZELL_TARGETS_URL`, по умолчанию
+  `https://github.com/zell-lang/zell/releases/download/v{version}/zell-runtime-{version}-{triple}.tar.gz`
   (`{version}`, `{triple}`; `https://` — через curl, `http://` и `file://`
   — встроенно, путь без схемы — локальный архив).
 - `scripts/install.sh` (Linux/macOS: `curl … | sh`, `--version`,
-  `--dir`, `--bin`, `--from <архив>`, `$SLANG_DIST_URL`) распаковывает в
-  `~/.slang/toolchain/slang-<ver>-<host>/`, ставит ссылку `current` и
-  ссылки `slang`/`slang-lsp` в `~/.local/bin`; `scripts/install.ps1`
+  `--dir`, `--bin`, `--from <архив>`, `$ZELL_DIST_URL`) распаковывает в
+  `~/.zell/toolchain/zell-<ver>-<host>/`, ставит ссылку `current` и
+  ссылки `zell`/`zell-lsp` в `~/.local/bin`; `scripts/install.ps1`
   (Windows, `irm … | iex`; здесь не запускался) — в
-  `%USERPROFILE%\.slang\toolchain`, `bin\` в пользовательский `PATH`,
+  `%USERPROFILE%\.zell\toolchain`, `bin\` в пользовательский `PATH`,
   распаковка встроенным `tar.exe`.
-- Проверено: архив распакован в чистый каталог, `env -i … SLANG_HOME=…
-  bin/slang build hello.sl` берёт рантайм и `std/` из тулчейна (видно в
-  `-v`), `slang target add windows-amd64 linux-amd64-musl` с
-  `file://`-шаблоном ставит рантаймы в `$SLANG_HOME/targets`, после чего
+- Проверено: архив распакован в чистый каталог, `env -i … ZELL_HOME=…
+  bin/zell build hello.zl` берёт рантайм и `std/` из тулчейна (видно в
+  `-v`), `zell target add windows-amd64 linux-amd64-musl` с
+  `file://`-шаблоном ставит рантаймы в `$ZELL_HOME/targets`, после чего
   `hello.exe` работает под Wine, а musl-бинарник — статически;
-  `install.sh --from` и `SLANG_DIST_URL=file://…` ставят и запускают.
+  `install.sh --from` и `ZELL_DIST_URL=file://…` ставят и запускают.
   Компилятору для линковки по-прежнему нужен системный `clang` (`lld` для
   кросс-целей): `lld` в бинарник не вшит.
 
@@ -456,7 +456,7 @@ wasm32-wasi.
    сертификатов, ✅ sqlite через DLL; CodeView/MSVC ABI — дальше.
 4. Кросс-компиляция: ✅ `--target` в `build`/`run` (Windows через Wine,
    linux-arm64 через QEMU, macOS — объектники), ✅ поиск рантайма в
-   `~/.slang/targets/<triple>/` и в тулчейне, ✅ `slang target add/list`,
+   `~/.zell/targets/<triple>/` и в тулчейне, ✅ `zell target add/list`,
    ✅ `package-toolchain.sh`, `install.sh`/`install.ps1`; релизные сборки
    под все tier-1 — по артефактам CI.
 5. ✅ linux-arm64 (QEMU + нативный CI), ✅ linux-musl (статический); FreeBSD,

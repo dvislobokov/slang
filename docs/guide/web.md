@@ -12,7 +12,7 @@ directly. The design is [docs/FRAMEWORK.md](../FRAMEWORK.md).
 
 ## Hello, web
 
-```slang
+```zell
 // check-only
 namespace guide.web.hello
 
@@ -26,14 +26,14 @@ async func main() void! {
 }
 ```
 
-`slang run` it and open `http://localhost:8080/hello/ann`. Strings are
+`zell run` it and open `http://localhost:8080/hello/ann`. Strings are
 written as `text/plain`; any other value as JSON.
 
 Everything on this page can be tested without a socket: `TestServer(app)`
 builds the app and returns a client that calls it in memory. The rest of
 the examples use it, so they run as they are:
 
-```slang
+```zell
 namespace guide.web.minimal
 
 import std.io
@@ -73,7 +73,7 @@ with a `@route` prefix whose methods carry `@get`, `@post`, `@put`,
 `@patch` or `@delete`. A `@body` parameter is read from the JSON body;
 a `Result<T>` return value chooses the status.
 
-```slang
+```zell
 namespace guide.web.controllers
 
 import std
@@ -127,7 +127,7 @@ for the raw request and response.
 `@validate` on fields (and parameters) declares the rules; a request
 that breaks them gets one 400 response listing every failed field.
 
-```slang
+```zell
 namespace guide.web.validation
 
 import std.io
@@ -168,7 +168,7 @@ Register services on `app.Services` as singletons (one per app), scoped
 resolution). Controllers receive them in their fields; minimal API
 handlers call `Resolve<T>()`.
 
-```slang
+```zell
 namespace guide.web.di
 
 import std
@@ -228,7 +228,7 @@ readiness checks. Configuration comes from `appsettings.json`,
 `appsettings.<Environment>.json` and environment variables
 (`std.web.config`).
 
-```slang
+```zell
 // check-only
 namespace guide.web.production
 
@@ -254,7 +254,7 @@ Without the framework, a `http.Router` maps patterns to handler
 functions and `http.Server` serves it; `http.Get`, `http.Post` and
 `http.Client` are the client side:
 
-```slang
+```zell
 namespace guide.web.nethttp
 
 import std

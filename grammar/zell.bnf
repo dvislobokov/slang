@@ -1,19 +1,19 @@
-// Slang grammar in IntelliJ Grammar-Kit format.
+// Zell grammar in IntelliJ Grammar-Kit format.
 // Canonical syntax reference for IDE tooling; keep in sync with DESIGN.md
 // and compiler/src/parser.rs. Generates a PSI parser for the IDEA plugin.
 
 {
-  parserClass="org.slang.lang.parser.SlangParser"
+  parserClass="org.zell.lang.parser.ZellParser"
   extends="com.intellij.extapi.psi.ASTWrapperPsiElement"
 
-  psiClassPrefix="Slang"
+  psiClassPrefix="Zell"
   psiImplClassSuffix="Impl"
-  psiPackage="org.slang.lang.psi"
-  psiImplPackage="org.slang.lang.psi.impl"
+  psiPackage="org.zell.lang.psi"
+  psiImplPackage="org.zell.lang.psi.impl"
 
-  elementTypeHolderClass="org.slang.lang.psi.SlangTypes"
-  elementTypeClass="org.slang.lang.psi.SlangElementType"
-  tokenTypeClass="org.slang.lang.psi.SlangTokenType"
+  elementTypeHolderClass="org.zell.lang.psi.ZellTypes"
+  elementTypeClass="org.zell.lang.psi.ZellElementType"
+  tokenTypeClass="org.zell.lang.psi.ZellTokenType"
 
   tokens = [
     // Keywords
@@ -74,7 +74,7 @@ name_segment ::= IDENTIFIER | NAMESPACE | IMPORT | AS | STRUCT | INTERFACE | ENU
 // A declaration ending in `}` gets an automatic SEMI at the newline after it.
 top_level_decl ::= attribute* ((struct_decl | interface_decl | enum_decl | func_decl) eos? | extern_func_decl eos | var_decl eos | const_decl eos)
 // `extern` is a contextual keyword (an IDENTIFIER spelled "extern"): a runtime
-// (C) function without a body, only in the generated std/**/*_extern.sl files.
+// (C) function without a body, only in the generated std/**/*_extern.zl files.
 extern_func_decl ::= IDENTIFIER func_signature
 
 // `@json("name")`, `@reflect`, `@deprecated(reason: "...")`, `@allowCycle`;

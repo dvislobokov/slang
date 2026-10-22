@@ -1,6 +1,6 @@
-# Slang — дизайн языка
+# Zell — дизайн языка
 
-Slang — компилируемый язык с простой структурой в духе Go, но без шумных
+Zell — компилируемый язык с простой структурой в духе Go, но без шумных
 `if err != nil`, с выводом типов через `var`, пространствами имён вместо
 пакетов, методами внутри структур и встроенным `async/await`.
 Компилируется в нативный код через LLVM.
@@ -34,7 +34,7 @@ Slang — компилируемый язык с простой структур
 Один файл начинается с объявления пространства имён. Имя — полный путь,
 точки разделяют уровни.
 
-```slang
+```zell
 namespace app.services.users
 
 import std.io
@@ -83,9 +83,9 @@ struct UserService {
 Только `var`. Тип выводится из инициализатора. Явный тип пишется после имени
 через пробел, как в Go.
 
-```slang
+```zell
 var x = 123          // int
-var name = "slang"   // string
+var name = "zell"   // string
 var ratio = 0.5      // float
 var list []int = []  // явный тип нужен, если из значения не выводится
 var count int        // без инициализатора: нулевое значение
@@ -121,7 +121,7 @@ regex, путей Windows, SQL). Строки — неизменяемые, UTF-
 Параметр — `имя тип`. Возвращаемый тип — после закрывающей скобки, без
 двоеточия. `void` опускается.
 
-```slang
+```zell
 func Add(a int, b int) int { return a + b }
 func Add(a, b int) int { return a + b }       // группировка как в Go
 func Swap(a, b int) (int, int) { return b, a }
@@ -149,7 +149,7 @@ var (x, y) = Swap(1, 2)
 Методы объявляются внутри структуры. Приёмник неявный — `this`. Метод
 по умолчанию работает с указателем на структуру, как `func (s *S)` в Go.
 
-```slang
+```zell
 struct Point {
     X float
     Y float
@@ -192,7 +192,7 @@ var q = Point{X: 3, Y: 4}
 компилятору. Пишутся через `@` перед объявлением, пространства имён,
 структур, полей, методов, функций, вариантов enum и параметров.
 
-```slang
+```zell
 @json(name: "user_id")
 struct User {
     @json(name: "id")       Id    int
@@ -219,7 +219,7 @@ struct User {
   embed.FS` — каталог (все файлы рекурсивно) или шаблон `dir/*.ext`;
   `embed.FS` даёт `ReadFile`/`ReadString`/`Has`/`Names`/`List` по путям
   `dir/имя`. У `var` с `@embed` нет инициализатора.
-- Атрибут-структуры могут объявляться и в stdlib на Slang
+- Атрибут-структуры могут объявляться и в stdlib на Zell
   (`@binary(endian: "big")` из `std.encoding.binary`, `@cli.flag(...)` из
   `std.cli`): они пишутся через пространство имён, как обычные. Ключевое
   слово `default` допустимо как имя поля и аргумента
@@ -236,7 +236,7 @@ struct User {
 Атрибут объявляется как структура с `@attribute`. Поля — параметры,
 значения по умолчанию допускаются.
 
-```slang
+```zell
 namespace app.validation
 
 import std.reflect
@@ -254,7 +254,7 @@ struct tag {
 }
 ```
 
-```slang
+```zell
 @tag("entity")
 @tag("audited")
 struct User {
@@ -283,7 +283,7 @@ struct User {
 интерфейс, если имеет все его методы. `implements` — необязательная проверка
 на месте объявления (см. ниже).
 
-```slang
+```zell
 interface Shape {
     func Area() float
 }
@@ -308,7 +308,7 @@ func Describe(s Shape) {
   переопределяет метод по умолчанию (и при вызове через интерфейс).
   Методы по умолчанию не бывают `static`, `async` или обобщёнными.
 
-  ```slang
+  ```zell
   interface Logger {
       func Log(level int, msg string)
       func Info(msg string) { this.Log(1, msg) }   // по умолчанию
@@ -320,7 +320,7 @@ func Describe(s Shape) {
   `T: Logger`): значение приводится к интерфейсу (переменная-структура —
   по адресу, так что изменения через методы видны в ней самой; `*S`
   удовлетворяет ограничению-интерфейсу, как и `S`). Методы по умолчанию
-  могут объявлять и интерфейсы stdlib на Slang (`hash.Hasher.WriteString`
+  могут объявлять и интерфейсы stdlib на Zell (`hash.Hasher.WriteString`
   по умолчанию пишет байты строки через `Write`). Если такой метод дают два
   разных интерфейса, которые тип реализует, вызов — ошибка `ambiguous
   default method` (приведите значение к нужному интерфейсу явно).
@@ -377,7 +377,7 @@ func Describe(s Shape) {
 | `<`, `<=`, `>`, `>=` | `Ordered` | `func Compare(other T) int` |
 | `a += b` и прочие (`-= *= /= %= @=`) | через соответствующий бинарный | — |
 
-```slang
+```zell
 struct Vec {
     X float
     Y float
@@ -443,7 +443,7 @@ v += a                          // v = v.Add(a)
 
 ## Перечисления
 
-```slang
+```zell
 enum Color { Red, Green, Blue }
 
 enum Result {
@@ -461,7 +461,7 @@ switch r {
 После вариантов перечисление может объявлять методы; `this` — само
 значение (копия, а не указатель). Статических методов у перечислений нет.
 
-```slang
+```zell
 enum Color {
     Red
     Green
@@ -484,7 +484,7 @@ println(Color.Green.IsWarm())
 различный набор аргументов типа компилируется в отдельную функцию/структуру,
 кодогенерация и рантайм про generics ничего не знают.
 
-```slang
+```zell
 func Max<T: Ordered>(a, b T) T {
     if a > b { return a }
     return b
@@ -562,14 +562,14 @@ Go): `a + b` для `T` без `Ordered` — ошибка в самой декл
 
 **Мономорфизация.** Экземпляр `(шаблон, аргументы)` создаётся один раз и
 кэшируется; его имя читаемое (`Max<int>`, `Pair<string, int>.Swap`), символ —
-`slang_<ns>__Max__int` (видно в `slang check --dump-hir`). Методы обобщённой
+`zell_<ns>__Max__int` (видно в `zell check --dump-hir`). Методы обобщённой
 структуры инстанцируются вместе с ней; обобщённые методы — при вызове.
 Рекурсия в обобщённом коде допустима; бесконечное разрастание
 (`F<T>` вызывает `F<[]T>`) обрывается ошибкой после 48 уровней вложенности.
 Значения экземпляров освобождаются как обычные значения своих типов
 (`Drop` экземпляра работает).
 
-**`std.collections`** написана на Slang (обобщённые структуры поверх срезов и
+**`std.collections`** написана на Zell (обобщённые структуры поверх срезов и
 `map`, встроены в компилятор):
 
 | Тип | Методы |
@@ -589,7 +589,7 @@ Go): `a + b` для `T` без `Ordered` — ошибка в самой декл
 указатель автоматически (`p.X`). Арифметики указателей нет. Нулевое
 значение — `nil`.
 
-```slang
+```zell
 var p = Point{X: 1, Y: 2}
 var ptr = &p
 ptr.X = 10
@@ -613,7 +613,7 @@ var copy = *ptr
 Функция, которая может завершиться ошибкой, добавляет `!` к возвращаемому
 типу. `void!` — функция без результата, но с возможной ошибкой.
 
-```slang
+```zell
 func ParseInt(s string) int! {
     if s == "" {
         return error("empty string")
@@ -635,7 +635,7 @@ func Save(path string, data []byte) void! { ... }
 Работает только внутри функции с типом `T!` (или внутри блочного `try`,
 см. ниже).
 
-```slang
+```zell
 func ReadConfig(path string) Config! {
     var text = io.ReadFile(path)?
     var cfg = ParseConfig(text)?
@@ -648,7 +648,7 @@ func ReadConfig(path string) Config! {
 
 ### 3. Обработка на месте: `try`
 
-```slang
+```zell
 // Обработать и выйти / продолжить
 var cfg = try ReadConfig("app.toml") catch err {
     println("config:", err)
@@ -675,7 +675,7 @@ try Save("out.txt", data) catch err {
 блок. Внутри него `?` переходит в `catch` этого блока, а не возвращает из
 функции:
 
-```slang
+```zell
 try {
     var text = io.ReadFile(path)?
     var cfg = ParseConfig(text)?
@@ -712,7 +712,7 @@ try {
 
 `error` — встроенный интерфейс:
 
-```slang
+```zell
 interface error {
     func Message() string
 }
@@ -721,7 +721,7 @@ interface error {
 Любая структура с методом `Message()` может быть ошибкой. Это позволяет
 делать типизированные ошибки и разбирать их через `switch` по типу:
 
-```slang
+```zell
 struct NotFound {
     Path string
     func Message() string { return "not found: " + this.Path }
@@ -749,7 +749,7 @@ var f = try Open("a.txt") catch err {
 исходная ошибка сохраняется внутри. Для проверки по цепочке служат
 `errors.Is` и `errors.As`:
 
-```slang
+```zell
 // Ошибки-значения объявляются как константы и сравниваются через Is
 const ErrNotFound = error("not found")
 const ErrTimeout  = error("timeout")
@@ -803,7 +803,7 @@ try Connect(addr) catch err {
 - Если на ошибку есть другие ссылки, `?` сначала копирует её
   (copy-on-write), чтобы не менять чужую трассу.
 
-```slang
+```zell
 try ReadConfig("app.toml") catch err {
     println(err)                  // config: open app.toml: not found
     println(errors.Trace(err))
@@ -812,9 +812,9 @@ try ReadConfig("app.toml") catch err {
 
 ```
 config: open app.toml: not found
-  created at   app/fs.sl:42      Open
-  returned via app/config.sl:17  ReadConfig  ?("config")
-  returned via app/main.sl:9     main
+  created at   app/fs.zl:42      Open
+  returned via app/config.zl:17  ReadConfig  ?("config")
+  returned via app/main.zl:9     main
 ```
 
 - `println(err)` печатает только сообщение; трасса показывается явно через
@@ -841,8 +841,8 @@ config: open app.toml: not found
 - Копия при записи сохраняет идентичность: `errors.Is(err, ErrX)` верно и
   для копии константы.
 - Полный нативный стектрейс по-прежнему снимается при `panic`. Для ошибок
-  его планируется включать в отладке (`slang run --debug-errors` или
-  `SLANG_ERROR_BACKTRACE=1`: при создании ошибки сохраняются сырые адреса
+  его планируется включать в отладке (`zell run --debug-errors` или
+  `ZELL_ERROR_BACKTRACE=1`: при создании ошибки сохраняются сырые адреса
   кадров, символизация лениво при печати); в 0.1 это не реализовано.
 - В release трасса включена; `--no-error-trace` отключает запись для
   случаев, когда ошибки используются как управление потоком в горячем цикле
@@ -850,7 +850,7 @@ config: open app.toml: not found
 
 ### Как это выглядит вместе
 
-```slang
+```zell
 func LoadUsers(path string) []User! {
     var text = io.ReadFile(path)?("loading users")
     var lines = strings.Split(text, "\n")
@@ -870,7 +870,7 @@ func LoadUsers(path string) []User! {
 
 Как в Go, без скобок вокруг условий, с обязательными фигурными скобками.
 
-```slang
+```zell
 if x > 0 {
     ...
 } else if x < 0 {
@@ -911,7 +911,7 @@ code point), `map`, коллекции `std.collections` и любой тип, �
 `Iter()`), `Deque`, `Ring`, `Heap`, `BitSet` (через `Items()`),
 `regex.Iter` и `Channel`.
 
-```slang
+```zell
 struct Countdown {
     From int
     func Iter() countIter { return countIter{n: this.From} }
@@ -935,7 +935,7 @@ for x in (Countdown{From: 3}) { print(x) }   // 321
 без `break` в конце каждого `case`. Поддерживает значения, диапазоны,
 несколько вариантов, деструктуризацию enum и проверку типа.
 
-```slang
+```zell
 switch n {
     case 1, 2:       println("small")
     case 3..10:      println("medium")
@@ -974,7 +974,7 @@ switch res {
 Модель — задачи (tasks) на пуле потоков, как в C#/Tokio, с
 языковым `async`/`await`.
 
-```slang
+```zell
 async func Fetch(url string) string! {
     var resp = await http.Get(url)?
     return await resp.Text()?
@@ -1057,13 +1057,13 @@ async func main() {
   удаляет `globaldce`.
 - Раскладка таблиц (общая для компилятора и рантайма) — `runtime/ABI.md`,
   раздел 17: таблица — неуничтожимый объект `{-1, null, TypeInfo}`, первые
-  три слова `TypeInfo` — заголовок `slang_type_info` рантайма; поля,
+  три слова `TypeInfo` — заголовок `zell_type_info` рантайма; поля,
   методы, варианты и значения атрибутов — тоже неуничтожимые объекты,
   срезы таблиц без `backing` (подсчёт ссылок на них ничего не делает).
 
 ### API (`std.reflect`)
 
-```slang
+```zell
 var t = reflect.TypeOf<User>()         // статически, без значения
 var t2 = typeof(u)                     // по значению, встроенная функция
 
@@ -1137,7 +1137,7 @@ for variant in reflect.TypeOf<Color>().Variants { println(variant.Name) }
 в generic-коде: компилятор раскрывает обход полей на этапе компиляции,
 когда тип известен (мономорфизация).
 
-```slang
+```zell
 func ToJson<T>(value T) string {
     var b = strings.Builder{}
     b.Write("{")
@@ -1175,8 +1175,8 @@ func ToJson<T>(value T) string {
 ### Реализовано
 
 - `std.reflect` целиком в описанном объёме (кроме списка реализуемых
-  интерфейсов и методов у таблиц интерфейсов); исходник на Slang —
-  `compiler/src/sema/reflect_src/reflect.sl`, тела нескольких внутренних
+  интерфейсов и методов у таблиц интерфейсов); исходник на Zell —
+  `compiler/src/sema/reflect_src/reflect.zl`, тела нескольких внутренних
   функций генерирует компилятор (`codegen/reflect.rs`).
 - `std.encoding.json`: `Parse<T>(text) T!` и `Format<T>(v T) string`
   через compile-time рефлексию (структуры с `@json(name:, omitEmpty:,
@@ -1200,12 +1200,12 @@ func ToJson<T>(value T) string {
   `std.text.template.Parse<T>` проверяют поля `T` через `reflect.TypeInfo`
   во время выполнения, а для строкового литерала — ещё и при компиляции
   (`sema/litcheck.rs`, вместе с `regex.Pattern("...")`).
-- Библиотеки на Slang загружаются при первом обращении к их именам,
+- Библиотеки на Zell загружаются при первом обращении к их именам,
   поэтому программы без рефлексии не платят ничего.
 
 ### Сравнение
 
-| | Go | C# | Slang |
+| | Go | C# | Zell |
 |---|---|---|---|
 | Метаданные | runtime таблицы | metadata + JIT | статические таблицы, урезаемые |
 | Теги полей | строки `json:"id"` | типизированные атрибуты | типизированные атрибуты, проверяются компилятором |
@@ -1236,7 +1236,7 @@ func ToJson<T>(value T) string {
 - `task.Any` отменяет проигравшие задачи; `task.All` при первой ошибке
   отменяет остальные.
 
-```slang
+```zell
 async func Search(query string) []Result! {
     return await task.WithTimeout(5000, async () => {
         return await task.Scope(async (s *task.Scope) => {
@@ -1253,7 +1253,7 @@ async func Search(query string) []Result! {
 Аналог `AsyncLocal<T>` и `context.WithValue`, но с типизированными ключами и
 без параметра `ctx` в сигнатурах:
 
-```slang
+```zell
 const CurrentSpan = task.Key<SpanInfo>()      // уникальный типизированный ключ
 
 await task.With(CurrentSpan, span, async () => {   // действует на время fn
@@ -1275,8 +1275,8 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
   `diag.StartSpan`, `log.Context.Push`), не видны вызывающему после
   первой приостановки или завершения функции: рантайм возвращает контекст
   вызывающего (runtime/ABI.md, 10.8).
-- Используется `slang.diag` (текущий span), `slang.log` (`Enrich.FromContext`),
-  `http.Client` и `sql` (автоматический `traceparent`), DI-scope в `slang.web`.
+- Используется `zell.diag` (текущий span), `zell.log` (`Enrich.FromContext`),
+  `http.Client` и `sql` (автоматический `traceparent`), DI-scope в `zell.web`.
 
 ## Память
 
@@ -1422,7 +1422,7 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 где объект действительно трогают разные потоки:
 
 - пока в процессе один поток (планировщик запускается при первой задаче),
-  счётчик меняется без атомарных инструкций (`slang_threaded`);
+  счётчик меняется без атомарных инструкций (`zell_threaded`);
 - в многопоточном процессе работает **смещённый подсчёт ссылок** (biased
   reference counting, как в Swift и CPython без GIL): объект, который
   удерживает поток-воркер (или главный поток), «принадлежит» ему — слово
@@ -1491,7 +1491,7 @@ warning: W0001 type Node can form a reference cycle through field Parent (*Node)
 типа с атрибутом `@allowCycle` (на структуре или перечислении); у
 компоненты, где какой-то тип уже держит `weak`-ссылку внутрь неё
 (дерево со слабым `Parent`, список наблюдателей — направление владения
-задано). `--deny-warnings` (`slang build/run/check`) превращает все
+задано). `--deny-warnings` (`zell build/run/check`) превращает все
 предупреждения в ошибки. Атрибут `@acyclic` на структуре или
 перечислении — **обещание** программиста, что значения типа никогда не
 лежат на цикле (дерево, список): у типа нет исходящих рёбер в графе, он
@@ -1502,22 +1502,22 @@ warning: W0001 type Node can form a reference cycle through field Parent (*Node)
 строку `type Node is @acyclic but was found in a cycle`. Предупреждение — подсказка, а не запрет: такие
 типы по-прежнему компилируются, и их циклы освобождает сборщик.
 
-**(б) Диагностика в продакшене.** `slang run --leak-check` (и `slang
+**(б) Диагностика в продакшене.** `zell run --leak-check` (и `zell
 build --leak-check`): при выходе программа печатает в stderr `leak: N
 objects`, (в отладочной сборке) строки `K x Тип` для ещё живых объектов
 и `cycle through Type.Field` — поле `*T`, замыкающее цикл, — и
 завершается с кодом 66. Неумирающие литералы и sentinel-ошибки не
-считаются. В режиме `SLANG_CYCLES=auto` перед отчётом выполняется
+считаются. В режиме `ZELL_CYCLES=auto` перед отчётом выполняется
 последняя сборка циклов (утечкой остаётся только то, что сборщик
 освободить не может); в режиме `manual` отчёт добавляет строку `M of
 them in unreachable reference cycles the cycle collector can free` —
 сколько из утёкших объектов лежат в недостижимых циклах, а остальное —
 настоящие утечки (объект удерживает что-то вне кучи: глобальная
-переменная, зависшая задача). Без `--leak-check`: `SLANG_DIAG_HEAP=1`
+переменная, зависшая задача). Без `--leak-check`: `ZELL_DIAG_HEAP=1`
 включает дешёвые счётчики живых объектов по типам (`std.diag.HeapByType`,
 обработчик `/debug/heap` с приростом с прошлого запроса,
-docs/FRAMEWORK.md §5), а метрики `slang_cycles_collected_total`,
-`slang_cycle_collections_total`, `slang_cycle_candidates` попадают в
+docs/FRAMEWORK.md §5), а метрики `zell_cycles_collected_total`,
+`zell_cycle_collections_total`, `zell_cycle_candidates` попадают в
 `diag.PrometheusText`; `std.runtime.CycleStats()` даёт то же из кода.
 
 **(в) Ограниченный сборщик циклов.** Синхронное пробное удаление (trial
@@ -1547,7 +1547,7 @@ deletion) Бэкона–Раджана поверх счётчиков ссыл
   останавливается: остальные потоки работают, а объект, счётчик которого
   поменялся во время сборки, считается живым (проверка перед
   освобождением; инвариант — `runtime/ABI.md` 3.8). Размер просматриваемого
-  множества ограничен (`SLANG_CYCLES_MAX_SCAN`, по умолчанию 4M объектов;
+  множества ограничен (`ZELL_CYCLES_MAX_SCAN`, по умолчанию 4M объектов;
   больше — сборка отменяется).
 - Освобождение мусорного цикла: сначала обнуляются слабые ссылки на его
   объекты, затем вызываются **все** их `Drop` (в порядке записи
@@ -1555,9 +1555,9 @@ deletion) Бэкона–Раджана поверх счётчиков ссыл
   поля и память. Если `Drop` сохранил объект цикла куда-то наружу, этот
   объект и то, что он достигает, остаются жить (и считаются утечкой), а
   `Drop` никогда не вызывается дважды.
-- Когда: `SLANG_CYCLES=auto` (по умолчанию) — после записи N кандидатов
+- Когда: `ZELL_CYCLES=auto` (по умолчанию) — после записи N кандидатов
   (N адаптивно: 4096 вначале, от 1024 до 4M — удваивается, если сборки
-  находят мало мусора; `SLANG_CYCLES_THRESHOLD=N` фиксирует), при
+  находят мало мусора; `ZELL_CYCLES_THRESHOLD=N` фиксирует), при
   ближайшем создании объекта циклического типа в потоке, который это
   заметил; `manual` — только `std.runtime.CollectCycles()` (возвращает
   число освобождённых объектов); `off` — сборщика нет: флаги не ставятся,
@@ -1579,7 +1579,7 @@ deletion) Бэкона–Раджана поверх счётчиков ссыл
 Для серверов, парсеров и других задач с чётким жизненным циклом есть
 библиотечные арены (`std.arena`) — дополнение к ARC, а не замена:
 
-```slang
+```zell
 func Handle(words []string) int {
     var a = arena.New()
     defer a.Free()                  // идиома: одна арена на запрос
@@ -1610,7 +1610,7 @@ func Handle(words []string) int {
   сразу, когда счётчик обнулился (или в конце блока для значения на
   стеке); файлы и сокеты закрываются вовремя. Исключение — объекты
   недостижимого цикла: их `Drop` вызывает сборщик циклов, когда до них
-  доходит (или никогда, если `SLANG_CYCLES=off`).
+  доходит (или никогда, если `ZELL_CYCLES=off`).
 - Нет фонового потока и барьеров записи, маленький рантайм. Пауза
   сборщика циклов — только у потока, который его запустил, и длится
   столько, сколько занимает просмотр множества кандидатов; остальные
@@ -1641,11 +1641,11 @@ func Handle(words []string) int {
 
 Исходники стандартной библиотеки лежат на диске в `std/<путь пространства
 имён>/` (генерируются `compiler/build.rs`, см. docs/TOOLING.md):
-модули на Slang и файлы-объявления `<ns>_extern.sl` для функций рантайма
+модули на Zell и файлы-объявления `<ns>_extern.zl` для функций рантайма
 вида `extern func Split(s string, sep string) []string` (без тела;
 `extern` — контекстное ключевое слово, допустимое только в этих файлах,
 в пользовательском коде — ошибка). Компилятор загружает модули из
-`$SLANG_STD`, `<exe>/../std` или `std/` репозитория, иначе использует
+`$ZELL_STD`, `<exe>/../std` или `std/` репозитория, иначе использует
 встроенные копии.
 
 | Пространство | Содержимое | Реализовано |
@@ -1654,14 +1654,14 @@ func Handle(words []string) int {
 | `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`, `Sprintf` (глаголы Go: `%v %d %s %f %.2f %5d %-4d %03d %x %q %c %t %e %%`); даты — `time.Format` |
 | `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё (`Builder{}` с `Write`, `String`, `Len`, `Reset`), плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
 | `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
-| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓, плюс `LinkedList<T>`, `Deque<T>`, `Ring<T>(cap)`, `Heap<T: Ordered>`, `PriorityQueue<T>(less)` (FIFO при равенстве), `OrderedMap<K: Ordered, V>` (`Min/Max/Floor/Ceiling/Range`), `LRU<K, V>(cap)`, `BitSet` (`stdlib_src/collections2.sl`; `for` по ним — через `Items()`/`Keys()`) |
+| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓, плюс `LinkedList<T>`, `Deque<T>`, `Ring<T>(cap)`, `Heap<T: Ordered>`, `PriorityQueue<T>(less)` (FIFO при равенстве), `OrderedMap<K: Ordered, V>` (`Min/Max/Floor/Ceiling/Range`), `LRU<K, V>(cap)`, `BitSet` (`stdlib_src/collections2.zl`; `for` по ним — через `Items()`/`Keys()`) |
 | `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, `Go(f func() Task<void>)`; значения контекста `Key<T>()`, `Get(key) *T`, `With(key, value, f)`, `CurrentContext() Context`, `RunWith(ctx, f)`, `SpawnWith(ctx, f)`; отмена `NewCancel() CancelHandle` (`Context`, `Cancel()`, `IsCancelled()`), `WithTimeout(ms, f)`, `CheckCancelled() void!`, `IsCancelled()`, `ErrCancelled`; `Any` отменяет проигравших. Нет: `Scope`, `WithDeadline`, `OnCancel`, отмены остальных в `All` |
 | `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; файлы `Open`/`Create`/`OpenFile(path, O_* флаги, perm)` → `File` (`Read`/`ReadAt`/`Write`/`Seek`/`Close`/`Sync`/`Truncate`/`Stat`, реализует интерфейсы `std.io`), `Stat`/`Lstat` → `FileInfo`, `ReadDir` → `[]DirEntry`, `Chmod`, `Stdin/Stdout/Stderr()`; `std.os.signal` (`Wait`, `WaitAny`, `Notify`, `Catch`, `Ignore`, `Reset`, `Raise`); `std.os.user`; процессы — `std.process` |
 | `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir`; `fs.ErrNotFound` — ошибка-константа, которую оборачивают все ошибки «файл не найден» (`errors.Is(err, fs.ErrNotFound)`) |
-| `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; типы (`stdlib_src/time.sl`): `Duration` (нс; `Seconds()`, `String()` как в Go `1h2m3.5s`, `ParseDuration`, конструкторы `time.Seconds(n)`… вместо констант), `Time` (`Time.Now()`/`Current()`, `Unix`, `Date`, `Add`/`Sub`/`AddDate`, `Before`/`After`/`Equal`, `Format` по эталону Go и `Strftime`, `ParseTime`/`ParseInLocation`, `Truncate`/`Round`, `In`/`UTC`/`Local`, `Zone`, `ISOWeek`), `Location` (`UTC()`, `Local()`, `LoadLocation` из `/usr/share/zoneinfo` с POSIX-правилами после последнего перехода, `FixedZone`), раскладки `RFC3339`…, `Instant` (монотонные часы), async `NewTicker`/`NewTimer`/`After`. Имена Go, занятые int-функциями: `Since` → `Elapsed`, `Sleep` → `SleepFor`, `Parse` → `ParseTime`, `t.Month()` — `int` |
+| `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; типы (`stdlib_src/time.zl`): `Duration` (нс; `Seconds()`, `String()` как в Go `1h2m3.5s`, `ParseDuration`, конструкторы `time.Seconds(n)`… вместо констант), `Time` (`Time.Now()`/`Current()`, `Unix`, `Date`, `Add`/`Sub`/`AddDate`, `Before`/`After`/`Equal`, `Format` по эталону Go и `Strftime`, `ParseTime`/`ParseInLocation`, `Truncate`/`Round`, `In`/`UTC`/`Local`, `Zone`, `ISOWeek`), `Location` (`UTC()`, `Local()`, `LoadLocation` из `/usr/share/zoneinfo` с POSIX-правилами после последнего перехода, `FixedZone`), раскладки `RFC3339`…, `Instant` (монотонные часы), async `NewTicker`/`NewTimer`/`After`. Имена Go, занятые int-функциями: `Since` → `Elapsed`, `Sleep` → `SleepFor`, `Parse` → `ParseTime`, `t.Month()` — `int` |
 | `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New` | ✓ всё |
 
-Уровень 2 (`docs/STDLIB.md`; Slang в `compiler/src/sema/stdlib_src/`, C —
+Уровень 2 (`docs/STDLIB.md`; Zell в `compiler/src/sema/stdlib_src/`, C —
 `runtime/ABI.md` §21): `std.regex` (синтаксис RE2, ленивый DFA + Pike VM,
 линейное время; `regex.Pattern("литерал")` проверяется при компиляции),
 `std.compress.{deflate,zlib,gzip}` (кодер и декодер, потоковые `Writer`/
@@ -1681,7 +1681,7 @@ brotli, bzip2, lzw.
 | `std.net` | TCP/UDP/Unix-сокеты, `Dial`/`Dialer` (Happy Eyeballs; TCP self-connect — ядро выбрало набираемый порт loopback исходным — считается `ErrRefused`, как в Go), `Listen`/`ListenConfig` (dual-stack), DNS через пул резолверов, `IP`/`Addr`, опции сокетов, half-close, дедлайны, `SendFile`, буферизованный ввод-вывод, типизированные ошибки; всё асинхронное |
 | `std.net.http` | клиент: `Get`, `Post`, `Request`, `Client` с таймаутами и заголовками; сервер: `Server`, `Router`, `Handler`, middleware; HTTP/1.1 и HTTP/2 |
 
-Реализовано (Slang-код в `compiler/src/sema/stdlib_src/`, рантайм —
+Реализовано (Zell-код в `compiler/src/sema/stdlib_src/`, рантайм —
 `runtime/ABI.md` §10.9, §16):
 
 - `std.net` (рантайм — `runtime/ABI.md` §10.9, §16):
@@ -1846,7 +1846,7 @@ brotli, bzip2, lzw.
     с `Allow`, `Use(mw)` — middleware `func(next Handler) Handler` в порядке
     добавления; `Chain(h, mws)`.
   - **Middleware и файлы**: `Recover()` (ошибка обработчика → залогированный
-    500 без текста; паники в Slang не перехватываются), `Logging(logger)`
+    500 без текста; паники в Zell не перехватываются), `Logging(logger)`
     (событие `HTTP {RequestMethod} {RequestPath} responded {StatusCode} in
     {Elapsed} ms` в `std.log`), `CORS(CORSOptions{...})` (preflight → 204),
     `Gzip(level)`, `BodyLimit(n)`, `TimeoutHandler(h, ms, msg)` (503, отмена
@@ -1864,12 +1864,12 @@ brotli, bzip2, lzw.
     `NewServerWith(h, Options{...})` — сервер на свободном порту
     `127.0.0.1` с полями `URL`, `Client`, `Transport` и `Close()`;
     `NewRecorder()`, `NewRequest(method, target, body)`, `Serve(h, req)`.
-| `std.net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Slang; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `slang.web`. ✓ реализовано (см. ниже), кроме OCSP, ACME и горячей перезагрузки сертификатов |
+| `std.net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Zell; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `zell.web`. ✓ реализовано (см. ниже), кроме OCSP, ACME и горячей перезагрузки сертификатов |
 | `std.net.ws` | WebSocket (RFC 6455) клиент и сервер: `Upgrade(req, res) Task<Conn!>` / `UpgradeWith(req, res, UpgradeOptions{Subprotocols, Origins, Headers})` внутри `http.Handler`, `Dial(url)` / `DialWith(url, DialOptions{...})` (`ws://`, `wss://`); `Conn`: `Send(Message)`, `SendText`, `SendBinary`, `SendFragments`, `Ping`, `Recv() Task<Message!>`, `for msg in conn`, `Close()`, `CloseWith(code, reason)`, `Pongs()`, `SetMaxMessageSize`; фрагментация, ping/pong (pong — автоматически), коды закрытия (`CloseError`, `IsCloseError`), маскирование, проверка UTF-8; `Send` из нескольких задач сериализуется мьютексом. permessage-deflate не реализован. ✓ реализовано |
 | `std.net.url` | разбор и сборка URL, query-параметры |
 | `std.net.mail` | адреса RFC 5322, сборка MIME-писем и отправка по SMTP — ✓ (см. ниже) |
 
-Реализовано (`std.net.tls`, Slang-код `compiler/src/sema/stdlib_src/tls*.sl`
+Реализовано (`std.net.tls`, Zell-код `compiler/src/sema/stdlib_src/tls*.zl`
 поверх `std.net` и примитивов `std.crypto.*`; рантайм — `runtime/ABI.md` §19):
 
 - Версии: TLS 1.3 (RFC 8446) и TLS 1.2 только с ECDHE + AEAD (RFC 5246,
@@ -1922,7 +1922,7 @@ brotli, bzip2, lzw.
   post-handshake auth, 0-RTT, P-521, RSA-PSS-ключи (`rsassa-pss` OID),
   горячей перезагрузки сертификатов.
 
-Реализовано (`std.net.mail`, Slang, `sema/stdlib_src/mail.sl`):
+Реализовано (`std.net.mail`, Zell, `sema/stdlib_src/mail.zl`):
 
 - `Address{Name, Address}` с `String()` (имя в кавычках или RFC 2047),
   `ParseAddress(s)`, `ParseAddressList(s)` (кавычки, `<...>`, старая форма
@@ -1960,7 +1960,7 @@ brotli, bzip2, lzw.
 
 Реализация: примитивы — на C в рантайме, по проверенным реализациям с
 константным временем (без ветвлений и обращений к памяти по секретам),
-с векторами Wycheproof и RFC в тестах; протоколы (TLS, x509, JWT) — на Slang.
+с векторами Wycheproof и RFC в тестах; протоколы (TLS, x509, JWT) — на Zell.
 Внешних криптобиблиотек нет; до внешнего аудита это отмечено в документации.
 
 Реализовано: `std.crypto.hash` — `Sha256`, `Sha512`, `Sha1`, `Md5` (`[]byte`)
@@ -1982,7 +1982,7 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
   `HasHardware()`. Ключи 16/24/32 байта, nonce 12 байт. Без AES-NI —
   bitsliced AES (64-битный, 4 блока за проход) и GHASH на умножениях «с
   дырками», без таблиц по секретам; с AES-NI+PCLMULQDQ — intrinsics
-  (выбор по cpuid, `SLANG_NO_AESNI=1` отключает).
+  (выбор по cpuid, `ZELL_NO_AESNI=1` отключает).
 - `std.crypto.chacha`: `Seal`, `Open` — ChaCha20-Poly1305 (RFC 8439).
 - `std.crypto.x25519`: `GenerateKey()`, `PublicKey(priv)`,
   `SharedSecret(priv, peer)` (нулевой секрет малого порядка — ошибка).
@@ -2033,7 +2033,7 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
   `EncryptOAEP(n, e, hash, msg, label)` / `DecryptOAEP(keyDER, hash, ct,
   label)` (RFC 8017 §7.1, декодирование за постоянное время),
   `IsProbablePrime(p, rounds)`.
-- `std.crypto.x509` (Slang, `sema/stdlib_src/x509.sl`): `ParseDER(der)
+- `std.crypto.x509` (Zell, `sema/stdlib_src/x509.zl`): `ParseDER(der)
   *Certificate!`, `ParsePEM(text) []*Certificate!`, `DecodePEM`/`EncodePEM`,
   `Certificate{Raw, RawTBSCertificate, Version, SerialNumber, Subject,
   Issuer, NotBefore, NotAfter (Unix ms), PublicKeyAlgorithm, PublicKey,
@@ -2065,13 +2065,13 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 | `std.encoding.base64`, `std.encoding.hex` | кодировки |
 | `std.encoding.csv` | чтение и запись CSV |
 | `std.compress` | gzip, zlib, zstd (декодер и кодер), brotli (декодер) |
-| `std.regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Slang |
+| `std.regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Zell |
 | `std.unicode` | классификация символов, нормализация (✓ классы и регистр по таблицам Unicode 15, `utf8`, `utf16`; нет нормализации) |
-| `std.database.sql` | единый асинхронный интерфейс к SQL с пулом и `Query<T>`; драйверы `std.database.postgres` (на Slang) и `std.database.sqlite` (системная libsqlite3) — ✓ (см. `docs/FRAMEWORK.md` §3); MySQL позже |
-| `std.data` | ORM уровня EF Core (`slang.data`) — ✓: модель из атрибутов и соглашений, `data.Context` с `data.Set<T>`, запросы с лямбдами, переведёнными в SQL при компиляции, change tracking, миграции (`slang data ...`); PostgreSQL и SQLite (см. `docs/FRAMEWORK.md` §3) |
-| `std.data.redis` | клиент Redis на Slang (уровень 3б `docs/STDLIB.md`) — ✓: RESP2/RESP3 (`HELLO 3` с откатом на RESP2), `redis.Connect(url)` (`redis://`, `rediss://`, `unix://`, AUTH, SELECT, параметры пула в URL), типизированные команды методами (`Get/Set/SetEx/SetNX/Del/Exists/Incr/Expire/TTL/MGet/MSet/H*/L*/S*/Z*/PF*/XAdd/XRange/Keys/Scan/Publish/Eval/EvalSha/Script*`; несколько значений — срезом, вариадиков нет) и `Do(args []any) Reply!`; отсутствующее значение — `redis.Nil`, ошибка сервера — `redis.Error{Code, Text}`; пул с проверкой простаивающих (PING), сроком жизни, ожиданием с таймаутом (`ErrPoolTimeout`), повторами с backoff; `Pipeline()` — задачи команд завершаются после `Exec` (одна запись в сокет); `TxPipeline` (MULTI/EXEC), `Watch(keys, fn)` (`ErrTxFailed`); `NewScript` + `Run` (EVALSHA → EVAL при NOSCRIPT); `Subscribe/PSubscribe` с `for msg in sub` и переподключением; таймауты через контекст задачи; **Sentinel** (`ConnectSentinel`: поиск мастера, подписка на `+switch-master`, повторный опрос при READONLY/сетевой ошибке, чтение с реплик); **Cluster** (`ConnectCluster`: карта слотов из `CLUSTER SLOTS`, CRC16 и hash tags, MOVED/ASK, многоключевые команды в одном слоте — иначе `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE); `GetJSON<T>/SetJSON<T>` и `redis.Get<T>/Set<T>`. Проверено на redis-server 7.0 (TLS, Sentinel с отказом мастера, Cluster из 3 узлов с миграцией слота) |
-| `std.data.kafka` | клиент Kafka на Slang без C — ✓: протокол (ApiVersions 0, Metadata 1, Produce 7/3, Fetch 10/4, ListOffsets 1, FindCoordinator 1, JoinGroup 2, SyncGroup 1, Heartbeat 1, LeaveGroup 1, OffsetCommit 2, OffsetFetch 1, SaslHandshake 1, SaslAuthenticate 0, CreateTopics 2, DeleteTopics 1, InitProducerId 0), record batch v2 (CRC-32C, gzip, zstd; snappy/lz4 нет), `NewProducer(brokers, opts)` с батчами по размеру и `LingerMs`, acks, идемпотентностью (producer id + последовательности), разбиением по murmur2 как в Java-клиенте и round-robin, `Send(topic, key, value) Task<RecordMetadata!>`; `NewConsumer(brokers, group, topics)` — группы (range/round-robin, ребаланс, heartbeat в фоновой задаче, авто- и ручной commit), `for rec in consumer`, `Poll`, `Seek`; `NewAdmin` (create/delete/list/describe); TLS, SASL PLAIN/SCRAM-SHA-256/512, обновление метаданных при смене лидера, повторы с backoff. Проверено на Kafka 3.7 (KRaft) |
-| `std.cloud.s3`, `std.cloud.blob` | клиент S3 на Slang — ✓: AWS Signature V4 (заголовки и presigned URL; векторы AWS и botocore), `s3.NewClient(Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle})` для AWS, MinIO, R2, GCS; `PutObject` (тип, метаданные, ACL, `If-None-Match`), `GetObject` потоком и диапазоном, `GetObjectBytes`, `HeadObject`, `DeleteObject(s)`, `ListObjectsV2` и итератор `List` с префиксами и разделителем, `CopyObject`, бакеты (`Create/Delete/List/Exists`), multipart `Upload(bucket, key, reader, partSize, concurrency)` с параллельными частями и отменой при ошибке, `Presign`, типизированные ошибки (`s3.Error`, `ErrNoSuchKey`…), повторы при 5xx/SlowDown, учётные данные из env, `~/.aws/credentials` и IMDSv2; `std.cloud.blob.Bucket` поверх S3 (`OpenS3`) и каталога (`OpenDir`). Проверено на MinIO |
+| `std.database.sql` | единый асинхронный интерфейс к SQL с пулом и `Query<T>`; драйверы `std.database.postgres` (на Zell) и `std.database.sqlite` (системная libsqlite3) — ✓ (см. `docs/FRAMEWORK.md` §3); MySQL позже |
+| `std.data` | ORM уровня EF Core (`zell.data`) — ✓: модель из атрибутов и соглашений, `data.Context` с `data.Set<T>`, запросы с лямбдами, переведёнными в SQL при компиляции, change tracking, миграции (`zell data ...`); PostgreSQL и SQLite (см. `docs/FRAMEWORK.md` §3) |
+| `std.data.redis` | клиент Redis на Zell (уровень 3б `docs/STDLIB.md`) — ✓: RESP2/RESP3 (`HELLO 3` с откатом на RESP2), `redis.Connect(url)` (`redis://`, `rediss://`, `unix://`, AUTH, SELECT, параметры пула в URL), типизированные команды методами (`Get/Set/SetEx/SetNX/Del/Exists/Incr/Expire/TTL/MGet/MSet/H*/L*/S*/Z*/PF*/XAdd/XRange/Keys/Scan/Publish/Eval/EvalSha/Script*`; несколько значений — срезом, вариадиков нет) и `Do(args []any) Reply!`; отсутствующее значение — `redis.Nil`, ошибка сервера — `redis.Error{Code, Text}`; пул с проверкой простаивающих (PING), сроком жизни, ожиданием с таймаутом (`ErrPoolTimeout`), повторами с backoff; `Pipeline()` — задачи команд завершаются после `Exec` (одна запись в сокет); `TxPipeline` (MULTI/EXEC), `Watch(keys, fn)` (`ErrTxFailed`); `NewScript` + `Run` (EVALSHA → EVAL при NOSCRIPT); `Subscribe/PSubscribe` с `for msg in sub` и переподключением; таймауты через контекст задачи; **Sentinel** (`ConnectSentinel`: поиск мастера, подписка на `+switch-master`, повторный опрос при READONLY/сетевой ошибке, чтение с реплик); **Cluster** (`ConnectCluster`: карта слотов из `CLUSTER SLOTS`, CRC16 и hash tags, MOVED/ASK, многоключевые команды в одном слоте — иначе `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE); `GetJSON<T>/SetJSON<T>` и `redis.Get<T>/Set<T>`. Проверено на redis-server 7.0 (TLS, Sentinel с отказом мастера, Cluster из 3 узлов с миграцией слота) |
+| `std.data.kafka` | клиент Kafka на Zell без C — ✓: протокол (ApiVersions 0, Metadata 1, Produce 7/3, Fetch 10/4, ListOffsets 1, FindCoordinator 1, JoinGroup 2, SyncGroup 1, Heartbeat 1, LeaveGroup 1, OffsetCommit 2, OffsetFetch 1, SaslHandshake 1, SaslAuthenticate 0, CreateTopics 2, DeleteTopics 1, InitProducerId 0), record batch v2 (CRC-32C, gzip, zstd; snappy/lz4 нет), `NewProducer(brokers, opts)` с батчами по размеру и `LingerMs`, acks, идемпотентностью (producer id + последовательности), разбиением по murmur2 как в Java-клиенте и round-robin, `Send(topic, key, value) Task<RecordMetadata!>`; `NewConsumer(brokers, group, topics)` — группы (range/round-robin, ребаланс, heartbeat в фоновой задаче, авто- и ручной commit), `for rec in consumer`, `Poll`, `Seek`; `NewAdmin` (create/delete/list/describe); TLS, SASL PLAIN/SCRAM-SHA-256/512, обновление метаданных при смене лидера, повторы с backoff. Проверено на Kafka 3.7 (KRaft) |
+| `std.cloud.s3`, `std.cloud.blob` | клиент S3 на Zell — ✓: AWS Signature V4 (заголовки и presigned URL; векторы AWS и botocore), `s3.NewClient(Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle})` для AWS, MinIO, R2, GCS; `PutObject` (тип, метаданные, ACL, `If-None-Match`), `GetObject` потоком и диапазоном, `GetObjectBytes`, `HeadObject`, `DeleteObject(s)`, `ListObjectsV2` и итератор `List` с префиксами и разделителем, `CopyObject`, бакеты (`Create/Delete/List/Exists`), multipart `Upload(bucket, key, reader, partSize, concurrency)` с параллельными частями и отменой при ошибке, `Presign`, типизированные ошибки (`s3.Error`, `ErrNoSuchKey`…), повторы при 5xx/SlowDown, учётные данные из env, `~/.aws/credentials` и IMDSv2; `std.cloud.blob.Bucket` поверх S3 (`OpenS3`) и каталога (`OpenDir`). Проверено на MinIO |
 
 Реализовано: `std.encoding.base64` — `Encode`, `EncodeString`, `Decode`,
 `DecodeString`, URL-safe `EncodeURL`/`DecodeURL`; `std.encoding.hex` —
@@ -2082,13 +2082,13 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 ### Фреймворк
 
 Поверх стандартной библиотеки строится фреймворк уровня ASP.NET Core:
-`slang.web` (маршруты через атрибуты, DI, middleware, OpenAPI),
-`slang.data` (ORM уровня EF Core с переводом лямбд в SQL при компиляции и
-миграциями; реализован как `std.data`, см. ниже), `slang.log` (структурированный логгер уровня Serilog с sinks и
-enrichers), `slang.diag` (профилировщик CPU/памяти/задач в формате pprof,
-метрики, OpenTelemetry, `slang tool pprof`). Подробно: `docs/FRAMEWORK.md`.
+`zell.web` (маршруты через атрибуты, DI, middleware, OpenAPI),
+`zell.data` (ORM уровня EF Core с переводом лямбд в SQL при компиляции и
+миграциями; реализован как `std.data`, см. ниже), `zell.log` (структурированный логгер уровня Serilog с sinks и
+enrichers), `zell.diag` (профилировщик CPU/памяти/задач в формате pprof,
+метрики, OpenTelemetry, `zell tool pprof`). Подробно: `docs/FRAMEWORK.md`.
 
-Пока нет реестра пакетов, `slang.web` живёт в stdlib как `std.web`
+Пока нет реестра пакетов, `zell.web` живёт в stdlib как `std.web`
 (`std.web.auth.jwt`, `std.web.config`). Вызовы `app.MapController<C>()`,
 `app.MapGet(path, handler)` и `app.Services.AddSingleton<T>()` (и их
 родственники) компилятор раскрывает при компиляции (`sema/web.rs`): по
@@ -2099,7 +2099,7 @@ enrichers), `slang.diag` (профилировщик CPU/памяти/задач
 Внутри таких экземпляров `T.New(...)` с параметром типа, связанным со
 структурой, вызывает её статический метод.
 
-**Перевод лямбд в SQL при компиляции (`std.data`).** `slang.data` тоже
+**Перевод лямбд в SQL при компиляции (`std.data`).** `zell.data` тоже
 живёт в stdlib как `std.data` (docs/FRAMEWORK.md §3). Лямбда, переданная
 литералом в `Where`, `OrderBy`, `Select`, `GroupBy`, `Join`, `Sum`,
 `ExecuteUpdate`, ... у получателя `data.Set<T>`/`data.Query<T>`, не
@@ -2123,8 +2123,8 @@ SQL-аналога, `await`, сравнение несовместимых ти�
 
 ### GUI
 
-Кроссплатформенный GUI `slang.ui` (Windows, macOS, Linux, iOS, Android):
-декларативные View на самом Slang, `@observable`-состояние через
+Кроссплатформенный GUI `zell.ui` (Windows, macOS, Linux, iOS, Android):
+декларативные View на самом Zell, `@observable`-состояние через
 compile-time рефлексию, собственный GPU-рендерер (Vulkan/Metal/D3D12),
 accessibility из коробки, hot reload, `ui.TestHost` для CI. Подробно:
 `docs/GUI.md`.
@@ -2133,9 +2133,9 @@ accessibility из коробки, hot reload, `ui.TestHost` для CI. Подр
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.log` | логгер уровня Serilog (docs/FRAMEWORK.md, раздел 4); пока нет реестра пакетов, живёт в `std.log` вместо `slang.log` |
-| `std.diag` | метрики (Prometheus), трассировка (OpenTelemetry, W3C traceparent), профили CPU/heap в формате pprof (docs/FRAMEWORK.md, раздел 5); вместо `slang.diag` |
-| `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты (✓ `@test` + `slang test`, каждый тест в отдельном процессе; см. «Компилятор и инструменты») |
+| `std.log` | логгер уровня Serilog (docs/FRAMEWORK.md, раздел 4); пока нет реестра пакетов, живёт в `std.log` вместо `zell.log` |
+| `std.diag` | метрики (Prometheus), трассировка (OpenTelemetry, W3C traceparent), профили CPU/heap в формате pprof (docs/FRAMEWORK.md, раздел 5); вместо `zell.diag` |
+| `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты (✓ `@test` + `zell test`, каждый тест в отдельном процессе; см. «Компилятор и инструменты») |
 | `std.random` | ГПСЧ для не-криптографических задач |
 | `std.sync` | атомики, `Once`, `RwMutex` (✓ `RwMutex`, `Semaphore`, `Barrier` — async; `Once`, `AtomicInt`/`AtomicBool`, `Atomic<T: Comparable>`, `Pool<T>`) |
 | `std.reflect` | `TypeOf<T>`, `ValueOf`, `TypeInfo`/`FieldInfo`/`MethodInfo`, атрибуты, compile-time `Fields<T>()` (см. раздел «Рефлексия») |
@@ -2159,7 +2159,7 @@ Sink/Async`, `Filter.*`), интерфейсы `Logger`/`Sink`/`Enricher`, `Even
 docs/STDLIB.md (`std.slices`, `maps`, `cmp`, `bytes`, `strconv`, `math.bits/
 big/complex`, `unicode`, `hash`, `encoding.binary/base32/pem/asn1`, `io`,
 `os`, `process`, `cli`, `sync`, `testing`, `embed`) — исходники
-`compiler/src/sema/stdlib_src/*.sl`, C-части `runtime/src/std_*.c`;
+`compiler/src/sema/stdlib_src/*.zl`, C-части `runtime/src/std_*.c`;
 статусы и пробелы — таблица docs/STDLIB.md. Операторы над `Decimal`,
 `Duration`, `Complex`, `big.Int` пока — методы с именами интерфейсов
 (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Compare`, `Equals`). Остальное — пока
@@ -2168,7 +2168,7 @@ big/complex`, `unicode`, `hash`, `encoding.binary/base32/pem/asn1`, `io`,
 ## Платформы
 
 Linux, macOS и Windows на amd64 и arm64 — tier 1 с CI и релизными
-бинарниками; кросс-компиляция `slang build --target windows-amd64` с
+бинарниками; кросс-компиляция `zell build --target windows-amd64` с
 любой машины через LLVM и вшитый `lld`. Платформозависимый код рантайма
 изолирован в `runtime/src/platform/`. Подробно: `docs/PLATFORMS.md`.
 
@@ -2185,21 +2185,21 @@ Linux, macOS и Windows на amd64 и arm64 — tier 1 с CI и релизным
 - Исключённое объявление не проверяется типами, его имени нет
   (использование — `unknown identifier`), поэтому два варианта одной
   функции или структуры под разные платформы сосуществуют.
-- Суффиксы файлов, как в Go: `x_linux.sl`, `x_windows.sl`, `x_macos.sl`,
-  `x_amd64.sl`, `x_arm64.sl`, `x_linux_arm64.sl` — файл каталога или пакета
+- Суффиксы файлов, как в Go: `x_linux.zl`, `x_windows.zl`, `x_macos.zl`,
+  `x_amd64.zl`, `x_arm64.zl`, `x_linux_arm64.zl` — файл каталога или пакета
   компилируется только для этой цели (файл, указанный явно, берётся
   всегда).
 - Константы `os.Name`, `os.Arch`, `os.PathSeparator`, `os.LineSeparator` —
   строки времени компиляции (годятся в `const`).
 - Цель — хост или `--target <triple|alias>` (`linux-amd64`,
   `aarch64-apple-darwin`); пока генерация кода только для хоста, а
-  `slang check --target windows-amd64` проверяет код под другую цель.
+  `zell check --target windows-amd64` проверяет код под другую цель.
 
 ## Компилятор и инструменты
 
 - Реализация компилятора: **Rust** (крейт `inkwell` для LLVM API) — безопасно,
   быстро, хорошие библиотеки для парсинга.
-- Дистрибутив для пользователя — один бинарник `slang`: LLVM и `lld`
+- Дистрибутив для пользователя — один бинарник `zell`: LLVM и `lld`
   линкуются статически, рантайм и стандартная библиотека лежат рядом.
   Пользователю не нужно ставить LLVM, clang или системный линковщик.
 - Пайплайн: лексер → парсер (AST) → разрешение имён и типов → проверка
@@ -2210,13 +2210,13 @@ Linux, macOS и Windows на amd64 и arm64 — tier 1 с CI и релизным
 - CLI:
 
 ```
-slang build ./src -o app      # собрать
-slang run main.sl             # собрать и запустить
-slang fmt ./src               # форматировать
-slang test ./src              # тесты (@test func TestX(t *testing.T)): --filter, --json, --bench, -v
+zell build ./src -o app      # собрать
+zell run main.zl             # собрать и запустить
+zell fmt ./src               # форматировать
+zell test ./src              # тесты (@test func TestX(t *testing.T)): --filter, --json, --bench, -v
 ```
 
-- `slang test [path]` находит функции `@test` (`func TestX(t *testing.T)`,
+- `zell test [path]` находит функции `@test` (`func TestX(t *testing.T)`,
   `func X()` без параметров, бенчмарки `func BenchX(b *testing.B)` — с
   `--bench`), генерирует драйвер, вызывающий `std.testing.Main`, и
   запускает его; собственные `main` переименовываются в памяти. Каждый
@@ -2226,18 +2226,18 @@ slang test ./src              # тесты (@test func TestX(t *testing.T)): --f
   (`--- FAIL: Name (0.00s)`, `PASS`/`FAIL`, итог `ok`), `--json` — события
   `{"Action": ...}`, `--filter` — подстроки через `|` с якорями `^`/`$`,
   `--parallel N`; код выхода 1 при падении.
-- Расширение файлов: `.sl`.
+- Расширение файлов: `.zl`.
 - В сообщениях об ошибках типы текущего пространства имён пишутся коротко
   (`Point`), остальные — полным путём (`app.models.User`, `std.task.Mutex`).
 - Компилятор — библиотека; LSP-сервер, форматтер, отладчик и IDE-плагины
   строятся на ней. Подробно: `docs/TOOLING.md`. Каноническая грамматика
-  для IDE: `grammar/slang.bnf`; подсветка VS Code: `editors/vscode/`.
-- Проект описывается файлом `slang.toml` (имя, версия, зависимости, точка
-  входа). Менеджер пакетов встроен в `slang`: `docs/PACKAGES.md`.
+  для IDE: `grammar/zell.bnf`; подсветка VS Code: `editors/vscode/`.
+- Проект описывается файлом `zell.toml` (имя, версия, зависимости, точка
+  входа). Менеджер пакетов встроен в `zell`: `docs/PACKAGES.md`.
 
 ## Пример программы
 
-```slang
+```zell
 namespace app
 
 import std
@@ -2301,7 +2301,7 @@ variant     = { attribute } ident [ "(" params ")" ] ;
 field       = { attribute } ident type [ "=" expr ] ;
 method      = [ "static" ] func ;
 func        = [ "async" ] "func" ident [ generics ] "(" [ params ] ")" [ type ] block ;
-externfunc  = "extern" "func" ident "(" [ params ] ")" [ type ] ;   (* только в std/**/*_extern.sl *)
+externfunc  = "extern" "func" ident "(" [ params ] ")" [ type ] ;   (* только в std/**/*_extern.zl *)
 params      = param { "," param } ;
 param       = ident { "," ident } type ;
 type        = path [ typeargs ] [ "!" ] | "*" type | "weak" "*" type | "[" [ constexpr ] "]" type
@@ -2347,7 +2347,7 @@ lambda      = [ "async" ] "func" "(" [ params ] ")" [ type ] block
 4. **Рантайм** — аллокатор с подсчётом ссылок, строки, срезы, map, паника.
 5. **Async** — LLVM coroutines, планировщик, `std.task`.
 6. **Стандартная библиотека (ядро) и инструменты** — `std.io`, `std.strings`,
-   `std.fmt`, `std.fs`, `std.os`, `std.time`, `slang fmt`, `slang test`.
+   `std.fmt`, `std.fs`, `std.os`, `std.time`, `zell fmt`, `zell test`.
 7. **Generics** — `List<T>`, ограничения через интерфейсы (мономорфизация). ✓
    (без обобщённых интерфейсов; см. «Generics»).
 8. **Сеть и криптография** — `std.net`, `std.net.http`, `std.crypto.*` через
@@ -2356,7 +2356,7 @@ lambda      = [ "async" ] "func" "(" [ params ] ")" [ type ] block
 10. **Рефлексия** — атрибуты, таблицы `TypeInfo`, `std.reflect`, compile-time
     `Fields<T>()`; `std.encoding.json` поверх неё. ✓ (см. «Рефлексия»,
     «Реализовано»).
-11. **Инструменты** — `slang lsp`, `slang fmt`, DWARF и DAP, плагины для
+11. **Инструменты** — `zell lsp`, `zell fmt`, DWARF и DAP, плагины для
     VS Code и IDEA (`docs/TOOLING.md`).
 
 ## Открытые вопросы

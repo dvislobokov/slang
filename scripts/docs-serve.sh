@@ -5,11 +5,11 @@
 set -e
 cd "$(dirname "$0")/.."
 PORT="${1:-${PORT:-8000}}"
-SLANG="${SLANG:-target/release/slang}"
-if [ ! -x "$SLANG" ]; then
-    cargo build --release -p slang
+ZELL="${ZELL:-target/release/zell}"
+if [ ! -x "$ZELL" ]; then
+    cargo build --release -p zell
 fi
 rm -rf site
-"$SLANG" doc --site site
+"$ZELL" doc --site site
 echo "serving http://localhost:$PORT/"
 exec python3 -m http.server "$PORT" --directory site

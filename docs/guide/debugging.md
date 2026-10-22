@@ -12,15 +12,15 @@ trace to stderr and exits with status 1:
 
 ```text
 error: config: open app.toml: not found
-  created at   app/fs.sl:42      open
-  returned via app/config.sl:17  readConfig  ?("config")
-  returned via app/main.sl:9     main
+  created at   app/fs.zl:42      open
+  returned via app/config.zl:17  readConfig  ?("config")
+  returned via app/main.zl:9     main
 ```
 
 In code, `errors.Trace(err)` returns the same text and
 `errors.Frames(err)` the records (see [errors.md](errors.md)):
 
-```slang
+```zell
 namespace guide.debugging.trace
 
 import std
@@ -54,7 +54,7 @@ func main() {
 A panic (`panic(msg)`, an index out of range, a `nil` dereference,
 division by zero) prints `panic: <message>` and a native backtrace, and
 exits with status 2. Deferred calls and destructors do not run. Set
-`SLANG_NO_BACKTRACE=1` to print only the message (the test suites do).
+`ZELL_NO_BACKTRACE=1` to print only the message (the test suites do).
 
 ## Logging
 
@@ -64,7 +64,7 @@ templates are checked by the compiler, properties are kept as values
 arguments are not evaluated. `log.Info("...")` uses the default logger
 (stderr); configure your own for anything else.
 
-```slang
+```zell
 namespace guide.debugging.log
 
 import std
@@ -101,19 +101,19 @@ Reference counting cannot free a reference cycle by itself (see
 `--leak-check` to see what is still alive at exit:
 
 ```sh
-slang run --leak-check app.sl
+zell run --leak-check app.zl
 ```
 
 At exit the program prints `leak: N objects` and, in a debug build, a
 line per type still alive and the field that closes a cycle, and exits
 with status 66. With the cycle collector on (the default,
-`SLANG_CYCLES=auto`) it first collects once more, so what is reported is
+`ZELL_CYCLES=auto`) it first collects once more, so what is reported is
 what the collector cannot free either: objects kept by a global, by a
 task that never finished, by a cycle through an `error` or a map shared
 between threads. To see the cycles themselves, turn the collector off or
 to manual. This program leaks two nodes then:
 
-```slang
+```zell
 // check-only
 namespace guide.debugging.leak
 
@@ -132,18 +132,18 @@ func main() {
 }
 ```
 
-`SLANG_CYCLES=manual slang run --leak-check` prints:
+`ZELL_CYCLES=manual zell run --leak-check` prints:
 
 ```text
 b a
 leak: 2 objects
   2 x guide.debugging.leak.Node
   cycle through Node.Next (make one field of the cycle `weak *T` to break it)
-  2 of them in unreachable reference cycles the cycle collector can free (SLANG_CYCLES=auto or runtime.CollectCycles())
+  2 of them in unreachable reference cycles the cycle collector can free (ZELL_CYCLES=auto or runtime.CollectCycles())
 ```
 
 In production, without `--leak-check`, start the program with
-`SLANG_DIAG_HEAP=1` and serve `diag.ServeHeap` at `/debug/heap`: it
+`ZELL_DIAG_HEAP=1` and serve `diag.ServeHeap` at `/debug/heap`: it
 lists the types with the most live objects and how much each grew since
 the previous request; a type that keeps growing is the leak.
 
@@ -152,12 +152,12 @@ the previous request; a type that keeps growing is the leak.
 Debug builds carry DWARF debug information. Three ways in:
 
 ```sh
-slang debug run app.sl          # build with the in-process debug agent and debug it
-slang debug app.sl              # build with DWARF and start lldb (or --gdb)
-SLANG_DEBUG=:2345 ./app         # start the agent, then: slang debug attach :2345
+zell debug run app.zl          # build with the in-process debug agent and debug it
+zell debug app.zl              # build with DWARF and start lldb (or --gdb)
+ZELL_DEBUG=:2345 ./app         # start the agent, then: zell debug attach :2345
 ```
 
-`slang debug run` speaks gdb-style commands: `b file:line [if cond]`,
+`zell debug run` speaks gdb-style commands: `b file:line [if cond]`,
 `b func`, `log file:line msg {expr}` (a logpoint), `c`, `n`, `s`, `o`
 (step out), `p expr`, `locals`, `bt`, `up`/`down`, `tasks`, `task N`,
 `catch panic`, `catch error [Type]`, `q`. Breakpoint conditions are
@@ -165,19 +165,19 @@ evaluated inside the process, so they are fast; `next` steps over an
 `await` within the same task.
 
 In VS Code, the extension in `editors/vscode` launches programs with the
-agent (`"type": "slang"` in `launch.json`) and supports breakpoints,
+agent (`"type": "zell"` in `launch.json`) and supports breakpoints,
 conditions, logpoints, stepping, variables, tasks as threads, and
 stopping on panics or on errors being created. With lldb or gdb, the
 formatters in `tools/lldb` and `tools/gdb` show strings, slices, maps,
-`T!`, enums and interfaces readably, and their `slang-rc <expr>` command
+`T!`, enums and interfaces readably, and their `zell-rc <expr>` command
 decodes the reference count of the object a value points at (unowned,
 biased to a thread, cycle-collected, immortal).
 
 ## Looking at what the compiler did
 
 ```sh
-slang check --dump-hir app.sl        # the typed program after semantic analysis
-slang build app.sl --emit=llvm-ir    # the LLVM IR
+zell check --dump-hir app.zl        # the typed program after semantic analysis
+zell build app.zl --emit=llvm-ir    # the LLVM IR
 ```
 
 ## Profiling
@@ -185,7 +185,7 @@ slang build app.sl --emit=llvm-ir    # the LLVM IR
 `std.diag` writes CPU profiles in pprof format, exposes Prometheus
 metrics and records trace spans (exported to stdout or OTLP):
 
-```slang
+```zell
 namespace guide.debugging.profile
 
 import std
@@ -214,7 +214,7 @@ func main() void! {
 // samples recorded: true true
 ```
 
-Then `slang tool pprof -top guide-cpu.pb` (it runs `go tool pprof`)
+Then `zell tool pprof -top guide-cpu.pb` (it runs `go tool pprof`)
 shows where the time went. `diag.Runtime()` reports live objects,
 allocations and scheduler state, and `diag.ServeMetrics` serves them with
 your own counters at `/metrics`.

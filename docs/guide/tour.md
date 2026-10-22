@@ -1,11 +1,11 @@
-# A tour of Slang
+# A tour of Zell
 
 Twenty minutes, top to bottom. Every program on this page is complete:
-copy it into a file, run `slang run file.sl`, and you get the output shown
+copy it into a file, run `zell run file.zl`, and you get the output shown
 in its `// Output:` comment (the guides are tested by
 `compiler/tests/guide.rs`, so they stay correct).
 
-Slang is a compiled language with Go's simplicity, C#-style namespaces and
+Zell is a compiled language with Go's simplicity, C#-style namespaces and
 `var` inference, methods inside structs, `T!` errors instead of
 `if err != nil`, `async`/`await` on a task scheduler, and no garbage
 collector (reference counting with compile-time ownership). The language
@@ -14,16 +14,16 @@ English introduction.
 
 ## Hello, world
 
-```slang
+```zell
 namespace tour.hello
 
 import std.io
 
 func main() {
-    println("Hello, Slang!")
+    println("Hello, Zell!")
 }
 // Output:
-// Hello, Slang!
+// Hello, Zell!
 ```
 
 Every file starts with `namespace`. `import std.io` makes the members of
@@ -34,7 +34,7 @@ Unused imports are compile errors, as in Go.
 
 ## Variables and types
 
-```slang
+```zell
 namespace tour.vars
 
 import std
@@ -44,7 +44,7 @@ const Pi = 3.14159
 
 func main() {
     var n = 42              // int (64-bit)
-    var name = "slang"      // string (immutable UTF-8)
+    var name = "zell"       // string (immutable UTF-8)
     var ratio = 0.5         // float (64-bit)
     var ok = true
     var c = 'é'             // char: a Unicode code point
@@ -64,9 +64,9 @@ func divmod(a int, b int) (int, int) {
     return (a / b, a % b)
 }
 // Output:
-// 42 slang 0.5 true é 0 [42 7] 2
-// slang has 5 letters, pi is 3.14159
-// 3 2 [7] sl
+// 42 zell 0.5 true é 0 [42 7] 2
+// zell has 4 letters, pi is 3.14159
+// 3 2 [7] ze
 ```
 
 Only `var` declares variables; the type comes after the name when you
@@ -75,7 +75,7 @@ maps work like Go's; `s[a..b]` is a sub-slice or substring.
 
 Control flow is Go's, without parentheses:
 
-```slang
+```zell
 namespace tour.control
 
 import std.io
@@ -115,7 +115,7 @@ Methods live inside the struct; the receiver is `this` (a pointer, so
 methods can change the value). Exported names start with an upper-case
 letter.
 
-```slang
+```zell
 namespace tour.structs
 
 import std
@@ -166,7 +166,7 @@ Interfaces are structural, as in Go: a type implements an interface by
 having its methods. A `switch` on an interface value can test the
 dynamic type.
 
-```slang
+```zell
 namespace tour.interfaces
 
 import std.io
@@ -224,7 +224,7 @@ func main() {
 Plain enums and enums whose variants carry data; `switch` destructures
 them, and a `switch` that covers every variant needs no `default`.
 
-```slang
+```zell
 namespace tour.enums
 
 import std.io
@@ -266,7 +266,7 @@ Functions, structs, enums and methods can take type parameters,
 optionally constrained (`Ordered`, `Comparable`, an interface). They are
 compiled per type (monomorphized), so they cost nothing at run time.
 
-```slang
+```zell
 namespace tour.generics
 
 import std.io
@@ -326,7 +326,7 @@ A function that can fail returns `T!` (`void!` when it has no value).
 it on the spot. A `T!` result cannot be ignored silently. Errors carry a
 trace of where they were created and returned. See [errors.md](errors.md).
 
-```slang
+```zell
 namespace tour.errors
 
 import std
@@ -359,7 +359,7 @@ func main() {
 waits for its result. Tasks run on a pool of worker threads; waiting
 never blocks a thread. `task.All` waits for several tasks at once.
 
-```slang
+```zell
 namespace tour.async
 
 import std
@@ -391,7 +391,7 @@ Cancellation travels in the task context: `task.WithTimeout` cancels the
 code it runs (and every task started inside it) when the time is up, and
 cancelled waits fail with `task.ErrCancelled`. See [async.md](async.md).
 
-```slang
+```zell
 namespace tour.tasks
 
 import std
@@ -433,7 +433,7 @@ Slices and maps are built in; `std.slices` and `std.maps` have the usual
 algorithms, and `std.collections` adds ordered maps, sets, queues, heaps,
 deques and LRU caches.
 
-```slang
+```zell
 namespace tour.collections
 
 import std
@@ -470,20 +470,20 @@ func main() {
 
 ## Packages
 
-A project is a directory with a manifest (`slang.toml`) and sources in
+A project is a directory with a manifest (`zell.toml`) and sources in
 `src/`; namespaces are just paths, and any file can import any namespace
-of the project. `slang init` creates one:
+of the project. `zell init` creates one:
 
 ```sh
-slang init hello && cd hello
-slang run                  # builds src/main.sl and runs it
-slang install              # after adding a dependency to slang.toml (packages.md)
+zell init hello && cd hello
+zell run                  # builds src/main.zl and runs it
+zell install              # after adding a dependency to zell.toml (packages.md)
 ```
 
 The pieces you have seen compose: here is a small program that reads a
 file with fallible steps, in the style of a real tool:
 
-```slang
+```zell
 namespace tour.packages
 
 import std
@@ -530,8 +530,8 @@ func main() void! {
 - [async.md](async.md): tasks, channels, mutexes, cancellation, timeouts.
 - [memory.md](memory.md): how memory works without a garbage collector.
 - [packages.md](packages.md): projects, dependencies, workspaces.
-- [testing.md](testing.md): `slang test`, benchmarks, examples.
+- [testing.md](testing.md): `zell test`, benchmarks, examples.
 - [debugging.md](debugging.md): traces, the debugger, leak checks, profiles.
 - [web.md](web.md): HTTP services with `std.web`.
-- [faq.md](faq.md): how Slang differs from Go and C#.
-- `slang doc strings.Split`, `slang doc std --html out/`: the API reference.
+- [faq.md](faq.md): how Zell differs from Go and C#.
+- `zell doc strings.Split`, `zell doc std --html out/`: the API reference.

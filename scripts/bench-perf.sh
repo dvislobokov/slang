@@ -1,14 +1,14 @@
 #!/bin/bash
-# Runs benchmarks/*/main.{sl,go}, prints wall time, user+sys CPU and peak RSS.
+# Runs benchmarks/*/main.{zl,go}, prints wall time, user+sys CPU and peak RSS.
 # Usage: ./scripts/bench-perf.sh [bench...]   (default: all)
-# Environment: SLANG=<compiler> (default target/release/slang),
-#   RUNS=N  run each binary N times (alternating Slang and Go) and print the
+# Environment: ZELL=<compiler> (default target/release/zell),
+#   RUNS=N  run each binary N times (alternating Zell and Go) and print the
 #           run with the best wall time (default 1),
 #   NOGO=1  skip the Go programs.
 #   Extra arguments for a benchmark's binary: benchmarks/<b>/args (one line).
 set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
-SLANG=${SLANG:-$root/target/release/slang}
+ZELL=${ZELL:-$root/target/release/zell}
 RUNS=${RUNS:-1}
 out=$(mktemp -d)
 cd "$root/benchmarks"
@@ -28,12 +28,12 @@ print(f"{wall:.3f} {ru.ru_utime + ru.ru_stime:.2f} {ru.ru_maxrss / 1024:.1f} {p.
 PY
 }
 
-langs="sl go"
-[ -n "$NOGO" ] && langs="sl"
+langs="zl go"
+[ -n "$NOGO" ] && langs="zl"
 printf '%-12s %-6s %8s %8s %8s  %s\n' bench lang wall_s cpu_s rss_mb output
 for b in $benches; do
-    [ -f "$b/main.sl" ] || continue
-    "$SLANG" build "$b/main.sl" --release -o "$out/$b.sl.bin" >/dev/null
+    [ -f "$b/main.zl" ] || continue
+    "$ZELL" build "$b/main.zl" --release -o "$out/$b.zl.bin" >/dev/null
     if [ -z "$NOGO" ]; then (cd "$b" && go build -o "$out/$b.go.bin" main.go); fi
     args=()
     [ -f "$b/args" ] && read -r -a args < "$b/args"
@@ -49,7 +49,7 @@ for b in $benches; do
     done
     for lang in $langs; do
         read wall cpu rss rc output <<< "${best[$lang]}"
-        printf '%-12s %-6s %8s %8s %8s  %s\n' "$b" "$([ $lang = sl ] && echo slang || echo go)" "$wall" "$cpu" "$rss" "$output"
+        printf '%-12s %-6s %8s %8s %8s  %s\n' "$b" "$([ $lang = zl ] && echo zell || echo go)" "$wall" "$cpu" "$rss" "$output"
     done
     unset best
 done

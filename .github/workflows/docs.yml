@@ -1,5 +1,5 @@
 # Builds the documentation site (README, docs/guide, design docs and the
-# std API reference; `slang doc --site`) and deploys it to GitHub Pages.
+# std API reference; `zell doc --site`) and deploys it to GitHub Pages.
 # Enable it once: Settings -> Pages -> Source: GitHub Actions.
 name: docs
 
@@ -27,9 +27,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build the compiler
-        run: cargo build --release -p slang
+        run: cargo build --release -p zell
       - name: Build the site
-        run: ./target/release/slang doc --site site --base "/${{ github.event.repository.name }}/"
+        run: ./target/release/zell doc --site site --base "/${{ github.event.repository.name }}/"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

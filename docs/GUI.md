@@ -1,7 +1,7 @@
-# Кроссплатформенный GUI: `slang.ui`
+# Кроссплатформенный GUI: `zell.ui`
 
 Цель: писать настольные (Windows, macOS, Linux) и мобильные (iOS, Android)
-приложения на Slang с одним кодом, нативной производительностью и без JIT,
+приложения на Zell с одним кодом, нативной производительностью и без JIT,
 WebView или JavaScript. Уровень удобства — SwiftUI / Jetpack Compose /
 Flutter; уровень накладных расходов — ниже, чем у них: нет GC, нет
 рантайма Dart/JVM, бинарник hello-world GUI в несколько мегабайт, а не
@@ -10,16 +10,16 @@ Flutter; уровень накладных расходов — ниже, чем
 ## Архитектура
 
 ```
- приложение на Slang (декларативные View, состояние, async-обработчики)
+ приложение на Zell (декларативные View, состояние, async-обработчики)
  ───────────────────────────────────────────────────────────────────────
- slang.ui          : дерево виджетов, diff/reconcile, layout (flexbox + grid),
+ zell.ui          : дерево виджетов, diff/reconcile, layout (flexbox + grid),
                      стили, темы, анимации, жесты, фокус, accessibility-дерево
- slang.ui.render   : собственный рендерер (пути, текст, изображения, слои)
+ zell.ui.render   : собственный рендерер (пути, текст, изображения, слои)
                      поверх GPU: Vulkan / Metal / Direct3D 12 / OpenGL ES,
                      fallback — софтверный растеризатор
- slang.ui.text     : шейпинг (HarfBuzz-эквивалент), растеризация глифов,
+ zell.ui.text     : шейпинг (HarfBuzz-эквивалент), растеризация глифов,
                      BiDi, эмодзи, подписки на системные шрифты
- slang.ui.platform : окна, события ввода, DPI, буфер обмена, drag&drop,
+ zell.ui.platform : окна, события ввода, DPI, буфер обмена, drag&drop,
                      системные диалоги, меню, трей, уведомления, IME,
                      accessibility-мост (UIA / NSAccessibility / AT-SPI)
  ───────────────────────────────────────────────────────────────────────
@@ -40,13 +40,13 @@ Flutter; уровень накладных расходов — ниже, чем
 
 ## Код
 
-Разметка — это Slang, без XAML/QML/HTML. Генерики, лямбды и атрибуты
+Разметка — это Zell, без XAML/QML/HTML. Генерики, лямбды и атрибуты
 дают декларативный стиль без отдельного языка.
 
-```slang
+```zell
 namespace app
 
-import slang.ui
+import zell.ui
 
 @observable
 struct CounterModel {
@@ -119,24 +119,24 @@ func main() {
 - **Платформенные возможности**: системные меню и трей, уведомления,
   файловые диалоги, буфер обмена, drag&drop, несколько окон, DPI/масштаб,
   тёмная тема, автозапуск, deep links; мобильные — ориентация, safe areas,
-  клавиатура, камера/геолокация через `slang.device`.
+  клавиатура, камера/геолокация через `zell.device`.
 
 ## Инструменты
 
-- **Hot reload** состояния и разметки: `slang run --watch` пересобирает
+- **Hot reload** состояния и разметки: `zell run --watch` пересобирает
   изменённый пакет (инкрементально, по кэшу объектных файлов) и заменяет
   код View без перезапуска приложения, сохраняя состояние модели.
   Реализуется через динамическую загрузку пересобранного модуля в dev-сборке.
-- **Инспектор** (в `slang.diag`): дерево виджетов, layout-границы, время
+- **Инспектор** (в `zell.diag`): дерево виджетов, layout-границы, время
   кадра, перерисовки, просмотр состояния `@observable`.
 - **Превью** в редакторе через LSP: `@preview func Demo() ui.View` рендерится
   в панели VS Code/IDEA.
 - **Тесты**: `ui.TestHost` рендерит в память, находит виджеты по
   семантике (`host.Find(ui.ByText("Load")).Tap()`), снимки экрана для
   snapshot-тестов, без реального окна (работает в CI).
-- **Сборка и упаковка**: `slang build --target macos-arm64 --bundle` даёт
+- **Сборка и упаковка**: `zell build --target macos-arm64 --bundle` даёт
   `.app`/`.dmg`, `.msix`/`.exe` с установщиком, `.AppImage`/`.deb`/`.flatpak`,
-  `.ipa`, `.apk`/`.aab`; иконки, подпись и нотаризация из `slang.toml`
+  `.ipa`, `.apk`/`.aab`; иконки, подпись и нотаризация из `zell.toml`
   секции `[bundle]`.
 
 ## Платформы
@@ -150,7 +150,7 @@ func main() {
 | Android 8+ | NDK / NativeActivity | Vulkan, GLES 3 | AccessibilityNodeInfo |
 | Web (позже) | Canvas/WebGPU через wasm32 | WebGPU | DOM-мост |
 
-Рендерер и текст пишутся на Slang (с небольшими C-прослойками к GPU API);
+Рендерер и текст пишутся на Zell (с небольшими C-прослойками к GPU API);
 это заодно нагрузочный тест языка: SIMD, float-математика, большие
 структуры данных, работа без GC в реальном времени.
 
@@ -166,10 +166,10 @@ func main() {
 
 ## Этапы
 
-1. FFI (`@extern`), `slang.ui.platform` на Win32/Cocoa/Wayland: окно,
+1. FFI (`@extern`), `zell.ui.platform` на Win32/Cocoa/Wayland: окно,
    события, буфер обмена, DPI; софтверный растеризатор.
-2. `slang.ui.render` на Vulkan/Metal/D3D12, `slang.ui.text` с шейпингом.
-3. `slang.ui`: виджеты, layout, стили, `@observable`, анимации,
+2. `zell.ui.render` на Vulkan/Metal/D3D12, `zell.ui.text` с шейпингом.
+3. `zell.ui`: виджеты, layout, стили, `@observable`, анимации,
    accessibility; набор базовых контролов; `ui.TestHost`.
 4. Hot reload, инспектор, превью в LSP, упаковка.
 5. iOS и Android; затем Web через wasm32 + WebGPU.

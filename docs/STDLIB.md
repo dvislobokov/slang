@@ -1,7 +1,7 @@
-# Стандартная библиотека: карта Go → Slang
+# Стандартная библиотека: карта Go → Zell
 
-Все пакеты стандартной библиотеки Go, их место в Slang, статус и чем
-версия Slang лучше. Уровни — порядок реализации по зависимостям: пакет
+Все пакеты стандартной библиотеки Go, их место в Zell, статус и чем
+версия Zell лучше. Уровни — порядок реализации по зависимостям: пакет
 уровня N зависит только от уровней < N. Внутри уровня порядок свободный.
 
 Статусы: ✅ есть — реализовано и покрыто тестами; 🟡 частично — есть ядро;
@@ -21,7 +21,7 @@
 
 ## Уровень 0 — без зависимостей
 
-| Go | Slang | Статус | Лучше чем в Go |
+| Go | Zell | Статус | Лучше чем в Go |
 |---|---|---|---|
 | `builtin` (len, append, panic…) | встроенные | ✅ есть | `?`, `try`, generics |
 | `errors` | `std.errors` | ✅ есть | `Trace`/`Frames`, типизированные ошибки, `As<T>` |
@@ -47,7 +47,7 @@
 
 ## Уровень 1 — базовый ввод-вывод, ОС, синхронизация
 
-| Go | Slang | Статус | Лучше чем в Go |
+| Go | Zell | Статус | Лучше чем в Go |
 |---|---|---|---|
 | `io` | `std.io` (`Reader`, `Writer`, `Closer`, `Seeker`, `Copy`, `ReadAllFrom`, `LimitReader`, `MultiWriter`, `Pipe`, `BoundedPipe`, `TeeReader`) | ✅ есть (+ `AsyncReader/AsyncWriter`, их реализует `net.Conn`; `os.File`) | интерфейсы async-совместимые (`AsyncReader`); нет `SendFile` в `Copy` |
 | `bufio` | `std.io.Buffered*`, `Scanner` | ✅ есть (`ReadLine/ReadString/ReadBytes/Peek/ReadRune`, `Flush`, `Scanner` с `ScanLines/Words/Runes/Bytes`, `io.Lines`/`Words`) | `Lines()`/`Words()` (срезами, итераторов нет) |
@@ -65,7 +65,7 @@
 | `crypto/*` примитивы | `std.crypto.{hash,hmac,aes,chacha,x25519,ecdsa,ed25519,rsa,hkdf,kdf,password}` | ✅ есть hash (+ BLAKE2b), hmac, aes-gcm, aes-cbc + PKCS#7, chacha, x25519, P-256 и P-384 (ECDH/ECDSA, RFC 6979), ed25519, rsa (подпись, OAEP, генерация ключей), hkdf, kdf (PBKDF2, scrypt, Argon2d/i/id по RFC 9106), password (PHC `$argon2id$`, `Verify`, `NeedsRehash`); нет P-521, SHA-3 | `password.Hash/Verify` на Argon2 из коробки |
 | `encoding/base64`, `base32`, `hex`, `ascii85`, `pem`, `asn1` | `std.encoding.*` | 🟡 есть base64, hex, base32, pem (с заголовками), asn1 (DER reader/Builder поверх ридера x509); нет ascii85 | — |
 | `runtime` | `std.runtime` (`NumCPU`, `Version`, `GC` → нет) | 🟡 частично (`diag.Runtime()` с `HeapInUse`/`HeapRetained`/`HeapReleased`, `runtime.FreeOSMemory()`) | — |
-| `testing` | `std.testing` + `slang test` | ✅ есть (`@test` с `*testing.T`/без параметров, бенчмарки `@test func B(b *testing.B)`, `t.Run`, `Fatal/Error/Skip/Log`, assert-функции, `--filter/--json/--bench/-v/--parallel`, тест в отдельном процессе) | `@test`, табличные тесты, assert; нет snapshot |
+| `testing` | `std.testing` + `zell test` | ✅ есть (`@test` с `*testing.T`/без параметров, бенчмарки `@test func B(b *testing.B)`, `t.Run`, `Fatal/Error/Skip/Log`, assert-функции, `--filter/--json/--bench/-v/--parallel`, тест в отдельном процессе) | `@test`, табличные тесты, assert; нет snapshot |
 | `log` | `std.log` | ✅ есть | уровень Serilog: шаблоны при компиляции, sinks, enrichers |
 | `log/slog` | то же | ✅ есть | — |
 | `log/syslog` | `log.WriteTo.Syslog` | ❌ нет | — |
@@ -74,7 +74,7 @@
 
 ## Уровень 2 — форматы, текст, сжатие, сеть (ядро)
 
-| Go | Slang | Статус | Лучше чем в Go |
+| Go | Zell | Статус | Лучше чем в Go |
 |---|---|---|---|
 | `encoding/json` | `std.encoding.json` | ✅ есть (Parse<T>/Format/Value) | compile-time, пути в ошибках, атрибуты |
 | `encoding/xml` | `std.encoding.xml` | ✅ есть (pull-`Reader` с пространствами имён, дерево `Value`, `Writer`, `Parse<T>/Decode<T>/Format<T>` с `@xml(name, attr, text, ns, omitEmpty, skip)`; C-токенизатор; DTD не раскрывается) | та же модель, pull-reader, атрибуты вместо тегов |
@@ -94,16 +94,16 @@
 | `net/textproto` | `std.net.textproto` | ✅ есть (`Header` с каноническими ключами, `ReadHeader` с продолжениями строк, `DotEncode/DotDecode`, `ReadResponse` многострочных ответов; на строках, без `Reader`) | — |
 | `image`, `image/png`, `jpeg`, `gif`, `color`, `draw` | `std.image` | ❌ нет | + webp, avif декодеры позже |
 | `index/suffixarray` | `std.text.suffixarray` | ⛔ не нужно (пакет) | — |
-| `database/sql`, `sql/driver` | `std.database.sql` + драйверы `std.database.postgres` (на Slang), `std.database.sqlite` (системная libsqlite3) | ✅ есть (интерфейс драйвера `Driver/DriverConn/DriverStmt/DriverRows/DriverTx`, `sql.Register/Open/OpenDriver`, асинхронный пул: max open/idle, время простоя и жизни, health check, ожидание с отменой; `Exec`, `QueryRows`, `QueryRow`, `Query<T>`/`QueryOne<T>` в структуры через compile-time рефлексию с `@sql.column`, `Null<T>`, указатели для NULL, `time.Time`, `big.Decimal`, `json.Value`; именованные `:name` → `$1`/`?`; транзакции, `Transact`, `Prepare` с кэшем подготовленных выражений на соединение, `Conn`, `Raw`; отмена и таймауты через контекст задачи; PostgreSQL: протокол 3.0, trust/password/MD5/SCRAM-SHA-256, sslmode до verify-full, simple и extended протоколы, бинарные результаты, COPY, уведомления; проверено на PostgreSQL 16) | async, `Query<T>` в структуры, пул, `Query<T>` вместо `Scan` |
-| Entity Framework Core (EF Core), `gorm`/`ent` | `std.data` (станет пакетом `slang.data`) | ✅ есть (модель из атрибутов `@table/@key/@column/@index/@hasMany/@belongsTo/@manyToMany/@concurrencyToken/...`, соглашений и `Configure`; `data.Open<Ctx>` с `data.Set<T>`; запросы `Where/OrderBy/Select/Include/GroupBy/Join/Sum/...` с лямбдами, переведёнными в SQL при компиляции (непереводимое — ошибка компиляции), `ToSql`; change tracking со снимками и UPDATE только изменённых столбцов, карта идентичности, единица работы, пакетные INSERT с `RETURNING`, upsert `ON CONFLICT`, оптимистичная блокировка, транзакции, `AsNoTracking`, явная загрузка, `ExecuteUpdate/ExecuteDelete`, `Raw<T>`; провайдеры PostgreSQL и SQLite; миграции как код: `slang data migration add/update/script/list`, `ctx.Migrate()`; см. FRAMEWORK.md §3) | лямбды не замыкания, а SQL на этапе компиляции; модель и маппинг генерируются компилятором, без рефлексии во время выполнения |
-| `go/*` (ast, parser, types…) | `std.slang.{ast,parser,types}` — экспорт компилятора как библиотеки | 🟡 частично (внутри компилятора) | — |
+| `database/sql`, `sql/driver` | `std.database.sql` + драйверы `std.database.postgres` (на Zell), `std.database.sqlite` (системная libsqlite3) | ✅ есть (интерфейс драйвера `Driver/DriverConn/DriverStmt/DriverRows/DriverTx`, `sql.Register/Open/OpenDriver`, асинхронный пул: max open/idle, время простоя и жизни, health check, ожидание с отменой; `Exec`, `QueryRows`, `QueryRow`, `Query<T>`/`QueryOne<T>` в структуры через compile-time рефлексию с `@sql.column`, `Null<T>`, указатели для NULL, `time.Time`, `big.Decimal`, `json.Value`; именованные `:name` → `$1`/`?`; транзакции, `Transact`, `Prepare` с кэшем подготовленных выражений на соединение, `Conn`, `Raw`; отмена и таймауты через контекст задачи; PostgreSQL: протокол 3.0, trust/password/MD5/SCRAM-SHA-256, sslmode до verify-full, simple и extended протоколы, бинарные результаты, COPY, уведомления; проверено на PostgreSQL 16) | async, `Query<T>` в структуры, пул, `Query<T>` вместо `Scan` |
+| Entity Framework Core (EF Core), `gorm`/`ent` | `std.data` (станет пакетом `zell.data`) | ✅ есть (модель из атрибутов `@table/@key/@column/@index/@hasMany/@belongsTo/@manyToMany/@concurrencyToken/...`, соглашений и `Configure`; `data.Open<Ctx>` с `data.Set<T>`; запросы `Where/OrderBy/Select/Include/GroupBy/Join/Sum/...` с лямбдами, переведёнными в SQL при компиляции (непереводимое — ошибка компиляции), `ToSql`; change tracking со снимками и UPDATE только изменённых столбцов, карта идентичности, единица работы, пакетные INSERT с `RETURNING`, upsert `ON CONFLICT`, оптимистичная блокировка, транзакции, `AsNoTracking`, явная загрузка, `ExecuteUpdate/ExecuteDelete`, `Raw<T>`; провайдеры PostgreSQL и SQLite; миграции как код: `zell data migration add/update/script/list`, `ctx.Migrate()`; см. FRAMEWORK.md §3) | лямбды не замыкания, а SQL на этапе компиляции; модель и маппинг генерируются компилятором, без рефлексии во время выполнения |
+| `go/*` (ast, parser, types…) | `std.zell.{ast,parser,types}` — экспорт компилятора как библиотеки | 🟡 частично (внутри компилятора) | — |
 | `debug/elf`, `dwarf`, `pe`, `macho` | `std.debug.*` | ❌ нет (для `diag` частично) | — |
 | `plugin` | `std.plugin` (dlopen) | 🟡 частично (внутренние `rtOpen/rtSym/rtClose`, capability `plugin`) | capability-помечен; используется `std.debug` |
-| `runtime/debug` (частично), — | `std.debug` — отладочный агент на Slang (DAP, DWARF, точки, задачи) | ✅ есть (DAP-агент: точки, условия, логпоинты, шаги по задачам, исключения, переменные, выражения v1; без DWARF — по таблицам компилятора) + `std.thread` (`Spawn/Join/Sleep`) | см. `docs/DEBUGGER.md` этап 2 |
+| `runtime/debug` (частично), — | `std.debug` — отладочный агент на Zell (DAP, DWARF, точки, задачи) | ✅ есть (DAP-агент: точки, условия, логпоинты, шаги по задачам, исключения, переменные, выражения v1; без DWARF — по таблицам компилятора) + `std.thread` (`Spawn/Join/Sleep`) | см. `docs/DEBUGGER.md` этап 2 |
 
 ## Уровень 3 — протоколы и сервисы
 
-| Go | Slang | Статус | Лучше чем в Go |
+| Go | Zell | Статус | Лучше чем в Go |
 |---|---|---|---|
 | `crypto/tls` | `std.net.tls` | ✅ есть (1.3 + 1.2 ECDHE/AEAD, группы X25519/P-256/P-384, подписи ECDSA P-256/P-384, interop с OpenSSL) | только современные наборы, без C-зависимостей |
 | `crypto/x509`, `x509/pkix` | `std.crypto.x509` | ✅ есть (P-256 и P-384; `SystemRoots()` разбирается раз на процесс и переиспользуется, пока у файла те же путь, размер и mtime — каждый вызов получает свою копию пула; без OCSP/CRL, без P-521) | — |
@@ -113,31 +113,31 @@
 | `golang.org/x/net/http2/hpack` | `std.net.http.hpack` | ✅ есть (RFC 7541, векторы приложения C) | — |
 | — (websocket в Go нет) | `std.net.ws` | ✅ есть (RFC 6455: Upgrade/Dial, фрагментация, ping/pong, коды закрытия, `for msg in conn`; interop с Go и curl); нет permessage-deflate | в stdlib |
 | `net/mail`, `net/smtp` | `std.net.mail` | ✅ есть (`Address`, `ParseAddress/ParseAddressList` с RFC 2047 и группами, `Message{From, To, Cc, Bcc, Subject, Text, HTML, Attachments}.Build()` — MIME multipart/mixed/alternative/related, quoted-printable, base64, кодирование и перенос заголовков; SMTP-клиент `Dial/Send/SendWith` со STARTTLS и SMTPS, AUTH PLAIN/LOGIN/CRAM-MD5, типизированные `SMTPError`); нет DKIM | `Send` в одну строку, TLS по умолчанию |
-| `net/rpc`, `rpc/jsonrpc` | `slang.grpc`, `std.net.jsonrpc` | ❌ нет | gRPC вместо net/rpc |
+| `net/rpc`, `rpc/jsonrpc` | `zell.grpc`, `std.net.jsonrpc` | ❌ нет | gRPC вместо net/rpc |
 | `testing/fstest`, `iotest`, `quick` | `std.testing.*` | ❌ нет | property-based `quick` с generics |
 | `syscall` | `std.sys` (слой платформы) | 🟡 частично (внутри рантайма) | единый API на всех ОС |
 | `time` (таймеры, тикеры) | `task.Delay`, `time.NewTicker/NewTimer/After` | ✅ есть | async (`await t.Tick()`) |
 
 ## Уровень 3б — клиенты инфраструктуры (в Go внешние библиотеки)
 
-| Go (внешние) | Slang | Статус | Лучше чем в Go |
+| Go (внешние) | Zell | Статус | Лучше чем в Go |
 |---|---|---|---|
 | `go-redis` | `std.data.redis` | ✅ есть (RESP2/RESP3 с откатом, `Connect(url)` с `redis://`/`rediss://`/`unix://`, AUTH, db; ~100 типизированных команд методами + `Do(args []any)`; `redis.Nil`, `redis.Error{Code}`; пул с PING-проверкой, сроком жизни, `ErrPoolTimeout`, повторами; `Pipeline()` одной записью (задачи команд завершаются после `Exec`), `TxPipeline` и `Watch` (`ErrTxFailed`), `NewScript().Run` с EVALSHA→EVAL; `Subscribe/PSubscribe` + `for msg in sub` с переподключением; таймауты через контекст задачи; Sentinel (`ConnectSentinel`: мастер, `+switch-master`, повторный опрос при READONLY, `ReadFromReplicas`); Cluster (`ConnectCluster`: `CLUSTER SLOTS`, hash tags, MOVED/ASK, `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE, SCAN по всем мастерам); `GetJSON<T>/SetJSON<T>`. Проверено на redis-server 7.0: TLS + пароль, Sentinel с `kill -9` мастера → повышенная реплика, Cluster из 3 мастеров с миграцией слота (ASK, затем MOVED); spec-тесты против мок-серверов) | RESP3, pipelining, pub/sub, транзакции, Lua-скрипты, cluster, **Sentinel** с автоматическим failover, типизированные команды, async |
-| `sarama`/`franz-go` | `std.data.kafka` | ✅ есть (протокол на Slang: ApiVersions, Metadata, Produce v7/v3, Fetch v10/v4, ListOffsets, FindCoordinator, JoinGroup/SyncGroup/Heartbeat/LeaveGroup, OffsetCommit/OffsetFetch, SASL PLAIN и SCRAM-SHA-256/512, CreateTopics/DeleteTopics, InitProducerId; record batch v2 побайтно как Java-клиент, CRC-32C на C, gzip/zstd; `NewProducer` с батчами по размеру и linger, acks, идемпотентностью, murmur2 как в Java, round-robin; `NewConsumer` с группами (range/round-robin, ребаланс, heartbeat в фоне, авто/ручной commit), `for rec in consumer`; `NewAdmin`; TLS; смена лидера и повторы с backoff. Проверено на Kafka 3.7 (KRaft, SASL PLAIN/SCRAM) — тест `--ignored` с `KAFKA_BROKERS`; spec-тесты против мок-брокера на Slang; нет snappy/lz4, транзакций, статического членства) | producer с батчами и idempotence, consumer groups с rebalance, SASL (PLAIN/SCRAM), TLS, компрессия gzip/zstd, транзакции позже; один клиент на Slang без C |
-| `aws-sdk-go` S3 | `std.cloud.s3` | ✅ есть (SigV4 заголовками и presigned URL — векторы набора AWS и документации S3, сверено с botocore; `Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle}` для AWS/MinIO/R2/GCS; Put/Get (поток, диапазон)/Head/Delete/DeleteObjects, `ListObjectsV2` и итератор `List`, `CopyObject`, бакеты, multipart `Upload` с параллельными частями и abort, `Presign`, `s3.Error` + `ErrNoSuchKey/NoSuchBucket/AccessDenied/PreconditionFailed`, повторы 5xx/SlowDown; учётные данные: env, `~/.aws/credentials`, IMDSv2. Проверено на MinIO; spec-тест против S3-сервера на Slang, проверяющего подписи; тела запросов в памяти — потоковой загрузки одним PUT нет, только multipart) | SigV4, Get/Put/Delete/List, multipart upload с параллельными частями, presigned URLs, потоковые тела, совместимо с MinIO/R2/GCS-S3 |
+| `sarama`/`franz-go` | `std.data.kafka` | ✅ есть (протокол на Zell: ApiVersions, Metadata, Produce v7/v3, Fetch v10/v4, ListOffsets, FindCoordinator, JoinGroup/SyncGroup/Heartbeat/LeaveGroup, OffsetCommit/OffsetFetch, SASL PLAIN и SCRAM-SHA-256/512, CreateTopics/DeleteTopics, InitProducerId; record batch v2 побайтно как Java-клиент, CRC-32C на C, gzip/zstd; `NewProducer` с батчами по размеру и linger, acks, идемпотентностью, murmur2 как в Java, round-robin; `NewConsumer` с группами (range/round-robin, ребаланс, heartbeat в фоне, авто/ручной commit), `for rec in consumer`; `NewAdmin`; TLS; смена лидера и повторы с backoff. Проверено на Kafka 3.7 (KRaft, SASL PLAIN/SCRAM) — тест `--ignored` с `KAFKA_BROKERS`; spec-тесты против мок-брокера на Zell; нет snappy/lz4, транзакций, статического членства) | producer с батчами и idempotence, consumer groups с rebalance, SASL (PLAIN/SCRAM), TLS, компрессия gzip/zstd, транзакции позже; один клиент на Zell без C |
+| `aws-sdk-go` S3 | `std.cloud.s3` | ✅ есть (SigV4 заголовками и presigned URL — векторы набора AWS и документации S3, сверено с botocore; `Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle}` для AWS/MinIO/R2/GCS; Put/Get (поток, диапазон)/Head/Delete/DeleteObjects, `ListObjectsV2` и итератор `List`, `CopyObject`, бакеты, multipart `Upload` с параллельными частями и abort, `Presign`, `s3.Error` + `ErrNoSuchKey/NoSuchBucket/AccessDenied/PreconditionFailed`, повторы 5xx/SlowDown; учётные данные: env, `~/.aws/credentials`, IMDSv2. Проверено на MinIO; spec-тест против S3-сервера на Zell, проверяющего подписи; тела запросов в памяти — потоковой загрузки одним PUT нет, только multipart) | SigV4, Get/Put/Delete/List, multipart upload с параллельными частями, presigned URLs, потоковые тела, совместимо с MinIO/R2/GCS-S3 |
 | `minio-go`, `gocloud blob` | `std.cloud.blob` (абстракция над s3/fs) | ✅ есть (`Bucket`: Write/Read/Delete/Exists/Attributes/List/Copy/SignedURL; `OpenS3`, `OpenDir` с атомарной записью и защитой от `..`, `Open("s3://…"/"file://…")`, `blob.ErrNotFound`) | единый интерфейс для S3 и локальной ФС |
 
 ## Уровень 4 — фреймворк (`docs/FRAMEWORK.md`)
 
-`slang.web`, `slang.data`, `slang.log` (расширенные sinks), `slang.diag`
-(endpoints, trace), `slang.config`, `slang.cache`, `slang.jobs`,
-`slang.auth`, `slang.messaging`, `slang.cli`, `slang.test`.
+`zell.web`, `zell.data`, `zell.log` (расширенные sinks), `zell.diag`
+(endpoints, trace), `zell.config`, `zell.cache`, `zell.jobs`,
+`zell.auth`, `zell.messaging`, `zell.cli`, `zell.test`.
 
-| Аналог | Slang | Статус | Лучше чем в Go |
+| Аналог | Zell | Статус | Лучше чем в Go |
 |---|---|---|---|
-| ASP.NET Core, `gin`/`echo` + `wire` + `viper` + `golang-jwt` + `swag` | `std.web` (`std.web.auth.jwt`, `std.web.config`; станет пакетом `slang.web`, когда появится реестр) | ✅ есть (контроллеры `@route`/`@get…` и minimal API `MapGet((id int, svc *Svc) => …)` — таблица маршрутов, привязка и фабрики DI генерируются при компиляции (`sema/web.rs`), неверный маршрут или незарегистрированная зависимость — ошибка компиляции; привязка path/query/header/form/JSON с `@validate` и 400 Problem Details; DI singleton/scoped/transient с `Drop` в конце запроса; middleware (логирование, recover, CORS, gzip, статика, rate limit, request id, трассировка, JWT HS256/RS256/ES256 + `@authorize(roles)`, body limit, timeout, health checks); `config.Bind<T>` из json/yaml/toml + env + args, `Options<T>` с перезагрузкой; `Result<T>` с content negotiation; OpenAPI 3.1 + `/swagger`; `TestServer`/`TestClient` в памяти; см. FRAMEWORK.md §2) | без рефлексии при старте и без кодогенерации отдельным шагом; ошибки маршрутов и DI — при компиляции |
+| ASP.NET Core, `gin`/`echo` + `wire` + `viper` + `golang-jwt` + `swag` | `std.web` (`std.web.auth.jwt`, `std.web.config`; станет пакетом `zell.web`, когда появится реестр) | ✅ есть (контроллеры `@route`/`@get…` и minimal API `MapGet((id int, svc *Svc) => …)` — таблица маршрутов, привязка и фабрики DI генерируются при компиляции (`sema/web.rs`), неверный маршрут или незарегистрированная зависимость — ошибка компиляции; привязка path/query/header/form/JSON с `@validate` и 400 Problem Details; DI singleton/scoped/transient с `Drop` в конце запроса; middleware (логирование, recover, CORS, gzip, статика, rate limit, request id, трассировка, JWT HS256/RS256/ES256 + `@authorize(roles)`, body limit, timeout, health checks); `config.Bind<T>` из json/yaml/toml + env + args, `Options<T>` с перезагрузкой; `Result<T>` с content negotiation; OpenAPI 3.1 + `/swagger`; `TestServer`/`TestClient` в памяти; см. FRAMEWORK.md §2) | без рефлексии при старте и без кодогенерации отдельным шагом; ошибки маршрутов и DI — при компиляции |
 
-## Чего в Go нет, а в Slang будет в stdlib
+## Чего в Go нет, а в Zell будет в stdlib
 
 `collections` (полный набор), `yaml`/`toml`, `regex` с проверкой при
 компиляции, `websocket`, `zstd`/`brotli`, `uuid`, `password` (Argon2),

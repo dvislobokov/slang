@@ -1,8 +1,8 @@
-"""GDB pretty-printers for Slang programs (docs/DEBUGGER.md, stage 1).
+"""GDB pretty-printers for Zell programs (docs/DEBUGGER.md, stage 1).
 
-    (gdb) source /path/to/slang/tools/gdb/slang_printers.py
+    (gdb) source /path/to/zell/tools/gdb/zell_printers.py
 
-or `slang debug --gdb prog.sl`. Same coverage as tools/lldb/slang_formatters.py:
+or `zell debug --gdb prog.zl`. Same coverage as tools/lldb/zell_formatters.py:
 string, []T, map[K]V, error, T!, data enums, interfaces/any, func values,
 Task<T>, weak *T and char. They only read memory (core dumps work too).
 """
@@ -302,7 +302,7 @@ class ClosurePrinter:
 
 def _task_layout():
     try:
-        tbl = gdb.parse_and_eval("(long *)&slang_debug_task_layout")
+        tbl = gdb.parse_and_eval("(long *)&zell_debug_task_layout")
         if int(tbl[0]) == 1:
             return int(tbl[1]), int(tbl[2]), int(tbl[3])
     except gdb.error:
@@ -433,12 +433,12 @@ def decode_refcount(word):
     return text + ("" if not flags else ", " + ", ".join(flags))
 
 
-class SlangRc(gdb.Command):
-    """slang-rc EXPR: the reference count of the heap object EXPR points at
+class ZellRc(gdb.Command):
+    """zell-rc EXPR: the reference count of the heap object EXPR points at
     (a *T points at the payload, 16 bytes after the header)."""
 
     def __init__(self):
-        super().__init__("slang-rc", gdb.COMMAND_DATA)
+        super().__init__("zell-rc", gdb.COMMAND_DATA)
 
     def invoke(self, arg, from_tty):
         v = gdb.parse_and_eval(arg)
@@ -456,7 +456,7 @@ class SlangRc(gdb.Command):
         print("0x%x: %s" % (addr, decode_refcount(_u64(addr))))
 
 
-SlangRc()
+ZellRc()
 
 
 def register(objfile=None):

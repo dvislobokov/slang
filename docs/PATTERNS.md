@@ -1,6 +1,6 @@
-# ООП и паттерны в Slang
+# ООП и паттерны в Zell
 
-В Slang нет наследования классов. Четыре механизма заменяют его:
+В Zell нет наследования классов. Четыре механизма заменяют его:
 
 1. **Структуры со встраиванием** — композиция и подъём методов.
 2. **Структурные интерфейсы** — полиморфизм без объявления связи.
@@ -12,7 +12,7 @@
 
 ## Встраивание — это композиция, не наследование
 
-```slang
+```zell
 struct Base {
     Name string
     func Run() { println("run"); this.Step() }
@@ -32,7 +32,7 @@ d.Run()      // печатает "run", затем "base step" — НЕ "derived
 встраивание нет (как в Go). Это сделано намеренно: поведение `Base` нельзя
 сломать снаружи. Когда нужна подмена шага, используйте интерфейс:
 
-```slang
+```zell
 interface Stepper { func Step() }
 
 struct Runner {
@@ -50,7 +50,7 @@ Runner.New(Loud{}).Run()     // run, LOUD
 
 ## Таблица паттернов
 
-| Паттерн | Как в Slang |
+| Паттерн | Как в Zell |
 |---|---|
 | Стратегия | интерфейс с одним методом или значение `func(...)` |
 | Наблюдатель | срез `[]func(Event)` или интерфейс `Observer`; `events.Hub<T>` в stdlib |
@@ -68,14 +68,14 @@ Runner.New(Loud{}).Run()     // run, LOUD
 | Компоновщик | интерфейс `Node` + структура со срезом `[]Node` |
 | Итератор | `for x in` поверх срезов/map/коллекций; интерфейс `Iterator<T>` |
 | Цепочка обязанностей | срез обработчиков `[]Handler` или middleware `func(ctx, next)` |
-| Внедрение зависимостей | поля-интерфейсы + конструктор; контейнер в `slang.web` |
-| Repository / Unit of Work | интерфейсы + generics (`Repo<T>`), `slang.data` |
+| Внедрение зависимостей | поля-интерфейсы + конструктор; контейнер в `zell.web` |
+| Repository / Unit of Work | интерфейсы + generics (`Repo<T>`), `zell.data` |
 
 ## Примеры
 
 ### Декоратор
 
-```slang
+```zell
 struct Cached {
     inner Store
     cache map[string]string
@@ -104,7 +104,7 @@ var s Store = Cached.New(DiskStore{Path: "/tmp"})   // Cached тоже Store
 
 ### Строитель с functional options
 
-```slang
+```zell
 struct Server {
     addr    string
     timeout int
@@ -125,7 +125,7 @@ var srv = Server.New(":8080", WithTimeout(10))
 
 ### Посетитель через enum
 
-```slang
+```zell
 enum Expr {
     Num(value float)
     Add(left *Expr, right *Expr)
@@ -147,7 +147,7 @@ func Eval(e *Expr) float {
 
 ### Состояние
 
-```slang
+```zell
 enum OrderState { Created, Paid, Shipped, Delivered, Cancelled }
 
 struct Order {
@@ -164,7 +164,7 @@ struct Order {
 
 ### Внедрение зависимостей
 
-```slang
+```zell
 struct UserService {
     repo  UserRepo      // интерфейс
     mail  Mailer        // интерфейс
@@ -176,12 +176,12 @@ struct UserService {
 }
 ```
 
-В тестах подставляются структуры-заглушки; в `slang.web` контейнер
+В тестах подставляются структуры-заглушки; в `zell.web` контейнер
 собирает граф по типам при компиляции.
 
 ## Чего нет и чем заменяется
 
-| В C#/Java | В Slang |
+| В C#/Java | В Zell |
 |---|---|
 | `abstract class` с общими полями и абстрактными методами | интерфейс для контракта + встраиваемая структура для общих полей/методов |
 | `virtual`/`override` | интерфейс, переданный явно (см. «шаблонный метод») |
@@ -197,7 +197,7 @@ struct UserService {
 
 ## Пример: `implements`, методы по умолчанию и `sealed`
 
-```slang
+```zell
 namespace app.shapes
 
 import std
@@ -247,7 +247,7 @@ func main() {
 - `implements` не меняет семантику: интерфейсы структурные. Реализации
   `sealed`-интерфейса — все типы его пространства имён с нужными методами
   (с `implements` или без); тип из другого пространства имён его не
-  реализует. Пример лежит в `examples/sealed_shapes.sl`.
+  реализует. Пример лежит в `examples/sealed_shapes.zl`.
 - `this` в методе по умолчанию — значение интерфейса; полей у интерфейса нет.
 - Новая реализация `sealed`-интерфейса подсвечивает каждый неполный `switch`.
 
@@ -260,7 +260,7 @@ func main() {
    с телом, выраженный через остальные методы интерфейса. Реализация
    обязана дать только абстрактные методы.
 
-   ```slang
+   ```zell
    interface Logger {
        func Log(level int, msg string)
        func Info(msg string)  { this.Log(1, msg) }

@@ -1,19 +1,19 @@
 #!/bin/sh
-# Installs a Slang toolchain on Linux or macOS (docs/PLATFORMS.md, "Установка"):
+# Installs a Zell toolchain on Linux or macOS (docs/PLATFORMS.md, "Установка"):
 #
-#   curl -fsSL https://raw.githubusercontent.com/dvislobokov/slang/master/scripts/install.sh | sh
-#   sh install.sh [--version X.Y.Z] [--dir ~/.slang/toolchain] [--from slang-X-host.tar.gz]
+#   curl -fsSL https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.sh | sh
+#   sh install.sh [--version X.Y.Z] [--dir ~/.zell/toolchain] [--from zell-X-host.tar.gz]
 #
-# Downloads slang-<version>-<host>.tar.gz from $SLANG_DIST_URL (a directory
+# Downloads zell-<version>-<host>.tar.gz from $ZELL_DIST_URL (a directory
 # of release files; default: the GitHub release of that version, or of the
 # latest one, whose VERSION file names it), checks its .sha256, unpacks it into
-# <dir>/slang-<version>-<host>/ and points <dir>/current at it, then links
-# bin/slang and bin/slang-lsp into ~/.local/bin (or $SLANG_BIN_DIR).
-# Linking Slang programs needs clang on PATH (and lld for cross targets).
+# <dir>/zell-<version>-<host>/ and points <dir>/current at it, then links
+# bin/zell and bin/zell-lsp into ~/.local/bin (or $ZELL_BIN_DIR).
+# Linking Zell programs needs clang on PATH (and lld for cross targets).
 set -eu
-version=${SLANG_VERSION:-latest}
-dir=${SLANG_TOOLCHAIN_DIR:-$HOME/.slang/toolchain}
-bindir=${SLANG_BIN_DIR:-$HOME/.local/bin}
+version=${ZELL_VERSION:-latest}
+dir=${ZELL_TOOLCHAIN_DIR:-$HOME/.zell/toolchain}
+bindir=${ZELL_BIN_DIR:-$HOME/.local/bin}
 from=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -40,21 +40,21 @@ fetch() { # url file
 if [ -n "$from" ]; then
     archive=$from
 else
-    if [ -n "${SLANG_DIST_URL:-}" ]; then
-        url=$SLANG_DIST_URL             # a directory of release files (VERSION, archives)
+    if [ -n "${ZELL_DIST_URL:-}" ]; then
+        url=$ZELL_DIST_URL             # a directory of release files (VERSION, archives)
     elif [ "$version" = latest ]; then
-        url=https://github.com/dvislobokov/slang/releases/latest/download
+        url=https://github.com/zell-lang/zell/releases/latest/download
     else
-        url=https://github.com/dvislobokov/slang/releases/download/v$version
+        url=https://github.com/zell-lang/zell/releases/download/v$version
     fi
     if [ "$version" = latest ]; then
         fetch "$url/VERSION" "$tmp/VERSION" || { echo "install.sh: cannot read $url/VERSION; pass --version" >&2; exit 1; }
         version=$(cat "$tmp/VERSION")
     fi
-    archive="$tmp/slang-$version-$host.tar.gz"
-    echo "downloading $url/slang-$version-$host.tar.gz"
-    fetch "$url/slang-$version-$host.tar.gz" "$archive"
-    if fetch "$url/slang-$version-$host.tar.gz.sha256" "$tmp/sum" 2>/dev/null; then
+    archive="$tmp/zell-$version-$host.tar.gz"
+    echo "downloading $url/zell-$version-$host.tar.gz"
+    fetch "$url/zell-$version-$host.tar.gz" "$archive"
+    if fetch "$url/zell-$version-$host.tar.gz.sha256" "$tmp/sum" 2>/dev/null; then
         want=$(cut -d' ' -f1 < "$tmp/sum")
         got=$( (sha256sum "$archive" 2>/dev/null || shasum -a 256 "$archive") | cut -d' ' -f1)
         [ "$want" = "$got" ] || { echo "install.sh: checksum mismatch ($got, expected $want)" >&2; exit 1; }
@@ -65,8 +65,8 @@ tar xzf "$archive" -C "$dir"
 name=$(tar tzf "$archive" | head -1 | cut -d/ -f1)
 ln -sfn "$dir/$name" "$dir/current"
 mkdir -p "$bindir"
-ln -sf "$dir/current/bin/slang" "$bindir/slang"
-ln -sf "$dir/current/bin/slang-lsp" "$bindir/slang-lsp"
-echo "installed $name in $dir (current -> $name); slang and slang-lsp linked into $bindir"
+ln -sf "$dir/current/bin/zell" "$bindir/zell"
+ln -sf "$dir/current/bin/zell-lsp" "$bindir/zell-lsp"
+echo "installed $name in $dir (current -> $name); zell and zell-lsp linked into $bindir"
 case ":$PATH:" in *":$bindir:"*) ;; *) echo "add $bindir to PATH:  export PATH=\"$bindir:\$PATH\"" ;; esac
 command -v clang >/dev/null 2>&1 || echo "note: linking needs clang (apt install clang lld / xcode-select --install)"

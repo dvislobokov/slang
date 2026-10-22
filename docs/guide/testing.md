@@ -1,17 +1,17 @@
 # Testing
 
-`slang test` finds the tests of a package (or a directory, or one file),
+`zell test` finds the tests of a package (or a directory, or one file),
 builds them into one binary and runs every test in its own process, so a
 failed assertion, a `Fatal` or even a panic ends only that test.
 
 ```sh
-slang test                     # the package of the current directory
-slang test path/to/dir -v      # every test, with names and logs
-slang test --filter '^TestParse|Sum$'
-slang test --json              # one JSON event per line (CI, editors)
-slang test --bench             # also run the benchmarks
-slang test --parallel 8        # parallel tests at a time (default 4)
-slang test std                 # the standard library's own tests and examples
+zell test                     # the package of the current directory
+zell test path/to/dir -v      # every test, with names and logs
+zell test --filter '^TestParse|Sum$'
+zell test --json              # one JSON event per line (CI, editors)
+zell test --bench             # also run the benchmarks
+zell test --parallel 8        # parallel tests at a time (default 4)
+zell test std                 # the standard library's own tests and examples
 ```
 
 ## Tests
@@ -20,8 +20,8 @@ A test is a function marked `@test` that takes a `*testing.T` (or no
 parameters at all). Assertions from `std.testing` report a failure and
 keep going; their `...Fatal` variants stop the test.
 
-```slang
-// slang test
+```zell
+// zell test
 namespace guide.testing.basics
 
 import std
@@ -73,8 +73,8 @@ Tables are slices of structs; `t.Run(name, fn)` runs a named subtest
 (`TestAbs/negative` in the output). A test whose body calls
 `t.Parallel()` runs concurrently with the other parallel tests.
 
-```slang
-// slang test
+```zell
+// zell test
 namespace guide.testing.table
 
 import std
@@ -114,11 +114,11 @@ func abs(x int) int {
 ## Benchmarks
 
 A benchmark takes a `*testing.B` and runs the measured code `b.N` times;
-`slang test --bench` reports time and allocations per operation.
+`zell test --bench` reports time and allocations per operation.
 `b.ResetTimer()`, `StopTimer()` and `StartTimer()` exclude setup.
 
-```slang
-// slang test
+```zell
+// zell test
 namespace guide.testing.bench
 
 import std
@@ -138,9 +138,9 @@ import std
 
 ## Examples
 
-A function `ExampleName()` in a `*_test.sl` file is an *example*: it is
-compiled with the tests, `slang doc` shows it under the symbol it names,
-and if it ends with an `// Output:` comment `slang test` runs it and
+A function `ExampleName()` in a `*_test.zl` file is an *example*: it is
+compiled with the tests, `zell doc` shows it under the symbol it names,
+and if it ends with an `// Output:` comment `zell test` runs it and
 compares its standard output with the comment (surrounding white space
 ignored; `// Unordered output:` compares the lines in any order).
 
@@ -153,8 +153,8 @@ ignored; `// Unordered output:` compares the lines in any order).
 
 An example may also be `async` or return `void!` (an error fails it).
 
-```slang
-// slang test
+```zell
+// zell test
 namespace guide.testing.examples
 
 import std
@@ -183,13 +183,13 @@ func ExampleGreet_unordered() {
 }
 ```
 
-The standard library documents itself this way: `std/**/*_test.sl` hold
-examples for the most used functions, and `slang test std` runs them.
+The standard library documents itself this way: `std/**/*_test.zl` hold
+examples for the most used functions, and `zell test std` runs them.
 
 ## Output and exit status
 
 Without `-v`, passing tests are quiet; a failure prints the test's log and
 `--- FAIL: TestName (0.00s)`, and the run ends with a summary such as
 `ok   12 passed, 0 failed, 1 skipped (0.31s)`. The exit status is 1 when
-anything failed, so `slang test` works in CI as is; `--json` gives
+anything failed, so `zell test` works in CI as is; `--json` gives
 machine-readable events (`{"Action":"pass","Test":"TestAdd","Elapsed":0.004}`).

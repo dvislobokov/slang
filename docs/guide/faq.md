@@ -1,8 +1,8 @@
-# FAQ: Slang for Go and C# programmers
+# FAQ: Zell for Go and C# programmers
 
 ## Why another language?
 
-Slang aims at the programs people write in Go and C# (services, tools,
+Zell aims at the programs people write in Go and C# (services, tools,
 CLIs) with Go's small, readable language, C#'s ergonomics where Go is
 verbose (namespaces, `var`, methods inside types, `async`/`await`,
 generics, attributes), errors that are values but take one character to
@@ -12,7 +12,7 @@ deterministically. It compiles through LLVM to small native binaries.
 
 ## Coming from Go
 
-| Go | Slang |
+| Go | Zell |
 |---|---|
 | `package users` + directory layout | `namespace app.services.users` in the file; directories do not matter |
 | `x := 1`, `var x int` | `var x = 1`, `var x int` (no `:=`) |
@@ -27,15 +27,15 @@ deterministically. It compiles through LLVM to small native binaries.
 | `interface{}` / `any` | `any`, and real generics with constraints |
 | `for i := 0; i < n; i++` | `for i in 0..n` |
 | GC | ARC + `Drop` + `weak` (see [memory.md](memory.md)) |
-| `go test`, `ExampleX` | `slang test`, `ExampleX` with `// Output:` (the same idea) |
-| `go doc strings.Split` | `slang doc strings.Split` |
+| `go test`, `ExampleX` | `zell test`, `ExampleX` with `// Output:` (the same idea) |
+| `go doc strings.Split` | `zell doc strings.Split` |
 
 Things that stay as in Go: structural interfaces, value structs, slices
 and maps with reference semantics, `defer`, `switch` without fall-through,
 upper-case export, unused imports and variables are errors, a formatter
-with no options (`slang fmt`).
+with no options (`zell fmt`).
 
-```slang
+```zell
 namespace guide.faq.go
 
 import std
@@ -75,7 +75,7 @@ func main() {
 
 ## Coming from C#
 
-| C# | Slang |
+| C# | Zell |
 |---|---|
 | `namespace App.Users;` + `using` | `namespace app.users` + `import` (an import shortens names; full paths always work) |
 | classes (reference types) | structs are values; `new T{}` gives a `*T` on the heap |
@@ -91,7 +91,7 @@ func main() {
 | inheritance | composition: embedded structs and interfaces with default methods |
 | `null` everywhere | `nil` only for pointers, interfaces, slices, maps and functions |
 
-```slang
+```zell
 namespace guide.faq.csharp
 
 import std
@@ -133,7 +133,7 @@ async func main() {
 ## Is there a garbage collector? What about cycles?
 
 No collector, ever: memory is freed when the last reference goes. Cycles
-need a `weak *T` back reference; `slang run --leak-check` finds the ones
+need a `weak *T` back reference; `zell run --leak-check` finds the ones
 you missed and names the field. See [memory.md](memory.md).
 
 ## Are there exceptions?
@@ -163,6 +163,6 @@ and how they were measured are in [benchmarks/README.md](../../benchmarks/README
 
 ## Where is the API reference?
 
-`slang doc` prints it in the terminal (`slang doc http.Client`), and
-`slang doc std --html out/` generates a static site with search. The
+`zell doc` prints it in the terminal (`zell doc http.Client`), and
+`zell doc std --html out/` generates a static site with search. The
 documentation comes from the comments above declarations in `std/`.

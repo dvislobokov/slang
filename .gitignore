@@ -7,3 +7,4 @@ target/
 /site/
 /dist/
 .claude/worktrees/
+__pycache__/

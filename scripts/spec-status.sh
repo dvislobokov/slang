@@ -2,8 +2,8 @@
 # Prints a markdown table of the spec corpus (tests/spec) by area:
 # number of tests, how many are passing / pending (from their `// status:`
 # directive) and how many of them are compile-fail tests (`// error:`).
-# A test is a .sl file directly in an area directory, or a subdirectory
-# (multi-file test; its directives are read from its first .sl file).
+# A test is a .zl file directly in an area directory, or a subdirectory
+# (multi-file test; its directives are read from its first .zl file).
 #
 # Usage: scripts/spec-status.sh [spec-dir]   (default: tests/spec)
 set -eu
@@ -26,10 +26,10 @@ for dir in "$root"/*/; do
     t=0; p=0; n=0; c=0
     for entry in "$dir"*; do
         if [ -d "$entry" ]; then
-            file=$(ls "$entry"/*.sl 2>/dev/null | sort | head -n 1)
+            file=$(ls "$entry"/*.zl 2>/dev/null | sort | head -n 1)
             [ -n "$file" ] || continue
         else
-            case "$entry" in *.sl) file=$entry ;; *) continue ;; esac
+            case "$entry" in *.zl) file=$entry ;; *) continue ;; esac
         fi
         t=$((t + 1))
         case "$(directive "$file" status)" in

@@ -1,0 +1,145 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Zell",
+  "scopeName": "source.zell",
+  "fileTypes": ["zl"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#namespace" },
+    { "include": "#attributes" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#literals" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.zell", "match": "//.*$" },
+        { "name": "comment.block.zell", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "namespace": {
+      "patterns": [
+        {
+          "match": "\\b(namespace|import)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": { "name": "keyword.other.namespace.zell" },
+            "2": { "name": "entity.name.namespace.zell" },
+            "3": { "name": "keyword.other.as.zell" },
+            "4": { "name": "entity.name.namespace.alias.zell" }
+          }
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "match": "(@)([A-Za-z_][A-Za-z0-9_.]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.zell" },
+            "2": { "name": "entity.name.tag.attribute.zell" }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(struct|interface|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.zell" },
+            "2": { "name": "entity.name.type.zell" }
+          }
+        },
+        {
+          "match": "\\b(?:(static)\\s+)?(?:(async)\\s+)?(func)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.static.zell" },
+            "2": { "name": "storage.modifier.async.zell" },
+            "3": { "name": "storage.type.function.zell" },
+            "4": { "name": "entity.name.function.zell" }
+          }
+        },
+        {
+          "match": "\\b(var|const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.var.zell" },
+            "2": { "name": "variable.other.declaration.zell" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.zell", "match": "\\b(if|else|for|in|switch|case|default|return|break|continue|defer)\\b" },
+        { "name": "keyword.control.error.zell", "match": "\\b(try|catch)\\b" },
+        { "name": "keyword.control.async.zell", "match": "\\b(async|await)\\b" },
+        { "name": "keyword.operator.new.zell", "match": "\\b(new)\\b" },
+        { "name": "storage.type.zell", "match": "\\b(struct|interface|enum|func|var|const|map)\\b" },
+        { "name": "storage.modifier.zell", "match": "\\b(static)\\b" },
+        { "name": "variable.language.this.zell", "match": "\\b(this)\\b" },
+        { "name": "constant.language.zell", "match": "\\b(nil|true|false)\\b" },
+        { "name": "support.function.builtin.zell", "match": "\\b(error|panic|append|len|cap|typeof)\\b(?=\\s*\\()" }
+      ]
+    },
+    "literals": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.zell",
+          "begin": "\"", "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.zell", "match": "\\\\(u\\{[0-9A-Fa-f]+\\}|[nrt0\\\\\"'])" },
+            { "name": "constant.other.placeholder.zell", "match": "\\{[0-9]+\\}" }
+          ]
+        },
+        { "name": "string.quoted.other.raw.zell", "begin": "`", "end": "`" },
+        {
+          "name": "string.quoted.single.zell",
+          "begin": "'", "end": "'",
+          "patterns": [{ "name": "constant.character.escape.zell", "match": "\\\\(u\\{[0-9A-Fa-f]+\\}|[nrt0\\\\\"'])" }]
+        },
+        { "name": "constant.numeric.hex.zell", "match": "\\b0[xX][0-9A-Fa-f_]+\\b" },
+        { "name": "constant.numeric.binary.zell", "match": "\\b0[bB][01_]+\\b" },
+        { "name": "constant.numeric.octal.zell", "match": "\\b0[oO][0-7_]+\\b" },
+        { "name": "constant.numeric.float.zell", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.float.zell", "match": "\\b[0-9][0-9_]*[eE][+-]?[0-9]+\\b" },
+        { "name": "constant.numeric.integer.zell", "match": "\\b[0-9][0-9_]*\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "support.type.primitive.zell", "match": "\\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|byte|float|float32|float64|bool|string|char|void|error|Task)\\b" },
+        { "name": "entity.name.type.zell", "match": "\\b[A-Z][A-Za-z0-9_]*\\b(?=\\s*[{<]|\\s*$|\\s*[,)\\]!]|\\s+[a-zA-Z_])" }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        { "name": "entity.name.function.call.zell", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.assignment.zell", "match": "(<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|=(?!=))" },
+        { "name": "keyword.operator.comparison.zell", "match": "(==|!=|<=|>=|<|>)" },
+        { "name": "keyword.operator.logical.zell", "match": "(&&|\\|\\||!(?!=))" },
+        { "name": "keyword.operator.arithmetic.zell", "match": "(\\+|-|\\*|/|%|<<|>>|&|\\||\\^)" },
+        { "name": "keyword.operator.error.zell", "match": "\\?" },
+        { "name": "keyword.operator.arrow.zell", "match": "=>" },
+        { "name": "keyword.operator.range.zell", "match": "\\.\\." }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.separator.zell", "match": "[,;:]" },
+        { "name": "punctuation.accessor.zell", "match": "\\." },
+        { "name": "punctuation.section.braces.zell", "match": "[{}]" },
+        { "name": "punctuation.section.brackets.zell", "match": "[\\[\\]]" },
+        { "name": "punctuation.section.parens.zell", "match": "[()]" }
+      ]
+    }
+  }
+}

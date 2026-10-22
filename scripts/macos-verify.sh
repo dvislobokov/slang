@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verifies the macOS port on a real Mac (docs/PLATFORMS.md, "macOS: что
 # проверить на настоящем Mac"). Everything here was only compiled on Linux
-# (runtime against stub headers, Slang code as Mach-O objects); this script
+# (runtime against stub headers, Zell code as Mach-O objects); this script
 # builds, links and runs it for real and prints one line per check.
 #
 # Needs: Xcode command line tools (clang, the SDK), Rust (cargo), LLVM 18
@@ -41,14 +41,14 @@ check compiler_build cargo build --release
 if [ $quick = no ]; then
     check cargo_test cargo test --workspace
 fi
-S=$root/target/release/slang
+S=$root/target/release/zell
 # 3. platform specifics
 tmp=$log/work; mkdir -p "$tmp"
-check hello_link_run sh -c "'$S' build examples/hello.sl -o '$tmp/hello' && '$tmp/hello' | grep -q 'Hello, Slang!'"
-check release_dead_strip sh -c "'$S' build --release examples/hello.sl -o '$tmp/hello_r' && ls -l '$tmp/hello_r'"
-check net_examples sh -c "for e in tcp_echo http_server tls_echo redis http_realtime; do '$S' run examples/\$e.sl > '$tmp/'\$e.got && cmp '$tmp/'\$e.got examples/\$e.out || exit 1; done"
-check cpuprofile sh -c "'$S' run examples/cpuprofile.sl | cmp - examples/cpuprofile.out"
-cat > "$tmp/panic.sl" <<'SL'
+check hello_link_run sh -c "'$S' build examples/hello.zl -o '$tmp/hello' && '$tmp/hello' | grep -q 'Hello, Zell!'"
+check release_dead_strip sh -c "'$S' build --release examples/hello.zl -o '$tmp/hello_r' && ls -l '$tmp/hello_r'"
+check net_examples sh -c "for e in tcp_echo http_server tls_echo redis http_realtime; do '$S' run examples/\$e.zl > '$tmp/'\$e.got && cmp '$tmp/'\$e.got examples/\$e.out || exit 1; done"
+check cpuprofile sh -c "'$S' run examples/cpuprofile.zl | cmp - examples/cpuprofile.out"
+cat > "$tmp/panic.zl" <<'SL'
 namespace verify.panic
 
 import std.io
@@ -61,8 +61,8 @@ func main() {
     println(inner([1, 2]))
 }
 SL
-check backtrace_symbols sh -c "'$S' build '$tmp/panic.sl' -o '$tmp/panic'; '$tmp/panic' 2>&1 | grep -q 'inner'"
-cat > "$tmp/plat.sl" <<'SL'
+check backtrace_symbols sh -c "'$S' build '$tmp/panic.zl' -o '$tmp/panic'; '$tmp/panic' 2>&1 | grep -q 'inner'"
+cat > "$tmp/plat.zl" <<'SL'
 namespace verify.plat
 
 import std
@@ -78,13 +78,13 @@ async func main() void! {
     print(r.Stdout)
 }
 SL
-check platform_features sh -c "'$S' run '$tmp/plat.sl' > '$tmp/plat.got' && printf 'macos %s\n2024-07-03 11:46 CEST\nroots: true true\nspawned\n' \"\$(uname -m | sed 's/x86_64/amd64/')\" | cmp - '$tmp/plat.got'"
+check platform_features sh -c "'$S' run '$tmp/plat.zl' > '$tmp/plat.got' && printf 'macos %s\n2024-07-03 11:46 CEST\nroots: true true\nspawned\n' \"\$(uname -m | sed 's/x86_64/amd64/')\" | cmp - '$tmp/plat.got'"
 # 4. cross targets from the Mac (optional toolchains)
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1 || [ -d /opt/homebrew/opt/mingw-w64 ]; then
-    check windows_cross sh -c "make -C runtime CROSS=x86_64-w64-mingw32 -j8 && '$S' build --target windows-amd64 examples/hello.sl -o '$tmp/hello.exe'"
+    check windows_cross sh -c "make -C runtime CROSS=x86_64-w64-mingw32 -j8 && '$S' build --target windows-amd64 examples/hello.zl -o '$tmp/hello.exe'"
 fi
-check linux_obj "$S" build --target linux-arm64 --emit=obj examples/structs.sl -o "$tmp/structs.o"
+check linux_obj "$S" build --target linux-arm64 --emit=obj examples/structs.zl -o "$tmp/structs.o"
 # 5. packaging
-check package_toolchain sh -c "scripts/package-toolchain.sh --no-build --out '$tmp/dist' && tar tzf '$tmp/dist/slang-'*'-macos-'*'.tar.gz' | grep -q targets/"
+check package_toolchain sh -c "scripts/package-toolchain.sh --no-build --out '$tmp/dist' && tar tzf '$tmp/dist/zell-'*'-macos-'*'.tar.gz' | grep -q targets/"
 echo "macos-verify: $fails failed check(s); logs in $log"
 exit $fails

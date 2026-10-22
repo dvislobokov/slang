@@ -1,22 +1,22 @@
-# Slang Framework: веб, данные, логирование, диагностика
+# Zell Framework: веб, данные, логирование, диагностика
 
 Цель: из коробки давать уровень ASP.NET Core + EF Core + Serilog + pprof,
 но проще, быстрее и без магии рантайма. Всё строится на четырёх свойствах
 языка: generics (мономорфизация), compile-time рефлексия
 (`reflect.Fields<T>()`), типизированные атрибуты и `async/await`.
-Там, где .NET использует JIT и Reflection.Emit, Slang генерирует код при
-компиляции; там, где Go использует строковые теги и `interface{}`, Slang
+Там, где .NET использует JIT и Reflection.Emit, Zell генерирует код при
+компиляции; там, где Go использует строковые теги и `interface{}`, Zell
 использует атрибуты и generics.
 
 Разделение: стандартная библиотека `std.*` содержит базовые протоколы и
-форматы; фреймворк `slang.web`, `slang.data`, `slang.log`, `slang.diag` —
+форматы; фреймворк `zell.web`, `zell.data`, `zell.log`, `zell.diag` —
 отдельные пакеты в реестре с той же командой разработки.
 
 ## 1. Форматы: `std.encoding.{json,xml,yaml,toml}`
 
 Единая модель для всех четырёх форматов:
 
-```slang
+```zell
 @json(name: "user")
 struct User {
     @json(name: "id")                 Id       int
@@ -61,7 +61,7 @@ switch any {
 - TOML и YAML дополнительно: сохранение комментариев при round-trip
   (`toml.Document`), якоря YAML, многодокументные YAML-потоки.
 
-## 2. HTTP-сервер: `std.net.http` и `slang.web`
+## 2. HTTP-сервер: `std.net.http` и `zell.web`
 
 Два уровня, как `Kestrel` + ASP.NET Core.
 
@@ -125,7 +125,7 @@ switch any {
   renegotiation, SSLv3/TLS 1.0/1.1. По умолчанию `MinVersion: tls.V12`;
   клиент предлагает 1.3 и откатывается на 1.2 по правилам RFC 8446 с защитой
   от downgrade (`DOWNGRD` sentinel в ServerHello.random).
-- **Протокол на Slang**: машина состояний handshake, record layer, HKDF и
+- **Протокол на Zell**: машина состояний handshake, record layer, HKDF и
   расписание ключей, X.509-парсер (DER) и проверка цепочек, SNI, ALPN,
   session tickets, OCSP stapling, горячая перезагрузка сертификатов.
 - **Примитивы на C** в рантайме с константным временем (AES-GCM,
@@ -138,7 +138,7 @@ switch any {
 - **Интеграция**: шифрование в буферы, ввод-вывод — наши async-сокеты, без
   потока на соединение; `http.Get("https://...")`, `http.Server{TLS: ...}`,
   `h2` через ALPN; системные корни через `runtime/src/platform/`;
-  `web.AutoTLS("example.com")` через ACME в `slang.web`.
+  `web.AutoTLS("example.com")` через ACME в `zell.web`.
 - **Результат**: TLS добавляет ~300–400 KB к бинарнику, одна сборка под
   все платформы, wasm и мобильные без C-зависимостей.
 
@@ -156,7 +156,7 @@ switch any {
   ~70 MB/s без него, ChaCha20-Poly1305 ~270 MB/s), X25519 и Ed25519 (поле
   2^255-19 на 51-битных лимбах), P-256 (Монтгомери, полные формулы RCB),
   RSA (CRT + ослепление экспоненты), SHA-2, HMAC, HKDF. NEON — нет.
-- ✓ X.509 на Slang: DER/PEM, цепочки, сроки, CA/pathlen, keyUsage/EKU,
+- ✓ X.509 на Zell: DER/PEM, цепочки, сроки, CA/pathlen, keyUsage/EKU,
   dNSName name constraints, проверка имени хоста; системные корни через
   `runtime/src/platform/certroots.c` (Linux/BSD; macOS/Windows — только
   `$SSL_CERT_FILE`).
@@ -164,10 +164,10 @@ switch any {
   `http.Server{TLS: &tls.ServerConfig{...}}`.
 - ✓ Тесты: векторы RFC/NIST/Wycheproof-стиля для каждого примитива
   (`runtime/tests/test_crypto.c`), расписание ключей и записи RFC 8448 байт в
-  байт (`tests/spec/stdlib/tls_rfc8448.sl`), полная трасса рукопожатия
+  байт (`tests/spec/stdlib/tls_rfc8448.zl`), полная трасса рукопожатия
   TLS 1.3 «The Illustrated TLS 1.3 Connection» (AES-256-GCM-SHA384, RSA-PSS:
   секреты, расшифровка записей, CertificateVerify, оба Finished —
-  `tests/spec/stdlib/tls_trace13.sl`), interop с `openssl s_server` /
+  `tests/spec/stdlib/tls_trace13.zl`), interop с `openssl s_server` /
   `s_client` в обе стороны для 1.3 и 1.2 (`compiler/tests/tls.rs`),
   fuzz-smoke парсеров X.509, record layer и рукопожатий (без паник и утечек).
   libFuzzer-цели и interop с `curl` — пока нет.
@@ -175,13 +175,13 @@ switch any {
   ACME/`web.AutoTLS`, P-384, wasm-сборка не проверялась. Внешнего аудита не
   было (`docs/SECURITY.md`).
 
-### `slang.web` (фреймворк)
+### `zell.web` (фреймворк)
 
-```slang
+```zell
 namespace shop
 
-import slang.web
-import slang.log
+import zell.web
+import zell.log
 import shop.services
 
 @route("/api/users")
@@ -243,10 +243,10 @@ async func main() {
   с трассой ошибки в режиме разработки.
 - **Фильтры и модель-биндинг**: `@filter(Auth)`, кастомные биндеры.
 - **Тестирование**: `web.TestServer(app)` — запросы в памяти без сокетов.
-- **gRPC** (`slang.grpc`) и **GraphQL** — отдельными пакетами на той же базе.
+- **gRPC** (`zell.grpc`) и **GraphQL** — отдельными пакетами на той же базе.
 
 **Статус (реализовано как `std.web`, пока нет реестра пакетов; исходники —
-`compiler/src/sema/stdlib_src/web_*.sl`, генерация при компиляции —
+`compiler/src/sema/stdlib_src/web_*.zl`, генерация при компиляции —
 `compiler/src/sema/web.rs`; пример — `examples/web_app/`, тесты —
 `tests/spec/web/`):**
 
@@ -340,7 +340,7 @@ async func main() {
   JSON по умолчанию, XML (`Accept: application/xml`) или YAML, строки —
   `text/plain`. Ошибка `T!` из обработчика → Problem Details (RFC 9457)
   с сообщением в `detail`, статусом из `web.Error(404, "...")`
-  (`HttpError`), а при `SLANG_ENV=development` — с `trace` =
+  (`HttpError`), а при `ZELL_ENV=development` — с `trace` =
   `errors.Trace(err)`; 404/405 — тоже Problem Details.
 - ✓ **OpenAPI 3.1**: `app.MapOpenApi("/openapi.json")` — документ из
   метаданных, которые генерирует компилятор вместе с таблицей маршрутов
@@ -361,24 +361,24 @@ async func main() {
 - Нет: cookie/OAuth2/OIDC-аутентификации и политик сверх ролей,
   `@filter` и своих биндеров, `$ref`-компонентов в OpenAPI (схемы
   встраиваются), тел XML/YAML в запросах, `web.AutoTLS`, команды
-  `slang web openapi`, групп маршрутов, ограничений в шаблонах
+  `zell web openapi`, групп маршрутов, ограничений в шаблонах
   (`{id:int}`), привязки multipart-форм; переменные окружения ищутся по
   именам полей (`APP__Db__Host`), списка окружения нет.
 
-## 3. Данные: `std.database.sql` и `slang.data` (ORM уровня EF Core)
+## 3. Данные: `std.database.sql` и `zell.data` (ORM уровня EF Core)
 
 ### `std.database.sql`
 
 - Единый интерфейс `sql.DB`, `Conn`, `Tx`, `Rows`; асинхронный; пул
-  соединений; драйверы PostgreSQL, MySQL, SQLite (нативные, на Slang),
+  соединений; драйверы PostgreSQL, MySQL, SQLite (нативные, на Zell),
   SQL Server и ClickHouse позже.
 - Типизированные запросы: `db.Query<User>("select ... where id = $1", id)`
   маппит строки в структуры по именам столбцов и `@column`.
 
 #### Статус реализации (`std.database.sql`)
 
-Реализовано (Slang: `sema/stdlib_src/sql.sl`, драйверы `postgres.sl`,
-`postgres_types.sl`, `sqlite.sl`; C — только SQLite и сигнальные ошибки,
+Реализовано (Zell: `sema/stdlib_src/sql.zl`, драйверы `postgres.zl`,
+`postgres_types.zl`, `sqlite.zl`; C — только SQLite и сигнальные ошибки,
 `runtime/ABI.md` §23):
 
 - Интерфейс драйвера: `Driver.Open(dsn) Task<DriverConn!>`, `DriverConn
@@ -419,7 +419,7 @@ async func main() {
   Stmt!`, `Conn()` (выделенное соединение), `Raw(f)` (доступ к соединению
   драйвера). Таймауты — `task.WithTimeout`: отменённый запрос прерывается,
   его соединение выбрасывается.
-- PostgreSQL (`std.database.postgres`, на Slang поверх `std.net`/
+- PostgreSQL (`std.database.postgres`, на Zell поверх `std.net`/
   `std.net.tls`): DSN `postgres://user:pass@host:port/db?sslmode=...` и
   `key=value`, переменные `PG*`, Unix-сокеты (`host=/dir`); sslmode
   `disable/allow/prefer/require/verify-ca/verify-full` (`sslrootcert`);
@@ -433,7 +433,7 @@ async func main() {
   OnNotification}`; `postgres.CopyFrom(db, "COPY ... FROM STDIN", data)`,
   `COPY ... TO STDOUT` — строки столбца `data`. Проверено против
   PostgreSQL 16 (`compiler/tests/database.rs`) и mock-сервера
-  (`tests/spec/stdlib4/postgres_mock.sl`). Нет: CancelRequest при отмене
+  (`tests/spec/stdlib4/postgres_mock.zl`). Нет: CancelRequest при отмене
   (соединение просто закрывается), бинарного кодирования аргументов
   (передаются текстом, `[]byte` — бинарно), многомерных массивов,
   SCRAM-SHA-256-PLUS.
@@ -445,9 +445,9 @@ async func main() {
   `sqlite.Error{Code, ExtendedCode, Msg}` с `IsConstraint()`. Вызовы
   синхронные (выполняются на потоке воркера).
 
-### `slang.data` (ORM)
+### `zell.data` (ORM)
 
-```slang
+```zell
 @table("users")
 struct User {
     @key @autoincrement Id      int
@@ -487,19 +487,19 @@ await ctx.SaveChanges()?        // change tracking: UPDATE только изме
 - Change tracking, unit of work, транзакции, оптимистичная блокировка
   (`@concurrencyToken`), ленивые и явные загрузки, split queries,
   пакетные вставки, raw SQL с маппингом, compiled queries по умолчанию.
-- **Миграции**: `slang data migration add AddUsers` сравнивает модель со
-  снимком и генерирует миграцию на Slang; `slang data update` применяет;
+- **Миграции**: `zell data migration add AddUsers` сравнивает модель со
+  снимком и генерирует миграцию на Zell; `zell data update` применяет;
   миграции — обычный код в репозитории.
 - Провайдеры: PostgreSQL, MySQL, SQLite; шаблон провайдера для остальных.
 - Лёгкая альтернатива в том же пакете: `data.Dapper`-стиль
   (`db.Query<T>(sql, args)`) без трекинга.
-- NoSQL: `slang.data.redis`, `slang.data.mongo` отдельными пакетами.
+- NoSQL: `zell.data.redis`, `zell.data.mongo` отдельными пакетами.
 
 #### Статус реализации (`std.data`)
 
 Реализовано как `std.data` (пока нет реестра пакетов; `import std.data` —
 короткие имена `@table`, `Context`, `Set<T>`, или `import std` и
-`data.X`). Исходники — `compiler/src/sema/stdlib_src/data*.sl`
+`data.X`). Исходники — `compiler/src/sema/stdlib_src/data*.zl`
 (контекст, запросы, сохранение, миграции), раскрытие при компиляции —
 `compiler/src/sema/orm.rs` (вызовы), `orm_model.rs` (модель),
 `orm_sql.rs` (перевод лямбд), CLI — `compiler/src/datacli.rs`; тесты —
@@ -574,16 +574,16 @@ CLI миграций), пример — `examples/web_app` (API пользова
   средних в PostgreSQL, типы DDL (`bigint GENERATED BY DEFAULT AS
   IDENTITY`/`INTEGER PRIMARY KEY AUTOINCREMENT`, `timestamptz`, `numeric`,
   `jsonb`, `bytea`, `boolean`, `varchar(n)`), `now()` → `CURRENT_TIMESTAMP`.
-- ✓ **Миграции.** `slang data migration add AddUsers` (`--project`,
+- ✓ **Миграции.** `zell data migration add AddUsers` (`--project`,
   `--dir`, `--context`) сравнивает модель со снимком
-  `migrations/snapshot.json` и пишет `migrations/<время>_AddUsers.sl` —
+  `migrations/snapshot.json` и пишет `migrations/<время>_AddUsers.zl` —
   структуру с `@migration("<время>_AddUsers")` и методами `Up/Down(m
   *data.Migrator)` (`CreateTable` со столбцами и внешними ключами,
   `DropTable`, `RenameTable`, `AddColumn`, `DropColumn`, `RenameColumn`,
   `AlterColumn`, `CreateIndex`, `DropIndex`, `AddForeignKey`,
-  `DropForeignKey`, `Sql`, `SqlFor`); `slang data update [цель|0]` применяет
+  `DropForeignKey`, `Sql`, `SqlFor`); `zell data update [цель|0]` применяет
   или откатывает (`Down`) миграции, каждую в транзакции, с учётом в таблице
-  `__migrations`; `slang data list`, `slang data script` (SQL для
+  `__migrations`; `zell data list`, `zell data script` (SQL для
   провайдера); `ctx.Migrate()` и `data.Migrations()` во время выполнения
   (список `@migration`-структур программы составляет компилятор).
 - Нет (пока): MySQL и шаблона провайдера, составных ключей, ленивой
@@ -599,12 +599,12 @@ CLI миграций), пример — `examples/web_app` (API пользова
   когда контекст освобождается, ссылочные и многие-ко-многим навигации его
   сущностей (и отсоединённых им) сбрасываются, чтобы разорвать циклы.
 
-## 4. Логирование: `slang.log` уровня Serilog
+## 4. Логирование: `zell.log` уровня Serilog
 
-```slang
+```zell
 var logger = log.New()
     .MinimumLevel(log.Debug)
-    .MinimumLevelOverride("slang.web", log.Warning)
+    .MinimumLevelOverride("zell.web", log.Warning)
     .Enrich.WithProperty("App", "shop")
     .Enrich.WithMachineName()
     .Enrich.WithRequestId()
@@ -636,21 +636,21 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   (`WriteTo.Async(...)`), пользовательские форматтеры (JSON, Compact JSON,
   Logfmt, текстовый шаблон).
 - **Enrichers** (обогатители): свойство, машина, процесс, поток, задача,
-  request id, trace/span id из `slang.diag`, окружение, версия, `FromContext`
+  request id, trace/span id из `zell.diag`, окружение, версия, `FromContext`
   для `log.Context.Push` (контекст живёт в async-задаче, не в потоке).
 - **Фильтры**, уровни по источникам, динамическое изменение уровня в
   рантайме, `log.Logger` как интерфейс для DI с категорией `log.For<T>()`.
 - **Destructuring**: `{@Obj}` через compile-time рефлексию с учётом
   `@log(skip: true)` для секретов, политики для типов
   (`Destructure.ByTransforming<User>((u) => {Id: u.Id})`).
-- Интеграция: `slang.web` пишет запросы одной строкой на запрос
-  (как Serilog RequestLogging), `slang.data` логирует SQL с параметрами.
+- Интеграция: `zell.web` пишет запросы одной строкой на запрос
+  (как Serilog RequestLogging), `zell.data` логирует SQL с параметрами.
 
 ### Статус реализации (`std.log`)
 
 Пока нет реестра пакетов, логгер живёт в стандартной библиотеке как
-`std.log` (`compiler/src/sema/stdlib_src/log.sl`, C-помощники файлового
-приёмника — `runtime/src/diag.c`). Пример — `examples/log.sl`, тесты —
+`std.log` (`compiler/src/sema/stdlib_src/log.zl`, C-помощники файлового
+приёмника — `runtime/src/diag.c`). Пример — `examples/log.zl`, тесты —
 `compiler/tests/log_diag.rs`, `tests/spec/stdlib/log_*`.
 
 - **Шаблоны компилируются.** Вызов `logger.Info("...", args)` (у любого
@@ -708,15 +708,15 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 - Нет: Seq, Elasticsearch/Loki/Splunk/Syslog/OTLP-logs/Email/webhook
   приёмников, батчинга (кроме `Async`), `Destructure.ByTransforming`,
   `Enrich.WithRequestId`/потока/окружения, logfmt, интеграции со
-  `slang.web`/`slang.data`, `{@X}` для enum с полями (печатается имя типа).
+  `zell.web`/`zell.data`, `{@X}` для enum с полями (печатается имя типа).
 
-## 5. Диагностика: `slang.diag` (аналог pprof и dotnet-counters)
+## 5. Диагностика: `zell.diag` (аналог pprof и dotnet-counters)
 
 - **Профилирование CPU**: сэмплирующий профилировщик в рантайме
   (сигнал/таймер, стек через frame pointers, без остановки мира):
   `diag.StartCPUProfile(w)`, HTTP-эндпоинт `/debug/pprof/profile` в
   формате pprof (`profile.proto`), совместим с `go tool pprof`, `pprof`
-  (Google) и Speedscope; `slang tool pprof` — своя обёртка с flame graph.
+  (Google) и Speedscope; `zell tool pprof` — своя обёртка с flame graph.
 - **Память**: подсчёт ссылок даёт точные данные без снимков GC: живые
   объекты по типу и месту аллокации (`/debug/pprof/heap`, `/debug/heap`),
   аллокации с сэмплированием (`allocs`), детектор утечек (`--leak-check`)
@@ -732,22 +732,22 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 - **Распределённая трассировка**: OpenTelemetry-совместимые `Span`,
   распространение контекста через async-задачи, W3C traceparent в HTTP и
   SQL автоматически.
-- **CLI**: `slang tool pprof`, `slang tool trace`, `slang tool counters
-  <pid>` (как dotnet-counters: живые метрики процесса), `slang tool dump
-  <pid>` (снимок задач и памяти), `slang tool stack <pid>`. Подключение к
+- **CLI**: `zell tool pprof`, `zell tool trace`, `zell tool counters
+  <pid>` (как dotnet-counters: живые метрики процесса), `zell tool dump
+  <pid>` (снимок задач и памяти), `zell tool stack <pid>`. Подключение к
   запущенному процессу через Unix-сокет диагностики, включается
-  `SLANG_DIAG=1` или `diag.Enable()`.
-- **Бенчмарки**: `@bench` функции, `slang bench` с статистикой
+  `ZELL_DIAG=1` или `diag.Enable()`.
+- **Бенчмарки**: `@bench` функции, `zell bench` с статистикой
   (среднее, p50/p99, аллокации), сравнение с базой (`--compare`).
-- **Отладка**: DWARF по умолчанию, `slang tool debug` поверх lldb с
-  форматтерами типов Slang (см. docs/TOOLING.md).
+- **Отладка**: DWARF по умолчанию, `zell tool debug` поверх lldb с
+  форматтерами типов Zell (см. docs/TOOLING.md).
 
 ### Статус реализации (`std.diag`)
 
-Живёт в `std.diag` (`compiler/src/sema/stdlib_src/diag.sl`, рантайм —
+Живёт в `std.diag` (`compiler/src/sema/stdlib_src/diag.zl`, рантайм —
 `runtime/src/diag.c`, `runtime/src/profile.c`, сэмплер в
-`runtime/src/platform/posix.c`). Примеры — `examples/metrics.sl`,
-`examples/tracing.sl`, `examples/cpuprofile.sl`; тесты —
+`runtime/src/platform/posix.c`). Примеры — `examples/metrics.zl`,
+`examples/tracing.zl`, `examples/cpuprofile.zl`; тесты —
 `compiler/tests/log_diag.rs`.
 
 - **Метрики**: `diag.NewCounter(name, help, labels)` (`Inc`, `Add`,
@@ -762,9 +762,9 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   большие объекты; `HeapRetained` — свободная, но ещё не отданная ОС память
   (резерв, входит в RSS); `HeapReleased` — свободные страницы, уже отданные
   ОС, чьи адреса сохранены; `runtime/ABI.md` §3.2) и
-  `diag.EnableRuntimeMetrics()` (метрики `slang_*` в `PrometheusText`, в
-  том числе `slang_heap_inuse_bytes`, `slang_heap_retained_bytes`,
-  `slang_heap_released_bytes`). `runtime.FreeOSMemory()` отдаёт ОС всю
+  `diag.EnableRuntimeMetrics()` (метрики `zell_*` в `PrometheusText`, в
+  том числе `zell_heap_inuse_bytes`, `zell_heap_retained_bytes`,
+  `zell_heap_released_bytes`). `runtime.FreeOSMemory()` отдаёт ОС всю
   свободную память кучи сразу.
 - **Трассировка**: `diag.StartSpan(name)` / `StartSpanKind(name, kind)` →
   `*diag.Span` (поля OpenTelemetry: `TraceId` 16 байт hex, `SpanId` 8,
@@ -787,16 +787,16 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   запоминаются при старте воркеров) и пишет в предвыделенный буфер без
   блокировок; при остановке адреса символизируются по `.symtab`
   исполняемого файла (ELF, Linux; иначе `dladdr`) и записываются в
-  `profile.proto` (ручное protobuf-кодирование, без сжатия). Код Slang
+  `profile.proto` (ручное protobuf-кодирование, без сжатия). Код Zell
   собирается с `"frame-pointer"="all"`, рантайм — с
   `-fno-omit-frame-pointer`. Проверено `go tool pprof -top`:
   `demo.p1.fib` flat, `spin`/`main` — cum. Сборки `--release` стрипаются,
   поэтому в их профилях только адреса.
 - **Heap**: `diag.WriteHeapProfile(path)` (pprof, `inuse_objects` /
   `inuse_space` по типам) и `diag.HeapProfile()` (текст) — из списка живых
-  объектов детектора утечек, поэтому только под `slang run --leak-check`
+  объектов детектора утечек, поэтому только под `zell run --leak-check`
   без `--release`; места аллокаций и сэмплирование `allocs` — нет.
-- **Живые объекты по типам в продакшене**: с `SLANG_DIAG_HEAP=1` в
+- **Живые объекты по типам в продакшене**: с `ZELL_DIAG_HEAP=1` в
   окружении (читается при старте; в любой сборке, в том числе
   `--release`) каждая аллокация и освобождение обновляют счётчик своего
   `TypeInfo` в таблице потока (без атомарных операций на общем пути,
@@ -812,35 +812,35 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   тип — кандидат в утечку (обычно цикл, который не освободил ни `weak`,
   ни сборщик циклов).
 - **Сборщик циклов**: `diag.EnableRuntimeMetrics()` добавляет в
-  `PrometheusText` `slang_cycles_collected_total` (объекты, освобождённые
-  сборщиком), `slang_cycle_collections_total`, `slang_cycle_candidates`
-  (возможные корни, ждущие сборки) и `slang_cycle_candidates_total`;
+  `PrometheusText` `zell_cycles_collected_total` (объекты, освобождённые
+  сборщиком), `zell_cycle_collections_total`, `zell_cycle_candidates`
+  (возможные корни, ждущие сборки) и `zell_cycle_candidates_total`;
   подробности — `std.runtime.CycleStats()` (DESIGN.md «Циклы»).
-- **CLI**: `slang tool pprof [флаги] файл` вызывает `go tool pprof` (или
+- **CLI**: `zell tool pprof [флаги] файл` вызывает `go tool pprof` (или
   `pprof`).
 - Нет: эндпоинтов `/debug/pprof/*`, профилей задач/блокировок, `diag.Trace`
-  (Perfetto), `slang tool trace/counters/dump/stack`, сокета диагностики,
-  `@bench`/`slang bench`, `traceparent` в SQL, сэмплера на Windows.
+  (Perfetto), `zell tool trace/counters/dump/stack`, сокета диагностики,
+  `@bench`/`zell bench`, `traceparent` в SQL, сэмплера на Windows.
 
 ## 6. Прочие «плюшки» уровня .NET
 
-- `slang.config` — конфигурация с провайдерами (файлы, env, args, Vault,
+- `zell.config` — конфигурация с провайдерами (файлы, env, args, Vault,
   Consul), горячая перезагрузка.
-- `slang.cache` — in-memory и distributed (Redis) cache с единым API.
-- `slang.jobs` — фоновые задачи, cron, очереди (аналог Hangfire).
-- `slang.validation` — `@validate` плюс FluentValidation-подобный API.
-- `slang.mapper` — маппинг DTO через compile-time рефлексию, без
+- `zell.cache` — in-memory и distributed (Redis) cache с единым API.
+- `zell.jobs` — фоновые задачи, cron, очереди (аналог Hangfire).
+- `zell.validation` — `@validate` плюс FluentValidation-подобный API.
+- `zell.mapper` — маппинг DTO через compile-time рефлексию, без
   рефлексии в рантайме (аналог Mapster/AutoMapper, но проверяется при
   компиляции).
-- `slang.mediator` — CQRS, пайплайны обработчиков.
-- `slang.test` — `@test`, `@fact`/`@theory` с данными, моки через
+- `zell.mediator` — CQRS, пайплайны обработчиков.
+- `zell.test` — `@test`, `@fact`/`@theory` с данными, моки через
   интерфейсы (`mock.Of<UserRepo>()` генерируется при компиляции),
   snapshot-тесты, `web.TestServer`.
-- `slang.cli` — парсер команд и аргументов с генерацией help из атрибутов.
-- `slang.auth` — JWT, OIDC, API keys, политики.
-- `slang.realtime` — SignalR-подобные хабы поверх WebSocket.
-- `slang.messaging` — Kafka, RabbitMQ, NATS клиенты и абстракция шины.
-- Шаблоны проектов: `slang new web-api`, `slang new worker`, `slang new lib`.
+- `zell.cli` — парсер команд и аргументов с генерацией help из атрибутов.
+- `zell.auth` — JWT, OIDC, API keys, политики.
+- `zell.realtime` — SignalR-подобные хабы поверх WebSocket.
+- `zell.messaging` — Kafka, RabbitMQ, NATS клиенты и абстракция шины.
+- Шаблоны проектов: `zell new web-api`, `zell new worker`, `zell new lib`.
 
 ## Что для этого нужно от языка (требования к компилятору)
 
@@ -859,10 +859,10 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 
 1. Generics, compile-time рефлексия, атрибуты как значения (компилятор).
 2. `std.encoding.json` (+ Value, Reader/Writer), `std.net` async-сокеты,
-   `std.net.http` 1.1, `slang.log` с Console/File/JSON.
-3. `slang.web`: маршруты, биндинг, middleware, DI, конфигурация, OpenAPI.
-4. `std.database.sql` + PostgreSQL/SQLite, `slang.data` базовый (✓ как `std.data`)
+   `std.net.http` 1.1, `zell.log` с Console/File/JSON.
+3. `zell.web`: маршруты, биндинг, middleware, DI, конфигурация, OpenAPI.
+4. `std.database.sql` + PostgreSQL/SQLite, `zell.data` базовый (✓ как `std.data`)
    (запросы, трекинг, миграции).
-5. `slang.diag`: CPU/heap/tasks профили в формате pprof, метрики,
-   OpenTelemetry; `slang tool pprof/trace/counters`.
+5. `zell.diag`: CPU/heap/tasks профили в формате pprof, метрики,
+   OpenTelemetry; `zell tool pprof/trace/counters`.
 6. xml/yaml/toml, HTTP/2, TLS, auth, cache, jobs, messaging, остальное.

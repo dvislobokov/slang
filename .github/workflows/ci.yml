@@ -3,7 +3,7 @@
 # Wine, linux-arm64 under QEMU, static musl binaries natively, macOS objects
 # and a stub-SDK compile check of the runtime without an SDK). Every host
 # job packages its toolchain (scripts/package-toolchain.sh) as an artifact;
-# the cross job adds the runtime archives that `slang target add` fetches.
+# the cross job adds the runtime archives that `zell target add` fetches.
 name: ci
 
 on:
@@ -44,7 +44,7 @@ jobs:
         run: ./scripts/package-toolchain.sh --no-build --out dist
       - uses: actions/upload-artifact@v4
         with:
-          name: slang-linux-${{ matrix.arch }}
+          name: zell-linux-${{ matrix.arch }}
           path: dist/
 
   macos:
@@ -77,7 +77,7 @@ jobs:
         run: ./scripts/package-toolchain.sh --no-build --out dist
       - uses: actions/upload-artifact@v4
         with:
-          name: slang-macos-${{ matrix.arch }}
+          name: zell-macos-${{ matrix.arch }}
           path: dist/
 
   windows:
@@ -103,7 +103,7 @@ jobs:
         run: |
           make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)"
           make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
-          SLANG_POLLER=wsapoll make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
+          ZELL_POLLER=wsapoll make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
       - name: LLVM 18 for the compiler
         uses: KyleMayes/install-llvm-action@v2
         with:
@@ -145,12 +145,12 @@ jobs:
       - name: macOS runtime compile check against runtime/stub-sdk/macos (no SDK here)
         run: make -C runtime CROSS=aarch64-apple-darwin -j"$(nproc)" && make -C runtime CROSS=x86_64-apple-darwin -j"$(nproc)"
       - name: Examples for windows-amd64 (Wine, IOCP and WSAPoll), linux-arm64 (QEMU), musl; macos objects
-        run: cargo test -p slang --test cross -- --include-ignored
+        run: cargo test -p zell --test cross -- --include-ignored
       - name: Cross hello world sizes
         run: cargo build --release && ./scripts/bench-size.sh
-      - name: Runtime archives for `slang target add`
+      - name: Runtime archives for `zell target add`
         run: ./scripts/package-toolchain.sh --no-build --out dist
       - uses: actions/upload-artifact@v4
         with:
-          name: slang-runtimes
-          path: dist/slang-runtime-*
+          name: zell-runtimes
+          path: dist/zell-runtime-*

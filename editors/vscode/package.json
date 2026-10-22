@@ -1,9 +1,9 @@
 {
-  "name": "slang-lang",
-  "displayName": "Slang",
-  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics with quick fixes, navigation, hover, rename, completion, signature help, inlay hints, formatting, semantic highlighting, code lenses to run tests) and debugging through lldb-dap with Slang value formatters",
+  "name": "zell",
+  "displayName": "Zell",
+  "description": "Zell language support: syntax highlighting and the zell-lsp language server (diagnostics with quick fixes, navigation, hover, rename, completion, signature help, inlay hints, formatting, semantic highlighting, code lenses to run tests) and debugging through lldb-dap with Zell value formatters",
   "version": "0.3.0",
-  "publisher": "slang",
+  "publisher": "zell",
   "license": "MIT",
   "engines": {
     "vscode": "^1.82.0"
@@ -13,74 +13,74 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:slang",
-    "workspaceContains:**/slang.{toml,json,yaml,yml}",
-    "onDebugResolve:slang",
-    "onDebugDynamicConfigurations:slang",
+    "onLanguage:zell",
+    "workspaceContains:**/zell.{toml,json,yaml,yml}",
+    "onDebugResolve:zell",
+    "onDebugDynamicConfigurations:zell",
     "onDebugInitialConfigurations"
   ],
   "contributes": {
     "languages": [
       {
-        "id": "slang",
+        "id": "zell",
         "aliases": [
-          "Slang",
-          "slang"
+          "Zell",
+          "zell"
         ],
         "extensions": [
-          ".sl"
+          ".zl"
         ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "slang",
-        "scopeName": "source.slang",
-        "path": "./syntaxes/slang.tmLanguage.json"
+        "language": "zell",
+        "scopeName": "source.zell",
+        "path": "./syntaxes/zell.tmLanguage.json"
       }
     ],
     "commands": [
       {
-        "command": "slang.restartServer",
+        "command": "zell.restartServer",
         "title": "Restart server",
-        "category": "Slang"
+        "category": "Zell"
       },
       {
-        "command": "slang.fmt",
-        "title": "Format document (slang fmt)",
-        "category": "Slang"
+        "command": "zell.fmt",
+        "title": "Format document (zell fmt)",
+        "category": "Zell"
       },
       {
-        "command": "slang.runTest",
+        "command": "zell.runTest",
         "title": "Run test",
-        "category": "Slang"
+        "category": "Zell"
       },
       {
-        "command": "slang.debugTest",
+        "command": "zell.debugTest",
         "title": "Debug test",
-        "category": "Slang"
+        "category": "Zell"
       },
       {
-        "command": "slang.run",
+        "command": "zell.run",
         "title": "Run",
-        "category": "Slang"
+        "category": "Zell"
       },
       {
-        "command": "slang.showReferences",
+        "command": "zell.showReferences",
         "title": "Show references",
-        "category": "Slang"
+        "category": "Zell"
       }
     ],
     "configuration": {
-      "title": "Slang",
+      "title": "Zell",
       "properties": {
-        "slang.serverPath": {
+        "zell.serverPath": {
           "type": "string",
-          "default": "slang-lsp",
-          "markdownDescription": "Path to the language server executable. The default `slang-lsp` is looked up on `PATH`; if it is not found, `slang lsp` is used instead. A path to the `slang` CLI also works (it is started as `slang lsp`)."
+          "default": "zell-lsp",
+          "markdownDescription": "Path to the language server executable. The default `zell-lsp` is looked up on `PATH`; if it is not found, `zell lsp` is used instead. A path to the `zell` CLI also works (it is started as `zell lsp`)."
         },
-        "slang.serverArgs": {
+        "zell.serverArgs": {
           "type": "array",
           "items": {
             "type": "string"
@@ -88,7 +88,7 @@
           "default": [],
           "description": "Extra arguments passed to the language server."
         },
-        "slang.trace.server": {
+        "zell.trace.server": {
           "type": "string",
           "enum": [
             "off",
@@ -96,76 +96,76 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Trace the communication between VS Code and the Slang language server."
+          "description": "Trace the communication between VS Code and the Zell language server."
         },
-        "slang.inlayHints.types.enabled": {
+        "zell.inlayHints.types.enabled": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Show the inferred type after names declared with `var x = ...` (and `for x in ...`)."
         },
-        "slang.inlayHints.parameterNames.enabled": {
+        "zell.inlayHints.parameterNames.enabled": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Show parameter names before literal arguments at call sites (`Open(owner: \"alice\", initial: 100)`)."
         },
-        "slang.path": {
+        "zell.path": {
           "type": "string",
-          "default": "slang",
-          "markdownDescription": "The `slang` CLI used to build programs for debugging (`slang build`) and to locate the lldb formatters (`slang debug --formatters lldb`)."
+          "default": "zell",
+          "markdownDescription": "The `zell` CLI used to build programs for debugging (`zell build`) and to locate the lldb formatters (`zell debug --formatters lldb`)."
         },
-        "slang.debug.lldbDapPath": {
+        "zell.debug.lldbDapPath": {
           "type": "string",
           "default": "",
           "markdownDescription": "Path to `lldb-dap` (LLVM 18+; `lldb-vscode` in older LLVMs). Empty: look for `lldb-dap`, `lldb-dap-18`, ... on `PATH`."
         },
-        "slang.debug.formatters": {
+        "zell.debug.formatters": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Path to `tools/lldb/slang_formatters.py`. Empty: ask `slang debug --formatters lldb`."
+          "markdownDescription": "Path to `tools/lldb/zell_formatters.py`. Empty: ask `zell debug --formatters lldb`."
         }
       }
     },
     "configurationDefaults": {
-      "[slang]": {
-        "editor.defaultFormatter": "slang.slang-lang",
+      "[zell]": {
+        "editor.defaultFormatter": "zell.zell",
         "editor.formatOnSave": true
       }
     },
     "menus": {
       "commandPalette": [
         {
-          "command": "slang.fmt",
-          "when": "editorLangId == slang"
+          "command": "zell.fmt",
+          "when": "editorLangId == zell"
         },
         {
-          "command": "slang.runTest",
+          "command": "zell.runTest",
           "when": "false"
         },
         {
-          "command": "slang.debugTest",
+          "command": "zell.debugTest",
           "when": "false"
         },
         {
-          "command": "slang.run",
+          "command": "zell.run",
           "when": "false"
         },
         {
-          "command": "slang.showReferences",
+          "command": "zell.showReferences",
           "when": "false"
         }
       ]
     },
     "breakpoints": [
       {
-        "language": "slang"
+        "language": "zell"
       }
     ],
     "debuggers": [
       {
-        "type": "slang",
-        "label": "Slang",
+        "type": "zell",
+        "label": "Zell",
         "languages": [
-          "slang"
+          "zell"
         ],
         "configurationAttributes": {
           "launch": {
@@ -178,18 +178,18 @@
                 ],
                 "default": "agent",
                 "enumDescriptions": [
-                  "The in-process debug agent (std.debug): the program is started with SLANG_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
-                  "lldb-dap with the Slang formatters (stage 1; DWARF, needs LLDB 18+)."
+                  "The in-process debug agent (std.debug): the program is started with ZELL_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
+                  "lldb-dap with the Zell formatters (stage 1; DWARF, needs LLDB 18+)."
                 ],
                 "description": "Debug adapter: the in-process agent (default) or lldb-dap."
               },
               "program": {
                 "type": "string",
-                "description": "Executable to debug (built with debug info: any non-release `slang build`, or `--release -g`)."
+                "description": "Executable to debug (built with debug info: any non-release `zell build`, or `--release -g`)."
               },
               "source": {
                 "type": "string",
-                "description": "A .sl file or project directory: built with `slang build` before launching when no preLaunchTask is set (`program` defaults to target/slang-debug/<name>)."
+                "description": "A .zl file or project directory: built with `zell build` before launching when no preLaunchTask is set (`program` defaults to target/zell-debug/<name>)."
               },
               "build": {
                 "type": "boolean",
@@ -201,7 +201,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Extra `slang build` arguments, e.g. [\"--release\", \"-g\"]."
+                "description": "Extra `zell build` arguments, e.g. [\"--release\", \"-g\"]."
               },
               "args": {
                 "type": "array",
@@ -234,7 +234,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Extra lldb commands run before the target is created (after the Slang formatters are imported)."
+                "description": "Extra lldb commands run before the target is created (after the Zell formatters are imported)."
               },
               "preRunCommands": {
                 "type": "array",
@@ -262,14 +262,14 @@
                 ],
                 "default": "agent",
                 "enumDescriptions": [
-                  "The in-process debug agent (std.debug): the program is started with SLANG_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
-                  "lldb-dap with the Slang formatters (stage 1; DWARF, needs LLDB 18+)."
+                  "The in-process debug agent (std.debug): the program is started with ZELL_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
+                  "lldb-dap with the Zell formatters (stage 1; DWARF, needs LLDB 18+)."
                 ],
                 "description": "Debug adapter: the in-process agent (default) or lldb-dap."
               },
               "address": {
                 "type": "string",
-                "description": "agent: [host:]port of a program started with SLANG_DEBUG (e.g. \"127.0.0.1:2345\" or \":2345\")."
+                "description": "agent: [host:]port of a program started with ZELL_DEBUG (e.g. \"127.0.0.1:2345\" or \":2345\")."
               },
               "host": {
                 "type": "string",
@@ -301,7 +301,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Extra lldb commands run before the target is created (after the Slang formatters are imported)."
+                "description": "Extra lldb commands run before the target is created (after the Zell formatters are imported)."
               },
               "preRunCommands": {
                 "type": "array",
@@ -322,22 +322,22 @@
         },
         "initialConfigurations": [
           {
-            "type": "slang",
+            "type": "zell",
             "request": "launch",
-            "name": "Debug Slang file",
+            "name": "Debug Zell file",
             "source": "${file}",
-            "program": "${workspaceFolder}/target/slang-debug/${fileBasenameNoExtension}",
+            "program": "${workspaceFolder}/target/zell-debug/${fileBasenameNoExtension}",
             "args": [],
             "cwd": "${workspaceFolder}",
-            "preLaunchTask": "slang: build"
+            "preLaunchTask": "zell: build"
           }
         ],
         "configurationSnippets": [
           {
-            "label": "Slang: Launch",
-            "description": "Build a .sl file with debug info and debug it",
+            "label": "Zell: Launch",
+            "description": "Build a .zl file with debug info and debug it",
             "body": {
-              "type": "slang",
+              "type": "zell",
               "request": "launch",
               "name": "Debug ${1:program}",
               "source": "^\"\\${file}\"",
@@ -346,10 +346,10 @@
             }
           },
           {
-            "label": "Slang: Attach to process (lldb)",
-            "description": "Attach lldb-dap to a running Slang program",
+            "label": "Zell: Attach to process (lldb)",
+            "description": "Attach lldb-dap to a running Zell program",
             "body": {
-              "type": "slang",
+              "type": "zell",
               "request": "attach",
               "name": "Attach",
               "pid": "^\"\\${command:pickProcess}\"",
@@ -357,10 +357,10 @@
             }
           },
           {
-            "label": "Slang: Attach to the debug agent",
-            "description": "Connect to a program started with SLANG_DEBUG=:2345 (or `slang debug run --headless --port 2345`)",
+            "label": "Zell: Attach to the debug agent",
+            "description": "Connect to a program started with ZELL_DEBUG=:2345 (or `zell debug run --headless --port 2345`)",
             "body": {
-              "type": "slang",
+              "type": "zell",
               "request": "attach",
               "name": "Attach to agent",
               "adapter": "agent",
@@ -372,7 +372,7 @@
     ],
     "taskDefinitions": [
       {
-        "type": "slang",
+        "type": "zell",
         "required": [
           "command"
         ],
@@ -384,7 +384,7 @@
               "test",
               "run"
             ],
-            "description": "`build`: slang build <source> -o <program> (debug info included); `test` and `run` are started by the code lenses."
+            "description": "`build`: zell build <source> -o <program> (debug info included); `test` and `run` are started by the code lenses."
           },
           "source": {
             "type": "string",
@@ -392,14 +392,14 @@
           },
           "program": {
             "type": "string",
-            "description": "Output executable (default: target/slang-debug/<name>)."
+            "description": "Output executable (default: target/zell-debug/<name>)."
           },
           "args": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Extra `slang build` arguments."
+            "description": "Extra `zell build` arguments."
           }
         }
       }
