@@ -15,7 +15,7 @@
 //! The server is synchronous (`lsp-server`): one thread reads messages;
 //! document changes mark the session dirty and analysis runs ~100 ms after
 //! the last change (or immediately before answering a request), after which
-//! diagnostics are published for every file.
+//! diagnostics are published for every file whose diagnostics changed.
 
 mod assist;
 mod features;
@@ -156,7 +156,9 @@ struct Server {
     uris: HashMap<String, Url>,
     open: HashSet<String>,
     /// URIs that got non-empty diagnostics last time.
-    published: HashSet<Url>,
+    /// URIs published last time, with a hash of what was sent (files whose
+    /// diagnostics did not change are not published again).
+    published: HashMap<Url, u64>,
     /// `slang.inlayHints.*` settings.
     hints: assist::HintSettings,
 }
@@ -183,7 +185,7 @@ impl Server {
             roots: Vec::new(),
             uris: HashMap::new(),
             open: HashSet::new(),
-            published: HashSet::new(),
+            published: HashMap::new(),
             hints: assist::HintSettings::default(),
         }
     }
@@ -293,13 +295,16 @@ impl Server {
     fn refresh(&mut self) {
         self.dirty = None;
         let session = &self.session;
+        // No request is answered while analysing: the previous results go
+        // first (the session keeps what is still valid of them).
+        self.analysis = None;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.analyze()));
         match result {
             Ok(a) => {
                 self.analysis = Some(a);
                 self.publish();
             }
-            Err(_) => self.log(MessageType::ERROR, "slang-lsp: internal error during analysis (kept the previous results)"),
+            Err(_) => self.log(MessageType::ERROR, "slang-lsp: internal error during analysis"),
         }
     }
 
@@ -310,22 +315,43 @@ impl Server {
     }
 
     fn publish(&mut self) {
+        use std::hash::{Hash, Hasher};
         let Some(a) = &self.analysis else { return };
-        let mut now = HashSet::new();
+        let mut by_file: Vec<Vec<&slang::diagnostics::Diagnostic>> = vec![Vec::new(); a.files.len()];
+        for d in &a.diagnostics {
+            if let Some(v) = by_file.get_mut(d.file) {
+                v.push(d);
+            }
+        }
+        let mut now = HashMap::new();
         let mut out = Vec::new();
         for (i, f) in a.files.iter().enumerate() {
             if a.is_read_only(i) {
                 continue; // library files: their problems are not the user's to fix
             }
-            let Some(uri) = self.uris.get(&f.path).cloned() else { continue };
-            let diags: Vec<Diagnostic> = a.diagnostics_for(i).map(|d| self.to_lsp_diag(a, d)).collect();
-            if !diags.is_empty() {
-                now.insert(uri.clone());
+            let Some(uri) = self.uris.get(&f.path) else { continue };
+            // Unchanged diagnostics (of an unchanged text: their ranges) are
+            // not sent again.
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            if !by_file[i].is_empty() {
+                f.text.hash(&mut h);
             }
-            out.push(PublishDiagnosticsParams { uri, diagnostics: diags, version: None });
+            for d in &by_file[i] {
+                (d.span.start, d.span.end, &d.message, d.code, d.severity == slang::diagnostics::Severity::Error).hash(&mut h);
+                for (n, s) in &d.notes {
+                    (n, s.map(|s| (s.start, s.end))).hash(&mut h);
+                }
+            }
+            let h = h.finish();
+            now.insert(uri.clone(), h);
+            if self.published.get(uri) == Some(&h) {
+                continue;
+            }
+            let diags: Vec<Diagnostic> = by_file[i].iter().map(|d| self.to_lsp_diag(a, d)).collect();
+            out.push(PublishDiagnosticsParams { uri: uri.clone(), diagnostics: diags, version: None });
         }
-        for uri in self.published.difference(&now) {
-            if !out.iter().any(|p| &p.uri == uri) {
+        for uri in self.published.keys() {
+            if !now.contains_key(uri) {
                 out.push(PublishDiagnosticsParams { uri: uri.clone(), diagnostics: Vec::new(), version: None });
             }
         }
