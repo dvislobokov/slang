@@ -69,7 +69,7 @@ pub type FileId = usize;
 // ---------------------------------------------------------------------------
 
 /// A whole analysed program.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Program {
     /// All semantic types referenced by the program.
     pub types: TypeTable,

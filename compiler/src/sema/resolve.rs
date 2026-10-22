@@ -710,7 +710,10 @@ impl<'a> Sema<'a> {
                     self.err(format!("duplicate method {} in interface {}", m.name.name, src.name.name), m.name.span);
                     continue;
                 }
-                self.ide_def(index::SymKey::IfaceMethod(iid as u32, ms.len() as u32), &m.name, m.span, Some(index::SymKey::Interface(iid as u32)));
+                // (Stdlib interfaces have no declaration span: not recorded.)
+                if self.interfaces[iid].span != Span::DUMMY {
+                    self.ide_def(index::SymKey::IfaceMethod(iid as u32, ms.len() as u32), &m.name, m.span, Some(index::SymKey::Interface(iid as u32)));
+                }
                 let params = m.params.iter().map(|p| self.resolve_type(&p.ty)).collect();
                 let ret = m.ret.as_ref().map(|r| self.resolve_type(r)).unwrap_or(self.tt.void);
                 let default = if m.body.is_some() { self.iface_defaults.get(&(iid as u32, m.name.name.clone())).copied() } else { None };
@@ -805,7 +808,9 @@ impl<'a> Sema<'a> {
                 self.err(format!("duplicate field {} in struct {}", f.name.name, src.name.name), f.name.span);
                 continue;
             }
-            self.ide_def(index::SymKey::Field(sid as u32, fields.len() as u32), &f.name, f.span, Some(index::SymKey::Struct(sid as u32)));
+            if self.structs[sid].span != Span::DUMMY {
+                self.ide_def(index::SymKey::Field(sid as u32, fields.len() as u32), &f.name, f.span, Some(index::SymKey::Struct(sid as u32)));
+            }
             fields.push(hir::StructField {
                 name: f.name.name.clone(),
                 ty,

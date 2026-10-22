@@ -212,6 +212,19 @@ impl SymbolIndex {
         self.by_key = self.symbols.iter().map(|s| (s.key.clone(), s.id)).collect();
     }
 
+    /// An index of `symbols` (ids are their positions) and `references`.
+    pub(crate) fn from_parts(symbols: Vec<Symbol>, references: Vec<Reference>, files: Vec<Option<FileInfo>>, ns_members: HashMap<String, Vec<(String, SymbolId)>>) -> SymbolIndex {
+        let mut by_key = HashMap::with_capacity(symbols.len());
+        for s in &symbols {
+            by_key.entry(s.key.clone()).or_insert(s.id);
+        }
+        let mut refs_by_symbol: HashMap<SymbolId, Vec<usize>> = HashMap::new();
+        for (i, r) in references.iter().enumerate() {
+            refs_by_symbol.entry(r.symbol).or_default().push(i);
+        }
+        SymbolIndex { symbols, references, files, ns_members, by_key, refs_by_symbol }
+    }
+
     fn add(&mut self, mut s: Symbol) -> SymbolId {
         if let Some(&id) = self.by_key.get(&s.key) {
             return id;
@@ -228,13 +241,14 @@ impl SymbolIndex {
 /// partial) HIR program together with the symbol index. `texts[i]` is the
 /// source of `files[i]` (used for doc comments).
 pub fn analyze_indexed(files: &[ast::File], texts: &[&str], diags: &mut Diagnostics) -> (Program, SymbolIndex) {
-    let mut s = Sema::new(files, diags);
+    let files: Vec<&ast::File> = files.iter().collect();
+    let mut s = Sema::new(&files, diags);
     s.ide = Some(Box::default());
     s.run();
-    let extra = s.ide_collect_extras();
+    let (extra, names) = s.ide_collect_extras_for(&|_| true, true);
     let rec = *s.ide.take().unwrap();
     let program = s.finish();
-    let index = build(rec, extra, &program, texts);
+    let index = build_with(rec, extra, &program, texts, &names);
     (program, index)
 }
 
@@ -263,7 +277,7 @@ pub(crate) struct Recorder {
 }
 
 /// Facts gathered from sema after analysis.
-struct Extras {
+pub(crate) struct Extras {
     files: Vec<FileInfo>,
     imports: Vec<Vec<(Option<String>, Option<String>, SymKey)>>,
     ns_members: Vec<(String, Vec<(String, SymKey)>)>,
@@ -292,7 +306,10 @@ impl<'a> Sema<'a> {
     /// Checking stdlib code written in Slang (`std.collections`, `std.net`,
     /// ...): its spans are not in any user file, so nothing is recorded.
     fn ide_in_std(&self) -> bool {
-        self.nss.get(self.cur_ns).is_some_and(|n| n.is_std)
+        let std = self.nss.get(self.cur_ns).is_some_and(|n| n.is_std);
+        // Unit mode: a user file declaring a std namespace (editing the
+        // stdlib sources) is recorded like any user file.
+        std && !(self.unit.is_some() && self.cur_file < self.files.len() && self.file_scopes.get(self.cur_file).map(|s| s.ns) == Some(self.cur_ns))
     }
 
     /// Records a use of `key` at `span` in the current file.
@@ -465,8 +482,10 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// File, namespace and std facts for the index.
-    fn ide_collect_extras(&mut self) -> Extras {
+    /// File, namespace and std facts for the index: the member lists of
+    /// the namespaces `want` selects, signatures of std members when
+    /// `std_info`; also the names of the type parameters.
+    pub(crate) fn ide_collect_extras_for(&mut self, want: &dyn Fn(&str) -> bool, with_std: bool) -> (Extras, Vec<String>) {
         let mut files = Vec::new();
         let mut imports = Vec::new();
         for (fi, f) in self.files.iter().enumerate() {
@@ -489,10 +508,13 @@ impl<'a> Sema<'a> {
         let mut ns_members = Vec::new();
         let mut std_info = HashMap::new();
         for ns in &self.nss {
+            if !want(&ns.path) && !(with_std && ns.is_std) {
+                continue;
+            }
             let mut members: Vec<(String, SymKey)> = Vec::new();
             for (name, (m, _, _)) in &ns.members {
                 let Some(k) = self.member_key(*m) else { continue };
-                if ns.is_std {
+                if ns.is_std && with_std {
                     let info = match m {
                         Member::StdFunc(i) => {
                             let f = stdlib::FUNCS[*i];
@@ -515,9 +537,12 @@ impl<'a> Sema<'a> {
                 members.push((name.clone(), k));
             }
             members.sort_by(|a, b| a.0.cmp(&b.0));
-            ns_members.push((ns.path.clone(), members));
+            if want(&ns.path) {
+                ns_members.push((ns.path.clone(), members));
+            }
         }
-        Extras { files, imports, ns_members, std_info }
+        let names = self.gen.tparams.iter().map(|p| p.name.clone()).collect();
+        (Extras { files, imports, ns_members, std_info }, names)
     }
 }
 
@@ -525,10 +550,14 @@ impl<'a> Sema<'a> {
 // Building the index
 // ---------------------------------------------------------------------------
 
-/// Declaration names without the namespace prefix, for signatures.
-struct ShortNames<'p>(&'p Program);
+/// Declaration names without the namespace prefix, for signatures (and
+/// the names of type parameters, when known).
+struct ShortNames<'p>(&'p Program, &'p [String]);
 
 impl DeclNames for ShortNames<'_> {
+    fn param_name(&self, id: u32) -> String {
+        self.1.get(id as usize).cloned().unwrap_or_else(|| format!("T#{id}"))
+    }
     fn struct_name(&self, id: u32) -> String {
         self.0.structs.get(id as usize).map(|s| s.name.clone()).unwrap_or_default()
     }
@@ -542,14 +571,19 @@ impl DeclNames for ShortNames<'_> {
 
 /// Short spelling of a type (`[]User`, `*Account`).
 pub fn short_type_name(p: &Program, t: TypeId) -> String {
-    type_name(&p.types, t, &ShortNames(p))
+    type_name(&p.types, t, &ShortNames(p, &[]))
 }
 
 /// Signature of a function: `func Name(a int) T`, with `static`/`async`
 /// prefixes and `Struct.` qualification for methods when `qualify`.
 pub fn func_signature(p: &Program, fid: u32, qualify: bool) -> String {
+    func_signature_with(p, &[], fid, qualify)
+}
+
+/// [`func_signature`] with the names of type parameters.
+fn func_signature_with(p: &Program, names: &[String], fid: u32, qualify: bool) -> String {
     let f = &p.funcs[fid as usize];
-    let tn = |t| short_type_name(p, t);
+    let tn = |t| type_name(&p.types, t, &ShortNames(p, names));
     let mut s = String::new();
     let mut name = f.name.clone();
     if let FuncKind::Method { struct_id, is_static } = f.kind {
@@ -613,9 +647,11 @@ fn narrow(text: &str, span: Span, name: &str) -> Span {
     }
 }
 
-fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolIndex {
+/// Builds the index from the records of an analysis; `names` are the
+/// names of its type parameters.
+pub(crate) fn build_with(rec: Recorder, extra: Extras, p: &Program, texts: &[&str], names: &[String]) -> SymbolIndex {
     let mut idx = SymbolIndex::default();
-    let tn = |t| short_type_name(p, t);
+    let tn = |t| type_name(&p.types, t, &ShortNames(p, names));
     // Containers are resolved after all symbols exist.
     let mut containers: Vec<(SymbolId, SymKey)> = Vec::new();
     for d in &rec.defs {
@@ -672,7 +708,7 @@ fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolInd
                 sym.full_name = it.full_name.clone();
                 let mut s = format!("interface {} {{\n", it.name);
                 for m in &it.methods {
-                    s.push_str(&format!("    {}\n", iface_method_sig(p, m)));
+                    s.push_str(&format!("    {}\n", iface_method_sig(p, names, m)));
                 }
                 s.push('}');
                 sym.signature = s;
@@ -681,7 +717,7 @@ fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolInd
                 let e = &p.enums[*i as usize];
                 sym.kind = SymbolKind::Enum;
                 sym.full_name = e.full_name.clone();
-                let vs: Vec<String> = e.variants.iter().map(|v| variant_sig(p, v)).collect();
+                let vs: Vec<String> = e.variants.iter().map(|v| variant_sig(p, names, v)).collect();
                 sym.signature = format!("enum {} {{ {} }}", e.name, vs.join(", "));
             }
             SymKey::Variant(e, v) => {
@@ -690,7 +726,7 @@ fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolInd
                 sym.full_name = format!("{}.{}", en.full_name, d.name);
                 sym.is_readonly = true;
                 if let Some(var) = en.variants.get(*v as usize) {
-                    sym.signature = format!("{}.{}", en.name, variant_sig(p, var));
+                    sym.signature = format!("{}.{}", en.name, variant_sig(p, names, var));
                 }
             }
             SymKey::Field(s, f) => {
@@ -707,7 +743,7 @@ fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolInd
                 sym.kind = SymbolKind::Method;
                 sym.full_name = format!("{}.{}", it.full_name, d.name);
                 if let Some(ms) = it.methods.get(*m as usize) {
-                    sym.signature = iface_method_sig(p, ms);
+                    sym.signature = iface_method_sig(p, names, ms);
                 }
             }
             SymKey::Func(f) => {
@@ -716,7 +752,7 @@ fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolInd
                 sym.full_name = func.full_name.clone();
                 sym.is_static = matches!(func.kind, FuncKind::Method { is_static: true, .. });
                 sym.is_async = func.is_async;
-                sym.signature = func_signature(p, *f, false);
+                sym.signature = func_signature_with(p, names, *f, false);
             }
             SymKey::Global(g) => {
                 let gl = &p.globals[*g as usize];
@@ -764,47 +800,7 @@ fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolInd
         if let Some(id) = idx.lookup(key) {
             return Some(id);
         }
-        let (kind, name, full, sig) = match key {
-            SymKey::Std(path) => {
-                let name = path.rsplit('.').next().unwrap_or(path).to_string();
-                let (kind, sig) = extra.std_info.get(key).cloned().unwrap_or((SymbolKind::Func, format!("func {name}")));
-                (kind, name, path.clone(), sig)
-            }
-            SymKey::Ns(path) => {
-                let name = path.rsplit('.').next().unwrap_or(path).to_string();
-                (SymbolKind::Namespace, name, path.clone(), format!("namespace {path}"))
-            }
-            SymKey::Builtin(n) => {
-                let is_fn = matches!(n.as_str(), "len" | "append" | "delete" | "panic" | "typeof") || (n == "error");
-                let sig = match n.as_str() {
-                    "len" => "func len(v) int".to_string(),
-                    "append" => "func append(s []T, v T) []T".to_string(),
-                    "delete" => "func delete(m map[K]V, k K)".to_string(),
-                    "panic" => "func panic(msg string)".to_string(),
-                    "error" => "func error(msg string) error  (also the builtin error interface)".to_string(),
-                    _ => format!("type {n}"),
-                };
-                (if is_fn { SymbolKind::BuiltinFunc } else { SymbolKind::BuiltinType }, n.clone(), n.clone(), sig)
-            }
-            _ => return None,
-        };
-        let is_std = !matches!(key, SymKey::Ns(p) if !(p == "std" || p.starts_with("std.")));
-        Some(idx.add(Symbol {
-            id: SymbolId(0),
-            key: key.clone(),
-            kind,
-            name,
-            full_name: full,
-            loc: None,
-            signature: sig,
-            ty: None,
-            doc: None,
-            container: None,
-            is_static: false,
-            is_async: false,
-            is_readonly: kind == SymbolKind::Const,
-            is_std,
-        }))
+        Some(idx.add(implicit_symbol(key, extra.std_info.get(key).cloned())?))
     };
     for (path, members) in &extra.ns_members {
         let mut list = Vec::new();
@@ -859,17 +855,64 @@ fn build(rec: Recorder, extra: Extras, p: &Program, texts: &[&str]) -> SymbolInd
     idx
 }
 
-fn iface_method_sig(p: &Program, m: &hir::MethodSig) -> String {
-    let ps: Vec<String> = m.params.iter().map(|t| short_type_name(p, *t)).collect();
-    let ret = if matches!(p.types.get(m.ret), Type::Void) { String::new() } else { format!(" {}", short_type_name(p, m.ret)) };
+/// The symbol of a namespace, std member or builtin that no declaration
+/// defines (`info`: kind and signature of a std member).
+pub(crate) fn implicit_symbol(key: &SymKey, info: Option<(SymbolKind, String)>) -> Option<Symbol> {
+    let (kind, name, full, sig) = match key {
+        SymKey::Std(path) => {
+            let name = path.rsplit('.').next().unwrap_or(path).to_string();
+            let (kind, sig) = info.unwrap_or((SymbolKind::Func, format!("func {name}")));
+            (kind, name, path.clone(), sig)
+        }
+        SymKey::Ns(path) => {
+            let name = path.rsplit('.').next().unwrap_or(path).to_string();
+            (SymbolKind::Namespace, name, path.clone(), format!("namespace {path}"))
+        }
+        SymKey::Builtin(n) => {
+            let is_fn = matches!(n.as_str(), "len" | "append" | "delete" | "panic" | "typeof") || (n == "error");
+            let sig = match n.as_str() {
+                "len" => "func len(v) int".to_string(),
+                "append" => "func append(s []T, v T) []T".to_string(),
+                "delete" => "func delete(m map[K]V, k K)".to_string(),
+                "panic" => "func panic(msg string)".to_string(),
+                "error" => "func error(msg string) error  (also the builtin error interface)".to_string(),
+                _ => format!("type {n}"),
+            };
+            (if is_fn { SymbolKind::BuiltinFunc } else { SymbolKind::BuiltinType }, n.clone(), n.clone(), sig)
+        }
+        _ => return None,
+    };
+    let is_std = !matches!(key, SymKey::Ns(p) if !(p == "std" || p.starts_with("std.")));
+    Some(Symbol {
+        id: SymbolId(0),
+        key: key.clone(),
+        kind,
+        name,
+        full_name: full,
+        loc: None,
+        signature: sig,
+        ty: None,
+        doc: None,
+        container: None,
+        is_static: false,
+        is_async: false,
+        is_readonly: kind == SymbolKind::Const,
+        is_std,
+    })
+}
+
+fn iface_method_sig(p: &Program, names: &[String], m: &hir::MethodSig) -> String {
+    let tn = |t| type_name(&p.types, t, &ShortNames(p, names));
+    let ps: Vec<String> = m.params.iter().map(|t| tn(*t)).collect();
+    let ret = if matches!(p.types.get(m.ret), Type::Void) { String::new() } else { format!(" {}", tn(m.ret)) };
     format!("func {}({}){ret}", m.name, ps.join(", "))
 }
 
-fn variant_sig(p: &Program, v: &hir::Variant) -> String {
+fn variant_sig(p: &Program, names: &[String], v: &hir::Variant) -> String {
     if v.fields.is_empty() {
         v.name.clone()
     } else {
-        let fs: Vec<String> = v.fields.iter().map(|(n, t)| format!("{n} {}", short_type_name(p, *t))).collect();
+        let fs: Vec<String> = v.fields.iter().map(|(n, t)| format!("{n} {}", type_name(&p.types, *t, &ShortNames(p, names)))).collect();
         format!("{}({})", v.name, fs.join(", "))
     }
 }

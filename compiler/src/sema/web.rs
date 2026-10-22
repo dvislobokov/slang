@@ -241,7 +241,7 @@ impl<'a> Sema<'a> {
                 let e = self.generic_call(t, targs, Some(recv), args, span);
                 if let ExprKind::Call { callee: Callee::Func(f), .. } = &e.kind {
                     if let Some(ty) = self.gen.insts.get(&f.0).and_then(|i| i.env.iter().find(|(n, _)| n == "T").map(|x| x.1)) {
-                        self.web.registered.push(ty);
+                        self.web_registered(ty);
                     }
                 }
                 Ok(e)
@@ -274,6 +274,7 @@ impl<'a> Sema<'a> {
         let saved = self.cur_ns;
         self.cur_ns = self.ensure_ns("std.web", Span::DUMMY);
         let t = self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false);
+        self.gen.templates[t as usize].generated = true;
         self.cur_ns = saved;
         self.web.tmpls.insert(src, t);
         t
@@ -687,9 +688,24 @@ impl<'a> Sema<'a> {
         }
     }
 
+    /// Records a registered service type.
+    fn web_registered(&mut self, t: TypeId) {
+        self.web.registered.push(t);
+        if self.unit.is_some() {
+            let key = self.tn_full(t);
+            let origin = self.unit_origin_file();
+            self.unit.as_mut().unwrap().web_registered.push((key, origin));
+        }
+    }
+
     fn web_route_check(&mut self, verb: &str, pattern: &str, segs: &[String], who: &str, span: Span) {
         let norm: Vec<String> = segs.iter().map(|s| if s.starts_with('{') { "{}".to_string() } else { s.clone() }).collect();
         let key = format!("{verb} /{}", norm.join("/"));
+        if let Some(u) = self.unit.as_mut() {
+            // Duplicates are found over the whole program (see units).
+            u.web_routes.push(super::units::WebRoute { key, pattern: pattern.to_string(), who: who.to_string(), verb: verb.to_string(), span, file: self.cur_file });
+            return;
+        }
         if let Some((_, prev, _, _)) = self.web.routes.iter().find(|r| r.0 == key).cloned() {
             self.err(format!("{who}: duplicate route {verb} {pattern} (already mapped as {verb} {prev})"), span);
             return;
@@ -1013,9 +1029,9 @@ impl<'a> Sema<'a> {
                 self.err(format!("{who}<{n}, {iname}>: the first type argument must be an interface"), span);
                 return self.invalid(span);
             }
-            self.web.registered.push(i);
+            self.web_registered(i);
         } else {
-            self.web.registered.push(ptr);
+            self.web_registered(ptr);
         }
         let Some((ctor, deps)) = self.web_construct(impl_, "__sc", "__v", false, &format!("{who}<{iname}>"), span) else { return self.invalid(span) };
         let owner = format!("*{}", self.tn(impl_));
@@ -1050,6 +1066,10 @@ impl<'a> Sema<'a> {
     /// registers is an error (types of the stdlib are provided or checked
     /// by `App.Build` at run time).
     pub(crate) fn web_finish(&mut self) {
+        if self.unit.is_some() {
+            self.web_finish_unit();
+            return;
+        }
         let required = std::mem::take(&mut self.web.required);
         let mut reported: Vec<(TypeId, String)> = Vec::new();
         for (t, owner, span, file) in required {
@@ -1070,5 +1090,33 @@ impl<'a> Sema<'a> {
             self.err(format!("{owner} needs service {tn}, which is never registered: add {hint}"), span);
             self.cur_file = saved;
         }
+    }
+
+    /// [`Sema::web_finish`] in unit mode: the dependencies are checked by
+    /// the caller against the registrations of the whole program; type
+    /// names are spelled from the namespace of the file needing them.
+    fn web_finish_unit(&mut self) {
+        let required = std::mem::take(&mut self.web.required);
+        let saved_ns = self.cur_ns;
+        for (t, owner, span, file) in required {
+            if self.web_std_type(t) {
+                continue;
+            }
+            if let Some(fs) = self.file_scopes.get(file) {
+                self.cur_ns = fs.ns;
+            }
+            let tn = self.tn(t);
+            let hint = match self.tt.get(t) {
+                Type::Pointer(x) => {
+                    let x = *x;
+                    format!("app.Services.AddSingleton<{}>() (or AddScoped / AddTransient / AddInstance)", self.tn(x))
+                }
+                _ => format!("app.Services.AddSingleton<{tn}, Impl>() or AddInstance"),
+            };
+            let diag = Diagnostic::error(format!("{owner} needs service {tn}, which is never registered: add {hint}"), span).in_file(file);
+            let key = self.tn_full(t);
+            self.unit.as_mut().unwrap().web_required.push(super::units::WebRequired { key, owner, diag });
+        }
+        self.cur_ns = saved_ns;
     }
 }

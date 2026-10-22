@@ -52,6 +52,7 @@ pub mod stdfs;
 mod stdsrc;
 mod suggest;
 pub mod stdlib;
+pub mod units;
 // >>> std.web (docs/FRAMEWORK.md section 2)
 mod web;
 // <<< std.web
@@ -83,7 +84,8 @@ pub fn analyze(files: &[ast::File], diags: &mut Diagnostics) -> Option<hir::Prog
 /// every context as JSON (the migrations snapshot, see `crate::datacli`),
 /// or `None` if any error was reported.
 pub fn analyze_data_model(files: &[ast::File], diags: &mut Diagnostics) -> Option<String> {
-    let mut s = Sema::new(files, diags);
+    let files: Vec<&ast::File> = files.iter().collect();
+    let mut s = Sema::new(&files, diags);
     s.run();
     if s.diags.has_errors() {
         return None;
@@ -95,7 +97,8 @@ pub fn analyze_data_model(files: &[ast::File], diags: &mut Diagnostics) -> Optio
 /// namespaces each file may reach (strict package isolation, used by
 /// package builds; see `crate::package`).
 pub fn analyze_with_policy(files: &[ast::File], diags: &mut Diagnostics, policy: Option<&ImportPolicy>) -> Option<hir::Program> {
-    let mut s = Sema::new(files, diags);
+    let files: Vec<&ast::File> = files.iter().collect();
+    let mut s = Sema::new(&files, diags);
     s.policy = policy;
     s.run();
     let mut had_errors = s.diags.has_errors();
@@ -286,7 +289,7 @@ pub(crate) enum VarRef {
 
 /// The analyser state.
 pub(crate) struct Sema<'a> {
-    pub files: &'a [ast::File],
+    pub files: &'a [&'a ast::File],
     pub diags: &'a mut Diagnostics,
     pub tt: TypeTable,
     pub nss: Vec<Ns>,
@@ -348,10 +351,16 @@ pub(crate) struct Sema<'a> {
     pub(crate) web: web::WebState,
     /// std.data compile-time expansion (models, query translation).
     pub(crate) orm: orm_model::OrmState,
+    /// Set by a tool (the language server) when the result is no longer
+    /// wanted: [`Sema::run`] stops between phases and function bodies.
+    pub(crate) cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Unit mode for incremental IDE analysis (see [`units`]); `None` =
+    /// an ordinary analysis.
+    pub(crate) unit: Option<Box<units::UnitState>>,
 }
 
 impl<'a> Sema<'a> {
-    fn new(files: &'a [ast::File], diags: &'a mut Diagnostics) -> Sema<'a> {
+    fn new(files: &'a [&'a ast::File], diags: &'a mut Diagnostics) -> Sema<'a> {
         Sema {
             files,
             diags,
@@ -393,35 +402,63 @@ impl<'a> Sema<'a> {
             refl: reflect::ReflState::default(),
             web: web::WebState::default(),
             orm: orm_model::OrmState::default(),
+            cancel: None,
+            unit: None,
         }
     }
 
+    /// The analysis was cancelled through [`Sema::cancel`].
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     fn run(&mut self) {
-        self.build_stdlib();
-        self.collect_decls();
-        self.add_std_structs();
-        self.register_collections();
-        self.register_std_sources();
-        self.resolve_imports();
-        self.resolve_template_bounds();
-        self.resolve_signatures();
-        self.check_implements();
-        self.run_deferred_bounds();
-        self.check_attributes();
+        let phases: [fn(&mut Self); 11] = [
+            Self::build_stdlib,
+            Self::collect_decls,
+            Self::add_std_structs,
+            Self::register_collections,
+            Self::register_std_sources,
+            Self::resolve_imports,
+            Self::resolve_template_bounds,
+            Self::resolve_signatures,
+            Self::check_implements,
+            Self::run_deferred_bounds,
+            Self::check_attributes,
+        ];
+        for phase in phases {
+            if self.cancelled() {
+                return;
+            }
+            phase(self);
+        }
         for g in 0..self.globals.len() {
             self.ensure_global(GlobalId(g as u32));
         }
         self.check_templates();
         self.instantiate_debug_agent();
+        if let Some(u) = self.unit.as_mut() {
+            u.in_bodies = true;
+        }
         // Instantiations append functions while bodies are checked; they
         // are checked in turn.
         let mut f = 0;
         while f < self.func_src.len() {
+            if self.cancelled() {
+                return;
+            }
             self.check_function_body(FuncId(f as u32));
             f += 1;
         }
+        if let Some(u) = self.unit.as_mut() {
+            u.in_bodies = false;
+        }
         self.web_finish();
         self.check_unused_imports();
+        if self.unit.is_some() {
+            // The entry point is chosen over the whole program (see units).
+            return;
+        }
         if let Some(main) = self.find_entry() {
             let sig = &self.sigs[main.0 as usize];
             let void_ok = matches!(self.tt.get(sig.ret), Type::Void) || matches!(self.tt.fallible_inner(sig.ret).map(|t| self.tt.get(t)), Some(Type::Void));
@@ -587,6 +624,7 @@ impl<'a> Sema<'a> {
         if self.gen.mute > 0 {
             return;
         }
+        self.unit_note_diag();
         if let Some(n) = &self.gen.note {
             d = d.with_note(n.clone(), None);
         }
@@ -793,10 +831,16 @@ impl<'a> Sema<'a> {
     /// of a root namespace (`import std`) are exempt: they only make child
     /// namespaces reachable by short name and are customary boilerplate.
     fn check_unused_imports(&mut self) {
-        if self.diags.has_errors() {
+        // Unit mode: candidates of the full files, whatever the errors.
+        let unit = self.unit.is_some();
+        if !unit && self.diags.has_errors() {
             return;
         }
+        let mark = self.diags.items.len();
         for fi in 0..self.file_scopes.len() {
+            if self.unit.as_ref().is_some_and(|u| !u.full.get(fi).copied().unwrap_or(false)) {
+                continue;
+            }
             for (span, used) in self.file_scopes[fi].import_uses.clone() {
                 let imp = self.files[fi].imports.iter().find(|i| i.path.span == span);
                 let root = imp.is_some_and(|i| i.path.segments.len() == 1 && i.alias.is_none());
@@ -808,6 +852,10 @@ impl<'a> Sema<'a> {
                     self.err_fix(format!("unused import {path}: nothing from it is used"), span, codes::UNUSED_IMPORT, vec![fix]);
                 }
             }
+        }
+        if let Some(u) = self.unit.as_mut() {
+            u.unused_imports = self.diags.items.split_off(mark);
+            u.diag_nodes.retain(|(i, _)| *i < mark);
         }
     }
 
@@ -823,8 +871,14 @@ impl<'a> Sema<'a> {
             self.check_instance_body(fid, decl, body);
             return;
         }
+        if self.unit_skips_body(fid) {
+            return;
+        }
         let f = &self.funcs[fid.0 as usize];
         self.cur_file = f.file;
+        if let Some(u) = self.unit.as_mut() {
+            u.body_file = f.file;
+        }
         if let Some(&ns) = self.std_fn_ns.get(&fid.0) {
             // A stdlib default method: its namespace's scope, nothing
             // recorded for the IDE (the spans are in the stdlib source).
@@ -835,6 +889,12 @@ impl<'a> Sema<'a> {
             return;
         }
         self.cur_ns = self.ns_of_hir(f.namespace);
+        if self.unit.is_some() {
+            // The namespace of the file (std namespaces have no HIR id).
+            if let Some(fs) = self.file_scopes.get(self.cur_file) {
+                self.cur_ns = fs.ns;
+            }
+        }
         self.check_body_in_scope(fid, decl, body);
     }
 
