@@ -500,7 +500,7 @@ zell-<версия>-<хост>/
   -lmingw32 builtins -lmoldname -lmingwex -lmsvcrt -luser32 -lkernel32`;
   crtbegin/crtend gcc не нужны (SEH x86-64), libgcc заменён compiler-rt.
 - **macOS**: `lld -flavor darwin -arch arm64|x86_64 -platform_version macos
-  12.0.0 14.0 … builtins libSystem.tbd` (+ `-dead_strip`, `-x -S`); lld
+  12.3.0 14.0 … builtins libSystem.tbd libsqlite3.tbd?` (macOS ≥ 12.3: первый SDK с `sqlite3_changes64`) (+ `-dead_strip`, `-x -S`); lld
   подписывает arm64-бинарники ad hoc сам.
 
 Параллельный кодогенератор сливает части объекта `ld.lld -r` из архива,

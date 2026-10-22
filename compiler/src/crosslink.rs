@@ -380,7 +380,7 @@ pub fn lld_command(lld: &Lld, t: &Target, dir: &Path, objs: &[PathBuf], rt: &Pat
         ObjectFormat::MachO => {
             let mut c = lld.command(Flavor::Darwin);
             let arch = if cpu(t) == "aarch64" || cpu(t) == "arm64" { "arm64" } else { "x86_64" };
-            c.args(["-demangle", "-dynamic", "-arch", arch, "-platform_version", "macos", "12.0.0", "14.0"]);
+            c.args(["-demangle", "-dynamic", "-arch", arch, "-platform_version", "macos", "12.3.0", "14.0"]);
             c.arg("-o").arg(output);
             c.args(objs).arg(rt);
             c.arg("-L").arg(dir);
@@ -403,6 +403,22 @@ pub fn lld_command(lld: &Lld, t: &Target, dir: &Path, objs: &[PathBuf], rt: &Pat
         }
         _ => Err(preflight(t).err().unwrap_or_else(|| format!("no bundled link recipe for {}", t.triple))),
     }
+}
+
+/// The clang option that makes it link with lld of flavour `f`: the full
+/// path (`--ld-path=`) of the lld [`find_lld`] found (`ld.lld-18` on PATH is
+/// not something `-fuse-ld=lld` finds), or `None` without one.
+fn clang_lld_arg(f: Flavor) -> Option<String> {
+    let lld = find_lld()?;
+    let prog = PathBuf::from(lld.command(f).get_program());
+    let prog = if lld.multi {
+        // the multi-flavour binary through its flavour-named link
+        let name = if f == Flavor::Darwin { "ld64.lld" } else { "ld.lld" };
+        lld.program.with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+    } else {
+        prog
+    };
+    prog.is_file().then(|| format!("--ld-path={}", prog.display()))
 }
 
 /// The clang-driver link command for executable `output` of target `t`
@@ -441,8 +457,8 @@ pub fn clang_command(t: &Target, objs: &[PathBuf], rt: &Path, output: &Path, lib
     }
     match t.object_format() {
         ObjectFormat::Coff => {
-            if have("ld.lld") || have("ld.lld-18") {
-                cmd.arg("-fuse-ld=lld");
+            if let Some(a) = clang_lld_arg(Flavor::Gnu) {
+                cmd.arg(a);
             }
             for l in WINDOWS_LIBS {
                 cmd.arg(format!("-l{l}"));
@@ -457,15 +473,15 @@ pub fn clang_command(t: &Target, objs: &[PathBuf], rt: &Path, output: &Path, lib
         ObjectFormat::MachO => {
             let Some(sdk) = macos_sdk() else { return Err(preflight(t).unwrap_err()) };
             cmd.arg("-isysroot").arg(sdk);
-            if have("ld64.lld") || have("ld64.lld-18") {
-                cmd.arg("-fuse-ld=lld");
+            if let Some(a) = clang_lld_arg(Flavor::Darwin) {
+                cmd.arg(a);
             }
             if o.release {
                 cmd.arg("-Wl,-dead_strip");
             }
         }
         ObjectFormat::Elf => {
-            cmd.arg("-fuse-ld=lld");
+            cmd.arg(clang_lld_arg(Flavor::Gnu).unwrap_or_else(|| "-fuse-ld=lld".into()));
             if let Ok(s) = std::env::var("ZELL_SYSROOT") {
                 cmd.arg(format!("--sysroot={s}"));
             }

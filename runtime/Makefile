@@ -58,9 +58,11 @@ else ifneq ($(findstring apple-darwin,$(CROSS)),)
 TARGET_OS := macos
 TRIPLE  := $(CROSS)
 DARWIN_ARCH := $(if $(findstring aarch64,$(CROSS)),arm64,x86_64)
+# deployment target; 12.3 is the first with sqlite3_changes64 in the SDK
+MACOS_MIN ?= 12.3
 SDKROOT ?= $(shell xcrun --sdk macosx --show-sdk-path 2>/dev/null)
 ifeq ($(HAVE_CLANG),yes)
-CC      := $(CLANG) -target $(DARWIN_ARCH)-apple-macos12
+CC      := $(CLANG) -target $(DARWIN_ARCH)-apple-macos$(MACOS_MIN)
 endif
 ifeq ($(STUBSDK),yes)
 # A runtime archive from the stub headers (the toolchain bundle's macOS runtime).

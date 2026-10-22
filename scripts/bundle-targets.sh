@@ -65,6 +65,7 @@ MUSL_VERSION=1.2.5
 MINGW_VERSION=11.0.1
 SQLITE_VERSION=3.45.1
 COMPILER_RT_VERSION=18.1.8
+MACOS_MIN=12.3   # macOS deployment target (crosslink.rs -platform_version; SDK: sqlite3_changes64)
 PINS="
 libc6-amd64|$UA/main/g/glibc/libc6_2.31-0ubuntu9_amd64.deb|847a68e5f1ec2cd4e6fc191c5eaf0547445dd5c473c7617c068ba4441f63b292
 libc6-dev-amd64|$UA/main/g/glibc/libc6-dev_2.31-0ubuntu9_amd64.deb|adb78f38fb00c76af4384be7a4c5f41da242e05bea6b0483e03b7e0c86738477
@@ -89,7 +90,11 @@ check_darwin_tbd() {
     cat "$sdk/usr/lib/libSystem.B.tbd" "$sdk"/usr/lib/system/*.tbd | tr ',[]' '\n\n\n' | sed -e "s/[' ]//g" -e '/^$/d' | sort -u > "$work/sdk.syms"
     bad=0
     for d in "$@"; do
-        sed -n "s/^      '\(.*\)',\{0,1\}$/\1/p" "$d/libSystem.tbd" | sort -u > "$work/ours.syms"
+        if [ -f "$d/libsqlite3.tbd" ]; then
+            tr ',[]' '\n\n\n' < "$sdk/usr/lib/libsqlite3.tbd" | sed -e "s/[' ]//g" -e '/^$/d' >> "$work/sdk.syms"
+            sort -u -o "$work/sdk.syms" "$work/sdk.syms"
+        fi
+        cat "$d/libSystem.tbd" "$d"/libsqlite3.tbd 2>/dev/null | sed -n "s/^      '\(.*\)',\{0,1\}$/\1/p" | sort -u > "$work/ours.syms"
         missing=$(comm -23 "$work/ours.syms" "$work/sdk.syms")
         if [ -n "$missing" ]; then
             echo "$d/libSystem.tbd: not in the SDK's libSystem:" $missing >&2
@@ -382,12 +387,12 @@ darwin() {
     if [ -z "$sdk" ] && command -v xcrun >/dev/null 2>&1; then sdk=$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true); fi
     if [ -n "$sdk" ]; then
         # on a Mac (release builds): the real SDK's headers
-        builtins "$t" "$arch-apple-macos12" "$o" -isysroot "$sdk"
-        runtime "$t" "$t" "$o" SDKROOT="$sdk" STUBSDK=
+        builtins "$t" "$arch-apple-macos$MACOS_MIN" "$o" -isysroot "$sdk"
+        runtime "$t" "$t" "$o" SDKROOT="$sdk" STUBSDK= MACOS_MIN="$MACOS_MIN"
         built="the macOS SDK $(basename "$sdk")"
     else
-        builtins "$t" "$arch-apple-macos12" "$o" -nostdlibinc -isystem "$root/runtime/stub-sdk/macos/include"
-        runtime "$t" "$t" "$o" STUBSDK=yes
+        builtins "$t" "$arch-apple-macos$MACOS_MIN" "$o" -nostdlibinc -isystem "$root/runtime/stub-sdk/macos/include"
+        runtime "$t" "$t" "$o" STUBSDK=yes MACOS_MIN="$MACOS_MIN"
         built="runtime/stub-sdk/macos"
     fi
     syms=$work/darwin-$arch.syms
@@ -396,7 +401,25 @@ darwin() {
         sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/^\([^=]\)/_\1/' -e 's/^=//' "$root/scripts/lld/darwin-symbols.txt"
     } | sort -u > "$syms.all"
     "$NM" --defined-only "$o/libzell_rt.a" "$o/libclang_rt.builtins.a" 2>/dev/null | awk 'NF == 3 { print $3 }' | sort -u > "$syms.def"
-    comm -23 "$syms.all" "$syms.def" > "$syms"
+    comm -23 "$syms.all" "$syms.def" > "$syms.need"
+    grep -v '^_sqlite3_' "$syms.need" > "$syms" || true
+    grep '^_sqlite3_' "$syms.need" > "$syms.sqlite" || true
+    tbd() { # file install-name symbols
+        {
+            echo "--- !tapi-tbd"
+            echo "tbd-version: 4"
+            echo "targets: [ $arch-macos ]"
+            echo "install-name: '$2'"
+            echo "exports:"
+            echo "  - targets: [ $arch-macos ]"
+            echo "    symbols: ["
+            sed -e 's/^/      '"'"'/' -e 's/$/'"'"',/' "$3" | sed '$ s/,$//'
+            echo "    ]"
+            echo "..."
+        } > "$1"
+    }
+    # /usr/lib/libsqlite3.dylib: what the runtime's database.sqlite imports
+    [ -s "$syms.sqlite" ] && tbd "$o/libsqlite3.tbd" /usr/lib/libsqlite3.dylib "$syms.sqlite"
     {
         echo "--- !tapi-tbd"
         echo "tbd-version: 4"
@@ -410,8 +433,8 @@ darwin() {
         echo "    ]"
         echo "..."
     } > "$o/libSystem.tbd"
-    bundle_file "$o" "triple=$t" "libc=libSystem (text stub, $(wc -l < "$syms" | tr -d ' ') symbols; macOS >= 12)" \
-        "runtime=built against $built" "compiler-rt=$COMPILER_RT_VERSION"
+    bundle_file "$o" "triple=$t" "libc=libSystem (text stub, $(wc -l < "$syms" | tr -d ' ') symbols; macOS >= $MACOS_MIN)" \
+        "runtime=built against $built" "sqlite=$( [ -s "$syms.sqlite" ] && echo "libsqlite3.tbd ($(wc -l < "$syms.sqlite" | tr -d ' ') symbols)" || echo none)" "compiler-rt=$COMPILER_RT_VERSION"
 }
 
 for t in $targets; do

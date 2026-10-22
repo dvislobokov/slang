@@ -61,11 +61,13 @@ if [ -n "$LC" ] && [ -f "$("$LC" --libdir)/liblldELF.a" ]; then
             sys="-Wl,-Bstatic -lz -lzstd -ltinfo -Wl,-Bdynamic -lrt -ldl -lm -lpthread"
             static="-static-libstdc++ -static-libgcc -Wl,--gc-sections -Wl,-O1" ;;
     esac
+    # static archives by full path, no -L of LLVM's lib directory: Homebrew's
+    # holds a libc++.dylib (re-exporting its libunwind) that would shadow the OS's
     # shellcheck disable=SC2086
     "$CXX" -O2 -std=c++17 $("$LC" --cxxflags) "-DZELL_LLD_STUB_TARGETS=$stubs" \
-        "$root/scripts/lld/lld-main.cpp" -o "$dst" -L"$libdir" \
-        -llldMinGW -llldCOFF -llldELF -llldMachO -llldCommon $("$LC" --link-static --libs all) \
-        $static $sys
+        "$root/scripts/lld/lld-main.cpp" -o "$dst" \
+        "$libdir/liblldMinGW.a" "$libdir/liblldCOFF.a" "$libdir/liblldELF.a" "$libdir/liblldMachO.a" "$libdir/liblldCommon.a" \
+        $("$LC" --link-static --libfiles all) $static $sys
     strip "$dst" 2>/dev/null || true
 else
     # 3. from source
