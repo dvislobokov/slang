@@ -7,6 +7,7 @@ paste the prompt from the file.
 | File | Wave |
 |---|---|
 | `perf-wave-1.md` | the five hot spots of the 2026-10-22 benchmark run: scheduler, I/O, JSON, crypto, compiler |
+| `windows-ci.md` | Windows as a first-class host: green `ci`, the self-contained archive built and tested on Windows, release dry run; lists the open macOS items for a later Mac run |
 
 Planned next (not written yet): logger and ORM hot spots
 (RESULTS-framework.md), the self-contained distribution
