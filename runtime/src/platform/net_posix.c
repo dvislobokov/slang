@@ -408,7 +408,12 @@ int64_t zell__plat_sock_sendto(int64_t fd, const void *buf, int64_t n, const zel
 
 int zell__plat_sock_shutdown(int64_t fd, int how) {
     int h = how == (ZELL_PLAT_READ | ZELL_PLAT_WRITE) ? SHUT_RDWR : how == ZELL_PLAT_READ ? SHUT_RD : SHUT_WR;
-    return shutdown((int)fd, h) == 0 ? 0 : errno;
+    if (shutdown((int)fd, h) == 0) return 0;
+    /* BSD (macOS) refuses with ENOTCONN once the peer has closed and the
+     * connection is gone, where Linux succeeds: the direction is shut
+     * either way. */
+    if (errno == ENOTCONN && how != ZELL_PLAT_WRITE) return 0;
+    return errno;
 }
 
 void zell__plat_sock_close(int64_t fd) {
