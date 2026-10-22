@@ -58,10 +58,17 @@ struct stat {
 #define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
 #define UTIME_NOW -1
 #define UTIME_OMIT -2
-int stat(const char *restrict, struct stat *restrict);
-int lstat(const char *restrict, struct stat *restrict);
-int fstat(int, struct stat *);
-int fstatat(int, const char *, struct stat *, int);
+/* x86_64: the 64-bit-inode struct stat above goes with the $INODE64
+ * entry points (the SDK's __DARWIN_INODE64); arm64 has only those. */
+#if defined(__x86_64__)
+#define ZELL_STUB_INODE64(sym) __asm("_" #sym "$INODE64")
+#else
+#define ZELL_STUB_INODE64(sym)
+#endif
+int stat(const char *restrict, struct stat *restrict) ZELL_STUB_INODE64(stat);
+int lstat(const char *restrict, struct stat *restrict) ZELL_STUB_INODE64(lstat);
+int fstat(int, struct stat *) ZELL_STUB_INODE64(fstat);
+int fstatat(int, const char *, struct stat *, int) ZELL_STUB_INODE64(fstatat);
 int chmod(const char *, mode_t);
 int fchmod(int, mode_t);
 int mkdir(const char *, mode_t);

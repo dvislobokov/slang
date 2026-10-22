@@ -19,12 +19,20 @@
 #   make CROSS=aarch64-linux-gnu / x86_64-linux-musl / aarch64-linux-musl -> Linux
 #               cross runtimes in build/<triple>/ (gcc-aarch64-linux-gnu sysroot,
 #               musl-gcc's headers); test-qemu runs the C tests under qemu-<arch>
+#   SYSROOT=dir -> cross builds compile against that sysroot (--sysroot; for musl
+#               set MUSL_INC instead): scripts/bundle-targets.sh builds the bundled
+#               runtimes against glibc 2.31 / mingw-w64 trees it unpacked
+#   make CROSS=aarch64-apple-darwin STUBSDK=yes -> a macOS runtime archive compiled
+#               against stub-sdk/macos/ (build/<triple>-stubsdk/libzell_rt.a, what the
+#               toolchain bundle ships for cross-linking macOS without an SDK)
 
 CC      ?= cc
 AR      ?= ar
 CFLAGS  ?= -O2
 CROSS   ?=
 CLANG   ?= clang
+SYSROOT ?=
+STUBSDK ?=
 HAVE_CLANG := $(shell command -v $(CLANG) >/dev/null 2>&1 && echo yes)
 
 ifneq ($(CROSS),)
@@ -43,7 +51,7 @@ BUILD   := build/win64
 TRIPLE  := x86_64-pc-windows-gnu
 EXE     := .exe
 PICFLAG :=
-OSFLAGS := -D_WIN32_WINNT=0x0A00
+OSFLAGS := -D_WIN32_WINNT=0x0A00 $(if $(SYSROOT),--sysroot=$(SYSROOT))
 LDLIBS  = -lws2_32 -liphlpapi -lbcrypt -lshell32 -ladvapi32 -lm
 RDYNAMIC :=
 else ifneq ($(findstring apple-darwin,$(CROSS)),)
@@ -54,7 +62,11 @@ SDKROOT ?= $(shell xcrun --sdk macosx --show-sdk-path 2>/dev/null)
 ifeq ($(HAVE_CLANG),yes)
 CC      := $(CLANG) -target $(DARWIN_ARCH)-apple-macos12
 endif
-ifneq ($(SDKROOT),)
+ifeq ($(STUBSDK),yes)
+# A runtime archive from the stub headers (the toolchain bundle's macOS runtime).
+BUILD   := build/$(CROSS)-stubsdk
+OSFLAGS := -nostdlibinc -isystem stub-sdk/macos/include
+else ifneq ($(SDKROOT),)
 BUILD   := build/$(CROSS)
 OSFLAGS := -isysroot $(SDKROOT)
 else
@@ -75,7 +87,8 @@ BUILD   := build/$(CROSS)
 TRIPLE  := $(if $(findstring -unknown-,$(CROSS)),$(CROSS),$(subst -linux-,-unknown-linux-,$(CROSS)))
 EXE     :=
 PICFLAG := -fPIC
-OSFLAGS :=
+# SYSROOT (a glibc tree): only its headers, never the host's or a cross gcc's
+OSFLAGS := $(if $(SYSROOT),--sysroot=$(SYSROOT) -nostdinc -isystem $(shell $(CLANG) -print-resource-dir)/include -isystem $(SYSROOT)/usr/include/$(CROSS) -isystem $(SYSROOT)/usr/include)
 LDLIBS  = -lpthread -lm
 RDYNAMIC := -rdynamic
 # musl: clang -target x86_64-linux-musl with musl-gcc's headers (musl-tools);

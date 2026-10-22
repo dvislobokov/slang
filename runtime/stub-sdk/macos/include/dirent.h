@@ -13,11 +13,18 @@
 #define DT_WHT 14
 struct dirent { __uint64_t d_ino; __uint64_t d_seekoff; __uint16_t d_reclen; __uint16_t d_namlen; __uint8_t d_type; char d_name[1024]; };
 typedef struct __dirdesc DIR;
-DIR *opendir(const char *);
-DIR *fdopendir(int);
-struct dirent *readdir(DIR *);
-int readdir_r(DIR *, struct dirent *, struct dirent **);
+/* x86_64: the 64-bit-inode struct dirent goes with the $INODE64 entry
+ * points (the SDK's __DARWIN_INODE64 and __DARWIN_ALIAS_I). */
+#if defined(__x86_64__)
+#define ZELL_STUB_DIR_INODE64(sym) __asm("_" #sym "$INODE64")
+#else
+#define ZELL_STUB_DIR_INODE64(sym)
+#endif
+DIR *opendir(const char *) ZELL_STUB_DIR_INODE64(opendir);
+DIR *fdopendir(int) ZELL_STUB_DIR_INODE64(fdopendir);
+struct dirent *readdir(DIR *) ZELL_STUB_DIR_INODE64(readdir);
+int readdir_r(DIR *, struct dirent *, struct dirent **) ZELL_STUB_DIR_INODE64(readdir_r);
 int closedir(DIR *);
-void rewinddir(DIR *);
+void rewinddir(DIR *) ZELL_STUB_DIR_INODE64(rewinddir);
 int dirfd(DIR *);
 #endif
