@@ -578,9 +578,37 @@ fn emit_plain(program: &Program, name: &str, output: PathBuf, opts: &BuildOption
     let obj = output.with_extension(format!("{}.o", std::process::id()));
     write_object_par(&machine, &module, &obj, opts)?;
     let r = link(&[obj.clone()], &output, &libs, opts);
+    if r.is_ok() && opts.emits_debug_info() {
+        macos_dsym(&output, opts);
+    }
     let _ = std::fs::remove_file(&obj);
     r?;
     Ok(output)
+}
+
+/// On macOS the DWARF stays in the object files (the executable has only a
+/// debug map), so before the temporary object is removed `dsymutil` copies
+/// it into `<output>.dSYM`, where lldb finds it. Without dsymutil the build
+/// still succeeds, without debug info.
+fn macos_dsym(output: &Path, opts: &BuildOptions) {
+    if crate::target::current().os != "macos" {
+        return;
+    }
+    let mut tools: Vec<String> = ["dsymutil", "llvm-dsymutil", "llvm-dsymutil-18"].iter().map(|s| s.to_string()).collect();
+    if let Some(p) = std::env::var_os("LLVM_SYS_180_PREFIX") {
+        tools.push(Path::new(&p).join("bin/dsymutil").to_string_lossy().into_owned());
+    }
+    for t in &tools {
+        if let Ok(out) = Command::new(t).arg(output).output() {
+            if out.status.success() {
+                log(opts, format!("debug info: {}.dSYM ({t})", output.display()));
+            } else {
+                eprintln!("warning: {t} failed, {} has no debug info:\n{}", output.display(), String::from_utf8_lossy(&out.stderr));
+            }
+            return;
+        }
+    }
+    eprintln!("warning: dsymutil not found, {} has no debug info (install the Xcode command line tools)", output.display());
 }
 
 /// Codegen + verification of the whole program.
