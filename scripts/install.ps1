@@ -24,7 +24,9 @@ try {
     } else {
         $base = if ($env:ZELL_DIST_URL) { $env:ZELL_DIST_URL } else { "https://github.com/zell-lang/zell/releases" }
         if ($Version -eq "latest") {
-            $Version = (Invoke-RestMethod "$base/latest/download/VERSION").Trim()
+            $vurl = if ($env:ZELL_DIST_URL) { "$base/VERSION" } else { "$base/latest/download/VERSION" }
+            Invoke-WebRequest $vurl -OutFile (Join-Path $tmp "VERSION") -UseBasicParsing
+            $Version = (Get-Content (Join-Path $tmp "VERSION") -Raw).Trim()
         }
         $url = if ($env:ZELL_DIST_URL) { $env:ZELL_DIST_URL } else { "https://github.com/zell-lang/zell/releases/download/v$Version" }
         $file = "zell-$Version-$hostName.tar.gz"
@@ -32,10 +34,14 @@ try {
         Write-Host "downloading $url/$file"
         Invoke-WebRequest "$url/$file" -OutFile $archive -UseBasicParsing
         try {
-            $want = ((Invoke-RestMethod "$url/$file.sha256") -split '\s+')[0].ToLower()
+            Invoke-WebRequest "$url/$file.sha256" -OutFile "$archive.sha256" -UseBasicParsing
+            $want = ((Get-Content "$archive.sha256" -Raw) -split '\s+')[0].ToLower()
             $got = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
             if ($want -and $want -ne $got) { throw "checksum mismatch ($got, expected $want)" }
-        } catch [System.Net.WebException] { }
+        } catch {
+            if ($_.Exception.Message -like "checksum mismatch*") { throw }
+            Write-Host "note: no checksum file next to the archive; not verified"
+        }
     }
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
     tar -xzf $archive -C $Dir

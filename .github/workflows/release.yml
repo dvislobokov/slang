@@ -1,0 +1,232 @@
+# Release: on a pushed tag v<version> (the version in Cargo.toml, e.g.
+# v0.1.0), or by hand (workflow_dispatch with a tag), builds the toolchain
+# archives on every tier-1 host with scripts/package-toolchain.sh and the
+# cross-built runtime archives that `zell target add` downloads, writes a
+# .sha256 next to each archive plus SHA256SUMS and VERSION (install.sh /
+# install.ps1 read VERSION from releases/latest/download), and creates the
+# GitHub Release with all of them. The test suites run in ci.yml, not here.
+#
+# Assets of release v<version>:
+#   zell-<version>-<host>.tar.gz(.sha256)          host: linux-amd64, linux-arm64,
+#                                                  macos-arm64, macos-amd64, windows-amd64
+#   zell-runtime-<version>-<triple>.tar.gz(.sha256) one per runtime that built
+#   SHA256SUMS, VERSION
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (v<version>, must match Cargo.toml); need not exist yet for a dry run"
+        required: true
+      dry_run:
+        description: "Build and upload the assets as workflow artifacts only (no GitHub Release)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  # what to build: the tag, except for a dry run by hand (the branch it runs on)
+  REF: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && github.ref || (github.event_name == 'push' && github.ref_name || inputs.tag) }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - id: v
+        name: Tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match the workspace version $version in Cargo.toml (expected v$version)"
+            exit 1
+          fi
+
+  unix:
+    name: ${{ matrix.host }}
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: linux-amd64
+            os: ubuntu-24.04
+          - host: linux-arm64
+            os: ubuntu-24.04-arm
+            optional: true
+          - host: macos-arm64
+            os: macos-14
+          - host: macos-amd64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional == true }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - name: LLVM 18 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo ./scripts/setup.sh
+      - name: LLVM 18 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@18 lld
+          echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+          echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Runtime
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then make -C runtime CC=clang -j"$(sysctl -n hw.ncpu)"; else make -C runtime -j"$(nproc)"; fi
+      - name: Cross runtimes for `zell target add` (best effort)
+        if: matrix.host == 'linux-amd64'
+        run: |
+          sudo apt-get install -y mingw-w64 gcc-aarch64-linux-gnu musl-tools || true
+          for t in x86_64-w64-mingw32 aarch64-linux-gnu x86_64-linux-musl; do
+            if make -C runtime CROSS=$t -j"$(nproc)"; then echo "built runtime for $t"
+            else echo "::warning::runtime for $t did not build; its archive is left out"; fi
+          done
+      - name: Compiler (release)
+        run: cargo build --release --bin zell --bin zell-lsp --bin zell-mcp
+      - name: Package
+        run: ./scripts/package-toolchain.sh --no-build --out dist && ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.host }}
+          path: dist/
+          if-no-files-found: error
+
+  windows:
+    name: windows-amd64
+    needs: meta
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-lld
+            mingw-w64-x86_64-llvm
+      - name: Runtime (MinGW ABI)
+        run: make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)"
+      # llvm-sys needs llvm-config and the static LLVM libraries, which the
+      # official Windows installer lacks: a prebuilt LLVM 18 for MSVC with
+      # the static CRT (libcmt), matching +crt-static below, so zell.exe
+      # needs no Visual C++ redistributable.
+      - name: LLVM 18 for the compiler (MSVC, static CRT)
+        shell: pwsh
+        run: |
+          $name = "llvm-18.1.8-windows-amd64-msvc17-libcmt"
+          Invoke-WebRequest "https://github.com/vovkos/llvm-package-windows/releases/download/llvm-18.1.8/$name.7z" -OutFile "$env:RUNNER_TEMP\llvm.7z"
+          7z x "$env:RUNNER_TEMP\llvm.7z" "-o$env:RUNNER_TEMP" | Out-Null
+          $prefix = Join-Path $env:RUNNER_TEMP $name
+          & "$prefix\bin\llvm-config.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "llvm-config not found in $prefix" }
+          "LLVM_SYS_180_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Compiler (release)
+        shell: pwsh
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc --bin zell --bin zell-lsp --bin zell-mcp
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+          New-Item -ItemType Directory -Force -Path target\release | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\zell.exe, target\x86_64-pc-windows-msvc\release\zell-lsp.exe, target\x86_64-pc-windows-msvc\release\zell-mcp.exe target\release\
+          .\target\release\zell.exe version
+      - name: Package
+        run: ./scripts/package-toolchain.sh --no-build --out dist && ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-amd64
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: [meta, unix, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect assets
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          mkdir -p release
+          # A host's own runtime archive wins over the same triple cross-built
+          # on Linux: the native artifacts are copied first, cp -n keeps them.
+          for d in artifacts/dist-windows-amd64 artifacts/dist-macos-arm64 artifacts/dist-macos-amd64 \
+                   artifacts/dist-linux-arm64 artifacts/dist-linux-amd64; do
+            [ -d "$d" ] || { echo "::warning::no assets from ${d#artifacts/dist-}"; continue; }
+            for f in "$d"/*.tar.gz; do
+              b=$(basename "$f")
+              [ -e "release/$b" ] && continue
+              cp "$f" "$f.sha256" release/
+            done
+          done
+          printf '%s\n' "$VERSION" > release/VERSION
+          (cd release && sha256sum -c ./*.sha256 && sha256sum ./*.tar.gz | sed 's| \./| |' > SHA256SUMS)
+          for h in linux-amd64 macos-arm64 macos-amd64 windows-amd64; do
+            [ -f "release/zell-$VERSION-$h.tar.gz" ] || { echo "::error::missing zell-$VERSION-$h.tar.gz"; exit 1; }
+          done
+          ls -l release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release/
+      - name: Create the GitHub Release
+        if: github.event_name == 'push' || !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+          notes=release-notes.md
+          if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = tag ]; then
+            git for-each-ref "refs/tags/$TAG" --format='%(contents)' | sed '/-----BEGIN PGP SIGNATURE-----/,$d' > "$notes"
+          fi
+          [ -s "$notes" ] || printf 'Zell %s\n' "$TAG" > "$notes"
+          cat >> "$notes" <<'NOTES'
+
+          ### Install
+
+              curl -fsSL https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.sh | sh
+              irm https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.ps1 | iex   # Windows
+
+          Other targets: `zell target add <target>`. Checksums: `SHA256SUMS`.
+          NOTES
+          pre=""
+          case "$TAG" in *-*) pre=--prerelease ;; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* --title "Zell $TAG" --notes-file "$notes" --verify-tag $pre
+          fi
