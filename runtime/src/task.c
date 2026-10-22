@@ -453,9 +453,15 @@ static void restore_parent(zell_task *t) {
 /* Completes t; returns false (and does nothing) if it already was done. */
 static bool task_complete(zell_task *t, const void *result) {
     if (!t) zell_panic_nil();
+    /* A waiter that sees DONE may drop the last reference at once, while
+     * this thread still writes t (conts, the lock word, t_cur): hold one
+     * until the task is left (the drop then runs on whichever thread lets
+     * go last, ordered by the count's acquire-release decrement). */
+    zell_retain(t);
     task_lock(t);
     if (t->state == TASK_DONE) {
         task_unlock(t);
+        zell_release(t);
         return false;
     }
     if (result && t->result_size > 0) {
@@ -475,7 +481,8 @@ static bool task_complete(zell_task *t, const void *result) {
     }
     task_unlock(t);
     restore_parent(t);  /* a coroutine returning: the code after it is its parent's */
-    /* After this point `t` may be freed by another thread; use only `rev`. */
+    zell_release(t);
+    /* After this point `t` may be freed; use only `rev`. */
     while (c) { cont *n = c->next; c->next = rev; rev = c; c = n; }
     while (rev) {
         cont *n = rev->next;
