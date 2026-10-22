@@ -862,3 +862,4 @@ impl Expr {
 
 pub mod dump;
 pub mod ownership;
+pub mod borrow;

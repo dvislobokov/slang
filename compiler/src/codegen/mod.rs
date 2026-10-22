@@ -142,6 +142,10 @@
 //!   (and zeroed) at the end of their block and by `break`/`continue` out
 //!   of it, see [`cleanup`]. Re-executing a `Let` releases the old value.
 //!   Stack values with a destructor have a drop flag (`FnState::flags`).
+//!   *Borrowed locals* ([`crate::hir::borrow`], DESIGN.md "Память") of
+//!   heap-pure functions (`CodeGen::pure_fns`) are stored without a retain
+//!   and never released (`FnState::borrow_local`, also marked in
+//!   `FnState::borrowed`).
 //! * **Temporaries** held while later operands are evaluated live on the
 //!   cleanup stack ([`cleanup`]) and are released on early exits (`?`,
 //!   `try ... else return/break/continue`, `return`, `break`, `continue`
@@ -358,6 +362,9 @@ pub(crate) struct FnState<'a, 'ctx> {
     pub pins: HashMap<usize, inkwell::values::IntValue<'ctx>>,
     /// Per local: the slot holds a borrowed parameter (never released).
     pub borrowed: Vec<bool>,
+    /// Per local: a borrowed local ([`hir::borrow`]): stored without a
+    /// retain and never released.
+    pub borrow_local: Vec<bool>,
     /// Per local: drop flag of a stack value with a destructor (`i1`, set
     /// while the slot holds a live value).
     pub flags: Vec<Option<PointerValue<'ctx>>>,
@@ -429,6 +436,8 @@ pub struct CodeGen<'a, 'ctx> {
     /// Escape facts that also treat runtime-call arguments as escaping
     /// (for stack allocation, [`hir::ownership::stack_locals`]).
     pub(crate) strict_facts: hir::ownership::ParamFacts,
+    /// Heap-pure functions ([`hir::borrow::pure_functions`]).
+    pub(crate) pure_fns: Vec<bool>,
     /// Memoised [`rc::RcKind`] per type.
     pub(crate) rc_cache: std::cell::RefCell<HashMap<TypeId, rc::RcKind>>,
     /// Debug-info state when [`Options::debug_info`] is set.
@@ -540,6 +549,7 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
         opts,
         facts: hir::ownership::param_facts(program),
         strict_facts: hir::ownership::strict_param_facts(program),
+        pure_fns: hir::borrow::pure_functions(program),
         rc_cache: Default::default(),
         dbg: None,
         dbga: None,
@@ -660,6 +670,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             cleanups: Vec::new(),
             pins: HashMap::new(),
             borrowed: Vec::new(),
+            borrow_local: Vec::new(),
             flags: Vec::new(),
             try_targets: Vec::new(),
             interior: None,

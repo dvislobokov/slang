@@ -329,6 +329,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         p
     }
 
+    /// A function-lifetime slot holding owned value `v` (released at exit,
+    /// or when the slot is stored again).
+    pub(crate) fn scoped_slot_owned(&mut self, t: TypeId, v: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        self.scoped_slot(t, Val::owned(v))
+    }
+
     fn for_slice(&mut self, label: Label, index: Option<LocalId>, elem: Option<LocalId>, seq: &Expr, body: &Block) -> R<()> {
         let sv = self.expr(seq)?;
         let tmp = self.scoped_slot(seq.ty, sv);

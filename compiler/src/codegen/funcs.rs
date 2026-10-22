@@ -53,7 +53,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         self.fs_mut().locals = slots;
         self.fs_mut().flags = flags;
-        self.fs_mut().borrowed = vec![false; f.locals.len()];
+        // Borrowed locals (hir::borrow): never retained or released.
+        let bl = crate::hir::borrow::borrowed_locals(self.prog, fid, f, &self.pure_fns, &stack, &|t| self.cycles.holds_cyclic(t));
+        self.fs_mut().borrowed = bl.clone();
+        self.fs_mut().borrow_local = bl;
         self.setup_interior(fid, f);
         if f.ret != self.prog.types.void {
             let t = self.llty(f.ret);
@@ -303,6 +306,21 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// execution) is released and a captured local gets a new cell.
     pub(crate) fn assign_local(&mut self, l: LocalId, v: Val<'ctx>, fresh: bool) -> R<()> {
         let (info, slot) = self.local_info(l);
+        if fresh && self.fs().borrow_local.get(l.0 as usize).copied().unwrap_or(false) {
+            // A borrowed local: the value is kept alive by the place it was
+            // read from. An owned value (not expected from a path) is kept
+            // until the function exits instead.
+            self.dbg_declare(l);
+            let x = if v.owned {
+                let p = self.scoped_slot_owned(info.ty, v.get());
+                let lt = self.llty(info.ty);
+                self.b.build_load(lt, p, "").unwrap()
+            } else {
+                v.get()
+            };
+            self.b.build_store(slot.ptr, x).unwrap();
+            return Ok(());
+        }
         if fresh {
             self.dbg_declare(l);
             let owned = self.to_owned(info.ty, v);

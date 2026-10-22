@@ -1,0 +1,87 @@
+// test: borrowed locals (DESIGN.md "Память"): loop variables and `var x = path` in heap-pure functions are not retained, values taken from them are, and functions that may overwrite or drop what they read keep counting
+// status: passing
+// run-flags: --leak-check
+namespace spec.memory2.borrowed_locals
+
+import io
+
+struct Tag {
+    Label string
+    N     int
+}
+
+struct Item {
+    Name string
+    Tag  *Tag
+}
+
+// Heap-pure: `it`, `cur`, `t` and `name` are borrowed.
+func total(items []*Item) int {
+    var s = 0
+    for it in items {
+        var cur = it
+        var t = cur.Tag
+        var name = cur.Name
+        s += len(name) + t.N + len(t.Label)
+    }
+    return s
+}
+
+// A borrowed local returned or stored is retained for the new owner.
+func first(items []*Item) *Item {
+    var x = items[0]
+    return x
+}
+
+func firstTag(items []*Item) *Tag {
+    var x = items[0]
+    var t = x.Tag
+    return t
+}
+
+// Not heap-pure (stores into the slice): `it` keeps its own reference
+// while the slot it came from is overwritten.
+func replace(items []*Item) int {
+    var s = 0
+    for it in items {
+        items[0] = new Item{Name: "new", Tag: new Tag{Label: "n", N: 100}}
+        s += len(it.Name) + it.Tag.N
+    }
+    return s
+}
+
+var dropped []string = []
+
+struct Res {
+    Name string
+    func Drop() { dropped = append(dropped, this.Name) }
+}
+
+// Handles values whose Drop is not heap-pure: counted as before.
+func resName(rs []*Res) string {
+    var r = rs[0]
+    return r.Name
+}
+
+func build(n int) []*Item {
+    var items []*Item = []
+    for i in 0..n {
+        items = append(items, new Item{Name: "item" + string(char(48 + i)), Tag: new Tag{Label: "t", N: i}})
+    }
+    return items
+}
+
+func main() {
+    var items = build(4)
+    println(total(items))
+    var f = first(items)
+    var t = firstTag(items)
+    items = build(2)
+    println(f.Name, t.N, total(items))
+    println(replace(items))
+    println(items[0].Name, items[1].Name)
+    var rs []*Res = [new Res{Name: "a"}, new Res{Name: "b"}]
+    println(resName(rs))
+    rs = []
+    println(len(dropped), dropped[0], dropped[1])
+}
