@@ -1,0 +1,17 @@
+{
+  "description": "After Claude writes or edits a .zl file: format it with zell fmt and type-check its project with zell check (errors are fed back to Claude). ZELL_AGENT_FORMAT=0 / ZELL_AGENT_CHECK=0 turn the steps off.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/zell-post-edit.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

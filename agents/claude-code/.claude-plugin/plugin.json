@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "zell",
+  "displayName": "Zell",
+  "version": "0.1.0",
+  "description": "Zell language intelligence: zell-lsp code intelligence for .zl files, the zell-mcp tools (diagnostics, navigation, rename, format, tests, std docs), a post-edit format/check hook and Zell skills",
+  "author": { "name": "Zell contributors", "url": "https://github.com/zell-lang" },
+  "homepage": "https://github.com/zell-lang/zell/tree/master/agents",
+  "repository": "https://github.com/zell-lang/zell",
+  "license": "MIT",
+  "keywords": ["zell", "lsp", "mcp", "language-server", "code-intelligence"],
+  "lspServers": {
+    "zell": {
+      "command": "zell-lsp",
+      "extensionToLanguage": { ".zl": "zell" },
+      "initializationOptions": { "diagnostics": { "mode": "push" } },
+      "startupTimeout": 30000,
+      "maxRestarts": 3
+    }
+  },
+  "mcpServers": {
+    "zell": {
+      "command": "zell-mcp",
+      "args": []
+    }
+  }
+}

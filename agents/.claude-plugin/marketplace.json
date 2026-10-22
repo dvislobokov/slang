@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "zell",
+  "owner": { "name": "Zell contributors", "url": "https://github.com/zell-lang" },
+  "description": "Claude Code plugins for the Zell programming language",
+  "plugins": [
+    {
+      "name": "zell",
+      "source": "./claude-code",
+      "description": "Zell language intelligence: zell-lsp for .zl files, zell-mcp tools, a format/check hook and Zell skills",
+      "category": "development",
+      "tags": ["zell", "lsp", "mcp"]
+    }
+  ]
+}
