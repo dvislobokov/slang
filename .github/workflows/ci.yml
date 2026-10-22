@@ -62,13 +62,27 @@ jobs:
       - uses: actions/checkout@v4
       - name: LLVM 18
         run: |
-          brew install llvm@18 lld
+          brew install llvm@18 lld zstd
           echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+          # llvm-config --system-libs names -lzstd (Homebrew), which is not on
+          # the default linker path
+          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
           echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Runtime (kqueue poller, POSIX layer)
-        run: make -C runtime CC=clang -j"$(sysctl -n hw.ncpu)" && make -C runtime CC=clang test
+        run: |
+          make -C runtime CC=clang -j"$(sysctl -n hw.ncpu)"
+          make -C runtime CC=clang test || {
+            # where a crashing test stopped (stderr of lldb goes to the log)
+            for t in runtime/build/tests/test_*; do
+              case "$t" in *.*) continue ;; esac
+              "$t" >/dev/null 2>&1 && continue
+              echo "== $t failed; backtrace:"
+              lldb --batch -o run -k "thread backtrace all" -k quit -- "$t" 2>&1 | tail -80
+            done
+            exit 1
+          }
       - name: Compiler, examples, spec corpus
         run: cargo build --workspace && cargo test --workspace
       - name: macOS port checks (kqueue, sampler, symbols, tz, roots, processes, packaging)
@@ -104,21 +118,31 @@ jobs:
           make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)"
           make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
           ZELL_POLLER=wsapoll make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
-      - name: LLVM 18 for the compiler
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "18.1"
-          directory: ${{ runner.temp }}/llvm
+      # llvm-sys needs llvm-config and the static LLVM libraries, which the
+      # official Windows LLVM lacks: a prebuilt LLVM 18 for MSVC with the
+      # static CRT (as in release.yml).
+      - name: LLVM 18 for the compiler (MSVC, static CRT)
+        shell: pwsh
+        run: |
+          $name = "llvm-18.1.8-windows-amd64-msvc17-libcmt"
+          Invoke-WebRequest "https://github.com/vovkos/llvm-package-windows/releases/download/llvm-18.1.8/$name.7z" -OutFile "$env:RUNNER_TEMP\llvm.7z"
+          7z x "$env:RUNNER_TEMP\llvm.7z" "-o$env:RUNNER_TEMP" | Out-Null
+          $prefix = Join-Path $env:RUNNER_TEMP $name
+          & "$prefix\bin\llvm-config.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "llvm-config not found in $prefix" }
+          "LLVM_SYS_180_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Compiler and examples
         shell: pwsh
         env:
-          LLVM_SYS_180_PREFIX: ${{ runner.temp }}/llvm
+          RUSTFLAGS: -C target-feature=+crt-static
         run: |
           $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           cargo build --workspace
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
           cargo test --workspace
+          if ($LASTEXITCODE -ne 0) { throw "cargo test failed" }
 
   cross:
     name: cross (linux -> windows, linux-arm64, musl, macos)

@@ -82,8 +82,11 @@ jobs:
       - name: LLVM 18 (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install llvm@18 lld
+          brew install llvm@18 lld zstd
           echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+          # llvm-config --system-libs names -lzstd (Homebrew), which is not on
+          # the default linker path
+          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
           echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
       # rustup is preinstalled on the hosted runners; retried, since the
       # download of the toolchain sometimes fails on a DNS error.
