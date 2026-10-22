@@ -633,8 +633,8 @@ mod tests {
     #[test]
     fn flavour_named_binaries() {
         let l = Lld { program: PathBuf::from("/usr/bin/ld.lld-18"), multi: false };
-        assert_eq!(l.command(Flavor::Gnu).get_program(), "/usr/bin/ld.lld-18");
-        assert_eq!(l.command(Flavor::Darwin).get_program(), "/usr/bin/ld64.lld-18");
+        assert_eq!(Path::new(l.command(Flavor::Gnu).get_program()), l.program);
+        assert_eq!(Path::new(l.command(Flavor::Darwin).get_program()), l.program.with_file_name("ld64.lld-18"));
         assert_eq!(l.elf_program().as_deref(), Some(Path::new("/usr/bin/ld.lld-18")));
     }
 }

@@ -670,7 +670,12 @@ fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> 
     let strip = opts.strip || (opts.release && !opts.debug_info);
     let lo = crate::crosslink::LinkOpts { release: opts.release, strip, static_link: opts.static_link, export_dynamic: !opts.release && !opts.static_link, clang: &clang };
     let cross = !target.is_host() || target.os == "windows";
-    let rt = if cross { crate::crosslink::find_runtime(&target)? } else { find_runtime()? };
+    let rt = if cross {
+        // no runtime for the target: say first what else the clang link would lack (the macOS SDK, ...)
+        crate::crosslink::find_runtime(&target).or_else(|e| crate::crosslink::preflight(&target).and(Err(e)))?
+    } else {
+        find_runtime()?
+    };
     let (mut cmd, linker) = if let Some(r) = crate::crosslink::bundled_link(&target, objs, &rt, output, libs, &lo) {
         r?
     } else if cross {

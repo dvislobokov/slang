@@ -559,9 +559,19 @@ fn macos_arm64_emits_macho_object() {
     assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 0x0100_000c, "CPU_TYPE_ARM64");
     assert_eq!(u32::from_le_bytes(b[12..16].try_into().unwrap()), 1, "MH_OBJECT");
     if std::env::var_os("SDKROOT").is_none() && !ok("xcrun", &["--version"]) {
-        let r = Command::new(zell()).arg("build").arg("--target").arg("macos-arm64").arg(repo().join("examples/hello.zl")).arg("-o").arg(dir.join("hello")).output().unwrap();
-        assert!(!r.status.success());
-        assert!(String::from_utf8_lossy(&r.stderr).contains("macOS SDK"), "{}", String::from_utf8_lossy(&r.stderr));
+        // with bundled link inputs (targets/aarch64-apple-darwin/BUNDLE, e.g.
+        // from scripts/bundle-targets.sh) the link succeeds without an SDK;
+        // without them it fails and names the SDK and `zell target add`
+        let exe = dir.join("hello");
+        let r = Command::new(zell()).arg("build").arg("--target").arg("macos-arm64").arg(repo().join("examples/hello.zl")).arg("-o").arg(&exe).output().unwrap();
+        if r.status.success() {
+            let b = std::fs::read(&exe).unwrap();
+            assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()), 0xfeed_facf, "MH_MAGIC_64");
+            assert_eq!(u32::from_le_bytes(b[12..16].try_into().unwrap()), 2, "MH_EXECUTE");
+        } else {
+            let e = String::from_utf8_lossy(&r.stderr);
+            assert!(e.contains("macOS SDK") && e.contains("zell target add"), "{e}");
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
