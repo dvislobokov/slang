@@ -88,6 +88,10 @@ pub(crate) struct Template<'a> {
     /// Created by the instantiation of a generic struct (checked as part of
     /// the struct's abstract check).
     pub nested: bool,
+    /// A stdlib template whose module is not parsed yet: (module, index of
+    /// the declaration); `decl` is a placeholder of the right kind until
+    /// [`Sema::force_template`].
+    pub lazy: Option<(u32, u32)>,
 }
 
 /// What an instantiation produced.
@@ -243,6 +247,7 @@ impl<'a> Sema<'a> {
             root: t,
             failed: false,
             nested,
+            lazy: None,
         });
         t
     }
@@ -558,6 +563,7 @@ impl<'a> Sema<'a> {
         if let Some(Inst::Func(f)) = self.gen.cache.get(&key) {
             return Some(*f);
         }
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         let (decl, owner) = match tm.decl {
             TmplDecl::Func(d) => (d, None),
@@ -597,6 +603,7 @@ impl<'a> Sema<'a> {
         if let Some(Inst::Struct(s)) = self.gen.cache.get(&key) {
             return Some(*s);
         }
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         let TmplDecl::Struct(decl) = tm.decl else { return None };
         let (root, tname, ns) = (tm.root, tm.name.clone(), tm.ns);
@@ -672,6 +679,7 @@ impl<'a> Sema<'a> {
         if let Some(Inst::Enum(e)) = self.gen.cache.get(&key) {
             return Some(*e);
         }
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         let TmplDecl::Enum(decl) = tm.decl else { return None };
         let (tname, ns) = (tm.name.clone(), tm.ns);

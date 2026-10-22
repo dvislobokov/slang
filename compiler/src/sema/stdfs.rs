@@ -90,6 +90,22 @@ pub fn load(ns: &str, file: &str, embedded: &'static str) -> Cow<'static, str> {
 
 static ORIGINS: std::sync::Mutex<Vec<(String, Origin)>> = std::sync::Mutex::new(Vec::new());
 
+/// Gives memory freed after a large transient allocation (parsing the
+/// whole stdlib once) back to the operating system where the allocator
+/// keeps it otherwise (glibc).
+pub fn release_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        // SAFETY: malloc_trim only releases free heap pages.
+        unsafe {
+            malloc_trim(0);
+        }
+    }
+}
+
 /// The modules loaded so far in this process and where each came from.
 pub fn loaded_origins() -> Vec<(String, Origin)> {
     ORIGINS.lock().unwrap().clone()

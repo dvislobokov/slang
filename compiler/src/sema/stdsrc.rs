@@ -165,10 +165,28 @@ const MODULES: &[(&str, &str, &str)] = &[
     ("std.os", "os.sl", include_str!("stdlib_src/os.sl")),
 ];
 
-/// The parsed [`MODULES`] (parsed once per process).
-fn module_asts() -> &'static [ast::File] {
-    static ASTS: OnceLock<Vec<ast::File>> = OnceLock::new();
-    ASTS.get_or_init(|| {
+/// What registering a module needs of it: the names, kinds and type
+/// parameters of its templates and its interfaces. The whole AST of a
+/// module is only parsed when one of its templates is instantiated
+/// ([`module_ast`]), so a program pays for the stdlib code it uses.
+struct ModSummary {
+    text: std::borrow::Cow<'static, str>,
+    ns: String,
+    decls: Vec<SumDecl>,
+}
+
+enum SumDecl {
+    Struct(String, Vec<ast::GenericParam>),
+    Func(String, Vec<ast::GenericParam>),
+    Enum(String, Vec<ast::GenericParam>),
+    /// With its spans erased (see [`parse_module`]).
+    Interface(ast::InterfaceDecl),
+}
+
+/// The summaries of [`MODULES`] (parsed once per process).
+fn summaries() -> &'static [ModSummary] {
+    static SUMS: OnceLock<Vec<ModSummary>> = OnceLock::new();
+    SUMS.get_or_init(|| {
         let _t = crate::build::phase("std-parse");
         // From `std/` on disk when installed (sema/stdfs.rs), in order (the
         // origins log keeps it); then lexed and parsed on several threads.
@@ -176,13 +194,50 @@ fn module_asts() -> &'static [ast::File] {
         let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).clamp(1, 8);
         let chunk = MODULES.len().div_ceil(n).max(1);
         let idx: Vec<usize> = (0..MODULES.len()).collect();
-        std::thread::scope(|sc| {
-            let hs: Vec<_> = idx.chunks(chunk).map(|is| {
-                let texts = &texts;
-                sc.spawn(move || is.iter().map(|&i| parse_module(i, &texts[i])).collect::<Vec<ast::File>>())
-            }).collect();
+        let decls: Vec<Vec<SumDecl>> = std::thread::scope(|sc| {
+            let hs: Vec<_> = idx
+                .chunks(chunk)
+                .map(|is| {
+                    let texts = &texts;
+                    sc.spawn(move || is.iter().map(|&i| summarize(parse_module(i, &texts[i]))).collect::<Vec<_>>())
+                })
+                .collect();
             hs.into_iter().flat_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))).collect()
+        });
+        super::stdfs::release_memory();
+        texts.into_iter().zip(decls).zip(MODULES).map(|((text, decls), (ns, _, _))| ModSummary { text, ns: ns.to_string(), decls }).collect()
+    })
+}
+
+fn summarize(file: ast::File) -> Vec<SumDecl> {
+    let name = file.namespace.to_string();
+    file.decls
+        .into_iter()
+        .map(|d| match d {
+            ast::Decl::Struct(s) => SumDecl::Struct(s.name.name, s.generics),
+            ast::Decl::Func(f) => SumDecl::Func(f.name.name, f.generics),
+            ast::Decl::Enum(e) => SumDecl::Enum(e.name.name, e.generics),
+            ast::Decl::Interface(it) => SumDecl::Interface(it),
+            _ => panic!("internal error: unsupported declaration in stdlib source {name}"),
         })
+        .collect()
+}
+
+/// The whole AST of module `MODULES[m]`, parsed on first use.
+fn module_ast(m: usize) -> &'static ast::File {
+    static ASTS: OnceLock<Vec<OnceLock<ast::File>>> = OnceLock::new();
+    let asts = ASTS.get_or_init(|| (0..MODULES.len()).map(|_| OnceLock::new()).collect());
+    asts[m].get_or_init(|| parse_module(m, &summaries()[m].text))
+}
+
+/// Placeholders for the declarations of templates whose module is not
+/// parsed yet (only their kind is looked at, see [`Sema::force_template`]).
+fn placeholders() -> &'static ast::File {
+    static P: OnceLock<ast::File> = OnceLock::new();
+    P.get_or_init(|| {
+        let mut diags = crate::diagnostics::Diagnostics::new();
+        let tokens = crate::lexer::lex("namespace std.placeholder\n\nfunc F() {}\n\nstruct S {}\n\nenum E {\n    A\n}\n", &mut diags);
+        crate::parser::parse(tokens, &mut diags).expect("placeholder declarations parse")
     })
 }
 
@@ -269,16 +324,21 @@ impl<'a> Sema<'a> {
             return;
         }
         let saved = (self.cur_file, self.cur_ns);
-        for file in module_asts() {
-            let ns = self.ensure_ns(&file.namespace.to_string(), Span::DUMMY);
+        let ph = placeholders();
+        let (ph_func, ph_struct, ph_enum) = match ph.decls.as_slice() {
+            [ast::Decl::Func(f), ast::Decl::Struct(s), ast::Decl::Enum(e)] => (f, s, e),
+            _ => unreachable!("placeholder declarations"),
+        };
+        for (m, sum) in summaries().iter().enumerate() {
+            let ns = self.ensure_ns(&sum.ns, Span::DUMMY);
             self.cur_ns = ns;
             self.cur_file = 0;
-            for d in &file.decls {
+            for (di, d) in sum.decls.iter().enumerate() {
                 let (name, t) = match d {
-                    ast::Decl::Struct(s) => (&s.name.name, self.new_template(&s.name.name, TmplDecl::Struct(s), &s.generics, Vec::new(), false)),
-                    ast::Decl::Func(f) => (&f.name.name, self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false)),
-                    ast::Decl::Enum(e) => (&e.name.name, self.new_template(&e.name.name, TmplDecl::Enum(e), &e.generics, Vec::new(), false)),
-                    ast::Decl::Interface(it) => {
+                    SumDecl::Struct(name, g) => (name, self.new_template(name, TmplDecl::Struct(ph_struct), g, Vec::new(), false)),
+                    SumDecl::Func(name, g) => (name, self.new_template(name, TmplDecl::Func(ph_func), g, Vec::new(), false)),
+                    SumDecl::Enum(name, g) => (name, self.new_template(name, TmplDecl::Enum(ph_enum), g, Vec::new(), false)),
+                    SumDecl::Interface(it) => {
                         let id = self.interfaces.len() as u32;
                         self.interfaces.push(hir::Interface {
                             name: it.name.name.clone(),
@@ -309,12 +369,25 @@ impl<'a> Sema<'a> {
                         }
                         continue;
                     }
-                    _ => panic!("internal error: unsupported declaration in stdlib source {}", file.namespace.to_string()),
                 };
+                self.gen.templates[t as usize].lazy = Some((m as u32, di as u32));
                 self.nss[ns].members.insert(name.clone(), (Member::Generic(t), Span::DUMMY, 0));
             }
         }
         (self.cur_file, self.cur_ns) = saved;
+    }
+
+    /// Gives template `t` of a stdlib module its declaration (parsing the
+    /// module on first use); a no-op for other templates.
+    pub(crate) fn force_template(&mut self, t: u32) {
+        let Some((m, di)) = self.gen.templates[t as usize].lazy.take() else { return };
+        let decl = match &module_ast(m as usize).decls[di as usize] {
+            ast::Decl::Struct(s) => TmplDecl::Struct(s),
+            ast::Decl::Func(f) => TmplDecl::Func(f),
+            ast::Decl::Enum(e) => TmplDecl::Enum(e),
+            _ => unreachable!("stdlib template declarations are structs, functions and enums"),
+        };
+        self.gen.templates[t as usize].decl = decl;
     }
 
     /// True if template `t` is a stdlib template without type parameters.
