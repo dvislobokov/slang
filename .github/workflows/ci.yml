@@ -81,8 +81,10 @@ jobs:
             # where a crashing test stopped (stderr of lldb goes to the log)
             for t in runtime/build/tests/test_*; do
               case "$t" in *.*) continue ;; esac
-              "$t" >/dev/null 2>&1 && continue
-              echo "== $t failed; backtrace:"
+              "$t" > "$t.out" 2>&1 && continue
+              echo "== $t failed (status $?); its output:"
+              tail -40 "$t.out"
+              echo "== $t under lldb:"
               lldb --batch -o run -k "thread backtrace all" -k quit -- "$t" 2>&1 | tail -80
             done
             exit 1
