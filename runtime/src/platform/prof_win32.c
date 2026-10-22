@@ -37,7 +37,9 @@
 
 /* ---- stack bounds ------------------------------------------------------------ */
 
-static _Thread_local uintptr_t t_stack_lo, t_stack_hi;
+/* `t_stack_lo` is kept for the debugger formatters (not read here). */
+static _Thread_local uintptr_t __attribute__((unused)) t_stack_lo;
+static _Thread_local uintptr_t t_stack_hi;
 
 void zell__plat_thread_stack_init(void) {
     if (t_stack_hi) return;

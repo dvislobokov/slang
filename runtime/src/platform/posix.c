@@ -27,6 +27,7 @@
 #include <sys/mman.h>
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
+#include <sys/random.h> /* getentropy */
 #elif defined(__FreeBSD__) || defined(__DragonFly__)
 #include <malloc_np.h>
 #else

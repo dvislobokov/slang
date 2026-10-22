@@ -151,7 +151,7 @@ TEST(delay_any) {
 /* ---- timer heap: many delays fire in deadline order; rt_fire removes a
  * pending delay from anywhere in the heap ---- */
 
-static int64_t fired_seq;
+static int64_t fired_seq, fired_done;
 typedef struct { int64_t ms, order; } fire_rec;
 static fire_rec fired[400];
 
@@ -160,12 +160,15 @@ static void on_fired(void *arg) {
     int64_t i = __atomic_fetch_add(&fired_seq, 1, __ATOMIC_ACQ_REL);
     fired[i].ms = ms;
     fired[i].order = i;
+    /* Publish the record: the test reads `fired` after `fired_done`. */
+    __atomic_fetch_add(&fired_done, 1, __ATOMIC_RELEASE);
 }
 
 TEST(timer_heap_order_and_fire) {
     enum { N = 400 };
     static zell_task *ds[N];
     fired_seq = 0;
+    fired_done = 0;
     for (int i = 0; i < N; i++) {
         /* Durations 20..215 ms in a scrambled order, 2 per value. */
         int64_t ms = 20 + (int64_t)((i * 37) % (N / 2));
@@ -183,7 +186,7 @@ TEST(timer_heap_order_and_fire) {
     zell_task_await(all);
     zell_release(all);
     /* Continuations run as jobs; wait until all have recorded. */
-    while (__atomic_load_n(&fired_seq, __ATOMIC_ACQUIRE) < N - N / 4) sched_yield();
+    while (__atomic_load_n(&fired_done, __ATOMIC_ACQUIRE) < N - N / 4) sched_yield();
     /* Timers fire in deadline order; their jobs may run a little out of
      * order on 3 workers, but never by more than a few ms of deadline. */
     for (int64_t i = 1; i < N - N / 4; i++) assert(fired[i].ms + 15 >= fired[i - 1].ms);
