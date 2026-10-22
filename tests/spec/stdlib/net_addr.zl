@@ -82,7 +82,8 @@ async func main() void! {
         }
     }
     var r = await net.ResolveAddr("localhost:0")?
-    println(r.String(), r.IP.IsLoopback())
+    // 127.0.0.1 or ::1, whichever /etc/hosts lists first
+    println(r.Port, r.IP.IsLoopback())
     var any = await net.ResolveAddr(":9")?
     println(any.String())
     println(net.LookupPort("tcp", "8080")?)

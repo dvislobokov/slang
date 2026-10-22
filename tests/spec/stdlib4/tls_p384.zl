@@ -15,6 +15,24 @@ async func serveOne(l net.tls.Listener) void! {
     c.Close()
 }
 
+// The suite both sides prefer: AES-GCM with AES hardware, else ChaCha20 (as in Go).
+func preferred(name string, v int) string {
+    var want = "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256"
+    if v == net.tls.V13 {
+        want = "TLS_CHACHA20_POLY1305_SHA256"
+    }
+    if crypto.aes.HasHardware() {
+        want = "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
+        if v == net.tls.V13 {
+            want = "TLS_AES_128_GCM_SHA256"
+        }
+    }
+    if name == want {
+        return "preferred-suite"
+    }
+    return name
+}
+
 async func main() void! {
     var certs = crypto.x509.ParsePEM(CertPEM)?
     println(certs[0].PublicKeyAlgorithm, certs[0].Curve, certs[0].SignatureAlgorithm)
@@ -42,7 +60,7 @@ async func main() void! {
             got = got + strings.FromBytes(b)
         }
         var st = c.ConnectionState()
-        println(st.Version == v, st.CipherSuiteName, got, st.PeerCertificates[0].Curve)
+        println(st.Version == v, preferred(st.CipherSuiteName, v), got, st.PeerCertificates[0].Curve)
         c.Close()
         await srv?
     }

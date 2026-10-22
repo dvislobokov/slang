@@ -438,6 +438,10 @@ async func serve(l net.Listener) *server! {
 }
 
 async func main() void! {
+    // DSN defaults come from the PG* variables (as in libpq); CI images set some
+    for k in ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE"] {
+        os.Setenv(k, "")?
+    }
     // connection strings
     for dsn in [
         "postgres://u:p%40ss@db.example.com:6543/app?sslmode=require&application_name=x",
