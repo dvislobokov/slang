@@ -1,0 +1,3 @@
+# LF in every checkout, Windows included: the tests compare sources,
+# templates and expected outputs byte for byte.
+* text=auto eol=lf
