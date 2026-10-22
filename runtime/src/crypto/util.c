@@ -6,9 +6,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* memset, then a compiler barrier that makes the zeroed memory observable,
+ * so the stores cannot be dropped as dead (explicit_bzero without needing
+ * it from libc). A byte loop through a volatile pointer was ~1 instruction
+ * per byte; TLS wipes a 6 KB AES-GCM context copy per record. */
 void zell__crypto_wipe(void *p, size_t n) {
+    if (!n) return;
+    memset(p, 0, n);
+#if defined(__GNUC__) || defined(__clang__)
+    __asm__ __volatile__("" : : "r"(p) : "memory");
+#else
     volatile uint8_t *v = p;
     while (n--) *v++ = 0;
+#endif
 }
 
 int zell__crypto_ct_eq(const uint8_t *a, const uint8_t *b, size_t n) {

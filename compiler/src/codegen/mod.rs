@@ -456,6 +456,13 @@ pub fn target_machine(t: &crate::target::Target, opt: OptimizationLevel) -> Resu
         Target::initialize_native(&InitializationConfig::default())?;
         let triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+        // ZELL_TARGET_CPU=x86-64-v3 (say) instead of the host's CPU and
+        // features: for tools such as Valgrind that lack AVX-512.
+        if let Some(cpu) = std::env::var("ZELL_TARGET_CPU").ok().filter(|c| !c.is_empty()) {
+            return target
+                .create_target_machine(&triple, &cpu, "", opt, RelocMode::PIC, CodeModel::Default)
+                .ok_or_else(|| format!("cannot create a target machine for CPU {cpu}"));
+        }
         let cpu = TargetMachine::get_host_cpu_name();
         let features = TargetMachine::get_host_cpu_features();
         return target
