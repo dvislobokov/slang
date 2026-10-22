@@ -3,6 +3,7 @@
 #
 #   dist/zell-<version>-<host>.tar.gz      unpacks to zell-<version>-<host>/:
 #       bin/zell, bin/zell-lsp            the compiler and the language server
+#       bin/zell-mcp                        the MCP server for AI agents (agents/)
 #       std/                                standard library sources (IDE navigation;
 #                                           the compiler also embeds them)
 #       targets/<host triple>/libzell_rt.a the runtime for this machine
@@ -44,12 +45,12 @@ esac
 exe=""
 [ "$host" = windows-amd64 ] && exe=.exe
 if [ "$build" = yes ]; then
-    (cd "$root" && cargo build --release --bin zell --bin zell-lsp)
+    (cd "$root" && cargo build --release --bin zell --bin zell-lsp --bin zell-mcp)
     make -C "$root/runtime" -j4
 fi
 rt="$root/runtime/libzell_rt.a"
 [ "$host" = windows-amd64 ] && rt="$root/runtime/build/x86_64-pc-windows-gnu/libzell_rt.a"
-for f in "$root/target/release/zell$exe" "$root/target/release/zell-lsp$exe" "$rt"; do
+for f in "$root/target/release/zell$exe" "$root/target/release/zell-lsp$exe" "$root/target/release/zell-mcp$exe" "$rt"; do
     [ -f "$f" ] || { echo "missing $f (run without --no-build)" >&2; exit 1; }
 done
 name="zell-$version-$host"
@@ -57,8 +58,8 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 d="$stage/$name"
 mkdir -p "$d/bin" "$d/targets/$triple" "$d/tools"
-cp "$root/target/release/zell$exe" "$root/target/release/zell-lsp$exe" "$d/bin/"
-strip "$d/bin/zell$exe" "$d/bin/zell-lsp$exe" 2>/dev/null || true
+cp "$root/target/release/zell$exe" "$root/target/release/zell-lsp$exe" "$root/target/release/zell-mcp$exe" "$d/bin/"
+strip "$d/bin/zell$exe" "$d/bin/zell-lsp$exe" "$d/bin/zell-mcp$exe" 2>/dev/null || true
 cp -R "$root/std" "$d/std"
 cp "$rt" "$d/targets/$triple/libzell_rt.a"
 cp -R "$root/tools/." "$d/tools/"

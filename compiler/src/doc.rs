@@ -178,7 +178,7 @@ pub fn is_exported(name: &str) -> bool {
 
 /// Strips what is not documentation: the `C: zell_x (runtime/...)` line
 /// of generated extern declarations, `Code generated` headers.
-fn clean_doc(d: &str) -> String {
+pub fn clean_doc(d: &str) -> String {
     if d.starts_with("Code generated") {
         return String::new();
     }
@@ -888,6 +888,13 @@ fn find_dep(root: &Path, module: &str) -> Option<PathBuf> {
 
 fn resolve_target(arg: Option<&str>, opts: Options) -> Result<Target, String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    resolve_target_in(&cwd, arg, opts)
+}
+
+/// [`resolve_target`] for the project at `cwd` (paths in `arg` are
+/// relative to it).
+fn resolve_target_in(cwd: &Path, arg: Option<&str>, opts: Options) -> Result<Target, String> {
+    let cwd = cwd.to_path_buf();
     let Some(arg) = arg else {
         let srcs = project_sources(&cwd, opts);
         if srcs.is_empty() {
@@ -902,7 +909,8 @@ fn resolve_target(arg: Option<&str>, opts: Options) -> Result<Target, String> {
         }
         return Ok(Target { docs: Docs::build(&srcs, opts), ns: None, item: None });
     }
-    let p = Path::new(arg);
+    let joined = cwd.join(arg);
+    let p = joined.as_path();
     if p.exists() && (arg.contains('/') || arg.ends_with(".zl") || arg == "." || p.is_dir() && !arg.contains('.')) {
         let root = if p.is_file() { p.parent().unwrap_or(Path::new(".")).to_path_buf() } else { p.to_path_buf() };
         let srcs = if p.is_file() { load_dir(p, &root, "", false) } else { project_sources(p, opts) };
@@ -946,6 +954,32 @@ fn resolve_target(arg: Option<&str>, opts: Options) -> Result<Target, String> {
     };
     let ns = docs.namespaces[ni].name.clone();
     Ok(Target { docs, ns: Some(ns), item: (!item.is_empty()).then_some(item) })
+}
+
+/// The text `zell doc <arg>` prints when run in `cwd` (a namespace,
+/// symbol, path or `std`; `None`: the project), for tools such as
+/// `zell-mcp`.
+pub fn describe(cwd: &Path, arg: Option<&str>, private: bool) -> Result<String, String> {
+    let t = resolve_target_in(cwd, arg, Options { private })?;
+    let docs = t.docs;
+    Ok(match (&t.ns, &t.item) {
+        (Some(ns), Some(item)) => item_text(&docs, docs.namespace(ns).ok_or("namespace not found")?, item),
+        (Some(ns), None) => namespace_text(docs.namespace(ns).ok_or("namespace not found")?),
+        _ => {
+            let mut out = String::new();
+            for n in &docs.namespaces {
+                if n.items.is_empty() && n.examples.is_empty() {
+                    continue;
+                }
+                if docs.namespaces.len() > 1 {
+                    out.push_str(&format!("{:<28} {}\n", n.name, n.summary));
+                } else {
+                    out.push_str(&namespace_text(n));
+                }
+            }
+            out
+        }
+    })
 }
 
 /// Runs `zell doc <args>`; returns the exit code.

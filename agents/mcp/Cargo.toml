@@ -1,0 +1,18 @@
+[package]
+name = "zell-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Model Context Protocol server for Zell (stdio): diagnostics, navigation, rename, format, tests and docs for AI coding agents"
+
+[lib]
+name = "zell_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zell-mcp"
+path = "src/main.rs"
+
+[dependencies]
+zell = { path = "../../compiler" }
+serde_json = "1"

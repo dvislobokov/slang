@@ -8,7 +8,7 @@
 # of release files; default: the GitHub release of that version, or of the
 # latest one, whose VERSION file names it), checks its .sha256, unpacks it into
 # <dir>/zell-<version>-<host>/ and points <dir>/current at it, then links
-# bin/zell and bin/zell-lsp into ~/.local/bin (or $ZELL_BIN_DIR).
+# bin/zell, bin/zell-lsp and bin/zell-mcp into ~/.local/bin (or $ZELL_BIN_DIR).
 # Linking Zell programs needs clang on PATH (and lld for cross targets).
 set -eu
 version=${ZELL_VERSION:-latest}
@@ -67,6 +67,7 @@ ln -sfn "$dir/$name" "$dir/current"
 mkdir -p "$bindir"
 ln -sf "$dir/current/bin/zell" "$bindir/zell"
 ln -sf "$dir/current/bin/zell-lsp" "$bindir/zell-lsp"
-echo "installed $name in $dir (current -> $name); zell and zell-lsp linked into $bindir"
+[ -e "$dir/current/bin/zell-mcp" ] && ln -sf "$dir/current/bin/zell-mcp" "$bindir/zell-mcp"
+echo "installed $name in $dir (current -> $name); zell, zell-lsp and zell-mcp linked into $bindir"
 case ":$PATH:" in *":$bindir:"*) ;; *) echo "add $bindir to PATH:  export PATH=\"$bindir:\$PATH\"" ;; esac
 command -v clang >/dev/null 2>&1 || echo "note: linking needs clang (apt install clang lld / xcode-select --install)"
