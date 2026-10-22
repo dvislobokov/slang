@@ -11,8 +11,13 @@ Language support for `.sl` files:
   (signature + doc comment), rename across files, semantic highlighting,
   folding, completion (members after `.`, names in scope, keywords),
   signature help, inlay hints (inferred `var` types, parameter names),
-  formatting (`slang fmt` rules, whole document or selection) and
-  workspace symbols.
+  formatting (`slang fmt` rules, whole document or selection), workspace
+  symbols, go to implementation / type definition, smart selection and
+  code lenses: "▶ Run test" on `@test` functions (`slang test --filter
+  ^Name$`), "▶ Run" on `main` (`slang run`, both as tasks) and reference
+  counts on exported declarations. Renaming or moving a `.sl` file in a
+  package updates its `namespace` line and the imports when the namespace
+  follows the directory (`src/a/b/x.sl` -> `app.a.b`).
 
 ## Build the language server
 

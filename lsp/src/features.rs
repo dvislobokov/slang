@@ -3,7 +3,7 @@
 
 use crate::range;
 use lsp_types::{
-    CompletionItem, CompletionItemKind, Documentation, FoldingRange, FoldingRangeKind, MarkupContent, MarkupKind, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+    CompletionItem, CompletionItemKind, FoldingRange, FoldingRangeKind, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensEdit,
     SemanticTokensLegend,
 };
 use slang::diagnostics::Diagnostics;
@@ -223,8 +223,63 @@ fn is_operator(k: &TokenKind) -> bool {
         && !is_keyword(k)
 }
 
+/// A semantic token with an absolute position (UTF-16 line/column).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AbsToken {
+    pub line: u32,
+    pub col: u32,
+    pub len: u32,
+    pub ty: u32,
+    pub mods: u32,
+}
+
 /// Full-document semantic tokens (relative encoding).
 pub(crate) fn semantic_tokens(a: &Analysis, file: usize) -> Vec<SemanticToken> {
+    encode_tokens(&absolute_tokens(a, file))
+}
+
+/// The tokens of `file` that intersect `range` (relative encoding, as
+/// `textDocument/semanticTokens/range` returns them).
+pub(crate) fn semantic_tokens_range(a: &Analysis, file: usize, range: &Range) -> Vec<SemanticToken> {
+    let (start, end) = ((range.start.line, range.start.character), (range.end.line, range.end.character));
+    let toks: Vec<AbsToken> = absolute_tokens(a, file).into_iter().filter(|t| (t.line, t.col + t.len) > start && (t.line, t.col) < end).collect();
+    encode_tokens(&toks)
+}
+
+/// Relative LSP encoding of tokens sorted by position.
+pub(crate) fn encode_tokens(toks: &[AbsToken]) -> Vec<SemanticToken> {
+    let (mut prev_line, mut prev_col) = (0u32, 0u32);
+    toks.iter()
+        .map(|t| {
+            let delta_line = t.line - prev_line;
+            let delta_start = if delta_line == 0 { t.col - prev_col } else { t.col };
+            prev_line = t.line;
+            prev_col = t.col;
+            SemanticToken { delta_line, delta_start, length: t.len, token_type: t.ty, token_modifiers_bitset: t.mods }
+        })
+        .collect()
+}
+
+/// Edits turning `old` into `new` (`textDocument/semanticTokens/full/delta`):
+/// one replacement between their common prefix and suffix, in units of the
+/// flat integer array (5 per token); none when they are equal.
+pub(crate) fn token_edits(old: &[SemanticToken], new: &[SemanticToken]) -> Vec<SemanticTokensEdit> {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+    let max_suffix = old.len().min(new.len()) - prefix;
+    let suffix = old.iter().rev().zip(new.iter().rev()).take(max_suffix).take_while(|(a, b)| a == b).count();
+    if prefix == old.len() && prefix == new.len() {
+        return Vec::new();
+    }
+    vec![SemanticTokensEdit {
+        start: (prefix * 5) as u32,
+        delete_count: ((old.len() - prefix - suffix) * 5) as u32,
+        data: Some(new[prefix..new.len() - suffix].to_vec()),
+    }]
+}
+
+/// Semantic tokens of `file` with absolute positions, sorted; tokens
+/// spanning lines (block comments, raw strings) are split per line.
+pub(crate) fn absolute_tokens(a: &Analysis, file: usize) -> Vec<AbsToken> {
     let f = &a.files[file];
     let text = f.text.as_str();
     let mut names: HashMap<(u32, u32), (SymbolId, bool)> = HashMap::new();
@@ -264,22 +319,17 @@ pub(crate) fn semantic_tokens(a: &Analysis, file: usize) -> Vec<SemanticToken> {
     }
     items.sort_by_key(|i| i.0.start);
     let mut out = Vec::new();
-    let (mut prev_line, mut prev_col) = (0u32, 0u32);
-    for (span, ty, m) in items {
+    for (span, ty, mods) in items {
         // Split multi-line tokens (block comments, strings) per line.
         let mut start = span.start as usize;
-        let end = span.end as usize;
+        let end = (span.end as usize).min(text.len());
         while start < end {
             let line_end = text[start..end].find('\n').map_or(end, |i| start + i);
             if line_end > start {
                 let (line, col) = f.utf16_position(start as u32);
                 let len: u32 = text[start..line_end].trim_end_matches('\r').encode_utf16().count() as u32;
-                if len > 0 {
-                    let delta_line = line - prev_line;
-                    let delta_start = if delta_line == 0 { col - prev_col } else { col };
-                    out.push(SemanticToken { delta_line, delta_start, length: len, token_type: ty, token_modifiers_bitset: m });
-                    prev_line = line;
-                    prev_col = col;
+                if len > 0 && out.last().is_none_or(|p: &AbsToken| (p.line, p.col) < (line, col)) {
+                    out.push(AbsToken { line, col, len, ty, mods });
                 }
             }
             start = line_end + 1;
@@ -395,15 +445,28 @@ fn completion_kind(k: SymbolKind) -> CompletionItemKind {
     }
 }
 
+/// A completion item for a symbol: light (label, kind, one-line detail);
+/// `data` names the symbol so `completionItem/resolve` can add its
+/// documentation ([`resolve_completion`]).
 fn item(a: &Analysis, label: &str, id: SymbolId) -> CompletionItem {
     let s = a.index.symbol(id);
     CompletionItem {
         label: label.to_string(),
         kind: Some(completion_kind(s.kind)),
         detail: s.signature.lines().next().map(|l| l.to_string()),
-        documentation: s.doc.as_ref().map(|d| Documentation::MarkupContent(MarkupContent { kind: MarkupKind::Markdown, value: d.clone() })),
+        data: Some(crate::symbol_data(a, id)),
         ..Default::default()
     }
+}
+
+/// `completionItem/resolve`: the detail (signature) and the Markdown
+/// documentation of the symbol named by the item's `data`.
+pub(crate) fn resolve_completion(a: &Analysis, generation: u64, mut item: CompletionItem) -> CompletionItem {
+    let Some(id) = item.data.as_ref().and_then(|d| crate::symbol_from_data(a, generation, d)) else { return item };
+    let s = a.index.symbol(id);
+    item.detail = s.signature.lines().next().map(|l| l.to_string());
+    item.documentation = Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent { kind: lsp_types::MarkupKind::Markdown, value: hover_markdown(a, id) }));
+    item
 }
 
 fn plain(label: &str, kind: CompletionItemKind, detail: Option<&str>) -> CompletionItem {

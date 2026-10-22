@@ -1,10 +1,14 @@
 //! Slang language server (LSP over stdio), built on the compiler library's
 //! [`slang::session::Session`] API (docs/TOOLING.md, stages 1-5):
-//! diagnostics (with codes and quick fixes), outline, folding, definition,
-//! references, rename, hover, highlights, semantic tokens, completion,
-//! signature help, inlay hints, code actions, formatting (`slang::fmt`)
-//! and workspace symbols; `.sl` files created or deleted on disk are
-//! picked up through `workspace/didChangeWatchedFiles`.
+//! diagnostics (pushed, or pulled with `textDocument/diagnostic` and
+//! `workspace/diagnostic`), outline, folding, selection ranges,
+//! definition, declaration, type definition, implementation, references,
+//! rename (also of import paths when files move), hover, highlights,
+//! semantic tokens (full, delta, range), completion (with lazy resolve),
+//! signature help, inlay hints, code actions, code lenses, formatting
+//! (`slang::fmt`) and workspace symbols; `.sl` files created, deleted or
+//! renamed on disk are picked up through `workspace/didChangeWatchedFiles`
+//! and `workspace/didRenameFiles`.
 //!
 //! Library sources are part of the project, read-only (docs/TOOLING.md):
 //! the standard library from `std/` ([`slang::sema::stdfs::std_dir`],
@@ -12,22 +16,41 @@
 //! that `slang.lock` lists, from `.slang/deps/` (or `vendor/`). Definition,
 //! hover, references and workspace symbols reach into them; rename refuses.
 //!
-//! The server is synchronous (`lsp-server`): one thread reads messages;
-//! document changes mark the session dirty and analysis runs ~100 ms after
-//! the last change (or immediately before answering a request), after which
-//! diagnostics are published for every file.
+//! # Scheduling
+//!
+//! One thread reads messages; analysis runs on a worker thread over a
+//! snapshot of the session ([`Session`] clones share parsed files). Edits
+//! (`didChange`, incremental or full) only update the server's copy of the
+//! document text and bump the session version; the text is parsed when an
+//! analysis starts, so a burst of changes costs one parse and one
+//! analysis. Analysis starts [`DEBOUNCE`] after the last change, or at once
+//! when a request is waiting. A change cancels the analysis in flight (an
+//! `AtomicBool` that sema checks between phases and function bodies, see
+//! [`Session::analyze_cancellable`]). Requests are answered against an
+//! analysis of the latest text: while it is not ready they wait in a
+//! queue, from which `$/cancelRequest` removes them (answered with
+//! `RequestCancelled`). Requests that only need the text and its syntax
+//! (formatting, folding, selection ranges) are answered at once.
 
 mod assist;
 mod features;
+mod files;
+mod handlers;
+mod lens;
+mod nav;
+mod sync;
 
-use crossbeam_channel::{RecvTimeoutError, Sender};
-use lsp_server::{Connection, ExtractError, Message, Notification, Request, RequestId, Response};
+use crossbeam_channel::{Receiver, Sender};
+use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::Notification as _;
+use lsp_types::request::Request as _;
 use lsp_types::*;
 use slang::session::{Analysis, Session};
 use slang::span::Span;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use features::{SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES};
@@ -41,6 +64,15 @@ const MAX_FILES: usize = 5000;
 /// Manifest file names that mark a project root (docs/PACKAGES.md).
 const MANIFESTS: &[&str] = &["slang.toml", "slang.json", "slang.yaml", "slang.yml"];
 
+/// `slang/analyzerStatus`: counters of the analysis scheduler (for
+/// diagnosing the server and for tests).
+pub const ANALYZER_STATUS: &str = "slang/analyzerStatus";
+
+/// `slang/documentText`: the server's copy of an open document's text,
+/// `{"uri": ...}` -> string or null (for diagnosing sync problems, and
+/// for tests).
+pub const DOCUMENT_TEXT: &str = "slang/documentText";
+
 /// Runs the server on stdin/stdout until the client disconnects.
 pub fn run_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (connection, io_threads) = Connection::stdio();
@@ -49,116 +81,255 @@ pub fn run_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
+/// How diagnostics reach the client.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiagMode {
+    /// `textDocument/publishDiagnostics` after every analysis.
+    Push,
+    /// Only on request (`textDocument/diagnostic`, `workspace/diagnostic`),
+    /// with `workspace/diagnostic/refresh` after analyses.
+    Pull,
+}
+
+/// What the client supports (from `initialize`).
+#[derive(Clone, Copy, Debug, Default)]
+struct ClientCaps {
+    work_done_progress: bool,
+    pull_diagnostics: bool,
+    diagnostic_refresh: bool,
+}
+
+impl ClientCaps {
+    fn of(p: &InitializeParams) -> ClientCaps {
+        let c = &p.capabilities;
+        ClientCaps {
+            work_done_progress: c.window.as_ref().and_then(|w| w.work_done_progress).unwrap_or(false),
+            pull_diagnostics: c.text_document.as_ref().is_some_and(|t| t.diagnostic.is_some()),
+            diagnostic_refresh: c.workspace.as_ref().and_then(|w| w.diagnostic.as_ref()).and_then(|d| d.refresh_support).unwrap_or(false),
+        }
+    }
+}
+
+/// Diagnostics mode: `initializationOptions.diagnostics.mode` = "push" |
+/// "pull" | "auto" (default: pull when the client supports it, so it
+/// never gets both).
+fn diag_mode(opts: Option<&serde_json::Value>, caps: ClientCaps) -> (DiagMode, bool) {
+    let asked = opts.and_then(|o| o.pointer("/diagnostics/mode")).and_then(|v| v.as_str()).unwrap_or("auto");
+    match asked {
+        "push" => (DiagMode::Push, false),
+        "pull" => (DiagMode::Pull, true),
+        _ if caps.pull_diagnostics => (DiagMode::Pull, true),
+        _ => (DiagMode::Push, true),
+    }
+}
+
 /// Runs the server on `connection` (stdio or an in-memory pair in tests).
 pub fn run(connection: Connection) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (id, params) = connection.initialize_start()?;
     let params: InitializeParams = serde_json::from_value(params)?;
-    let result = InitializeResult {
-        capabilities: capabilities(),
-        server_info: Some(ServerInfo { name: "slang-lsp".into(), version: Some(env!("CARGO_PKG_VERSION").into()) }),
-    };
+    let caps = ClientCaps::of(&params);
+    let (mode, advertise_pull) = diag_mode(params.initialization_options.as_ref(), caps);
+    let mut server_caps = capabilities();
+    if !advertise_pull {
+        server_caps.diagnostic_provider = None;
+    }
+    let result = InitializeResult { capabilities: server_caps, server_info: Some(ServerInfo { name: "slang-lsp".into(), version: Some(env!("CARGO_PKG_VERSION").into()) }) };
     connection.initialize_finish(id, serde_json::to_value(result)?)?;
-    let mut server = Server::new(connection.sender.clone());
+    let (events_tx, events_rx) = crossbeam_channel::unbounded();
+    let mut server = Server::new(connection.sender.clone(), events_tx, caps, mode);
     if let Some(opts) = &params.initialization_options {
         server.hints.update(opts);
-    }
-    server.discover(&params);
-    server.refresh();
-    loop {
-        let msg = match server.dirty {
-            Some(t) => {
-                let wait = (t + DEBOUNCE).saturating_duration_since(Instant::now());
-                match connection.receiver.recv_timeout(wait) {
-                    Ok(m) => m,
-                    Err(RecvTimeoutError::Timeout) => {
-                        server.refresh();
-                        continue;
-                    }
-                    Err(RecvTimeoutError::Disconnected) => break,
-                }
-            }
-            None => match connection.receiver.recv() {
-                Ok(m) => m,
-                Err(_) => break,
-            },
-        };
-        match msg {
-            Message::Request(req) => {
-                if connection.handle_shutdown(&req)? {
-                    return Ok(());
-                }
-                server.handle_request(req);
-            }
-            Message::Notification(n) => {
-                if n.method == notification::Exit::METHOD {
-                    return Ok(());
-                }
-                server.handle_notification(n);
-            }
-            Message::Response(_) => {}
+        if let Some(ms) = opts.pointer("/debug/analysisDelayMs").and_then(|v| v.as_u64()) {
+            server.analysis_delay = Duration::from_millis(ms);
         }
     }
-    Ok(())
+    server.initial_index(&params);
+    let result = event_loop(&connection, &mut server, &events_rx);
+    if let Some(f) = &server.inflight {
+        f.cancel.store(true, Ordering::Relaxed);
+    }
+    result
+}
+
+fn event_loop(connection: &Connection, server: &mut Server, events: &Receiver<Event>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    loop {
+        server.maybe_start_analysis();
+        let tick = match server.next_deadline() {
+            Some(d) => crossbeam_channel::at(d),
+            None => crossbeam_channel::never(),
+        };
+        crossbeam_channel::select! {
+            recv(connection.receiver) -> msg => {
+                let Ok(msg) = msg else { return Ok(()) };
+                match msg {
+                    Message::Request(req) => {
+                        if req.method == request::Shutdown::METHOD {
+                            if let Some(f) = &server.inflight {
+                                f.cancel.store(true, Ordering::Relaxed);
+                            }
+                        }
+                        if connection.handle_shutdown(&req)? {
+                            return Ok(());
+                        }
+                        server.on_request(req);
+                    }
+                    Message::Notification(n) => {
+                        if n.method == notification::Exit::METHOD {
+                            return Ok(());
+                        }
+                        server.handle_notification(n);
+                    }
+                    Message::Response(_) => {}
+                }
+            }
+            recv(events) -> ev => {
+                if let Ok(ev) = ev {
+                    server.on_event(ev);
+                }
+            }
+            recv(tick) -> _ => {}
+        }
+    }
 }
 
 /// What the server supports.
 pub fn capabilities() -> ServerCapabilities {
+    let sl_files = FileOperationRegistrationOptions {
+        filters: vec![
+            FileOperationFilter { scheme: Some("file".into()), pattern: FileOperationPattern { glob: "**/*.sl".into(), matches: Some(FileOperationPatternKind::File), options: None } },
+            FileOperationFilter { scheme: Some("file".into()), pattern: FileOperationPattern { glob: "**".into(), matches: Some(FileOperationPatternKind::Folder), options: None } },
+        ],
+    };
     ServerCapabilities {
         position_encoding: Some(PositionEncodingKind::UTF16),
         text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
             open_close: Some(true),
-            change: Some(TextDocumentSyncKind::FULL),
+            change: Some(TextDocumentSyncKind::INCREMENTAL),
             save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions { include_text: Some(true) })),
             ..Default::default()
         })),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
-        completion_provider: Some(CompletionOptions { trigger_characters: Some(vec![".".into()]), ..Default::default() }),
+        completion_provider: Some(CompletionOptions { trigger_characters: Some(vec![".".into()]), resolve_provider: Some(true), ..Default::default() }),
         signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), ",".into()]),
             retrigger_characters: Some(vec![",".into()]),
             work_done_progress_options: Default::default(),
         }),
-        inlay_hint_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(InlayHintOptions { resolve_provider: Some(true), work_done_progress_options: Default::default() }))),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
             code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            resolve_provider: Some(true),
             ..Default::default()
         })),
+        code_lens_provider: Some(CodeLensOptions { resolve_provider: Some(true) }),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
+        declaration_provider: Some(DeclarationCapability::Simple(true)),
+        type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+        implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
             legend: features::legend(),
-            full: Some(SemanticTokensFullOptions::Bool(true)),
-            range: None,
+            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+            range: Some(true),
             ..Default::default()
         })),
+        diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
+            identifier: Some("slang".into()),
+            inter_file_dependencies: true,
+            workspace_diagnostics: true,
+            work_done_progress_options: Default::default(),
+        })),
+        workspace: Some(WorkspaceServerCapabilities {
+            workspace_folders: None,
+            file_operations: Some(WorkspaceFileOperationsServerCapabilities { will_rename: Some(sl_files.clone()), did_rename: Some(sl_files), ..Default::default() }),
+        }),
         ..Default::default()
     }
+}
+
+/// Messages from analysis workers to the main loop.
+enum Event {
+    Analyzed { version: u64, outcome: Outcome },
+}
+
+enum Outcome {
+    Done(Box<Analysis>),
+    Cancelled,
+    Panicked,
+}
+
+/// The analysis in flight.
+struct Inflight {
+    version: u64,
+    cancel: Arc<AtomicBool>,
+}
+
+/// Scheduler counters (`slang/analyzerStatus`).
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Stats {
+    /// Analyses started.
+    started: u64,
+    /// Analyses that finished and were used.
+    completed: u64,
+    /// Analyses cancelled (superseded by an edit) or whose result was stale.
+    cancelled: u64,
+    /// Requests answered with `RequestCancelled`.
+    cancelled_requests: u64,
+    /// Requests that waited for an analysis.
+    queued_requests: u64,
 }
 
 /// Server state.
 struct Server {
     sender: Sender<Message>,
+    events: Sender<Event>,
+    caps: ClientCaps,
+    diag_mode: DiagMode,
     /// The standard library sources (read-only, never analysed as project files).
     std_dir: Option<PathBuf>,
     session: Session,
-    analysis: Option<Analysis>,
-    /// Time of the last unanalysed change.
+    /// Bumped on every change of the project's text.
+    version: u64,
+    /// The latest analysis and the version it was made for (or attempted:
+    /// after an internal error the previous analysis is kept).
+    analysis: Option<Arc<Analysis>>,
+    analysis_version: u64,
+    inflight: Option<Inflight>,
+    /// Time of the last change not yet analysed.
     dirty: Option<Instant>,
+    /// Requests waiting for a fresh analysis.
+    pending: VecDeque<Request>,
+    /// Parked `workspace/diagnostic` requests: answered when a report changes.
+    parked: Vec<(RequestId, WorkspaceDiagnosticParams)>,
+    /// Texts of open documents (the editor's copy; parsed on flush).
+    docs: HashMap<String, String>,
+    /// Open documents whose text the session has not parsed yet.
+    unflushed: HashSet<String>,
     roots: Vec<PathBuf>,
     /// Session path -> URI the client knows the file by.
     uris: HashMap<String, Url>,
-    open: HashSet<String>,
     /// URIs that got non-empty diagnostics last time.
     published: HashSet<Url>,
+    /// Last semantic tokens per document: (result id, tokens).
+    tokens: HashMap<String, (String, Vec<SemanticToken>)>,
+    token_seq: u64,
+    /// Progress token of the initial indexing, ended by the first analysis.
+    indexing: Option<NumberOrString>,
+    next_server_request: i32,
     /// `slang.inlayHints.*` settings.
     hints: assist::HintSettings,
+    /// Artificial delay of each analysis (`initializationOptions.debug.analysisDelayMs`).
+    analysis_delay: Duration,
+    stats: Stats,
 }
 
 /// Session key for a URI: the file path for `file:` URIs.
@@ -169,29 +340,69 @@ fn path_of(uri: &Url) -> String {
     }
 }
 
+/// `data` of an item naming symbol `id` (completion items, inlay hints).
+pub(crate) fn symbol_data(a: &Analysis, id: slang::sema::index::SymbolId) -> serde_json::Value {
+    let s = a.index.symbol(id);
+    serde_json::json!({"sym": id.0, "name": s.name, "fullName": s.full_name})
+}
+
+/// The symbol named by [`symbol_data`] (plus `"v"`, the analysis version
+/// it was made in): by id in the same analysis, else by full name.
+pub(crate) fn symbol_from_data(a: &Analysis, version: u64, data: &serde_json::Value) -> Option<slang::sema::index::SymbolId> {
+    let name = data.get("name")?.as_str()?;
+    let full = data.get("fullName")?.as_str()?;
+    let id = data.get("sym")?.as_u64()? as usize;
+    if data.get("v").and_then(|v| v.as_u64()) == Some(version) {
+        if let Some(s) = a.index.symbols.get(id).filter(|s| s.name == name && s.full_name == full) {
+            return Some(s.id);
+        }
+    }
+    a.index.symbols.iter().find(|s| s.full_name == full && s.name == name).map(|s| s.id)
+}
+
 impl Server {
-    fn new(sender: Sender<Message>) -> Server {
-        let mut session = Session::new();
-        let std_dir = slang::sema::stdfs::std_dir();
-        session.set_std_index(std_dir.as_deref().map(|d| std::sync::Arc::new(slang::stdindex::StdIndex::load(d))));
+    fn new(sender: Sender<Message>, events: Sender<Event>, caps: ClientCaps, diag_mode: DiagMode) -> Server {
         Server {
             sender,
-            std_dir,
-            session,
+            events,
+            caps,
+            diag_mode,
+            std_dir: None,
+            session: Session::new(),
+            version: 1,
             analysis: None,
+            analysis_version: 0,
+            inflight: None,
             dirty: None,
+            pending: VecDeque::new(),
+            parked: Vec::new(),
+            docs: HashMap::new(),
+            unflushed: HashSet::new(),
             roots: Vec::new(),
             uris: HashMap::new(),
-            open: HashSet::new(),
             published: HashSet::new(),
+            tokens: HashMap::new(),
+            token_seq: 0,
+            indexing: None,
+            next_server_request: 0,
             hints: assist::HintSettings::default(),
+            analysis_delay: Duration::ZERO,
+            stats: Stats::default(),
         }
     }
 
     // -- workspace ---------------------------------------------------------
 
+    /// Loads the std index and the workspace, reporting progress when the
+    /// client supports it; the progress ends with the first analysis.
     #[allow(deprecated)]
-    fn discover(&mut self, params: &InitializeParams) {
+    fn initial_index(&mut self, params: &InitializeParams) {
+        let token = self.progress_begin("Slang", "loading the standard library");
+        self.std_dir = slang::sema::stdfs::std_dir();
+        self.session.set_std_index(self.std_dir.as_deref().map(|d| Arc::new(slang::stdindex::StdIndex::load(d))));
+        if let Some(t) = &token {
+            self.progress_report(t, "indexing workspace files", Some(30));
+        }
         let mut roots: Vec<PathBuf> = Vec::new();
         if let Some(folders) = &params.workspace_folders {
             roots.extend(folders.iter().filter_map(|f| f.uri.to_file_path().ok()));
@@ -204,6 +415,14 @@ impl Server {
         for r in roots {
             self.add_root(r);
         }
+        if let Some(t) = &token {
+            let n = self.session.paths().count();
+            self.progress_report(t, &format!("analysing {n} file{}", if n == 1 { "" } else { "s" }), Some(60));
+        }
+        self.indexing = token;
+        self.touch();
+        // The first analysis starts at once, without the debounce delay.
+        self.dirty = Instant::now().checked_sub(DEBOUNCE).or(self.dirty);
     }
 
     /// Loads every `.sl` file of the project rooted at `root`: `src/**` when
@@ -220,7 +439,7 @@ impl Server {
         files.sort();
         for p in files {
             let key = p.display().to_string();
-            if self.open.contains(&key) || self.session.contains(&key) {
+            if self.docs.contains_key(&key) || self.session.contains(&key) {
                 continue;
             }
             if let (Ok(text), Ok(uri)) = (std::fs::read_to_string(&p), Url::from_file_path(&p)) {
@@ -232,7 +451,7 @@ impl Server {
             self.add_dependencies(&root);
         }
         self.roots.push(root);
-        self.dirty.get_or_insert_with(Instant::now);
+        self.touch();
     }
 
     /// Loads the sources of the modules `slang.lock` lists, from
@@ -272,7 +491,11 @@ impl Server {
         let mut dir = path.parent();
         while let Some(d) = dir {
             if MANIFESTS.iter().any(|m| d.join(m).is_file()) {
+                let token = self.progress_begin("Slang", &format!("indexing {}", d.display()));
                 self.add_root(d.to_path_buf());
+                if let Some(t) = token {
+                    self.progress_end(&t, "done");
+                }
                 return;
             }
             dir = d.parent();
@@ -283,34 +506,158 @@ impl Server {
         self.roots.iter().any(|r| path.starts_with(r))
     }
 
-    // -- analysis ------------------------------------------------------------
+    // -- analysis scheduling ---------------------------------------------------
 
-    fn changed(&mut self) {
+    /// Records a change of the project: a new version, analysed after the
+    /// debounce delay; the analysis in flight is superseded.
+    fn touch(&mut self) {
+        self.version += 1;
         self.dirty = Some(Instant::now());
-    }
-
-    /// Re-analyses and publishes diagnostics for every file.
-    fn refresh(&mut self) {
-        self.dirty = None;
-        let session = &self.session;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.analyze()));
-        match result {
-            Ok(a) => {
-                self.analysis = Some(a);
-                self.publish();
-            }
-            Err(_) => self.log(MessageType::ERROR, "slang-lsp: internal error during analysis (kept the previous results)"),
+        if let Some(f) = &self.inflight {
+            f.cancel.store(true, Ordering::Relaxed);
         }
     }
 
-    fn ensure_fresh(&mut self) {
-        if self.dirty.is_some() || self.analysis.is_none() {
-            self.refresh();
+    fn fresh(&self) -> bool {
+        self.analysis_version == self.version
+    }
+
+    /// When the main loop must wake up to start an analysis.
+    fn next_deadline(&self) -> Option<Instant> {
+        if self.fresh() || self.inflight.as_ref().is_some_and(|f| f.version == self.version) {
+            return None;
+        }
+        if !self.pending.is_empty() {
+            return Some(Instant::now());
+        }
+        self.dirty.map(|t| t + DEBOUNCE)
+    }
+
+    /// Starts an analysis of the current version when one is due: the
+    /// debounce delay passed, or a request waits for it.
+    fn maybe_start_analysis(&mut self) {
+        let due = self.next_deadline().is_some_and(|d| d <= Instant::now());
+        if !due {
+            return;
+        }
+        // The superseded analysis (already told to stop) finishes on its own.
+        self.flush();
+        let snapshot = self.session.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let version = self.version;
+        self.inflight = Some(Inflight { version, cancel: cancel.clone() });
+        self.stats.started += 1;
+        let events = self.events.clone();
+        let delay = self.analysis_delay;
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + delay;
+            while Instant::now() < deadline && !cancel.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(5).min(deadline.saturating_duration_since(Instant::now())));
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| snapshot.analyze_cancellable(Some(&cancel))));
+            let outcome = match result {
+                Ok(Some(a)) if !cancel.load(Ordering::Relaxed) => Outcome::Done(Box::new(a)),
+                Ok(_) => Outcome::Cancelled,
+                Err(_) => Outcome::Panicked,
+            };
+            let _ = events.send(Event::Analyzed { version, outcome });
+        });
+    }
+
+    /// The current text of a file (project files parsed: see [`Server::flush`]).
+    fn current_source(&mut self, uri: &Url) -> Option<slang::span::SourceFile> {
+        self.flush();
+        let key = path_of(uri);
+        match self.session.text(&key) {
+            Some(t) => Some(slang::span::SourceFile::new(key.clone(), t.to_string())),
+            // A library file: the std sources are in the analysis only.
+            None => self.analysis.as_ref().and_then(|a| a.files.iter().find(|f| f.path == key).cloned()),
+        }
+    }
+
+    /// Parses the open documents changed since the last analysis.
+    fn flush(&mut self) {
+        for key in std::mem::take(&mut self.unflushed) {
+            if let Some(text) = self.docs.get(&key) {
+                self.session.update_file(key.clone(), text.clone());
+            }
+        }
+    }
+
+    fn on_event(&mut self, ev: Event) {
+        let Event::Analyzed { version, outcome } = ev;
+        if self.inflight.as_ref().is_some_and(|f| f.version == version) {
+            self.inflight = None;
+        }
+        if version != self.version {
+            self.stats.cancelled += 1;
+            return;
+        }
+        match outcome {
+            Outcome::Done(a) => {
+                self.stats.completed += 1;
+                self.analysis = Some(Arc::from(a));
+                self.analysis_version = version;
+                self.dirty = None;
+                match self.diag_mode {
+                    DiagMode::Push => self.publish(),
+                    DiagMode::Pull if self.caps.diagnostic_refresh => self.server_request::<request::WorkspaceDiagnosticRefresh>(()),
+                    DiagMode::Pull => {}
+                }
+                if let Some(t) = self.indexing.take() {
+                    self.progress_end(&t, "done");
+                }
+            }
+            Outcome::Panicked => {
+                self.log(MessageType::ERROR, "slang-lsp: internal error during analysis (kept the previous results)");
+                self.analysis_version = version;
+                self.dirty = None;
+            }
+            Outcome::Cancelled => {
+                self.stats.cancelled += 1;
+                return;
+            }
+        }
+        while let Some(req) = self.pending.pop_front() {
+            self.dispatch(req);
+        }
+        self.wake_parked();
+    }
+
+    fn on_request(&mut self, req: Request) {
+        // Requests that only need the text (and its syntax) never wait.
+        const TEXT_ONLY: &[&str] = &[
+            ANALYZER_STATUS,
+            DOCUMENT_TEXT,
+            request::Formatting::METHOD,
+            request::RangeFormatting::METHOD,
+            request::FoldingRangeRequest::METHOD,
+            request::SelectionRangeRequest::METHOD,
+        ];
+        if TEXT_ONLY.contains(&req.method.as_str()) {
+            return self.dispatch(req);
+        }
+        if self.fresh() {
+            self.dispatch(req);
+        } else {
+            self.stats.queued_requests += 1;
+            self.pending.push_back(req);
+        }
+    }
+
+    /// `$/cancelRequest`: a request still waiting is answered with
+    /// `RequestCancelled` (answered ones are not affected).
+    fn cancel_request(&mut self, id: RequestId) {
+        let waiting = self.pending.iter().position(|r| r.id == id).map(|i| self.pending.remove(i).map(|r| r.id));
+        let parked = self.parked.iter().position(|p| p.0 == id).map(|i| Some(self.parked.remove(i).0));
+        if let Some(Some(id)) = waiting.or(parked) {
+            self.stats.cancelled_requests += 1;
+            self.reply_err(id, lsp_server::ErrorCode::RequestCanceled as i32, "cancelled");
         }
     }
 
     fn publish(&mut self) {
-        let Some(a) = &self.analysis else { return };
+        let Some(a) = self.analysis.clone() else { return };
         let mut now = HashSet::new();
         let mut out = Vec::new();
         for (i, f) in a.files.iter().enumerate() {
@@ -318,7 +665,7 @@ impl Server {
                 continue; // library files: their problems are not the user's to fix
             }
             let Some(uri) = self.uris.get(&f.path).cloned() else { continue };
-            let diags: Vec<Diagnostic> = a.diagnostics_for(i).map(|d| self.to_lsp_diag(a, d)).collect();
+            let diags = self.file_diagnostics(&a, i);
             if !diags.is_empty() {
                 now.insert(uri.clone());
             }
@@ -333,6 +680,14 @@ impl Server {
         for p in out {
             self.notify::<notification::PublishDiagnostics>(p);
         }
+    }
+
+    /// The LSP diagnostics of file `i` (none for library files).
+    fn file_diagnostics(&self, a: &Analysis, i: usize) -> Vec<Diagnostic> {
+        if a.is_read_only(i) {
+            return Vec::new();
+        }
+        a.diagnostics_for(i).map(|d| self.to_lsp_diag(a, d)).collect()
     }
 
     fn to_lsp_diag(&self, a: &Analysis, d: &slang::diagnostics::Diagnostic) -> Diagnostic {
@@ -370,6 +725,13 @@ impl Server {
         let _ = self.sender.send(Message::Notification(Notification::new(N::METHOD.to_string(), params)));
     }
 
+    /// Sends a request to the client (its response is ignored).
+    fn server_request<R: request::Request>(&mut self, params: R::Params) {
+        self.next_server_request += 1;
+        let id = RequestId::from(format!("slang-lsp/{}", self.next_server_request));
+        let _ = self.sender.send(Message::Request(Request::new(id, R::METHOD.to_string(), params)));
+    }
+
     fn log(&self, typ: MessageType, message: &str) {
         self.notify::<notification::LogMessage>(LogMessageParams { typ, message: message.to_string() });
     }
@@ -382,8 +744,42 @@ impl Server {
         let _ = self.sender.send(Message::Response(Response::new_err(id, code, msg.into())));
     }
 
+    /// Creates a work-done progress (when the client supports them) and
+    /// begins it; returns its token.
+    fn progress_begin(&mut self, title: &str, message: &str) -> Option<NumberOrString> {
+        if !self.caps.work_done_progress {
+            return None;
+        }
+        self.next_server_request += 1;
+        let token = NumberOrString::String(format!("slang-lsp/progress/{}", self.next_server_request));
+        self.server_request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams { token: token.clone() });
+        let begin = WorkDoneProgressBegin { title: title.into(), cancellable: Some(false), message: Some(message.into()), percentage: Some(0) };
+        self.notify::<notification::Progress>(ProgressParams { token: token.clone(), value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(begin)) });
+        Some(token)
+    }
+
+    fn progress_report(&self, token: &NumberOrString, message: &str, percentage: Option<u32>) {
+        let report = WorkDoneProgressReport { cancellable: None, message: Some(message.into()), percentage };
+        self.notify::<notification::Progress>(ProgressParams { token: token.clone(), value: ProgressParamsValue::WorkDone(WorkDoneProgress::Report(report)) });
+    }
+
+    fn progress_end(&self, token: &NumberOrString, message: &str) {
+        let end = WorkDoneProgressEnd { message: Some(message.into()) };
+        self.notify::<notification::Progress>(ProgressParams { token: token.clone(), value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(end)) });
+    }
+
+    // -- notifications -----------------------------------------------------------
+
     fn handle_notification(&mut self, n: Notification) {
         match n.method.as_str() {
+            notification::Cancel::METHOD => {
+                let Ok(p) = serde_json::from_value::<CancelParams>(n.params) else { return };
+                let id = match p.id {
+                    NumberOrString::Number(i) => RequestId::from(i),
+                    NumberOrString::String(s) => RequestId::from(s),
+                };
+                self.cancel_request(id);
+            }
             notification::DidOpenTextDocument::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidOpenTextDocumentParams>(n.params) else { return };
                 let key = path_of(&p.text_document.uri);
@@ -393,33 +789,34 @@ impl Server {
                     }
                     self.discover_for(&path);
                 }
-                self.open.insert(key.clone());
                 self.uris.insert(key.clone(), p.text_document.uri);
-                self.session.update_file(key, p.text_document.text);
-                self.changed();
+                self.docs.insert(key.clone(), p.text_document.text);
+                self.unflushed.insert(key);
+                self.touch();
             }
             notification::DidChangeTextDocument::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidChangeTextDocumentParams>(n.params) else { return };
                 let key = path_of(&p.text_document.uri);
-                if !self.session.contains(&key) && self.session.is_read_only(&key) {
-                    return;
+                let Some(text) = self.docs.get_mut(&key) else { return };
+                for change in p.content_changes {
+                    sync::apply_change(text, change);
                 }
-                // Full sync: the last change carries the whole text.
-                if let Some(c) = p.content_changes.into_iter().last() {
-                    if c.range.is_none() {
-                        self.session.update_file(key, c.text);
-                        self.changed();
-                    }
-                }
+                self.unflushed.insert(key);
+                self.touch();
             }
             notification::DidSaveTextDocument::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidSaveTextDocumentParams>(n.params) else { return };
-                if !self.session.contains(&path_of(&p.text_document.uri)) {
-                    return;
-                }
-                if let Some(text) = p.text {
-                    self.session.update_file(path_of(&p.text_document.uri), text);
-                    self.changed();
+                let key = path_of(&p.text_document.uri);
+                let Some(text) = p.text else { return };
+                if let Some(doc) = self.docs.get_mut(&key) {
+                    if *doc != text {
+                        *doc = text;
+                        self.unflushed.insert(key);
+                        self.touch();
+                    }
+                } else if self.session.contains(&key) && !self.session.is_read_only(&key) {
+                    self.session.update_file(key, text);
+                    self.touch();
                 }
             }
             notification::DidChangeWatchedFiles::METHOD => {
@@ -430,7 +827,7 @@ impl Server {
                         continue;
                     }
                     let key = path.display().to_string();
-                    if self.open.contains(&key) {
+                    if self.docs.contains_key(&key) {
                         continue; // the editor's text wins
                     }
                     if ev.typ == FileChangeType::DELETED {
@@ -443,7 +840,11 @@ impl Server {
                         }
                     }
                 }
-                self.changed();
+                self.touch();
+            }
+            notification::DidRenameFiles::METHOD => {
+                let Ok(p) = serde_json::from_value::<RenameFilesParams>(n.params) else { return };
+                self.did_rename_files(p);
             }
             notification::DidChangeConfiguration::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidChangeConfigurationParams>(n.params) else { return };
@@ -454,10 +855,11 @@ impl Server {
             notification::DidCloseTextDocument::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidCloseTextDocumentParams>(n.params) else { return };
                 let key = path_of(&p.text_document.uri);
-                self.open.remove(&key);
-                if !self.session.contains(&key) {
+                self.tokens.remove(&key);
+                if self.docs.remove(&key).is_none() {
                     return;
                 }
+                self.unflushed.remove(&key);
                 let on_disk = p.text_document.uri.to_file_path().ok().filter(|p| self.in_roots(p)).and_then(|p| std::fs::read_to_string(p).ok());
                 match on_disk {
                     Some(text) => self.session.update_file(key, text),
@@ -465,281 +867,54 @@ impl Server {
                         self.session.remove_file(&key);
                     }
                 }
-                self.changed();
+                self.touch();
             }
             _ => {}
         }
     }
 
-    fn handle_request(&mut self, req: Request) {
-        let req = match try_handle::<request::HoverRequest>(req, |id, p| self.hover(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::GotoDefinition>(req, |id, p| self.definition(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::References>(req, |id, p| self.references(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::DocumentSymbolRequest>(req, |id, p| self.document_symbols(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::PrepareRenameRequest>(req, |id, p| self.prepare_rename(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::Rename>(req, |id, p| self.rename(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::SemanticTokensFullRequest>(req, |id, p| self.semantic_tokens(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::FoldingRangeRequest>(req, |id, p| self.folding(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::Completion>(req, |id, p| self.completion(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::SignatureHelpRequest>(req, |id, p| self.signature_help(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::InlayHintRequest>(req, |id, p| self.inlay_hints(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::CodeActionRequest>(req, |id, p| self.code_actions(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::Formatting>(req, |id, p| self.formatting(id, p.text_document, None)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::RangeFormatting>(req, |id, p| self.formatting(id, p.text_document, Some(p.range))) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::WorkspaceSymbolRequest>(req, |id, p| self.workspace_symbols(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let req = match try_handle::<request::DocumentHighlightRequest>(req, |id, p| self.highlights(id, p)) {
-            Ok(()) => return,
-            Err(r) => r,
-        };
-        let _ = self.sender.send(Message::Response(Response::new_err(req.id, lsp_server::ErrorCode::MethodNotFound as i32, format!("unsupported request {}", req.method))));
-    }
-
-    /// Fresh analysis plus the file index and byte offset of a position.
-    fn locate(&mut self, doc: &TextDocumentIdentifier, pos: Option<Position>) -> Option<(usize, u32)> {
-        self.ensure_fresh();
-        let a = self.analysis.as_ref()?;
-        let file = a.file_index(&path_of(&doc.uri))?;
-        let offset = pos.map(|p| a.files[file].utf16_offset(p.line, p.character)).unwrap_or(0);
-        Some((file, offset))
-    }
-
-    // -- features --------------------------------------------------------------
-
-    fn hover(&mut self, id: RequestId, p: HoverParams) {
-        let tdp = p.text_document_position_params;
-        let result = self.locate(&tdp.text_document, Some(tdp.position)).and_then(|(file, off)| {
-            let a = self.analysis.as_ref()?;
-            let sym = a.symbol_at(file, off)?;
-            let value = features::hover_markdown(a, sym);
-            let r = a.name_span_at(file, off).map(|s| range(&a.files[file], s));
-            Some(Hover { contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value }), range: r })
-        });
-        self.reply(id, result);
-    }
-
-    fn definition(&mut self, id: RequestId, p: GotoDefinitionParams) {
-        let tdp = p.text_document_position_params;
-        let result = self.locate(&tdp.text_document, Some(tdp.position)).and_then(|(file, off)| {
-            let a = self.analysis.as_ref()?;
-            let loc = a.definition_at(file, off)?;
-            let uri = self.uri_of(a, loc.file)?;
-            Some(GotoDefinitionResponse::Scalar(Location { uri, range: range(&a.files[loc.file], loc.name_span) }))
-        });
-        self.reply(id, result);
-    }
-
-    fn references(&mut self, id: RequestId, p: ReferenceParams) {
-        let tdp = p.text_document_position;
-        let include_decl = p.context.include_declaration;
-        let result = self.locate(&tdp.text_document, Some(tdp.position)).and_then(|(file, off)| {
-            let a = self.analysis.as_ref()?;
-            let sym = a.symbol_at(file, off)?;
-            let mut out = Vec::new();
-            if include_decl {
-                if let Some(l) = a.index.symbol(sym).loc {
-                    out.push((l.file, l.name_span));
+    /// The session files a rename moves: `(old key, new path)` for each
+    /// renamed `.sl` file, and for each file under a renamed directory.
+    fn renamed_files(&self, p: &RenameFilesParams) -> Vec<(String, PathBuf)> {
+        let mut out = Vec::new();
+        for r in &p.files {
+            let (Ok(old), Ok(new)) = (Url::parse(&r.old_uri), Url::parse(&r.new_uri)) else { continue };
+            let (Ok(old), Ok(new)) = (old.to_file_path(), new.to_file_path()) else { continue };
+            for key in self.session.paths().map(str::to_string).chain(self.docs.keys().cloned()).collect::<HashSet<_>>() {
+                let kp = Path::new(&key);
+                if kp == old {
+                    out.push((key, new.clone()));
+                } else if let Ok(rel) = kp.strip_prefix(&old) {
+                    out.push((key.clone(), new.join(rel)));
                 }
             }
-            out.extend(a.references_of(sym).into_iter().map(|r| (r.file, r.span)));
-            Some(out.into_iter().filter_map(|(f, s)| Some(Location { uri: self.uri_of(a, f)?, range: range(&a.files[f], s) })).collect::<Vec<_>>())
-        });
-        self.reply(id, result);
-    }
-
-    fn document_symbols(&mut self, id: RequestId, p: DocumentSymbolParams) {
-        let result = self.locate(&p.text_document, None).map(|(file, _)| {
-            let a = self.analysis.as_ref().unwrap();
-            let f = &a.files[file];
-            DocumentSymbolResponse::Nested(a.document_symbols(file).iter().map(|s| features::doc_symbol(f, s)).collect())
-        });
-        self.reply(id, result);
-    }
-
-    /// The renamable symbol at a position, or a reason why there is none.
-    fn rename_target(&self, file: usize, off: u32) -> Result<(slang::sema::index::SymbolId, Span), String> {
-        let a = self.analysis.as_ref().ok_or("no analysis")?;
-        let sym_id = a.symbol_at(file, off).ok_or("no symbol at this position")?;
-        let sym = a.index.symbol(sym_id);
-        if sym.is_std || sym.loc.is_none() {
-            return Err(format!("{} is part of the standard library or a builtin and cannot be renamed", sym.name));
         }
-        if sym.loc.is_some_and(|l| a.is_read_only(l.file)) || a.is_read_only(file) {
-            return Err(format!("{} is declared in a read-only dependency (.slang/deps) and cannot be renamed", sym.name));
-        }
-        let span = a.name_span_at(file, off).ok_or("no name at this position")?;
-        Ok((sym_id, span))
+        out.sort();
+        out
     }
 
-    fn prepare_rename(&mut self, id: RequestId, p: TextDocumentPositionParams) {
-        let Some((file, off)) = self.locate(&p.text_document, Some(p.position)) else {
-            return self.reply(id, None::<PrepareRenameResponse>);
-        };
-        match self.rename_target(file, off) {
-            Ok((sym, span)) => {
-                let a = self.analysis.as_ref().unwrap();
-                let placeholder = a.index.symbol(sym).name.clone();
-                self.reply(id, Some(PrepareRenameResponse::RangeWithPlaceholder { range: range(&a.files[file], span), placeholder }));
+    /// `workspace/didRenameFiles`: moves the files in the session (open
+    /// documents keep their text until the client reopens them).
+    fn did_rename_files(&mut self, p: RenameFilesParams) {
+        for (old, new) in self.renamed_files(&p) {
+            let new_key = new.display().to_string();
+            // The editor's copy, else the moved file on disk (the client may
+            // have applied willRenameFiles edits to it), else what we had.
+            let text = self.docs.remove(&old).or_else(|| std::fs::read_to_string(&new).ok()).or_else(|| self.session.text(&old).map(str::to_string));
+            let read_only = self.session.is_read_only(&old);
+            self.session.remove_file(&old);
+            self.unflushed.remove(&old);
+            self.uris.remove(&old);
+            self.tokens.remove(&old);
+            if let Some(text) = text {
+                if let Ok(uri) = Url::from_file_path(&new) {
+                    self.uris.insert(new_key.clone(), uri);
+                }
+                self.session.update_file(new_key.clone(), text);
+                self.session.set_read_only(&new_key, read_only);
             }
-            Err(msg) => self.reply_err(id, -32803, msg),
         }
-    }
-
-    fn rename(&mut self, id: RequestId, p: RenameParams) {
-        let tdp = p.text_document_position;
-        let Some((file, off)) = self.locate(&tdp.text_document, Some(tdp.position)) else {
-            return self.reply(id, None::<WorkspaceEdit>);
-        };
-        if !features::is_identifier(&p.new_name) {
-            return self.reply_err(id, -32803, format!("`{}` is not a valid Slang identifier", p.new_name));
-        }
-        let (sym_id, _) = match self.rename_target(file, off) {
-            Ok(t) => t,
-            Err(msg) => return self.reply_err(id, -32803, msg),
-        };
-        let a = self.analysis.as_ref().unwrap();
-        let sym = a.index.symbol(sym_id);
-        let mut spans: Vec<(usize, Span)> = sym.loc.map(|l| (l.file, l.name_span)).into_iter().collect();
-        spans.extend(a.references_of(sym_id).into_iter().map(|r| (r.file, r.span)));
-        let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-        let mut seen = HashSet::new();
-        for (f, s) in spans {
-            if !seen.insert((f, s.start)) || a.files[f].text.get(s.start as usize..s.end as usize) != Some(sym.name.as_str()) {
-                continue;
-            }
-            let Some(uri) = self.uri_of(a, f) else { continue };
-            changes.entry(uri).or_default().push(TextEdit { range: range(&a.files[f], s), new_text: p.new_name.clone() });
-        }
-        self.reply(id, Some(WorkspaceEdit { changes: Some(changes), ..Default::default() }));
-    }
-
-    fn semantic_tokens(&mut self, id: RequestId, p: SemanticTokensParams) {
-        let result = self.locate(&p.text_document, None).map(|(file, _)| {
-            let a = self.analysis.as_ref().unwrap();
-            SemanticTokensResult::Tokens(SemanticTokens { result_id: None, data: features::semantic_tokens(a, file) })
-        });
-        self.reply(id, result);
-    }
-
-    fn folding(&mut self, id: RequestId, p: FoldingRangeParams) {
-        let result = self.locate(&p.text_document, None).map(|(file, _)| features::folding_ranges(&self.analysis.as_ref().unwrap().files[file]));
-        self.reply(id, result);
-    }
-
-    fn completion(&mut self, id: RequestId, p: CompletionParams) {
-        let tdp = p.text_document_position;
-        let result = self.locate(&tdp.text_document, Some(tdp.position)).map(|(file, off)| {
-            let a = self.analysis.as_ref().unwrap();
-            CompletionResponse::Array(features::completions(a, file, off))
-        });
-        self.reply(id, result);
-    }
-}
-
-impl Server {
-    fn signature_help(&mut self, id: RequestId, p: SignatureHelpParams) {
-        let tdp = p.text_document_position_params;
-        let result = self.locate(&tdp.text_document, Some(tdp.position)).and_then(|(file, off)| assist::signature_help(self.analysis.as_ref()?, file, off));
-        self.reply(id, result);
-    }
-
-    fn inlay_hints(&mut self, id: RequestId, p: InlayHintParams) {
-        let hints = self.hints;
-        let result = self.locate(&p.text_document, None).map(|(file, _)| {
-            let a = self.analysis.as_ref().unwrap();
-            let within = assist::span_of(&a.files[file], &p.range);
-            assist::inlay_hints(a, file, within, hints)
-        });
-        self.reply(id, result);
-    }
-
-    fn code_actions(&mut self, id: RequestId, p: CodeActionParams) {
-        let result = self.locate(&p.text_document, None).map(|(file, _)| {
-            let a = self.analysis.as_ref().unwrap();
-            let span = assist::span_of(&a.files[file], &p.range);
-            assist::code_actions(a, file, &p.text_document.uri, span, |d| self.to_lsp_diag(a, d))
-        });
-        self.reply(id, result);
-    }
-
-    fn formatting(&mut self, id: RequestId, doc: TextDocumentIdentifier, range: Option<Range>) {
-        let result = self.locate(&doc, None).and_then(|(file, _)| {
-            let f = &self.analysis.as_ref()?.files[file];
-            assist::format_edits(f, range.map(|r| (r.start.line, r.end.line)))
-        });
-        self.reply(id, result);
-    }
-
-    fn workspace_symbols(&mut self, id: RequestId, p: WorkspaceSymbolParams) {
-        self.ensure_fresh();
-        let result = self.analysis.as_ref().map(|a| assist::workspace_symbols(a, &p.query, |f| self.uri_of(a, f)));
-        self.reply(id, result.map(WorkspaceSymbolResponse::Flat));
-    }
-
-    fn highlights(&mut self, id: RequestId, p: DocumentHighlightParams) {
-        let tdp = p.text_document_position_params;
-        let result = self.locate(&tdp.text_document, Some(tdp.position)).and_then(|(file, off)| assist::highlights(self.analysis.as_ref()?, file, off));
-        self.reply(id, result);
-    }
-}
-
-/// Runs `f` if `req` is an `R` request; otherwise gives the request back.
-fn try_handle<R: request::Request>(req: Request, f: impl FnOnce(RequestId, R::Params)) -> Result<(), Request> {
-    match req.extract::<R::Params>(R::METHOD) {
-        Ok((id, params)) => {
-            f(id, params);
-            Ok(())
-        }
-        Err(ExtractError::MethodMismatch(r)) => Err(r),
-        Err(ExtractError::JsonError { method, error }) => {
-            // Malformed params: report and drop.
-            eprintln!("slang-lsp: bad params for {method}: {error}");
-            Ok(())
-        }
+        self.touch();
     }
 }
 

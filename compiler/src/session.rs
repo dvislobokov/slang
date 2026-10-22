@@ -30,6 +30,7 @@ use crate::stdindex::StdIndex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+#[derive(Clone)]
 struct FileState {
     source: SourceFile,
     parse_diags: Vec<Diagnostic>,
@@ -37,9 +38,12 @@ struct FileState {
 }
 
 /// In-memory project: path -> source text.
-#[derive(Default)]
+///
+/// Cloning is cheap (parsed files are shared), so a tool can analyse a
+/// snapshot on another thread while it keeps editing the session.
+#[derive(Clone, Default)]
 pub struct Session {
-    files: BTreeMap<String, FileState>,
+    files: BTreeMap<String, Arc<FileState>>,
     read_only: BTreeSet<String>,
     std: Option<Arc<StdIndex>>,
 }
@@ -62,7 +66,7 @@ impl Session {
         let tokens = lexer::lex(&text, &mut diags);
         let ast = parser::parse_file(tokens, &mut diags);
         let state = FileState { source: SourceFile::new(path.clone(), text), parse_diags: diags.items, ast };
-        self.files.insert(path, state);
+        self.files.insert(path, Arc::new(state));
     }
 
     pub fn remove_file(&mut self, path: &str) -> bool {
@@ -108,6 +112,14 @@ impl Session {
 
     /// Parses (cached) and analyses all files.
     pub fn analyze(&self) -> Analysis {
+        self.analyze_cancellable(None).expect("analysis without a cancel flag completes")
+    }
+
+    /// [`Session::analyze`] that returns `None` as soon as it notices that
+    /// `cancel` was set (checked between phases and function bodies, see
+    /// [`index::analyze_indexed_cancellable`]).
+    pub fn analyze_cancellable(&self, cancel: Option<&std::sync::atomic::AtomicBool>) -> Option<Analysis> {
+        let cancelled = || cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed));
         let files: Vec<SourceFile> = self.files.values().map(|f| f.source.clone()).collect();
         let mut asts: Vec<ast::File> = self.files.values().map(|f| f.ast.clone()).collect();
         let texts: Vec<&str> = files.iter().map(|f| f.text.as_str()).collect();
@@ -119,7 +131,10 @@ impl Session {
         // Declarations excluded by `@cfg` (or files by their suffix) on
         // this target are not analysed, as in a build.
         crate::driver::apply_cfg(&mut asts, &files, &crate::cfg::CfgEnv::current(), &mut diags);
-        let (hir, index) = index::analyze_indexed(&asts, &texts, &mut diags);
+        if cancelled() {
+            return None;
+        }
+        let (hir, index) = index::analyze_indexed_cancellable(&asts, &texts, &mut diags, cancel)?;
         let ok = !diags.has_errors() && !diagnostics.iter().any(|d: &Diagnostic| d.severity == Severity::Error);
         diagnostics.extend(diags.items);
         complete_fixes(&mut diagnostics, &files, &asts);
@@ -128,7 +143,12 @@ impl Session {
         if let Some(std) = &self.std {
             attach_std(&mut a, std);
         }
-        a
+        Some(a)
+    }
+
+    /// The parsed (possibly partial) AST of `path`.
+    pub fn ast(&self, path: &str) -> Option<&ast::File> {
+        self.files.get(path).map(|f| &f.ast)
     }
 }
 
@@ -476,6 +496,23 @@ mod tests {
         assert_eq!(user.name, "User");
         let names: Vec<&str> = user.children.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["Name", "Hello"]);
+    }
+
+    #[test]
+    fn analysis_can_be_cancelled_and_snapshots_are_independent() {
+        let s = session();
+        let flag = std::sync::atomic::AtomicBool::new(true);
+        assert!(s.analyze_cancellable(Some(&flag)).is_none(), "a set flag stops the analysis");
+        flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        let a = s.analyze_cancellable(Some(&flag)).expect("not cancelled");
+        assert!(a.diagnostics.is_empty());
+        // A clone is a snapshot: later edits of the original do not reach it.
+        let snapshot = s.clone();
+        let mut s = s;
+        s.update_file("main.sl", MAIN.replace("u.Hello()", "u.Nope()"));
+        assert!(snapshot.analyze().diagnostics.is_empty());
+        assert!(!s.analyze().diagnostics.is_empty());
+        assert_eq!(snapshot.ast("main.sl").map(|f| f.decls.len()), Some(1));
     }
 
     #[test]

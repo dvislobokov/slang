@@ -20,11 +20,12 @@ use std::collections::HashMap;
 // AST walking
 // ---------------------------------------------------------------------------
 
-/// Calls `on_stmt` / `on_expr` for every statement and expression of a
-/// file, outer before inner.
+/// Calls `on_stmt` / `on_expr` / `on_block` for every statement,
+/// expression and block of a file, outer before inner.
 pub(crate) struct Walker<'a, 'f> {
     pub on_stmt: &'f mut dyn FnMut(&'a Stmt),
     pub on_expr: &'f mut dyn FnMut(&'a Expr),
+    pub on_block: &'f mut dyn FnMut(&'a ast::Block),
 }
 
 impl<'a> Walker<'a, '_> {
@@ -58,13 +59,14 @@ impl<'a> Walker<'a, '_> {
         }
     }
 
-    fn func(&mut self, f: &'a ast::FuncDecl) {
+    pub fn func(&mut self, f: &'a ast::FuncDecl) {
         if let Some(b) = &f.body {
             self.block(b);
         }
     }
 
     fn block(&mut self, b: &'a ast::Block) {
+        (self.on_block)(b);
         for s in &b.stmts {
             self.stmt(s);
         }
@@ -131,7 +133,7 @@ impl<'a> Walker<'a, '_> {
         }
     }
 
-    fn expr(&mut self, e: &'a Expr) {
+    pub fn expr(&mut self, e: &'a Expr) {
         (self.on_expr)(e);
         match &e.kind {
             ExprKind::Field { base, .. } => self.expr(base),
@@ -421,7 +423,7 @@ pub(crate) fn inlay_hints(a: &Analysis, file: usize, within: Span, settings: Hin
     let mut calls: Vec<(&ast::Ident, Vec<&Expr>)> = Vec::new();
     let mut stmts: Vec<&Stmt> = Vec::new();
     let mut exprs: Vec<&Expr> = Vec::new();
-    Walker { on_stmt: &mut |s| stmts.push(s), on_expr: &mut |e| exprs.push(e) }.file(ast);
+    Walker { on_stmt: &mut |s| stmts.push(s), on_expr: &mut |e| exprs.push(e), on_block: &mut |_| {} }.file(ast);
     for s in &stmts {
         match &s.kind {
             StmtKind::Var(v) if v.ty.is_none() && v.init.is_some() => type_spots.extend(v.names.iter()),
@@ -465,6 +467,8 @@ pub(crate) fn inlay_hints(a: &Analysis, file: usize, within: Span, settings: Hin
             if matches!(a.hir.types.get(ty), Type::Invalid) {
                 continue;
             }
+            let mut data = crate::symbol_data(a, sym.id);
+            data["kind"] = "type".into();
             out.push(InlayHint {
                 position: pos(id.span.end),
                 label: InlayHintLabel::String(short_type_name(&a.hir, ty)),
@@ -473,7 +477,7 @@ pub(crate) fn inlay_hints(a: &Analysis, file: usize, within: Span, settings: Hin
                 tooltip: None,
                 padding_left: Some(true),
                 padding_right: None,
-                data: None,
+                data: Some(data),
             });
         }
     }
@@ -493,6 +497,8 @@ pub(crate) fn inlay_hints(a: &Analysis, file: usize, within: Span, settings: Hin
                 if !is_literal_arg(arg) || pname.is_empty() || !inside(arg.span) {
                     continue;
                 }
+                let mut data = crate::symbol_data(a, r.symbol);
+                data["kind"] = "parameter".into();
                 out.push(InlayHint {
                     position: pos(arg.span.start),
                     label: InlayHintLabel::String(format!("{pname}:")),
@@ -501,13 +507,46 @@ pub(crate) fn inlay_hints(a: &Analysis, file: usize, within: Span, settings: Hin
                     tooltip: None,
                     padding_left: None,
                     padding_right: Some(true),
-                    data: None,
+                    data: Some(data),
                 });
             }
         }
     }
     out.sort_by_key(|h| (h.position.line, h.position.character));
     out
+}
+
+/// `inlayHint/resolve`: a Markdown tooltip. For a type hint, the
+/// variable's signature and the documentation of its type's declaration;
+/// for a parameter name, the called function's signature and doc.
+pub(crate) fn resolve_inlay_hint(a: &Analysis, version: u64, mut hint: InlayHint) -> InlayHint {
+    let Some(data) = hint.data.as_ref() else { return hint };
+    let Some(id) = crate::symbol_from_data(a, version, data) else { return hint };
+    let mut value = crate::features::hover_markdown(a, id);
+    if data.get("kind").and_then(|k| k.as_str()) == Some("type") {
+        if let Some(decl) = a.index.symbol(id).ty.and_then(|t| type_symbol(a, t)) {
+            value.push_str("\n---\n\n");
+            value.push_str(&crate::features::hover_markdown(a, decl));
+        }
+    }
+    hint.tooltip = Some(lsp_types::InlayHintTooltip::MarkupContent(MarkupContent { kind: MarkupKind::Markdown, value }));
+    hint
+}
+
+/// The index symbol of the struct, enum or interface behind type `t`
+/// (through pointers, slices, fallible results and tasks).
+fn type_symbol(a: &Analysis, mut t: slang::types::TypeId) -> Option<SymbolId> {
+    use slang::sema::index::SymKey;
+    for _ in 0..16 {
+        t = match a.hir.types.get(t) {
+            Type::Pointer(x) | Type::Weak(x) | Type::Slice(x) | Type::Array(x, _) | Type::Fallible(x) | Type::Task(x) => *x,
+            Type::Struct(d) => return a.index.lookup(&SymKey::Struct(d.0)),
+            Type::Enum(d) => return a.index.lookup(&SymKey::Enum(d.0)),
+            Type::Interface(d) => return a.index.lookup(&SymKey::Interface(d.0)),
+            _ => return None,
+        };
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------

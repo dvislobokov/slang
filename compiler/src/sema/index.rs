@@ -228,14 +228,25 @@ impl SymbolIndex {
 /// partial) HIR program together with the symbol index. `texts[i]` is the
 /// source of `files[i]` (used for doc comments).
 pub fn analyze_indexed(files: &[ast::File], texts: &[&str], diags: &mut Diagnostics) -> (Program, SymbolIndex) {
+    analyze_indexed_cancellable(files, texts, diags, None).expect("analysis without a cancel flag completes")
+}
+
+/// [`analyze_indexed`] that gives up (returning `None`) once `cancel` is
+/// set: checked between the analysis phases and before each function
+/// body, so a superseded analysis stops within one function's checking.
+pub fn analyze_indexed_cancellable(files: &[ast::File], texts: &[&str], diags: &mut Diagnostics, cancel: Option<&std::sync::atomic::AtomicBool>) -> Option<(Program, SymbolIndex)> {
     let mut s = Sema::new(files, diags);
     s.ide = Some(Box::default());
+    s.cancel = cancel;
     s.run();
+    if s.cancelled() {
+        return None;
+    }
     let extra = s.ide_collect_extras();
     let rec = *s.ide.take().unwrap();
     let program = s.finish();
     let index = build(rec, extra, &program, texts);
-    (program, index)
+    Some((program, index))
 }
 
 // ---------------------------------------------------------------------------

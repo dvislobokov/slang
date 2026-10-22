@@ -1,7 +1,7 @@
 {
   "name": "slang-lang",
   "displayName": "Slang",
-  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics with quick fixes, navigation, hover, rename, completion, signature help, inlay hints, formatting, semantic highlighting) and debugging through lldb-dap with Slang value formatters",
+  "description": "Slang language support: syntax highlighting and the slang-lsp language server (diagnostics with quick fixes, navigation, hover, rename, completion, signature help, inlay hints, formatting, semantic highlighting, code lenses to run tests) and debugging through lldb-dap with Slang value formatters",
   "version": "0.3.0",
   "publisher": "slang",
   "license": "MIT",
@@ -49,6 +49,26 @@
       {
         "command": "slang.fmt",
         "title": "Format document (slang fmt)",
+        "category": "Slang"
+      },
+      {
+        "command": "slang.runTest",
+        "title": "Run test",
+        "category": "Slang"
+      },
+      {
+        "command": "slang.debugTest",
+        "title": "Debug test",
+        "category": "Slang"
+      },
+      {
+        "command": "slang.run",
+        "title": "Run",
+        "category": "Slang"
+      },
+      {
+        "command": "slang.showReferences",
+        "title": "Show references",
         "category": "Slang"
       }
     ],
@@ -116,6 +136,22 @@
         {
           "command": "slang.fmt",
           "when": "editorLangId == slang"
+        },
+        {
+          "command": "slang.runTest",
+          "when": "false"
+        },
+        {
+          "command": "slang.debugTest",
+          "when": "false"
+        },
+        {
+          "command": "slang.run",
+          "when": "false"
+        },
+        {
+          "command": "slang.showReferences",
+          "when": "false"
         }
       ]
     },
@@ -344,9 +380,11 @@
           "command": {
             "type": "string",
             "enum": [
-              "build"
+              "build",
+              "test",
+              "run"
             ],
-            "description": "`build`: slang build <source> -o <program> (debug info included)."
+            "description": "`build`: slang build <source> -o <program> (debug info included); `test` and `run` are started by the code lenses."
           },
           "source": {
             "type": "string",

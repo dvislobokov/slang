@@ -16,42 +16,68 @@ struct Client {
     next_id: i32,
     /// Notifications received while waiting for responses.
     notes: Vec<Notification>,
+    /// Requests the server sent to the client (progress, refresh).
+    server_requests: Vec<Request>,
+    /// Responses received while waiting for another one.
+    responses: Vec<lsp_server::Response>,
+    capabilities: ServerCapabilities,
 }
 
 impl Client {
     fn start(root: &Path) -> Client {
+        Client::start_with(root, |_| {})
+    }
+
+    /// Starts a server on `root` with initialize params adjusted by `adjust`.
+    fn start_with(root: &Path, adjust: impl FnOnce(&mut InitializeParams)) -> Client {
         let (server_conn, client_conn) = Connection::memory();
         let server = std::thread::spawn(move || slang_lsp::run(server_conn).expect("server failed"));
-        let mut c = Client { conn: client_conn, server: Some(server), next_id: 0, notes: Vec::new() };
+        let mut c = Client { conn: client_conn, server: Some(server), next_id: 0, notes: Vec::new(), server_requests: Vec::new(), responses: Vec::new(), capabilities: Default::default() };
         let root_uri = Url::from_file_path(root).unwrap();
         #[allow(deprecated)]
-        let params = InitializeParams {
+        let mut params = InitializeParams {
             root_uri: Some(root_uri.clone()),
             workspace_folders: Some(vec![WorkspaceFolder { uri: root_uri, name: "test".into() }]),
             ..Default::default()
         };
+        adjust(&mut params);
         let init: InitializeResult = serde_json::from_value(c.request_raw(request::Initialize::METHOD, serde_json::to_value(params).unwrap())).unwrap();
         assert!(init.capabilities.semantic_tokens_provider.is_some());
+        c.capabilities = init.capabilities;
         c.notify::<notification::Initialized>(InitializedParams {});
         c
     }
 
-    fn request_raw(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+    /// Sends a request without waiting; returns its id.
+    fn send_request(&mut self, method: &str, params: serde_json::Value) -> RequestId {
         self.next_id += 1;
         let id = RequestId::from(self.next_id);
         self.conn.sender.send(Message::Request(Request { id: id.clone(), method: method.into(), params })).unwrap();
+        id
+    }
+
+    /// Waits for the response to `id`, collecting everything else.
+    fn response(&mut self, id: &RequestId) -> lsp_server::Response {
+        if let Some(i) = self.responses.iter().position(|r| &r.id == id) {
+            return self.responses.remove(i);
+        }
         loop {
             match self.conn.receiver.recv_timeout(Duration::from_secs(30)).expect("no response from server") {
-                Message::Response(r) if r.id == id => {
-                    if let Some(e) = r.error {
-                        panic!("{method} failed: {} {}", e.code, e.message);
-                    }
-                    return r.result.unwrap_or(serde_json::Value::Null);
-                }
+                Message::Response(r) if &r.id == id => return r,
+                Message::Response(r) => self.responses.push(r),
                 Message::Notification(n) => self.notes.push(n),
-                _ => {}
+                Message::Request(r) => self.server_requests.push(r),
             }
         }
+    }
+
+    fn request_raw(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+        let id = self.send_request(method, params);
+        let r = self.response(&id);
+        if let Some(e) = r.error {
+            panic!("{method} failed: {} {}", e.code, e.message);
+        }
+        r.result.unwrap_or(serde_json::Value::Null)
     }
 
     fn request<R: request::Request>(&mut self, params: R::Params) -> R::Result {
@@ -61,16 +87,8 @@ impl Client {
 
     /// Sends a request expecting an error response; returns its message.
     fn request_err<R: request::Request>(&mut self, params: R::Params) -> String {
-        self.next_id += 1;
-        let id = RequestId::from(self.next_id);
-        self.conn.sender.send(Message::Request(Request { id: id.clone(), method: R::METHOD.into(), params: serde_json::to_value(params).unwrap() })).unwrap();
-        loop {
-            match self.conn.receiver.recv_timeout(Duration::from_secs(30)).unwrap() {
-                Message::Response(r) if r.id == id => return r.error.expect("expected an error").message,
-                Message::Notification(n) => self.notes.push(n),
-                _ => {}
-            }
-        }
+        let id = self.send_request(R::METHOD, serde_json::to_value(params).unwrap());
+        self.response(&id).error.expect("expected an error").message
     }
 
     fn notify<N: notification::Notification>(&self, params: N::Params) {
@@ -517,6 +535,35 @@ fn every_example_survives_all_queries() {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         });
+        let lenses: Option<Vec<CodeLens>> = c.request::<request::CodeLensRequest>(CodeLensParams { text_document: doc.clone(), work_done_progress_params: Default::default(), partial_result_params: Default::default() });
+        for l in lenses.unwrap_or_default().into_iter().filter(|l| l.command.is_none()) {
+            assert!(c.request::<request::CodeLensResolve>(l).command.is_some());
+        }
+        let everything = Range { start: Position { line: 0, character: 0 }, end: Position { line: 100_000, character: 0 } };
+        let hints: Option<Vec<InlayHint>> = c.request::<request::InlayHintRequest>(InlayHintParams { text_document: doc.clone(), range: everything, work_done_progress_params: Default::default() });
+        for h in hints.unwrap_or_default().into_iter().take(20) {
+            let _: InlayHint = c.request::<request::InlayHintResolveRequest>(h);
+        }
+        let _: Option<SemanticTokensRangeResult> = c.request::<request::SemanticTokensRangeRequest>(SemanticTokensRangeParams {
+            text_document: doc.clone(),
+            range: everything,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        });
+        let _: DocumentDiagnosticReportResult = c.request::<request::DocumentDiagnosticRequest>(DocumentDiagnosticParams {
+            text_document: doc.clone(),
+            identifier: None,
+            previous_result_id: None,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        });
+        let positions: Vec<Position> = (0..text.lines().count() as u32).step_by(3).map(|line| Position { line, character: 4 }).collect();
+        let _: Option<Vec<SelectionRange>> = c.request::<request::SelectionRangeRequest>(SelectionRangeParams {
+            text_document: doc.clone(),
+            positions,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        });
         for (line, l) in text.lines().enumerate() {
             let mut col = 0;
             for word in l.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.') {
@@ -537,10 +584,17 @@ fn every_example_survives_all_queries() {
                     partial_result_params: Default::default(),
                     context: None,
                 });
+                for method in [request::GotoImplementation::METHOD, request::GotoTypeDefinition::METHOD] {
+                    let p = GotoDefinitionParams { text_document_position_params: tdp(&uri, at), work_done_progress_params: Default::default(), partial_result_params: Default::default() };
+                    let _ = c.request_raw(method, serde_json::to_value(p).unwrap());
+                }
             }
         }
     }
 }
+
+#[path = "server/protocol.rs"]
+mod protocol;
 
 // ---------------------------------------------------------------------------
 // Stage 3-5 features

@@ -98,8 +98,100 @@ slang (CLI)  slang-lsp  slang fmt  slang test  IDEA plugin (через LSP)
 изменённые и удалённые на диске `.sl` (открытые в редакторе файлы
 главнее). Исходники `std/` и зависимостей из `.slang/deps/` (или
 `vendor/`) по `slang.lock` индексируются как файлы проекта только для
-чтения (см. ниже). Не сделано: call hierarchy, инкрементальная
-синхронизация текста, инкрементальный анализ.
+чтения (см. ниже). Не сделано: call hierarchy, linked editing,
+инкрементальный анализ (каждый анализ — весь проект, разбор кэшируется
+по файлам).
+
+Методы сервера (`lsp/src/`; capability — что объявляется в `initialize`):
+
+| Метод | Capability | Где |
+|-------|-----------|-----|
+| `textDocument/didOpen`, `didChange`, `didSave`, `didClose` | `textDocumentSync`: `change: Incremental` (2), `save.includeText` | `lib.rs`, `sync.rs` |
+| `$/cancelRequest` | — | `lib.rs` |
+| `textDocument/publishDiagnostics` (push) | — | `lib.rs` |
+| `textDocument/diagnostic`, `workspace/diagnostic` (pull) | `diagnosticProvider { identifier: "slang", interFileDependencies, workspaceDiagnostics }` | `handlers.rs` |
+| `textDocument/definition`, `declaration` (= definition) | `definitionProvider`, `declarationProvider` | `handlers.rs` |
+| `textDocument/typeDefinition` | `typeDefinitionProvider` | `nav.rs` |
+| `textDocument/implementation` | `implementationProvider` | `nav.rs` |
+| `textDocument/references`, `documentHighlight` | `referencesProvider`, `documentHighlightProvider` | `handlers.rs`, `assist.rs` |
+| `textDocument/hover` | `hoverProvider` | `features.rs` |
+| `textDocument/documentSymbol`, `workspace/symbol` | `documentSymbolProvider`, `workspaceSymbolProvider` | `features.rs`, `assist.rs` |
+| `textDocument/prepareRename`, `rename` | `renameProvider { prepareProvider }` | `handlers.rs` |
+| `textDocument/completion`, `completionItem/resolve` | `completionProvider { triggerCharacters: ["."], resolveProvider }` | `features.rs` |
+| `textDocument/signatureHelp` | `signatureHelpProvider` (`(`, `,`) | `assist.rs` |
+| `textDocument/inlayHint`, `inlayHint/resolve` | `inlayHintProvider { resolveProvider }` | `assist.rs` |
+| `textDocument/codeAction`, `codeAction/resolve` | `codeActionProvider { codeActionKinds: [quickfix], resolveProvider }` | `assist.rs` |
+| `textDocument/codeLens`, `codeLens/resolve` | `codeLensProvider { resolveProvider }` | `lens.rs` |
+| `textDocument/semanticTokens/full`, `full/delta`, `range` | `semanticTokensProvider { full: { delta: true }, range: true }` | `features.rs` |
+| `textDocument/foldingRange`, `selectionRange` | `foldingRangeProvider`, `selectionRangeProvider` | `features.rs`, `nav.rs` |
+| `textDocument/formatting`, `rangeFormatting` | `documentFormattingProvider`, `documentRangeFormattingProvider` | `assist.rs` |
+| `workspace/didChangeWatchedFiles`, `didChangeConfiguration` | — | `lib.rs` |
+| `workspace/willRenameFiles`, `didRenameFiles` | `workspace.fileOperations { willRename, didRename }` (`**/*.sl`, папки) | `files.rs`, `lib.rs` |
+| `window/workDoneProgress/create` + `$/progress` (сервер → клиент) | если клиент объявил `window.workDoneProgress` | `lib.rs` |
+| `slang/analyzerStatus`, `slang/documentText` | служебные: счётчики планировщика, текст документа у сервера (для отладки и тестов) | `handlers.rs` |
+
+Подробности:
+
+- **Синхронизация** инкрементальная: диапазоны `contentChanges` в UTF-16
+  применяются к копии текста у сервера по порядку (`\r` перед `\n` не часть
+  строки, позиции за концом строки/текста прижимаются к концу); изменение
+  без `range` заменяет весь текст. Разбор откладывается до старта анализа,
+  поэтому серия `didChange` стоит одного разбора и одного анализа.
+- **Планировщик и отмена.** Анализ идёт в отдельном потоке над снимком
+  `Session` (клон дешёвый: разобранные файлы общие), через ~100 мс после
+  последней правки или сразу, если ждёт запрос. Правка отменяет анализ в
+  полёте (`AtomicBool`, sema проверяет его между фазами и перед телом
+  каждой функции: `Session::analyze_cancellable`). Запросы отвечают по
+  анализу последнего текста; пока его нет, они ждут в очереди, и
+  `$/cancelRequest` вынимает их оттуда с ошибкой `RequestCancelled`
+  (−32800). Форматирование, folding и selection range нужны только текст
+  и синтаксис — отвечают сразу. `initializationOptions.debug.analysisDelayMs`
+  искусственно замедляет анализ (для тестов).
+- **Диагностики**: push или pull, не оба: `initializationOptions.diagnostics.mode`
+  = `auto` (по умолчанию: pull, если клиент объявил
+  `textDocument.diagnostic`, иначе push), `push` (pull не объявляется) или
+  `pull`. `resultId` — хэш диагностик файла (`unchanged`, если совпал);
+  `workspace/diagnostic`, в котором всё `unchanged`, «паркуется» до
+  анализа, который что-то меняет (клиенты, переспрашивающие сразу, не
+  крутятся); после анализа — `workspace/diagnostic/refresh`, если клиент
+  его поддерживает.
+- **Semantic tokens**: на документ хранится последний результат с
+  `resultId`; `full/delta` от него — одна правка между общим префиксом и
+  суффиксом (в единицах массива: 5 чисел на токен), от неизвестного id —
+  полные токены; `range` — токены, пересекающие диапазон.
+- **Implementation**: интерфейс → структуры и enum'ы, у которых есть все
+  его методы с теми же сигнатурами (методы с телом по умолчанию можно не
+  иметь; методы встроенных структур считаются); sealed — только из его
+  пространства имён; метод интерфейса → реализующие методы. **Type
+  definition**: тип переменной/параметра/поля/константы, результат функции
+  (сквозь `*T`, `weak`, `[]T`, `[N]T`, `T!`, `Task<T>`, значения `map`); для
+  экземпляра обобщённого типа — его объявление-шаблон.
+- **Resolve**: элементы completion несут `data` (id символа, полное имя,
+  версия анализа); `completionItem/resolve` добавляет `detail` и Markdown-
+  документацию (тот же конвейер, что hover). Подсказки inlay — tooltip в
+  `inlayHint/resolve`. Quick fix'ы дешёвые и сразу с правкой:
+  `codeAction/resolve` возвращает их как есть.
+- **Code lens**: на `@test`/`@bench`-функциях «▶ Run test» (`slang.runTest`)
+  и «Debug test» (`slang.debugTest`) с аргументами `[uri файла, имя]`, на
+  `main` — «▶ Run» (`slang.run`, `[uri]`); на экспортируемых объявлениях
+  верхнего уровня — «N references», счёт в `codeLens/resolve` (команда
+  `slang.showReferences` с `[uri, position, locations]`). Команды
+  выполняет клиент (`editors/vscode/src/extension.ts`: `slang test <пакет>
+  --filter ^Имя$ -v` и `slang run` как задачи; отладки отдельного теста в
+  `slang test` пока нет, «Debug test» запускает его с `-v`).
+- **Selection range**: токен → выражения → оператор → блоки → функция →
+  объявление → файл, по span'ам AST.
+- **Прогресс**: начальная индексация (загрузка std, файлы проекта, первый
+  анализ) и подгрузка проекта, найденного по манифесту при открытии файла.
+- **Переименование файлов**: правки только для файлов пакета, чьё
+  пространство имён выводится из пути (`src/a/b/x.sl` пакета с корнем
+  `app` → `namespace app.a.b`), когда путь меняет это имя: строка
+  `namespace` перемещаемого файла; если пространство имён переезжает целиком
+  — `import app.a.b` и `import app.a.b.T` везде; иначе — `import app.a.b.T`
+  членов файла, `import <новое>` в файлах, которые используют его
+  объявления, и `import app.a.b` в самом файле, если он использует
+  оставшиеся. Полные пути без импорта не переписываются.
+  `didRenameFiles` переносит файлы в сессии.
 
 Проект определяется файлом `slang.toml`; LSP ищет его вверх от открытого
 файла, загружает все `.sl` проекта и стандартную библиотеку (исходники

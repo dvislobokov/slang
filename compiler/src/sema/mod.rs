@@ -340,6 +340,9 @@ pub(crate) struct Sema<'a> {
     pub policy: Option<&'a ImportPolicy>,
     /// IDE symbol recording (see [`index`]); `None` = off.
     pub(crate) ide: Option<Box<index::Recorder>>,
+    /// Set by a tool (the language server) when the result is no longer
+    /// wanted: [`Sema::run`] stops between phases and function bodies.
+    pub(crate) cancel: Option<&'a std::sync::atomic::AtomicBool>,
     /// Generics state (templates, instantiations, type environment).
     pub(crate) gen: generics::GenState<'a>,
     /// Reflection state (lazily loaded library sources, compile-time fields).
@@ -389,6 +392,7 @@ impl<'a> Sema<'a> {
             attrs_done: false,
             policy: None,
             ide: None,
+            cancel: None,
             gen: generics::GenState::default(),
             refl: reflect::ReflState::default(),
             web: web::WebState::default(),
@@ -396,18 +400,31 @@ impl<'a> Sema<'a> {
         }
     }
 
+    /// The analysis was cancelled through [`Sema::cancel`].
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     fn run(&mut self) {
-        self.build_stdlib();
-        self.collect_decls();
-        self.add_std_structs();
-        self.register_collections();
-        self.register_std_sources();
-        self.resolve_imports();
-        self.resolve_template_bounds();
-        self.resolve_signatures();
-        self.check_implements();
-        self.run_deferred_bounds();
-        self.check_attributes();
+        let phases: [fn(&mut Self); 11] = [
+            Self::build_stdlib,
+            Self::collect_decls,
+            Self::add_std_structs,
+            Self::register_collections,
+            Self::register_std_sources,
+            Self::resolve_imports,
+            Self::resolve_template_bounds,
+            Self::resolve_signatures,
+            Self::check_implements,
+            Self::run_deferred_bounds,
+            Self::check_attributes,
+        ];
+        for phase in phases {
+            if self.cancelled() {
+                return;
+            }
+            phase(self);
+        }
         for g in 0..self.globals.len() {
             self.ensure_global(GlobalId(g as u32));
         }
@@ -417,6 +434,9 @@ impl<'a> Sema<'a> {
         // are checked in turn.
         let mut f = 0;
         while f < self.func_src.len() {
+            if self.cancelled() {
+                return;
+            }
             self.check_function_body(FuncId(f as u32));
             f += 1;
         }
