@@ -23,6 +23,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Examples built and run by the staged self-contained toolchain.
+#[path = "cross/bundle.rs"]
+mod bundle;
+
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
