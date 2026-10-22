@@ -1,0 +1,169 @@
+namespace bench.latencyp99
+
+import io
+import net
+
+// Tail latency of an HTTP/1.1 server while a background task keeps a
+// ~200 MB live heap of small objects churning (ARC frees at once, on the
+// thread that drops the last reference; Go's GC traces and sweeps).
+//   main                 deterministic self-check of the churn: builds the
+//                        heap, rebuilds 2 x SLOTS buckets, prints checksums
+//   main --server        only the server (no background work): prints its
+//                        port (stderr), serves until killed
+//   main --server-churn  the server plus the background churn; the port is
+//                        printed once the heap is built, then every second a
+//                        line "churn <buckets rebuilt/s>" (stderr)
+// The load generator is main.go -load (percentiles); bench.sh runs it all.
+//   SCALE=small  a 2 MB heap (smoke test)
+//
+// The heap: SLOTS buckets; each holds a list of OBJS objects (an int, a
+// small string, a pointer to the previous object) and a map from id to
+// every other object. A rebuild replaces one bucket chosen by an LCG.
+
+const BODY = "{\"message\":\"hello, world\",\"id\":1}"
+
+struct Obj {
+    Id   int
+    Name string
+    Prev *Obj
+}
+
+struct Bucket {
+    Items []*Obj
+    Index map[int]*Obj
+}
+
+struct Config {
+    Slots int
+    Objs  int
+}
+
+async func Hello(req *http.Request, res *http.Response) void! {
+    res.Json(200, BODY)
+}
+
+func lcg(x int) int {
+    return (x * 1103515245 + 12345) & 2147483647
+}
+
+// Appends objects from..to-1 of a bucket (the churn builds a bucket in
+// chunks, yielding in between).
+func fill(b *Bucket, seed int, from int, to int) {
+    var prev *Obj = nil
+    if from > 0 {
+        prev = b.Items[from - 1]
+    }
+    for i in from..to {
+        var id = seed * 4096 + i
+        var o = new Obj{Id: id, Name: fmt.Format("o{0}", id % 1000), Prev: prev}
+        b.Items = append(b.Items, o)
+        if i % 2 == 0 {
+            b.Index[id] = o
+        }
+        prev = o
+    }
+}
+
+func newBucket(seed int, n int) *Bucket {
+    var b = new Bucket{Items: [], Index: map[int]*Obj{}}
+    fill(b, seed, 0, n)
+    return b
+}
+
+func newHeap(cfg Config) []*Bucket {
+    var slots []*Bucket = []
+    for s in 0..cfg.Slots {
+        slots = append(slots, newBucket(s, cfg.Objs))
+    }
+    return slots
+}
+
+// Replaces one bucket; returns the new LCG state.
+func rebuild(slots []*Bucket, cfg Config, r int) int {
+    var next = lcg(r)
+    slots[next % cfg.Slots] = newBucket(next & 1048575, cfg.Objs)
+    return next
+}
+
+func checksum(slots []*Bucket) int {
+    var s = 0
+    var objs = 0
+    for b in slots {
+        for o in b.Items {
+            s = (s + o.Id + len(o.Name)) & 4294967295
+            objs += 1
+        }
+        s = (s + len(b.Index)) & 4294967295
+    }
+    println("objects", objs, "checksum", s)
+    return s
+}
+
+async func churn(slots []*Bucket, cfg Config) {
+    await task.Yield()
+    var r = 1
+    var n = 0
+    var t0 = diag.rtMonoNanos()
+    for {
+        // = rebuild(slots, cfg, r), built in chunks of 400 objects with a
+        // yield after each (cooperative scheduling: let HTTP tasks run)
+        r = lcg(r)
+        var b = new Bucket{Items: [], Index: map[int]*Obj{}}
+        var from = 0
+        for from < cfg.Objs {
+            var to = from + 400
+            if to > cfg.Objs {
+                to = cfg.Objs
+            }
+            fill(b, r & 1048575, from, to)
+            from = to
+            await task.Yield()
+        }
+        slots[r % cfg.Slots] = b // frees the old bucket here, on this thread
+        n += 1
+        var t = diag.rtMonoNanos()
+        if t - t0 >= 1000000000 {
+            io.Eprintln(fmt.Format("churn {0}", n * 1000000000 / (t - t0)))
+            n = 0
+            t0 = t
+        }
+    }
+}
+
+async func main() void! {
+    var args = os.Args()
+    var cfg = Config{Slots: 1000, Objs: 3200}
+    if os.Getenv("SCALE") == "small" {
+        cfg = Config{Slots: 100, Objs: 150}
+    }
+    var mode = ""
+    if len(args) > 1 {
+        mode = args[1]
+    }
+    if mode == "" {
+        var slots = newHeap(cfg)
+        _ = checksum(slots)
+        var r = 1
+        for _ in 0..cfg.Slots * 2 {
+            r = rebuild(slots, cfg, r)
+        }
+        _ = checksum(slots)
+        io.Eprintln(fmt.Format("heap_in_use_mb {0}", diag.rtHeapInUse() / 1048576))
+        return
+    }
+    var r = http.NewRouter()
+    r.Get("/", Hello)
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: r}
+    srv.Listen()?
+    var serving = srv.Serve()
+    if mode == "--server-churn" {
+        var slots = newHeap(cfg)
+        var bg = churn(slots, cfg)
+        io.Eprintln(fmt.Format("{0}", srv.Port()))
+        await serving?
+        await bg
+        return
+    }
+    io.Eprintln(fmt.Format("{0}", srv.Port()))
+    await serving?
+}

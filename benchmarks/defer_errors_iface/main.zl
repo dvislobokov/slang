@@ -1,0 +1,237 @@
+namespace bench.defererrorsiface
+
+import io
+
+// Micro-benchmarks of language mechanisms, one row each. stdout gets the
+// deterministic checksum of every row (equal to main.go's), stderr the
+// microseconds of every row ("us <row> <microseconds>").
+//   SCALE=small  divides every iteration count by 100 (smoke test)
+// The error rows measure whatever the binary was built with: bench.sh
+// builds it twice, with error traces (the default) and --no-error-trace.
+
+interface Op {
+    func Apply(x int) int
+}
+
+struct AddOp {
+    K int
+    func Apply(x int) int { return (x + this.K) & 1023 }
+}
+
+struct XorOp {
+    K int
+    func Apply(x int) int { return (x ^ this.K) & 1023 }
+}
+
+struct Counter {
+    N int
+    func Inc() { this.N += 1 }
+}
+
+interface Valuer {
+    func Value() int
+}
+
+struct Val {
+    N int
+    func Value() int { return this.N }
+}
+
+const ErrOdd = error("odd")
+
+func now() int {
+    return diag.rtMonoNanos()
+}
+
+func report(name string, n int, t0 int, sum int) {
+    io.Eprintln(fmt.Format("us {0} {1}", name, (now() - t0) / 1000))
+    println(name, n, sum)
+}
+
+// 1. direct method calls on a concrete type (inlinable).
+func direct(n int) {
+    var a = AddOp{K: 7}
+    var b = XorOp{K: 5}
+    var t0 = now()
+    var s = 0
+    for i in 0..n {
+        if i & 1 == 0 {
+            s += a.Apply(i)
+        } else {
+            s += b.Apply(i)
+        }
+    }
+    report("direct_call", n, t0, s)
+}
+
+// 2. the same calls through an interface (two implementations, one call site).
+func iface(n int) {
+    var ops []Op = []
+    ops = append(ops, new AddOp{K: 7})
+    ops = append(ops, new XorOp{K: 5})
+    var t0 = now()
+    var s = 0
+    for i in 0..n {
+        s += ops[i & 1].Apply(i)
+    }
+    report("iface_call", n, t0, s)
+}
+
+// 3. closures capturing a variable, called through a func value.
+func closures(n int) {
+    var k = 7
+    var fs []func(int) int = []
+    fs = append(fs, (x int) => (x + k) & 1023)
+    fs = append(fs, (x int) => (x ^ (k - 2)) & 1023)
+    var t0 = now()
+    var s = 0
+    for i in 0..n {
+        s += fs[i & 1](i)
+    }
+    report("closure_call", n, t0, s)
+}
+
+// 4. a function with a defer, called in a hot loop, and the same without.
+func withDefer(c *Counter, i int) int {
+    defer c.Inc()
+    return i & 3
+}
+
+func noDefer(c *Counter, i int) int {
+    var r = i & 3
+    c.Inc()
+    return r
+}
+
+func defers(n int) {
+    var c = Counter{}
+    var t0 = now()
+    var s = 0
+    for i in 0..n {
+        s += withDefer(&c, i)
+    }
+    report("defer_call", n, t0, s + c.N)
+    var d = Counter{}
+    t0 = now()
+    s = 0
+    for i in 0..n {
+        s += noDefer(&d, i)
+    }
+    report("no_defer_call", n, t0, s + d.N)
+}
+
+// 5. errors: one call in 8 fails at the bottom of three levels of `?`.
+func leafNew(i int) int! {
+    if i & 7 == 0 {
+        return error("odd")
+    }
+    return i & 15
+}
+
+func midNew(i int) int! {
+    var v = leafNew(i)?
+    return v + 1
+}
+
+func topNew(i int) int! {
+    var v = midNew(i)?
+    return v * 2
+}
+
+func leafConst(i int) int! {
+    if i & 7 == 0 {
+        return ErrOdd
+    }
+    return i & 15
+}
+
+func midConst(i int) int! {
+    var v = leafConst(i)?
+    return v + 1
+}
+
+func topConst(i int) int! {
+    var v = midConst(i)?
+    return v * 2
+}
+
+func errorsNew(n int) {
+    var t0 = now()
+    var s = 0
+    var fails = 0
+    for i in 0..n {
+        var v = try topNew(i) catch err {
+            fails += len(err.Message())
+            continue
+        }
+        s += v
+    }
+    report("error_new", n, t0, s + fails)
+}
+
+func errorsConst(n int) {
+    var t0 = now()
+    var s = 0
+    var fails = 0
+    for i in 0..n {
+        var v = try topConst(i) catch err {
+            fails += len(err.Message())
+            continue
+        }
+        s += v
+    }
+    report("error_sentinel", n, t0, s + fails)
+}
+
+// 6. generics (monomorphized) vs interface-based code over the same data.
+func SumG<T: Add>(xs []T, zero T) T {
+    var s = zero
+    for x in xs {
+        s = s + x
+    }
+    return s
+}
+
+func SumI(xs []Valuer) int {
+    var s = 0
+    for x in xs {
+        s += x.Value()
+    }
+    return s
+}
+
+func generics(n int, passes int) {
+    var xs []int = []
+    var vs []Valuer = []
+    for i in 0..n {
+        xs = append(xs, i & 255)
+        vs = append(vs, new Val{N: i & 255})
+    }
+    var t0 = now()
+    var s = 0
+    for _ in 0..passes {
+        s += SumG(xs, 0)
+    }
+    report("generic_sum", n * passes, t0, s)
+    t0 = now()
+    s = 0
+    for _ in 0..passes {
+        s += SumI(vs)
+    }
+    report("iface_sum", n * passes, t0, s)
+}
+
+func main() {
+    var scale = 1
+    if os.Getenv("SCALE") == "small" {
+        scale = 100
+    }
+    var calls = 100000000 / scale
+    direct(calls)
+    iface(calls)
+    closures(calls)
+    defers(calls / 5)
+    errorsNew(calls / 5)
+    errorsConst(calls / 5)
+    generics(1000000 / scale, 100)
+}

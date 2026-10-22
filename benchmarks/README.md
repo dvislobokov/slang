@@ -737,3 +737,5 @@ suspending still allocates a task (a synchronous fast path would need an
 ABI change). The TLS server copies the GCM context per record (could be
 used in place with an aligned copy kept per connection), and does one
 `zell__aead` call per response rather than batching streams into records.
+
+Latency, cores scaling and language-mechanism benchmarks: see [RESULTS-latency.md](RESULTS-latency.md).
