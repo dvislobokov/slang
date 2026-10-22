@@ -30,13 +30,14 @@ void zell_runtime_shutdown(void) {
      * map, diag.c), while the scheduler still runs the tasks their
      * destructors wake; then the scheduler, I/O and resolver threads;
      * then what was registered again meanwhile. */
-    zell__diag_shutdown();
+    if (zell__diag_shutdown_fn) zell__diag_shutdown_fn();
     zell__sched_stop();
     zell__io_flush_all();
     if (g_args_free) g_args_free();
-    zell__diag_shutdown();
+    if (zell__diag_shutdown_fn) zell__diag_shutdown_fn();
     g_initialized = 0;
-    zell__rc_drain_all();   /* objects waiting in refcount merge queues (rc.c) */
+    /* objects waiting in refcount merge queues (rc.c) */
+    if (zell__rc_drain_fn) zell__rc_drain_fn();
     zell__leak_report();
 }
 

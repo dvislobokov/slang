@@ -96,6 +96,8 @@ ZELL_HIDDEN int zell__rc_pending(void);
 ZELL_HIDDEN void zell__rc_park(int merge);
 ZELL_HIDDEN void zell__rc_unpark(void);
 ZELL_HIDDEN void zell__rc_drain_all(void);
+/* zell__rc_drain_all once a thread took an owner slot (rc.c), else NULL. */
+ZELL_HIDDEN extern void (*zell__rc_drain_fn)(void);
 /* Whether zell__heap_collect(0) has work on this thread (idle workers). */
 ZELL_HIDDEN int zell__heap_needs_collect(void);
 ZELL_HIDDEN void zell__heap_stats(int64_t *in_use, int64_t *retained, int64_t *released, int64_t *returned);
@@ -190,6 +192,9 @@ ZELL_HIDDEN int64_t zell__live_tasks(void);
 ZELL_HIDDEN int64_t zell__sched_queue_len(void);
 /* diag (diag.c): releases the process-wide slots before the leak report. */
 ZELL_HIDDEN void zell__diag_shutdown(void);
+/* Set once the diag slot map was set (so programs without it do not link
+ * the release path through zell__diag_shutdown). */
+ZELL_HIDDEN extern void (*zell__diag_shutdown_fn)(void);
 
 /* Panic capture scopes (std_testing.c): while a thread's scope is set, a
  * panic on that thread saves its message (malloc'd) and longjmps to `jb`

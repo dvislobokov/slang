@@ -35,6 +35,7 @@ void zell_diag_rt_set_slots(zell_object *m) {
     zell_object *old = g_slots;
     g_slots = m;
     ptr_unlock();
+    zell__diag_shutdown_fn = zell__diag_shutdown;
     zell_release(old);
 }
 
@@ -50,6 +51,8 @@ void zell_diag_rt_unlock(void) { __atomic_store_n(&g_slots_lock, 0, __ATOMIC_REL
  * their destructors (closing pooled connections, flushing sinks) and the
  * tasks those wake (HTTP/2 readers) finish before the leak report, and
  * once more after (whatever was registered again meanwhile). */
+void (*zell__diag_shutdown_fn)(void);
+
 void zell__diag_shutdown(void) {
     ptr_lock();
     zell_object *old = g_slots;

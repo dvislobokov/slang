@@ -193,10 +193,16 @@ void zell__process_init(void) {
     zell__plat_once_run(&proc_once, zell__plat_process_init);
 }
 
+/* Set by zell__sched_start, so a program that never starts the scheduler
+ * does not link the drain (sched_stop_started, nor what it pulls in). */
+static void sched_stop_started(void);
+static void (*g_sched_stop)(void);
+
 /* Starts the workers and the timer thread. Called lazily, by the first
  * post, await or timer: a program that never starts a task stays single-
  * threaded (cheaper startup, non-atomic refcounts, ABI.md 3.2). */
 void zell__sched_start(void) {
+    g_sched_stop = sched_stop_started;
     zell__process_init();
     zell__plat_mutex_lock(&q_mu);
     if (q_started) { zell__plat_mutex_unlock(&q_mu); return; }
@@ -209,6 +215,11 @@ void zell__sched_start(void) {
 }
 
 void zell__sched_stop(void) {
+    if (g_sched_stop) g_sched_stop();
+    else stop_io();
+}
+
+static void sched_stop_started(void) {
     zell__plat_mutex_lock(&q_mu);
     if (!q_started) {
         zell__plat_mutex_unlock(&q_mu);

@@ -211,6 +211,8 @@ static void thread_exit(void *arg) {
 
 static void key_init(void) { g_keyed = zell__plat_tls_new(&g_key, thread_exit); }
 
+void (*zell__rc_drain_fn)(void);
+
 void zell__rc_thread_enable(void) {
     if (t_slot) return;
     t_eligible = 0;   /* one attempt: with no free slot the thread stays unowned */
@@ -228,6 +230,7 @@ void zell__rc_thread_enable(void) {
         __atomic_store_n(&g_slot_hint, i, __ATOMIC_RELAXED);
         t_slot = i;
         zell_rc_owner = OWNER_TAG(i);
+        zell__rc_drain_fn = zell__rc_drain_all;
         zell__plat_tls_set(g_key, (void *)(intptr_t)i);
         return;
     }
