@@ -518,55 +518,82 @@ that finishes in well under a second, and `DETAIL=1` prints the phase lines.
 | `async_io` | 1000 loopback TCP connections x 1000 round trips of 64 bytes (latency-bound, unlike `tcp_echo`); round trips/s and p50/p99/max latency |
 | `select_many` | one consumer takes 2M events from whichever of 8 unbuffered channels is ready; Zell has no `select`, so it keeps a `Recv` per channel and waits with `task.Any` (which cancels the losers, so every event re-arms the receives); for reference the same events through a merge channel fed by 8 forwarders |
 
-### Preliminary numbers (before the scheduler fixes below; NOT a quiet run)
+### Results (2026-10-22, quiet machine, best of 5)
 
-**Preliminary.** Single runs (not best of 5) at commit e51cf3d, measured
-while four other agents were building and testing on the same 4 vCPU
-machine (load average 2-4), so every figure can be off by 2x or more; the
-order of magnitude is what they show. The final best-of-5 table is a TODO
-below. Times in ms are the programs' own phase timings; wall/CPU/RSS from
-`bench-perf.sh`.
+`RUNS=5 DETAIL=1 ./scripts/bench-perf.sh async` at commit 450e35f (which
+contains the scheduler fixes described under "Analysis"), Zell and Go
+alternating, full size, nothing else running (load < 0.5 at the start).
+Wall, CPU (user+sys) and peak RSS are for the best run (by wall time) of
+the whole process; the phase times are that run's own timings. Zell / Go
+with Go = 1.00: below 1 is better, except for round trips/s, where above
+1 is better. Every checksum matched.
 
-| bench | phase | Zell | Go | Zell / Go |
-|---|---|---|---|---|
-| spawn_tasks | wall (CPU) | 10.1 s (12.2) | 17.7 s (24.8) | 0.57 |
-| | run 1M yielding tasks | 4 971 ms | 934 ms | 5.3 |
-| | park 1M tasks | 4 360 ms | 15 579 ms | 0.28 |
-| | wake 1M parked | 500 ms | 1 060 ms | 0.47 |
-| | peak RSS | 806 MB | 2 600 MB | **0.31** |
-| channel_pingpong | wall (CPU) | 167.7 s (261) | 1.48 s (2.2) | 113 |
-| | ping-pong 5M (1 worker: 6 472 ms) | 162 459 ms | 1 203 ms | 135 |
-| | 4-stage pipeline 1M (1 worker: 3 683 ms) | 5 280 ms | 271 ms | 19 |
-| fanout_fanin | wall (CPU) | 9.68 s (35.8) | 1.41 s (3.4) | 6.9 |
-| | fan-in 10k producers | 7 126 ms | 1 192 ms | 6.0 |
-| | worker pool 1M jobs | 2 545 ms | 214 ms | 12 |
-| mutex_contention | contended, 8 tasks | 34 006 ms | 590 ms | 58 |
-| | uncontended | 1 002 ms | 162 ms | 6.2 |
-| timers | wall | 194.3 s | 0.163 s | ~1200 |
-| | max / mean lateness | 187 s / 127 s | 21 ms / 1.4 ms | - |
-| await_chain | 10M async calls, no suspension | 1 600 ms (160 ns/call) | 94 ms (9 ns/call) | 17 |
-| | 1k chains of 1000 resuming | 782 ms | 10 ms | 78 |
-| cancel_tree | drain after Cancel(), avg / max | 158 / 300 ms | 12.7 / 16.5 ms | 12 |
-| | drain after WithTimeout, avg | 113 ms | 16.4 ms | 6.9 |
-| | peak RSS | 28 MB | 41 MB | 0.68 |
-| async_io | wall (CPU) | 34.5 s (84) | 9.05 s (24.8) | 3.8 |
-| | round trips/s | 29 100 | 113 000 | 3.9 (slower) |
-| | p50 / p99 / max | 33.7 / 61.3 / 103 ms | 8.1 / 18.6 / 64 ms | 4.2 / 3.3 / 1.6 |
-| select_many | `task.Any` emulation / Go `select` (Zell with 1 worker) | 4 161 ms | 70 796 ms (suspect) | - |
-| | merge channel (Zell with 1 worker) | 15 043 ms | 1 151 ms | 13 |
+The `before fixes` column is the preliminary single run at commit e51cf3d
+on a shared machine (load 2-4, so up to 2x off); the fixes themselves were
+never measured separately, so it is the only "before".
 
-The Go `select` figure (35 us per event) is far off what Go usually does
-and was measured during the heaviest load; treat it as noise until the
-quiet run. Zell's `select_many` was only run with `ZELL_WORKERS=1`.
+| bench | phase | before fixes (Zell) | Zell | Go | Zell / Go |
+|---|---|---|---|---|---|
+| spawn_tasks | wall s (CPU s) | 10.1 (12.2) | 4.78 (9.60) | 3.43 (8.89) | 1.39 |
+| | peak RSS MB | 806 | 606 | 2 579 | **0.24** |
+| | run 1M yielding tasks | 4 971 ms | 3 195 ms | 629 ms | 5.08 |
+| | park 1M tasks | 4 360 ms | 596 ms | 2 237 ms | **0.27** |
+| | wake 1M parked | 500 ms | 779 ms | 364 ms | 2.14 |
+| channel_pingpong | wall s (CPU s) | 167.7 (261) | 42.1 (76.9) | 1.39 (2.03) | 30.4 |
+| | peak RSS MB | - | 10.8 | 10.7 | 1.01 |
+| | ping-pong 5M | 162 459 ms | 39 035 ms | 1 110 ms | 35.2 |
+| | 4-stage pipeline 1M | 5 280 ms | 3 081 ms | 271 ms | 11.4 |
+| fanout_fanin | wall s (CPU s) | 9.68 (35.8) | 3.73 (14.0) | 0.85 (1.90) | 4.38 |
+| | peak RSS MB | - | 24.3 | 27.5 | 0.88 |
+| | fan-in 10k producers | 7 126 ms | 1 759 ms | 692 ms | 2.54 |
+| | worker pool 1M jobs | 2 545 ms | 1 962 ms | 154 ms | 12.7 |
+| mutex_contention | wall s (CPU s) | - | 22.8 (37.6) | 0.84 (2.02) | 27.3 |
+| | peak RSS MB | - | 10.7 | 10.8 | 0.99 |
+| | contended, 8 tasks | 34 006 ms | 22 025 ms | 662 ms | 33.3 |
+| | uncontended | 1 002 ms | 776 ms | 165 ms | 4.70 |
+| timers | wall s (CPU s) | 194.3 | 0.166 (0.40) | 0.119 (0.33) | 1.39 |
+| | peak RSS MB | - | 40.1 | 35.2 | 1.14 |
+| | max / mean lateness | 187 s / 127 s | 10.8 / 2.81 ms | 19.7 / 0.65 ms | 0.55 / 4.3 |
+| | timers late by > 1 ms | - | 60 618 | 17 256 | 3.5 |
+| await_chain | wall s (CPU s) | - | 3.86 (5.24) | 0.105 (0.11) | 36.8 |
+| | 10M async calls, no suspension | 1 600 ms | 1 364 ms (136 ns/call) | 81 ms (8 ns/call) | 16.8 |
+| | 1k chains of 1000 resuming | 782 ms | 2 494 ms | 20 ms | 125 |
+| cancel_tree | wall s (CPU s) | - | 0.785 (1.03) | 0.589 (1.38) | 1.33 |
+| | peak RSS MB | 28 | 46.9 | 38.0 | 1.23 |
+| | drain after Cancel(), avg / max | 158 / 300 ms | 18.1 / 35.8 ms | 8.9 / 10.3 ms | 2.04 / 3.48 |
+| | drain after WithTimeout, avg | 113 ms | 17.1 ms | 9.3 ms | 1.84 |
+| async_io | wall s (CPU s) | 34.5 (84) | 18.5 (61.0) | 5.12 (19.4) | 3.62 |
+| | peak RSS MB | - | 28.1 | 28.9 | 0.97 |
+| | round trips/s (> 1 better) | 29 100 | 54 365 | 202 388 | 0.27 |
+| | p50 / p99 / max | 33.7 / 61.3 / 103 ms | 18.7 / 24.8 / 39.5 ms | 4.7 / 7.7 / 80.6 ms | 3.94 / 3.23 / 0.49 |
+| select_many | wall s (CPU s) | - | 53.1 (120) | 3.80 (7.93) | 14.0 |
+| | peak RSS MB | - | 10.8 | 10.8 | 1.00 |
+| | `task.Any` emulation / Go `select` | 4 161 ms (1 worker) | 29 059 ms | 2 376 ms | 12.2 |
+| | merge channel | 15 043 ms (1 worker) | 24 054 ms | 1 421 ms | 16.9 |
 
-### Final table: TODO (quiet machine)
+What the quiet run shows:
 
-TODO: `RUNS=5 ./scripts/bench-perf.sh async` (best of 5, alternating Zell
-and Go) on an otherwise idle machine, before and after the fixes below,
-with wall, CPU, peak RSS and Go = 1.0 ratios. Not done in this session: the
-machine was shared by five agents, so full-size timing was stopped; the
-fixes were checked with the C tests (also under TSan), the `--leak-check`
-examples and the `SCALE=small` runs only.
+- The timer heap fixed `timers` outright (194 s -> 0.17 s, max lateness
+  now below Go's; the mean is 4x Go's because the timer thread wakes the
+  tasks through the global queue) and `cancel_tree` (drain 158 -> 18 ms,
+  about 2x Go).
+- The spin-before-park change cut ping-pong 4x (162 -> 39 s) and the
+  pipeline, fan-in and contended mutex by 1.5-4x, but hand-off patterns
+  are still 11-35x Go: every hand-off is a trip through the global queue.
+- Memory per task stays Zell's strength: 1M parked tasks need 0.24x
+  Go's RSS and park in a quarter of Go's time.
+- `await_chain`'s resuming phase (1000 frames resumed per chain) got
+  slower than the preliminary figure (782 -> 2 494 ms, 2.5 us per resumed
+  frame); the preliminary number was a single run on a loaded machine, so
+  this is not established as a regression, but it is now the largest
+  ratio in the suite (125x). `select_many` at 4 workers is 12-17x Go
+  (the preliminary Zell figures were 1-worker runs and are not
+  comparable; the suspect 70 s Go `select` figure was indeed noise: 2.4 s
+  now).
+- The open items below (per-worker queues and a LIFO slot, a
+  non-allocating async call path, `task.Channel` over `zell_chan`, mutex
+  barging, `select`) are what is left; nothing in this run contradicts
+  their order.
 
 ### Analysis
 
@@ -655,8 +682,9 @@ The machine was shared by five agents during this pass, so wall times are
 instruction counts (`ZELL_TARGET_CPU=x86-64-v3`, since Valgrind lacks
 AVX-512) and syscall counts. `old` = commit e51cf3d, `new` = this pass.
 
-**TODO: the full `RUNS=5 ./scripts/bench-perf.sh` table (wall s and peak
-RSS, Go = 1.0) on a quiet machine.**
+The quiet re-run of the full table (best of 5 alternating, 2026-10-22,
+commit 450e35f) is "Final results, quiet machine" at the top of this
+file; the wall times below are from the shared machine.
 
 Instructions (callgrind, whole program; `shared_objects` with
 `ZELL_WORKERS=4`, serialised by Valgrind):
@@ -676,7 +704,9 @@ Instructions (callgrind, whole program; `shared_objects` with
 (* already with the task and frame changes below; before them the server
 was not measured.)
 
-Preliminary wall times (shared machine, best of 3, ms or s):
+Preliminary wall times (shared machine, best of 3, ms or s; the quiet
+best-of-5 numbers are in the final table at the top: heap_churn 0.375 s vs
+Go 1.170 s, shared_objects 0.327 s vs 0.226 s):
 
 | bench | old | new | Go |
 |---|---:|---:|---:|
@@ -727,8 +757,10 @@ What changed:
    plus a compiler barrier. Preliminary req/s on the shared machine were
    within noise of `old` (load generator 26.5k/23.3k -> 26.9k/27.3k against
    the Go server, h2 server 19.3k/20.4k -> 19.5k/21.8k, Go h2 server 16.7k
-   in the same session), so the throughput comparison is part of the TODO
-   re-run.
+   in the same session); the quiet re-run (`http_hello` in the final table
+   at the top) has the Zell h2 server at 28.6k req/s vs Go's 24.5k (1.17x)
+   and the Zell load generator at 52.1k vs Go's 86.5k against the Go
+   server (0.60x).
 
 What remains: the load generator still spends ~30% of its instructions in
 refcount operations on task, context and buffer objects and ~4% in the

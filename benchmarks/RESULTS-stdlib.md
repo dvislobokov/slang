@@ -7,10 +7,11 @@ other benchmarks, each directory holds an equivalent `main.zl` and
 same checksums to **stdout**, and each prints the time of every phase (and
 MB/s or ops/s) to **stderr**.
 
-**Status: no timings yet.** The programs build and give identical stdout
-at `SCALE=small` (checked 2026-10-22). Nothing was timed, because five
-agents were sharing the machine. The results table below is a TODO for a
-run on a quiet machine.
+**Status: measured on a quiet machine** (2026-10-22, commit 450e35f, 4 vCPU
+Intel Xeon @ 2.80 GHz with AVX-512, Firecracker VM, Linux 6.18, clang/LLVM
+18, go 1.24.7, nothing else running). Every pair printed identical stdout
+at full size. `json_codec` ran with an 8 MB document instead of 100 MB
+(see the results).
 
 ## The benchmarks
 
@@ -73,38 +74,90 @@ What is comparable, and what is not:
   `main.go` has the same data structures written out (a sorted array, a ring
   buffer). This compares the implementations, not two libraries.
 
-## Results (TODO: quiet machine, best of 5 alternating, Go = 1.0)
+## Results (2026-10-22, quiet machine, best of 5 alternating, Go = 1.00)
 
-Ratio = Zell time / Go time (for throughput rows: Go rate / Zell rate);
-below 1.0 means Zell is faster.
+`RUNS=5 DETAIL=1 ./scripts/bench-perf.sh <bench>`: wall, CPU (user+sys)
+and peak RSS of the whole process are from the best of 5 runs (by wall
+time, Zell and Go alternating); the phase times are that best run's own
+stderr lines. "time Zell / Go" below 1 means Zell is faster; for
+throughput rows "rate Zell / Go" is the inverse (Zell's MB/s or ops/s over
+Go's) and above 1 means Zell is faster. Zell `--release` targets the host
+CPU (AVX-512 here), Go `GOAMD64=v1`.
 
-| Benchmark | Phase | Zell | Go | Zell / Go |
-|---|---|---|---|---|
-| json_codec | typed parse 100 MB | TODO | TODO | TODO |
-| json_codec | typed format | TODO | TODO | TODO |
-| json_codec | Value parse + lookups | TODO | TODO | TODO |
-| json_codec | 1M small messages | TODO | TODO | TODO |
-| encodings | XML parse / format 20 MB | TODO | TODO | TODO |
-| encodings | YAML parse / format 20 MB | TODO | TODO | TODO |
-| encodings | TOML parse / format 20 MB | TODO | TODO | TODO |
-| crypto | SHA-256 / SHA-512 MB/s | TODO | TODO | TODO |
-| crypto | AES-256-GCM / ChaCha20-Poly1305 MB/s | TODO | TODO | TODO |
-| crypto | X25519 ops/s | TODO | TODO | TODO |
-| crypto | Ed25519 sign / verify ops/s | TODO | TODO | TODO |
-| crypto | RSA-2048 sign / verify ops/s | TODO | TODO | TODO |
-| crypto | P-256 sign / verify ops/s | TODO | TODO | TODO |
-| crypto | HKDF ops/s, Argon2id ops/s | TODO | TODO | TODO |
-| crypto | TLS 1.3 handshakes/s | TODO | TODO | TODO |
-| file_io | write / read 1 MB chunks | TODO | TODO | TODO |
-| file_io | buffered write / read 1 KB | TODO | TODO | TODO |
-| file_io | io.Copy 1 GB | TODO | TODO | TODO |
-| file_io | line scan 1 GB | TODO | TODO | TODO |
-| file_io | create / walk+stat / remove 100k files | TODO | TODO | TODO |
-| sort_collect | sort 10M ints / 2M strings | TODO | TODO | TODO |
-| sort_collect | binary search 10M | TODO | TODO | TODO |
-| sort_collect | deque / heap / PQ / list / ordered map | TODO | TODO | TODO |
-| sort_collect | strings.Builder 100 MB | TODO | TODO | TODO |
-| sort_collect | text.template 1M rows | TODO | TODO | TODO |
+`json_codec` ran with `JSON_DOC_BYTES=8000000` (an 8 MB document, 78k
+items; the message phase is full size, 1M messages). The full 100 MB is
+infeasible with the quadratic tokenizer (open item 1): one 8 MB parse
+takes 97 s (1 MB 0.78 s, 4 MB 23 s), so one 100 MB parse would take hours;
+8 MB is the largest size whose run (two parses) stays under 10 minutes
+(305 s). `JSON_DOC_BYTES` was added to both programs for this.
+
+| Benchmark | Phase | Zell | Go | time Zell / Go (< 1 better) | rate Zell / Go (> 1 better) |
+|---|---|---|---|---|---|
+| json_codec | whole program, 8 MB doc: wall s (CPU s), peak RSS | 305.3 s (301.7), 283 MB | 5.83 s (6.41), 102 MB | 52.40 (RSS 2.78) | - |
+| json_codec | typed parse 8 MB (`Parse<Doc>`) | 96 879 ms | 195 ms | 496.82 | - |
+| json_codec | typed format | 307 ms | 64 ms | 4.80 | - |
+| json_codec | Value parse 8 MB | 98 231 ms | 212 ms | 463.35 | - |
+| json_codec | Value lookups | 40 ms | 7 ms | 5.71 | - |
+| json_codec | Value format | 468 ms | 204 ms | 2.29 | - |
+| json_codec | 1M small messages (msg/s) | 12 973 ms (77 077) | 4 815 ms (207 641) | 2.69 | 0.37 |
+| encodings | whole program: wall s (CPU s), peak RSS | 27.7 s (28.6), 961 MB | 30.1 s (43.7), 2 945 MB | 0.92 (RSS 0.33) | - |
+| encodings | XML parse 20 MB | 3 308 ms | 1 563 ms | 2.12 | - |
+| encodings | XML format | 1 269 ms | 565 ms | 2.25 | - |
+| encodings | YAML parse 20 MB | 2 328 ms | 3 436 ms | 0.68 | - |
+| encodings | YAML format | 1 977 ms | 11 905 ms | 0.17 | - |
+| encodings | TOML parse 20 MB | 4 598 ms | 2 618 ms | 1.76 | - |
+| encodings | TOML format | 1 529 ms | 1 964 ms | 0.78 | - |
+| crypto | whole program: wall s (CPU s), peak RSS | 44.8 s (44.9), 77 MB | 15.0 s (16.1), 142 MB | 2.98 (RSS 0.54) | - |
+| crypto | SHA-256 1 GB (MB/s) | 5 215 ms (205) | 3 089 ms (347) | 1.69 | 0.59 |
+| crypto | SHA-512 1 GB (MB/s) | 3 116 ms (344) | 2 024 ms (530) | 1.54 | 0.65 |
+| crypto | AES-256-GCM seal 1 GB (MB/s) | 1 107 ms (969) | 220 ms (4 867) | 5.03 | 0.20 |
+| crypto | ChaCha20-Poly1305 seal 1 GB (MB/s) | 4 447 ms (241) | 575 ms (1 865) | 7.73 | 0.13 |
+| crypto | X25519 20k (ops/s) | 1 492 ms (13 403) | 2 472 ms (8 090) | 0.60 | 1.66 |
+| crypto | Ed25519 sign 20k (ops/s) | 5 687 ms (3 516) | 580 ms (34 476) | 9.81 | 0.10 |
+| crypto | Ed25519 verify 20k (ops/s) | 5 201 ms (3 845) | 1 449 ms (13 793) | 3.59 | 0.28 |
+| crypto | RSA-2048 sign 500 (ops/s) | 956 ms (522) | 756 ms (660) | 1.26 | 0.79 |
+| crypto | RSA-2048 verify 5000 (ops/s) | 528 ms (9 454) | 218 ms (22 872) | 2.42 | 0.41 |
+| crypto | P-256 sign 10k (ops/s) | 4 404 ms (2 270) | 498 ms (20 065) | 8.84 | 0.11 |
+| crypto | P-256 verify 10k (ops/s) | 8 065 ms (1 239) | 920 ms (10 861) | 8.77 | 0.11 |
+| crypto | HKDF-SHA256 200k (ops/s) | 534 ms (374 466) | 634 ms (315 102) | 0.84 | 1.19 |
+| crypto | Argon2id x8 (ops/s) | 817 ms (9) | 448 ms (17) | 1.82 | 0.55 |
+| crypto | TLS 1.3 handshakes 1000 (ops/s) | 3 155 ms (316) | 1 081 ms (924) | 2.92 | 0.34 |
+| file_io | whole program: wall s (CPU s), peak RSS | 30.6 s (29.2), 10.9 MB | 29.3 s (29.9), 11.0 MB | 1.04 (RSS 0.99) | - |
+| file_io | write 1 GB, 1 MB chunks (MB/s) | 429 ms (2 498) | 306 ms (3 502) | 1.40 | 0.71 |
+| file_io | read 1 GB, 1 MB chunks (MB/s) | 178 ms (6 028) | 176 ms (6 092) | 1.01 | 0.99 |
+| file_io | buffered write, 1 KB calls (MB/s) | 2 378 ms (451) | 981 ms (1 093) | 2.42 | 0.41 |
+| file_io | buffered read, 1 KB calls (MB/s) | 2 673 ms (401) | 289 ms (3 708) | 9.25 | 0.11 |
+| file_io | io.Copy 1 GB (MB/s) | 534 ms (2 008) | 443 ms (2 423) | 1.21 | 0.83 |
+| file_io | line scan 1 GB (MB/s) | 2 669 ms (402) | 937 ms (1 145) | 2.85 | 0.35 |
+| file_io | create 100k files | 1 850 ms | 15 966 ms | 0.12 | - |
+| file_io | walk + stat 100k files | 197 ms | 269 ms | 0.73 | - |
+| file_io | remove tree | 1 274 ms | 1 170 ms | 1.09 | - |
+| sort_collect | whole program: wall s (CPU s), peak RSS | 23.8 s (23.6), 1 598 MB | 15.0 s (18.3), 294 MB | 1.58 (RSS 5.44) | - |
+| sort_collect | sort 10M ints | 1 373 ms | 1 164 ms | 1.18 | - |
+| sort_collect | binary search 10M | 5 829 ms | 5 611 ms | 1.04 | - |
+| sort_collect | sort 2M strings | 3 243 ms | 995 ms | 3.26 | - |
+| sort_collect | deque 10M | 223 ms | 198 ms | 1.13 | - |
+| sort_collect | heap 1M push+pop | 214 ms | 450 ms | 0.48 | - |
+| sort_collect | priority queue 1M | 803 ms | 610 ms | 1.32 | - |
+| sort_collect | linked list 2M | 1 693 ms | 299 ms | 5.66 | - |
+| sort_collect | ordered map 50k inserts + 1M gets | 727 ms | 282 ms | 2.58 | - |
+| sort_collect | strings.Builder 100 MB | 3 592 ms | 1 682 ms | 2.14 | - |
+| sort_collect | text.template 1M rows | 5 124 ms | 1 649 ms | 3.11 | - |
+
+Verdicts: `json_codec` is unusable for large documents until open item 1
+is fixed (500x on a parse; even the 200-byte messages are 2.7x Go);
+`encodings` is at parity overall (YAML far ahead of yaml.v3, XML 2x
+behind, TOML parse 1.8x behind) with a third of Go's memory; `crypto` is
+2-10x behind except X25519 and HKDF (ahead) and RSA sign (1.26x): the
+AEADs lack AES-NI/SIMD-class speed (AES-GCM 5x, ChaCha 7.7x), Ed25519
+sign and P-256 are 9-10x (open item 6 and no fixed-base tables);
+`file_io` is at parity for large I/O, far ahead creating files (Go
+15.9 s vs 1.9 s for the same `MkdirAll` + `WriteFile` calls, 160 vs
+18 us per file; the cause on the Go side was not investigated),
+but 2.4-9x behind for buffered 1 KB calls and line scanning (the Zell
+`io` buffered reader/scanner path); `sort_collect` is 1.6x behind overall
+and uses 5.4x the memory (`strings.Builder` keeps every piece, open item
+11; `LinkedList` 5.7x, string sort 3.3x, `text.template` 3.1x).
 
 ## Open items found while writing the benchmarks
 

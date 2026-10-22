@@ -1,18 +1,17 @@
-# Latency, scaling and language mechanisms (preliminary)
+# Latency, scaling and language mechanisms
 
 Three Zell vs Go benchmarks for questions the throughput suite in
 `README.md` does not answer: tail latency under allocation pressure (the
 ARC-vs-GC pause argument), scaling over cores, and the cost of individual
 language mechanisms.
 
-**Status: programs only, no results yet.** The machine (4 vCPU) was shared
-by five agents when they were written, so nothing was timed. Both sides of
-each benchmark were built and run once at `SCALE=small`, and their
-checksums are equal. The results tables below are TODO, to be filled from a
-quiet run. The smoke runs printed some timings, but they come from tiny
-workloads on a loaded machine and are not results. The only thing taken
-from them is the open items at the end, and each of those also has evidence
-from the IR or the heap counters.
+**Status: measured on a quiet machine** (2026-10-22, commit 450e35f,
+4 vCPU Intel Xeon @ 2.80 GHz with AVX-512 in a Firecracker VM, Linux 6.18,
+clang/LLVM 18, go 1.24.7; nothing else running, load average < 0.5 before
+each suite; `RUNS=5`, full size). Zell `--release` targets the host CPU
+(the default; see RESULTS-framework.md open item 9), Go the default
+`GOAMD64=v1`. The drivers report the programs' own timings, not process
+wall/CPU/RSS.
 
 ## How to run
 
@@ -72,16 +71,28 @@ builds the heap, does 2000 rebuilds and prints object counts and
 checksums, which must be equal on both sides (`bench.sh` checks this
 first). `SCALE=small` uses 100 buckets of 150 objects and 20k requests.
 
-Results (best of `RUNS` by p99; µs; Go = 1.0 in the ratio rows): **TODO
-(quiet run)**
+Results (best of 5 by p99; µs; ratio rows Zell / Go, Go = 1.00: for
+req/s and churn/s **> 1 is better**, for latencies < 1 is better):
 
 | server | mode | req/s | p50 | p90 | p99 | p999 | max | churn/s |
 |---|---|---|---|---|---|---|---|---|
-| zell | idle | | | | | | | - |
-| go | idle | | | | | | | - |
-| zell | churn | | | | | | | |
-| go | churn | | | | | | | |
-| zell/go | churn | | | | | | | |
+| zell | idle | 77 602 | 764 | 1 303 | 2 210 | 4 154 | 12 123 | - |
+| go | idle | 95 924 | 491 | 1 265 | 3 411 | 6 556 | 12 679 | - |
+| zell | churn | 65 210 | 860 | 1 608 | 3 145 | 6 459 | 18 654 | 281 |
+| go | churn | 52 539 | 643 | 3 323 | 8 142 | 12 217 | 16 760 | 1 208 |
+| zell/go | idle | 0.81 | 1.56 | 1.03 | 0.65 | 0.63 | 0.96 | - |
+| zell/go | churn | 1.24 | 1.34 | 0.48 | 0.39 | 0.53 | 1.11 | 0.23 |
+
+Reading: idle, Go serves 24% more requests and has the lower median, Zell
+the lower tail (p99 0.65x). Under churn Go's throughput drops by 45%
+(95.9k -> 52.5k req/s) and its p99 grows 2.4x, Zell's throughput drops by
+16% and its p99 grows 1.4x, so Zell is ahead on req/s (1.24x), p90, p99
+and p999 under churn. But the churn rates are not comparable: Go's
+background goroutine rebuilt 4.3x as many buckets per second (1208 vs
+281), i.e. it produced 4.3x the garbage. Per unit of churn work Go's
+interference is lower; per wall second of a "background job that runs as
+fast as it can", Zell's request tail is better. Max latency is similar
+(Zell 18.7 ms, Go 16.8 ms).
 
 What to look at: how much churn moves p99, p999 and max away from each
 server's idle baseline. The absolute numbers matter less. Go's concurrent
@@ -114,18 +125,25 @@ depend on the worker count. The driver prints the best ms per row and the
 1->4 speedup for each language. `SCALE=small` uses 4 MB of text and 32
 trees.
 
-Results (ms, best of `RUNS`): **TODO (quiet run)**
+Results (ms, best of 5; Zell / Go, Go = 1.00, < 1 is better; for the
+speedup rows > 1 is better):
 
 | phase | workers | zell | go | zell/go |
 |---|---|---|---|---|
-| wordfreq | 1 | | | |
-| wordfreq | 2 | | | |
-| wordfreq | 4 | | | |
-| trees | 1 | | | |
-| trees | 2 | | | |
-| trees | 4 | | | |
-| speedup 1->4 | wordfreq | | | |
-| speedup 1->4 | trees | | | |
+| wordfreq | 1 | 1 948 | 2 151 | 0.91 |
+| wordfreq | 2 | 1 014 | 1 101 | 0.92 |
+| wordfreq | 4 | 532 | 535 | 0.99 |
+| trees | 1 | 4 770 | 2 384 | 2.00 |
+| trees | 2 | 2 526 | 2 075 | 1.22 |
+| trees | 4 | 1 319 | 1 504 | 0.88 |
+| speedup 1->4 | wordfreq | 3.66x | 4.02x | 0.91 |
+| speedup 1->4 | trees | 3.62x | 1.59x | 2.28 |
+
+wordfreq scales nearly linearly in both. For trees, Go's single worker is
+helped by the GC running on the other 3 cores (one goroutine, but
+`GOMAXPROCS=4`), so Go's 1-worker number is not a 1-core number and its
+speedup flattens; Zell frees synchronously on the worker, is 2x slower
+with one task, and scales 3.6x to beat Go at 4 workers.
 
 With 4 vCPU and a 4-worker run, any other load on the machine shows up
 directly in the 4-worker numbers. That is the main reason this table must
@@ -149,19 +167,26 @@ with error return traces (the default) and with `--no-error-trace`.
 | `generic_sum` | 100M adds | `SumG<T: Add>(xs []T)` over `[]int` (1M elements, 100 passes; Go: `SumG[T ~int\|~float64]`) |
 | `iface_sum` | 100M calls | `SumI(xs []Valuer)` over boxed `*Val`, the interface-based equivalent |
 
-Results (µs; Go = 1.0 in the ratio columns): **TODO (quiet run)**
+Results (µs, best of 5; Go = 1.00 in the ratio columns, < 1 is better):
 
 | row | zell | zell --no-error-trace | go | zell/go | notrace/go |
 |---|---|---|---|---|---|
-| direct_call | | | | | |
-| iface_call | | | | | |
-| closure_call | | | | | |
-| defer_call | | | | | |
-| no_defer_call | | | | | |
-| error_new | | | | | |
-| error_sentinel | | | | | |
-| generic_sum | | | | | |
-| iface_sum | | | | | |
+| direct_call | 14 890 | 14 828 | 85 525 | 0.17 | 0.17 |
+| iface_call | 627 507 | 612 248 | 161 928 | 3.88 | 3.78 |
+| closure_call | 567 193 | 563 917 | 187 465 | 3.03 | 3.01 |
+| defer_call | 852 201 | 944 735 | 66 943 | 12.73 | 14.11 |
+| no_defer_call | 998 | 997 | 43 242 | 0.02 | 0.02 |
+| error_new | 168 782 | 98 190 | 120 995 | 1.39 | 0.81 |
+| error_sentinel | 207 046 | 42 929 | 36 440 | 5.68 | 1.18 |
+| generic_sum | 27 559 | 25 802 | 50 423 | 0.55 | 0.51 |
+| iface_sum | 744 186 | 770 541 | 296 792 | 2.51 | 2.60 |
+
+The open items below are confirmed: `defer` is 12.7x Go (43 ns per
+deferred call vs 3.3 ns; item 1), interface and closure calls 3-4x
+(the out-of-line retain/release of the receiver, item 2), and a sentinel
+error with traces 5.7x but 1.18x without them (item 3). Error traces
+cost about 28 ns per failing call on `error_new` (2.5M failures; 1.72x
+the no-trace time).
 
 How to read the rows: LLVM vectorizes the `direct_call`, `no_defer_call`
 and `generic_sum` loops in Zell (`llvm.vector.reduce.add` in the IR), and
@@ -174,8 +199,7 @@ mechanism, and `zell` vs `zell --no-error-trace` for the cost of traces.
 ## Open items (found while writing; for the compiler/runtime owners)
 
 These come from the IR (`zell build --emit=llvm-ir`) and the heap counters.
-The smoke-run hints are from a loaded machine and still need confirming on
-a quiet run.
+The quiet run (tables above) confirms items 1-3.
 
 1. **`defer` allocates on every execution.** In `withDefer`, `defer
    c.Inc()` becomes two `zell_object_new` per call (a bound-method value

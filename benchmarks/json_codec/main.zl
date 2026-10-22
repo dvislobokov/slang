@@ -7,7 +7,8 @@ import io
 // (json.Parse<T>), formatted back (json.Format), parsed again schema-less
 // (json.ParseValue) with path lookups, and 1M small (~200 byte) API
 // messages parsed and formatted one at a time. Same data as main.go.
-// SCALE=small runs a 1 MB document and 10k messages.
+// SCALE=small runs a 1 MB document and 10k messages; JSON_DOC_BYTES=n
+// sets the document size.
 
 struct Item {
     @json(name: "id") Id int
@@ -184,6 +185,12 @@ func main() void! {
     if os.Getenv("SCALE") == "small" {
         docSize = 1000000
         nMsgs = 10000
+    }
+    // JSON_DOC_BYTES overrides the document size (the full 100 MB is
+    // infeasible while the JSON tokenizer is quadratic, RESULTS-stdlib.md)
+    var envSize = os.Getenv("JSON_DOC_BYTES")
+    if envSize != "" {
+        docSize = strconv.Atoi(envSize)?
     }
     var text = genDoc(docSize)
 

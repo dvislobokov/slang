@@ -14,7 +14,8 @@ import (
 // (json.Unmarshal), formatted back (json.Marshal), parsed again schema-less
 // (into any) with path lookups, and 1M small (~200 byte) API messages
 // parsed and formatted one at a time. Same data as main.zl.
-// SCALE=small runs a 1 MB document and 10k messages.
+// SCALE=small runs a 1 MB document and 10k messages; JSON_DOC_BYTES=n
+// sets the document size.
 
 type Item struct {
 	Id     int      `json:"id"`
@@ -172,6 +173,11 @@ func main() {
 	if os.Getenv("SCALE") == "small" {
 		docSize = 1000000
 		nMsgs = 10000
+	}
+	if v := os.Getenv("JSON_DOC_BYTES"); v != "" {
+		n, err := strconv.Atoi(v)
+		must(err)
+		docSize = n
 	}
 	text := genDoc(docSize)
 

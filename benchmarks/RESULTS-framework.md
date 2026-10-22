@@ -65,13 +65,20 @@ is taken out of POST bodies, because which request gets which id depends
 on scheduling), and it must be equal too. Error bodies are not compared
 (Problem Details vs Gin's validator messages).
 
-Results (TODO, quiet run; ratio = Zell / Go, Go = 1.0):
+Results (best of 5 rounds by req/s, the p50/p99 of that round; ratio =
+X / Gin, Gin = 1.00; for req/s **> 1 is better**, for latency and RSS < 1
+is better; peak RSS of the server process after all rounds):
 
-| server | req/s | p50 ms | p99 ms | req/s vs Gin | p99 vs Gin | peak RSS |
-|---|---|---|---|---|---|---|
-| Zell `web` | TODO | TODO | TODO | TODO | TODO | TODO |
-| Go Gin | TODO | TODO | TODO | 1.0 | 1.0 | TODO |
-| Go net/http | TODO | TODO | TODO | TODO | TODO | TODO |
+| server | req/s | p50 ms | p99 ms | req/s vs Gin | p99 vs Gin | peak RSS | RSS vs Gin |
+|---|---|---|---|---|---|---|---|
+| Zell `web` | 41 778 | 1.430 | 3.974 | 0.71 | 0.66 | 6.9 MB | 0.31 |
+| Go Gin | 58 960 | 0.746 | 5.982 | 1.00 | 1.00 | 22.5 MB | 1.00 |
+| Go net/http | 59 891 | 0.793 | 5.165 | 1.02 | 0.86 | 15.3 MB | 0.68 |
+
+Rounds ranged 39.8-41.8k (Zell), 49.7-59.0k (Gin), 53.9-59.9k (net/http)
+req/s. Zell's `web` serves 0.71x Gin's requests with twice its median
+latency, but a 34% lower p99 and a third of its memory; every request
+pays the `log` pipeline of `UseLogging` (open item 4).
 
 ### `orm_sqlite`: `data` vs GORM vs database/sql
 
@@ -101,13 +108,36 @@ equal for all three on every store. At smoke scale all 9 combinations
 printed `lookup 1000600000 / filter 10000 523232 / update 1000 496000 1000
 / rows 10000`.
 
-Results (TODO, quiet run; ms per phase, best of 5; ratio = Zell / GORM):
+Results (ms per phase, best of 5 rounds for SQLite; PostgreSQL: best of
+2 rounds for Zell and GORM and a single run for database/sql, because the
+session's time limit stopped the run in round 3 (the throwaway cluster
+was stopped by the script's trap); ratio = Zell / GORM, GORM = 1.00,
+< 1 is better; all checksums equal):
 
 | store | phase | Zell | GORM | database/sql | Zell / GORM |
 |---|---|---|---|---|---|
-| memory | migrate / insert / lookup / filter / update | TODO | TODO | TODO | TODO |
-| file | migrate / insert / lookup / filter / update | TODO | TODO | TODO | TODO |
-| postgres | migrate / insert / lookup / filter / update | TODO | TODO | TODO | TODO |
+| memory | migrate | 0.68 | 0.78 | 0.54 | 0.88 |
+| memory | insert 100k | 1 819 | 414 | 221 | 4.40 |
+| memory | lookup 1M | 14 079 | 20 796 | 4 639 | 0.68 |
+| memory | filter 10k | 468 | 645 | 329 | 0.73 |
+| memory | update 10k | 92 | 171 | 41 | 0.54 |
+| file | migrate | 3.81 | 3.66 | 2.00 | 1.04 |
+| file | insert 100k | 2 243 | 707 | 464 | 3.17 |
+| file | lookup 1M | 21 568 | 29 941 | 11 183 | 0.72 |
+| file | filter 10k | 589 | 756 | 410 | 0.78 |
+| file | update 10k | 247 | 317 | 165 | 0.78 |
+| postgres | migrate | 12.0 | 10.3 | 9.1 (single run) | 1.17 |
+| postgres | insert 100k | 4 008 | 955 | 900 (single run) | 4.20 |
+| postgres | lookup 1M | 315 094 | 145 016 | 123 582 (single run) | 2.17 |
+| postgres | filter 10k | 5 379 | 2 658 | 2 386 (single run) | 2.02 |
+| postgres | update 10k | 3 361 | 1 549 | 1 516 (single run) | 2.17 |
+
+On SQLite `data` beats GORM on every read and update phase (0.54-0.78x)
+and is 1.5-3x behind hand-written database/sql; inserts are 3-4x GORM
+(open items 1-2: `entryOf` scans and 100-row statements). On PostgreSQL
+the pure-Zell `database.postgres` driver makes every query about 2x
+GORM/pgx (315 vs 145 us per primary-key lookup round trip), so the
+driver, not `data`, is the bottleneck there.
 
 ### `logging`: `log` vs zap, zerolog, slog
 
@@ -141,13 +171,22 @@ Allocations per record (deterministic, measured at smoke scale, 100k records):
 | file | **344.4** | 1.0 | 0.0 | 3.0 |
 | disabled | 0 | 1.0 | 0 | 0 |
 
-Results (TODO, quiet run; records/s, ratio = Zell / Go library, Go = 1.0):
+Results (**single run**, `RUNS=1`, 5M records per scenario; records/s,
+ratio = Zell / Go library, Go = 1.00, **> 1 is better** for records/s; for
+the disabled row ns per call, < 1 is better). Allocations per record at
+full size match the smoke-scale table above (Zell 344.4, zap 1.0,
+zerolog 0, slog 3.0).
 
 | scenario | Zell | zap | zerolog | slog | Zell / zap | Zell / zerolog | Zell / slog |
 |---|---|---|---|---|---|---|---|
-| devnull | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| file | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| disabled (ns/call) | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+| devnull (records/s) | 40 326 | 612 984 | 1 226 122 | 501 155 | 0.066 | 0.033 | 0.080 |
+| file (records/s) | 39 589 | 411 188 | 756 629 | 394 849 | 0.096 | 0.052 | 0.100 |
+| disabled (ns/call) | 3.7 | 122 | 16.8 | 25.0 | 0.030 | 0.22 | 0.15 |
+
+The enabled path is 10-30x slower than every Go logger (open item 4: 344
+allocations per record); the disabled path is the fastest of all (item 6;
+0 allocations, 3.7 ns per call, so the guarded call was not folded away
+entirely).
 
 ### `websocket_echo`: `net.ws` vs gorilla/websocket
 
@@ -162,12 +201,19 @@ negotiate it by default).
 Verification: every client prints `messages <n> bytes <n>`, which must be
 equal for all 4 pairs (smoke: `messages 20000 bytes 2560000`).
 
-Results (TODO, quiet run; messages/s, ratio = Zell / Go, Go = 1.0):
+Results (**single run**, `RUNS=1`, `ulimit -n 4096`; messages/s, in
+brackets the ratio to Go client -> Go server, Go = 1.00, **> 1 is
+better**; all four pairs echoed `messages 10000000 bytes 1280000000`):
 
 | server \ client | Zell client | Go client |
 |---|---|---|
-| Zell server | TODO | TODO |
-| Go server | TODO | 1.0 |
+| Zell server | 40 401 (0.30) | 48 441 (0.36) |
+| Go server | 55 177 (0.41) | 135 540 (1.00) |
+
+Both the `net.ws` server (0.36x with Go's client) and client (0.41x
+against Go's server) are well behind gorilla/websocket on small-message
+echo; this is the same per-message async round trip that `async_io`
+shows (3.6x Go) plus framing in Zell.
 
 ### `startup`: exec to first output
 
