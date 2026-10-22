@@ -1,5 +1,6 @@
 // test: os.Name is the target operating system ("linux" on the CI and development machines)
 // status: passing
+// os: linux
 namespace spec.platform.os_name
 
 import io

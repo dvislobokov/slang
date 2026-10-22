@@ -18,6 +18,7 @@
 //! | `// no-warning: <text>` | the build's stderr must not contain `<text>` (repeatable) |
 //! | `// env: K=V` | environment variable of the program run (repeatable) |
 //! | `// build-flags: --x` | extra `zell build` flags (also for compile-fail tests) |
+//! | `// os: linux macos` | run only on these host operating systems (`std::env::consts::OS`); skipped elsewhere |
 //!
 //! `SPEC_FILTER=<substring>` restricts the run to tests whose path (relative
 //! to the repository, e.g. `tests/spec/errors/trace_basic.zl`) contains it.
@@ -74,6 +75,8 @@ struct Directives {
     no_warnings: Vec<String>,
     env: Vec<(String, String)>,
     build_flags: Vec<String>,
+    /// Host operating systems the test applies to (empty: all).
+    os: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -106,6 +109,7 @@ fn parse_directives(file: &Path) -> Result<Directives, String> {
             "warning" => d.warnings.push(val.to_string()),
             "no-warning" => d.no_warnings.push(val.to_string()),
             "build-flags" => d.build_flags = val.split_whitespace().map(String::from).collect(),
+            "os" => d.os = val.split_whitespace().map(String::from).collect(),
             "env" => match val.split_once('=') {
                 Some((k, v)) => d.env.push((k.trim().to_string(), v.trim().to_string())),
                 None => return Err(format!("{}: bad env directive `{val}` (expected K=V)", file.display())),
@@ -329,6 +333,9 @@ fn run_area(area: &str) {
     if let Some(f) = &filter {
         cases.retain(|c| c.rel.contains(f.as_str()));
     }
+    let before = cases.len();
+    cases.retain(|c| c.dirs.os.is_empty() || c.dirs.os.iter().any(|o| o == std::env::consts::OS));
+    let other_os = before - cases.len();
     let verbose = std::env::var("SPEC_VERBOSE").is_ok_and(|v| v != "0" && !v.is_empty());
 
     // A few workers per area; cargo already runs the areas in parallel.
@@ -381,7 +388,7 @@ fn run_area(area: &str) {
         }
     }
     eprintln!(
-        "spec {area}: {} tests ({compile_fail} compile-fail): {passing} passing, {pending} pending, {} unexpected",
+        "spec {area}: {} tests ({compile_fail} compile-fail): {passing} passing, {pending} pending, {} unexpected, {other_os} for other systems",
         cases.len(),
         unexpected.len()
     );

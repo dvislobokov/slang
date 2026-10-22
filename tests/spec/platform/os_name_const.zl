@@ -1,5 +1,6 @@
 // test: os.Name and os.Arch are compile-time constants usable in const declarations
 // status: passing
+// os: linux
 namespace spec.platform.os_name_const
 
 import io

@@ -83,6 +83,7 @@ the first `.zl` file by name; the other files repeat them for readability.
 | 3+ | `// no-warning: <text>` | the build's stderr must not contain `<text>`; repeatable |
 | 3+ | `// env: K=V` | environment variable of the program run (e.g. `ZELL_CYCLES=manual`); repeatable |
 | 3+ | `// build-flags: --x` | extra `zell build` flags, also for compile-fail tests (e.g. `--deny-warnings`) |
+| 3+ | `// os: linux macos` | run only on these host systems (Rust `std::env::consts::OS`: `linux`, `macos`, `windows`); skipped and counted as "for other systems" elsewhere. For tests whose expected output is the host's (`os.Name`, `@cfg(os: ...)`, the root user's home) |
 
 Output conventions are those of `examples/README.md` ("Output format"):
 `println` separates arguments with one space, floats print like Go's `%v`

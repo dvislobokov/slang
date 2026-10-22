@@ -1,5 +1,6 @@
 // test: os.user Current, Lookup, LookupId, LookupGroup(Id) against the passwd/group databases
 // status: passing
+// os: linux
 // run-flags: --leak-check
 namespace spec.stdlib2.os_user
 
