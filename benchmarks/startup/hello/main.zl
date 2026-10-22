@@ -1,0 +1,8 @@
+namespace bench.startup.hello
+
+import io
+
+// startup: hello (the Go side is main.go here).
+func main() {
+    println("Hello, world")
+}
