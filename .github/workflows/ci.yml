@@ -9,6 +9,13 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Run every job, or only the macos-arm64 job"
+        type: choice
+        options: [all, macos-arm64]
+        default: all
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,6 +23,7 @@ env:
 jobs:
   linux:
     name: linux-${{ matrix.arch }}
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all'
     strategy:
       fail-fast: false
       matrix:
@@ -52,11 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: arm64
-            os: macos-14
-          - arch: amd64
-            os: macos-15-intel
+        include: ${{ fromJSON(inputs.only == 'macos-arm64' && '[{"arch":"arm64","os":"macos-14"}]' || '[{"arch":"arm64","os":"macos-14"},{"arch":"amd64","os":"macos-15-intel"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +100,7 @@ jobs:
 
   windows:
     name: windows-amd64
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all'
     runs-on: windows-latest
     defaults:
       run:
@@ -154,6 +159,7 @@ jobs:
 
   cross:
     name: cross (linux -> windows, linux-arm64, musl, macos)
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
