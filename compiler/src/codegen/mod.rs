@@ -108,7 +108,8 @@
 //! the result into a slot and branches there; the exit block runs deferred
 //! closures (LIFO, up to 64 per call, kept in an alloca'd array), releases
 //! the locals and returns. `async` functions are LLVM switched-resume
-//! coroutines following ABI.md §10.3 (see [`async_`]). The build pipeline
+//! coroutines following ABI.md §10.3 (see [`async_`]); their frames come
+//! from `zell_coro_frame_alloc` and go back with `zell_coro_frame_free`. The build pipeline
 //! (`crate::build`) runs `default<On>`, which in LLVM 18 includes the
 //! coroutine passes (coro-early, coro-split, coro-elide, coro-cleanup; at
 //! O0 via the CoroConditionalWrapper), so coroutines are lowered at every

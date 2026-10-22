@@ -304,8 +304,8 @@ typedef struct hook {
 
 struct zell_task {
     zell_object hdr;
-    zell__plat_mutex mu;
-    zell__plat_cond cv;
+    int32_t mu;                 /* spin lock (task_lock): short critical sections only */
+    int32_t waiters;            /* atomic: threads blocked in zell_task_await */
     int32_t state;              /* atomic */
     int32_t _pad;
     int64_t result_size;
@@ -336,6 +336,23 @@ struct zell_task {
 
 static int64_t g_live_tasks; /* diag */
 
+/* A task's lock: held for a few loads and stores (never across a wait or a
+ * call into user code that could take it again), so a spin lock with a
+ * yield is cheaper than a pthread mutex, which every async call would
+ * otherwise initialise, lock and destroy. Threads blocking on a task
+ * (zell_task_await) wait on one process-wide condition instead of a
+ * per-task one; completion wakes them only when the task has waiters. */
+static inline void task_lock(zell_task *t) {
+    while (__atomic_exchange_n(&t->mu, 1, __ATOMIC_ACQUIRE)) {
+        while (__atomic_load_n(&t->mu, __ATOMIC_RELAXED)) zell__plat_yield();
+    }
+}
+
+static inline void task_unlock(zell_task *t) { __atomic_store_n(&t->mu, 0, __ATOMIC_RELEASE); }
+
+static zell__plat_mutex g_await_mu = ZELL_PLAT_MUTEX_INIT;
+static zell__plat_cond g_await_cv = ZELL_PLAT_COND_INIT;
+
 int64_t zell__live_tasks(void) { return __atomic_load_n(&g_live_tasks, __ATOMIC_RELAXED); }
 
 int64_t zell__sched_queue_len(void) {
@@ -359,14 +376,12 @@ static void task_drop(void *obj) {
     if (t->dbg_id) zell__dbg_task_drop(t->dbg_id);
     if (t->parent) {
         zell_task *p = t->parent;
-        zell__plat_mutex_lock(&p->mu);
+        task_lock(p);
         if (t->sib_prev) t->sib_prev->sib_next = t->sib_next; else p->child_head = t->sib_next;
         if (t->sib_next) t->sib_next->sib_prev = t->sib_prev;
-        zell__plat_mutex_unlock(&p->mu);
+        task_unlock(p);
         zell_release(p);
     }
-    zell__plat_mutex_destroy(&t->mu);
-    zell__plat_cond_destroy(&t->cv);
 }
 
 static const zell_type_info task_type = { "Task", 0, task_drop };
@@ -378,8 +393,6 @@ static zell_task *task_new_ex(int64_t result_size, const zell_value_ops *ops, in
     /* Tasks move between threads all the time (awaiters, continuations,
      * jobs): biasing them to one thread would only queue merges (rc.c). */
     t->hdr.refcount |= ZELL_RC_NOBIAS;
-    zell__plat_mutex_init(&t->mu);
-    zell__plat_cond_init(&t->cv);
     __atomic_add_fetch(&g_live_tasks, 1, __ATOMIC_RELAXED);
     t->result_size = result_size;
     t->ops = ops;
@@ -392,12 +405,12 @@ static void task_attach(zell_task *t, zell_task *parent) {
     if (!parent) return;
     zell_retain(parent);
     t->parent = parent;
-    zell__plat_mutex_lock(&parent->mu);
+    task_lock(parent);
     t->sib_next = parent->child_head;
     if (parent->child_head) parent->child_head->sib_prev = t;
     parent->child_head = t;
     if (__atomic_load_n(&parent->cancelled, __ATOMIC_ACQUIRE)) __atomic_store_n(&t->cancelled, 1, __ATOMIC_RELEASE);
-    zell__plat_mutex_unlock(&parent->mu);
+    task_unlock(parent);
 }
 
 /* The task of the code that runs now: a child of the current task, and the
@@ -440,20 +453,27 @@ static void restore_parent(zell_task *t) {
 /* Completes t; returns false (and does nothing) if it already was done. */
 static bool task_complete(zell_task *t, const void *result) {
     if (!t) zell_panic_nil();
-    zell__plat_mutex_lock(&t->mu);
+    task_lock(t);
     if (t->state == TASK_DONE) {
-        zell__plat_mutex_unlock(&t->mu);
+        task_unlock(t);
         return false;
     }
     if (result && t->result_size > 0) {
         memcpy(t->slot, result, (size_t)t->result_size);
         if (t->ops && t->ops->retain) t->ops->retain(t->slot + t->ops_offset);
     }
-    __atomic_store_n(&t->state, TASK_DONE, __ATOMIC_RELEASE);
+    __atomic_store_n(&t->state, TASK_DONE, __ATOMIC_SEQ_CST);
     cont *c = t->conts, *rev = NULL;
     t->conts = NULL;
-    zell__plat_cond_broadcast(&t->cv);
-    zell__plat_mutex_unlock(&t->mu);
+    /* A waiter increments `waiters` before it checks the state (both
+     * sequentially consistent), and checks it under g_await_mu, which the
+     * broadcast takes: it either sees DONE or is woken. */
+    if (__atomic_load_n(&t->waiters, __ATOMIC_SEQ_CST)) {
+        zell__plat_mutex_lock(&g_await_mu);
+        zell__plat_cond_broadcast(&g_await_cv);
+        zell__plat_mutex_unlock(&g_await_mu);
+    }
+    task_unlock(t);
     restore_parent(t);  /* a coroutine returning: the code after it is its parent's */
     /* After this point `t` may be freed by another thread; use only `rev`. */
     while (c) { cont *n = c->next; c->next = rev; rev = c; c = n; }
@@ -493,9 +513,9 @@ static bool add_cont(zell_task *t, zell_resume_fn fn, void *frame, bool suspend)
     c->frame = frame;
     c->ctx = t_ctx;
     c->cur = t_cur;
-    zell__plat_mutex_lock(&t->mu);
+    task_lock(t);
     if (t->state == TASK_DONE) {
-        zell__plat_mutex_unlock(&t->mu);
+        task_unlock(t);
         free(c);
         return false;
     }
@@ -513,7 +533,7 @@ static bool add_cont(zell_task *t, zell_resume_fn fn, void *frame, bool suspend)
     }
     c->next = t->conts;
     t->conts = c;
-    zell__plat_mutex_unlock(&t->mu);
+    task_unlock(t);
     zell_release(drop_ctx);
     return true;
 }
@@ -544,9 +564,11 @@ void *zell_task_await(zell_task *t) {
     }
     int parked = __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) != TASK_DONE;
     if (parked) zell__rc_park(1);   /* others may merge our refcount queue (rc.c) */
-    zell__plat_mutex_lock(&t->mu);
-    while (t->state != TASK_DONE) zell__plat_cond_wait(&t->cv, &t->mu);
-    zell__plat_mutex_unlock(&t->mu);
+    __atomic_add_fetch(&t->waiters, 1, __ATOMIC_SEQ_CST);
+    zell__plat_mutex_lock(&g_await_mu);
+    while (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) != TASK_DONE) zell__plat_cond_wait(&g_await_cv, &g_await_mu);
+    zell__plat_mutex_unlock(&g_await_mu);
+    __atomic_sub_fetch(&t->waiters, 1, __ATOMIC_SEQ_CST);
     if (parked) zell__rc_unpark();
     if (t_is_worker) {
         zell__plat_mutex_lock(&q_mu);
@@ -1245,7 +1267,7 @@ zell_task *zell_task_yield(void) {
 /* Collects (moves) the hooks of t and its descendants and flags them; locks
  * are taken parent before child. */
 static void cancel_collect(zell_task *t, hook **out) {
-    zell__plat_mutex_lock(&t->mu);
+    task_lock(t);
     if (__atomic_exchange_n(&t->cancelled, 1, __ATOMIC_ACQ_REL) == 0 || t->hooks) {
         hook *h = t->hooks;
         while (h) { hook *n = h->next; h->next = *out; *out = h; h = n; }
@@ -1253,7 +1275,7 @@ static void cancel_collect(zell_task *t, hook **out) {
         t->nhooks = 0;
     }
     for (zell_task *c = t->child_head; c; c = c->sib_next) cancel_collect(c, out);
-    zell__plat_mutex_unlock(&t->mu);
+    task_unlock(t);
 }
 
 void zell_task_cancel(zell_task *t) {
@@ -1281,9 +1303,9 @@ bool zell_task_cur_cancelled(void) { return zell_task_is_cancelled(t_cur); }
 static void cancel_hook_ex(void (*fn)(zell_task *), void (*fn_data)(zell_task *, uintptr_t), uintptr_t data, zell_task *w) {
     zell_task *t = t_cur;
     if (!t) return;
-    zell__plat_mutex_lock(&t->mu);
+    task_lock(t);
     if (__atomic_load_n(&t->cancelled, __ATOMIC_ACQUIRE)) {
-        zell__plat_mutex_unlock(&t->mu);
+        task_unlock(t);
         if (fn_data) fn_data(w, data);
         else fn(w);
         return;
@@ -1312,7 +1334,7 @@ static void cancel_hook_ex(void (*fn)(zell_task *), void (*fn_data)(zell_task *,
     h->next = t->hooks;
     t->hooks = h;
     t->nhooks++;
-    zell__plat_mutex_unlock(&t->mu);
+    task_unlock(t);
 }
 
 static void cancel_hook(void (*fn)(zell_task *), zell_task *w) { cancel_hook_ex(fn, NULL, 0, w); }

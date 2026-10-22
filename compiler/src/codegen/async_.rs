@@ -57,7 +57,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let id = self.intrinsic("llvm.coro.id", &mut [zero, null, null, null]);
         let sz = self.intrinsic("llvm.coro.size.i64", &mut []);
         let szv = unsafe { IntValue::new(sz) };
-        let mem = self.call_rt_v("zell_alloc", &[szv.into()]);
+        let mem = self.call_rt_v("zell_coro_frame_alloc", &[szv.into()]);
         let hdl = self.intrinsic("llvm.coro.begin", &mut [id, mem.as_value_ref()]);
         let hdl = unsafe { PointerValue::new(hdl) };
         // Zeroing stores emitted later by `entry_alloca` follow this code.
@@ -66,7 +66,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.position_at_end(cleanup);
         let fr = self.intrinsic("llvm.coro.free", &mut [id, hdl.as_value_ref()]);
         let frv = unsafe { PointerValue::new(fr) };
-        self.call_rt("zell_free", &[frv.into()]);
+        self.call_rt("zell_coro_frame_free", &[frv.into()]);
         self.b.build_unconditional_branch(suspended).unwrap();
         self.b.position_at_end(suspended);
         let fls = self.ctx.bool_type().const_zero().as_value_ref();

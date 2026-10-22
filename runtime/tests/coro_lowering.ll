@@ -28,8 +28,8 @@ declare ptr  @zell_task_result(ptr)
 declare ptr  @zell_task_await(ptr)
 declare ptr  @zell_task_delay(i64)
 declare void @zell_coro_resume(ptr)
-declare ptr  @zell_alloc(i64)
-declare void @zell_free(ptr)
+declare ptr  @zell_coro_frame_alloc(i64)
+declare void @zell_coro_frame_free(ptr)
 declare void @zell_retain(ptr)
 declare void @zell_release(ptr)
 declare void @zell_println_int(i64)
@@ -54,7 +54,7 @@ entry:
   ; 2. coroutine frame on the zell heap
   %id   = call token @llvm.coro.id(i32 0, ptr null, ptr null, ptr null)
   %size = call i64 @llvm.coro.size.i64()
-  %mem  = call ptr @zell_alloc(i64 %size)
+  %mem  = call ptr @zell_coro_frame_alloc(i64 %size)
   %hdl  = call ptr @llvm.coro.begin(token %id, ptr %mem)
   ; 3. body: `await task.Delay(5)` (result type void)
   %d = call ptr @zell_task_delay(i64 5)
@@ -82,7 +82,7 @@ d.ready:
 
 cleanup:                                    ; no final suspend: frame frees itself
   %mem.free = call ptr @llvm.coro.free(token %id, ptr %hdl)
-  call void @zell_free(ptr %mem.free)
+  call void @zell_coro_frame_free(ptr %mem.free)
   br label %suspended
 
 suspended:
@@ -98,7 +98,7 @@ entry:
   call void @zell_retain(ptr %task)
   %id   = call token @llvm.coro.id(i32 0, ptr null, ptr null, ptr null)
   %size = call i64 @llvm.coro.size.i64()
-  %mem  = call ptr @zell_alloc(i64 %size)
+  %mem  = call ptr @zell_coro_frame_alloc(i64 %size)
   %hdl  = call ptr @llvm.coro.begin(token %id, ptr %mem)
   ; `var a = await work(x)`
   %w = call ptr @work(i64 %x)
@@ -127,7 +127,7 @@ w.ready:
 
 cleanup:
   %mem.free = call ptr @llvm.coro.free(token %id, ptr %hdl)
-  call void @zell_free(ptr %mem.free)
+  call void @zell_coro_frame_free(ptr %mem.free)
   br label %suspended
 
 suspended:

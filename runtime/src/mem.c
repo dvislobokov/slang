@@ -129,6 +129,21 @@ void *zell_realloc(void *p, int64_t size) {
 
 void zell_free(void *p) { free(p); }
 
+/* Coroutine frames (ABI.md 10.3): zeroed memory from the object heap's
+ * size classes (frames are made and freed on every async call, often on
+ * different threads), or calloc when the heap is off. */
+void *zell_coro_frame_alloc(int64_t size) {
+    if (size < 16) size = 16;
+    void *p = zell__heap_alloc(size, 1);
+    return p ? p : zell_alloc(size);
+}
+
+void zell_coro_frame_free(void *p) {
+    if (!p) return;
+    if (zell__heap_on) zell__heap_free(p);
+    else free(p);
+}
+
 /* ---- objects ---- */
 
 /* Allocates an object of `size` bytes (header included) with the header set
@@ -234,6 +249,8 @@ void zell_retain(void *obj) {
         __atomic_store_n(&o->refcount, n + 1, __ATOMIC_RELAXED);   /* one thread: no RMW (and nothing is biased) */
     else if ((n & (ZELL_RC_BIASED | ZELL_RC_CYCLIC)) == ZELL_RC_BIASED)
         zell__rc_retain_biased(o, n);    /* biased counts (rc.c, ABI.md 3.1) */
+    else if ((n & (ZELL_RC_CYCLIC | ZELL_RC_NOBIAS)) == ZELL_RC_NOBIAS)
+        __atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED);   /* never biased (tasks): no CAS */
     else if (!(n & ZELL_RC_CYCLIC))
         zell__rc_retain_unowned(o, n);   /* may bias it (rc.c) */
     else if (__atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED) & ZELL_RC_MARKED)
@@ -274,8 +291,9 @@ void zell_release(void *obj) {
             __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
             return;
         }
-        /* Unowned and threaded: a CAS, since another thread may bias it. */
-        if (__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED)) {
+        /* Unowned and threaded: a CAS, since another thread may bias it
+         * (a NOBIAS object never is: a plain atomic decrement). */
+        if (__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED) && !(n & ZELL_RC_NOBIAS)) {
             zell__rc_release_unowned(o, n);
             return;
         }

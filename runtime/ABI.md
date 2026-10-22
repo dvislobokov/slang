@@ -270,7 +270,7 @@ its own objects); compiled code only does the inline fast paths below.
 
 | Function | Semantics |
 |---|---|
-| `void *zell_alloc(int64_t size)` | `calloc`-style **zeroed** raw memory, not refcounted. Use it for coroutine frames, closure environments without a header, and scratch memory. Out of memory or a negative size panics. `size == 0` returns a unique pointer |
+| `void *zell_alloc(int64_t size)` | `calloc`-style **zeroed** raw memory, not refcounted. Use it for closure environments without a header and scratch memory (coroutine frames use `zell_coro_frame_alloc`, 10.3). Out of memory or a negative size panics. `size == 0` returns a unique pointer |
 | `void *zell_realloc(void *p, int64_t size)` | raw `realloc`. New bytes are **not** zeroed. Panics on out of memory |
 | `void zell_free(void *p)` | frees raw memory. NULL is fine |
 | `void *zell_object_new(const zell_type_info *type, int64_t size)` | allocates a zeroed object of `size` bytes, **header included** (so `size >= 16`), sets `refcount = 1` and `type = type`. Returns it +1 |
@@ -1132,7 +1132,7 @@ entry:
   task  = zell_task_new(sizeof(T), ops_T)         ; +1, returned to the caller
   zell_retain(task)                               ; +1 owned by the frame
   id    = llvm.coro.id(0, null, null, null)
-  mem   = zell_alloc(llvm.coro.size.i64())
+  mem   = zell_coro_frame_alloc(llvm.coro.size.i64())
   hdl   = llvm.coro.begin(id, mem)
   ... body ...
 
@@ -1154,7 +1154,7 @@ ready:
   br cleanup                                       ; NO final suspend
 
 cleanup:
-  zell_free(llvm.coro.free(id, hdl))
+  zell_coro_frame_free(llvm.coro.free(id, hdl))
   br suspended
 suspended:
   llvm.coro.end(hdl, false, none)
@@ -1172,12 +1172,15 @@ Rules the compiler must respect:
   `await_suspend` returning `bool`.
 - **No final suspend point.** Once the result is published with
   `zell_task_complete`, nobody ever resumes the frame again, so the coroutine
-  destroys its own frame (`coro.free` + `zell_free`). Nothing outside the
+  destroys its own frame (`coro.free` + `zell_coro_frame_free`). Nothing outside the
   coroutine ever calls `llvm.coro.destroy`, and cancellation does not exist in 0.1.
 - Use `@zell_coro_resume` as the resume function (or your own trampoline that
   calls `llvm.coro.resume`). Coroutine resumption is always performed by a worker
   thread.
-- Frame memory comes from `zell_alloc` and is released with `zell_free`. The frame
+- Frame memory comes from `zell_coro_frame_alloc(size)` (zeroed, from the object
+  heap's size classes, or `calloc` when the heap is off) and is released with
+  `zell_coro_frame_free(p)` (NULL ok), possibly on another thread. Never mix
+  them with `zell_alloc` / `zell_free`. The frame
   is not a refcounted object. The task owns the result, and the frame owns its
   locals.
 - `await` on an expression that yields a fresh task (`await f()`): the temporary
