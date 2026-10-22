@@ -138,6 +138,7 @@ int zell__plat_poller_wait(zell__plat_poller *p, zell__plat_event *evs, int max,
     int n = kevent(p->kq, NULL, 0, buf, max, tp);
     if (n < 0) return 0;  /* EINTR */
     int out = 0;
+    uintptr_t ident[256];
     for (int i = 0; i < n; i++) {
         uint64_t token = (uint64_t)(uintptr_t)buf[i].udata;
         if (token == (uint64_t)(uintptr_t)ZELL_PLAT_WAKE_TOKEN) {
@@ -145,12 +146,14 @@ int zell__plat_poller_wait(zell__plat_poller *p, zell__plat_event *evs, int max,
                 char drain[64];
                 while (read(p->pipe_rd, drain, sizeof drain) > 0) {}
             }
+            ident[out] = (uintptr_t)-1;
             evs[out].token = ZELL_PLAT_WAKE_TOKEN;
             evs[out].events = 0;
             out++;
             continue;
         }
         if ((buf[i].flags & EV_ERROR) && buf[i].data != 0) {
+            ident[out] = buf[i].ident;
             evs[out].token = token;
             evs[out].events = ZELL_PLAT_ERROR | ZELL_PLAT_READ | ZELL_PLAT_WRITE;
             out++;
@@ -158,6 +161,15 @@ int zell__plat_poller_wait(zell__plat_poller *p, zell__plat_event *evs, int max,
         }
         int32_t e = buf[i].filter == EVFILT_READ ? ZELL_PLAT_READ : buf[i].filter == EVFILT_WRITE ? ZELL_PLAT_WRITE : 0;
         if (buf[i].flags & EV_EOF) e |= buf[i].fflags ? ZELL_PLAT_ERROR | ZELL_PLAT_READ | ZELL_PLAT_WRITE : 0;
+        /* READ and WRITE are separate kqueue filters: one event per fd and
+         * token, as epoll and IOCP report it. */
+        int k = out - 1;
+        while (k >= 0 && !(ident[k] == buf[i].ident && evs[k].token == token)) k--;
+        if (k >= 0) {
+            evs[k].events |= e;
+            continue;
+        }
+        ident[out] = buf[i].ident;
         evs[out].token = token;
         evs[out].events = e;
         out++;
