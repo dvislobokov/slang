@@ -91,6 +91,16 @@ jobs:
           }
       - name: Compiler, examples, spec corpus
         run: |
+          # Apple's lldb (Xcode 15) lacks the formatters' --recognizer-function:
+          # put Homebrew's lldb first (only lldb, so clang stays LLVM 18)
+          brew install llvm >/dev/null 2>&1 || true
+          for d in "$(brew --prefix llvm)/bin" "$(brew --prefix lldb 2>/dev/null)/bin"; do
+            if [ -x "$d/lldb" ]; then
+              mkdir -p "$RUNNER_TEMP/lldb-bin" && ln -sf "$d/lldb" "$RUNNER_TEMP/lldb-bin/lldb"
+              export PATH="$RUNNER_TEMP/lldb-bin:$PATH"
+              break
+            fi
+          done
           which -a lldb dsymutil || true
           lldb --version || true
           # macOS caps listen backlogs at kern.ipc.somaxconn (128): the
