@@ -1,0 +1,222 @@
+namespace bench.encodings
+
+import encoding
+import io
+
+// encoding.xml, encoding.yaml, encoding.toml: a generated ~20 MB document
+// of each format parsed into typed structs (Parse<T>), formatted back
+// (Format<T>) and parsed again to check the round trip. Same data as
+// main.go. SCALE=small uses 200 KB documents.
+
+@xml(name: "catalog")
+struct Catalog {
+    @serde(name: "items") @xml(name: "item") Items []Item
+}
+
+struct Item {
+    @serde(name: "id") @xml(attr: true, name: "id") Id int
+    @serde(name: "name") Name string
+    @serde(name: "price") Price float
+    @serde(name: "qty") Qty int
+    @serde(name: "active") Active bool
+    @serde(name: "tags") @xml(name: "tag") Tags []string
+}
+
+struct Rng {
+    s int
+
+    func Next() int {
+        this.s = (this.s * 1103515245 + 12345) % 2147483648
+        return this.s >> 8
+    }
+}
+
+func words() []string {
+    return [
+        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do",
+        "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua", "veniam",
+    ]
+}
+
+func itoa(n int) string {
+    return fmt.Format("{0}", n)
+}
+
+func money(cents int) string {
+    var c = cents % 100
+    if c < 10 {
+        return itoa(cents / 100) + ".0" + itoa(c)
+    }
+    return itoa(cents / 100) + "." + itoa(c)
+}
+
+// One generated record (fields as text).
+struct Rec {
+    id     string
+    name   string
+    price  string
+    qty    string
+    active string
+    tags   []string
+}
+
+func rec(r *Rng, ws []string, i int) Rec {
+    var name = ws[r.Next() % 20] + "-" + ws[r.Next() % 20] + "-" + itoa(i)
+    var price = money(r.Next() % 100000)
+    var qty = itoa(r.Next() % 1000)
+    var active = "false"
+    if r.Next() % 2 == 0 {
+        active = "true"
+    }
+    var tags []string = []
+    var nt = r.Next() % 4
+    for _ in 0..nt {
+        tags = append(tags, ws[r.Next() % 20])
+    }
+    return Rec{id: itoa(i * 7 + 1), name: name, price: price, qty: qty, active: active, tags: tags}
+}
+
+// format: 0 = XML, 1 = YAML, 2 = TOML.
+func gen(format int, target int) string {
+    var ws = words()
+    var r = Rng{s: 4242}
+    var b = strings.Builder{}
+    if format == 0 {
+        b.Write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<catalog>\n")
+    } else if format == 1 {
+        b.Write("# generated catalog\nitems:\n")
+    } else {
+        b.Write("# generated catalog\n")
+    }
+    var i = 0
+    for b.Len() < target {
+        var x = rec(&r, ws, i)
+        if format == 0 {
+            b.Write("  <item id=\"" + x.id + "\"><name>" + x.name + "</name><price>" + x.price)
+            b.Write("</price><qty>" + x.qty + "</qty><active>" + x.active + "</active>")
+            for t in x.tags {
+                b.Write("<tag>" + t + "</tag>")
+            }
+            b.Write("</item>\n")
+        } else if format == 1 {
+            b.Write("  - id: " + x.id + "\n    name: " + x.name + "\n    price: " + x.price)
+            b.Write("\n    qty: " + x.qty + "\n    active: " + x.active + "\n    tags: [")
+            b.Write(strings.Join(x.tags, ", "))
+            b.Write("]\n")
+        } else {
+            b.Write("[[items]]\nid = " + x.id + "\nname = \"" + x.name + "\"\nprice = " + x.price)
+            b.Write("\nqty = " + x.qty + "\nactive = " + x.active + "\ntags = [")
+            for k, t in x.tags {
+                if k > 0 {
+                    b.Write(", ")
+                }
+                b.Write("\"" + t + "\"")
+            }
+            b.Write("]\n\n")
+        }
+        i += 1
+    }
+    if format == 0 {
+        b.Write("</catalog>\n")
+    }
+    return b.String()
+}
+
+func checksum(c Catalog) string {
+    var sumId = 0
+    var sumQty = 0
+    var sumCents = 0
+    var active = 0
+    var tags = 0
+    var bytes = 0
+    for it in c.Items {
+        sumId += it.Id
+        sumQty += it.Qty
+        sumCents += int(math.Round(it.Price * 100.0))
+        if it.Active {
+            active += 1
+        }
+        tags += len(it.Tags)
+        bytes += len(it.Name)
+        for t in it.Tags {
+            bytes += len(t)
+        }
+    }
+    return fmt.Format(
+        "items={0} id={1} qty={2} cents={3} active={4} tags={5} bytes={6}",
+        len(c.Items),
+        sumId,
+        sumQty,
+        sumCents,
+        active,
+        tags,
+        bytes,
+    )
+}
+
+func parse(format int, text string) Catalog! {
+    if format == 0 {
+        return xml.Parse<Catalog>(text)?
+    } else if format == 1 {
+        return yaml.Parse<Catalog>(text)?
+    }
+    return toml.Parse<Catalog>(text)?
+}
+
+func format(f int, c Catalog) string {
+    if f == 0 {
+        return xml.Format(c)
+    } else if f == 1 {
+        return yaml.Format(c)
+    }
+    return toml.Format(c)
+}
+
+func ms(t0 int, t1 int) int {
+    return (t1 - t0) / 1000000
+}
+
+func mbs(bytes int, t0 int, t1 int) int {
+    var d = t1 - t0
+    if d <= 0 {
+        d = 1
+    }
+    return bytes * 1000 / d
+}
+
+func main() void! {
+    var size = 20000000
+    if os.Getenv("SCALE") == "small" {
+        size = 200000
+    }
+    var only = os.Getenv("FORMAT")
+    var names = ["xml", "yaml", "toml"]
+    for f in 0..3 {
+        if only != "" && only != names[f] {
+            continue
+        }
+        var text = gen(f, size)
+        var t0 = time.NowNanos()
+        var c = parse(f, text)?
+        var t1 = time.NowNanos()
+        var sum = checksum(c)
+        println(names[f], "parse:", sum)
+        var t2 = time.NowNanos()
+        var out = format(f, c)
+        var t3 = time.NowNanos()
+        var again = parse(f, out)?
+        println(names[f], "roundtrip:", checksum(again) == sum)
+        io.Eprintln(
+            fmt.Format(
+                "{0}: {1} bytes, parse {2} ms ({3} MB/s), format {4} ms ({5} bytes, {6} MB/s)",
+                names[f],
+                len(text),
+                ms(t0, t1),
+                mbs(len(text), t0, t1),
+                ms(t2, t3),
+                len(out),
+                mbs(len(out), t2, t3),
+            ),
+        )
+    }
+}
