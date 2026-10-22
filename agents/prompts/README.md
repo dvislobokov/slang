@@ -1,0 +1,15 @@
+# Agent prompts
+
+Ready-to-paste prompts for long waves of work that need more CPU and disk
+than a cloud session has. Run `claude` locally in the repository root and
+paste the prompt from the file.
+
+| File | Wave |
+|---|---|
+| `perf-wave-1.md` | the five hot spots of the 2026-10-22 benchmark run: scheduler, I/O, JSON, crypto, compiler |
+
+Planned next (not written yet): logger and ORM hot spots
+(RESULTS-framework.md), the self-contained distribution
+(docs/PLATFORMS.md "Дистрибутив": bundled lld, glibc/musl/mingw/macOS link
+inputs for every target), test-suite speed-up, moving `web`/`data` into
+packages (docs/FRAMEWORK.md plan).
