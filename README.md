@@ -57,6 +57,12 @@ async func main() {
 
 ## Install
 
+> **Status:** there is no published release yet, so the prebuilt-toolchain
+> path below does not work until the first `v0.1.0` release is tagged
+> (the release workflow is in `.github/workflows/release.yml`). Until then,
+> build from source (next section): it takes a few minutes and gives you
+> `zell`, `zell-lsp` and `zell-mcp`.
+
 **A prebuilt toolchain** (`bin/zell`, `bin/zell-lsp`, `bin/zell-mcp`, `std/`, the
 runtime for the machine in `targets/<triple>/`, debugger formatters):
 
@@ -100,7 +106,36 @@ make -C runtime CROSS=x86_64-linux-musl    # optional: static musl binaries (mus
 The compiler finds the standard library sources in the repository's
 `std/` (or `$ZELL_STD`, or `<prefix>/std` next to an installed
 `<prefix>/bin/zell`). Supported platforms and how each was verified:
-`docs/PLATFORMS.md`.
+`docs/PLATFORMS.md`. Check the installation:
+
+```sh
+zell version                 # zell 0.1.0 (x86_64)
+zell-lsp --version           # the language server (also: zell lsp)
+zell run examples/hello.zl   # Hello, Zell!
+```
+
+### Editors and the language server
+
+`zell-lsp` is a standard LSP server over stdio (diagnostics with quick
+fixes, go to definition/implementation/type definition, references, hover,
+rename, completion, signature help, inlay hints, code actions, semantic
+tokens, formatting, code lenses to run tests, workspace symbols; the method
+list is in `docs/TOOLING.md`). Any editor with an LSP client can use it;
+the server must be on `PATH` (or point the client at the binary).
+
+| Editor | Setup |
+|---|---|
+| **VS Code** | `cd editors/vscode && npm install && npx @vscode/vsce package`, then `code --install-extension zell-*.vsix`. The extension starts `zell-lsp` from `PATH` (setting `zell.serverPath` to override), adds syntax highlighting, run/debug code lenses and debugging through `lldb-dap`. Not on the Marketplace yet. |
+| **IntelliJ IDEA / GoLand / other JetBrains IDEs** | plugin repository [zell-lang/zell-idea-plugin](https://github.com/zell-lang/zell-idea-plugin): Grammar-Kit PSI for syntax, `zell-lsp` through the platform LSP API (Ultimate/commercial IDEs). Build with `./gradlew buildPlugin` and install the zip from `build/distributions/`; the toolchain is found on `PATH`, in `ZELL_HOME`, or set in Settings → Languages → Zell. |
+| **Neovim** | `vim.lsp.start({ name = "zell", cmd = { "zell-lsp" }, root_dir = vim.fs.root(0, { "zell.toml", "zell.json", "zell.yaml", ".git" }) })` in an autocommand for `*.zl` (`vim.filetype.add({ extension = { zl = "zell" } })`). |
+| **Helix** | in `languages.toml`: `[[language]] name = "zell" scope = "source.zell" file-types = ["zl"] roots = ["zell.toml"] language-servers = ["zell-lsp"]` and `[language-server.zell-lsp] command = "zell-lsp"`. |
+| **Zed, Sublime, Emacs (eglot/lsp-mode)** | register `zell-lsp` as the server for the `zl` extension; no dedicated extension exists yet. |
+| **AI coding agents** | Claude Code plugin with the LSP, `zell-mcp` for the rest: see [AI coding agents](#ai-coding-agents). |
+
+Server options go in the client's `initializationOptions`: `inlayHints`
+(`types`, `parameterNames`) and `diagnostics.mode` (`auto` by default: pull
+diagnostics when the client supports them, otherwise push; set `"push"` for
+clients that advertise pull support but never pull).
 
 ## Hello, world
 
