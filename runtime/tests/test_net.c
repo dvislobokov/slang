@@ -526,24 +526,30 @@ TEST(net_unix_udp_sendfile) {
     zell_string *fp = S(fpath);
     int64_t ffd = zell_net_rt_open_file(fp, &err);
     assert(!err && zell_net_rt_file_size(ffd) == 10000);
-    int64_t off = 0;
-    while (off < 10000) {
-        int64_t k = zell_net_rt_send_file(c, ffd, off, 10000 - off, &err);
-        assert(!err);
-        if (k < 0) assert(wait_code(zell_net_rt_wait_writable(c, 2000)) == 0);
-        else off += k;
+    /* Send and receive together: a Unix socket's buffer can be smaller
+     * than the file (8 KB on macOS), so the sender waits for the reader. */
+    zell_slice buf;
+    zell_slice_new(&buf, 1, 20000, 20000);
+    int64_t off = 0, got = 0;
+    while (off < 10000 || got < 10000) {
+        int progress = 0;
+        if (off < 10000) {
+            int64_t k = zell_net_rt_send_file(c, ffd, off, 10000 - off, &err);
+            assert(!err);
+            if (k > 0) off += k, progress = 1;
+        }
+        if (got < 10000) {
+            int64_t k = zell_net_rt_read_into(a, &buf, got, &err);
+            assert(!err && k != 0);
+            if (k > 0) got += k, progress = 1;
+        }
+        if (!progress) {
+            if (got < off) assert(wait_code(zell_net_rt_wait_readable(a, 2000)) == 0);
+            else assert(wait_code(zell_net_rt_wait_writable(c, 2000)) == 0);
+        }
     }
     zell_net_rt_close_file(ffd);
     unlink(fpath);
-    zell_slice buf;
-    zell_slice_new(&buf, 1, 20000, 20000);
-    int64_t got = 0;
-    while (got < 10000) {
-        int64_t k = zell_net_rt_read_into(a, &buf, got, &err);
-        assert(!err && k != 0);
-        if (k < 0) assert(wait_code(zell_net_rt_wait_readable(a, 2000)) == 0);
-        else got += k;
-    }
     assert(((char *)buf.data)[9999] == 'a' + 9999 % 26);
     zell_net_rt_free(a);
     zell_net_rt_free(c);
