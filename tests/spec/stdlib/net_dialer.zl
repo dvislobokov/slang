@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_dialer
 
-import std
-import std.io
+import io
 
 async func main() void! {
     var lc = net.ListenConfig{Backlog: 16}

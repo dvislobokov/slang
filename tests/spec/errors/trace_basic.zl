@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors.trace_basic
 
-import std
-import std.io
+import io
 
 func Open(name string) string! {
     return error("not found: " + name)

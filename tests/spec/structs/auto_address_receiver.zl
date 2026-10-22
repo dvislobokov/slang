@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.auto_address_receiver
 
-import std.io
+import io
 
 struct Counter {
     N int

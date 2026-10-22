@@ -1,4 +1,4 @@
-// std.database.postgres against a real PostgreSQL server (compiler/tests/
+// database.postgres against a real PostgreSQL server (compiler/tests/
 // database.rs starts a temporary cluster): authentication methods, TLS
 // modes, Unix sockets, types in text and binary formats, typed queries,
 // errors, transactions, timeouts, pool concurrency, COPY, notices and
@@ -6,9 +6,8 @@
 // and server.crt) come from the environment.
 namespace pgreal
 
-import std.io
-import std
-import std.database
+import io
+import database
 
 struct Item {
     Id int

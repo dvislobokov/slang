@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.web.err_ctor_param
 
-import std.web
+import web
 
 struct Cache {
     size int

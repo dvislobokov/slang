@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.drop_heap_refcount
 
-import std.io
+import io
 
 struct File {
     Path string

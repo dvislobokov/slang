@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.generic_drop
 
-import std.io
+import io
 
 struct Guard<T> {
     V T

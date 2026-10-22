@@ -1,6 +1,6 @@
 namespace examples.control
 
-import std.io
+import io
 
 func Classify(n int) string {
     if n < 0 {

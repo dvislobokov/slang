@@ -51,7 +51,7 @@ check cpuprofile sh -c "'$S' run examples/cpuprofile.zl | cmp - examples/cpuprof
 cat > "$tmp/panic.zl" <<'SL'
 namespace verify.panic
 
-import std.io
+import io
 
 func inner(xs []int) int {
     return xs[5]
@@ -65,9 +65,8 @@ check backtrace_symbols sh -c "'$S' build '$tmp/panic.zl' -o '$tmp/panic'; '$tmp
 cat > "$tmp/plat.zl" <<'SL'
 namespace verify.plat
 
-import std
-import std.io
-import std.crypto
+import io
+import crypto
 
 async func main() void! {
     println(os.Name, os.Arch)

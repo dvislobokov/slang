@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.impossible_type_case
 
-import std.io
+import io
 
 interface Shape {
     func Area() float

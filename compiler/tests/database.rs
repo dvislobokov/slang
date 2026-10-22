@@ -1,4 +1,4 @@
-//! `std.database.postgres` against a real PostgreSQL server.
+//! `database.postgres` against a real PostgreSQL server.
 //!
 //! The test starts a temporary cluster: `initdb` into a temporary
 //! directory (as the `postgres` user when running as root), TLS with a

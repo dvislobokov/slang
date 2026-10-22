@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.switch_pattern_type_mismatch
 
-import std.io
+import io
 
 func main() {
     var n = 1

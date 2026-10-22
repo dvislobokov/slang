@@ -1,10 +1,10 @@
-// test: std.web DI: singletons (created once by Build, in order), scoped services (one per request, dropped with it), transient services (new per resolution), constructor injection by static New, @inject fields, interfaces registered with <I, T>, factories, instances, web.Resolve<T>() and Context.Resolve<T>() inside handlers, a missing registration at run time
+// test: web DI: singletons (created once by Build, in order), scoped services (one per request, dropped with it), transient services (new per resolution), constructor injection by static New, @inject fields, interfaces registered with <I, T>, factories, instances, web.Resolve<T>() and Context.Resolve<T>() inside handlers, a missing registration at run time
 // status: passing
 // run-flags: --leak-check
 namespace spec.web.di_scopes
 
-import std.io
-import std.web
+import io
+import web
 
 interface Greeter {
     func Greet(name string) string
@@ -66,7 +66,7 @@ struct DiController {
         this.counter.n += 1
         this.state.id = this.counter.n
         var same = this.repo.state == this.state
-        return std.fmt.Format(
+        return fmt.Format(
             "{0} | request {1} | same scope {2} | transient differs {3} | unused nil {4} | db {5}",
             this.greeter.Greet(name),
             this.counter.n,
@@ -105,7 +105,7 @@ async func main() void! {
         var a = c.Resolve<*RequestState>()?
         var b = c.Resolve<*RequestState>()?
         a.id = 100
-        return std.fmt.Format("{0}", a == b)
+        return fmt.Format("{0}", a == b)
     })
     app.MapGet("/missing", func() int! {
         var m = Resolve<*Missing>()?

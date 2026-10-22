@@ -1,9 +1,8 @@
-// test: std.encoding.yaml Parse<T>/Format<T> with @yaml(name:, omitEmpty:, skip:, flow:) and @serde, round trips through Format (quoting of strings that look like other types, multi-line strings as literal blocks), maps with sorted keys, pointers and enums; error messages with lines and paths (bad indentation, duplicate keys, unterminated quotes, tabs, unknown aliases, alias bombs, type mismatches)
+// test: encoding.yaml Parse<T>/Format<T> with @yaml(name:, omitEmpty:, skip:, flow:) and @serde, round trips through Format (quoting of strings that look like other types, multi-line strings as literal blocks), maps with sorted keys, pointers and enums; error messages with lines and paths (bad indentation, duplicate keys, unterminated quotes, tabs, unknown aliases, alias bombs, type mismatches)
 // status: passing
 namespace spec.stdlib3.yaml_typed
 
-import std
-import std.io
+import io
 
 enum Mode {
     Dev

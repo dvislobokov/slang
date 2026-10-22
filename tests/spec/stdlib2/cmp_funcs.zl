@@ -1,10 +1,9 @@
-// test: std.cmp Compare/Less/Min/Max/Clamp/Or generic over Ordered (NaN sorts first)
+// test: cmp Compare/Less/Min/Max/Clamp/Or generic over Ordered (NaN sorts first)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.cmp_funcs
 
-import std
-import std.io
+import io
 
 func main() {
     println(cmp.Compare(1, 2), cmp.Compare("b", "a"), cmp.Compare(2.5, 2.5), cmp.Compare('a', 'b'))

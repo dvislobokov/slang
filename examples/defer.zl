@@ -1,6 +1,6 @@
 namespace examples.defers
 
-import std.io
+import io
 
 // Deferred calls run when the function returns, last-in first-out.
 func Basic() {

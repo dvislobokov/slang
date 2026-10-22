@@ -1,7 +1,6 @@
 namespace examples.structs
 
-import std
-import std.io
+import io
 
 struct Point {
     X float

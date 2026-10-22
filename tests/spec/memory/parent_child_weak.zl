@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.parent_child_weak
 
-import std.io
+import io
 
 struct Child {
     Name   string

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.diagnostics.arena_intrinsic_no_type
 
-import std
-import std.io
+import io
 
 func main() {
     var a = arena.New()

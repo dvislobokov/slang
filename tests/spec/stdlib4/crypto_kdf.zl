@@ -1,11 +1,10 @@
-// test: std.crypto.kdf Argon2d/i/id (RFC 9106 5.1-5.3 vectors, argon2 CLI vector), PBKDF2 (RFC 6070, RFC 7914), scrypt (RFC 7914), HKDF (RFC 5869 A.1), BLAKE2b (RFC 7693); std.crypto.password PHC hashes, Verify (also of an argon2-cffi hash), NeedsRehash, malformed input
+// test: crypto.kdf Argon2d/i/id (RFC 9106 5.1-5.3 vectors, argon2 CLI vector), PBKDF2 (RFC 6070, RFC 7914), scrypt (RFC 7914), HKDF (RFC 5869 A.1), BLAKE2b (RFC 7693); crypto.password PHC hashes, Verify (also of an argon2-cffi hash), NeedsRehash, malformed input
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib4.crypto_kdf
 
-import std
-import std.encoding
-import std.io
+import encoding
+import io
 
 func rep(b int, n int) []byte {
     var out []byte = []

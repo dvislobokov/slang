@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_many_conns
 
-import std
-import std.io
+import io
 
 async func serve(c net.Conn) void! {
     var buf = net.MakeBuffer(512)

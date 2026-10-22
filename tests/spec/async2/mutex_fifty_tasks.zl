@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async2.mutex_fifty_tasks
 
-import std
-import std.io
+import io
 
 struct Counter {
     Mu task.Mutex

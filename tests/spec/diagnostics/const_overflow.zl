@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.const_overflow
 
-import std.io
+import io
 
 const Big int8 = 300
 

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.cfg_unknown_key
 
-import std.io
+import io
 
 @cfg(platform: "linux")
 func F() string { return "f" }

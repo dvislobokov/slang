@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.double_fallible
 
-import std.io
+import io
 
 func Wrap<T>(x T) T! { return x }
 

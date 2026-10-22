@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.diagnostics.fields_not_for_sequence
 
-import std
-import std.io
+import io
 
 struct P {
     X int

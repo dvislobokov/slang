@@ -2,9 +2,8 @@
 // status: passing
 namespace spec.programs.inventory
 
-import std
-import std.collections
-import std.io
+import collections
+import io
 
 struct Item {
     Sku        string

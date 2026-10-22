@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory2.interior_pointer_return_error
 
-import std.io
+import io
 
 struct Box {
     V int

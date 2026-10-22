@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes.builtin_attrs
 
-import std.io
+import io
 
 @reflect
 struct User {

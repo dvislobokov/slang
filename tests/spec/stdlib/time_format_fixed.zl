@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.time_format_fixed
 
-import std
-import std.io
+import io
 
 const T = 1700000000123
 

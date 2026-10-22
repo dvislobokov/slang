@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.x509_system_roots_cache
 
-import std
-import std.crypto
-import std.io
+import crypto
+import io
 
 const rootPEM = `-----BEGIN CERTIFICATE-----
 MIIBvTCCAWOgAwIBAgIUA9Sb9VwlxjjxD1YgDii/0p4QUi0wCgYIKoZIzj0EAwIw

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors.is_wrap_unwrap
 
-import std
-import std.io
+import io
 
 const ErrA = error("a")
 const ErrB = errors.New("b")

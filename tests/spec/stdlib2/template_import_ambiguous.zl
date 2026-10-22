@@ -1,0 +1,14 @@
+// error: ambiguous name template: imported from both html and text
+// status: passing
+namespace spec.stdlib2.template_import_ambiguous
+
+import html
+import io
+import text
+
+// `import text` gives text.template as `template`, `import html` gives
+// html.template as `template`: alias one (`import html.template as ht`)
+// or write the full path (`html.template.Must(...)`).
+func main() {
+    println(template.Str("x"))
+}

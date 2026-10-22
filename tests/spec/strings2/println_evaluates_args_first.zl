@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.strings2.println_evaluates_args_first
 
-import std.io
+import io
 
 func Noisy(s string) string {
     println("evaluating", s)

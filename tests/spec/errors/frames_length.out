@@ -1,5 +1,5 @@
 4
-Inner 9 [] tests/spec/errors/frames_length.zl
-Middle 13 [middle] tests/spec/errors/frames_length.zl
-Outer 17 [] tests/spec/errors/frames_length.zl
-main 21 [] tests/spec/errors/frames_length.zl
+Inner 8 [] tests/spec/errors/frames_length.zl
+Middle 12 [middle] tests/spec/errors/frames_length.zl
+Outer 16 [] tests/spec/errors/frames_length.zl
+main 20 [] tests/spec/errors/frames_length.zl

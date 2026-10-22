@@ -1,12 +1,11 @@
-// test: std.web middleware: Use order (outermost first) and short-circuiting, request ids (log property RequestId), request logging through the app logger, std.diag server spans, body limits, recover of middleware errors, CORS preflights, gzip, static files, rate limiting
+// test: web middleware: Use order (outermost first) and short-circuiting, request ids (log property RequestId), request logging through the app logger, diag server spans, body limits, recover of middleware errors, CORS preflights, gzip, static files, rate limiting
 // status: passing
 // run-flags: --leak-check
 namespace spec.web.middleware
 
-import std
-import std.io
-import std.net
-import std.web
+import io
+import net
+import web
 
 var now = 1700000000000000000
 

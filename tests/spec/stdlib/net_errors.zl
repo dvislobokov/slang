@@ -1,10 +1,9 @@
-// test: std.net errors: sentinels through OpError wraps (errors.Is / errors.As), refused, closed, address in use, unknown hosts, bad addresses
+// test: net errors: sentinels through OpError wraps (errors.Is / errors.As), refused, closed, address in use, unknown hosts, bad addresses
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib.net_errors
 
-import std
-import std.io
+import io
 
 async func main() void! {
     var hp = net.SplitHostPort("[::1]:8080")?

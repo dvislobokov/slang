@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.error_in_defer
 
-import std.io
+import io
 
 func Close(name string) void! {
     if name == "b" {

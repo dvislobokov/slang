@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.int_literals
 
-import std.io
+import io
 
 func main() {
     println(1_000_000, 0xff, 0XFF, 0b1010, 0o17, 0x_ff)

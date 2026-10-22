@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.typeof_value
 
-import std
-import std.io
+import io
 
 struct User {
     Name string

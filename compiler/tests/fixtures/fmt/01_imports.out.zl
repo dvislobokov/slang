@@ -1,9 +1,8 @@
 namespace app.main
 
-import std
-import std.io
+import io
 // strings for Split
-import std.strings
+import strings
 
 import app.models
 import app.util as u

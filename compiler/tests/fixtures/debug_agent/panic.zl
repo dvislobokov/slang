@@ -1,7 +1,6 @@
 namespace app
 
-import std
-import std.io
+import io
 
 // Debug-agent fixture: exception breakpoints on panics and on the
 // creation of typed errors.

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.unhandled_void_result_error
 
-import std.io
+import io
 
 func F() void! {}
 

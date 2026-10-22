@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.generic_type_as_value
 
-import std.io
+import io
 
 struct Box<T> {
     V T

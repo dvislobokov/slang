@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.int_conversions
 
-import std.io
+import io
 
 func main() {
     var x = 300

@@ -1,7 +1,6 @@
 namespace app
 
-import std
-import std.io
+import io
 
 // Debug-agent fixture: two tasks running the same code, stepped
 // independently.

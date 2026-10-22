@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.data.err_unsupported_method
 
-import std
-
 struct User {
     Id    int
     Name  string

@@ -1,7 +1,7 @@
 namespace fmt.nested
 
 func main() {
-    var ticket = sealTicket(c.srv, encodeTicket(ticketData{version: 772, suite: s.id, created: std.time.Now(),
+    var ticket = sealTicket(c.srv, encodeTicket(ticketData{version: 772, suite: s.id, created: time.Now(),
         ageAdd: ageAdd, secret: tpsk, alpn: c.alpn, certs: c.peerCerts}))?
     outer(innerFunctionName(argumentNumberOne, argumentNumberTwo, argumentNumberThree), anotherInner(someLongArgumentValue, anotherLongArgumentValue, yetAnotherOne))
     var r = mock.Expect(db.Query(sql.Text("SELECT id, name FROM users WHERE id = $1 AND active"), sql.Args(userIdentifier, true, "x")), mock.Rows(columns("id", "name"), row(1, "alice"), row(2, "bob")))

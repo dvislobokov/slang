@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.memory2.weak_across_async
 
-import std
-import std.io
+import io
 
 struct Res {
     Name string

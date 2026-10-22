@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.string_compare
 
-import std.io
+import io
 
 func main() {
     println("abc" < "abd", "Z" < "a", "" < "a", "ab" < "abc")

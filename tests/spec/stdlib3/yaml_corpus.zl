@@ -1,9 +1,8 @@
-// test: std.encoding.yaml parses 30 documents the same way as PyYAML (on YAML 1.2-compatible input): scalars and core-schema resolution, quoting and escapes, plain/quoted multi-line folding, literal/folded block scalars with chomping and indentation indicators, block/flow/compact collections (keys compared sorted), anchors, aliases and merge keys, tags, comments, multi-document streams
+// test: encoding.yaml parses 30 documents the same way as PyYAML (on YAML 1.2-compatible input): scalars and core-schema resolution, quoting and escapes, plain/quoted multi-line folding, literal/folded block scalars with chomping and indentation indicators, block/flow/compact collections (keys compared sorted), anchors, aliases and merge keys, tags, comments, multi-document streams
 // status: passing
 namespace spec.stdlib3.yaml_corpus
 
-import std
-import std.io
+import io
 
 func canon(v encoding.yaml.Value) string {
     if v.IsNull() {

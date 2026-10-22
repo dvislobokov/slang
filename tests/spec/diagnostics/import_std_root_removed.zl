@@ -1,0 +1,9 @@
+// error: unknown namespace std in import: the `std` namespace no longer exists
+// status: passing
+namespace spec.diagnostics.import_std_root_removed
+
+import std
+
+func main() {
+    io.println("x")
+}

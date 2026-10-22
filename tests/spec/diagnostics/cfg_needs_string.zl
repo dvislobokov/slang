@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.cfg_needs_string
 
-import std.io
+import io
 
 @cfg(os: 1)
 func F() string { return "f" }

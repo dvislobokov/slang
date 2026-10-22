@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.catch_typed_switch
 
-import std.io
+import io
 
 struct NotFound {
     Key string

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.control.switch_strings
 
-import std.io
+import io
 
 func Kind(ext string) string {
     switch ext {

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.type_args_on_plain_method
 
-import std.io
+import io
 
 struct S {
     func F(x int) int { return x }

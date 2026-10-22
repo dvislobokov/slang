@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.control.for_string_runes
 
-import std
-import std.io
+import io
 
 func main() {
     var s = "aé😀b"

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.async.await_non_task_error
 
-import std.io
+import io
 
 async func main() {
     var x = await 5

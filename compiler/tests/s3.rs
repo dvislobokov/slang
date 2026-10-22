@@ -1,4 +1,4 @@
-//! `std.cloud.s3` / `std.cloud.blob` against a real MinIO server.
+//! `cloud.s3` / `cloud.blob` against a real MinIO server.
 //!
 //! The test starts `minio server` (from `PATH` or `$MINIO_BIN`) on a free
 //! port with a temporary data directory and root credentials, waits for

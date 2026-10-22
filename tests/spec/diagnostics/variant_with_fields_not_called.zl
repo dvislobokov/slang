@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.variant_with_fields_not_called
 
-import std.io
+import io
 
 enum Shape {
     Circle(r float)

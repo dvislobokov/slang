@@ -1,11 +1,10 @@
-// test: std.cloud.s3 Signature V4 without a server: AWS SigV4 test-suite vectors (get-vanilla, get-vanilla-query-order-key-case, post-x-www-form-urlencoded: canonical request, string to sign, signature), the S3 documentation examples (GET Object with Range, a presigned URL; checked with botocore 1.43), RFC 3986 encoding and canonical query strings, the signing key chain, credentials from the environment and a shared credentials file, endpoint and addressing validation
+// test: cloud.s3 Signature V4 without a server: AWS SigV4 test-suite vectors (get-vanilla, get-vanilla-query-order-key-case, post-x-www-form-urlencoded: canonical request, string to sign, signature), the S3 documentation examples (GET Object with Range, a presigned URL; checked with botocore 1.43), RFC 3986 encoding and canonical query strings, the signing key chain, credentials from the environment and a shared credentials file, endpoint and addressing validation
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib5.s3_sigv4
 
-import std
-import std.cloud
-import std.io
+import cloud
+import io
 
 func show(name string, s s3.Signed) {
     println("== " + name)

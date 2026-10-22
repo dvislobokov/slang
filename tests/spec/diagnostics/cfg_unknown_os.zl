@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.cfg_unknown_os
 
-import std.io
+import io
 
 @cfg(os: "linx")
 func F() string { return "f" }

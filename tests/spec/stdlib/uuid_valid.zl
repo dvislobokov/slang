@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.uuid_valid
 
-import std
-import std.io
+import io
 
 func main() {
     var a = uuid.New()

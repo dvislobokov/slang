@@ -1,11 +1,10 @@
 namespace app
 
-import std
-import std.collections
-import std.io
+import collections
+import io
 
-// Word statistics with std.slices / std.maps / std.cmp and the newer
-// std.collections types (Heap, OrderedMap, LRU, Deque).
+// Word statistics with slices / maps / cmp and the newer
+// collections types (Heap, OrderedMap, LRU, Deque).
 
 struct WordCount {
     Word  string

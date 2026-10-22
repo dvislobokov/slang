@@ -1,16 +1,15 @@
 namespace bench.http_hello
 
-import std
-import std.io
-import std.net
+import io
+import net
 
-// HTTP/1.1 "hello" throughput: the std.net.http server answering a
+// HTTP/1.1 "hello" throughput: the net.http server answering a
 // keep-alive load generator (CONNS connections, REQUESTS requests in all,
 // one request in flight per connection, like wrk -c CONNS).
 //   main                  server and load generator in one process
 //   main --server         only the server: prints its port (stderr), serves until killed
 //   main --load host:port only the load generator (against any server)
-//   main --server-tls     HTTP/2 over TLS (std.net.http.test certificate, ALPN h2):
+//   main --server-tls     HTTP/2 over TLS (net.http.test certificate, ALPN h2):
 //                         prints its port (stderr), serves until killed
 
 async func Hello(req *http.Request, res *http.Response) void! {

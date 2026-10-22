@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory2.drop_explicit_call_error
 
-import std.io
+import io
 
 struct R {
     Name string

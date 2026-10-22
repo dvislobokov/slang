@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.underscore_discard
 
-import std.io
+import io
 
 func Noisy(fail bool) int! {
     println("Noisy", fail)

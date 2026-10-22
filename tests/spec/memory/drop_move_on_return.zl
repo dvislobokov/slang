@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.drop_move_on_return
 
-import std.io
+import io
 
 struct Token {
     Id int

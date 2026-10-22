@@ -1,9 +1,8 @@
-// test: std.archive.tar reads a pax archive made by GNU tar (long name in a pax header, directory, mtimes) inside a .tar.gz, writes ustar entries (prefix split for long paths) and pax headers (non-ASCII / very long names, big uid), reads them back with the sequential Reader; corrupt checksums and unsafe names are errors; ExtractTo / FromDir round trip
+// test: archive.tar reads a pax archive made by GNU tar (long name in a pax header, directory, mtimes) inside a .tar.gz, writes ustar entries (prefix split for long paths) and pax headers (non-ASCII / very long names, big uid), reads them back with the sequential Reader; corrupt checksums and unsafe names are errors; ExtractTo / FromDir round trip
 // status: passing
 namespace spec.stdlib3.archive_tar
 
-import std
-import std.io
+import io
 
 func short(name string) string {
     if len(name) > 30 {

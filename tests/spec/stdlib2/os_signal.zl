@@ -1,10 +1,9 @@
-// test: std.os.signal Wait, WaitAny, Notify channel, pending deliveries, Ignore and Reset with self-raised signals
+// test: os.signal Wait, WaitAny, Notify channel, pending deliveries, Ignore and Reset with self-raised signals
 // status: passing
 namespace spec.stdlib2.os_signal
 
-import std
-import std.io
-import std.os
+import io
+import os
 
 async func main() {
     var w = signal.Wait(signal.SIGUSR1)

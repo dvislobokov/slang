@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.missing_return_error
 
-import std.io
+import io
 
 func Sign(n int) int {
     switch {

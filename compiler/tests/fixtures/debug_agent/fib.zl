@@ -1,6 +1,6 @@
 namespace app
 
-import std.io
+import io
 
 // Debug-agent fixture: hook overhead with the agent compiled in but off.
 

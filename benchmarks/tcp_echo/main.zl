@@ -1,7 +1,6 @@
 namespace bench.tcp_echo
 
-import std
-import std.io
+import io
 
 // 1000 concurrent TCP connections through loopback, each sending 1 MB in
 // 64 KB writes and reading the echo back; the server echoes with

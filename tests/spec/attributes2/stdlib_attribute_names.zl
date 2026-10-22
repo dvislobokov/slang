@@ -1,11 +1,11 @@
-// test: stdlib attribute structs are named through their own namespace's import (`@flag` with import std.cli, `@binary` with import std.encoding.binary); builtin `@json` still works with import std.reflect; their fields are readable through Attribute<A>()
+// test: stdlib attribute structs are named through their own namespace's import (`@flag` with import cli, `@binary` with import encoding.binary); builtin `@json` still works with import reflect; their fields are readable through Attribute<A>()
 // status: passing
 namespace spec.attributes2.stdlib_attribute_names
 
-import std.cli
-import std.encoding.binary
-import std.io
-import std.reflect
+import cli
+import encoding.binary
+import io
+import reflect
 
 @binary(endian: "big")
 struct Opts {

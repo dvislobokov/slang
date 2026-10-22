@@ -1,11 +1,10 @@
-// test: std.net.ws: upgrade inside an http handler, Dial, text/binary/fragmented messages, ping/pong, concurrent senders, close codes, a bad handshake; served by std.net.http.test
+// test: net.ws: upgrade inside an http handler, Dial, text/binary/fragmented messages, ping/pong, concurrent senders, close codes, a bad handshake; served by net.http.test
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib.ws_echo
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 struct Seen {
     closeCode int

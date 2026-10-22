@@ -1,10 +1,9 @@
-// test: std.compress.zstd Compress/CompressNoChecksum: round trips through Decompress for empty, small, text, binary, run and multi-block inputs at several levels; frames start with the magic number; text compresses; the streaming Reader reads concatenated frames
+// test: compress.zstd Compress/CompressNoChecksum: round trips through Decompress for empty, small, text, binary, run and multi-block inputs at several levels; frames start with the magic number; text compresses; the streaming Reader reads concatenated frames
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib4.zstd_encode
 
-import std
-import std.io
+import io
 
 func same(a []byte, b []byte) bool {
     if len(a) != len(b) {

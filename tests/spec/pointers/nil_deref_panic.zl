@@ -3,7 +3,7 @@
 // exit: 2
 namespace spec.pointers.nil_deref_panic
 
-import std.io
+import io
 
 func main() {
     var p *int

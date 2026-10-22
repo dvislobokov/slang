@@ -1,6 +1,5 @@
 namespace liba
 
-import std
 import libb.math
 import libb.shapes
 

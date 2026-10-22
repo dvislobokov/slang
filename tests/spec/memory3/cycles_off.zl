@@ -6,8 +6,7 @@
 // stderr: leak: 2 objects
 namespace spec.memory3.cycles_off
 
-import std
-import std.io
+import io
 
 @allowCycle
 struct Node {

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.privm
 
-import std.io
+import io
 
 import spec.structs.privm.lib
 

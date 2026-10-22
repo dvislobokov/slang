@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.pointers.linked_list_reverse
 
-import std.io
+import io
 
 struct Node {
     V    int

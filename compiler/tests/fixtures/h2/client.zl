@@ -1,8 +1,7 @@
 namespace fixtures.h2.client
 
-import std.io
-import std
-import std.net
+import io
+import net
 
 // The Zell client of the interop tests (compiler/tests/net_http.rs):
 // `client <h2c-base> <tls-base>` requests a Go net/http server over h2c

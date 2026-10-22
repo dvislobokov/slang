@@ -1,14 +1,13 @@
 namespace examples.tls_echo
 
-import std
-import std.crypto
-import std.io
-import std.net
+import crypto
+import io
+import net
 
-// A TLS echo server and its clients in one program (std.net.tls): TLS 1.3
+// A TLS echo server and its clients in one program (net.tls): TLS 1.3
 // and TLS 1.2, ALPN, a large message spread over many records, KeyUpdate,
 // client certificates, session resumption, certificate verification
-// against a pinned self-signed certificate, and HTTPS through std.net.http.
+// against a pinned self-signed certificate, and HTTPS through net.http.
 // The certificates are self-signed test certificates (valid 2000-2100)
 // for localhost; never use embedded keys in real programs.
 

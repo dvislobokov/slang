@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.string_index_byte
 
-import std.io
+import io
 
 func main() {
     var s = "héllo"

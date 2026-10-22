@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.stdlib3.template_missing_end
 
-import std
-
 struct Page {
     Show bool
 }

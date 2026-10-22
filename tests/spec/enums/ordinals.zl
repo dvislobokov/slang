@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.ordinals
 
-import std.io
+import io
 
 enum Level { Debug, Info, Warn, Error }
 

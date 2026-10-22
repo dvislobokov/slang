@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.duplicate_case_error
 
-import std.io
+import io
 
 func main() {
     var n = 2

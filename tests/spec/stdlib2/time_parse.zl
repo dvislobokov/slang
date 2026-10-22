@@ -1,10 +1,9 @@
-// test: std.time.ParseTime / ParseInLocation with Go layouts, zone offsets, fractions and errors
+// test: time.ParseTime / ParseInLocation with Go layouts, zone offsets, fractions and errors
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.time_parse
 
-import std
-import std.io
+import io
 
 func show(layout string, value string) {
     var t = try time.ParseTime(layout, value) catch err {

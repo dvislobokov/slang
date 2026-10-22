@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_reset
 
-import std
-import std.io
+import io
 
 async func blockedRead(c net.Conn) string {
     var r = try await c.Read(10) catch err {

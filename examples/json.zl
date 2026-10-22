@@ -1,9 +1,9 @@
-// std.encoding.json: typed Parse/Format through compile-time reflection,
+// encoding.json: typed Parse/Format through compile-time reflection,
 // @json attributes, error paths, and the dynamic json.Value tree.
 namespace examples.json
 
-import std.encoding
-import std.io
+import encoding
+import io
 
 enum Role { Guest, Member, Admin }
 

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.pointers.no_pointer_arithmetic
 
-import std.io
+import io
 
 func main() {
     var x = 1

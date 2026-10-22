@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.stdlib.print_spacing
 
-import std.io
+import io
 
 func main() {
     print(1, 2, "\n")

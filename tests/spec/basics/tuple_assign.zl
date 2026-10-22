@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.tuple_assign
 
-import std.io
+import io
 
 func DivMod(a, b int) (int, int) {
     return a / b, a % b

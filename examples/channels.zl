@@ -1,7 +1,6 @@
 namespace examples.channels
 
-import std
-import std.io
+import io
 
 // A producer/consumer pipeline over channels, a mutex-protected counter,
 // a WaitGroup, task.Spawn, task.Timeout and the task context.

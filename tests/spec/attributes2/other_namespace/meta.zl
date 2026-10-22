@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.attributes2.other_namespace.meta
 
-import std
-
 @attribute(targets: [reflect.Target.Struct])
 struct Table {
     Name string

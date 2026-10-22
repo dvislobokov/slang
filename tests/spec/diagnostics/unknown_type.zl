@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.unknown_type
 
-import std.io
+import io
 
 func F(s Strng) {}
 

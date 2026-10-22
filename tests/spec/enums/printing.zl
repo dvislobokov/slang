@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.enums.printing
 
-import std
-import std.io
+import io
 
 enum Color { Red, Green, Blue }
 

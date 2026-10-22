@@ -36,9 +36,9 @@ fn terminal_output_of_a_symbol_and_a_namespace() {
     assert!(out.starts_with("func Split(s string, sep string) []string\n"), "{out}");
     assert!(out.contains("Split slices s into all substrings") && out.contains("std/strings/strings_extern.zl:"), "{out}");
     assert!(out.contains("Example:\n") && out.contains("    // Output:\n    // 3 [a b c]"), "{out}");
-    let (code, out, _) = zell(&["doc", "std.time"]);
+    let (code, out, _) = zell(&["doc", "time"]);
     assert_eq!(code, 0);
-    assert!(out.starts_with("namespace std.time  // std/time") && out.contains("func Date(year int"), "{out}");
+    assert!(out.starts_with("namespace time  // std/time") && out.contains("func Date(year int"), "{out}");
     // a method, through the last segment of the namespace
     let (code, out, _) = zell(&["doc", "http.Client.Do"]);
     assert_eq!(code, 0);
@@ -50,10 +50,10 @@ fn terminal_output_of_a_symbol_and_a_namespace() {
 
 #[test]
 fn json_output() {
-    let (code, out, _) = zell(&["doc", "std.strings", "--json"]);
+    let (code, out, _) = zell(&["doc", "strings", "--json"]);
     assert_eq!(code, 0);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["name"], "std.strings");
+    assert_eq!(v["name"], "strings");
     let split = v["items"].as_array().unwrap().iter().find(|i| i["name"] == "Split").unwrap();
     assert_eq!(split["kind"], "func");
     assert!(split["summary"].as_str().unwrap().starts_with("Split slices s"));
@@ -104,7 +104,7 @@ fn a_wrong_example_output_fails() {
     let d = tmp("example");
     std::fs::write(
         d.join("calc_test.zl"),
-        "namespace calc_test\n\nimport std.io\n\nfunc ExampleGood() {\n    println(1 + 1)\n    // Output: 2\n}\n\nfunc ExampleBad() {\n    println(\"two\")\n    // Output:\n    // three\n}\n\nfunc ExampleCompiledOnly() {\n    println(\"not run\")\n}\n",
+        "namespace calc_test\n\nimport io\n\nfunc ExampleGood() {\n    println(1 + 1)\n    // Output: 2\n}\n\nfunc ExampleBad() {\n    println(\"two\")\n    // Output:\n    // three\n}\n\nfunc ExampleCompiledOnly() {\n    println(\"not run\")\n}\n",
     )
     .unwrap();
     let (code, out, err) = zell(&["test", d.to_str().unwrap(), "-v"]);
@@ -123,12 +123,12 @@ fn html_reference_of_the_stdlib() {
     let d = tmp("html");
     let (code, _, err) = zell(&["doc", "std", "--html", d.to_str().unwrap()]);
     assert_eq!(code, 0, "{err}");
-    let strings = read(&d.join("std.strings.html"));
+    let strings = read(&d.join("strings.html"));
     assert!(strings.contains("id=\"Split\"") && strings.contains("<pre class=\"sig\">"), "no Split section");
     assert!(strings.contains("<details id=\"ExampleSplit\">"), "no example");
     assert!(strings.contains("href=\"src/std/strings/strings_extern.zl.html#L"), "no source link");
     let idx = read(&d.join("search-index.json"));
-    assert!(idx.contains("\"std.strings.Split\""));
+    assert!(idx.contains("\"strings.Split\""));
     let bad = zell::doc::site::check_links(&d);
     assert!(bad.is_empty(), "broken links: {:?}", &bad[..bad.len().min(20)]);
     let _ = std::fs::remove_dir_all(&d);
@@ -139,7 +139,7 @@ fn documentation_site_links_resolve() {
     let d = tmp("site");
     let (code, _, err) = zell(&["doc", "--site", d.to_str().unwrap(), "--base", "/zell/"]);
     assert_eq!(code, 0, "{err}");
-    for f in ["index.html", "guide/tour.html", "guide/faq.html", "design/DESIGN.html", "design/index.html", "std/index.html", "std/std.strings.html", "404.html", "style.css", "search-index.js", ".nojekyll"] {
+    for f in ["index.html", "guide/tour.html", "guide/faq.html", "design/DESIGN.html", "design/index.html", "std/index.html", "std/strings.html", "404.html", "style.css", "search-index.js", ".nojekyll"] {
         assert!(d.join(f).is_file(), "missing {f}");
     }
     let bad = zell::doc::site::check_links(&d);
@@ -159,6 +159,6 @@ fn documentation_site_links_resolve() {
     }
     // one search index over guides, design docs and the API
     let idx = read(&d.join("search-index.json"));
-    assert!(idx.contains("\"guide/tour.html\"") && idx.contains("\"design/DESIGN.html\"") && idx.contains("\"std/std.strings.html#Split\""));
+    assert!(idx.contains("\"guide/tour.html\"") && idx.contains("\"design/DESIGN.html\"") && idx.contains("\"std/strings.html#Split\""));
     let _ = std::fs::remove_dir_all(&d);
 }

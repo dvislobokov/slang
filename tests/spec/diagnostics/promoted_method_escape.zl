@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.promoted_method_escape
 
-import std.io
+import io
 
 var keep *Inner
 

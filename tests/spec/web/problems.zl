@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.web.problems
 
-import std
-import std.io
-import std.web
+import io
+import web
 
 func load(id int) string! {
     if id == 0 {

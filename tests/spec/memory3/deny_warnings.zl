@@ -3,7 +3,7 @@
 // build-flags: --deny-warnings
 namespace spec.memory3.deny_warnings
 
-import std.io
+import io
 
 struct Node {
     Next *Node

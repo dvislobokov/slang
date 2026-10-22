@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_router
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 async func User(req *http.Request, res *http.Response) void! {
     res.Json(200, "{\"id\": " + req.Param("id") + ", \"tab\": \"" + req.QueryValue("tab") + "\"}")

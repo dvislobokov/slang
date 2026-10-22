@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.strings_split_join
 
-import std
-import std.io
+import io
 
 func main() {
     var a = strings.Split("a,b,,c", ",")

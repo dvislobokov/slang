@@ -1,11 +1,10 @@
-// test: std.unicode classification and case mapping with full Unicode tables, utf8 and utf16 codecs
+// test: unicode classification and case mapping with full Unicode tables, utf8 and utf16 codecs
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.unicode_classes
 
-import std
-import std.io
-import std.unicode
+import io
+import unicode
 
 func main() {
     var rs = [

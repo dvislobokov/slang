@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_stream_request
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 async func count(req *http.Request, res *http.Response) void! {
     var total = 0

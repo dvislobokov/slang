@@ -1,11 +1,10 @@
-// test: std.math.big.Decimal fixed-point arithmetic (operators; `/` and `%` are fallible) with rounding modes, and Rat
+// test: math.big.Decimal fixed-point arithmetic (operators; `/` and `%` are fallible) with rounding modes, and Rat
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.big_decimal
 
-import std
-import std.io
-import std.math
+import io
+import math
 
 func d(s string) big.Decimal {
     return big.MustParseDecimal(s)

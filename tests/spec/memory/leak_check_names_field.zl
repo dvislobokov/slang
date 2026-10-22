@@ -6,7 +6,7 @@
 // stderr: Node.Other
 namespace spec.memory.leak_check_names_field
 
-import std.io
+import io
 
 struct Node {
     Name  string

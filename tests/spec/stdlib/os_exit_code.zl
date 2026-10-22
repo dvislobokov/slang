@@ -3,8 +3,7 @@
 // exit: 3
 namespace spec.stdlib.os_exit_code
 
-import std
-import std.io
+import io
 
 func main() {
     defer println("deferred: must not run")

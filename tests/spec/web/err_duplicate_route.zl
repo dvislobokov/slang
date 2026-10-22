@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.web.err_duplicate_route
 
-import std.web
+import web
 
 @route("/api/items")
 struct ItemsController {

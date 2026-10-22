@@ -1,11 +1,10 @@
-// test: std.database.sql over the SQLite driver (in-memory): Exec/Result, Query<T> with @sql.column, snake_case names, pointers and sql.Null<T>, time.Time, big.Decimal, []byte, bool, named parameters, QueryRow and ErrNoRows, Scan, Get<T>, transactions with defer Rollback, Transact, Prepare, Conn, driver registry, typed driver errors, conversion errors
+// test: database.sql over the SQLite driver (in-memory): Exec/Result, Query<T> with @sql.column, snake_case names, pointers and sql.Null<T>, time.Time, big.Decimal, []byte, bool, named parameters, QueryRow and ErrNoRows, Scan, Get<T>, transactions with defer Rollback, Transact, Prepare, Conn, driver registry, typed driver errors, conversion errors
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib4.sql_sqlite
 
-import std
-import std.database
-import std.io
+import database
+import io
 
 struct User {
     Id   int

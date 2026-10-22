@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.no_subject
 
-import std.io
+import io
 
 func Grade(score int) string {
     switch {

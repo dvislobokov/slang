@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.range_pattern_bad_subject
 
-import std.io
+import io
 
 func main() {
     var s = "b"

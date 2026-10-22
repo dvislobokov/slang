@@ -1,6 +1,6 @@
 namespace bench.sieve
 
-import std.io
+import io
 
 func CountPrimes(n int) int {
     var sieve []bool = []

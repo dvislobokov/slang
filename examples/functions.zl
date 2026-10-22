@@ -1,6 +1,6 @@
 namespace examples.functions
 
-import std.io
+import io
 
 func Add(a, b int) int {
     return a + b

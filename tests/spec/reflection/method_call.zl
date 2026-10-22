@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.method_call
 
-import std
-import std.io
+import io
 
 struct User {
     Name string

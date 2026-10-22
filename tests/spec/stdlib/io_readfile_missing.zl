@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.io_readfile_missing
 
-import std
-import std.io
+import io
 
 func main() {
     var text = try io.ReadFile("/nonexistent-zell-spec/missing.txt") catch err {

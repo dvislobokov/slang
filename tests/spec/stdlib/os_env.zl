@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.os_env
 
-import std
-import std.io
+import io
 
 func main() {
     println("[" + os.Getenv("ZELL_SPEC_SURELY_UNSET_VAR") + "]")

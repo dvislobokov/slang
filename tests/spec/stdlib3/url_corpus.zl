@@ -1,9 +1,8 @@
-// test: std.net.url agrees with Go net/url: Parse of 61 URLs (schemes, opaque, userinfo with escapes, IPv4/IPv6 hosts and zones, ports, escaped paths with RawPath, queries, fragments, errors) and String round trips, ResolveReference on the RFC 3986 examples, ParseQuery/Encode, JoinPath, QueryEscape/PathEscape
+// test: net.url agrees with Go net/url: Parse of 61 URLs (schemes, opaque, userinfo with escapes, IPv4/IPv6 hosts and zones, ports, escaped paths with RawPath, queries, fragments, errors) and String round trips, ResolveReference on the RFC 3986 examples, ParseQuery/Encode, JoinPath, QueryEscape/PathEscape
 // status: passing
 namespace spec.stdlib3.url_corpus
 
-import std
-import std.io
+import io
 
 func q(s string) string {
     return encoding.json.Quote(s)

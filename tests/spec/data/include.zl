@@ -1,10 +1,9 @@
-// test: std.data navigations: Include of has-many, belongs-to, has-one and many-to-many as LEFT JOINs (one query, deduplicated) or split queries (AsSplitQuery), with Where/OrderBy/Take on the root, value and pointer collections, explicit loading with Entry(e).Collection/Reference(...).Load(), reference columns in queries, and no leaks with both directions loaded
+// test: data navigations: Include of has-many, belongs-to, has-one and many-to-many as LEFT JOINs (one query, deduplicated) or split queries (AsSplitQuery), with Where/OrderBy/Take on the root, value and pointer collections, explicit loading with Entry(e).Collection/Reference(...).Load(), reference columns in queries, and no leaks with both directions loaded
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.include
 
-import std
-import std.io
+import io
 
 struct Author {
     Id      int

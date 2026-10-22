@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.constraint_ordered_wording
 
-import std.io
+import io
 
 struct Point {
     X int

@@ -1,8 +1,6 @@
-// error: user code cannot declare a std namespace
+// error: namespace `io.mine` belongs to the standard library
 // status: passing
-namespace std.mine
-
-import std.io
+namespace io.mine
 
 func main() {
     println("x")

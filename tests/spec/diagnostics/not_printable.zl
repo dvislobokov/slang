@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.not_printable
 
-import std.io
+import io
 
 struct P {
     X int

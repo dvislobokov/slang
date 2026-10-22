@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.ns.privtype
 
-import std.io
+import io
 
 import spec.ns.privtype.inner
 

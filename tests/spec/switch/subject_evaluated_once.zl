@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.subject_evaluated_once
 
-import std.io
+import io
 
 var calls = 0
 

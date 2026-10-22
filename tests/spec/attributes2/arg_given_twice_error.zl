@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes2.arg_given_twice_error
 
-import std.io
+import io
 
 @attribute
 struct note {

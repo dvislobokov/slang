@@ -1,11 +1,10 @@
 // test: an error returned from async main is printed to stderr with its trace, exit code 1
 // status: passing
 // exit: 1
-// stderr: created at   tests/spec/errors2/async_main_error_trace.zl:12  Fetch
+// stderr: created at   tests/spec/errors2/async_main_error_trace.zl:11  Fetch
 namespace spec.errors2.async_main_error_trace
 
-import std
-import std.io
+import io
 
 async func Fetch() int! {
     await task.Delay(1)

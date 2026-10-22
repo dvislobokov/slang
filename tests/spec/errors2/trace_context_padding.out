@@ -1,3 +1,3 @@
-  created at   tests/spec/errors2/trace_context_padding.zl:9   ReadConfiguration
-  returned via tests/spec/errors2/trace_context_padding.zl:13  Up                 ?("config")
-  returned via tests/spec/errors2/trace_context_padding.zl:17  main
+  created at   tests/spec/errors2/trace_context_padding.zl:8   ReadConfiguration
+  returned via tests/spec/errors2/trace_context_padding.zl:12  Up                 ?("config")
+  returned via tests/spec/errors2/trace_context_padding.zl:16  main

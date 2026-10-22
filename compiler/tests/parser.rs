@@ -243,7 +243,7 @@ fn design_example_program() {
 
     assert_eq!(file.namespace.to_string(), "app");
     let imports: Vec<_> = file.imports.iter().map(|i| i.path.to_string()).collect();
-    assert_eq!(imports, ["std", "std.io"]);
+    assert_eq!(imports, ["io"]);
     assert_eq!(file.decls.len(), 4);
 
     let Decl::Struct(counter) = &file.decls[0] else { panic!() };
@@ -299,7 +299,7 @@ fn design_example_program() {
     assert!(texts[3].starts_with("async func main()") && texts[3].ends_with('}'));
     assert_eq!(sf.slice(file.span), src.trim_end());
     // Re-joining the declaration texts and parsing again gives the same shape.
-    let rejoined = format!("namespace app\nimport std\nimport std.io\n{}\n", texts.join("\n\n"));
+    let rejoined = format!("namespace app\nimport io\n{}\n", texts.join("\n\n"));
     let again = parse_ok(&rejoined);
     assert_eq!(again.decls.len(), file.decls.len());
     for (a, b) in again.decls.iter().zip(&file.decls) {
@@ -355,16 +355,16 @@ func f(a, b int, c string) (int, string)! {
 
 #[test]
 fn namespace_and_imports() {
-    let f = parse_ok("namespace app.services.users\n\nimport std.io\nimport std.io as out\nimport app.models.User\n");
+    let f = parse_ok("namespace app.services.users\n\nimport io\nimport io as out\nimport app.models.User\n");
     assert_eq!(f.namespace.to_string(), "app.services.users");
     assert_eq!(f.imports.len(), 3);
     assert_eq!(f.imports[1].alias.as_ref().unwrap().name, "out");
     assert_eq!(f.imports[2].path.segments.len(), 3);
     assert!(f.decls.is_empty());
     // Keywords are allowed as path segments.
-    let f = parse_ok("namespace examples.async\nimport std.default as def\nvar x a.map");
+    let f = parse_ok("namespace examples.async\nimport default as def\nvar x a.map");
     assert_eq!(f.namespace.to_string(), "examples.async");
-    assert_eq!(f.imports[0].path.to_string(), "std.default");
+    assert_eq!(f.imports[0].path.to_string(), "default");
 }
 
 #[test]

@@ -1,9 +1,9 @@
-// test: std.collections.Set<T>: Add (idempotent), Has, Remove, Len, Items in insertion order
+// test: collections.Set<T>: Add (idempotent), Has, Remove, Len, Items in insertion order
 // status: passing
 namespace spec.generics.collections_set
 
-import std.collections
-import std.io
+import collections
+import io
 
 func main() {
     var s = Set<string>{}

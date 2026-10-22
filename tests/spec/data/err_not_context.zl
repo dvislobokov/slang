@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.data.err_not_context
 
-import std
-
 struct Plain {
     Name string
 }

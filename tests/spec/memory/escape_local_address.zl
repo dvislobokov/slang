@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.escape_local_address
 
-import std.io
+import io
 
 struct Counter {
     N int

@@ -1,9 +1,8 @@
-// test: std.encoding.xml pull Reader: StartElement/EndElement/CharData/Comment/ProcInst/Directive tokens, namespaces (default, prefixed, nested scopes, xml:), entities and character references, CDATA, CRLF and attribute white-space normalization, self-closing elements; well-formedness and safety errors with line numbers (mismatched/unclosed tags, duplicate attributes, undefined entities: no DTD expansion, so an entity bomb fails fast), Strict = false
+// test: encoding.xml pull Reader: StartElement/EndElement/CharData/Comment/ProcInst/Directive tokens, namespaces (default, prefixed, nested scopes, xml:), entities and character references, CDATA, CRLF and attribute white-space normalization, self-closing elements; well-formedness and safety errors with line numbers (mismatched/unclosed tags, duplicate attributes, undefined entities: no DTD expansion, so an entity bomb fails fast), Strict = false
 // status: passing
 namespace spec.stdlib3.xml_reader
 
-import std
-import std.io
+import io
 
 func dump(text string) {
     var r = encoding.xml.NewReader(text)

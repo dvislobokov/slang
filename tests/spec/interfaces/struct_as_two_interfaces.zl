@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces.struct_as_two_interfaces
 
-import std.io
+import io
 
 interface Named {
     func Name() string

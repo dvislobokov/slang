@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_halfclose
 
-import std
-import std.io
+import io
 
 async func main() void! {
     var l = net.Listen("127.0.0.1:0")?

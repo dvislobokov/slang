@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.enum_methods
 
-import std.io
+import io
 
 enum Color {
     Red

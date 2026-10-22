@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http2_client_reader
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 func frame(typ int, flags int, sid int, payload []byte) []byte {
     var n = len(payload)

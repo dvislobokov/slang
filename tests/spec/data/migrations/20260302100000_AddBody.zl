@@ -1,9 +1,9 @@
-// test: std.data migrations as code applied by ctx.Migrate() (see main.zl)
+// test: data migrations as code applied by ctx.Migrate() (see main.zl)
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.migrations.history
 
-import std.data
+import data
 
 @migration("20260302100000_AddBody")
 struct AddBody {

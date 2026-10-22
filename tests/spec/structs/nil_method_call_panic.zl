@@ -3,7 +3,7 @@
 // exit: 2
 namespace spec.structs.nil_method_call_panic
 
-import std.io
+import io
 
 struct Box {
     V int

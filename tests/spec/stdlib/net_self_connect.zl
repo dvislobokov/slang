@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_self_connect
 
-import std
-import std.io
+import io
 
 async func main() void! {
     // a free port: listen on :0, note the address, close

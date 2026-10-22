@@ -3,7 +3,7 @@
 @deprecated("old module")
 namespace spec.attributes.on_namespace
 
-import std.io
+import io
 
 func main() {
     println("namespace attribute accepted")

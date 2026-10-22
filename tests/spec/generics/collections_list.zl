@@ -1,9 +1,9 @@
-// test: std.collections.List<T>: Add, Len, Get, Set, Contains, Remove, iteration via Items
+// test: collections.List<T>: Add, Len, Get, Set, Contains, Remove, iteration via Items
 // status: passing
 namespace spec.generics.collections_list
 
-import std.collections
-import std.io
+import collections
+import io
 
 func main() {
     var l = List<int>{}

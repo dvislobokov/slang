@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.attributes_repeatable
 
-import std
-import std.io
+import io
 
 @attribute(targets: [reflect.Target.Struct], repeatable: true)
 struct tag {

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.nested_block_comments
 
-import std.io
+import io
 
 /* outer /* inner */ still a comment
    println("not code") */

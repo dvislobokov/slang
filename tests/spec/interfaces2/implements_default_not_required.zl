@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.implements_default_not_required
 
-import std.io
+import io
 
 interface Greeter {
     func Name() string

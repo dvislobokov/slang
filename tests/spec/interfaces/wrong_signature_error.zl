@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces.wrong_signature_error
 
-import std.io
+import io
 
 interface Named {
     func Name() string

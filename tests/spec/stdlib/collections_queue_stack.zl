@@ -1,9 +1,9 @@
-// test: std.collections.Queue<T> is FIFO and Stack<T> is LIFO; Pop on empty fails
+// test: collections.Queue<T> is FIFO and Stack<T> is LIFO; Pop on empty fails
 // status: passing
 namespace spec.stdlib.collections_queue_stack
 
-import std.collections
-import std.io
+import collections
+import io
 
 func main() {
     var q = Queue<int>{}

@@ -1,11 +1,10 @@
-// test: std.data model: attributes (@table, @key, @column, @index, @maxLength, @required, @default, @concurrencyToken, @ignore, relations), conventions (Id keys, snake_case plural tables and columns, <Entity>Id foreign keys, FK indexes) and Configure's fluent calls, as DDL for SQLite and PostgreSQL
+// test: data model: attributes (@table, @key, @column, @index, @maxLength, @required, @default, @concurrencyToken, @ignore, relations), conventions (Id keys, snake_case plural tables and columns, <Entity>Id foreign keys, FK indexes) and Configure's fluent calls, as DDL for SQLite and PostgreSQL
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.model_conventions
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 enum Status { Active, Banned }
 

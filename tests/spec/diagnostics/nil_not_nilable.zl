@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.nil_not_nilable
 
-import std.io
+import io
 
 func main() {
     var n int = nil

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.multi_assign_count_mismatch
 
-import std.io
+import io
 
 func main() {
     var a = 1

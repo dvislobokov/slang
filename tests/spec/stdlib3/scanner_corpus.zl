@@ -1,8 +1,6 @@
-// test: std.text.scanner against Go's text/scanner (generated; Go oracle): idents incl. Unicode, numbers with prefixes/underscores/exponents, strings/chars/raw strings, comments skipped and kept, every error message and its position
+// test: text.scanner against Go's text/scanner (generated; Go oracle): idents incl. Unicode, numbers with prefixes/underscores/exponents, strings/chars/raw strings, comments skipped and kept, every error message and its position
 // status: passing
 namespace spec.stdlib3.scanner_corpus
-
-import std
 
 func run(src string, comments bool) {
     var s = text.scanner.New(src)

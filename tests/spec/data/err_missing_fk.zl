@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.data.err_missing_fk
 
-import std
-import std.io
+import io
 
 struct Blog {
     Id    int

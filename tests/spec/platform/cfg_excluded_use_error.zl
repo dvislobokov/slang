@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.platform.cfg_excluded_use_error
 
-import std.io
+import io
 
 @cfg(os: "windows")
 func WindowsOnly() string {

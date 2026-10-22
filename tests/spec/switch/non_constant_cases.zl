@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.non_constant_cases
 
-import std.io
+import io
 
 func Rel(x, y int) string {
     switch x {

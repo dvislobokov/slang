@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.func_returns_generic_struct
 
-import std.io
+import io
 
 struct Pair<A, B> {
     First  A

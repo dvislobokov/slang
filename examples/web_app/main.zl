@@ -1,4 +1,4 @@
-// web_app: a users API on std.web (docs/FRAMEWORK.md section 2) over
+// web_app: a users API on web (docs/FRAMEWORK.md section 2) over
 // SQLite: controllers with attribute routes compiled into the route table,
 // DI (singletons built by static New, a scoped audit trail dropped with
 // each request), @validate with Problem Details, JWT auth with roles,
@@ -7,12 +7,11 @@
 // deterministic.
 namespace webapp
 
-import std
-import std.database
-import std.encoding
-import std.io
-import std.net
-import std.web
+import database
+import encoding
+import io
+import net
+import web
 
 import webapp.controllers
 import webapp.models

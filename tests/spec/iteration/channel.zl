@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.iteration.channel
 
-import std
-import std.io
+import io
 
 async func produce(ch task.Channel<int>, n int) {
     for i in 0..n {

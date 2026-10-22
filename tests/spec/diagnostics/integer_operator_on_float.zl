@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.integer_operator_on_float
 
-import std.io
+import io
 
 func main() {
     var f = 1.5

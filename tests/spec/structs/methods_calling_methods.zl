@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.methods_calling_methods
 
-import std.io
+import io
 
 struct Tree {
     V     int

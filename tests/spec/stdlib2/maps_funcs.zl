@@ -1,10 +1,9 @@
-// test: std.maps helpers (Keys, Values, SortedKeys, Merge, Invert, Filter, MapValues, Equal, Clone)
+// test: maps helpers (Keys, Values, SortedKeys, Merge, Invert, Filter, MapValues, Equal, Clone)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.maps_funcs
 
-import std
-import std.io
+import io
 
 func main() {
     var m = map[string]int{"b": 2, "a": 1, "c": 3}

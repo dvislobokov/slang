@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.not_a_type
 
-import std.io
+import io
 
 func Helper() {}
 

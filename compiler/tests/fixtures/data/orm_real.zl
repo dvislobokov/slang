@@ -1,12 +1,11 @@
-// std.data against a real PostgreSQL server (compiler/tests/data.rs) and
+// data against a real PostgreSQL server (compiler/tests/data.rs) and
 // SQLite: the same unit of work, queries, includes, aggregates,
 // concurrency and transactions run on both providers and must print the
 // same lines. PGTEST_DSN names the server.
 namespace ormreal
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 enum Kind { Paper, Ebook }
 
@@ -91,7 +90,7 @@ async func run(ctx *Library, label string) void! {
     ctx.Profiles.Add(prof)
     println("saved", await ctx.SaveChanges()?, prof.Bio)
     for p in [[le.Id, sf.Id], [le.Id, fa.Id], [ba.Id, sf.Id]] {
-        _ = await ctx.ExecuteSql("insert into author_tags (author_id, tag_id) values (:a, :t)", [std.database.sql.Named("a", p[0]), std.database.sql.Named("t", p[1])])?
+        _ = await ctx.ExecuteSql("insert into author_tags (author_id, tag_id) values (:a, :t)", [database.sql.Named("a", p[0]), database.sql.Named("t", p[1])])?
     }
     ctx.ClearTracker()
 

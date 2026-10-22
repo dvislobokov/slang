@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.generic_struct_field_method_clash
 
-import std.io
+import io
 
 struct Box<T> {
     Get T

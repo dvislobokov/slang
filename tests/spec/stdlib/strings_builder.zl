@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.strings_builder
 
-import std
-import std.io
+import io
 
 func main() {
     var b = strings.Builder{}

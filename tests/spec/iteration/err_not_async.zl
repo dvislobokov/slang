@@ -1,9 +1,8 @@
-// error: awaits std.task.Channel<int>.Next, which is async; main is not declared async
+// error: awaits task.Channel<int>.Next, which is async; main is not declared async
 // status: passing
 namespace spec.iteration.err_not_async
 
-import std
-import std.io
+import io
 
 func main() {
     var ch = task.Channel<int>(1)

@@ -1,9 +1,8 @@
-// test: std.collections.Map<K, V>: Set, Get, Has, Remove, Len, Keys in insertion order
+// test: collections.Map<K, V>: Set, Get, Has, Remove, Len, Keys in insertion order
 // status: passing
 namespace spec.generics.collections_map
 
-import std
-import std.io
+import io
 
 func main() {
     var m = collections.Map<string, int>{}

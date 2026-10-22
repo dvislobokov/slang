@@ -1,9 +1,8 @@
 namespace tlstest.client
 
-import std.io
-import std
-import std.net
-import std.crypto
+import io
+import net
+import crypto
 
 // Interop client for compiler/tests/tls.rs.
 // args: addr roots.pem|- version(12|13|any) dials message [cert.pem key.pem]

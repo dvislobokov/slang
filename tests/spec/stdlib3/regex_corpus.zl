@@ -1,9 +1,8 @@
-// test: std.regex corpus (296 cases checked against Go regexp): submatch indices of the first match, all matches, Match; invalid patterns fail
+// test: regex corpus (296 cases checked against Go regexp): submatch indices of the first match, all matches, Match; invalid patterns fail
 // status: passing
 namespace spec.stdlib3.regex_corpus
 
-import std
-import std.io
+import io
 
 func show(x []int) string {
     if x == nil {

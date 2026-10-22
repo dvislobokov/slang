@@ -1,4 +1,4 @@
-//! `std.data.redis` against real `redis-server` processes.
+//! `data.redis` against real `redis-server` processes.
 //!
 //! The test starts, on free ports, in a temporary directory:
 //! a plain server; a TLS server with a password (certificate made by

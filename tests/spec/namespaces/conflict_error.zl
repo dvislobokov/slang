@@ -2,9 +2,9 @@
 // status: passing
 namespace spec.namespaces.conflict_error
 
-import std.crypto.hash
-import std.crypto.hmac
-import std.io
+import crypto.hash
+import crypto.hmac
+import io
 
 func main() {
     println(Sha256Hex("a"))

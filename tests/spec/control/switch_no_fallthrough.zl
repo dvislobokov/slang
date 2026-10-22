@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.control.switch_no_fallthrough
 
-import std.io
+import io
 
 func main() {
     for n in 0..4 {

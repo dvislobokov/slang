@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.embedding_shadowing
 
-import std.io
+import io
 
 struct Animal {
     Name string

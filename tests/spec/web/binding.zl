@@ -1,10 +1,10 @@
-// test: std.web parameter binding: route values, query (renamed, optional pointers, slices, enums, bools), headers, form fields and JSON bodies, with conversion errors collected into one 400 Problem Details
+// test: web parameter binding: route values, query (renamed, optional pointers, slices, enums, bools), headers, form fields and JSON bodies, with conversion errors collected into one 400 Problem Details
 // status: passing
 // run-flags: --leak-check
 namespace spec.web.binding
 
-import std.io
-import std.web
+import io
+import web
 
 enum Sort { Name, Date }
 
@@ -33,9 +33,9 @@ struct NotesController {
     ) string {
         var p = "nil"
         if page != nil {
-            p = std.fmt.Format("{0}", *page)
+            p = fmt.Format("{0}", *page)
         }
-        return std.fmt.Format(
+        return fmt.Format(
             "id={0} q={1} page={2} sort={3} tags={4} verbose={5} trace={6}",
             id,
             search,
@@ -56,12 +56,12 @@ struct NotesController {
 
     @post("login")
     func Login(@form user string, @form("pw") password string, @form remember bool) string {
-        return std.fmt.Format("user={0} pw={1} remember={2}", user, password, remember)
+        return fmt.Format("user={0} pw={1} remember={2}", user, password, remember)
     }
 
     @post("search")
     func Search(f Filter) string {
-        return std.fmt.Format("{0} {1}", f.Tags, f.Limit)
+        return fmt.Format("{0} {1}", f.Tags, f.Limit)
     }
 }
 

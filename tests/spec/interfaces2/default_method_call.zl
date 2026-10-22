@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.default_method_call
 
-import std.io
+import io
 
 interface Named {
     func Name() string

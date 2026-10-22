@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.attribute_nested_missing_field
 
-import std.io
+import io
 
 @attribute
 struct unit {

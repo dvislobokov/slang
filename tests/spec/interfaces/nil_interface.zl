@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces.nil_interface
 
-import std.io
+import io
 
 interface Named {
     func Name() string

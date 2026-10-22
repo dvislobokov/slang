@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.strings_to_number
 
-import std
-import std.io
+import io
 
 func Int(s string) string {
     var n = try strings.ToInt(s) else -1

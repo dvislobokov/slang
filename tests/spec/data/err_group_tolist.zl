@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.data.err_group_tolist
 
-import std
-
 struct User {
     Id    int
     Name  string

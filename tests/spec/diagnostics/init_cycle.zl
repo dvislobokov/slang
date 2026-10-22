@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.init_cycle
 
-import std.io
+import io
 
 var a = b + 1
 var b = a + 1

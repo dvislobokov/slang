@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.strings_case
 
-import std
-import std.io
+import io
 
 func main() {
     println(strings.ToUpper("hello, World 42"), strings.ToLower("MiXeD"))

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.lambda_in_global
 
-import std.io
+import io
 
 var double = (x int) => x * 2
 

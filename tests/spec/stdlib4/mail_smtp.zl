@@ -1,10 +1,9 @@
-// test: std.net.mail against an in-process SMTP server: EHLO, STARTTLS (std.net.tls server), AUTH PLAIN/LOGIN/CRAM-MD5, MAIL/RCPT/DATA with dot-stuffing, MIME build (alternative, attachment, encoded subject, folding), SMTP errors, plain-text AUTH refused
+// test: net.mail against an in-process SMTP server: EHLO, STARTTLS (net.tls server), AUTH PLAIN/LOGIN/CRAM-MD5, MAIL/RCPT/DATA with dot-stuffing, MIME build (alternative, attachment, encoded subject, folding), SMTP errors, plain-text AUTH refused
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib4.mail_smtp
 
-import std
-import std.io
+import io
 
 const CertPEM = "-----BEGIN CERTIFICATE-----\nMIIBlTCCATugAwIBAgIUdwzHKFFR9jSgb1hmp35Ag4eQVnMwCgYIKoZIzj0EAwIw\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAyMDIyMTI1NloYDzIxMjYwOTI2\nMjIxMjU2WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO\nPQMBBwNCAARYFUuhrEhEqCXaURmgVzW8K02wCVyhH2HMM7MbEJGxGN10xQtbl9xT\nEC49C9A6sALZQIllZNstBF9nwBf9kdo8o2kwZzAdBgNVHQ4EFgQUiIXwxg3vSv4v\nZMl5fm9gF6BNTbkwHwYDVR0jBBgwFoAUiIXwxg3vSv4vZMl5fm9gF6BNTbkwDwYD\nVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhvc3QwCgYIKoZIzj0EAwID\nSAAwRQIgKIPUG22D9Uer8pgh/72P7ASAZfozUU+95MRNqkZXj4YCIQDp+mPI+8Mw\nw9FFCGseOrUYuaNwR6h3rQL+o9c+FcMnBA==\n-----END CERTIFICATE-----\n"
 const KeyPEM = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgiJNillhGcKwgcCOx\n1SSTFhRJeF/AFLwXyHhucI/a1imhRANCAARYFUuhrEhEqCXaURmgVzW8K02wCVyh\nH2HMM7MbEJGxGN10xQtbl9xTEC49C9A6sALZQIllZNstBF9nwBf9kdo8\n-----END PRIVATE KEY-----\n"

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.ordered_char
 
-import std.io
+import io
 
 func Max<T: Ordered>(a, b T) T {
     if a > b { return a }

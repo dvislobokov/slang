@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory2.interior_pointer_nonescaping
 
-import std.io
+import io
 
 struct Stats {
     Hits   int

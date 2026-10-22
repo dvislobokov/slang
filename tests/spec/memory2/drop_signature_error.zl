@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory2.drop_signature_error
 
-import std.io
+import io
 
 struct R {
     Name string

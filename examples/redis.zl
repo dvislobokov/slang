@@ -1,12 +1,11 @@
-// std.data.redis: a Redis client. So that the example runs anywhere it
+// data.redis: a Redis client. So that the example runs anywhere it
 // talks to a tiny in-process server (bottom of the file) that understands
 // a handful of commands; point redis.Connect at a real server instead
 // ("redis://localhost:6379/0", "rediss://:password@host:6380").
 namespace examples.redis
 
-import std.io
-import std
-import std.data
+import io
+import data
 
 struct Session {
     User string

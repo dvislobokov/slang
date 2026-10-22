@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.pointers.new_with_slice_fields
 
-import std.io
+import io
 
 struct Bag {
     Items  []string

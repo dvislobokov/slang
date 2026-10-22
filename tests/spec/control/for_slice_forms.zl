@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.control.for_slice_forms
 
-import std.io
+import io
 
 func main() {
     var names = ["ann", "bob", "cy"]

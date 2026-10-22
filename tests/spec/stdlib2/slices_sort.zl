@@ -1,10 +1,9 @@
-// test: std.slices sorting is stable (Sort, SortBy, SortFunc) and BinarySearch finds positions
+// test: slices sorting is stable (Sort, SortBy, SortFunc) and BinarySearch finds positions
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.slices_sort
 
-import std
-import std.io
+import io
 
 struct P {
     Name string

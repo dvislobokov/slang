@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.interface_no_method
 
-import std.io
+import io
 
 interface Reader {
     func Read() string

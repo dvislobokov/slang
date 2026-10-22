@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.diagnostics.log_template_invalid
 
-import std
-
 func main() {
     var logger = log.New().WriteTo.Console(log.ConsoleOptions{}).CreateLogger()
     logger.Warning("disk {Disk at 90%", "/var")

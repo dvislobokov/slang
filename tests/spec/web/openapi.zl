@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.web.openapi
 
-import std
-import std.io
-import std.web
+import io
+import web
 
 enum Status { Open, Closed }
 

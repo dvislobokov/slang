@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.values_and_ranges
 
-import std.io
+import io
 
 func Size(n int) string {
     switch n {

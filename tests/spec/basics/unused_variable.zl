@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.unused_variable
 
-import std.io
+import io
 
 func main() {
     var used = 1

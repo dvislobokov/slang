@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.unknown_field_literal
 
-import std.io
+import io
 
 struct P {
     X int

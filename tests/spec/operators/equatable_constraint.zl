@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.operators.equatable_constraint
 
-import std.collections
-import std.io
+import collections
+import io
 
 struct Key {
     Name string

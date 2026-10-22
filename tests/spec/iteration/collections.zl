@@ -1,10 +1,10 @@
-// test: for ... in over the std.collections types through the iteration protocol: LinkedList, OrderedMap and LRU (Iter), Deque, Ring, Heap and BitSet (Items)
+// test: for ... in over the collections types through the iteration protocol: LinkedList, OrderedMap and LRU (Iter), Deque, Ring, Heap and BitSet (Items)
 // status: passing
 // run-flags: --leak-check
 namespace spec.iteration.collections
 
-import std.collections
-import std.io
+import collections
+import io
 
 func main() {
     var l = LinkedList<string>{}

@@ -491,16 +491,15 @@ fn release_build_with_agent_stops() {
 fn capability_gate() {
     let dir = tmpdir("gate");
     let f = dir.join("u.zl");
-    std::fs::write(&f, "namespace app\n\nimport std.io\nimport std.unsafe\n\nfunc main() {\n    println(ReadInt(0, 0))\n}\n").unwrap();
+    std::fs::write(&f, "namespace app\n\nimport io\nimport unsafe\n\nfunc main() {\n    println(ReadInt(0, 0))\n}\n").unwrap();
     let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("check").arg(&f).output().unwrap();
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("needs the `unsafe` capability"), "{}", String::from_utf8_lossy(&r.stderr));
     // Reaching it by its full path without an import is gated too
-    // (also through `import std` and with std.plugin).
+    // (also with plugin).
     for (body, cap) in [
-        ("import std.io\n\nfunc main() {\n    println(std.unsafe.ReadInt(0, 0))\n}\n", "unsafe"),
-        ("import std.io\nimport std\n\nfunc main() {\n    println(unsafe.ReadInt(0, 0))\n}\n", "unsafe"),
-        ("import std.io\n\nfunc main() {\n    println(try std.plugin.rtOpen(\"x\") else 0)\n}\n", "plugin"),
+        ("import io\n\nfunc main() {\n    println(unsafe.ReadInt(0, 0))\n}\n", "unsafe"),
+        ("import io\n\nfunc main() {\n    println(try plugin.rtOpen(\"x\") else 0)\n}\n", "plugin"),
     ] {
         std::fs::write(&f, format!("namespace app\n\n{body}")).unwrap();
         let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("check").arg(&f).output().unwrap();
@@ -512,7 +511,7 @@ fn capability_gate() {
     let pkg = dir.join("pkg");
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::write(pkg.join("zell.toml"), "[package]\nname = \"low\"\nversion = \"0.1.0\"\nentry = \"src/main.zl\"\n\n[capabilities]\nunsafe = true\n").unwrap();
-    std::fs::write(pkg.join("src/main.zl"), "namespace low\n\nimport std.io\nimport std.unsafe\n\nfunc main() {\n    var b = [7]\n    println(len(b), CString(0))\n}\n").unwrap();
+    std::fs::write(pkg.join("src/main.zl"), "namespace low\n\nimport io\nimport unsafe\n\nfunc main() {\n    var b = [7]\n    println(len(b), CString(0))\n}\n").unwrap();
     let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("check").current_dir(&pkg).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 }

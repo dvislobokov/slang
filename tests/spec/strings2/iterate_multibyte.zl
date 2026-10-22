@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.strings2.iterate_multibyte
 
-import std.io
+import io
 
 func main() {
     for i, ch in "aé日🙂z" {

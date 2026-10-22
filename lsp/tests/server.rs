@@ -445,7 +445,18 @@ fn folding_ranges_cover_blocks_and_comments() {
     let r = r.unwrap();
     let account = pos_of(text, "struct Account {", 0, 0).line;
     assert!(r.iter().any(|f| f.start_line == account && f.end_line > account + 5), "{r:?}");
-    assert!(r.iter().any(|f| f.kind == Some(FoldingRangeKind::Imports)), "{r:?}");
+    // Two or more import lines fold as one imports range.
+    let src = "namespace app\n\nimport io\nimport strings\n\nfunc main() {\n    println(ToUpper(\"x\"))\n}\n";
+    let (dir, uri) = project_with("imports.zl", src);
+    let mut c = Client::start(&dir);
+    c.open(&uri, src);
+    let r: Option<Vec<FoldingRange>> = c.request::<request::FoldingRangeRequest>(FoldingRangeParams {
+        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    });
+    let r = r.unwrap();
+    assert!(r.iter().any(|f| f.kind == Some(FoldingRangeKind::Imports) && f.start_line == 2 && f.end_line == 3), "{r:?}");
 }
 
 #[test]
@@ -734,8 +745,8 @@ fn inlay_hints_types_and_parameter_names() {
 
 const FIXES: &str = "namespace app
 
-import std.io
-import std.strings
+import io
+import strings
 
 func Parse(s string) int! {
     if s == \"\" {
@@ -788,24 +799,39 @@ fn code_actions_fix_structured_diagnostics() {
     let d = c.diagnostics(&uri);
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(code(&d[0]), "E0003");
-    text = apply_action(&mut c, &uri, &text, d[0].range, "Remove import std.strings");
-    assert!(!text.contains("std.strings") && text.contains("import std.io\n\nfunc Parse"), "{text}");
+    text = apply_action(&mut c, &uri, &text, d[0].range, "Remove import strings");
+    assert!(!text.contains("strings") && text.contains("import io\n\nfunc Parse"), "{text}");
     c.change(&uri, 5, &text);
     assert_eq!(c.diagnostics(&uri), vec![], "the fixed file compiles");
     // Missing import of a std name: add it.
-    let no_io = text.replacen("import std.io\n", "", 1);
+    let no_io = text.replacen("import io\n", "", 1);
     c.change(&uri, 6, &no_io);
     let d = c.diagnostics(&uri);
     let unknown = d.iter().find(|d| code(d) == "E0004").unwrap_or_else(|| panic!("{d:?}"));
-    text = apply_action(&mut c, &uri, &no_io, unknown.range, "Import std.io");
-    assert!(text.starts_with("namespace app\n\nimport std.io\n"), "{text}");
+    text = apply_action(&mut c, &uri, &no_io, unknown.range, "Import io");
+    assert!(text.starts_with("namespace app\n\nimport io\n"), "{text}");
     c.change(&uri, 7, &text);
     assert_eq!(c.diagnostics(&uri), vec![], "{text}");
 }
 
 #[test]
+fn code_action_rewrites_import_of_removed_std_root() {
+    let src = "namespace app\n\nimport std.io\n\nfunc main() {\n    println(\"hi\")\n}\n";
+    let (dir, uri) = project_with("main.zl", src);
+    let mut c = Client::start(&dir);
+    c.open(&uri, src);
+    let d = c.diagnostics(&uri);
+    let removed = d.iter().find(|d| matches!(&d.code, Some(NumberOrString::String(s)) if s == "E0005")).unwrap_or_else(|| panic!("{d:?}"));
+    assert!(removed.message.contains("use `io` instead of `std.io`"), "{}", removed.message);
+    let text = apply_action(&mut c, &uri, src, removed.range, "Use `import io`");
+    assert!(text.contains("\nimport io\n") && !text.contains("std"), "{text}");
+    c.change(&uri, 2, &text);
+    assert_eq!(c.diagnostics(&uri), vec![], "{text}");
+}
+
+#[test]
 fn formatting_whole_document_and_range() {
-    let src = "namespace app\nimport std.io\nfunc main() {\n    var x=1\n    println(x+1)\n}\nfunc other() {\n    var y=2\n    println(y)\n}\n";
+    let src = "namespace app\nimport io\nfunc main() {\n    var x=1\n    println(x+1)\n}\nfunc other() {\n    var y=2\n    println(y)\n}\n";
     let (dir, uri) = project_with("main.zl", src);
     let mut c = Client::start(&dir);
     c.open(&uri, src);
@@ -912,7 +938,7 @@ fn queries_work_in_a_file_with_syntax_errors() {
 
 #[test]
 fn watched_files_are_added_and_removed() {
-    let main = "namespace app\n\nimport std.io\n\nfunc main() {\n    println(Helper())\n}\n";
+    let main = "namespace app\n\nimport io\n\nfunc main() {\n    println(Helper())\n}\n";
     let (dir, uri) = project_with("main.zl", main);
     let mut c = Client::start(&dir);
     c.open(&uri, main);
@@ -958,9 +984,8 @@ fn workspace_symbols(c: &mut Client, query: &str) -> Vec<SymbolInformation> {
 
 const STD_USER: &str = "namespace app
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 func main() {
     var parts = strings.Split(\"a,b\", \",\")
@@ -1024,7 +1049,7 @@ fn dependencies_in_zell_deps_are_read_only_project_files() {
         std::fs::write(f, s).unwrap();
     };
     w("zell.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.zl\"\n\n[dependencies]\n\"example.com/greet\" = \"^1\"\n");
-    let main = "namespace app\n\nimport std.io\nimport greet\n\nfunc main() {\n    println(greet.Hello(\"x\"))\n}\n";
+    let main = "namespace app\n\nimport io\n\nfunc main() {\n    println(greet.Hello(\"x\"))\n}\n";
     w("src/main.zl", main);
     w(
         "zell.lock",
@@ -1061,7 +1086,7 @@ fn dependencies_in_zell_deps_are_read_only_project_files() {
 
 #[test]
 fn hover_renders_doc_markdown_and_std_examples() {
-    let text = "namespace app\n\nimport std\nimport std.io\n\n// Words splits s. See `strings.Fields`.\n//\n// Deprecated: use strings.Fields.\nfunc Words(s string) []string {\n    return strings.Split(s, \" \")\n}\n\nfunc main() {\n    println(Words(\"a b\"))\n}\n";
+    let text = "namespace app\n\nimport io\n\n// Words splits s. See `strings.Fields`.\n//\n// Deprecated: use strings.Fields.\nfunc Words(s string) []string {\n    return strings.Split(s, \" \")\n}\n\nfunc main() {\n    println(Words(\"a b\"))\n}\n";
     let (dir, uri) = project_with("main.zl", text);
     let mut c = Client::start(&dir);
     c.open(&uri, text);

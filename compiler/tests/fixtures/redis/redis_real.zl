@@ -1,4 +1,4 @@
-// std.data.redis against real redis-server processes started by
+// data.redis against real redis-server processes started by
 // compiler/tests/redis.rs: a plain server (RESP3 and RESP2, every command
 // group, pipelines, MULTI/EXEC, WATCH conflicts, scripts, pub/sub,
 // SCAN, typed JSON values, timeouts, a pool under concurrent load), a TLS
@@ -7,9 +7,8 @@
 // hash tags, a slot migrated with ASK and then MOVED).
 namespace redisreal
 
-import std.io
-import std
-import std.data
+import io
+import data
 
 struct Profile {
     Name string

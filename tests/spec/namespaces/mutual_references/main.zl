@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.ns.mutual
 
-import std.io
+import io
 
 import spec.ns.mutual.a
 

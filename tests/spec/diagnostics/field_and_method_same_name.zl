@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.field_and_method_same_name
 
-import std.io
+import io
 
 struct S {
     Size int

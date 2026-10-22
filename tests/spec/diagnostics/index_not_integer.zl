@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.index_not_integer
 
-import std.io
+import io
 
 func main() {
     var xs = [1, 2]

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.bind_in_multi_pattern_case
 
-import std.io
+import io
 
 enum Shape {
     Circle(r float)

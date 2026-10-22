@@ -1,11 +1,10 @@
 namespace app
 
-import std
-import std.io
-import std.math
+import io
+import math
 
-// An invoice with std.math.big.Decimal (exact cents, explicit rounding),
-// std.strconv for input, std.time for dates (fixed, UTC) and durations;
+// An invoice with math.big.Decimal (exact cents, explicit rounding),
+// strconv for input, time for dates (fixed, UTC) and durations;
 // arithmetic with the overloaded operators (+ - * on Decimal, Time - Time).
 
 struct Line {

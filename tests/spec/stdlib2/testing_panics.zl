@@ -4,8 +4,7 @@
 // args: --no-time
 namespace spec.stdlib2.testing_panics
 
-import std
-import std.io
+import io
 
 var before = 0
 var pidSeen = 0

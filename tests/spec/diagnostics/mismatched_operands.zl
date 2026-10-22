@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.mismatched_operands
 
-import std.io
+import io
 
 func main() {
     var a = 1

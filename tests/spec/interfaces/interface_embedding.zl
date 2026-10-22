@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces.interface_embedding
 
-import std.io
+import io
 
 interface Reader {
     func Read() string

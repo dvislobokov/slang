@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.closures.immediately_invoked
 
-import std.io
+import io
 
 func main() {
     var v = func() int {

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.programs.calculator
 
-import std
-import std.io
+import io
 
 enum Token {
     Num(value int)

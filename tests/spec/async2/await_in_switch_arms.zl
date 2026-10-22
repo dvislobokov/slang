@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async2.await_in_switch_arms
 
-import std
-import std.io
+import io
 
 async func Double(n int) int {
     await task.Delay(1)

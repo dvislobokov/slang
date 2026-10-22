@@ -1,7 +1,6 @@
 namespace examples.stdlib_formats
 
-import std
-import std.io
+import io
 
 // Tier-2 formats: a TOML config read into a struct and edited in place
 // (comments kept), CSV records into structs and back, an HTML template

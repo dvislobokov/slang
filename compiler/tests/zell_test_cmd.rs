@@ -1,4 +1,4 @@
-//! `zell test` end to end on `tests/fixtures/testing` (std.testing).
+//! `zell test` end to end on `tests/fixtures/testing` (testing).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

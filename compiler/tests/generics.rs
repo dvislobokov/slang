@@ -1,6 +1,6 @@
 //! Generics: inference, constraints, monomorphisation (checked on the
 //! HIR), nested and recursive instantiations, generic enums and the
-//! `std.collections` types. End-to-end behaviour is covered by
+//! `collections` types. End-to-end behaviour is covered by
 //! `tests/spec/generics`.
 
 use zell::diagnostics::{Diagnostics, Severity};
@@ -19,9 +19,9 @@ fn analyze(src: &str) -> (Option<Program>, Vec<String>, Vec<String>) {
     (p, msgs, notes)
 }
 
-/// A program: namespace `t`, `import std.io`, then `body`.
+/// A program: namespace `t`, `import io`, then `body`.
 fn prog(body: &str) -> String {
-    format!("namespace t\nimport std.io\n{body}\n")
+    format!("namespace t\nimport io\n{body}\n")
 }
 
 fn ok(body: &str) -> Program {
@@ -171,16 +171,16 @@ fn generic_interfaces_are_rejected() {
 
 #[test]
 fn collections() {
-    let p = ok("import std.collections\nfunc main() {\n    var l = List<int>{}\n    l.Add(1)\n    var m = Map<string, int>{}\n    m.Set(\"a\", 1)\n    var s = Set<int>.New()\n    s.Add(1)\n    for x in l {\n        println(x)\n    }\n    for k, v in m {\n        println(k, v)\n    }\n    for i, x in s {\n        println(i, x)\n    }\n    println(l.Contains(1), m.Has(\"a\"), m.Keys(), s.Items())\n}");
-    assert!(p.structs.iter().any(|s| s.full_name == "std.collections.List<int>"));
-    assert!(p.structs.iter().any(|s| s.full_name == "std.collections.Map<string, int>"));
+    let p = ok("import collections\nfunc main() {\n    var l = List<int>{}\n    l.Add(1)\n    var m = Map<string, int>{}\n    m.Set(\"a\", 1)\n    var s = Set<int>.New()\n    s.Add(1)\n    for x in l {\n        println(x)\n    }\n    for k, v in m {\n        println(k, v)\n    }\n    for i, x in s {\n        println(i, x)\n    }\n    println(l.Contains(1), m.Has(\"a\"), m.Keys(), s.Items())\n}");
+    assert!(p.structs.iter().any(|s| s.full_name == "collections.List<int>"));
+    assert!(p.structs.iter().any(|s| s.full_name == "collections.Map<string, int>"));
     no_params_left(&p);
     let main = funcs_named(&p, "main")[0];
     let loops = main.body.stmts.iter().filter(|s| matches!(&s.kind, StmtKind::Block(b) if b.stmts.iter().any(|x| matches!(x.kind, StmtKind::ForSlice { .. })))).count();
     assert_eq!(loops, 3, "collection loops are lowered to slice loops");
     // Element requirements are checked where they are needed.
-    err("import std.collections\nstruct P {\n    X int\n}\nfunc main() {\n    var l = List<P>{}\n    l.Add(P{X: 1})\n    println(l.Contains(P{X: 1}))\n}", "required by List<P>.Contains");
-    ok("import std.collections\nstruct P {\n    X int\n}\nfunc main() {\n    var l = List<P>{}\n    l.Add(P{X: 1})\n    println(l.Len())\n}");
-    err("import std.collections\nstruct P {\n    X int\n}\nfunc main() {\n    var m = Map<P, int>{}\n    _ = m\n}", "does not satisfy constraint Comparable");
-    err("import std.collections\nfunc main() {\n    var l = List<int>{}\n    println(len(l.items))\n}", "items is private to namespace std.collections");
+    err("import collections\nstruct P {\n    X int\n}\nfunc main() {\n    var l = List<P>{}\n    l.Add(P{X: 1})\n    println(l.Contains(P{X: 1}))\n}", "required by List<P>.Contains");
+    ok("import collections\nstruct P {\n    X int\n}\nfunc main() {\n    var l = List<P>{}\n    l.Add(P{X: 1})\n    println(l.Len())\n}");
+    err("import collections\nstruct P {\n    X int\n}\nfunc main() {\n    var m = Map<P, int>{}\n    _ = m\n}", "does not satisfy constraint Comparable");
+    err("import collections\nfunc main() {\n    var l = List<int>{}\n    println(len(l.items))\n}", "items is private to namespace collections");
 }

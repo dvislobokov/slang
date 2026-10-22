@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.float_format_exponent
 
-import std.io
+import io
 
 func main() {
     println(1e6, 1e-5, 1234567.0, 0.00001234)

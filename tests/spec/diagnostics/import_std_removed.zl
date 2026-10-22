@@ -1,0 +1,10 @@
+// error: unknown namespace std.strings in import: the `std` namespace no longer exists: use `strings` instead of `std.strings`
+// status: passing
+namespace spec.diagnostics.import_std_removed
+
+import io
+import std.strings
+
+func main() {
+    println(ToUpper("x"))
+}

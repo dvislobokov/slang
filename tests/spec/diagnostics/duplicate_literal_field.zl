@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.duplicate_literal_field
 
-import std.io
+import io
 
 struct P {
     X int

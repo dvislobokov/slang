@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.embedding_conflict_error
 
-import std.io
+import io
 
 interface Closer {
     func Close()

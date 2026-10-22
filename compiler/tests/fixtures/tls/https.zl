@@ -1,13 +1,12 @@
 namespace tlstest.https
 
-import std.io
-import std
-import std.net
-import std.crypto
+import io
+import net
+import crypto
 
 // HTTPS fixture for compiler/tests/tls.rs.
 //   https serve port cert.pem key.pem readyFile requests
-//       serves GET /hello over std.net.http + TLS, stops after `requests`
+//       serves GET /hello over net.http + TLS, stops after `requests`
 //   https get url roots.pem
 //       fetches url with http.Client{TLS} and prints the status and body size
 async func run() void! {

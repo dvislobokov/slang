@@ -1,6 +1,6 @@
 namespace examples.enums
 
-import std.io
+import io
 
 enum Color { Red, Green, Blue }
 

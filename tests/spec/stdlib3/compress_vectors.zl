@@ -1,9 +1,8 @@
-// test: std.compress decodes streams made by other tools: gzip(1) files (with FNAME/MTIME, -1 -n, two concatenated members), Python zlib (zlib and raw deflate), libzstd 1.5 (level 19 with checksum, a skippable frame, two frames); checksum known answers (CRC-32, Adler-32)
+// test: compress decodes streams made by other tools: gzip(1) files (with FNAME/MTIME, -1 -n, two concatenated members), Python zlib (zlib and raw deflate), libzstd 1.5 (level 19 with checksum, a skippable frame, two frames); checksum known answers (CRC-32, Adler-32)
 // status: passing
 namespace spec.stdlib3.compress_vectors
 
-import std
-import std.io
+import io
 
 func text(b []byte) string {
     return strings.FromBytes(b)

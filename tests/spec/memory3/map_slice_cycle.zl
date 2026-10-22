@@ -5,8 +5,7 @@
 // warning: W0001 type Vertex can form a reference cycle through field Edges ([]*Vertex)
 namespace spec.memory3.map_slice_cycle
 
-import std
-import std.io
+import io
 
 struct Registry {
     Name  string

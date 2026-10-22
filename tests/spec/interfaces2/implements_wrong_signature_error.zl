@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.implements_wrong_signature_error
 
-import std.io
+import io
 
 interface Shape {
     func Area() float

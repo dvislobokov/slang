@@ -1,9 +1,8 @@
 namespace app
 
-import std
-import std.io
+import io
 
-// A command-line tool with std.cli: subcommands, flags declared on
+// A command-line tool with cli: subcommands, flags declared on
 // structs with @cli.flag (defaults from the field values, env fallback),
 // generated help and "did you mean" errors. The arguments are fixed lists
 // here so the output is deterministic, and error messages are collected

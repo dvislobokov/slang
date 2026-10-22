@@ -1,7 +1,6 @@
 namespace examples.errors_trace
 
-import std
-import std.io
+import io
 
 const ErrMissing = error("missing key")
 

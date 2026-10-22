@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async2.await_completed_task
 
-import std
-import std.io
+import io
 
 async func Quick() int {
     return 42

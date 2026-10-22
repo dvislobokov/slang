@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.weak_becomes_nil
 
-import std.io
+import io
 
 struct Obj {
     V int

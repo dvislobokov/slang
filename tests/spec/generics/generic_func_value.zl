@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics.generic_func_value
 
-import std.io
+import io
 
 func Double<T: Ordered>(x T) T {
     return x + x

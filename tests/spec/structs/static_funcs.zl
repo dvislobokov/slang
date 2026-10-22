@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.static_funcs
 
-import std.io
+import io
 
 struct Temp {
     Celsius float

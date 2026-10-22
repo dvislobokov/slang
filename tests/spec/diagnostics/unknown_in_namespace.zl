@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.unknown_in_namespace
 
-import std.io
+import io
 
 func main() {
-    std.io.Nope()
+    io.Nope()
 }

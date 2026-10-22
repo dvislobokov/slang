@@ -3,11 +3,10 @@
 // run-flags: --leak-check
 namespace spec.stdlib.tls_rfc8448
 
-import std
-import std.crypto
-import std.encoding
-import std.io
-import std.net
+import crypto
+import encoding
+import io
+import net
 
 func h(s string) []byte {
     return try hex.Decode(s) else []

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.reflect_retention
 
-import std
-import std.io
+import io
 
 @reflect
 struct Plugin {

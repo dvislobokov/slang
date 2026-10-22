@@ -1,6 +1,6 @@
-//! std.log and std.diag: compile-time message-template checks (placeholder
+//! log and diag: compile-time message-template checks (placeholder
 //! count, literal templates, syntax), the lowering's laziness, `@log(skip)`,
-//! sinks, context propagation, the W3C traceparent hooks of std.net.http
+//! sinks, context propagation, the W3C traceparent hooks of net.http
 //! with the OTLP/JSON exporter, and CPU / heap profiles read back with
 //! `go tool pprof` (skipped when `go` is not installed). The acceptance
 //! programs are `examples/{log,metrics,tracing,cpuprofile}.zl` and
@@ -19,15 +19,15 @@ fn analyze(src: &str) -> Vec<String> {
     diags.items.iter().filter(|d| d.severity == Severity::Error).map(|d| d.message.clone()).collect()
 }
 
-/// A program: namespace `t`, `import std.io` and `import std`, then `body`.
+/// A program: namespace `t`, `import io`, then `body`.
 fn prog(body: &str) -> String {
-    format!("namespace t\nimport std.io\nimport std\n{body}\n")
+    format!("namespace t\nimport io\n{body}\n")
 }
 
 fn ok(body: &str) {
-    // `prog` imports std.io for the programs that print; in the others it
+    // `prog` imports io for the programs that print; in the others it
     // is unused (the logger's output does not use the program's imports).
-    let errors: Vec<String> = analyze(&prog(body)).into_iter().filter(|e| !e.starts_with("unused import std.io")).collect();
+    let errors: Vec<String> = analyze(&prog(body)).into_iter().filter(|e| !e.starts_with("unused import io")).collect();
     assert!(errors.is_empty(), "unexpected errors: {errors:#?}");
 }
 
@@ -113,9 +113,9 @@ fn disabled_levels_do_not_evaluate_arguments_and_skip_works() {
 #[test]
 fn global_logger_writes_to_stderr() {
     let dir = tmp("global");
-    // (no std.io import: nothing here uses it, the logger's own output does
+    // (no io import: nothing here uses it, the logger's own output does
     // not count as a use of the program's imports)
-    let src = "namespace t\nimport std\nfunc main() {\n    log.Info(\"hello {Name}\", \"x\")\n    log.Debug(\"hidden\")\n    log.Error(error(\"e\"), \"failed {N}\", 2)\n}\n";
+    let src = "namespace t\nfunc main() {\n    log.Info(\"hello {Name}\", \"x\")\n    log.Debug(\"hidden\")\n    log.Error(error(\"e\"), \"failed {N}\", 2)\n}\n";
     let (code, out, errs) = run_in(&dir, src, &[]);
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(code, 0, "{errs}");
@@ -143,7 +143,7 @@ fn file_sink_rolls_by_size_and_retains() {
 #[test]
 fn traceparent_crosses_http_and_otlp_export_posts_json() {
     let dir = tmp("otlp");
-    let src = "namespace t\nimport std.io\nimport std\nimport std.net\n\
+    let src = "namespace t\nimport io\nimport net\n\
         var body = \"\"\nvar header = \"\"\n\
         async func Hello(req *http.Request, res *http.Response) void! {\n    header = req.Header(\"traceparent\")\n    var s = diag.StartSpanKind(\"server\", diag.SpanKind.Server)\n    defer s.End()\n    res.Text(200, s.ParentSpanId)\n}\n\
         async func Collect(req *http.Request, res *http.Response) void! {\n    body = req.Body\n    res.Text(200, \"{}\")\n}\n\

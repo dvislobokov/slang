@@ -1,12 +1,11 @@
-// test: std.web.auth.jwt (HS256, RS256, ES256 sign/verify, claims, expiry and not-before with leeway, issuer/audience, wrong key or algorithm, tampering) and UseAuth with @authorize(roles), @allowAnonymous and RequireAuthorization on minimal endpoints (401 vs 403)
+// test: web.auth.jwt (HS256, RS256, ES256 sign/verify, claims, expiry and not-before with leeway, issuer/audience, wrong key or algorithm, tampering) and UseAuth with @authorize(roles), @allowAnonymous and RequireAuthorization on minimal endpoints (401 vs 403)
 // status: passing
 // run-flags: --leak-check
 namespace spec.web.jwt_auth
 
-import std
-import std.io
-import std.web
-import std.web.auth
+import io
+import web
+import web.auth
 
 @route("/reports")
 @authorize

@@ -1,11 +1,10 @@
-// test: std.encoding.binary byte orders, varints and struct Encode/Decode via compile-time reflection with @binary
+// test: encoding.binary byte orders, varints and struct Encode/Decode via compile-time reflection with @binary
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.binary_encode
 
-import std
-import std.encoding.binary
-import std.io
+import encoding.binary
+import io
 
 @binary(endian: "big")
 struct Header {

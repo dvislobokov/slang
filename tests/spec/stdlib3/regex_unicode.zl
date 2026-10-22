@@ -1,9 +1,8 @@
-// test: std.regex on UTF-8 text: offsets are bytes, . and classes match whole code points, \p{L}/\p{Greek}/\p{Han}/\pN, negated Unicode classes, (?i) with Unicode case folding (K, σ/ς/Σ), \x{...}, ranges beyond ASCII, Split on Unicode separators
+// test: regex on UTF-8 text: offsets are bytes, . and classes match whole code points, \p{L}/\p{Greek}/\p{Han}/\pN, negated Unicode classes, (?i) with Unicode case folding (K, σ/ς/Σ), \x{...}, ranges beyond ASCII, Split on Unicode separators
 // status: passing
 namespace spec.stdlib3.regex_unicode
 
-import std
-import std.io
+import io
 
 func main() {
     var s = "Ünïcödé 世界 αβγ ΑΒΓ 123 ١٢٣"

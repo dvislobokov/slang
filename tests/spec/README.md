@@ -41,13 +41,13 @@ attributes reflection stdlib namespaces switch closures pointers`, and the
 second wave `interfaces2 generics2 memory2 errors2 async2 strings2 diagnostics
 programs attributes2 platform stdlib2 stdlib3`, then `operators` (operator
 overloading and its compile errors) and `iteration` (the `for ... in`
-protocol) (`stdlib2`: the tier 0/1 stdlib of docs/STDLIB.md, one or more files per namespace named `<ns>_*.zl`; `stdlib3`: the tier 2 stdlib (regex, compress, archive, encodings, templates, mime, url, text), `*_corpus` tests generated from Go / PyYAML / tomllib oracles; `stdlib4`: the tier 3 stdlib (`std.database.sql` with the SQLite driver and a fake in-test driver, `std.database.postgres` against an in-process mock server, `std.net.mail` against an in-process SMTP server, `std.crypto.kdf/password`, P-384, AES-CBC, RSA-OAEP, the zstd encoder, TLS with P-384; the real-PostgreSQL test is `compiler/tests/database.rs`); `stdlib5`: the tier 3b infrastructure clients (`std.data.redis` codec and client against in-process RESP mock servers incl. Cluster MOVED/ASK and Sentinel switch-over, `std.data.kafka` record batches byte-exact against the Java client and a mock broker with groups/SASL/TLS, `std.cloud.s3` SigV4 vectors and an in-process S3 server that verifies signatures, `std.cloud.blob`; the real-server tests are `compiler/tests/{redis,kafka,s3}.rs`); `diagnostics`: one compile-fail test per sema
+protocol) (`stdlib2`: the tier 0/1 stdlib of docs/STDLIB.md, one or more files per namespace named `<ns>_*.zl`; `stdlib3`: the tier 2 stdlib (regex, compress, archive, encodings, templates, mime, url, text), `*_corpus` tests generated from Go / PyYAML / tomllib oracles; `stdlib4`: the tier 3 stdlib (`database.sql` with the SQLite driver and a fake in-test driver, `database.postgres` against an in-process mock server, `net.mail` against an in-process SMTP server, `crypto.kdf/password`, P-384, AES-CBC, RSA-OAEP, the zstd encoder, TLS with P-384; the real-PostgreSQL test is `compiler/tests/database.rs`); `stdlib5`: the tier 3b infrastructure clients (`data.redis` codec and client against in-process RESP mock servers incl. Cluster MOVED/ASK and Sentinel switch-over, `data.kafka` record batches byte-exact against the Java client and a mock broker with groups/SASL/TLS, `cloud.s3` SigV4 vectors and an in-process S3 server that verifies signatures, `cloud.blob`; the real-server tests are `compiler/tests/{redis,kafka,s3}.rs`); `diagnostics`: one compile-fail test per sema
 diagnostic, see [Diagnostics coverage](#diagnostics-coverage); `programs`:
-larger programs mixing features; `web`: the `std.web` framework of
+larger programs mixing features; `web`: the `web` framework of
 docs/FRAMEWORK.md section 2 — routing, binding, validation, DI scopes,
 middleware order, JWT auth, Problem Details, results, the OpenAPI document,
 configuration, and the compile errors of route tables and DI, all through
-the in-memory `web.TestServer`; `data`: the `std.data` ORM of docs/FRAMEWORK.md
+the in-memory `web.TestServer`; `data`: the `data` ORM of docs/FRAMEWORK.md
 section 3 on SQLite in memory — model conventions and DDL for both providers,
 change tracking with minimal UPDATEs (through `LogTo`), queries and their
 `ToSql()` for SQLite and PostgreSQL, projections, aggregates, includes,
@@ -273,7 +273,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     generic enums built as `Option<int>.Some(1)` / `Option<int>.None` and
     matched without type arguments (`case Option.Some(v):`). A line ending in
     `>` (e.g. `var nf NotFound<string>`) ends the statement.
-29. **`std.collections` API**: `List<T>{}` with `Add`, `Len`, `Get(i)`,
+29. **`collections` API**: `List<T>{}` with `Add`, `Len`, `Get(i)`,
     `Set(i, v)`, `Contains`, `Remove(i)`, `Items() []T`; `Map<K, V>{}` with
     `Set`, `Get` (zero value when missing), `Has`, `Remove`, `Len`,
     `Keys() []K` in insertion order; `Set<T>{}` with `Add` (idempotent), `Has`,
@@ -309,7 +309,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     released last declared first, so the last declared node's `Drop` runs
     first), all before any field is released; a member stored elsewhere by
     a `Drop` survives (and leaks) and no `Drop` runs twice. — `memory3/*`
-34. **Arenas** live in `std.arena`: `arena.New()`, `a.New<T>() *T`,
+34. **Arenas** live in `arena`: `arena.New()`, `a.New<T>() *T`,
     `a.Free()` releases everything at once. — `memory/arena_basic`
 
 ### Async
@@ -322,7 +322,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     — `async/task_any`, `async/channel_send_recv`, `async/mutex_counter`, `async/async_lambda`
 36. **`defer await f()` is rejected** (keyword `defer requires a function call`).
     — `async/defer_await_rejected`
-36a. **More of `std.task`**: `Recv()` fails with `channel closed`; closing wakes
+36a. **More of `task`**: `Recv()` fails with `channel closed`; closing wakes
     every waiting receiver, values buffered before `Close` are still delivered;
     a capacity-0 channel hands values over one at a time. `task.WaitGroup`
     (zero value usable) has `Add/Done/Count/Wait`. `task.Spawn(f)` takes a
@@ -379,7 +379,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     `json.Format` writes struct fields in declaration order (all of them unless
     `@json(skip: true)`), sorts map keys, and writes nil slices, maps and
     pointers as `null`. — `stdlib/json_*`
-45. **`std.log`**: `log.Info(msg)`, `log.Warn(msg)` write `INFO msg` /
+45. **`log`**: `log.Info(msg)`, `log.Warn(msg)` write `INFO msg` /
     `WARN msg` lines to stderr (the default logger: Information and up,
     output template `{Level:u4} {Message:lj}{NewLine}{Exception}`, Serilog's
     4-letter levels `VERB DBUG INFO WARN EROR FATL`). Message templates are
@@ -390,7 +390,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     `diagnostics/log_template_*`
 46. **`os.Exit(n)`** flushes stdout and exits immediately; deferred calls do
     not run (Go).
-46a. **`std.net`**: `Read(n)` yields an empty slice and `ReadInto(buf)` 0 at
+46a. **`net`**: `Read(n)` yields an empty slice and `ReadInto(buf)` 0 at
     end of stream (never an error); `ReadExact`/`ReadLine`/`ReadByte` fail
     with an error wrapping `net.ErrEOF` there. Every operation error is a
     `net.OpError` with Go's text, `<op> <net> <addr>: <cause>`
@@ -406,9 +406,9 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     an empty `Listen` host is dual-stack. Deadlines are `time.Now()`
     milliseconds. Tests whose subject is IPv6 print the same lines when the
     host has no IPv6 (`net_ipv6`); multicast uses the loopback interface.
-    `import std.net` makes `http.` reachable (decision 50).
+    `import net` makes `http.` reachable (decision 50).
     — `stdlib/net_*`
-46b. **`std.net.http`**: header names are canonicalised (`content-type` ->
+46b. **`net.http`**: header names are canonicalised (`content-type` ->
     `Content-Type`) and repeated headers are joined with `, `; the router answers
     unknown paths with `404 Not Found\n` and other methods with 405 plus `Allow`;
     a handler error becomes `500 Internal Server Error: <message>` (`http.Recover`
@@ -421,7 +421,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     connection when a pooled one was closed by the server, asks for gzip and
     decodes it (the `Content-Encoding` header is then removed), follows
     redirects (dropping `Authorization` and `Cookie` for another host);
-    `https` URLs go through `std.net.tls` with ALPN `h2, http/1.1`
+    `https` URLs go through `net.tls` with ALPN `h2, http/1.1`
     (connection errors are wrapped as `GET <url>: ...`). HTTP/2 responses
     report `Proto` `HTTP/2.0`. A failed `ws.Upgrade` has already written its
     400/426 response, so handlers return without an error.
@@ -433,7 +433,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
 
 ### Tier 0/1 standard library (stdlib2)
 
-1. **Go names that clash with the older int-millisecond `std.time` functions
+1. **Go names that clash with the older int-millisecond `time` functions
    are renamed**: `time.Time.Now()`/`time.Current()`, `time.Elapsed(t)`,
    `time.SleepFor(d)`, `time.ParseTime(layout, s)`; Duration constants are
    constructors (`time.Seconds(5)`), because stdlib constants are untyped
@@ -444,18 +444,21 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
    `strings.NewReader`) so reads through an interface advance the original.
    `io.Pipe()` is an unbounded in-memory pipe: `Read` on an empty open pipe
    fails with `io: pipe empty`, the async `Recv(n)` waits. — `stdlib2/io_helpers`
-3. **Every error of `std.strconv` wraps `ErrSyntax`/`ErrRange`** with Go's
+3. **Every error of `strconv` wraps `ErrSyntax`/`ErrRange`** with Go's
    text (`strconv.ParseInt: parsing "12a": invalid syntax`). — `stdlib2/strconv_*`
 4. **Signals are Linux numbers** (`SIGUSR1` = 10); a signal delivered while
    nobody waits is kept (counted) once it was caught (`Catch`, `Wait`,
    `Notify`). — `stdlib2/os_signal`
-5. **`std.testing` runs every test in its own process** (exit 0 pass, 1 fail,
+5. **`testing` runs every test in its own process** (exit 0 pass, 1 fail,
    3 skip; anything else, e.g. a panic, fails); `t.Fatal` in a subtest ends
    the top-level test; `--no-time` removes durations for golden outputs.
    — `stdlib2/testing_main`
-6. **`import std` + `import std.crypto` make `hash` ambiguous** (`std.hash`
-   vs `std.crypto.hash`): alias one or use the full path.
-   — `stdlib2/hash_import_ambiguous`
+6. **Two imports giving the same short name make it ambiguous**
+   (`import text` + `import html`: `template`): alias one or use the full
+   path; a name from an import hides the stdlib root of the same name
+   (`import crypto`: `hash` is `crypto.hash`, the root `hash` needs its own
+   import), but never inside the standard library's own code.
+   — `stdlib2/template_import_ambiguous`, `stdlib2/hash_import_shadows_root`
 7. **`@embed` paths are relative to the declaring file**; a missing file or
    a type other than `string`/`[]byte`/`embed.FS` is a compile error.
    — `stdlib2/embed_*`
@@ -475,7 +478,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
 3. **Matching is linear time**: `(a+)+$`-style patterns on long inputs
    finish quickly (lazy DFA, Pike VM fallback). — `stdlib3/regex_redos`
 4. **Streaming coders are push-style over `[]byte` chunks** (`Write`/
-   `Bytes`, `Feed`/`Read`); gzip also has `std.io` adapters
+   `Bytes`, `Feed`/`Read`); gzip also has `io` adapters
    (`NewStreamReader`/`NewStreamWriter`). — `stdlib3/compress_*`
 5. **Archive extraction refuses paths outside the target directory**
    (zip-slip, absolute paths, `..`). — `stdlib3/archive_*`
@@ -633,10 +636,10 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
 74. **`main` returning an error under `--leak-check`**: the error is printed
     and released before the leak report, so the exit code is 1 and what
     the error holds is not reported as leaked. — `errors2/main_error_leak_check`
-75. **Stdlib attribute names**: `@flag` (with `import std.cli`) and
-    `@binary` (with `import std.encoding.binary`) resolve through the
+75. **Stdlib attribute names**: `@flag` (with `import cli`) and
+    `@binary` (with `import encoding.binary`) resolve through the
     import like other members; `@json` and the other builtins keep working
-    when `import std.reflect` brings their value structs into scope; the
+    when `import reflect` brings their value structs into scope; the
     lowercase fields of stdlib attribute structs are readable through
     `Attribute<A>()`. — `attributes2/stdlib_attribute_names`
 76. **Generic calls after an index**: `t.Fields[1].Attribute<json>()` is a
@@ -651,8 +654,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
 
 Resolved in `DESIGN.md` since: `break` in `switch` (Go semantics, written
 down as an open question), the `errors.Trace` format and creation sites,
-struct equality (rejected), unused imports (errors, except a root import such
-as `import std`), field defaults (all structs; literals and `var x T`),
+struct equality (rejected), unused imports (errors, every import), field defaults (all structs; literals and `var x T`),
 array lengths (constant expressions), multi/tuple assignment, enum methods,
 interface embedding and async lambdas in the grammar and the EBNF, `main`
 returning `void!`, `task.Any`. Spec fixes made on the way:
@@ -685,7 +687,7 @@ expected the byte sum of `héllo` to be 701 (it is 795).
   **`Ordered`** constraint, generic enum construction, `MethodInfo.Call`'s
   receiver/argument passing and the observable effect of **`@reflect`** are not
   specified.
-- The final example program in `DESIGN.md` uses `import std.strings` and then
+- The final example program in `DESIGN.md` uses `import strings` and then
   `strings.Split`, contradicting the import table (already noted in
   `examples/README.md`).
 
@@ -744,7 +746,7 @@ tests in the other areas and the new ones in `interfaces2`, `generics2`,
   `named argument x: is only allowed inside attribute arguments` (the parser
   accepts `name:` arguments only inside attributes, where constant
   evaluation reports first);
-- the arity errors of the internal `std.arena` intrinsics (`rtArenaNew<T>`,
+- the arity errors of the internal `arena` intrinsics (`rtArenaNew<T>`,
   `rtArenaAlloc<T>`), which only `Arena.New`/`Alloc` call (calling one
   without a type argument is `diagnostics/arena_intrinsic_no_type`);
 - reported by an earlier check: `wrong number of arguments in deferred call`
@@ -758,7 +760,7 @@ tests in the other areas and the new ones in `interfaces2`, `generics2`,
 **Help lines.** Diagnostics with an obvious fix carry a `= help:` line
 (rendered after the source excerpt; in the LSP it is a note): did-you-mean
 suggestions for unknown identifiers, types, members, namespace members and
-attributes (closest name by edit distance), `add import std.x` for a
+attributes (closest name by edit distance), `add import x` for a
 stdlib name that is not imported, `?`/`try` for unhandled `T!`, the
 parameter list for a wrong argument count, explicit conversions for mixed
 numeric operands, the iteration protocol for `cannot iterate`, `async
@@ -777,7 +779,7 @@ be implemented in namespace`; `diagnostics/default_method_*`,
 `diagnostics/cfg_*` and `diagnostics/sealed_from_open_interface` cover the
 other diagnostics of default methods, `@cfg` and sealed interfaces.
 
-### std.web (area `web`)
+### web (area `web`)
 
 - Problem Details members are written in the order `type`, `title`,
   `status`, `detail`, `instance`, `errors`, `trace`; `errors` groups the

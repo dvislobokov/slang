@@ -1,10 +1,9 @@
 namespace examples.stdlib_strings2
 
-import std
-import std.io
+import io
 
 func main() {
-    // More std.strings.
+    // More strings.
     println("fields:", strings.Fields("  the quick\tbrown  fox \n"), len(strings.Fields("   ")))
     println("count:", strings.Count("cheese", "e"), strings.Count("five", ""))
     println("last index:", strings.LastIndex("go gopher", "go"), strings.LastIndex("x", "y"))
@@ -62,7 +61,7 @@ func main() {
     bytes = append(bytes, 33)
     println("from bytes:", strings.FromBytes(bytes))
 
-    // More std.math: float functions, then the int helpers IMin/IMax/IAbs.
+    // More math: float functions, then the int helpers IMin/IMax/IAbs.
     println("round:", math.Round(2.5), math.Round(-2.5), math.Trunc(-3.7), math.Mod(7.5, 2.0))
     println("hypot:", math.Hypot(3.0, 4.0), "log2:", math.Log2(1024.0), "log10:", math.Log10(0.001))
     println("atan2:", math.Atan2(1.0, 1.0) * 4.0)

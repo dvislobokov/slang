@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.cfg_bad_condition
 
-import std.io
+import io
 
 @cfg(any(linux))
 func F() string { return "f" }

@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.yaml_toml_xml
 
-import std.encoding
-import std.io
+import encoding
+import io
 
 struct Config {
     Name string

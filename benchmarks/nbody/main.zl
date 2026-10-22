@@ -1,7 +1,6 @@
 namespace bench.nbody
 
-import std
-import std.io
+import io
 
 struct Body {
     X    float

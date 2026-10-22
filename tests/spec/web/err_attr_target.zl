@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.web.err_attr_target
 
-import std.web
+import web
 
 @get("/x")
 struct Bad {

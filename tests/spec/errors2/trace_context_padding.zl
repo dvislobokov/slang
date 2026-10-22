@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors2.trace_context_padding
 
-import std
-import std.io
+import io
 
 func ReadConfiguration() void! {
     return error("no file")

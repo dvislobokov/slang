@@ -1,10 +1,9 @@
-// test: std.data optimistic concurrency and units of work: an integer @concurrencyToken is checked and incremented by UPDATE and checked by DELETE, a conflict fails SaveChanges with ConcurrencyError and saves nothing, Reload discards changes; SaveChanges is atomic (a failing statement rolls back the whole batch); ctx.Transaction commits or rolls back everything inside it, nested calls join it
+// test: data optimistic concurrency and units of work: an integer @concurrencyToken is checked and incremented by UPDATE and checked by DELETE, a conflict fails SaveChanges with ConcurrencyError and saves nothing, Reload discards changes; SaveChanges is atomic (a failing statement rolls back the whole batch); ctx.Transaction commits or rolls back everything inside it, nested calls join it
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.concurrency
 
-import std
-import std.io
+import io
 
 struct Account {
     Id      int

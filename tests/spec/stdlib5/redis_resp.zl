@@ -1,11 +1,10 @@
-// test: std.data.redis codec without a server: every RESP2/RESP3 reply type (attributes skipped, verbatim, big numbers, nested maps/sets/pushes, null bulk/array), truncated and malformed input, command encoding of each argument type, Reply conversions, URL parsing, cluster hash slots with hash tags, command key extraction errors
+// test: data.redis codec without a server: every RESP2/RESP3 reply type (attributes skipped, verbatim, big numbers, nested maps/sets/pushes, null bulk/array), truncated and malformed input, command encoding of each argument type, Reply conversions, URL parsing, cluster hash slots with hash tags, command key extraction errors
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib5.redis_resp
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 func show(text string) {
     var rs = try redis.ParseReplies(strings.Bytes(text)) catch err {

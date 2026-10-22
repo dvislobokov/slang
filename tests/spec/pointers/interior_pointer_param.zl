@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.pointers.interior_pointer_param
 
-import std.io
+import io
 
 struct P {
     X int

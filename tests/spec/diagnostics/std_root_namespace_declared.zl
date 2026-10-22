@@ -1,0 +1,6 @@
+// error: namespace `net` belongs to the standard library
+// status: passing
+namespace net
+
+func main() {
+}

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.generics2.struct_generic_method
 
-import std
-import std.io
+import io
 
 struct Box<T> {
     V T

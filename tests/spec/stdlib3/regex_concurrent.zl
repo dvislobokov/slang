@@ -1,9 +1,8 @@
-// test: one std.regex.Regex shared by 8 concurrent tasks (the DFA cache is locked; a task that finds it busy runs the Pike VM) gives the same results everywhere
+// test: one regex.Regex shared by 8 concurrent tasks (the DFA cache is locked; a task that finds it busy runs the Pike VM) gives the same results everywhere
 // status: passing
 namespace spec.stdlib3.regex_concurrent
 
-import std
-import std.io
+import io
 
 async func worker(re regex.Regex, text string, rounds int) int {
     var total = 0

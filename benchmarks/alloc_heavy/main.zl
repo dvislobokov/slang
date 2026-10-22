@@ -1,7 +1,6 @@
 namespace bench.allocheavy
 
-import std
-import std.io
+import io
 
 // Two phases: binary trees (benchmarks game shape: many short-lived small
 // heap nodes), then 4M rounds of small temporaries whose address is taken

@@ -1,11 +1,10 @@
-// test: std.data.kafka encodings without a broker: record batches v2 byte-exact against kafka-clients 3.7.0 (MemoryRecords.withRecords / withIdempotentRecords: CRC-32C, varint records, headers, null keys), decoding them back, gzip and zstd batches, CRC corruption, a truncated trailing batch, unsupported codecs, murmur2 key partitioning (Utils.murmur2 / toPositive), range and round-robin assignors, Encoder/Decoder primitives, error names
+// test: data.kafka encodings without a broker: record batches v2 byte-exact against kafka-clients 3.7.0 (MemoryRecords.withRecords / withIdempotentRecords: CRC-32C, varint records, headers, null keys), decoding them back, gzip and zstd batches, CRC corruption, a truncated trailing batch, unsupported codecs, murmur2 key partitioning (Utils.murmur2 / toPositive), range and round-robin assignors, Encoder/Decoder primitives, error names
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib5.kafka_codec
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 func hex(b []byte) string {
     return encoding.hex.Encode(b)
@@ -142,7 +141,7 @@ func main() void! {
     var snappy = bytes.Clone(b)
     snappy[22] = 2
     // fix the CRC so that only the codec is wrong
-    var crc = std.data.rtCrc32c(0, snappy[21..])
+    var crc = data.rtCrc32c(0, snappy[21..])
     snappy[17] = byte((crc >> 24) & 255)
     snappy[18] = byte((crc >> 16) & 255)
     snappy[19] = byte((crc >> 8) & 255)

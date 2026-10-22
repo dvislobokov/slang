@@ -1,11 +1,10 @@
-// test: std.data.redis Cluster and Sentinel routing against in-process mock nodes: CLUSTER SLOTS map, MOVED (map update + reload), ASK (ASKING on the target, map unchanged), hash tags and ErrCrossSlot, pipelines split by node with a redirect inside, transactions on one slot; Sentinel master discovery, +switch-master moving the pool, READONLY after an unannounced failover asking the sentinel again, ReadFromReplicas
+// test: data.redis Cluster and Sentinel routing against in-process mock nodes: CLUSTER SLOTS map, MOVED (map update + reload), ASK (ASKING on the target, map unchanged), hash tags and ErrCrossSlot, pipelines split by node with a redirect inside, transactions on one slot; Sentinel master discovery, +switch-master moving the pool, READONLY after an unannounced failover asking the sentinel again, ReadFromReplicas
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib5.redis_topology
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 func bulk(s string) string {
     return "$" + strconv.Itoa(len(s)) + "\r\n" + s + "\r\n"

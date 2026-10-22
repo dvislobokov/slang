@@ -1,10 +1,9 @@
-// test: std.process Run/RunWith/Output/Start with pipes, exit codes, env, dir, Kill, Timeout and LookPath
+// test: process Run/RunWith/Output/Start with pipes, exit codes, env, dir, Kill, Timeout and LookPath
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.process_run
 
-import std
-import std.io
+import io
 
 async func main() void! {
     var r = await process.Run("sh", ["-c", "echo out; echo err >&2; exit 3"])?

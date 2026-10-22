@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes.unknown_attribute_error
 
-import std.io
+import io
 
 @frobnicate
 func main() {

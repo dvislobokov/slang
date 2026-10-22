@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.control.for_range_bounds_once
 
-import std.io
+import io
 
 func Limit() int {
     println("Limit called")

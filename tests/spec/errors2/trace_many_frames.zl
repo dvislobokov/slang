@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors2.trace_many_frames
 
-import std
-import std.io
+import io
 
 func Dive(n int) int! {
     if n == 0 {

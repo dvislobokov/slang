@@ -1,8 +1,7 @@
 namespace examples.cycle_server
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 // A long-running server whose request handling leaves a reference cycle
 // behind every time: each request gets a Session that points at its

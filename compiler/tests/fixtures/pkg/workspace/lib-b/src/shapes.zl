@@ -1,7 +1,5 @@
 namespace libb.shapes
 
-import std
-
 interface Shape {
     func Area() int
 }

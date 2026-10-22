@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.drop_in_map_value
 
-import std.io
+import io
 
 struct R {
     func Drop() {}

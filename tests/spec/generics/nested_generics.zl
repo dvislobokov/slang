@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics.nested_generics
 
-import std.io
+import io
 
 struct List<T> {
     Items []T

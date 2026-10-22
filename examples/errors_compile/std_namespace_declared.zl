@@ -1,0 +1,8 @@
+// error: namespace `io` belongs to the standard library
+// The root namespaces of the standard library (`io`, `net`, `strings`, ...)
+// are reserved: user code picks another root, e.g. the package name.
+namespace io
+
+func main() {
+    println("x")
+}

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.web.err_validate_kind
 
-import std.web
+import web
 
 struct Signup {
     @validate(required: true) Name string

@@ -1,9 +1,9 @@
-// test: std.collections List<List<int>> (declared with a trailing >>); a List stored in a Map is a value copy (its Len does not follow later Adds)
+// test: collections List<List<int>> (declared with a trailing >>); a List stored in a Map is a value copy (its Len does not follow later Adds)
 // status: passing
 namespace spec.generics2.nested_collections_print
 
-import std.collections
-import std.io
+import collections
+import io
 
 func main() {
     var grid List<List<int>>

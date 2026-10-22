@@ -3,8 +3,8 @@
 // run-flags: --leak-check
 namespace spec.web.validation
 
-import std.io
-import std.web
+import io
+import web
 
 struct Address {
     @validate(required: true)      City string
@@ -58,7 +58,7 @@ async func main() void! {
     var bad = "{\"email\": \"not-an-email\", \"Name\": \"Al\", \"Discount\": 150, \"Ship\": {\"Zip\": \"12\"}, \"Lines\": [{\"Sku\": \"\", \"Qty\": 0}, {\"Sku\": \"y\", \"Qty\": 100}, {\"Sku\": \"z\", \"Qty\": 1}]}"
     r = await c.Post("/orders", bad)
     println(r.Status, r.Header("Content-Type"))
-    var doc = std.encoding.json.ParseValue(r.Body)?
+    var doc = encoding.json.ParseValue(r.Body)?
     println(doc.Get("title").String()?)
     var errs = doc.Get("errors")
     for k in errs.Keys() {

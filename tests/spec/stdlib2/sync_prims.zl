@@ -1,11 +1,10 @@
-// test: std.sync RwMutex, Semaphore, Barrier, Once, AtomicInt/AtomicBool, Atomic<T> and Pool<T> across tasks
+// test: sync RwMutex, Semaphore, Barrier, Once, AtomicInt/AtomicBool, Atomic<T> and Pool<T> across tasks
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.sync_prims
 
-import std
-import std.io
-import std.sync
+import io
+import sync
 
 struct Counter {
     mu RwMutex

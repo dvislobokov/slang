@@ -14,10 +14,10 @@ The script builds both with release settings and reports wall time, CPU time
 | `nbody` | structs in a slice, float math, method calls (5M steps) |
 | `json_like` | string building: `fmt.Format` of 100k JSON-like records (ints, floats, bools) + `Join`, 5 rounds |
 | `struct_map` | map[string]Point insert/update/lookup (100k keys, 2M updates, 100k lookups) |
-| `tcp_echo` | std.net: 1000 concurrent loopback TCP connections, 1 MB each written in 64 KB chunks and echoed back (`ReadInto` into per-connection buffers) |
-| `http_hello` | std.net.http server answering a keep-alive load generator (64 connections, 200k `GET /` in all); `run.sh` cross-measures both servers with both load generators in separate processes, then HTTP/2 over TLS (`--server-tls` / `-server-tls`) with Go's h2 client (`-load2`) |
-| `regex` | std.regex: `FindAll` of an e-mail pattern over a 10 MB generated text (lazy DFA with prefix acceleration vs Go's `regexp`) |
-| `gzip` | std.compress.gzip: level-6 compression and decompression of 20 MB of mixed text, round trip checked |
+| `tcp_echo` | net: 1000 concurrent loopback TCP connections, 1 MB each written in 64 KB chunks and echoed back (`ReadInto` into per-connection buffers) |
+| `http_hello` | net.http server answering a keep-alive load generator (64 connections, 200k `GET /` in all); `run.sh` cross-measures both servers with both load generators in separate processes, then HTTP/2 over TLS (`--server-tls` / `-server-tls`) with Go's h2 client (`-load2`) |
+| `regex` | regex: `FindAll` of an e-mail pattern over a 10 MB generated text (lazy DFA with prefix acceleration vs Go's `regexp`) |
+| `gzip` | compress.gzip: level-6 compression and decompression of 20 MB of mixed text, round trip checked |
 | `alloc_heavy` | binary trees of small heap nodes (depth 4..16) and 4M rounds of non-escaping temporaries (`new Stats{}`, `&acc` passed to a method) |
 | `heap_churn` | 20 rounds of 40 MB of small strings (two size classes) plus 32 x 256 KB buffers, all dropped each round; prints the RSS after the last round (memory returned to the OS) |
 | `shared_objects` | reference counts across threads: one task builds 200k objects that 8 tasks read 10 times, 8 tasks build objects one task reads, 8 tasks churn task-local objects; prints the ms of each phase |
@@ -220,7 +220,7 @@ runtime call per element operation, `strings` per-element `malloc` traffic.
 The kernel copies dominate both (sys time); only about 1 in 15 reads or
 writes has to wait for readiness, so the poller round trip (epoll_ctl
 one-shot arm, shard thread, run-queue post) is not the limit here. The
-first version of the benchmark built its buffers with `std.bytes.Repeat`
+first version of the benchmark built its buffers with `bytes.Repeat`
 (a Zell append loop: 196M appends, 5 s of user time); `net.MakeBuffer(n)`
 / `strings.Bytes(strings.Repeat(..))` allocate in one C call.
 
@@ -231,7 +231,7 @@ jobs, so the numbers move by ±15% between runs; two runs, the better one per ce
 
 | server \ load generator | Zell load | Go load | Go HTTP/2 load (TLS, 64 streams, 1 connection) |
 |---|---|---|---|
-| Zell `std.net.http` | 67 100 | 103 300 | 31 600 |
+| Zell `net.http` | 67 100 | 103 300 | 31 600 |
 | Go `net/http` | 64 400 | 117 300 | 32 600 |
 
 Six alternating rounds of the Go load generator against both servers
@@ -302,7 +302,7 @@ HTTP (`benchmarks/http_hello/run.sh`, Go load generator, 64 keep-alive connectio
 
 | server | HTTP/1.1 req/s | HTTP/2 over TLS req/s (64 streams) |
 |---|---|---|
-| Zell `std.net.http` | **116,507** | 26,290 |
+| Zell `net.http` | **116,507** | 26,290 |
 | Go `net/http` | 101,979 | 29,389 |
 
 The Zell load generator itself is slower than Go's (76k vs 117k req/s against the same server): client-side request building is the next thing to optimise.
@@ -330,7 +330,7 @@ collector's own cost is `auto` vs `off`.
 | Benchmark | base | off | auto | auto vs off |
 |---|---:|---:|---:|---:|
 | `json_like` | 0.180 / 0.199 | 0.172 / 0.185 | 0.172 / 0.186 | noise (no cyclic user types) |
-| `http_hello` | 3.006 / 3.123 | 3.051 / 3.207 | 2.975 / 3.168 | noise (std.net.http has a few cyclic types: pools, h2 connections) |
+| `http_hello` | 3.006 / 3.123 | 3.051 / 3.207 | 2.975 / 3.168 | noise (net.http has a few cyclic types: pools, h2 connections) |
 | `alloc_heavy` | 0.362 / 0.402 | 0.444 / 0.499 | 0.415 / 0.446 | noise; callgrind (depth-12 run) 233M vs 224M instructions, +4 % |
 
 `alloc_heavy`'s `Node {Left, Right *Node}` is a cyclic type (W0001 warns,

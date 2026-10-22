@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces.embedded_method_set
 
-import std.io
+import io
 
 interface Speaker {
     func Speak() string

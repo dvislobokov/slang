@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics.monomorphisation
 
-import std.io
+import io
 
 func Twice<T: Ordered>(x T) T {
     return x + x

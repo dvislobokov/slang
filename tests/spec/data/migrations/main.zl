@@ -1,10 +1,9 @@
-// test: std.data migrations as code: @migration structs (as written by `zell data migration add`) applied by ctx.Migrate() in id order, each in a transaction, recorded in __migrations and not applied twice; the Migrator DDL for SQLite and PostgreSQL (CreateTable, AddColumn, AlterColumn, RenameColumn, CreateIndex, DropIndex, AddForeignKey, Sql); MigrationScript
+// test: data migrations as code: @migration structs (as written by `zell data migration add`) applied by ctx.Migrate() in id order, each in a transaction, recorded in __migrations and not applied twice; the Migrator DDL for SQLite and PostgreSQL (CreateTable, AddColumn, AlterColumn, RenameColumn, CreateIndex, DropIndex, AddForeignKey, Sql); MigrationScript
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.migrations
 
-import std
-import std.io
+import io
 
 struct Note {
     Id      int

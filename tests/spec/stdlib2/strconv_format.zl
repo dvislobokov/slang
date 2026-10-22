@@ -1,10 +1,9 @@
-// test: std.strconv FormatInt/FormatFloat/ParseFloat/ParseBool/Quote/Unquote and generic Parse<T>/Format<T>
+// test: strconv FormatInt/FormatFloat/ParseFloat/ParseBool/Quote/Unquote and generic Parse<T>/Format<T>
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.strconv_format
 
-import std
-import std.io
+import io
 
 func main() {
     println(

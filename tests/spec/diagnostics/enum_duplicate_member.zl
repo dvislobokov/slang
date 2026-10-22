@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.enum_duplicate_member
 
-import std.io
+import io
 
 enum Color {
     Red

@@ -1,10 +1,9 @@
-// test: std.compress.brotli Decompress on streams made by the brotli CLI: empty, uncompressed meta-block (quality 0), static dictionary words with identity/uppercase transforms (quality 11), back references, a generated 5000-byte binary input; corrupt and truncated streams are errors
+// test: compress.brotli Decompress on streams made by the brotli CLI: empty, uncompressed meta-block (quality 0), static dictionary words with identity/uppercase transforms (quality 11), back references, a generated 5000-byte binary input; corrupt and truncated streams are errors
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib4.brotli_decode
 
-import std
-import std.io
+import io
 
 func main() void! {
     var vectors = [

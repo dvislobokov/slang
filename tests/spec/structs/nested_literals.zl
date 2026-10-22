@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.nested_literals
 
-import std.io
+import io
 
 struct Inner {
     A int

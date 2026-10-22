@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.duplicate_variant
 
-import std.io
+import io
 
 enum Color { Red, Green, Red }
 

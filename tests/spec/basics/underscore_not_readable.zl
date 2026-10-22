@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.underscore_not_readable
 
-import std.io
+import io
 
 func main() {
     var x = _

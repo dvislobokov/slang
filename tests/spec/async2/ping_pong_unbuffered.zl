@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async2.ping_pong_unbuffered
 
-import std
-import std.io
+import io
 
 async func Player(
     name string,

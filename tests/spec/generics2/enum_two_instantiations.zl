@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.enum_two_instantiations
 
-import std.io
+import io
 
 enum Option<T> {
     Some(value T)

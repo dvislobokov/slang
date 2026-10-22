@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes2.defaults_positional_reflect
 
-import std
-import std.io
+import io
 
 @attribute(targets: [reflect.Target.Field])
 struct check {

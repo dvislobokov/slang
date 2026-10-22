@@ -1,11 +1,10 @@
-// test: std.io readers/writers (String/Bytes readers, Limit, Multi, Tee, Pipe, Discard), bufio-style Buffered* and Scanner, binary.Read/Write
+// test: io readers/writers (String/Bytes readers, Limit, Multi, Tee, Pipe, Discard), bufio-style Buffered* and Scanner, binary.Read/Write
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.io_helpers
 
-import std
-import std.encoding
-import std.io
+import encoding
+import io
 
 struct Point {
     X int32

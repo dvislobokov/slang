@@ -1,0 +1,9 @@
+// error: unknown namespace std.io in import: the `std` namespace no longer exists: use `io` instead of `std.io`
+// The standard library namespaces are top-level: `import io`, not `import std.io`.
+namespace examples.bad
+
+import std.io
+
+func main() {
+    println("x")
+}

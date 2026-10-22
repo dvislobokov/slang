@@ -1,8 +1,7 @@
 namespace examples.http_server
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 // An HTTP server with a router, queried by the client in the same program.
 
@@ -53,7 +52,7 @@ async func main() void! {
     var f = await http.Get(base + "/fail")?
     print(f.Status, " ", f.Body)
 
-    // https goes through std.net.tls; nothing listens on port 1
+    // https goes through net.tls; nothing listens on port 1
     try await http.Get("https://127.0.0.1:1/") catch err {
         println("error:", err)
     }

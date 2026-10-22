@@ -1,7 +1,6 @@
 namespace examples.async
 
-import std
-import std.io
+import io
 
 // An async func returns Task<T>; calling it starts the task immediately.
 async func Square(n int, delayMs int) int {

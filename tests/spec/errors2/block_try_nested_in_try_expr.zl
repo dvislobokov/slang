@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors2.block_try_nested_in_try_expr
 
-import std.io
+import io
 
 func Get(k string) int! {
     if k == "" {

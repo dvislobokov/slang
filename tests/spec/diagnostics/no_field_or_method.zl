@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.no_field_or_method
 
-import std.io
+import io
 
 struct S {
     Width int

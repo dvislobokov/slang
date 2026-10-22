@@ -1,11 +1,10 @@
-// test: std.math.big.Int arithmetic (operators + - * / % and comparisons), division modes, Exp/ModInverse/GCD/Sqrt, parsing, bytes and ProbablyPrime
+// test: math.big.Int arithmetic (operators + - * / % and comparisons), division modes, Exp/ModInverse/GCD/Sqrt, parsing, bytes and ProbablyPrime
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.big_int
 
-import std
-import std.io
-import std.math
+import io
+import math
 
 func main() {
     var a = big.MustParseInt("123456789012345678901234567890")

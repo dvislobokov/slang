@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.web.results
 
-import std
-import std.io
-import std.web
+import io
+import web
 
 struct Point {
     X int

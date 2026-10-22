@@ -4,8 +4,7 @@
 // stderr: Email
 namespace spec.reflection.value_set_wrong_type
 
-import std
-import std.io
+import io
 
 struct User {
     Email string

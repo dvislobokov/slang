@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes.custom_attribute
 
-import std
-import std.io
+import io
 
 @attribute(targets: [reflect.Target.Field])
 struct range {

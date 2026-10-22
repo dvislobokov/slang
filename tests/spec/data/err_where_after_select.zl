@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.data.err_where_after_select
 
-import std
-
 struct User {
     Id    int
     Name  string

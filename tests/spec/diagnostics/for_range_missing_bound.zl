@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.for_range_missing_bound
 
-import std.io
+import io
 
 func main() {
     for i in 0.. {

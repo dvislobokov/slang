@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.embedding_two_levels
 
-import std.io
+import io
 
 struct A {
     Level int

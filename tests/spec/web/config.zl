@@ -1,11 +1,10 @@
-// test: std.web.config: appsettings.json < .yaml < .toml < appsettings.<env>.* < APP__ environment variables < --arguments, case-insensitive keys, Bind<T> of nested structs, slices, maps and pointers with conversion errors and @validate, Options<T> reload when a file changes, embedded defaults
+// test: web.config: appsettings.json < .yaml < .toml < appsettings.<env>.* < APP__ environment variables < --arguments, case-insensitive keys, Bind<T> of nested structs, slices, maps and pointers with conversion errors and @validate, Options<T> reload when a file changes, embedded defaults
 // status: passing
 // run-flags: --leak-check
 namespace spec.web.config
 
-import std
-import std.io
-import std.web
+import io
+import web
 
 struct Db {
     Host string

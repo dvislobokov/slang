@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.variant_with_struct_and_string
 
-import std.io
+import io
 
 struct Point {
     X int

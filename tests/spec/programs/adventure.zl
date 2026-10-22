@@ -2,9 +2,8 @@
 // status: passing
 namespace spec.programs.adventure
 
-import std
-import std.collections
-import std.io
+import collections
+import io
 
 enum Room {
     Hall

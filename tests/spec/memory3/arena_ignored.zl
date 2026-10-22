@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.memory3.arena_ignored
 
-import std
-import std.io
+import io
 
 @allowCycle
 struct Node {

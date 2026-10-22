@@ -1,9 +1,8 @@
-// test: std.text.template and std.html.template API: ParseWith custom functions (errors propagate from Execute), ParseNamed, ExecuteTemplate and Defined with {{define}}, the dynamic Value of maps with int keys (sorted), any and enum fields, run-time checking of non-literal sources, Execute errors (index out of range), trusted html.template.HTML/URL/JS values, nested templates in HTML
+// test: text.template and html.template API: ParseWith custom functions (errors propagate from Execute), ParseNamed, ExecuteTemplate and Defined with {{define}}, the dynamic Value of maps with int keys (sorted), any and enum fields, run-time checking of non-literal sources, Execute errors (index out of range), trusted html.template.HTML/URL/JS values, nested templates in HTML
 // status: passing
 namespace spec.stdlib3.template_api
 
-import std
-import std.io
+import io
 
 enum Tier {
     Free

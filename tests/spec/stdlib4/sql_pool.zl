@@ -1,11 +1,10 @@
-// test: std.database.sql pool and driver interface with an in-test driver: max open connections and waiting, idle limit, broken connections discarded, health check pings, cancelled waiters, statement cache per connection, named parameters rewritten to $n, rows released on Close/Drop, Raw, Close of the pool
+// test: database.sql pool and driver interface with an in-test driver: max open connections and waiting, idle limit, broken connections discarded, health check pings, cancelled waiters, statement cache per connection, named parameters rewritten to $n, rows released on Close/Drop, Raw, Close of the pool
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib4.sql_pool
 
-import std
-import std.database
-import std.io
+import database
+import io
 
 struct counters {
     opened   int

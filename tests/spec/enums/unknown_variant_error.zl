@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.unknown_variant_error
 
-import std.io
+import io
 
 enum Color { Red, Green }
 

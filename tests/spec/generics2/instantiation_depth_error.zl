@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.instantiation_depth_error
 
-import std.io
+import io
 
 func Grow<T>(x T, n int) int {
     if n == 0 {

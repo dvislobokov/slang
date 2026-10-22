@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes.unknown_arg_error
 
-import std.io
+import io
 
 @attribute
 struct limit {

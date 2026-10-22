@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.multi_assign_swap
 
-import std.io
+import io
 
 func main() {
     var a = 1

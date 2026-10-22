@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.drop_stack_scope
 
-import std.io
+import io
 
 struct Res {
     Name string

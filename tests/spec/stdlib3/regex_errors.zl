@@ -1,11 +1,10 @@
-// test: std.regex.Compile errors name the problem, the byte offset and the pattern; backreferences and lookaround are rejected (RE2 syntax); Pattern of a bad dynamic pattern panics
+// test: regex.Compile errors name the problem, the byte offset and the pattern; backreferences and lookaround are rejected (RE2 syntax); Pattern of a bad dynamic pattern panics
 // status: passing
 // exit: 2
 // stderr: panic: regex: missing closing ]
 namespace spec.stdlib3.regex_errors
 
-import std
-import std.io
+import io
 
 func main() {
     var bad = [

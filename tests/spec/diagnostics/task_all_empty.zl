@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.diagnostics.task_all_empty
 
-import std
-import std.io
+import io
 
 async func main() {
     await task.All()

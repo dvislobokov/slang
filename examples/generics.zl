@@ -1,8 +1,7 @@
 namespace examples.generics
 
-import std
-import std.collections
-import std.io
+import collections
+import io
 
 // A generic function with the builtin Ordered constraint.
 func Max<T: Ordered>(a, b T) T {
@@ -137,7 +136,7 @@ func main() {
     var l = Logger{Prefix: "> "}
     println(l.Line(5), l.Line<bool>(true), l.Line("text"))
 
-    // std.collections: List, Map (insertion order), Set, Queue, Stack.
+    // collections: List, Map (insertion order), Set, Queue, Stack.
     var list = List<string>{}
     for w in words {
         list.Add(w)

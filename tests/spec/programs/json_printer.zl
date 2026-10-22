@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.programs.json_printer
 
-import std
-import std.io
+import io
 
 enum Json {
     Null

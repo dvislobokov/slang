@@ -1,7 +1,6 @@
 namespace app
 
-import std
-import std.io
+import io
 
 // Debugger fixture: locals of async functions across `await`.
 

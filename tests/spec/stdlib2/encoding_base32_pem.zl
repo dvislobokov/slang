@@ -1,11 +1,10 @@
-// test: std.encoding.base32 (RFC 4648 vectors, hex alphabet, no padding) and std.encoding.pem blocks with headers
+// test: encoding.base32 (RFC 4648 vectors, hex alphabet, no padding) and encoding.pem blocks with headers
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.encoding_base32_pem
 
-import std
-import std.encoding
-import std.io
+import encoding
+import io
 
 func main() {
     for s in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {

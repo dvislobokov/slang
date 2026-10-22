@@ -3,7 +3,7 @@
 // status: passing
 namespace spec.memory2.move_last_use_error
 
-import std.io
+import io
 
 struct R {
     Name string

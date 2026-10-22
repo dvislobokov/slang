@@ -1,10 +1,9 @@
-// test: std.text.template / std.html.template free everything (parse, check errors, execution, custom functions, escaping)
+// test: text.template / html.template free everything (parse, check errors, execution, custom functions, escaping)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib3.template_leaks
 
-import std
-import std.io
+import io
 
 struct Item {
     Name string

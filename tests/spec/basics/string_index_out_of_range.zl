@@ -3,7 +3,7 @@
 // exit: 2
 namespace spec.basics.string_index_out_of_range
 
-import std.io
+import io
 
 func main() {
     var s = "abc"

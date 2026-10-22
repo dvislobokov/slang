@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.float32_values
 
-import std.io
+import io
 
 func main() {
     var a float32 = 0.1

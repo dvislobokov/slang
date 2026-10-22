@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.generic_method_value
 
-import std.io
+import io
 
 struct S {
     func Show<T>(x T) T { return x }

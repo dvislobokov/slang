@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory2.escape_stack_new
 
-import std.io
+import io
 
 struct R {
     Name string

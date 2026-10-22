@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib3.template_unknown_field
 
-import std
-import std.io
+import io
 
 struct Item {
     Name string

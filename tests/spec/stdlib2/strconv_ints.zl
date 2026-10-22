@@ -1,10 +1,9 @@
-// test: std.strconv integer parsing/formatting with bases, ranges and Go-style errors
+// test: strconv integer parsing/formatting with bases, ranges and Go-style errors
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.strconv_ints
 
-import std
-import std.io
+import io
 
 func show(s string, base int) {
     var v = try strconv.ParseInt(s, base) catch err {

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.struct_no_method
 
-import std.io
+import io
 
 struct Dog {
     func Bark() { println("woof") }

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.stdlib2.embed_bad_type
 
-import std.io
+import io
 
 @embed("embed_bad_type.zl")
 var Data int

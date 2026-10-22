@@ -5,7 +5,7 @@
 // stderr: type Node is @acyclic but was found in a cycle
 namespace spec.memory3.acyclic_broken
 
-import std.io
+import io
 
 @acyclic
 struct Node {

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.void_bang
 
-import std.io
+import io
 
 func Check(n int) void! {
     if n < 0 {

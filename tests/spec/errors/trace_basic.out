@@ -1,5 +1,5 @@
 loading: not found: app.toml
-  created at   tests/spec/errors/trace_basic.zl:9   Open
-  returned via tests/spec/errors/trace_basic.zl:13  Load  ?("loading")
-  returned via tests/spec/errors/trace_basic.zl:18  Run
-  returned via tests/spec/errors/trace_basic.zl:22  main
+  created at   tests/spec/errors/trace_basic.zl:8   Open
+  returned via tests/spec/errors/trace_basic.zl:12  Load  ?("loading")
+  returned via tests/spec/errors/trace_basic.zl:17  Run
+  returned via tests/spec/errors/trace_basic.zl:21  main

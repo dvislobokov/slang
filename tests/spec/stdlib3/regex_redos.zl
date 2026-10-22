@@ -1,9 +1,8 @@
-// test: std.regex is linear time: ReDoS-shaped patterns ((a+)+$, (a|aa)*b, (x+x+)+y, (.*a){12}, nested quantifiers) on 10k-50k byte inputs finish quickly, with and without captures (Pike VM)
+// test: regex is linear time: ReDoS-shaped patterns ((a+)+$, (a|aa)*b, (x+x+)+y, (.*a){12}, nested quantifiers) on 10k-50k byte inputs finish quickly, with and without captures (Pike VM)
 // status: passing
 namespace spec.stdlib3.regex_redos
 
-import std
-import std.io
+import io
 
 func main() {
     var t0 = time.Now()

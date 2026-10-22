@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.constraint_interface_wording
 
-import std.io
+import io
 
 interface Shape {
     func Area() float

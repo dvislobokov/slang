@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.field_attribute
 
-import std
-import std.io
+import io
 
 struct User {
     @json(name: "id")      Id    int

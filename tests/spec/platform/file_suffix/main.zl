@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.platform.file_suffix
 
-import std.io
+import io
 
 func main() {
     println(PlatformName(), Separator())

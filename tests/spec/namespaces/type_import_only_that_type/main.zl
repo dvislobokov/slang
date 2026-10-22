@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.ns.typeonly
 
-import std.io
+import io
 
 import spec.ns.typeonly.models.User
 

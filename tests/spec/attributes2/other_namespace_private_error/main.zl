@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes2.other_namespace_private_error
 
-import std.io
+import io
 
 @meta.table("users")
 struct User {

@@ -1,9 +1,8 @@
-// test: std.regex named groups (?P<name>) and (?<name>), Groups API (At, Get, Span, Named, Matched, Names, Len, Match), GroupNames/GroupIndex/NumGroups, GroupsAll, ReplaceGroupsFunc, Iter, FindIndex, FindAllN, FindAllText, MatchBytes, String
+// test: regex named groups (?P<name>) and (?<name>), Groups API (At, Get, Span, Named, Matched, Names, Len, Match), GroupNames/GroupIndex/NumGroups, GroupsAll, ReplaceGroupsFunc, Iter, FindIndex, FindAllN, FindAllText, MatchBytes, String
 // status: passing
 namespace spec.stdlib3.regex_groups
 
-import std
-import std.io
+import io
 
 func main() void! {
     var date = regex.Pattern(`(?P<year>\d{4})-(?P<month>\d{2})-(?<day>\d{2})(T(\d\d):(\d\d))?`)

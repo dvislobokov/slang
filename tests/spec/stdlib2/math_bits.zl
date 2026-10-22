@@ -1,10 +1,10 @@
-// test: std.math.bits counting, rotation, reversal and 128-bit carry arithmetic
+// test: math.bits counting, rotation, reversal and 128-bit carry arithmetic
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.math_bits
 
-import std.io
-import std.math
+import io
+import math
 
 func main() {
     println(

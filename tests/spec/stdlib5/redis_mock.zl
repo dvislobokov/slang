@@ -1,11 +1,10 @@
-// test: std.data.redis client against an in-process RESP server: RESP3 HELLO with AUTH/SETNAME and the RESP2 fallback (AUTH + SELECT), typed commands and Nil, server errors as redis.Error, pipelining in one write, MULTI/EXEC, WATCH conflicts (ErrTxFailed), EVALSHA falling back to EVAL on NOSCRIPT, pub/sub with patterns and a reconnect, LOADING retries, pool limits (ErrPoolTimeout), task-context timeouts, Close
+// test: data.redis client against an in-process RESP server: RESP3 HELLO with AUTH/SETNAME and the RESP2 fallback (AUTH + SELECT), typed commands and Nil, server errors as redis.Error, pipelining in one write, MULTI/EXEC, WATCH conflicts (ErrTxFailed), EVALSHA falling back to EVAL on NOSCRIPT, pub/sub with patterns and a reconnect, LOADING retries, pool limits (ErrPoolTimeout), task-context timeouts, Close
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib5.redis_mock
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 // ---- a tiny RESP server -----------------------------------------------------
 

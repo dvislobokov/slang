@@ -1,9 +1,8 @@
-// test: std.encoding.csv.Read<T>/Write<T>/ReadNoHeader<T> through compile-time reflection: @csv(name:), @csv(index:), @csv(skip:), @serde(name:), ints with range checks, floats, bools, plain enums by name, *T (empty cell = nil); errors name the line and column
+// test: encoding.csv.Read<T>/Write<T>/ReadNoHeader<T> through compile-time reflection: @csv(name:), @csv(index:), @csv(skip:), @serde(name:), ints with range checks, floats, bools, plain enums by name, *T (empty cell = nil); errors name the line and column
 // status: passing
 namespace spec.stdlib3.csv_typed
 
-import std
-import std.io
+import io
 
 enum Level {
     Low

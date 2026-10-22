@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.builtin_as_value
 
-import std.io
+import io
 
 func main() {
     var f = len

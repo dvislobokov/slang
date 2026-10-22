@@ -1,10 +1,10 @@
-// test: std.web routing: controller prefixes, relative and absolute action routes, several verbs on one method, MapControllers<A, B>, minimal API handlers, 404/405 Problem Details, HEAD via GET, wildcard segments
+// test: web routing: controller prefixes, relative and absolute action routes, several verbs on one method, MapControllers<A, B>, minimal API handlers, 404/405 Problem Details, HEAD via GET, wildcard segments
 // status: passing
 // run-flags: --leak-check
 namespace spec.web.routing
 
-import std.io
-import std.web
+import io
+import web
 
 @route("/api/books")
 struct BooksController {
@@ -15,13 +15,13 @@ struct BooksController {
 
     @get("{id}")
     func Get(id int) string {
-        return "book " + std.fmt.Format("{0}", id)
+        return "book " + fmt.Format("{0}", id)
     }
 
     @put("{id}")
     @patch("{id}")
     func Update(id int, c *Context) string {
-        return c.Method() + " book " + std.fmt.Format("{0}", id)
+        return c.Method() + " book " + fmt.Format("{0}", id)
     }
 
     @get("/version")
@@ -31,7 +31,7 @@ struct BooksController {
 
     @get("{id}/pages/{page}")
     func Page(id int, page int) string {
-        return std.fmt.Format("book {0} page {1}", id, page)
+        return fmt.Format("book {0} page {1}", id, page)
     }
 }
 
@@ -51,7 +51,7 @@ async func main() void! {
     var app = NewApp()
     app.MapControllers<BooksController, AuthorsController>()
     app.MapGet("/", () => "root")
-    app.MapDelete("/api/books/{id}", (id int) => "deleted " + std.fmt.Format("{0}", id))
+    app.MapDelete("/api/books/{id}", (id int) => "deleted " + fmt.Format("{0}", id))
     app.MapGet("/files/*", files)
     var c = TestServer(app)?
     for path in [

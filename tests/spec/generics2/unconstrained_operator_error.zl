@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.unconstrained_operator_error
 
-import std.io
+import io
 
 func Sum<T>(xs []T) T {
     var t T

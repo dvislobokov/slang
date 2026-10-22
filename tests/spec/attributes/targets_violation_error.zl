@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes.targets_violation_error
 
-import std
-import std.io
+import io
 
 @attribute(targets: [reflect.Target.Field])
 struct column {

@@ -1,9 +1,8 @@
 namespace examples.log
 
-import std
-import std.io
+import io
 
-// std.log: Serilog-style structured logging. Message templates are parsed
+// log: Serilog-style structured logging. Message templates are parsed
 // at compile time; `{@X}` destructures X through compile-time reflection
 // (fields marked @log(skip: true) stay out); `{X:0.00}` formats; the level
 // is checked before any argument is evaluated. A fixed clock keeps the

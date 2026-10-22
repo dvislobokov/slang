@@ -1,7 +1,6 @@
 namespace examples.cancel
 
-import std
-import std.io
+import io
 
 // Cancellation through the task context: a cancel handle, timeouts,
 // task.Any cancelling the loser, and cancellation reaching child tasks.

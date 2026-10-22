@@ -1,7 +1,6 @@
 namespace bench.heapchurn
 
-import std
-import std.io
+import io
 
 // 20 rounds: build 40 MB of small strings (two size classes) and 32
 // large 256 KB buffers, then drop them all. Exercises page retirement, the

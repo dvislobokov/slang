@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.arrays_are_values
 
-import std.io
+import io
 
 struct Grid {
     Cells [3]int

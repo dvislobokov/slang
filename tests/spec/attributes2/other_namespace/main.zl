@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes2.other_namespace
 
-import std
-import std.io
+import io
 
 @meta.Table("users")
 struct User {

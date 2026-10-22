@@ -3,7 +3,7 @@
 // run-flags: --leak-check
 namespace spec.iteration.protocol
 
-import std.io
+import io
 
 struct Countdown {
     From int

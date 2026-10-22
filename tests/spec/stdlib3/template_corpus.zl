@@ -1,9 +1,8 @@
-// test: std.text.template and std.html.template render like Go text/template and html/template on 48 text templates (fields, pipelines, printf verbs, range with break/continue/else, if/else if, with, variables, comparison and logic functions, index/slice/len, define/template/block, trim markers, comments), 15 error cases (parse and check errors fail in Parse; unlike Go, a field that does not exist in the type is an error even in a branch the data never takes: e9) and 18 HTML contexts (text, quoted and unquoted attributes, URLs with scheme filtering, scripts, JS strings, event handlers, CSS, comments, RCDATA)
+// test: text.template and html.template render like Go text/template and html/template on 48 text templates (fields, pipelines, printf verbs, range with break/continue/else, if/else if, with, variables, comparison and logic functions, index/slice/len, define/template/block, trim markers, comments), 15 error cases (parse and check errors fail in Parse; unlike Go, a field that does not exist in the type is an error even in a branch the data never takes: e9) and 18 HTML contexts (text, quoted and unquoted attributes, URLs with scheme filtering, scripts, JS strings, event handlers, CSS, comments, RCDATA)
 // status: passing
 namespace spec.stdlib3.template_corpus
 
-import std
-import std.io
+import io
 
 struct Item {
     Name  string

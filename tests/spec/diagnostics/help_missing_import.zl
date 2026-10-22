@@ -1,9 +1,9 @@
-// error: help: strings is in std: add `import std`
+// error: help: Sqrt is in math: add `import math`
 // status: passing
 namespace spec.diagnostics.help_missing_import
 
-import std.io
+import io
 
 func main() {
-    println(strings.ToUpper("x"))
+    println(Sqrt(2.0))
 }

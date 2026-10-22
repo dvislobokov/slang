@@ -1,6 +1,6 @@
 namespace bench.fib
 
-import std.io
+import io
 
 func Fib(n int) int {
     if n < 2 {

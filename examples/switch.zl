@@ -1,6 +1,6 @@
 namespace examples.switches
 
-import std.io
+import io
 
 // Values, value lists, ranges (half-open) and guards; first match wins.
 func Size(n int) string {

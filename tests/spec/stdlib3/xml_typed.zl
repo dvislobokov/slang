@@ -1,9 +1,8 @@
-// test: std.encoding.xml.Parse<T>/Format<T>/FormatIndent<T> through compile-time reflection: root name from @xml(name:) on the type, @xml(attr:), @xml(text:), @xml(name:), @xml(omitEmpty:), @xml(skip:), @xml(ns:), @serde(name:), repeated elements into slices, nested and pointer structs, enums, bools, floats, list attributes; errors with paths; the Value tree (ParseValue, Child, Elements, Attr, InnerText, Format, NewElement) and the Writer (indent, comments, CDATA, escaping)
+// test: encoding.xml.Parse<T>/Format<T>/FormatIndent<T> through compile-time reflection: root name from @xml(name:) on the type, @xml(attr:), @xml(text:), @xml(name:), @xml(omitEmpty:), @xml(skip:), @xml(ns:), @serde(name:), repeated elements into slices, nested and pointer structs, enums, bools, floats, list attributes; errors with paths; the Value tree (ParseValue, Child, Elements, Attr, InnerText, Format, NewElement) and the Writer (indent, comments, CDATA, escaping)
 // status: passing
 namespace spec.stdlib3.xml_typed
 
-import std
-import std.io
+import io
 
 enum Status {
     Draft

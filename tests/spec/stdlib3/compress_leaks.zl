@@ -1,10 +1,9 @@
-// test: std.compress frees everything (one-shot and streaming coders, errors, zstd)
+// test: compress frees everything (one-shot and streaming coders, errors, zstd)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib3.compress_leaks
 
-import std
-import std.io
+import io
 
 func main() {
     var data = strings.Bytes(strings.Repeat("leak check data ", 5000))

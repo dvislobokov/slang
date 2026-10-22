@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.operators.fallible_method
 
-import std.io
+import io
 
 struct Frac {
     N int

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.generics2.infer_through_lambdas
 
-import std
-import std.io
+import io
 
 func MapAll<T, U>(xs []T, f func(T) U) []U {
     var out []U = []

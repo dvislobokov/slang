@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes.nested_attribute_arg
 
-import std.io
+import io
 
 enum Level { Low, High }
 

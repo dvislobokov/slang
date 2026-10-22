@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.embed_non_interface
 
-import std.io
+import io
 
 struct P {
     X int

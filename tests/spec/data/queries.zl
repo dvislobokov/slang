@@ -1,10 +1,9 @@
-// test: std.data queries translated at compile time: Where with comparisons, &&/||/!, arithmetic, string Contains/StartsWith/EndsWith/ToUpper/ToLower/len, nil checks and nullable fields, time comparisons, captured variables and calls as parameters, slices.Contains as IN, navigation Any/Count subqueries, OrderBy/ThenByDescending, Skip/Take, Distinct; ToSql for SQLite and PostgreSQL and the results
+// test: data queries translated at compile time: Where with comparisons, &&/||/!, arithmetic, string Contains/StartsWith/EndsWith/ToUpper/ToLower/len, nil checks and nullable fields, time comparisons, captured variables and calls as parameters, slices.Contains as IN, navigation Any/Count subqueries, OrderBy/ThenByDescending, Skip/Take, Distinct; ToSql for SQLite and PostgreSQL and the results
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.queries
 
-import std
-import std.io
+import io
 
 struct User {
     Id        int

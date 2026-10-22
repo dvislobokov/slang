@@ -1,7 +1,7 @@
 // error: await outside async
 namespace examples.bad
 
-import std.io
+import io
 
 async func Compute() int {
     return 42

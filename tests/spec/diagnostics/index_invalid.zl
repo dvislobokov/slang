@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.index_invalid
 
-import std.io
+import io
 
 func main() {
     var b = true

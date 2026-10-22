@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.iteration.err_bad_next
 
-import std.io
+import io
 
 struct Gen {
     n int

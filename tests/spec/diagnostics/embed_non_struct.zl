@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.embed_non_struct
 
-import std.io
+import io
 
 interface I {
     func F()

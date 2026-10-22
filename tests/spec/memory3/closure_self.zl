@@ -4,8 +4,7 @@
 // warning: W0001 type Button can form a reference cycle through field OnClick (func())
 namespace spec.memory3.closure_self
 
-import std
-import std.io
+import io
 
 struct Button {
     Label   string

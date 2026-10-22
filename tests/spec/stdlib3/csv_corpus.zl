@@ -1,9 +1,8 @@
-// test: std.encoding.csv reader and writer semantics checked against Go encoding/csv (36 reader cases: quotes, CRLF, lazy quotes, comments, custom delimiters, leading-space trimming, field counts, errors with line/column; writer quoting with and without CRLF)
+// test: encoding.csv reader and writer semantics checked against Go encoding/csv (36 reader cases: quotes, CRLF, lazy quotes, comments, custom delimiters, leading-space trimming, field counts, errors with line/column; writer quoting with and without CRLF)
 // status: passing
 namespace spec.stdlib3.csv_corpus
 
-import std
-import std.io
+import io
 
 func quoted(recs [][]string) string {
     var parts []string = []

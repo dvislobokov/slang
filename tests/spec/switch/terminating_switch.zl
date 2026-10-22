@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.terminating_switch
 
-import std.io
+import io
 
 func Sign(n int) int {
     switch {

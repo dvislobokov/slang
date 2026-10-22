@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.diagnostics.task_any_empty
 
-import std
-import std.io
+import io
 
 async func main() {
     var x = await task.Any()

@@ -1,14 +1,13 @@
-// test: Router.Use middleware chains (order), http.Recover, http.Logging through a std.log sink, CORS (preflight and simple requests), http.Gzip, http.BodyLimit, http.TimeoutHandler, Server.MaxBodyBytes; handlers called directly with std.net.http.test recorders
+// test: Router.Use middleware chains (order), http.Recover, http.Logging through a log sink, CORS (preflight and simple requests), http.Gzip, http.BodyLimit, http.TimeoutHandler, Server.MaxBodyBytes; handlers called directly with net.http.test recorders
 // status: passing
 // run-flags: --leak-check
 // stderr: EROR HTTP GET /fail failed: secret detail
 namespace spec.stdlib.http_middleware
 
-import std
-import std.io
-import std.net
+import io
+import net
 
-// A std.log sink that prints the request-log properties (not the timing).
+// A log sink that prints the request-log properties (not the timing).
 struct PrintSink {
     func Emit(e *log.Event) {
         println(

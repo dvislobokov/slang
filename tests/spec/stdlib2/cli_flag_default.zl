@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib2.cli_flag_default
 
-import std
-import std.io
+import io
 
 struct Flags {
     @cli.flag(default: "9090", env: "ZELL_CLI_DEFAULT_TEST_PORT", help: "listen port") Port  int

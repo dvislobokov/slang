@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.generics.map_filter
 
-import std
-import std.io
+import io
 
 func Map<T, U>(xs []T, f func(T) U) []U {
     var out []U = []

@@ -1,7 +1,7 @@
 // error: unknown identifier undefinedName
 namespace examples.bad
 
-import std.io
+import io
 
 func main() {
     println(undefinedName)

@@ -1,11 +1,10 @@
-// test: std.data.kafka against an in-process mock broker (one node, in-memory logs, a group coordinator): request framing byte-exact against the Java client's ApiVersions v0, SASL PLAIN and SCRAM-SHA-256 (server side verified here), admin create/list/delete, an idempotent producer surviving NOT_LEADER_OR_FOLLOWER and a lost produce response without duplicates, acks none, gzip/zstd batches, a two-member consumer group (JoinGroup/SyncGroup, range assignment computed by the leader, rebalance seen through Heartbeat), commits and restart from the committed offsets, offset reset, errors, TLS with a pinned self-signed certificate
+// test: data.kafka against an in-process mock broker (one node, in-memory logs, a group coordinator): request framing byte-exact against the Java client's ApiVersions v0, SASL PLAIN and SCRAM-SHA-256 (server side verified here), admin create/list/delete, an idempotent producer surviving NOT_LEADER_OR_FOLLOWER and a lost produce response without duplicates, acks none, gzip/zstd batches, a two-member consumer group (JoinGroup/SyncGroup, range assignment computed by the leader, rebalance seen through Heartbeat), commits and restart from the committed offsets, offset reset, errors, TLS with a pinned self-signed certificate
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib5.kafka_mock
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 // ---- the mock broker ---------------------------------------------------------
 

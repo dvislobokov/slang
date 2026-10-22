@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_default_transport_leak
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 async func hello(req *http.Request, res *http.Response) void! {
     res.Text(200, "hi " + req.Path)

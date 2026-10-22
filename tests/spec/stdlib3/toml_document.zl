@@ -1,9 +1,8 @@
-// test: std.encoding.toml Parse<T>/Format<T> with @toml(name:, omitEmpty:, skip:, inline:) and @serde (nested tables, arrays of tables, maps, datetimes as strings), and Document round-trip editing of a package manifest: Set replaces a value in place keeping its comment, adds keys to an existing table or a new [table], Delete removes a line; untouched text stays byte-identical; error messages carry line numbers
+// test: encoding.toml Parse<T>/Format<T> with @toml(name:, omitEmpty:, skip:, inline:) and @serde (nested tables, arrays of tables, maps, datetimes as strings), and Document round-trip editing of a package manifest: Set replaces a value in place keeping its comment, adds keys to an existing table or a new [table], Delete removes a line; untouched text stays byte-identical; error messages carry line numbers
 // status: passing
 namespace spec.stdlib3.toml_document
 
-import std
-import std.io
+import io
 
 struct Package {
     @toml(name: "name")                     Name    string

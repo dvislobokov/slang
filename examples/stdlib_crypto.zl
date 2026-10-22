@@ -1,14 +1,13 @@
 namespace examples.stdlib_crypto
 
-import std
-import std.crypto
-import std.crypto.hash as chash
-import std.encoding
-import std.io
+import crypto
+import crypto.hash as chash
+import encoding
+import io
 
 func main() {
-    // std.crypto.hash: `import std` and `import std.crypto` would both give `hash`
-    // (std.hash vs std.crypto.hash: ambiguous), so alias it or use crypto.hash.X.
+    // crypto.hash: `import crypto` gives `hash` (crypto.hash, hiding the
+    // root namespace hash), so alias it or use crypto.hash.X.
     println("sha256:", chash.Sha256Hex("abc"))
     println("sha1:", chash.Sha1Hex("abc"))
     println("md5:", crypto.hash.Md5Hex("The quick brown fox jumps over the lazy dog"))
@@ -18,7 +17,7 @@ func main() {
     println("digest:", len(digest), "bytes, first", digest[0], "last", digest[len(digest) - 1])
     println("hex matches:", hex.Encode(digest) == chash.Sha256Hex("hello"))
 
-    // std.crypto.hmac
+    // crypto.hmac
     println("hmac:", hmac.Sha256Hex("key", "The quick brown fox jumps over the lazy dog"))
     var mac = hmac.Sha256("secret", "message")
     println(
@@ -27,7 +26,7 @@ func main() {
         hmac.Equal(mac, hmac.Sha256("secret", "Message")),
     )
 
-    // std.encoding.base64 / hex
+    // encoding.base64 / hex
     var enc = base64.EncodeString("Zell + base64 = ok")
     println("base64:", enc)
     var dec = try base64.DecodeString(enc) else "?"
@@ -49,7 +48,7 @@ func main() {
         println("odd hex:", err)
     }
 
-    // std.crypto.rand and std.uuid: random, so only shapes are printed.
+    // crypto.rand and uuid: random, so only shapes are printed.
     var token = try rand.Hex(16) else ""
     println("token length:", len(token))
     var key = try rand.Bytes(32) catch err {
@@ -65,7 +64,7 @@ func main() {
         uuid.IsValid("123e4567-e89b-12d3-a456-426614174000"),
     )
 
-    // std.random: deterministic after Seed.
+    // random: deterministic after Seed.
     random.Seed(2024)
     var a = [random.IntN(100), random.IntN(100), random.IntN(100)]
     random.Seed(2024)

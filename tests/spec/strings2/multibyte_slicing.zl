@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.strings2.multibyte_slicing
 
-import std
-import std.io
+import io
 
 func main() {
     var s = "日本語"

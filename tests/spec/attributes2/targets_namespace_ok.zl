@@ -3,8 +3,7 @@
 @spec.attributes2.targets_namespace_ok.module("core")
 namespace spec.attributes2.targets_namespace_ok
 
-import std
-import std.io
+import io
 
 @attribute(targets: [reflect.Target.Namespace])
 struct module {

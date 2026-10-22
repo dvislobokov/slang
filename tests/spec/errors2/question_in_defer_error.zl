@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors2.question_in_defer_error
 
-import std.io
+import io
 
 func Close() void! {
     return error("close failed")

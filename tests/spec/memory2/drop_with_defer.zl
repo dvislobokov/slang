@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory2.drop_with_defer
 
-import std.io
+import io
 
 struct R {
     Name string

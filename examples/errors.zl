@@ -1,7 +1,6 @@
 namespace examples.errors
 
-import std
-import std.io
+import io
 
 // Sentinel errors: compared with errors.Is.
 const ErrNotFound = error("not found")

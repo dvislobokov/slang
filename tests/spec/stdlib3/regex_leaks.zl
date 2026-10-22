@@ -1,10 +1,9 @@
-// test: std.regex frees everything it allocates (compile, DFA cache reset, Pike VM, groups, replace, split, errors)
+// test: regex frees everything it allocates (compile, DFA cache reset, Pike VM, groups, replace, split, errors)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib3.regex_leaks
 
-import std
-import std.io
+import io
 
 func main() {
     for i in 0..3 {

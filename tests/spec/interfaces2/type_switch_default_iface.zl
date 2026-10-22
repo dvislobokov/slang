@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.type_switch_default_iface
 
-import std.io
+import io
 
 interface Named {
     func Name() string

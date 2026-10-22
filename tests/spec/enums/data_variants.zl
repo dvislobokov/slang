@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.data_variants
 
-import std.io
+import io
 
 enum Expr {
     Num(v int)

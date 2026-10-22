@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.duplicate_parameter
 
-import std.io
+import io
 
 func F(a int, a int) int { return a }
 

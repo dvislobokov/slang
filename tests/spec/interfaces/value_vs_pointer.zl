@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces.value_vs_pointer
 
-import std.io
+import io
 
 interface Counter {
     func Inc()

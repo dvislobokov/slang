@@ -4,8 +4,7 @@
 // warning: W0001 type Node can form a reference cycle through field Parent (*Node); consider weak *Node or a Drop that breaks the cycle
 namespace spec.memory3.cycle_parent_child
 
-import std
-import std.io
+import io
 
 struct Node {
     Name     string

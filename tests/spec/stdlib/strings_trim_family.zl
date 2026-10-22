@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.strings_trim_family
 
-import std
-import std.io
+import io
 
 func main() {
     println("[" + strings.Trim("  \t hi there \n ") + "]", "[" + strings.Trim("   ") + "]")

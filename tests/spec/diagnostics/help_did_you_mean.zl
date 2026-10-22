@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.help_did_you_mean
 
-import std.io
+import io
 
 struct Box {
     Width  int

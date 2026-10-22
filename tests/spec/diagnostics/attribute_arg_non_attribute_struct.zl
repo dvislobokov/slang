@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.attribute_arg_non_attribute_struct
 
-import std.io
+import io
 
 struct P {
     X int

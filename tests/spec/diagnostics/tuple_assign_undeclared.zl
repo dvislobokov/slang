@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.tuple_assign_undeclared
 
-import std.io
+import io
 
 func Two() (int, int) { return 1, 2 }
 

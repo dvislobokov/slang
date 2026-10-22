@@ -4,7 +4,7 @@
 // stderr: no case of an exhaustive switch matched
 namespace spec.interfaces2.sealed_enum_and_pointer_cases
 
-import std.io
+import io
 
 sealed interface Node {
     func Size() int

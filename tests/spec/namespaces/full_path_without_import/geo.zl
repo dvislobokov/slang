@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.ns.fullpath.geo
 
-import std
-
 const Unit = "m"
 
 struct Point {

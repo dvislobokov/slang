@@ -1,11 +1,10 @@
-// test: std.database.postgres against an in-process mock server speaking protocol 3.0: SSLRequest refused (sslmode=prefer falls back), SCRAM-SHA-256 verified by the server, ParameterStatus/BackendKeyData, simple query with text results, extended protocol (Parse/Describe/Bind/Execute/Sync) with binary results, typed Query<T>, ErrorResponse fields, NoticeResponse callback, transaction status, connection string parsing
+// test: database.postgres against an in-process mock server speaking protocol 3.0: SSLRequest refused (sslmode=prefer falls back), SCRAM-SHA-256 verified by the server, ParameterStatus/BackendKeyData, simple query with text results, extended protocol (Parse/Describe/Bind/Execute/Sync) with binary results, typed Query<T>, ErrorResponse fields, NoticeResponse callback, transaction status, connection string parsing
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib4.postgres_mock
 
-import std
-import std.database
-import std.io
+import database
+import io
 
 // ---- a mock PostgreSQL server ----------------------------------------------------
 
@@ -160,7 +159,7 @@ struct server {
         if cols[0].name == "n" {
             var v = 42
             if len(args) > 0 {
-                v = try std.strconv.Atoi(args[0]) else 0
+                v = try strconv.Atoi(args[0]) else 0
             }
             if bin {
                 out = append(out, cat([i16(1), i32(8), i32(0), i32(v)]))

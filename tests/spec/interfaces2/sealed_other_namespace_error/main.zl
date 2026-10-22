@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.sealed_other_namespace_error
 
-import std.io
+import io
 
 import spec.interfaces2.sealed_other_namespace_error.shapes
 

@@ -1,6 +1,6 @@
 namespace examples.drop
 
-import std.io
+import io
 
 // A struct with a `func Drop()` method has a destructor. It runs exactly
 // once, as soon as the value is gone: at the end of the variable's block

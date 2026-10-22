@@ -1,10 +1,9 @@
 namespace examples.metrics
 
-import std
-import std.io
-import std.net
+import io
+import net
 
-// std.diag metrics: counters, gauges and histograms with labels, exposed
+// diag metrics: counters, gauges and histograms with labels, exposed
 // in the Prometheus text format, also over HTTP (diag.ServeMetrics).
 
 async func Work(req *http.Request, res *http.Response) void! {

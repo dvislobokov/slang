@@ -1,9 +1,8 @@
-// test: std.regex Replace ($1, ${name}, $$, empty matches), ReplaceLiteral, Split/SplitN, Escape, ReplaceFunc; outputs checked against Go regexp
+// test: regex Replace ($1, ${name}, $$, empty matches), ReplaceLiteral, Split/SplitN, Escape, ReplaceFunc; outputs checked against Go regexp
 // status: passing
 namespace spec.stdlib3.regex_api
 
-import std
-import std.io
+import io
 
 func quoted(xs []string) string {
     var parts []string = []

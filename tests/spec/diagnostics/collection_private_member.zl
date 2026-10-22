@@ -1,9 +1,9 @@
-// error: is private to namespace std.collections
+// error: is private to namespace collections
 // status: passing
 namespace spec.diagnostics.collection_private_member
 
-import std.collections
-import std.io
+import collections
+import io
 
 func main() {
     var l = List<int>{}

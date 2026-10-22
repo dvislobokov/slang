@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.pattern_arity_error
 
-import std.io
+import io
 
 enum Shape {
     Rect(w float, h float)

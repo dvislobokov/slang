@@ -3,8 +3,7 @@
 // run-flags: --no-error-trace
 namespace spec.errors2.no_error_trace_flag
 
-import std
-import std.io
+import io
 
 func Fail() void! {
     return error("x")

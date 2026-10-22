@@ -1,13 +1,12 @@
 namespace examples.http_realtime
 
-import std
-import std.io
-import std.net
+import io
+import net
 
-// A small realtime web service on std.net.http: HTTP/2 (h2c, multiplexed
+// A small realtime web service on net.http: HTTP/2 (h2c, multiplexed
 // requests), middleware (Recover, CORS, Gzip), a WebSocket chat room
-// (std.net.ws) and a Server-Sent Events feed, tested with
-// std.net.http.test.
+// (net.ws) and a Server-Sent Events feed, tested with
+// net.http.test.
 
 struct Room {
     mu      task.Mutex

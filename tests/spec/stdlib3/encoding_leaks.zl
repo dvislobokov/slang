@@ -1,10 +1,9 @@
-// test: std.encoding.{csv,xml,yaml,toml} and std.archive.{zip,tar} free everything they allocate, also on errors
+// test: encoding.{csv,xml,yaml,toml} and archive.{zip,tar} free everything they allocate, also on errors
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib3.encoding_leaks
 
-import std
-import std.io
+import io
 
 struct Row {
     @csv(name: "n")  N  int

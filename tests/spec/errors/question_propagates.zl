@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.question_propagates
 
-import std.io
+import io
 
 func Half(n int) int! {
     if n % 2 != 0 {

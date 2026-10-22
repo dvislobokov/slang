@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.zero_value
 
-import std.io
+import io
 
 enum State { Idle, Running, Done }
 

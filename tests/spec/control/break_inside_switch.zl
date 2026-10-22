@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.control.break_inside_switch
 
-import std.io
+import io
 
 func main() {
     for i in 0..10 {

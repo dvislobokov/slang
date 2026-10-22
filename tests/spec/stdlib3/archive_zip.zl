@@ -1,9 +1,8 @@
-// test: std.archive.zip reads an archive made by zip(1) (deflate + store, directory entry, DOS times), writes archives (Add, AddDir, AddHeader with Store/Deflate, comments, Zip64 records) that it reads back, rejects bad data, duplicate and unsafe names; ExtractTo / FromDir round trip through a temp directory
+// test: archive.zip reads an archive made by zip(1) (deflate + store, directory entry, DOS times), writes archives (Add, AddDir, AddHeader with Store/Deflate, comments, Zip64 records) that it reads back, rejects bad data, duplicate and unsafe names; ExtractTo / FromDir round trip through a temp directory
 // status: passing
 namespace spec.stdlib3.archive_zip
 
-import std
-import std.io
+import io
 
 func short(name string) string {
     if len(name) > 30 {

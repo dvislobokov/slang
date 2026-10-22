@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.strings_fields_splitn
 
-import std
-import std.io
+import io
 
 func main() {
     var f = strings.Fields("  a b\t\tc\n d  ")

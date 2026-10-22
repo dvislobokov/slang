@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.map_not_printable
 
-import std.io
+import io
 
 func main() {
     var m = map[string]int{"a": 1}

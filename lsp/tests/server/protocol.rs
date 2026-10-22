@@ -86,7 +86,7 @@ fn model_position(chars: &[char], i: usize) -> Position {
 
 #[test]
 fn incremental_sync_matches_a_reference_model() {
-    let text = "namespace app\n\nimport std.io\n\n// Привет, 𝄞!\nfunc main() {\n    println(\"ü\")\n}\n";
+    let text = "namespace app\n\nimport io\n\n// Привет, 𝄞!\nfunc main() {\n    println(\"ü\")\n}\n";
     let (dir, uri) = project_with("main.zl", text);
     let mut c = Client::start(&dir);
     c.open(&uri, text);
@@ -272,7 +272,7 @@ fn semantic_tokens_delta_and_range() {
 
 const SHAPES: &str = "namespace app
 
-import std.io
+import io
 
 interface Shape {
     func Area() int
@@ -452,8 +452,7 @@ fn inlay_hint_and_code_action_resolve() {
 
 const LENSES: &str = "namespace app
 
-import std
-import std.io
+import io
 
 // Add adds.
 func Add(a int, b int) int {
@@ -576,7 +575,7 @@ fn progress_is_reported_for_initial_indexing() {
 
 #[test]
 fn pull_diagnostics_for_documents_and_the_workspace() {
-    let main = "namespace app\n\nimport std.io\n\nfunc main() {\n    println(Helper())\n}\n";
+    let main = "namespace app\n\nimport io\n\nfunc main() {\n    println(Helper())\n}\n";
     let (dir, uri) = project_with("main.zl", main);
     let helper = dir.join("helper.zl");
     std::fs::write(&helper, "namespace app\n\nfunc Other() int {\n    return 1\n}\n").unwrap();
@@ -683,7 +682,7 @@ fn apply_and_move(c: &Client, edit: &WorkspaceEdit, from: &Path, to: &Path) {
     c.notify::<notification::DidRenameFiles>(RenameFilesParams { files });
 }
 
-const RENAME_MAIN: &str = "namespace app\n\nimport std.io\nimport app.models\n\nfunc main() {\n    var u = NewUser(\"x\")\n    println(u.Name)\n}\n";
+const RENAME_MAIN: &str = "namespace app\n\nimport io\nimport app.models\n\nfunc main() {\n    var u = NewUser(\"x\")\n    println(u.Name)\n}\n";
 const RENAME_USER: &str = "namespace app.models\n\nstruct User {\n    Name string\n}\n\nfunc NewUser(n string) User {\n    return User{Name: n}\n}\n";
 
 #[test]
@@ -719,7 +718,7 @@ fn renaming_a_file_updates_its_namespace_and_imports() {
 fn renaming_a_file_of_a_shared_namespace_adds_imports() {
     let user = "namespace app.models\n\nstruct User {\n    Name string\n    R Role\n}\n\nfunc NewUser(n string) User {\n    return User{Name: n, R: Role{Name: \"admin\"}}\n}\n";
     let role = "namespace app.models\n\nstruct Role {\n    Name string\n}\n";
-    let main = "namespace app\n\nimport std.io\nimport app.models\n\nfunc main() {\n    var u = NewUser(\"x\")\n    var r = Role{Name: \"r\"}\n    println(u.Name, r.Name)\n}\n";
+    let main = "namespace app\n\nimport io\nimport app.models\n\nfunc main() {\n    var u = NewUser(\"x\")\n    var r = Role{Name: \"r\"}\n    println(u.Name, r.Name)\n}\n";
     let dir = package(&[("main.zl", main), ("models/user.zl", user), ("models/role.zl", role)]);
     let main_uri = Url::from_file_path(dir.join("src/main.zl")).unwrap();
     let mut c = Client::start(&dir);

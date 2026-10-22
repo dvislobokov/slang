@@ -1,12 +1,11 @@
-// test: std.encoding.asn1 DER Builder and Reader round trip (INTEGER, big INTEGER, OID, strings, times, BIT STRING, SET, [n])
+// test: encoding.asn1 DER Builder and Reader round trip (INTEGER, big INTEGER, OID, strings, times, BIT STRING, SET, [n])
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.encoding_asn1
 
-import std
-import std.encoding
-import std.io
-import std.math
+import encoding
+import io
+import math
 
 func main() void! {
     var b = asn1.NewBuilder()

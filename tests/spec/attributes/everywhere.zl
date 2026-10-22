@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes.everywhere
 
-import std.io
+import io
 
 @attribute
 struct note {

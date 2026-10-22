@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.control.switch_guards
 
-import std.io
+import io
 
 func Bucket(n int) string {
     switch n {

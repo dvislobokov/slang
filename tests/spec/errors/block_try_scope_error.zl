@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors.block_try_scope_error
 
-import std
-import std.io
+import io
 
 func main() {
     try {

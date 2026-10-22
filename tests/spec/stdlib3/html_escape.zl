@@ -1,9 +1,8 @@
-// test: std.html.Escape / Unescape agree with Go html.EscapeString / UnescapeString (full WHATWG entity table, legacy entities without ";", numeric references incl. C1 remapping and invalid code points)
+// test: html.Escape / Unescape agree with Go html.EscapeString / UnescapeString (full WHATWG entity table, legacy entities without ";", numeric references incl. C1 remapping and invalid code points)
 // status: passing
 namespace spec.stdlib3.html_escape
 
-import std
-import std.io
+import io
 
 func main() {
     var us = [

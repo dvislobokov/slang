@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.char_and_escapes
 
-import std.io
+import io
 
 func main() {
     println("tab:[\t] quote:[\"] backslash:[\\]")

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.default_method_async
 
-import std.io
+import io
 
 interface Loader {
     func Load() string

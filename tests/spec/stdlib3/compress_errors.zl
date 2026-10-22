@@ -1,9 +1,8 @@
-// test: std.compress reports corrupt input: bad gzip/zlib headers, checksum and size mismatches, truncated streams, invalid block types and distances, trailing garbage, zstd bad magic / truncated / corrupted / dictionary frames
+// test: compress reports corrupt input: bad gzip/zlib headers, checksum and size mismatches, truncated streams, invalid block types and distances, trailing garbage, zstd bad magic / truncated / corrupted / dictionary frames
 // status: passing
 namespace spec.stdlib3.compress_errors
 
-import std
-import std.io
+import io
 
 func show(f func() []byte!) {
     var b = try f() catch err {

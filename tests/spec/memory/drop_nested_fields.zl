@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.drop_nested_fields
 
-import std.io
+import io
 
 struct Part {
     Name string

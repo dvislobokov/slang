@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.type_switch_interface
 
-import std.io
+import io
 
 interface Shape {
     func Area() float

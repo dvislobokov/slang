@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.switch.enum_destructure_nested
 
-import std.io
+import io
 
 enum Cmd {
     Move(dx int, dy int)

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors.async_error_awaited
 
-import std
-import std.io
+import io
 
 async func Load(id int) string! {
     await task.Delay(1)

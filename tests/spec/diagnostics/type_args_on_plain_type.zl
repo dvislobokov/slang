@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.type_args_on_plain_type
 
-import std.io
+import io
 
 struct P {
     X int

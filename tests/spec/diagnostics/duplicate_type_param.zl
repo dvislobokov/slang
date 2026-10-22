@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.duplicate_type_param
 
-import std.io
+import io
 
 func F<T, T>(x T) T { return x }
 

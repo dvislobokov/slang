@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.zero_values
 
-import std.io
+import io
 
 struct P {
     X    int

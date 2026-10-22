@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.data.err_unknown_field
 
-import std
-
 struct User {
     Id    int
     Name  string

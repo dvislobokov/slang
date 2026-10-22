@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.programs.async_bank
 
-import std
-import std.io
+import io
 
 const ErrNoAccount = error("no such account")
 

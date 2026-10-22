@@ -1,10 +1,9 @@
-// test: std.log writes leveled lines to stderr, stdout stays clean
+// test: log writes leveled lines to stderr, stdout stays clean
 // status: passing
 // stderr: INFO service started
 namespace spec.stdlib.log_basic
 
-import std
-import std.io
+import io
 
 func main() {
     log.Info("service started")

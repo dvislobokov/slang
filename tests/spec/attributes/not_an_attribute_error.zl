@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes.not_an_attribute_error
 
-import std.io
+import io
 
 struct plain {
     x int

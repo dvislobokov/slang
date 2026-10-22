@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.closure_keeps_alive
 
-import std.io
+import io
 
 struct Conn {
     Id int

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics.stack_struct
 
-import std.io
+import io
 
 struct Stack<T> {
     items []T

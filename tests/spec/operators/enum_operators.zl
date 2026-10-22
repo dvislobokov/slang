@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.operators.enum_operators
 
-import std.io
+import io
 
 enum Dir {
     North

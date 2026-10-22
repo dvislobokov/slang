@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.slice_temporary_array
 
-import std.io
+import io
 
 func Arr() [3]int {
     var a [3]int

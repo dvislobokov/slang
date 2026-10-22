@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.not_static_method
 
-import std.io
+import io
 
 struct S {
     func F() int { return 1 }

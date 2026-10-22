@@ -1,10 +1,8 @@
-// test: std.testing.Main runs each case in a child process: assertions, Fatal, Skip, subtests, panics; summary and exit code 1
+// test: testing.Main runs each case in a child process: assertions, Fatal, Skip, subtests, panics; summary and exit code 1
 // status: passing
 // exit: 1
 // args: --no-time
 namespace spec.stdlib2.testing_main
-
-import std
 
 struct sq {
     In   int

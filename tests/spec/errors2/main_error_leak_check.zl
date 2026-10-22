@@ -5,7 +5,7 @@
 // stderr: error: config: missing key port
 namespace spec.errors2.main_error_leak_check
 
-import std.io
+import io
 
 struct ConfigError {
     Keys []string

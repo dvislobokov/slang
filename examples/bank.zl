@@ -1,7 +1,6 @@
 namespace examples.bank
 
-import std
-import std.io
+import io
 
 const ErrUnknownAccount = error("unknown account")
 

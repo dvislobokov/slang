@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.closures.loop_var_fresh
 
-import std
-import std.io
+import io
 
 func main() {
     var fs []func() int = []

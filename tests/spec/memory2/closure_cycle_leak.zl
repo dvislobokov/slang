@@ -6,7 +6,7 @@
 // stderr: leak:
 namespace spec.memory2.closure_cycle_leak
 
-import std.io
+import io
 
 struct Button {
     Label   string

@@ -1,9 +1,8 @@
 namespace tlstest.fuzz
 
-import std.io
-import std
-import std.net
-import std.crypto
+import io
+import net
+import crypto
 
 // Fuzz smoke test for compiler/tests/tls.rs: mutated and random inputs to
 // the X.509/PEM/private-key parsers, the record opener, and TLS servers and

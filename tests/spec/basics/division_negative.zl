@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.division_negative
 
-import std.io
+import io
 
 func main() {
     println(7 / 2, -7 / 2, 7 / -2, -7 / -2)

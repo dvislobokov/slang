@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.generics2.generic_fallible
 
-import std
-import std.io
+import io
 
 func ParseAll<T>(xs []string, parse func(string) T!) []T! {
     var out []T = []

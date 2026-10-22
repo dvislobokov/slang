@@ -1,9 +1,8 @@
-// test: std.random is deterministic after Seed and IntN stays in range
+// test: random is deterministic after Seed and IntN stays in range
 // status: passing
 namespace spec.stdlib.random_seeded
 
-import std
-import std.io
+import io
 
 func main() {
     random.Seed(42)

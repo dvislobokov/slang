@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces.any_type_switch
 
-import std.io
+import io
 
 struct User {
     Name string

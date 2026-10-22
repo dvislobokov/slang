@@ -41,16 +41,16 @@ fn err(src: &str, needle: &str) {
     err_files(&[src], needle)
 }
 
-/// `namespace t` + `import std.io` (when the body prints: unused imports
-/// are errors) + `import std` + body.
+/// `namespace t` + `import io` (when the body prints with a short name:
+/// unused imports are errors) + body.
 fn prog(body: &str) -> String {
-    let io = if body.contains("print") || body.contains("io.") { "import std.io\n" } else { "" };
-    format!("namespace t\n{io}import std\n{body}\n")
+    let io = if body.replace("io.print", "").contains("print") { "import io\n" } else { "" };
+    format!("namespace t\n{io}{body}\n")
 }
 
-/// [`prog`] that always imports `std.io` (the caller appends printing code).
+/// [`prog`] that always imports `io` (the caller appends printing code).
 fn prog_io(body: &str) -> String {
-    format!("namespace t\nimport std.io\nimport std\n{body}\n")
+    format!("namespace t\nimport io\n{body}\n")
 }
 
 /// A `main` with the given statements.
@@ -150,10 +150,12 @@ const ERROR_KEYWORDS: &[(&str, &str)] = &[
     ("catch_falls_through.zl", "catch block must return"),
     ("copy_drop_value.zl", "cannot copy a value of type File"),
     ("extern_in_user_code.zl", "extern declarations exist only in the standard library"),
+    ("import_std_removed.zl", "use `io` instead of `std.io`"),
     ("interior_pointer_escape.zl", "cannot keep interior pointer variable `p`"),
     ("log_template_args.zl", "the template has 2 placeholders ({UserId}, {Amount}) but 3 arguments are given"),
     ("missing_return.zl", "missing return"),
     ("question_outside_fallible.zl", "? outside of fallible function"),
+    ("std_namespace_declared.zl", "namespace `io` belongs to the standard library"),
     ("type_mismatch.zl", "cannot assign string to int"),
     ("unhandled_result.zl", "result of type int! must be handled"),
     ("unhandled_void_result.zl", "result of type void! must be handled"),
@@ -185,23 +187,23 @@ fn every_compile_error_example_fails_with_its_diagnostic() {
 
 #[test]
 fn import_rules_follow_the_table() {
-    ok("namespace t\nfunc main() { std.io.println(\"hi\") }");
-    ok("namespace t\nimport std\nfunc main() { io.println(\"hi\") }");
-    ok("namespace t\nimport std.io\nfunc main() { println(\"hi\") }");
-    ok("namespace t\nimport std.io as out\nfunc main() { out.println(\"hi\") }");
+    ok("namespace t\nfunc main() { io.println(\"hi\") }");
+    ok("namespace t\nfunc main() { io.println(\"hi\") }");
+    ok("namespace t\nimport io\nfunc main() { println(\"hi\") }");
+    ok("namespace t\nimport io as out\nfunc main() { out.println(\"hi\") }");
     err("namespace t\nfunc main() { println(\"hi\") }", "unknown identifier println");
-    err("namespace t\nimport std\nfunc main() { println(\"hi\") }", "unknown identifier println");
-    err("namespace t\nimport std.io as out\nfunc main() { println(\"hi\") }", "unknown identifier println");
-    err("namespace t\nimport std.nope\nfunc main() {}", "unknown namespace");
+    err("namespace t\nfunc main() { println(\"hi\") }", "unknown identifier println");
+    err("namespace t\nimport io as out\nfunc main() { println(\"hi\") }", "unknown identifier println");
+    err("namespace t\nimport nope\nfunc main() {}", "unknown namespace");
 }
 
 #[test]
 fn namespaces_merge_across_files_and_type_imports_work() {
     let a = "namespace app.models\nstruct User { Name string }";
     let b = "namespace app.models\nfunc Make(n string) User { return User{Name: n} }";
-    let c = "namespace app\nimport std.io\nimport app.models.User\nfunc main() { var u User = app.models.Make(\"x\")\n println(u.Name) }";
+    let c = "namespace app\nimport io\nimport app.models.User\nfunc main() { var u User = app.models.Make(\"x\")\n println(u.Name) }";
     ok_files(&[a, b, c]);
-    let c2 = "namespace app\nimport std.io\nimport app.models.User as U\nfunc main() { var u = U{Name: \"y\"}\n println(u.Name) }";
+    let c2 = "namespace app\nimport io\nimport app.models.User as U\nfunc main() { var u = U{Name: \"y\"}\n println(u.Name) }";
     ok_files(&[a, b, c2]);
 }
 
@@ -209,9 +211,9 @@ fn namespaces_merge_across_files_and_type_imports_work() {
 fn ambiguous_short_names_are_errors_on_use() {
     let a = "namespace a\nfunc F() int { return 1 }";
     let b = "namespace b\nfunc F() int { return 2 }";
-    let c = "namespace app\nimport a\nimport b\nimport std.io\nfunc main() { println(F()) }";
+    let c = "namespace app\nimport a\nimport b\nimport io\nfunc main() { println(F()) }";
     err_files(&[a, b, c], "ambiguous name F");
-    let c2 = "namespace app\nimport a\nimport b as bb\nimport std.io\nfunc main() { println(F(), bb.F()) }";
+    let c2 = "namespace app\nimport a\nimport b as bb\nimport io\nfunc main() { println(F(), bb.F()) }";
     ok_files(&[a, b, c2]);
 }
 
@@ -237,7 +239,7 @@ fn duplicate_declarations_are_reported() {
 fn unknown_types_and_namespaces() {
     err(&prog("func F(x Foo) {}\nfunc main() {}"), "unknown type Foo");
     err(&main_body("var x = nope.Thing()\nprintln(x)"), "unknown identifier nope");
-    err(&main_body("std.io.nothing()"), "unknown identifier nothing in namespace std.io");
+    err(&main_body("io.nothing()"), "unknown identifier nothing in namespace io");
 }
 
 // ---------------------------------------------------------------------------
@@ -652,7 +654,7 @@ fn w0001_pointer_self_and_mutual() {
 
 #[test]
 fn w0001_through_closures_interfaces_and_containers() {
-    let src = "namespace app\nimport std.io\ninterface Handler {\n    func Run()\n}\nstruct Server {\n    H Handler\n}\nstruct App {\n    Srv *Server\n    func Run() { println(\"run\") }\n}\nstruct Button {\n    OnClick func()\n}\nstruct Graph {\n    Nodes map[string][]*Graph\n}\nstruct Plain {\n    F func()\n}\nfunc main() {\n    var app = new App{}\n    app.Srv = new Server{H: app}\n    var b = new Button{}\n    b.OnClick = func() { println(b == nil) }\n    var p = Plain{F: func() { println(1) }}\n    p.F()\n    var g = new Graph{}\n    println(g == nil)\n    defer func() { println(app == nil) }()\n}\n";
+    let src = "namespace app\nimport io\ninterface Handler {\n    func Run()\n}\nstruct Server {\n    H Handler\n}\nstruct App {\n    Srv *Server\n    func Run() { println(\"run\") }\n}\nstruct Button {\n    OnClick func()\n}\nstruct Graph {\n    Nodes map[string][]*Graph\n}\nstruct Plain {\n    F func()\n}\nfunc main() {\n    var app = new App{}\n    app.Srv = new Server{H: app}\n    var b = new Button{}\n    b.OnClick = func() { println(b == nil) }\n    var p = Plain{F: func() { println(1) }}\n    p.F()\n    var g = new Graph{}\n    println(g == nil)\n    defer func() { println(app == nil) }()\n}\n";
     let w = cycle_warnings(src);
     assert!(w.iter().any(|m| m.contains("type Server can form a reference cycle through field H (Handler)")), "{w:#?}");
     assert!(w.iter().any(|m| m.contains("type App can form a reference cycle through field Srv (*Server)")), "{w:#?}");

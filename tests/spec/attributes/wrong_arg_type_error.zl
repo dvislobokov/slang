@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes.wrong_arg_type_error
 
-import std.io
+import io
 
 @attribute
 struct limit {

@@ -1,10 +1,9 @@
-// test: std.data projections and aggregates: Select to tuples, structs and scalars (with expressions and navigation counts), Join, GroupBy with Key/Count/Sum/Average and Where as HAVING, composite group keys, Count/Any/All/Sum/Min/Max/Average with and without rows, First/Single errors
+// test: data projections and aggregates: Select to tuples, structs and scalars (with expressions and navigation counts), Join, GroupBy with Key/Count/Sum/Average and Where as HAVING, composite group keys, Count/Any/All/Sum/Min/Max/Average with and without rows, First/Single errors
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.projections
 
-import std
-import std.io
+import io
 
 struct Customer {
     Id     int

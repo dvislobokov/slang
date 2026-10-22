@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.append_not_slice
 
-import std.io
+import io
 
 func main() {
     var n = 1

@@ -1,7 +1,6 @@
 namespace bench.strs
 
-import std
-import std.io
+import io
 
 func main() {
     var parts []string = []

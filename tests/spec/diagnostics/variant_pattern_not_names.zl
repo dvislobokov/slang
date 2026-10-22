@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.variant_pattern_not_names
 
-import std.io
+import io
 
 enum Shape {
     Circle(r int)

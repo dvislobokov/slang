@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.platform.cfg_any_all_members
 
-import std
-import std.io
+import io
 
 struct Paths {
     @cfg(os: "windows")

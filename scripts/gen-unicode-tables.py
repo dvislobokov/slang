@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generates runtime/src/std_unicode_tables.c (the range tables behind
-std.unicode) from Go's unicode/tables.go, which is itself generated from
+unicode) from Go's unicode/tables.go, which is itself generated from
 the Unicode Character Database.
 
 Usage: scripts/gen-unicode-tables.py [path/to/go/src/unicode/tables.go]

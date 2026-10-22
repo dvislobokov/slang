@@ -1,10 +1,9 @@
-// test: std.time.Duration constructors, accessors, operators (+ - * / unary - == < > <=), Go-style String, ParseDuration, Truncate/Round
+// test: time.Duration constructors, accessors, operators (+ - * / unary - == < > <=), Go-style String, ParseDuration, Truncate/Round
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.time_duration
 
-import std
-import std.io
+import io
 
 func main() {
     var d = time.Hours(1) + time.Minutes(2) + time.Milliseconds(3500)

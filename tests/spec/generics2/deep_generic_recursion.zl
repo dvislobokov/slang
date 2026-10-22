@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.deep_generic_recursion
 
-import std.io
+import io
 
 func CountDown<T>(x T, n int) T {
     if n == 0 {

@@ -1,11 +1,10 @@
-// test: std.crypto.x509 parses certificates and keys (PEM/DER) and verifies chains: SAN/wildcard/IP host names, validity, EKU, CA flags, name constraints
+// test: crypto.x509 parses certificates and keys (PEM/DER) and verifies chains: SAN/wildcard/IP host names, validity, EKU, CA flags, name constraints
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib.x509_verify
 
-import std
-import std.crypto
-import std.io
+import crypto
+import io
 
 // A P-256 root, an RSA intermediate (pathlen 0, name constraints
 // example.com and localhost) and a P-256 leaf for www.example.com,

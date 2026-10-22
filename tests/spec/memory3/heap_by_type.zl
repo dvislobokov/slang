@@ -3,8 +3,7 @@
 // env: ZELL_DIAG_HEAP=1
 namespace spec.memory3.heap_by_type
 
-import std
-import std.io
+import io
 
 struct Item {
     Id   int

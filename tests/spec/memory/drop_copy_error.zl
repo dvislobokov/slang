@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.memory.drop_copy_error
 
-import std.io
+import io
 
 struct Handle {
     Fd int

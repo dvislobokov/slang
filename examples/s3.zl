@@ -1,13 +1,12 @@
-// std.cloud.s3 and std.cloud.blob. So that the example runs anywhere it
+// cloud.s3 and cloud.blob. So that the example runs anywhere it
 // talks to a tiny in-memory S3 server (bottom of the file, it does not
 // check signatures); point the Config at AWS, MinIO, R2 or GCS instead:
 //   s3.Config{Region: "eu-west-1"}                      (keys from the environment / ~/.aws)
 //   s3.Config{Endpoint: "http://localhost:9000", PathStyle: true, AccessKey: ..., SecretKey: ...}
 namespace examples.s3
 
-import std.io
-import std
-import std.cloud
+import io
+import cloud
 
 async func main() void! {
     var srv = net.http.test.NewServer(fakeS3{st: new store{objects: map[string]string{}, types: map[string]string{}}})?

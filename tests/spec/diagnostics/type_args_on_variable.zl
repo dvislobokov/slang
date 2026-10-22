@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.type_args_on_variable
 
-import std.io
+import io
 
 func main() {
     var f = (x int) => x

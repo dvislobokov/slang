@@ -20,9 +20,9 @@ fn analyze(src: &str) -> (Option<Program>, Vec<String>) {
     (p, errors)
 }
 
-/// A program: namespace `t`, `import std.io` and `import std`, then `body`.
+/// A program: namespace `t`, `import io`, then `body`.
 fn prog(body: &str) -> String {
-    format!("namespace t\nimport std.io\nimport std\n{body}\n")
+    format!("namespace t\nimport io\n{body}\n")
 }
 
 fn ok(body: &str) -> Program {
@@ -47,8 +47,8 @@ const USER: &str = "struct User {\n    @json(name: \"id\") Id int\n    Email str
 #[test]
 fn no_reflection_without_use() {
     let p = ok("struct P {\n    X int\n}\nfunc main() {\n    var x any = P{X: 1}\n    println(x)\n}");
-    assert!(p.reflect.is_none(), "std.reflect must not be loaded");
-    assert!(!p.funcs.iter().any(|f| f.full_name.starts_with("std.reflect.")));
+    assert!(p.reflect.is_none(), "reflect must not be loaded");
+    assert!(!p.funcs.iter().any(|f| f.full_name.starts_with("reflect.")));
 }
 
 #[test]

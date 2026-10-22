@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.attributes2.too_many_args_error
 
-import std.io
+import io
 
 @attribute
 struct note {

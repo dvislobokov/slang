@@ -4,7 +4,7 @@
 // stderr: error: save: disk full
 namespace spec.errors2.main_error_stderr
 
-import std.io
+import io
 
 func Save() void! {
     return error("disk full")

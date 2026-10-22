@@ -1,11 +1,10 @@
-// test: std.net.http.hpack decodes and re-encodes the RFC 7541 appendix C examples (integers, literals, dynamic table eviction, Huffman)
+// test: net.http.hpack decodes and re-encodes the RFC 7541 appendix C examples (integers, literals, dynamic table eviction, Huffman)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib.http2_hpack
 
-import std
-import std.io
-import std.net.http
+import io
+import net.http
 
 func unhex(s string) []byte {
     return try encoding.hex.Decode(strings.Replace(s, " ", "")) else []

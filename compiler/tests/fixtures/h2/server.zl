@@ -1,7 +1,6 @@
 namespace fixtures.h2.server
 
-import std
-import std.net
+import net
 
 // The HTTP server of the interop tests in compiler/tests/net_http.rs: an
 // h2c (prior knowledge) + HTTP/1.1 listener and an https listener (ALPN h2,

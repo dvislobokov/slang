@@ -1,16 +1,16 @@
 listening on 8080
 error: invalid integer: "eighty"
-  errors_trace.zl:25 Port
-  errors_trace.zl:25 Port
-  errors_trace.zl:29 Start
-  errors_trace.zl:51 main
+  errors_trace.zl:24 Port
+  errors_trace.zl:24 Port
+  errors_trace.zl:28 Start
+  errors_trace.zl:50 main
 error: reading port: no value for port
-  errors_trace.zl:17 Store.Get
-  errors_trace.zl:24 Port (reading port)
-  errors_trace.zl:29 Start
-  errors_trace.zl:54 main
+  errors_trace.zl:16 Store.Get
+  errors_trace.zl:23 Port (reading port)
+  errors_trace.zl:28 Start
+  errors_trace.zl:53 main
 error: missing key
-  errors_trace.zl:13 Store.Get
-  errors_trace.zl:58 main
+  errors_trace.zl:12 Store.Get
+  errors_trace.zl:57 main
 is ErrMissing: true
 2 trace lines

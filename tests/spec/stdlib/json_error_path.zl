@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.json_error_path
 
-import std.encoding
-import std.io
+import encoding
+import io
 
 struct User {
     @json(name: "id") Id int

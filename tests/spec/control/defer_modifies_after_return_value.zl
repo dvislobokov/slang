@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.control.defer_modifies_after_return_value
 
-import std.io
+import io
 
 var trace = ""
 

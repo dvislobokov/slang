@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.struct_equality_rejected
 
-import std.io
+import io
 
 struct P {
     X int

@@ -1,10 +1,9 @@
-// test: std.os.File implements std.io Reader/Writer/Seeker/Closer; Stat, ReadDir, OpenFile flags, Copy and helpers
+// test: os.File implements io Reader/Writer/Seeker/Closer; Stat, ReadDir, OpenFile flags, Copy and helpers
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.io_os_file
 
-import std
-import std.io
+import io
 
 func main() void! {
     var dir = fs.Join(fs.TempDir(), "zell_io_os_file_" + strconv.Itoa(os.Pid()))

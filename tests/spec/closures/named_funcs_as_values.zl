@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.closures.named_funcs_as_values
 
-import std.io
+import io
 
 func Square(n int) int {
     return n * n

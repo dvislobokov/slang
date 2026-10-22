@@ -1,7 +1,6 @@
 namespace bench.gzip
 
-import std
-import std.io
+import io
 
 // gzip level 6: compress then decompress a generated 20 MB text (same text as main.go).
 func main() void! {

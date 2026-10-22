@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.closures.counters
 
-import std.io
+import io
 
 func Counter(start int) func() int {
     var n = start

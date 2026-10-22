@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.closure_captures_t
 
-import std.io
+import io
 
 func Accumulator<T: Ordered>(start T) func(T) T {
     var total = start

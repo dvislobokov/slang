@@ -1,10 +1,10 @@
-// test: std.collections LinkedList, Deque, Ring, Heap, PriorityQueue, OrderedMap, LRU and BitSet
+// test: collections LinkedList, Deque, Ring, Heap, PriorityQueue, OrderedMap, LRU and BitSet
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.collections_more
 
-import std.collections
-import std.io
+import collections
+import io
 
 struct Job {
     Name string

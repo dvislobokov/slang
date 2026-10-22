@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes2.on_generic_struct
 
-import std
-import std.io
+import io
 
 @attribute
 struct note {

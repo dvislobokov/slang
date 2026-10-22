@@ -1,7 +1,6 @@
 namespace bench.regex
 
-import std
-import std.io
+import io
 
 // Finds all e-mail addresses in a generated 10 MB text (same text as main.go).
 func main() {

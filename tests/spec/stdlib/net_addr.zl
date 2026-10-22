@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_addr
 
-import std
-import std.io
+import io
 
 func show(s string) void! {
     var ip = net.ParseIP(s)?

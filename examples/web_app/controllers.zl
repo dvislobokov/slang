@@ -3,8 +3,7 @@
 // from the DI container.
 namespace webapp.controllers
 
-import std
-import std.web
+import web
 
 import webapp.models
 import webapp.services

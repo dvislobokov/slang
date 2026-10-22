@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.bad_conversion
 
-import std.io
+import io
 
 struct P {
     X int

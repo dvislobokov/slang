@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.type_param_equality_hint
 
-import std.io
+import io
 
 func Eq<T>(a, b T) bool { return a == b }
 

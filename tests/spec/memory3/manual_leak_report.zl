@@ -6,7 +6,7 @@
 // stderr: 2 of them in unreachable reference cycles the cycle collector can free
 namespace spec.memory3.manual_leak_report
 
-import std.io
+import io
 
 @allowCycle
 struct Node {

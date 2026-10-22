@@ -1,11 +1,10 @@
-// Services: the user store (singleton) over std.data, the token issuer
+// Services: the user store (singleton) over data, the token issuer
 // (singleton, built by its static New) and a per-request audit trail
 // (scoped: dropped with the request).
 namespace webapp.services
 
-import std
-import std.database
-import std.io
+import database
+import io
 
 import webapp.db
 import webapp.models

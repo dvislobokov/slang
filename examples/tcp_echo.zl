@@ -1,7 +1,6 @@
 namespace examples.tcp_echo
 
-import std
-import std.io
+import io
 
 // A line-based TCP echo server and its clients in one program: a task per
 // connection, buffered line reads, half-close, typed errors with errors.Is,

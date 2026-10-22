@@ -1,10 +1,9 @@
-// test: std.cli subcommands, typed @flag struct binding with defaults/env/short names, help, errors with suggestions, completion
+// test: cli subcommands, typed @flag struct binding with defaults/env/short names, help, errors with suggestions, completion
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.cli_app
 
-import std
-import std.io
+import io
 
 struct ServeFlags {
     @cli.flag(name: "port", short: "p", env: "ZELL_CLI_TEST_PORT", help: "listen port") Port    int = 8080

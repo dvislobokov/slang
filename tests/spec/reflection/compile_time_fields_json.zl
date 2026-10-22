@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.compile_time_fields_json
 
-import std
-import std.io
+import io
 
 struct User {
     @json(name: "id") Id int

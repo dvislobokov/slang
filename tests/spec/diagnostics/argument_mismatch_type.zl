@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.argument_mismatch_type
 
-import std.io
+import io
 
 func Double(n int) int { return n * 2 }
 

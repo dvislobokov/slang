@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.defer_unhandled_error
 
-import std.io
+import io
 
 func Close() void! {
     return error("x")

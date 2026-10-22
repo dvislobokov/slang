@@ -3,10 +3,9 @@
 // run-flags: --leak-check
 namespace spec.operators.stdlib_types
 
-import std
-import std.collections
-import std.io
-import std.math
+import collections
+import io
+import math
 
 func main() {
     var f = big.NewInt(1)

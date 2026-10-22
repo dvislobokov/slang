@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics.pair_two_params
 
-import std.io
+import io
 
 struct Pair<A, B> {
     First  A

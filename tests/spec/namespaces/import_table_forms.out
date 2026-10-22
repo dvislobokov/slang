@@ -1,5 +1,7 @@
-full path
-via import std
-via import std.io
+full path Not Found
+via import io
+via import net.http: OK
 via alias
-FULL PATH TO STRINGS SHORT
+via import text: text.template.Value
+one member: "q"
+FULL PATH TO STRINGS

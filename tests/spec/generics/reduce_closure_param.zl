@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics.reduce_closure_param
 
-import std.io
+import io
 
 func Reduce<T, A>(xs []T, init A, f func(A, T) A) A {
     var acc = init

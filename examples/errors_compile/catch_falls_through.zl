@@ -1,7 +1,7 @@
 // error: catch block must return when the value of try is used
 namespace examples.bad
 
-import std.io
+import io
 
 func Parse(s string) int! {
     if s == "" {

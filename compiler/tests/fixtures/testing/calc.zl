@@ -1,6 +1,6 @@
 namespace calc
 
-import std.io
+import io
 
 // A tiny library with tests next to it (calc_test.zl), for `zell test`.
 

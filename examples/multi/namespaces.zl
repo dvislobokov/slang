@@ -1,7 +1,7 @@
 namespace app
 
-import std.fmt as f
-import std.io
+import fmt as f
+import io
 
 import app.models
 

@@ -172,8 +172,8 @@ const WINDOWS_NET_EXAMPLES: &[&str] = &["tcp_echo", "http_server", "tls_echo", "
 /// Windows port does not have (see the ignored test below).
 const WINDOWS_NOT_APPLICABLE: &[(&str, &str)] = &[
     ("cfg", "its windows variant calls a winapi namespace that does not exist (the example only type-checks the host variant)"),
-    ("stdlib_time_os_fs", "std.fs paths use '\\\\' and drive letters on Windows; the .out has Unix paths"),
-    ("sql", "std.database.sqlite binds sqlite3.dll / winsqlite3.dll at run time; Wine ships neither (see windows_sqlite_with_dll)"),
+    ("stdlib_time_os_fs", "fs paths use '\\\\' and drive letters on Windows; the .out has Unix paths"),
+    ("sql", "database.sqlite binds sqlite3.dll / winsqlite3.dll at run time; Wine ships neither (see windows_sqlite_with_dll)"),
 ];
 
 #[test]
@@ -216,7 +216,7 @@ fn windows_net_examples_wsapoll_under_wine() {
     assert!(f.is_empty(), "{} network example(s) failed with ZELL_POLLER=wsapoll:\n{}", f.len(), f.join("\n"));
 }
 
-/// std.database.sqlite on Windows with a sqlite3.dll next to the program
+/// database.sqlite on Windows with a sqlite3.dll next to the program
 /// ($ZELL_TEST_SQLITE3_DLL: e.g. built from the amalgamation with
 /// `x86_64-w64-mingw32-gcc -O1 -shared -DSQLITE_API=__declspec(dllexport)
 /// sqlite3.c -o sqlite3.dll`); without one, Open fails cleanly.
@@ -264,9 +264,8 @@ fn windows_processes_zones_roots_backtraces() {
         &src,
         r#"namespace t.winplat
 
-import std
-import std.io
-import std.crypto
+import io
+import crypto
 
 func inner(xs []int) int {
     return xs[5]
@@ -275,7 +274,7 @@ func inner(xs []int) int {
 async func main() void! {
     var args = os.Args()
     if len(args) > 1 && args[1] == "child" {
-        var data = std.io.ReadAll()?
+        var data = io.ReadAll()?
         println("child got", len(data), "bytes")
         io.Eprintln("child stderr")
         return
@@ -351,7 +350,7 @@ fn windows_target_constants_args_and_exit_code() {
     let src = dir.join("consts.zl");
     std::fs::write(
         &src,
-        "namespace t.consts\n\nimport std\nimport std.io\n\nfunc main() {\n    println(os.Name, os.Arch, os.PathSeparator, len(os.LineSeparator))\n    var a = os.Args()\n    println(len(a), a[1], a[2])\n    println(\"h\u{e9}llo \u{2713}\")\n    os.Exit(3)\n}\n",
+        "namespace t.consts\n\nimport io\n\nfunc main() {\n    println(os.Name, os.Arch, os.PathSeparator, len(os.LineSeparator))\n    var a = os.Args()\n    println(len(a), a[1], a[2])\n    println(\"h\u{e9}llo \u{2713}\")\n    os.Exit(3)\n}\n",
     )
     .unwrap();
     let exe = dir.join("consts.exe");
@@ -423,7 +422,7 @@ fn musl_unavailable() -> Option<String> {
 }
 
 /// Examples that need a target library this machine does not have for
-/// linux-arm64 / musl: std.database.sqlite links libsqlite3 (arm64: not in
+/// linux-arm64 / musl: database.sqlite links libsqlite3 (arm64: not in
 /// the cross sysroot; musl: no static libsqlite3, the runtime has no sqlite).
 const NEEDS_SQLITE: &[&str] = &["sql", "web_app"];
 
@@ -611,7 +610,7 @@ fn windows_console_output_is_utf8() {
     }
     let dir = tmpdir("console");
     let src = dir.join("console.zl");
-    std::fs::write(&src, "namespace t.console\n\nimport std.io\n\nfunc main() {\n    print(\"h\u{e9}\")\n    println(\"llo w\u{f6}rld \u{2713} \u{4e16}\u{754c}\")\n}\n").unwrap();
+    std::fs::write(&src, "namespace t.console\n\nimport io\n\nfunc main() {\n    print(\"h\u{e9}\")\n    println(\"llo w\u{f6}rld \u{2713} \u{4e16}\u{754c}\")\n}\n").unwrap();
     let exe = dir.join("console.exe");
     build(&src, &exe, &[]).unwrap();
     let r = Command::new("script").arg("-qc").arg(format!("wine {}", exe.display())).arg("/dev/null").env("WINEDEBUG", "-all").env("LC_ALL", "C.UTF-8").output().unwrap();

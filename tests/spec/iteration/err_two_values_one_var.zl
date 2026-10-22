@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.iteration.err_two_values_one_var
 
-import std.collections
-import std.io
+import collections
+import io
 
 func main() {
     var m = OrderedMap<string, int>{}

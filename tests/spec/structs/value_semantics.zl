@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.value_semantics
 
-import std.io
+import io
 
 struct P {
     X int

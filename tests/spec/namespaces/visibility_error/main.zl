@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.ns.vis
 
-import std.io
+import io
 
 import spec.ns.vis.util
 

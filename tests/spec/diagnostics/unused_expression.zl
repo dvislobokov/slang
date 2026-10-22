@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.unused_expression
 
-import std.io
+import io
 
 func main() {
     var n = 1

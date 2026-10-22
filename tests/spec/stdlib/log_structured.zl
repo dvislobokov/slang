@@ -1,9 +1,7 @@
-// test: std.log compiled templates: destructuring, formats, @log(skip), context, JSON lines
+// test: log compiled templates: destructuring, formats, @log(skip), context, JSON lines
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib.log_structured
-
-import std
 
 struct Card {
     Holder string

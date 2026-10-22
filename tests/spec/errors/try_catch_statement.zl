@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.try_catch_statement
 
-import std.io
+import io
 
 func Save(name string) void! {
     if name == "bad" {

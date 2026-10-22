@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.diagnostics.method_call_needs_receiver
 
-import std
-import std.io
+import io
 
 struct P {
     func Hi() string { return "hi" }

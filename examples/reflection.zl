@@ -1,9 +1,8 @@
-// std.reflect: static type tables, attributes as values, reflect.Value,
+// reflect: static type tables, attributes as values, reflect.Value,
 // method calls, and compile-time field loops in generic code.
 namespace examples.reflection
 
-import std
-import std.io
+import io
 
 @attribute(targets: [reflect.Target.Field])
 struct column {

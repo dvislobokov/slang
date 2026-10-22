@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.empty_slice_needs_type
 
-import std.io
+import io
 
 func main() {
     var xs = []

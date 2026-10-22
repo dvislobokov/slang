@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.diagnostics.field_get_wrong_type
 
-import std
-import std.io
+import io
 
 struct P {
     X int

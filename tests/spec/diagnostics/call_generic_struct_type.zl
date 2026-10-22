@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.call_generic_struct_type
 
-import std.io
+import io
 
 struct Box<T> {
     V T

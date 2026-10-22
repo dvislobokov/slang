@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.memory3.drop_resurrect
 
-import std
-import std.io
+import io
 
 @allowCycle
 struct Node {

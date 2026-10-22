@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async2.task_all_mixed
 
-import std
-import std.io
+import io
 
 async func N() int {
     await task.Delay(3)

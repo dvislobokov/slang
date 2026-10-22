@@ -1,4 +1,4 @@
-//! `std.data.kafka` against a real Kafka broker.
+//! `data.kafka` against a real Kafka broker.
 //!
 //! Ignored by default: there is no broker in a normal test run. Start one
 //! (see `tests/fixtures/kafka/README.md`) and run

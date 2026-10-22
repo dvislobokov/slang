@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.structs.field_defaults
 
-import std.io
+import io
 
 struct Config {
     Name  string = "app"

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.const_folding
 
-import std.io
+import io
 
 const K = 1 << 10
 const Twice = K * 2 + 1

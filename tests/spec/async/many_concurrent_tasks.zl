@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async.many_concurrent_tasks
 
-import std
-import std.io
+import io
 
 async func Square(n int) int {
     await task.Delay(n % 3)

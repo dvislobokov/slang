@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_sendfile
 
-import std
-import std.io
+import io
 
 async func main() void! {
     var path = fs.Join(fs.TempDir(), fmt.Format("zell-net-sendfile-{0}.txt", os.Pid()))
@@ -37,7 +36,7 @@ async func main() void! {
     var got = await r.ReadExact(1000000)?
     println("file bytes match:", strings.FromBytes(got) == body)
     println(await r.ReadLine()?, await r.ReadLine()?)
-    var rest = std.bytes.Repeat(strings.Bytes("."), 64)
+    var rest = bytes.Repeat(strings.Bytes("."), 64)
     var k = await r.ReadInto(rest)?
     println(strings.FromBytes(rest[..k]), await r.ReadInto(rest)?)
     try await r.ReadLine() catch err {

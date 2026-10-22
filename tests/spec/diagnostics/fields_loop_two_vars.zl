@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.diagnostics.fields_loop_two_vars
 
-import std
-import std.io
+import io
 
 struct P {
     X int

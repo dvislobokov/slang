@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.diagnostics.collection_contains_needs_comparable
 
-import std.collections
-import std.io
+import collections
+import io
 
 struct P {
     X int

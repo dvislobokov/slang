@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.new_invalid
 
-import std.io
+import io
 
 func main() {
     var p = new 5

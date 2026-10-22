@@ -1,10 +1,9 @@
-// test: std.data change tracking: batched INSERT with RETURNING keys, the identity map (Find without a query, one instance per row), snapshot diffs that UPDATE only the changed columns, Attach/Update/Remove, Entry state and changed columns, AsNoTracking, nothing to save, statement log
+// test: data change tracking: batched INSERT with RETURNING keys, the identity map (Find without a query, one instance per row), snapshot diffs that UPDATE only the changed columns, Attach/Update/Remove, Entry state and changed columns, AsNoTracking, nothing to save, statement log
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.tracking
 
-import std
-import std.io
+import io
 
 struct Product {
     Id    int

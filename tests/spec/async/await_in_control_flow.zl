@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async.await_in_control_flow
 
-import std
-import std.io
+import io
 
 async func Val(n int) int {
     await task.Delay(1)

@@ -1,9 +1,8 @@
-// test: std.net.textproto headers (canonical keys, continuation lines, multiple values, Del, String), dot-encoding round trip, multi-line responses; std.mime AddExtensionType/ExtensionsByType, RFC 2047 DecodeHeader/EncodeWord; multipart.ReadForm with values and files (quoted-printable part decoded), errors
+// test: net.textproto headers (canonical keys, continuation lines, multiple values, Del, String), dot-encoding round trip, multi-line responses; mime AddExtensionType/ExtensionsByType, RFC 2047 DecodeHeader/EncodeWord; multipart.ReadForm with values and files (quoted-printable part decoded), errors
 // status: passing
 namespace spec.stdlib3.mime_textproto
 
-import std
-import std.io
+import io
 
 func main() void! {
     println(

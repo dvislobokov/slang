@@ -3,13 +3,12 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_udp_more
 
-import std
-import std.io
+import io
 
 async func main() void! {
     var a = net.ListenUDP("127.0.0.1:0")?
     var b = net.ListenUDP("127.0.0.1:0")?
-    var buf = std.bytes.Repeat(strings.Bytes("."), 8)
+    var buf = bytes.Repeat(strings.Bytes("."), 8)
 
     // ReadFrom fills the caller's buffer; a longer datagram is truncated
     _ = await a.WriteTo(strings.Bytes("short"), b.Local())?
@@ -20,7 +19,7 @@ async func main() void! {
     println(d.N, strings.FromBytes(buf[..d.N]), d.Truncated)
 
     // a large datagram (60000 bytes) arrives whole
-    var big = std.bytes.Repeat(strings.Bytes("B"), 60000)
+    var big = bytes.Repeat(strings.Bytes("B"), 60000)
     b.SetReadBuffer(1 << 20)?
     println("sent", await a.WriteTo(big, b.Local())?)
     var p = await b.RecvFrom(65536)?

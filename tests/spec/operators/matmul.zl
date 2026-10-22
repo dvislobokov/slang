@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.operators.matmul
 
-import std.io
+import io
 
 // 2x2 integer matrix
 @deprecated("only for the test")

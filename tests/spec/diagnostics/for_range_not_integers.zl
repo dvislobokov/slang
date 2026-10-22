@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.for_range_not_integers
 
-import std.io
+import io
 
 func main() {
     for i in 0.5..2.5 {

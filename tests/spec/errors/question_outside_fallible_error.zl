@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.question_outside_fallible_error
 
-import std.io
+import io
 
 func F() int! {
     return 1

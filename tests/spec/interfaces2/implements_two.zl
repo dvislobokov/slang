@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.implements_two
 
-import std.io
+import io
 
 interface Reader {
     func Read() string

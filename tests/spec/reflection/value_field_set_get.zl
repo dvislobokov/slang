@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.value_field_set_get
 
-import std
-import std.io
+import io
 
 struct User {
     Name  string

@@ -1,9 +1,8 @@
-// test: std.time async Ticker (fixed cadence, Stop), Timer (Wait, Stop, Reset) and After
+// test: time async Ticker (fixed cadence, Stop), Timer (Wait, Stop, Reset) and After
 // status: passing
 namespace spec.stdlib2.time_ticker
 
-import std
-import std.io
+import io
 
 async func main() {
     var start = time.NowInstant()

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.return_value_from_void
 
-import std.io
+import io
 
 func F() {
     return 1

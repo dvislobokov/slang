@@ -1,12 +1,11 @@
-// std.database.sql with the SQLite driver (in-memory): schema, inserts
+// database.sql with the SQLite driver (in-memory): schema, inserts
 // with positional and named parameters, typed Query<T> into structs
 // (@sql.column, pointers for NULL, time.Time), QueryOne, a transaction
 // with the `defer tx.Rollback()` idiom, and ErrNoRows.
 namespace examples.sql
 
-import std
-import std.database
-import std.io
+import database
+import io
 
 struct Book {
     Id     int

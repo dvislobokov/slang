@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.enum_map_keys
 
-import std.io
+import io
 
 enum Fruit { Apple, Pear, Plum }
 

@@ -1,15 +1,20 @@
-// test: every row of the import table: full path, import std, import std.io, alias
+// test: every row of the import table: full path, import io, import net.http, alias, a namespace, one member
 // status: passing
 namespace spec.namespaces.import_table_forms
 
-import std
-import std.io
-import std.io as out
+import encoding.json.Quote
+import io
+import io as out
+import net.http
+import text
 
 func main() {
-    std.io.println("full path")
-    io.println("via import std")
-    println("via import std.io")
+    io.println("full path", net.http.StatusText(404))
+    println("via import io")
+    println("via import net.http:", StatusText(200))
     out.println("via alias")
-    std.io.println(std.strings.ToUpper("full path to strings"), strings.ToUpper("short"))
+    var v = template.Str("x")
+    println("via import text:", typeof(v).FullName)
+    println("one member:", Quote("q"))
+    io.println(strings.ToUpper("full path to strings"))
 }

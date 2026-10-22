@@ -1,7 +1,6 @@
 namespace bench.sharedobjects
 
-import std
-import std.io
+import io
 
 // Reference counting across threads, three phases (8 tasks on the
 // scheduler's workers; ZELL_WORKERS defaults to the CPU count):

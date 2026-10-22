@@ -3,11 +3,10 @@
 // run-flags: --leak-check
 namespace spec.stdlib.tls_trace13
 
-import std
-import std.crypto
-import std.encoding
-import std.io
-import std.net
+import crypto
+import encoding
+import io
+import net
 
 // The records of the connection documented at https://tls13.xargs.org
 // (github.com/syncsynchalt/illustrated-tls13, captures/caps): every

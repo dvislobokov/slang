@@ -1,11 +1,10 @@
-// test: std.cloud.s3 against an in-process S3-compatible server that verifies every Signature V4 (headers and presigned queries, with the same SignV4 code) and payload hashes: buckets, Put/Get (ranges, streaming)/Head/Delete, metadata and content types, keys needing escapes, ListObjectsV2 pagination with prefixes and delimiters (iteration), CopyObject, DeleteObjects, multipart Upload with parallel parts and abort on failure, presigned GET/PUT, typed errors (NoSuchKey, NoSuchBucket, SignatureDoesNotMatch), a 503 SlowDown retried; std.cloud.blob over the same server and over a directory
+// test: cloud.s3 against an in-process S3-compatible server that verifies every Signature V4 (headers and presigned queries, with the same SignV4 code) and payload hashes: buckets, Put/Get (ranges, streaming)/Head/Delete, metadata and content types, keys needing escapes, ListObjectsV2 pagination with prefixes and delimiters (iteration), CopyObject, DeleteObjects, multipart Upload with parallel parts and abort on failure, presigned GET/PUT, typed errors (NoSuchKey, NoSuchBucket, SignatureDoesNotMatch), a 503 SlowDown retried; cloud.blob over the same server and over a directory
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib5.s3_mock
 
-import std
-import std.cloud
-import std.io
+import cloud
+import io
 
 const AK = "AKIATESTKEY"
 const SK = "test/secret+key"

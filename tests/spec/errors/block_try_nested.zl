@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.errors.block_try_nested
 
-import std.io
+import io
 
 func Fail(msg string) void! {
     return error(msg)

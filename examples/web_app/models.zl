@@ -1,7 +1,7 @@
 // Models of the users API: entities and request bodies with @validate.
 namespace webapp.models
 
-import std.web
+import web
 
 struct User {
     Id    int

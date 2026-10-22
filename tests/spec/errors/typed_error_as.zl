@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors.typed_error_as
 
-import std
-import std.io
+import io
 
 struct HttpError {
     Code int

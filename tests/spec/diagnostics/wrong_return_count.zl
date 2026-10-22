@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.wrong_return_count
 
-import std.io
+import io
 
 func F() (int, int) {
     return 1, 2, 3

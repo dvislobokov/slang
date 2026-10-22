@@ -1,10 +1,9 @@
-// test: std.data set-based and raw statements: ExecuteUpdate with constants, nil and column expressions, ExecuteDelete (with OrderBy/Take as a key subquery), Raw<T> into structs and scalars (Dapper style, not tracked), ExecuteSql, AsEnumerable for client-side filters, and upserts (INSERT ... ON CONFLICT by key or by a unique column)
+// test: data set-based and raw statements: ExecuteUpdate with constants, nil and column expressions, ExecuteDelete (with OrderBy/Take as a key subquery), Raw<T> into structs and scalars (Dapper style, not tracked), ExecuteSql, AsEnumerable for client-side filters, and upserts (INSERT ... ON CONFLICT by key or by a unique column)
 // status: passing
 // run-flags: --leak-check
 namespace spec.data.execute
 
-import std
-import std.io
+import io
 
 struct Task {
     Id       int

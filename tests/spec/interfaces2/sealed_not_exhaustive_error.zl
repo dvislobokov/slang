@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.interfaces2.sealed_not_exhaustive_error
 
-import std.io
+import io
 
 sealed interface Shape {
     func Area() float

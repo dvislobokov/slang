@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.closures.recursion_via_var
 
-import std.io
+import io
 
 func main() {
     var fib func(int) int

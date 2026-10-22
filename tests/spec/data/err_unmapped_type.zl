@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.data.err_unmapped_type
 
-import std
-import std.io
+import io
 
 struct Person {
     Name string

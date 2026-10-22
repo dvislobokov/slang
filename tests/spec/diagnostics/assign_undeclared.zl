@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.assign_undeclared
 
-import std.io
+import io
 
 func main() {
     total = 5

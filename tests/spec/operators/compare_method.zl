@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.operators.compare_method
 
-import std.io
+import io
 
 struct Version {
     Major int

@@ -1,11 +1,10 @@
 namespace app
 
-import std
-import std.encoding
-import std.hash
-import std.io
+import encoding
+import hash
+import io
 
-// Streams and encodings: a record file written through std.io writers
+// Streams and encodings: a record file written through io writers
 // (BufferedWriter over a BytesWriter, MultiWriter feeding a hash), read
 // back with a Scanner and binary.Decode, plus base32/pem/hex, fnv/crc32
 // checksums, strconv and unicode helpers.

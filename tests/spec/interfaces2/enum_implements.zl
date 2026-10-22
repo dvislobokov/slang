@@ -3,7 +3,7 @@
 // run-flags: --leak-check
 namespace spec.interfaces2.enum_implements
 
-import std.io
+import io
 
 interface Stringer {
     func String() string

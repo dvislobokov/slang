@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.variant_without_fields_called
 
-import std.io
+import io
 
 enum Color { Red, Green }
 

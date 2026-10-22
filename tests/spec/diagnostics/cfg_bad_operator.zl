@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.cfg_bad_operator
 
-import std.io
+import io
 
 @cfg(either(os: "linux", os: "macos"))
 func F() string { return "f" }

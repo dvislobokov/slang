@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.enums.enum_in_struct_and_func
 
-import std.io
+import io
 
 enum Op { Plus, Minus }
 

@@ -1,6 +1,6 @@
 namespace bench.maps
 
-import std.io
+import io
 
 func main() {
     var m = map[int]int{}

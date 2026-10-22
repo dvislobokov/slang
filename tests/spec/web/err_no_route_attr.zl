@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.web.err_no_route_attr
 
-import std.web
+import web
 
 struct HomeController {
     @get("")

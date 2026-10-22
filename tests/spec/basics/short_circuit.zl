@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.short_circuit
 
-import std.io
+import io
 
 func Say(name string, v bool) bool {
     println("eval", name)

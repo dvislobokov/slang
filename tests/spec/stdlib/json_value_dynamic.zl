@@ -2,8 +2,8 @@
 // status: passing
 namespace spec.stdlib.json_value_dynamic
 
-import std.encoding
-import std.io
+import encoding
+import io
 
 func Run() void! {
     var v = json.ParseValue(

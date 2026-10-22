@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.stdlib.math_round_trunc
 
-import std
-import std.io
+import io
 
 func main() {
     println(math.Round(2.5), math.Round(-2.5), math.Round(2.4), math.Round(-0.4))

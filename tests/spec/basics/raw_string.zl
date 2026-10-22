@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.raw_string
 
-import std.io
+import io
 
 func main() {
     var path = `C:\Users\zell\new`

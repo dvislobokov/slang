@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.operators.equals_method
 
-import std.io
+import io
 
 struct Money {
     Cents    int

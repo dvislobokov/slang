@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.operators.generic_struct
 
-import std.io
+import io
 
 struct Money {
     Cents int

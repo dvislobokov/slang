@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes2.repeated_field_order
 
-import std
-import std.io
+import io
 
 @attribute(repeatable: true)
 struct rule {

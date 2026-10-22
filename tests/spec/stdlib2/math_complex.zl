@@ -1,11 +1,10 @@
-// test: std.math.complex arithmetic operators (+ - * / unary - ==) and cmplx functions (Abs, Phase, Exp, Log, Sqrt, Pow)
+// test: math.complex arithmetic operators (+ - * / unary - ==) and cmplx functions (Abs, Phase, Exp, Log, Sqrt, Pow)
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.math_complex
 
-import std
-import std.io
-import std.math
+import io
+import math
 
 func round(x float) float {
     return math.Round(x * 1000000) / 1000000

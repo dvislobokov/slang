@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes2.enum_and_slice_params
 
-import std
-import std.io
+import io
 
 enum Level {
     Debug

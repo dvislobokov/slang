@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.stdlib3.template_unknown_func
 
-import std
-
 struct Page {
     Title string
 }

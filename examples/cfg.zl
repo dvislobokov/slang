@@ -1,7 +1,6 @@
 namespace examples.cfg
 
-import std
-import std.io
+import io
 
 // Conditional compilation (DESIGN.md "Платформы"): exactly one variant of
 // each declaration is compiled for the target; the others are not even

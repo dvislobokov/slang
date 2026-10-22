@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.main_signature
 
-import std.io
+import io
 
 func main() int {
     println("x")

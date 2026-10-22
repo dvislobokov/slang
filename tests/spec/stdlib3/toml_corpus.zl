@@ -1,9 +1,8 @@
-// test: std.encoding.toml agrees with Python tomllib (TOML 1.0) on 20 valid documents (integers in all bases, floats incl. inf/nan, all string forms, tables, dotted and quoted keys, arrays of tables, nested arrays, inline tables, comments) and rejects the same 30 invalid ones (redefinitions, bad numbers, escapes, dates, inline-table rules)
+// test: encoding.toml agrees with Python tomllib (TOML 1.0) on 20 valid documents (integers in all bases, floats incl. inf/nan, all string forms, tables, dotted and quoted keys, arrays of tables, nested arrays, inline tables, comments) and rejects the same 30 invalid ones (redefinitions, bad numbers, escapes, dates, inline-table rules)
 // status: passing
 namespace spec.stdlib3.toml_corpus
 
-import std
-import std.io
+import io
 
 func sortStrings(a []string) {
     for i in 1..len(a) {

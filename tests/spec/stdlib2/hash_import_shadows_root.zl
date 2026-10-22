@@ -1,0 +1,16 @@
+// test: a name brought in by an import hides the stdlib root of the same name
+// status: passing
+namespace spec.stdlib2.hash_import_shadows_root
+
+import crypto
+import hash.fnv as fnv
+import io
+
+// `import crypto` gives crypto.hash as `hash`; it hides the root namespace
+// `hash` (hash.fnv, hash.crc32, ...) in this file, which stays reachable
+// through an import of its own.
+func main() {
+    println(hash.Sha256Hex("abc"))
+    println(crypto.hash.Sha256Hex("") == hash.Sha256Hex(""))
+    println(fnv.String64a("abc"))
+}

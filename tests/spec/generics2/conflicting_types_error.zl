@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.conflicting_types_error
 
-import std.io
+import io
 
 func Same<T>(a, b T) bool { return true }
 

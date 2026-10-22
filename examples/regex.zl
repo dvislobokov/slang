@@ -1,9 +1,8 @@
 namespace examples.regex
 
-import std
-import std.io
+import io
 
-// std.regex: RE2 syntax, linear time, literal patterns checked by the compiler.
+// regex: RE2 syntax, linear time, literal patterns checked by the compiler.
 func main() void! {
     var lines = [
         "2024-05-17 12:00:01 INFO  user=alice action=login ip=10.0.0.7",

@@ -1,12 +1,11 @@
-// test: std.crypto primitives (AES-GCM, ChaCha20-Poly1305, X25519, P-256 ECDH/ECDSA, Ed25519, RSA, HKDF, SHA-384, HMAC) against RFC/NIST vectors
+// test: crypto primitives (AES-GCM, ChaCha20-Poly1305, X25519, P-256 ECDH/ECDSA, Ed25519, RSA, HKDF, SHA-384, HMAC) against RFC/NIST vectors
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib.crypto_primitives
 
-import std
-import std.crypto
-import std.encoding
-import std.io
+import crypto
+import encoding
+import io
 
 const rsaKey = `-----BEGIN PRIVATE KEY-----
 MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBALzZl/Ab03QU0LKE

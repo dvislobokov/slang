@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.operators.mixed_operand
 
-import std.io
+import io
 
 struct Delta {
     DX int

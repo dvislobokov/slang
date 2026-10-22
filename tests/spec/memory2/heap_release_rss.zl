@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.memory2.heap_release_rss
 
-import std
-import std.io
+import io
 
 // Resident set size in MB, or -1 where /proc/self/statm does not exist
 // (then the RSS checks pass trivially).

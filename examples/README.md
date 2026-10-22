@@ -68,7 +68,7 @@ The `.out` files depend on these rules; the runtime must follow them.
 
 | File | Features exercised |
 |------|--------------------|
-| `hello.zl` | `namespace`, `import std.io`, bare `println` |
+| `hello.zl` | `namespace`, `import io`, bare `println` |
 | `arith.zl` | int/float literals, `+ - * / %`, truncating division and sign of `%`, Go precedence (incl. `<<`, `&`, `\|`, `^`), compound assignment, top-level and local `const`, `var` with inferred type, explicit type and zero value, float printing, `math.Sqrt/Pow/Floor/Abs`, `float()`/`int()` conversions, comparisons, `&&`/`\|\|`/`!` precedence |
 | `control.zl` | `if`/`else if`/`else` (all branches return), `for i in a..b` with literal and variable bounds, `for i, x in slice`, `for x in [literal]`, while-style `for cond`, infinite `for` with `break`, `continue`, nested loops |
 | `functions.zl` | grouped params `(a, b int)`, multiple results and `var (a, b) = f()`, `_` in destructuring, recursion (factorial, fib), block lambda `func(x int) int {}`, arrow lambda `(x int) => x * x`, lambdas as arguments, returning closures (`Compose`, counter with captured state), function types `func(int) int` / `func(string)`, named functions as values, slice of functions |
@@ -84,45 +84,45 @@ The `.out` files depend on these rules; the runtime must follow them.
 | `defer.zl` | LIFO order, defer in a loop, arguments evaluated at `defer`, deferred closure `defer func() { ... }()` seeing later values, deferring a call of a lambda variable, defers on early `return error(...)`, defer in `main` |
 | `async.zl` | `async func`, `async func main`, `await`, `task.Delay`, concurrent tasks with `task.All` and tuple destructuring, `await f()?`, `try await ... catch`, `try await ... else`, `task.All` over fallible tasks with `try`, sequential awaits in a loop |
 | `drop.zl` | destructors `func Drop()`: deterministic order at block end (reverse declaration order), per loop iteration and on `break`, by-value parameter takes ownership, pointer parameter borrows, early return through `?`, last reference to a `new` object, struct holding a value with a destructor (outer `Drop` first, then fields), interface box and closure capture, deferred calls run before locals are dropped, globals dropped after `main` |
-| `generics.zl` | generic functions with inference (`Max(3, 7)`, untyped constants following `T`) and explicit type arguments (`Max<float>(1, 2)`), the builtin `Ordered`/`Comparable` constraints, an interface constraint calling `x.Area()`, several type parameters and `func(T) U` parameters (`Apply`, `Reduce`), generic struct `Pair<A, B>` with a method returning `Pair<B, A>`, generic enum `Option<int>.Some(i)` matched as `case Option.Some(i):`, `Max<int>` as a function value, a generic error struct with `errors.As`, a generic method on a plain struct, `std.collections` `List`/`Map` (insertion order, `for k, v in m`)/`Set`/`Queue`/`Stack` |
+| `generics.zl` | generic functions with inference (`Max(3, 7)`, untyped constants following `T`) and explicit type arguments (`Max<float>(1, 2)`), the builtin `Ordered`/`Comparable` constraints, an interface constraint calling `x.Area()`, several type parameters and `func(T) U` parameters (`Apply`, `Reduce`), generic struct `Pair<A, B>` with a method returning `Pair<B, A>`, generic enum `Option<int>.Some(i)` matched as `case Option.Some(i):`, `Max<int>` as a function value, a generic error struct with `errors.As`, a generic method on a plain struct, `collections` `List`/`Map` (insertion order, `for k, v in m`)/`Set`/`Queue`/`Stack` |
 | `sealed_shapes.zl` | the `docs/PATTERNS.md` example: `sealed interface` with a default method (`Describe` built from `Name`/`Area`), `struct ... implements Shape`, a struct overriding the default, an exhaustive type switch with no `default` and no final `return` |
 | `cfg.zl` | `@cfg(os: ...)`/`not(...)`/`any(...)`/`all(...)`/`arch:` on functions, constants, struct fields and methods (the excluded variant is not type-checked), `os.Name`/`os.Arch`/`os.PathSeparator`/`os.LineSeparator` as compile-time constants (the output is that of a Unix amd64/arm64 target) |
 | `weak.zl` | `weak *T` back pointers (parent/child): the cycle is freed (shown by `Drop` prints), reading a weak pointer yields `*T` or `nil` once the target is gone, `!= nil` checks, a slice of `weak *T` observers |
-| `multi/` | three files, three namespaces: `import app.models` short names, full path `app.models.User.New(...)` even though imported, `import std.fmt as f` alias, calling non-imported `app.report.Summary` by full path, a file with no imports using `std.io.println` and `app.models.User` as a parameter type, private field `id` set only inside its namespace, exported `const` |
+| `multi/` | three files, three namespaces: `import app.models` short names, full path `app.models.User.New(...)` even though imported, `import fmt as f` alias, calling non-imported `app.report.Summary` by full path, a file with no imports using `io.println` and `app.models.User` as a parameter type, private field `id` set only inside its namespace, exported `const` |
 | `bank.zl` | larger program: `Account` with private fields, `void!` methods, `static func` returning `*Account`, enum `Tx` with fields and plain enum `EntryKind`, `Bank` with `map[string]*Account` and `[]string`, typed error `InsufficientFunds`, sentinel + `errors.Wrap`, `?` and `?("context")` on method calls through map elements, `errors.As` / `errors.Is` in a `catch`, switch over transactions and history, integer-cents money formatting, final report |
-| `stdlib_time_os_fs.zl` | `std.time` (`Format` with `%L`, `Parse` incl. `%z`, calendar accessors on a fixed instant, `Weekday`, pre-epoch time, `Now`/`Sleep`/`Since` only compared, never printed), `std.os` (`Args`, `Getenv`/`Setenv`, `Pid`, `Hostname`, `Cwd`/`Chdir`), `std.fs` path helpers (`Join/Base/Dir/Ext/Abs`) and file operations (`MkdirAll`, `AppendFile`, `Size`, `Copy`, `Rename`, sorted `ReadDir`, `Exists`/`IsDir`, `ModTime`, failing `Remove`/`Mkdir`, `RemoveAll` cleanup) in a temp dir under `fs.TempDir()`, `io.ReadLines/WriteLines`, `void!` helpers with `?` and `try ... catch` |
-| `stdlib_crypto.zl` | nested stdlib namespaces (`import std.crypto` -> `hash.X`, `import std` -> `crypto.hash.X`, `import std.encoding` -> `base64.X`), SHA-256/512/1, MD5, CRC-32 test vectors, `[]byte` results, HMAC-SHA256 and `hmac.Equal`, base64 std/URL and hex round trips and decode errors, `crypto.rand`/`uuid` (only lengths/validity printed), seeded `std.random` (`IntN`, `Shuffle`, `Float`, `Bytes`) |
+| `stdlib_time_os_fs.zl` | `time` (`Format` with `%L`, `Parse` incl. `%z`, calendar accessors on a fixed instant, `Weekday`, pre-epoch time, `Now`/`Sleep`/`Since` only compared, never printed), `os` (`Args`, `Getenv`/`Setenv`, `Pid`, `Hostname`, `Cwd`/`Chdir`), `fs` path helpers (`Join/Base/Dir/Ext/Abs`) and file operations (`MkdirAll`, `AppendFile`, `Size`, `Copy`, `Rename`, sorted `ReadDir`, `Exists`/`IsDir`, `ModTime`, failing `Remove`/`Mkdir`, `RemoveAll` cleanup) in a temp dir under `fs.TempDir()`, `io.ReadLines/WriteLines`, `void!` helpers with `?` and `try ... catch` |
+| `stdlib_crypto.zl` | nested stdlib namespaces (`import crypto` -> `hash.X`, no import -> `crypto.hash.X`, `import encoding` -> `base64.X`), SHA-256/512/1, MD5, CRC-32 test vectors, `[]byte` results, HMAC-SHA256 and `hmac.Equal`, base64 std/URL and hex round trips and decode errors, `crypto.rand`/`uuid` (only lengths/validity printed), seeded `random` (`IntN`, `Shuffle`, `Float`, `Bytes`) |
 | `stdlib_strings2.zl` | `strings.Fields/Count/LastIndex/TrimPrefix/TrimSuffix/TrimLeft/TrimRight/SplitN/EqualFold/Reverse/PadLeft/PadRight/Compare/Title`, `Runes`/`FromRunes` (`[]char`), `Bytes`/`FromBytes` (`[]byte`), `math.Round/Trunc/Mod/Hypot/Log2/Log10/Atan2/IsNaN/IsInf/Inf/NaN` and the int helpers `IMin/IMax/IAbs` |
-| `reflection.zl` | `std.reflect`: `reflect.TypeOf<T>()` (`Name`, `FullName`, `Kind`, `Size`, `Fields` with `Type.Name`/`Offset`, `Methods` with signature names), a custom `@attribute` struct read with `f.Attribute<column>()` (positional and named arguments, field default), `@reflect`, `t.Method(name).Call(&p, args...)` with a boxed result and a failing `void!` method, typed `Call<func(*Product, int) void!>()`, `reflect.ValueOf(&p).Field(..).Set/Get<T>`, `t.New()` as `any` holding `*T`, enum `Variants`, `typeof` of `any` values and of an interface, compile-time `for f in reflect.Fields<T>()` with `f.Get(v)` in a generic, a static `if reflect.TypeOf<T>().Kind == ...` |
-| `json.zl` | `std.encoding.json`: `json.Parse<T>` into nested structs, slices of structs, `*T`, `map[string]int`, plain enums by name, floats and `\u` escapes; `json.Format` with `@json(name:)`, `@json(omitEmpty:)`, `@json(skip:)`, sorted map keys, `null` for nil slices/maps/pointers; errors with the path of the bad value (`Users[1].id: expected int, found string`), syntax errors with offsets; the dynamic `json.ParseValue` tree (`Type`, `Len`, `Keys`, `Get`, `Index`, `Has`, `Float`, `Int`, `IsNull`, `Format`) |
+| `reflection.zl` | `reflect`: `reflect.TypeOf<T>()` (`Name`, `FullName`, `Kind`, `Size`, `Fields` with `Type.Name`/`Offset`, `Methods` with signature names), a custom `@attribute` struct read with `f.Attribute<column>()` (positional and named arguments, field default), `@reflect`, `t.Method(name).Call(&p, args...)` with a boxed result and a failing `void!` method, typed `Call<func(*Product, int) void!>()`, `reflect.ValueOf(&p).Field(..).Set/Get<T>`, `t.New()` as `any` holding `*T`, enum `Variants`, `typeof` of `any` values and of an interface, compile-time `for f in reflect.Fields<T>()` with `f.Get(v)` in a generic, a static `if reflect.TypeOf<T>().Kind == ...` |
+| `json.zl` | `encoding.json`: `json.Parse<T>` into nested structs, slices of structs, `*T`, `map[string]int`, plain enums by name, floats and `\u` escapes; `json.Format` with `@json(name:)`, `@json(omitEmpty:)`, `@json(skip:)`, sorted map keys, `null` for nil slices/maps/pointers; errors with the path of the bad value (`Users[1].id: expected int, found string`), syntax errors with offsets; the dynamic `json.ParseValue` tree (`Type`, `Len`, `Keys`, `Get`, `Index`, `Has`, `Float`, `Int`, `IsNull`, `Format`) |
 | `channels.zl` | `task.Channel<int>(0)` (unbuffered) and `(4)` pipelines with `Close` and `try await ch.Recv() else break`, `task.Mutex` as a struct field, `task.WaitGroup`, fire-and-forget `_ = Work(...)`, `task.Yield`, `task.Spawn` of an async lambda, `task.Timeout` (false, then true), a context value with `task.Key`/`task.With`/`task.Get` |
 | `task_context.zl` | `var K = task.Key<Span>()`, `task.With(K, v, f)` seen in the started task, a nested call, a `task.Go` child and a nested `With`, and gone after `With` returns (`task.Get` is nil) |
 | `cancel.zl` | `task.NewCancel()` + `task.SpawnWith` stopping a consumer blocked in `Recv` (`errors.Is(err, task.ErrCancelled)`), `task.WithTimeout` waking a long `Delay` (`task.CheckCancelled()?`), `task.Any` cancelling the loser, cancellation reaching a child task, `task.IsCancelled()` outside the scope (only "fast" timing facts are printed) |
-| `http_server.zl` | `std.net.http` server on `127.0.0.1:0` (`Listen`, `Port`, `Serve`, `Shutdown`) with `NewRouter`, `{name}` parameters, an async lambda handler, a redirect, 404/405/500; the client (`http.Get`/`Post`) talking to it; an `https` URL to a closed port (dialed through `std.net.tls`). Needs loopback networking |
-| `cycle_server.zl` | a `std.net.http` server serving 10k requests, each leaving a reference cycle behind (`Session` <-> `RequestCtx`, plus a closure in the session capturing it; W0001 warns about both types): the cycle collector (`ZELL_CYCLES=auto`) keeps the live object count bounded (`diag.Runtime().LiveObjects` sampled in both halves of the run), `runtime.CycleStats()`, and the program passes `--leak-check`. Needs loopback networking |
-| `tcp_echo.zl` | `std.net`: a line-based TCP echo server (task per connection) with `NewBufferedReader`/`NewBufferedWriter`, clients that half-close (`CloseWrite`) and `ReadAll`, `SetTimeout` failing with `net.IsTimeout`, shutdown by closing the listener (`errors.Is(err, net.ErrClosed)`), `net.ErrRefused` afterwards. Needs loopback networking |
-| `tls_echo.zl` | `std.net.tls` server and clients in one program on `127.0.0.1:0`: TLS 1.3 (ALPN, a 100 KB message, `KeyUpdate`) with `InsecureSkipVerify`, TLS 1.2 with a pinned self-signed root, an Ed25519 client certificate and ticket resumption, TLS 1.3 PSK resumption, verification failures (wrong name, unknown root), HTTPS with `http.Server{TLS}` and `http.Client{TLS}`. The embedded certificates are valid 2000-2100; output does not depend on the cipher suite (which depends on AES-NI). Needs loopback networking |
-| `log.zl` | `std.log`: `log.New()` configuration (`MinimumLevelControlledBy` a `LevelSwitch`, `MinimumLevelOverride`, `Enrich.WithProperty`/`FromContext`, `Clock` for fixed timestamps, `WriteTo.Console`/`Json`/`Async(NewFileSink(...))` rolling by day, `Filter.ByExcluding`), compiled templates with `{@Order}` destructuring (`@log(skip: true)`), `{Amount:0.00}`, `{Rate:P1}`, `{{` escapes, arguments not evaluated for disabled levels, `log.Context.Push` seen in a child task, `ForCategory`, `log.For<T>()`, `Error(err, ...)`, `log.SetGlobal` + `log.Info` |
-| `metrics.zl` | `std.diag` counters/gauges/histograms with labels, `PrometheusText` served by `diag.ServeMetrics` on a router (loopback HTTP), `diag.Runtime()` facts, `EnableRuntimeMetrics` |
-| `tracing.zl` | `std.diag` spans with seeded ids and a fake clock: nested spans across an `await`, a server span parented through the `traceparent` header of `http.Get`, `RecordError`, `SetStatus`, `ConsoleExporter`, `Enrich.FromContext` adding `TraceId`/`SpanId` to a log line, `OtlpSpanJson` |
+| `http_server.zl` | `net.http` server on `127.0.0.1:0` (`Listen`, `Port`, `Serve`, `Shutdown`) with `NewRouter`, `{name}` parameters, an async lambda handler, a redirect, 404/405/500; the client (`http.Get`/`Post`) talking to it; an `https` URL to a closed port (dialed through `net.tls`). Needs loopback networking |
+| `cycle_server.zl` | a `net.http` server serving 10k requests, each leaving a reference cycle behind (`Session` <-> `RequestCtx`, plus a closure in the session capturing it; W0001 warns about both types): the cycle collector (`ZELL_CYCLES=auto`) keeps the live object count bounded (`diag.Runtime().LiveObjects` sampled in both halves of the run), `runtime.CycleStats()`, and the program passes `--leak-check`. Needs loopback networking |
+| `tcp_echo.zl` | `net`: a line-based TCP echo server (task per connection) with `NewBufferedReader`/`NewBufferedWriter`, clients that half-close (`CloseWrite`) and `ReadAll`, `SetTimeout` failing with `net.IsTimeout`, shutdown by closing the listener (`errors.Is(err, net.ErrClosed)`), `net.ErrRefused` afterwards. Needs loopback networking |
+| `tls_echo.zl` | `net.tls` server and clients in one program on `127.0.0.1:0`: TLS 1.3 (ALPN, a 100 KB message, `KeyUpdate`) with `InsecureSkipVerify`, TLS 1.2 with a pinned self-signed root, an Ed25519 client certificate and ticket resumption, TLS 1.3 PSK resumption, verification failures (wrong name, unknown root), HTTPS with `http.Server{TLS}` and `http.Client{TLS}`. The embedded certificates are valid 2000-2100; output does not depend on the cipher suite (which depends on AES-NI). Needs loopback networking |
+| `log.zl` | `log`: `log.New()` configuration (`MinimumLevelControlledBy` a `LevelSwitch`, `MinimumLevelOverride`, `Enrich.WithProperty`/`FromContext`, `Clock` for fixed timestamps, `WriteTo.Console`/`Json`/`Async(NewFileSink(...))` rolling by day, `Filter.ByExcluding`), compiled templates with `{@Order}` destructuring (`@log(skip: true)`), `{Amount:0.00}`, `{Rate:P1}`, `{{` escapes, arguments not evaluated for disabled levels, `log.Context.Push` seen in a child task, `ForCategory`, `log.For<T>()`, `Error(err, ...)`, `log.SetGlobal` + `log.Info` |
+| `metrics.zl` | `diag` counters/gauges/histograms with labels, `PrometheusText` served by `diag.ServeMetrics` on a router (loopback HTTP), `diag.Runtime()` facts, `EnableRuntimeMetrics` |
+| `tracing.zl` | `diag` spans with seeded ids and a fake clock: nested spans across an `await`, a server span parented through the `traceparent` header of `http.Get`, `RecordError`, `SetStatus`, `ConsoleExporter`, `Enrich.FromContext` adding `TraceId`/`SpanId` to a log line, `OtlpSpanJson` |
 | `cpuprofile.zl` | `diag.StartCPUProfile`/`StopCPUProfile` around a busy loop (prints only that samples were taken; the profile is pprof `profile.proto`) |
-| `stdlib_collections_algos.zl` | word statistics with `std.slices` (`Map`, `SortFunc` stable, `Unique`, `MaxFunc`, `Chunk`, `Sum`, `BinarySearch`), `std.maps.SortedKeys`, `std.cmp` (`Clamp`, `Compare`), and the newer `std.collections` types: `Heap<int>` as a bounded top-k, `OrderedMap<string, []string>`, `LRU<string, int>(2)` with `Get` tuples and `Keys` order, `Deque.PushFront` |
-| `stdlib_money.zl` | an invoice with `std.math.big.Decimal` (exact `Mul`/`Add`, `Round(2, HalfUp)`, `Div(.., 2, HalfEven)`, `Rescale`), `strconv.Atoi`/`Quote` with `?("context")` errors, `big.ParseDecimal`; `std.time` types on fixed UTC dates (`Date`, `AddDate`, `Format` with `RFC3339` and a Go layout, `Sub` → `Duration.String()`, `ParseTime`, `Hours()`) |
-| `cli_tool.zl` | `std.cli`: `App` with two subcommands, flags from structs with `@cli.flag(short:, help:)` and field defaults (`cli.FlagsOf<T>()`, `cli.Bind<T>(c)`), positional args, `--times=2`/`-n x`/bool flags, a failing command (exit 1), usage errors with "did you mean" (exit 2) collected through `App.Errors`, generated `--help` for the app and a command |
-| `stdlib_io_encoding.zl` | `std.io` writers (`BufferedWriter` over `MultiWriter` of a `BytesWriter` and an `fnv` hash) and `Scanner` over a `BytesReader`, `strconv.Quote`/`Unquote`, `unicode.utf8.RuneCountInString`; `std.encoding.binary.Encode/Decode/Size` of a struct with `@binary.binary(endian: "big")`, `AppendUvarint`/`Uvarint` tuples; `pem.Block` with a header (`Encode`/`Decode`), `crc32.ChecksumIEEE`, `base32.Encode`/`EncodeHex`, `unicode.IsLetter`/`ToUpper`/`ToTitle` |
-| `regex.zl` | `std.regex`: `regex.Pattern` literals checked at compile time, named groups (`Groups` + `Get`), `GroupsAll` and `At`, `Replace` with `$1`, `Split`, `Escape` + `Compile`, a `Compile` error message with offset, linear-time matching of `(a+)+$` on 20k chars |
+| `stdlib_collections_algos.zl` | word statistics with `slices` (`Map`, `SortFunc` stable, `Unique`, `MaxFunc`, `Chunk`, `Sum`, `BinarySearch`), `maps.SortedKeys`, `cmp` (`Clamp`, `Compare`), and the newer `collections` types: `Heap<int>` as a bounded top-k, `OrderedMap<string, []string>`, `LRU<string, int>(2)` with `Get` tuples and `Keys` order, `Deque.PushFront` |
+| `stdlib_money.zl` | an invoice with `math.big.Decimal` (exact `Mul`/`Add`, `Round(2, HalfUp)`, `Div(.., 2, HalfEven)`, `Rescale`), `strconv.Atoi`/`Quote` with `?("context")` errors, `big.ParseDecimal`; `time` types on fixed UTC dates (`Date`, `AddDate`, `Format` with `RFC3339` and a Go layout, `Sub` → `Duration.String()`, `ParseTime`, `Hours()`) |
+| `cli_tool.zl` | `cli`: `App` with two subcommands, flags from structs with `@cli.flag(short:, help:)` and field defaults (`cli.FlagsOf<T>()`, `cli.Bind<T>(c)`), positional args, `--times=2`/`-n x`/bool flags, a failing command (exit 1), usage errors with "did you mean" (exit 2) collected through `App.Errors`, generated `--help` for the app and a command |
+| `stdlib_io_encoding.zl` | `io` writers (`BufferedWriter` over `MultiWriter` of a `BytesWriter` and an `fnv` hash) and `Scanner` over a `BytesReader`, `strconv.Quote`/`Unquote`, `unicode.utf8.RuneCountInString`; `encoding.binary.Encode/Decode/Size` of a struct with `@binary.binary(endian: "big")`, `AppendUvarint`/`Uvarint` tuples; `pem.Block` with a header (`Encode`/`Decode`), `crc32.ChecksumIEEE`, `base32.Encode`/`EncodeHex`, `unicode.IsLetter`/`ToUpper`/`ToTitle` |
+| `regex.zl` | `regex`: `regex.Pattern` literals checked at compile time, named groups (`Groups` + `Get`), `GroupsAll` and `At`, `Replace` with `$1`, `Split`, `Escape` + `Compile`, a `Compile` error message with offset, linear-time matching of `(a+)+$` on 20k chars |
 | `stdlib_formats.zl` | tier-2 formats: `encoding.toml.Parse<Config>` with `@toml(name:)`, `toml.ParseDocument` + `Set` keeping comments, `encoding.csv.Read<Item>`/`Write<Item>` with `@csv(name:)` and quoted fields, `html.template.Parse<Page>` (fields checked when compiling, contextual escaping of text and URL query), `text.table` with the Unicode style and right alignment, `compress.gzip` round trip |
-| `sql.zl` | `std.database.sql` over `std.database.sqlite` (in-memory, linked with `-lsqlite3` only because the program uses the driver): `Exec` with positional `?` and `sql.Named` parameters, `LastInsertId`, typed `db.Query<Book>` with `@sql.column` and a `*float` for NULL, `QueryOne<int>`, `Query<string>`, a transaction with `defer tx.Rollback()`, `errors.Is(err, sql.ErrNoRows)` |
-| `web_app/` | `std.web` users API over SQLite (models, services, controllers, main, `db.zl` with the `std.data` entity and context, `migrations/` written by `zell data migration add CreateUsers` and applied by `ctx.Migrate()`; the store's queries are `std.data` lambdas translated to SQL at compile time, projected to the API model with `Select`, inserts tracked by `SaveChanges`, deletes with `ExecuteDelete`; docs/FRAMEWORK.md §3): `@route`/`@get`/`@post`/`@delete` controllers compiled into the route table by `app.MapControllers<UsersController, AuthController>()`, DI (`AddInstance`, singletons built by `static func New(deps)`, a scoped `Audit` whose `Drop` prints at the end of each request), `@validate` bodies answered with 400 Problem Details, JWT login (`std.web.auth.jwt`) and `@authorize(roles: ["admin"])` (401/403), `web.Error(409, ...)`, `config.Load` (embedded `appsettings.json` < `APP__` env < args) + `Bind<Settings>`, request logging with request ids through a stdout logger, health checks, the OpenAPI 3.1 document and `/swagger`; every request goes through the in-memory `web.TestServer` client, so the output is deterministic |
-| `redis.zl` | `std.data.redis` against a tiny in-process RESP server (bottom of the file; the server parses commands with the client's own `redis.ParseReplies`): `redis.Connect`, `Set/Get`, `Incr/IncrBy`, a missing key as `redis.Nil`, `HSetMap/HGetAll`, typed `SetJSON<T>/GetJSON<T>`, a pipeline whose command tasks complete after `Exec`, `TxPipeline` (MULTI/EXEC), `Subscribe` + `for msg in sub` + `Publish`, a server error code. Needs loopback networking |
-| `kafka.zl` | `std.data.kafka` against a tiny in-process broker (ApiVersions, Metadata, Produce, ListOffsets, Fetch only; bottom of the file): `NewProducer` with gzip batches and linger, `Send(topic, key, value)` partitioned by the Java client's murmur2, a group-less `NewConsumerWith` from the earliest offsets read with `for rec in c`. Needs loopback networking |
-| `s3.zl` | `std.cloud.s3` against a tiny in-memory S3 server (`net.http.test`, no signature check; bottom of the file): `CreateBucket`, `PutObject` with a content type, `HeadObject`, `GetObjectBytes`, `List` iteration, `errors.Is(err, s3.ErrNoSuchKey)`, `Presign`; `std.cloud.blob` with the same calls over `OpenS3` and `OpenDir`. Needs loopback networking |
+| `sql.zl` | `database.sql` over `database.sqlite` (in-memory, linked with `-lsqlite3` only because the program uses the driver): `Exec` with positional `?` and `sql.Named` parameters, `LastInsertId`, typed `db.Query<Book>` with `@sql.column` and a `*float` for NULL, `QueryOne<int>`, `Query<string>`, a transaction with `defer tx.Rollback()`, `errors.Is(err, sql.ErrNoRows)` |
+| `web_app/` | `web` users API over SQLite (models, services, controllers, main, `db.zl` with the `data` entity and context, `migrations/` written by `zell data migration add CreateUsers` and applied by `ctx.Migrate()`; the store's queries are `data` lambdas translated to SQL at compile time, projected to the API model with `Select`, inserts tracked by `SaveChanges`, deletes with `ExecuteDelete`; docs/FRAMEWORK.md §3): `@route`/`@get`/`@post`/`@delete` controllers compiled into the route table by `app.MapControllers<UsersController, AuthController>()`, DI (`AddInstance`, singletons built by `static func New(deps)`, a scoped `Audit` whose `Drop` prints at the end of each request), `@validate` bodies answered with 400 Problem Details, JWT login (`web.auth.jwt`) and `@authorize(roles: ["admin"])` (401/403), `web.Error(409, ...)`, `config.Load` (embedded `appsettings.json` < `APP__` env < args) + `Bind<Settings>`, request logging with request ids through a stdout logger, health checks, the OpenAPI 3.1 document and `/swagger`; every request goes through the in-memory `web.TestServer` client, so the output is deterministic |
+| `redis.zl` | `data.redis` against a tiny in-process RESP server (bottom of the file; the server parses commands with the client's own `redis.ParseReplies`): `redis.Connect`, `Set/Get`, `Incr/IncrBy`, a missing key as `redis.Nil`, `HSetMap/HGetAll`, typed `SetJSON<T>/GetJSON<T>`, a pipeline whose command tasks complete after `Exec`, `TxPipeline` (MULTI/EXEC), `Subscribe` + `for msg in sub` + `Publish`, a server error code. Needs loopback networking |
+| `kafka.zl` | `data.kafka` against a tiny in-process broker (ApiVersions, Metadata, Produce, ListOffsets, Fetch only; bottom of the file): `NewProducer` with gzip batches and linger, `Send(topic, key, value)` partitioned by the Java client's murmur2, a group-less `NewConsumerWith` from the earliest offsets read with `for rec in c`. Needs loopback networking |
+| `s3.zl` | `cloud.s3` against a tiny in-memory S3 server (`net.http.test`, no signature check; bottom of the file): `CreateBucket`, `PutObject` with a content type, `HeadObject`, `GetObjectBytes`, `List` iteration, `errors.Is(err, s3.ErrNoSuchKey)`, `Presign`; `cloud.blob` with the same calls over `OpenS3` and `OpenDir`. Needs loopback networking |
 | `errors_compile/unused_var.zl` | declared and never used local variable |
 | `errors_compile/unhandled_result.zl` | `int!` value used without `?`/`try` |
 | `errors_compile/unhandled_void_result.zl` | `void!` call used as a statement without `?`/`try`/`_ =` |
 | `errors_compile/question_outside_fallible.zl` | `?` inside a function that does not return `T!` |
 | `errors_compile/await_outside_async.zl` | `await` in a non-`async` function |
-| `errors_compile/log_template_args.zl` | `std.log` message template with 2 placeholders and 3 arguments |
+| `errors_compile/log_template_args.zl` | `log` message template with 2 placeholders and 3 arguments |
 | `errors_compile/unknown_ident.zl` | reference to an undeclared name |
 | `errors_compile/type_mismatch.zl` | assigning a `string` to an `int` variable |
 | `errors_compile/missing_return.zl` | `if`/`else if` without final `else` in a function returning `int` |
@@ -146,11 +146,11 @@ per [Output format](#output-format-normative-for-println-fmtformat).
 | `delete` | `delete(m map[K]V, k K)`; no-op if absent |
 | conversions | `float(int) float`, `int(float) int` (truncates toward zero), `int(enum) int` (variant ordinal from 0), `string(char) string` |
 
-**std.io** — `println(args ...any)` (also reachable as `std.io.println`).
+**io** — `println(args ...any)` (also reachable as `io.println`).
 
-**std.fmt** — `Format(template string, args ...any) string`, placeholders `{0}`, `{1}`, ...
+**fmt** — `Format(template string, args ...any) string`, placeholders `{0}`, `{1}`, ...
 
-**std.strings**
+**strings**
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -162,10 +162,10 @@ per [Output format](#output-format-normative-for-println-fmtformat).
 | `Replace` | `Replace(s, old, new string) string` — replaces all occurrences |
 | `ToInt` | `ToInt(s string) int!` — base-10, optional leading `-`; fails on anything else (the error text is not relied on) |
 
-**std.math** — `Sqrt(x float) float`, `Pow(x, y float) float`,
+**math** — `Sqrt(x float) float`, `Pow(x, y float) float`,
 `Floor(x float) float`, `Abs(x float) float`.
 
-**std.strings** (used by `stdlib_strings2.zl`, Go semantics; offsets are bytes, widths are runes)
+**strings** (used by `stdlib_strings2.zl`, Go semantics; offsets are bytes, widths are runes)
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -181,15 +181,15 @@ per [Output format](#output-format-normative-for-println-fmtformat).
 | `Runes` / `FromRunes` | `Runes(s string) []char`, `FromRunes(r []char) string` |
 | `Bytes` / `FromBytes` | `Bytes(s string) []byte`, `FromBytes(b []byte) string` |
 
-**std.math** (more, `stdlib_strings2.zl`) — `Round` (half away from zero), `Trunc`,
+**math** (more, `stdlib_strings2.zl`) — `Round` (half away from zero), `Trunc`,
 `Log2`, `Log10` `(float) float`; `Mod`, `Hypot`, `Atan2(y, x)` `(float, float) float`;
 `IsNaN(x float) bool`, `IsInf(x float, sign int) bool`, `Inf(sign int) float`, `NaN() float`;
 int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
 
-**std.io** (more) — `ReadLines(path string) []string!` (no trailing empty line, `\r` dropped),
+**io** (more) — `ReadLines(path string) []string!` (no trailing empty line, `\r` dropped),
 `WriteLines(path string, lines []string) void!` (each line + `\n`), `WriteFile(path, data string) void!`.
 
-**std.time** (`stdlib_time_os_fs.zl`; instants are `int` Unix milliseconds, UTC)
+**time** (`stdlib_time_os_fs.zl`; instants are `int` Unix milliseconds, UTC)
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -200,11 +200,11 @@ int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
 | `Year` ... `Second` | `Year/Month/Day/Hour/Minute/Second(ms int) int` — UTC calendar fields (month 1..12) |
 | `Weekday` | `Weekday(ms int) int` — 0 = Sunday |
 
-**std.os** — `Args() []string`, `Getenv(name string) string` (`""` if unset),
+**os** — `Args() []string`, `Getenv(name string) string` (`""` if unset),
 `Setenv(name, value string) void!` (empty name fails), `Pid() int`, `Hostname() string!`,
 `Cwd() string!`, `Chdir(path string) void!`, `Exit(code int)`.
 
-**std.fs** (paths are `/`-separated, Go `path/filepath` semantics)
+**fs** (paths are `/`-separated, Go `path/filepath` semantics)
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -218,7 +218,7 @@ int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
 | `Size` / `ModTime` | `(path string) int!` — bytes / Unix ms |
 | `AppendFile` | `AppendFile(path, data string) void!` — creates the file if needed |
 
-**std.crypto.hash / hmac / rand** (`stdlib_crypto.zl`; hex is lowercase)
+**crypto.hash / hmac / rand** (`stdlib_crypto.zl`; hex is lowercase)
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -229,7 +229,7 @@ int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
 | `hmac.Equal` | `Equal(a, b []byte) bool` — constant-time comparison |
 | `rand.Bytes` / `Int` / `Hex` | `Bytes(n int) []byte!`, `Int() int!`, `Hex(n int) string!` (`2n` chars) — OS randomness |
 
-**std.encoding.base64 / hex**
+**encoding.base64 / hex**
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -239,13 +239,13 @@ int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
 | `hex.Encode` / `EncodeString` | `([]byte)` / `(string)` `-> string` |
 | `hex.Decode` / `DecodeString` | `(s string) []byte!` / `string!` — fails on odd length or a non-hex byte |
 
-**std.random** (non-cryptographic; fixed sequence after `Seed`) — `Seed(n int)`, `Int() int`,
+**random** (non-cryptographic; fixed sequence after `Seed`) — `Seed(n int)`, `Int() int`,
 `IntN(n int) int` (`[0, n)`, panics if `n <= 0`), `Float() float` (`[0, 1)`), `Bytes(n int) []byte`,
 `Shuffle(s []int)` (in place).
 
-**std.uuid** — `New() string` (random v4, lowercase), `IsValid(s string) bool`.
+**uuid** — `New() string` (random v4, lowercase), `IsValid(s string) bool`.
 
-**std.errors**
+**errors**
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -255,7 +255,7 @@ int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
 | `Is` | `Is(err, target error) bool` — true if `target` equals `err` or any cause in its chain |
 | `As` | `As(err error, target *T) bool` — `T` is a struct type implementing `error`; if some error in the chain has dynamic type `T`, copies it into `*target` and returns true |
 
-**std.task**
+**task**
 
 | Function | Signature / behaviour |
 |----------|-----------------------|
@@ -267,12 +267,10 @@ int helpers `IMin(a, b int) int`, `IMax(a, b int) int`, `IAbs(a int) int`.
 These are choices made where `DESIGN.md` is silent or ambiguous; each is
 consistent with Go unless stated. Please fold them into the design.
 
-1. **Import rule is applied literally.** `import std.io` gives bare
-   `println`; `import std` gives `strings.Split`, `fmt.Format`,
-   `math.Sqrt`, `errors.Is`, `task.All`. So most examples use
-   `import std.io` + `import std`. (The example program at the end of
-   DESIGN.md writes `import std.strings` and then `strings.Split`, which
-   contradicts the import table; the examples follow the table.)
+1. **Import rule is applied literally.** `import io` gives bare
+   `println`; the stdlib namespaces are top-level, so `strings.Split`,
+   `fmt.Format`, `math.Sqrt`, `errors.Is`, `task.All` work without any
+   import. So most examples only `import io`.
 2. **Entry point.** For a single file, `main` is taken from the file's
    namespace. `main` may be `async func main()`; the runtime awaits it.
 3. **Builtins** `error`, `len`, `append`, `delete`, `panic` and the

@@ -1,4 +1,4 @@
-//! `std.data` end to end: the migrations CLI (`zell data migration add`,
+//! `data` end to end: the migrations CLI (`zell data migration add`,
 //! `update`, `list`, `script`) on SQLite files, and the ORM and the CLI
 //! against a real PostgreSQL server (the temporary cluster of
 //! `support/pgcluster.rs`, shared with `database.rs`). The ORM fixture
@@ -39,9 +39,8 @@ fn data(dir: &Path, args: &[&str], ts: &str) -> String {
 
 const MODEL_V1: &str = r#"namespace shop
 
-import std
-import std.data
-import std.io
+import data
+import io
 
 struct User {
     Id    int

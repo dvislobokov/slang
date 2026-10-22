@@ -3,8 +3,7 @@
 // run-flags: --leak-check
 namespace spec.stdlib.net_ipv6
 
-import std
-import std.io
+import io
 
 async func tcp6() bool! {
     var l = try net.Listen("[::1]:0") catch err {
@@ -30,7 +29,7 @@ async func udp6() bool! {
     }
     var b = net.ListenUDP("[::1]:0")?
     _ = await a.WriteTo(strings.Bytes("dgram6"), b.Local())?
-    var buf = std.bytes.Repeat(strings.Bytes("."), 16)
+    var buf = bytes.Repeat(strings.Bytes("."), 16)
     var d = await b.ReadFrom(buf)?
     var ok = strings.FromBytes(buf[..d.N]) == "dgram6" && d.From.String() == a.Addr()
     a.Close()

@@ -1,9 +1,8 @@
-// test: std.mime agrees with Go mime / mime/quotedprintable / mime/multipart: ParseMediaType (case folding, quoting, RFC 2231 charsets and continuations, errors), FormatMediaType (quoting, RFC 2231 for non-ASCII, sorted keys, invalid types), TypeByExtension, quoted-printable encoding and decoding, a multipart Writer body byte for byte and reading it back
+// test: mime agrees with Go mime / mime/quotedprintable / mime/multipart: ParseMediaType (case folding, quoting, RFC 2231 charsets and continuations, errors), FormatMediaType (quoting, RFC 2231 for non-ASCII, sorted keys, invalid types), TypeByExtension, quoted-printable encoding and decoding, a multipart Writer body byte for byte and reading it back
 // status: passing
 namespace spec.stdlib3.mime_corpus
 
-import std
-import std.io
+import io
 
 func sortStrings(a []string) {
     for i in 1..len(a) {

@@ -1,13 +1,12 @@
-// std.data.kafka: a producer with batching and key partitioning, and a
+// data.kafka: a producer with batching and key partitioning, and a
 // consumer reading it back. So that the example runs anywhere it talks to
 // a tiny in-process broker (bottom of the file: one topic, in-memory log,
 // no consumer groups); point the bootstrap list at a real cluster
 // ("localhost:9092") to use groups (kafka.NewConsumer(brokers, group, topics)).
 namespace examples.kafka
 
-import std.io
-import std
-import std.data
+import io
+import data
 
 async func main() void! {
     var b = startBroker("orders", 3)?

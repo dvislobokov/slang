@@ -1,7 +1,6 @@
 namespace app
 
-import std
-import std.io
+import io
 
 // Debugger fixture (compiler/tests/debug.rs): every value kind, with
 // `// BREAK <name>` markers where the test stops.

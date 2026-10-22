@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors2.block_try_loop_continue
 
-import std
-import std.io
+import io
 
 func Parse(s string) int! {
     return strings.ToInt(s)?

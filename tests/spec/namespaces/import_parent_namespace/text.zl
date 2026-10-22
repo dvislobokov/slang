@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.ns.parent.lib.text
 
-import std
-
 func Shout(s string) string {
     return strings.ToUpper(s) + "!"
 }

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.generics2.default_method_constraint
 
-import std.io
+import io
 
 interface Logger {
     func Log(level int, msg string)

@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.call_non_function
 
-import std.io
+import io
 
 func main() {
     var n = 3

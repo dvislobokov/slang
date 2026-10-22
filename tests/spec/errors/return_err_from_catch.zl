@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors.return_err_from_catch
 
-import std
-import std.io
+import io
 
 const ErrSoft = error("soft")
 

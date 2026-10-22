@@ -1,4 +1,4 @@
-//! TLS end-to-end tests (`std.net.tls`, `std.crypto.x509`):
+//! TLS end-to-end tests (`net.tls`, `crypto.x509`):
 //!
 //! * interop with OpenSSL in both directions: the Zell client against
 //!   `openssl s_server` restricted to TLS 1.3 and to TLS 1.2 (several
@@ -7,7 +7,7 @@
 //!   -tls1_3` / `-tls1_2` against the Zell `tls.Server` (resumption with
 //!   `-sess_out`/`-sess_in`, HelloRetryRequest, client certificates, the
 //!   TLS 1.2 downgrade sentinel);
-//! * HTTPS: the `std.net.http` client against `openssl s_server -www`,
+//! * HTTPS: the `net.http` client against `openssl s_server -www`,
 //!   and `curl` against `http.Server{TLS}`;
 //! * `examples/tls_echo.zl` (Zell to Zell, several worker counts);
 //! * a fuzz smoke test feeding mutated and random input to the X.509

@@ -3,9 +3,8 @@
 // run-flags: --leak-check
 namespace spec.stdlib.http_sse
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 struct Feed {
     connects int

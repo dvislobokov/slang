@@ -1,7 +1,6 @@
 namespace examples.try_block
 
-import std
-import std.io
+import io
 
 struct Config {
     Port    int

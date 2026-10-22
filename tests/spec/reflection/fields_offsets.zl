@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.reflection.fields_offsets
 
-import std
-import std.io
+import io
 
 struct Rec {
     A int8

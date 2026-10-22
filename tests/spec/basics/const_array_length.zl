@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.const_array_length
 
-import std.io
+import io
 
 const N = 2
 const M = N * 2

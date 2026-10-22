@@ -1,6 +1,6 @@
 namespace app
 
-import std.io
+import io
 import liba
 
 func main() {

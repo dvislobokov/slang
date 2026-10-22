@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.closures.returning_closures
 
-import std.io
+import io
 
 func Compose(f func(int) int, g func(int) int) func(int) int {
     return (x int) => g(f(x))

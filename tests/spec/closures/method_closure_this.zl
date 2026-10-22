@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.closures.method_closure_this
 
-import std.io
+import io
 
 struct Acc {
     Total int

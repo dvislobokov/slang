@@ -1,9 +1,8 @@
 namespace tlstest.server
 
-import std.io
-import std
-import std.net
-import std.crypto
+import io
+import net
+import crypto
 
 // Interop server for compiler/tests/tls.rs.
 // args: port cert.pem key.pem conns clientAuth(0-4) readyFile [clientCA.pem]

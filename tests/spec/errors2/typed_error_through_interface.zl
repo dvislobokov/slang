@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.errors2.typed_error_through_interface
 
-import std
-import std.io
+import io
 
 struct NotFound {
     Key string

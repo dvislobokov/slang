@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.async2.async_closure_capture
 
-import std
-import std.io
+import io
 
 async func main() {
     var total = 0

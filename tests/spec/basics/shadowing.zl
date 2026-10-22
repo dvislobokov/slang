@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.basics.shadowing
 
-import std.io
+import io
 
 var level = "global"
 

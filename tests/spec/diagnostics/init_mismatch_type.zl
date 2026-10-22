@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.init_mismatch_type
 
-import std.io
+import io
 
 func main() {
     var n int = "two"

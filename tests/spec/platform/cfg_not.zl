@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.platform.cfg_not
 
-import std.io
+import io
 
 @cfg(not(os: "linux"))
 func Kind() string {

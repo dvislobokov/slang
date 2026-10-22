@@ -103,7 +103,7 @@ fn importing_an_undeclared_transitive_dependency_is_an_error() {
 
     // A fully qualified path without `import` is checked too.
     let main = root.join("phantom/app/src/main.zl");
-    std::fs::write(&main, "namespace app\n\nimport std.io\n\nfunc main() {\n    println(libb.math.Add(1, 2))\n}\n").unwrap();
+    std::fs::write(&main, "namespace app\n\nimport io\n\nfunc main() {\n    println(libb.math.Add(1, 2))\n}\n").unwrap();
     let err = fails(&root.join("phantom/app"), &["check"]);
     assert!(err.contains("cannot use namespace `libb`"), "{err}");
 
@@ -309,7 +309,7 @@ fn cfg_features_and_file_suffixes_in_packages() {
     write("app/zell.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.zl\"\n\n[dependencies]\nlib = { path = \"../lib\", features = [\"fast\"] }\n\n[features]\ndefault = [\"verbose\"]\nverbose = [\"lib/extra\"]\nunused = []\n");
     write(
         "app/src/main.zl",
-        "namespace app\nimport std.io\nimport lib\n@cfg(feature: \"verbose\")\nfunc Mode() string { return \"verbose\" }\n@cfg(feature: \"unused\")\nfunc Mode() string { return nope }\nfunc main() { println(Mode(), lib.Speed(), lib.Extra(), lib.Base(), lib.Os()) }\n",
+        "namespace app\nimport io\n@cfg(feature: \"verbose\")\nfunc Mode() string { return \"verbose\" }\n@cfg(feature: \"unused\")\nfunc Mode() string { return nope }\nfunc main() { println(Mode(), lib.Speed(), lib.Extra(), lib.Base(), lib.Os()) }\n",
     );
     write("lib/zell.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nnamespace = \"lib\"\n\n[features]\ndefault = [\"base\"]\nbase = []\nfast = []\nextra = []\nslow = []\n");
     write(
@@ -494,7 +494,7 @@ fn module_from(sb: &Sandbox, name: &str, releases: &[(&str, Vec<(String, String)
 /// The app project in `dir` depending on `deps`, printing `body`.
 fn app(sb: &Sandbox, dir: &str, deps: &str, imports: &str, body: &str) {
     sb.write(&format!("{dir}/zell.toml"), &format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.zl\"\n\n[dependencies]\n{deps}"));
-    sb.write(&format!("{dir}/src/main.zl"), &format!("namespace app\n\nimport std.io\n{imports}\nfunc main() {{\n    println({body})\n}}\n"));
+    sb.write(&format!("{dir}/src/main.zl"), &format!("namespace app\n\nimport io\n{imports}\nfunc main() {{\n    println({body})\n}}\n"));
 }
 
 /// Modules a (v1.0.0, v1.1.0, v2.0.0) and c (v1.0.0..v1.3.0), b (v1.0.0)
@@ -502,9 +502,9 @@ fn app(sb: &Sandbox, dir: &str, deps: &str, imports: &str, body: &str) {
 fn three_modules(sb: &Sandbox) {
     let c = |v: &str| lib_files("modc", &v[1..], "", &format!("func Name() string {{\n    return \"c{v}\"\n}}"));
     module_from(sb, "c", &[("v1.0.0", c("v1.0.0")), ("v1.1.0", c("v1.1.0")), ("v1.2.0", c("v1.2.0")), ("v1.3.0", c("v1.3.0"))]);
-    let a = |v: &str| lib_files("moda", &v[1..], "\"example.com/c\" = \"^1.1\"\n", &format!("import modc\n\nfunc Name() string {{\n    return \"a{v}+\" + modc.Name()\n}}"));
+    let a = |v: &str| lib_files("moda", &v[1..], "\"example.com/c\" = \"^1.1\"\n", &format!("func Name() string {{\n    return \"a{v}+\" + modc.Name()\n}}"));
     module_from(sb, "a", &[("v1.0.0", a("v1.0.0")), ("v1.1.0", a("v1.1.0")), ("v2.0.0", a("v2.0.0"))]);
-    let b = lib_files("modb", "1.0.0", "\"example.com/c\" = \"^1.2\"\n", "import modc\n\nfunc Name() string {\n    return \"b+\" + modc.Name()\n}");
+    let b = lib_files("modb", "1.0.0", "\"example.com/c\" = \"^1.2\"\n", "func Name() string {\n    return \"b+\" + modc.Name()\n}");
     module_from(sb, "b", &[("v1.0.0", b)]);
 }
 
@@ -514,7 +514,7 @@ fn git_dependencies_resolve_from_tags_with_mvs() {
     let sb = Sandbox::new("mvs");
     three_modules(&sb);
     let env = sb.env(true);
-    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n\"example.com/b\" = \"^1\"\n", "import moda\nimport modb\n", "moda.Name(), modb.Name()");
+    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n\"example.com/b\" = \"^1\"\n", "", "moda.Name(), modb.Name()");
     let out = sb.ok("p", &["run"], &env);
     // MVS: a at its minimum v1.0.0; c at max(min(^1.1), min(^1.2)) = v1.2.0.
     assert!(out.ends_with("av1.0.0+cv1.2.0 b+cv1.2.0\n"), "{out}");
@@ -560,14 +560,14 @@ fn git_pins_aliases_and_version_errors() {
     let d = lib_files("modd", "0.1.0", "", "func Name() string {\n    return \"d-main\"\n}");
     module_from(&sb, "d", &[("v0.1.0", d.clone()), ("branch:main", lib_files("modd", "0.2.0", "", "func Name() string {\n    return \"d-head\"\n}"))]);
     let deps = "cee = { git = \"https://example.com/c\", version = \"~1.1\" }\n\"example.com/d\" = { git = \"example.com/d\", branch = \"main\" }\n";
-    app(&sb, "p", deps, "import modc\nimport modd\n", "modc.Name(), modd.Name()");
+    app(&sb, "p", deps, "", "modc.Name(), modd.Name()");
     let out = sb.ok("p", &["run"], &env);
     assert!(out.ends_with("cv1.1.0 d-head\n"), "{out}");
     let lock = sb.read("p/zell.lock");
     assert!(lock.contains("source: git+https://example.com/d?branch=main#"), "{lock}");
     assert!(lock.contains("version: v0.0.0-"), "branch pins get a pseudo-version: {lock}");
     // Tag and rev pins.
-    app(&sb, "p", "\"example.com/d\" = { git = \"example.com/d\", tag = \"v0.1.0\" }\n", "import modd\n", "modd.Name()");
+    app(&sb, "p", "\"example.com/d\" = { git = \"example.com/d\", tag = \"v0.1.0\" }\n", "", "modd.Name()");
     assert!(sb.ok("p", &["run"], &env).ends_with("d-main\n"));
     // Errors: no matching version; two majors; a version without a module path.
     app(&sb, "p", "\"example.com/c\" = \"^3\"\n", "", "1");
@@ -587,7 +587,7 @@ fn lock_file_with_modules_is_deterministic_and_locked() {
     three_modules(&sb);
     let env = sb.env(true);
     for p in ["p1", "p2"] {
-        app(&sb, p, "\"example.com/b\" = \"^1\"\n\"example.com/a\" = \"^1.0\"\n", "import moda\nimport modb\n", "moda.Name(), modb.Name()");
+        app(&sb, p, "\"example.com/b\" = \"^1\"\n\"example.com/a\" = \"^1.0\"\n", "", "moda.Name(), modb.Name()");
     }
     sb.ok("p1", &["install"], &env);
     sb.ok("p2", &["check"], &env);
@@ -599,7 +599,7 @@ fn lock_file_with_modules_is_deterministic_and_locked() {
     sb.ok("p1", &["install", "--locked"], &env);
     assert_eq!(sb.read("p1/zell.lock"), l1, "re-install keeps the lock byte for byte");
     // A stricter constraint needs a new lock.
-    app(&sb, "p1", "\"example.com/b\" = \"^1\"\n\"example.com/a\" = \"^1.1\"\n", "import moda\nimport modb\n", "1");
+    app(&sb, "p1", "\"example.com/b\" = \"^1\"\n\"example.com/a\" = \"^1.1\"\n", "", "1");
     let err = sb.fails("p1", &["install", "--locked"], &env);
     assert!(err.contains("--locked"), "{err}");
 }
@@ -642,7 +642,7 @@ fn proxy_server_round_trip_and_checksum_log() {
     let mut env = sb.env(false);
     env.push(("ZELL_PROXY".into(), proxy.url.clone()));
     env.push(("ZELL_SUMDB".into(), format!("{}/sumdb", proxy.url)));
-    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n\"example.com/b\" = \"^1\"\n", "import moda\nimport modb\n", "moda.Name(), modb.Name()");
+    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n\"example.com/b\" = \"^1\"\n", "", "moda.Name(), modb.Name()");
     sb.ok("p", &["install"], &env);
     sb.ok("p", &["check"], &env);
     for f in ["example.com/c/@v/list", "example.com/c/@v/v1.2.0.info", "example.com/c/@v/v1.2.0.manifest", "example.com/c/@v/v1.2.0.zip", "sumdb/latest", "sumdb/lookup/example.com/c@v1.2.0"] {
@@ -663,12 +663,12 @@ fn proxy_server_round_trip_and_checksum_log() {
     env2.push(("ZELL_STORE".into(), sb.path("store2").display().to_string()));
     env2.push(("ZELL_PROXY".into(), mirror.url.clone()));
     env2.push(("ZELL_SUMDB".into(), format!("{}/sumdb", mirror.url)));
-    app(&sb, "q", "\"example.com/b\" = \"^1\"\n", "import modb\n", "modb.Name()");
+    app(&sb, "q", "\"example.com/b\" = \"^1\"\n", "", "modb.Name()");
     sb.ok("q", &["install"], &env2);
     // Unknown on the mirror (404): `,direct` falls back to git.
     let d = lib_files("modd", "0.1.0", "", "func Name() string {\n    return \"d\"\n}");
     module_from(&sb, "d", &[("v0.1.0", d)]);
-    app(&sb, "q", "\"example.com/b\" = \"^1\"\n\"example.com/d\" = \"^0.1\"\n", "import modb\nimport modd\n", "modb.Name(), modd.Name()");
+    app(&sb, "q", "\"example.com/b\" = \"^1\"\n\"example.com/d\" = \"^0.1\"\n", "", "modb.Name(), modd.Name()");
     let err = sb.fails("q", &["install"], &env2);
     assert!(err.contains("example.com/d"), "{err}");
     let mut env3 = sb.env(true);
@@ -695,7 +695,7 @@ fn checksum_mismatch_is_rejected() {
     let mut env = sb.env(false);
     env.push(("ZELL_PROXY".into(), proxy.url.clone()));
     env.push(("ZELL_SUMDB".into(), format!("{}/sumdb", proxy.url)));
-    app(&sb, "p", "\"example.com/c\" = \"^1.2\"\n", "import modc\n", "modc.Name()");
+    app(&sb, "p", "\"example.com/c\" = \"^1.2\"\n", "", "modc.Name()");
     sb.ok("p", &["install"], &env);
     // Replace the cached archive with different content: the log says otherwise.
     let zip = sb.path("cache/example.com/c/@v/v1.2.0.zip");
@@ -733,7 +733,7 @@ fn store_deduplicates_across_projects_and_installs_offline() {
     three_modules(&sb);
     let env = sb.env(true);
     for p in ["p1", "p2"] {
-        app(&sb, p, "\"example.com/b\" = \"^1\"\n", "import modb\n", "modb.Name()");
+        app(&sb, p, "\"example.com/b\" = \"^1\"\n", "", "modb.Name()");
     }
     sb.ok("p1", &["install"], &env);
     let count = || std::fs::read_dir(sb.path("store/files")).unwrap().count();
@@ -770,7 +770,7 @@ fn vendor_directory_replaces_store_and_network() {
     let sb = Sandbox::new("vendor");
     three_modules(&sb);
     let env = sb.env(true);
-    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n", "import moda\n", "moda.Name()");
+    app(&sb, "p", "\"example.com/a\" = \"^1.0\"\n", "", "moda.Name()");
     sb.ok("p", &["vendor"], &env);
     assert!(sb.path("p/vendor/modules.yaml").is_file());
     assert!(sb.path("p/vendor/example.com/c@v1.1.0/src/lib.zl").is_file());
@@ -791,11 +791,11 @@ fn vendor_directory_replaces_store_and_network() {
 #[test]
 fn std_loads_from_disk_and_falls_back_to_embedded() {
     let sb = Sandbox::new("std");
-    // A std tree with one extra function in std.cmp.
+    // A std tree with one extra function in cmp.
     copy_dir(&repo().join("std"), &sb.path("std"));
     let cmp = sb.path("std/cmp/cmp.zl");
     std::fs::write(&cmp, std::fs::read_to_string(&cmp).unwrap() + "\n// FromDisk exists only in this copy.\nfunc FromDisk() int {\n    return 7\n}\n").unwrap();
-    sb.write("x/main.zl", "namespace app\n\nimport std.io\nimport std.cmp\n\nfunc main() {\n    println(FromDisk())\n}\n");
+    sb.write("x/main.zl", "namespace app\n\nimport io\nimport cmp\n\nfunc main() {\n    println(FromDisk())\n}\n");
     let mut env = sb.env(false);
     env.push(("ZELL_STD".into(), sb.path("std").display().to_string()));
     sb.ok("x", &["check", "main.zl"], &env);
@@ -807,10 +807,23 @@ fn std_loads_from_disk_and_falls_back_to_embedded() {
     env2.push(("ZELL_STD".into(), sb.path("empty").display().to_string()));
     let err = sb.fails("x", &["check", "main.zl"], &env2);
     assert!(err.contains("FromDisk"), "{err}");
-    sb.write("y/main.zl", "namespace app\n\nimport std.io\nimport std.cmp\n\nfunc main() {\n    println(Compare(1, 2))\n}\n");
+    sb.write("y/main.zl", "namespace app\n\nimport io\nimport cmp\n\nfunc main() {\n    println(Compare(1, 2))\n}\n");
     sb.ok("y", &["check", "main.zl"], &env2);
     let all = sb.ok("x", &["env"], &env);
     for v in ["ZELL_STD=", "ZELL_HOME=", "ZELL_STORE=", "ZELL_PROXY=\"direct\""] {
         assert!(all.contains(v), "{all}");
     }
+}
+
+#[test]
+fn package_cannot_own_a_stdlib_root() {
+    for (name, ns) in [("io", ""), ("myhttp", "net"), ("oldstd", "std")] {
+        let ns_line = if ns.is_empty() { String::new() } else { format!("namespace = \"{ns}\"\n") };
+        let text = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n{ns_line}");
+        let err = zell::package::Manifest::parse(&text, Format::Toml).unwrap().validate().unwrap_err();
+        let root = if ns.is_empty() { name } else { ns };
+        assert!(err.contains(&format!("cannot own the namespace `{root}`")), "{err}");
+    }
+    let ok = "[package]\nname = \"iox\"\nversion = \"0.1.0\"\n";
+    assert!(zell::package::Manifest::parse(ok, Format::Toml).unwrap().validate().is_ok());
 }

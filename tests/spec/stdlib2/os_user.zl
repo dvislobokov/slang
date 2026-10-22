@@ -1,11 +1,10 @@
-// test: std.os.user Current, Lookup, LookupId, LookupGroup(Id) against the passwd/group databases
+// test: os.user Current, Lookup, LookupId, LookupGroup(Id) against the passwd/group databases
 // status: passing
 // run-flags: --leak-check
 namespace spec.stdlib2.os_user
 
-import std
-import std.io
-import std.os
+import io
+import os
 
 func main() void! {
     var me = user.Current()?

@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.attributes2.targets_namespace_violation_error
 
-import std
-import std.io
+import io
 
 @attribute(targets: [reflect.Target.Namespace])
 struct module {

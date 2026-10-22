@@ -2,7 +2,7 @@
 // status: passing
 namespace spec.diagnostics.for_range_mixed_types
 
-import std.io
+import io
 
 func main() {
     var a int8 = 0

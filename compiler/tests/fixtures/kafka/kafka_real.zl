@@ -1,4 +1,4 @@
-// std.data.kafka against a real broker (compiler/tests/kafka.rs, ignored
+// data.kafka against a real broker (compiler/tests/kafka.rs, ignored
 // unless KAFKA_BROKERS is set; see README.md next to this file). The
 // topics get a unique suffix so the program can run repeatedly against
 // the same cluster.
@@ -9,9 +9,8 @@
 //                     (SCRAM-SHA-256), carol/carol-secret (SCRAM-SHA-512)
 namespace kafkareal
 
-import std.io
-import std
-import std.data
+import io
+import data
 
 func brokers() []string {
     return strings.Split(os.Getenv("KAFKA_BROKERS"), ",")

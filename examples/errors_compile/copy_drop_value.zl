@@ -1,7 +1,7 @@
 // error: cannot copy a value of type File: it has a destructor (Drop), so it is move-only
 namespace app
 
-import std.io
+import io
 
 struct File {
     name string

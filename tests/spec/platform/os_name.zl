@@ -2,8 +2,7 @@
 // status: passing
 namespace spec.platform.os_name
 
-import std
-import std.io
+import io
 
 func main() {
     println(os.Name)

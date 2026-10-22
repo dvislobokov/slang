@@ -2,8 +2,6 @@
 // status: passing
 namespace spec.data.err_ignored_field
 
-import std
-
 struct User {
     Id    int
     Name  string
