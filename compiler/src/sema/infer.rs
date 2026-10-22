@@ -205,6 +205,7 @@ impl<'a> Sema<'a> {
                 return e;
             }
         }
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         let (decl, name) = match tm.decl {
             TmplDecl::Func(d) | TmplDecl::Method(d, _) => (d, tm.name.clone()),

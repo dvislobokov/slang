@@ -179,6 +179,14 @@ impl<'a> Sema<'a> {
         }
     }
 
+    /// Loads every library module (the IDE index of the stdlib lists
+    /// their members).
+    pub(crate) fn load_all_modules(&mut self) {
+        for m in 0..MODULES.len() {
+            self.load_module(m);
+        }
+    }
+
     fn load_module(&mut self, m: usize) {
         if self.refl.loaded.len() < MODULES.len() {
             self.refl.loaded.resize(MODULES.len(), false);

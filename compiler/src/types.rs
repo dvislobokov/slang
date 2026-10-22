@@ -86,7 +86,7 @@ pub struct FuncSig {
 }
 
 /// Interned type storage.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TypeTable {
     types: Vec<Type>,
     index: HashMap<Type, TypeId>,

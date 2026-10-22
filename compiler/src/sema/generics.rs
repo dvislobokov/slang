@@ -88,6 +88,13 @@ pub(crate) struct Template<'a> {
     /// Created by the instantiation of a generic struct (checked as part of
     /// the struct's abstract check).
     pub nested: bool,
+    /// Generated from user code (`std.web`, `std.data` expansions), not a
+    /// library source.
+    pub generated: bool,
+    /// A stdlib template whose module is not parsed yet: (module, index of
+    /// the declaration); `decl` is a placeholder of the right kind until
+    /// [`Sema::force_template`].
+    pub lazy: Option<(u32, u32)>,
 }
 
 /// What an instantiation produced.
@@ -243,6 +250,8 @@ impl<'a> Sema<'a> {
             root: t,
             failed: false,
             nested,
+            generated: false,
+            lazy: None,
         });
         t
     }
@@ -539,8 +548,9 @@ impl<'a> Sema<'a> {
         if args.iter().any(|a| self.tt.is_invalid(*a)) {
             return None;
         }
-        if let Some(i) = self.gen.cache.get(&(t, args.clone())) {
-            return Some(*i);
+        if let Some(&i) = self.gen.cache.get(&(t, args.clone())) {
+            self.unit_memo(units::MemoKey::Inst(i.into()));
+            return Some(i);
         }
         if !self.check_bounds(t, &args, span) {
             return None;
@@ -555,9 +565,11 @@ impl<'a> Sema<'a> {
     /// Instance of a generic function or method (constraints not checked).
     pub(crate) fn instantiate_func(&mut self, t: u32, args: Vec<TypeId>, span: Span) -> Option<FuncId> {
         let key = (t, args.clone());
-        if let Some(Inst::Func(f)) = self.gen.cache.get(&key) {
-            return Some(*f);
+        if let Some(&Inst::Func(f)) = self.gen.cache.get(&key) {
+            self.unit_memo(units::MemoKey::Inst(Inst::Func(f).into()));
+            return Some(f);
         }
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         let (decl, owner) = match tm.decl {
             TmplDecl::Func(d) => (d, None),
@@ -572,6 +584,8 @@ impl<'a> Sema<'a> {
         let env = self.env_of(t, &args);
         let note = self.note_for(&name, &args);
         let hns = self.inst_hir_ns(t, self.cur_ns);
+        let node = self.unit_new_node();
+        let unit_prev = self.unit_enter(node);
         let saved = self.enter(t, env.clone(), note.clone());
         let (kind, src, local) = match owner {
             Some(s) => (FuncKind::Method { struct_id: s, is_static: decl.is_static }, FuncSrc::Method(decl, s), format!("{}.{name}", self.structs[s as usize].name)),
@@ -585,18 +599,23 @@ impl<'a> Sema<'a> {
         f.symbol = symbol;
         f.namespace = hns;
         self.gen.cache.insert(key, Inst::Func(fid));
+        self.unit_bind(node, units::MemoKey::Inst(Inst::Func(fid).into()));
+        self.unit_bind_func(node, fid);
         self.gen.insts.insert(fid.0, InstFunc { env, file: self.cur_file, ns: self.cur_ns, root, note, depth: self.gen.depth });
         self.resolve_func_sig(fid.0 as usize);
         self.leave(saved);
+        self.unit_leave(unit_prev);
         Some(fid)
     }
 
     /// Instance of a generic struct, with its methods.
     pub(crate) fn instantiate_struct(&mut self, t: u32, args: Vec<TypeId>, span: Span) -> Option<u32> {
         let key = (t, args.clone());
-        if let Some(Inst::Struct(s)) = self.gen.cache.get(&key) {
-            return Some(*s);
+        if let Some(&Inst::Struct(s)) = self.gen.cache.get(&key) {
+            self.unit_memo(units::MemoKey::Inst(Inst::Struct(s).into()));
+            return Some(s);
         }
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         let TmplDecl::Struct(decl) = tm.decl else { return None };
         let (root, tname, ns) = (tm.root, tm.name.clone(), tm.ns);
@@ -609,6 +628,8 @@ impl<'a> Sema<'a> {
         let env = self.env_of(t, &args);
         let note = self.note_for(&name, &args);
         let hns = self.inst_hir_ns(t, self.cur_ns);
+        let node = self.unit_new_node();
+        let unit_prev = self.unit_enter(node);
         let saved = self.enter(t, env.clone(), note.clone());
         let sid = self.structs.len() as u32;
         self.structs.push(hir::Struct {
@@ -625,6 +646,7 @@ impl<'a> Sema<'a> {
         });
         self.struct_src.push(decl);
         self.gen.cache.insert(key, Inst::Struct(sid));
+        self.unit_bind(node, units::MemoKey::Inst(Inst::Struct(sid).into()));
         self.gen.inst_structs.insert(sid, (t, args));
         self.resolve_struct_fields(sid as usize);
         self.check_recursive_struct(sid as usize);
@@ -655,6 +677,7 @@ impl<'a> Sema<'a> {
             self.funcs[fid.0 as usize].symbol = symbol;
             self.funcs[fid.0 as usize].namespace = hns;
             self.structs[sid as usize].methods.push((m.name.name.clone(), fid));
+            self.unit_bind_func(node, fid);
             self.gen.insts.insert(fid.0, InstFunc { env: env.clone(), file: self.cur_file, ns: self.cur_ns, root, note: note.clone(), depth: self.gen.depth });
             self.resolve_func_sig(fid.0 as usize);
         }
@@ -663,15 +686,18 @@ impl<'a> Sema<'a> {
         }
         self.std_instance_hook(sid);
         self.leave(saved);
+        self.unit_leave(unit_prev);
         Some(sid)
     }
 
     /// Instance of a generic enum.
     pub(crate) fn instantiate_enum(&mut self, t: u32, args: Vec<TypeId>, span: Span) -> Option<u32> {
         let key = (t, args.clone());
-        if let Some(Inst::Enum(e)) = self.gen.cache.get(&key) {
-            return Some(*e);
+        if let Some(&Inst::Enum(e)) = self.gen.cache.get(&key) {
+            self.unit_memo(units::MemoKey::Inst(Inst::Enum(e).into()));
+            return Some(e);
         }
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         let TmplDecl::Enum(decl) = tm.decl else { return None };
         let (tname, ns) = (tm.name.clone(), tm.ns);
@@ -684,6 +710,8 @@ impl<'a> Sema<'a> {
         let env = self.env_of(t, &args);
         let note = self.note_for(&name, &args);
         let hns = self.inst_hir_ns(t, self.cur_ns);
+        let node = self.unit_new_node();
+        let unit_prev = self.unit_enter(node);
         let saved = self.enter(t, env, note);
         let eid = self.enums.len() as u32;
         self.enums.push(hir::Enum {
@@ -700,9 +728,11 @@ impl<'a> Sema<'a> {
         });
         self.enum_src.push(decl);
         self.gen.cache.insert(key, Inst::Enum(eid));
+        self.unit_bind(node, units::MemoKey::Inst(Inst::Enum(eid).into()));
         self.gen.inst_enums.insert(eid, (t, args));
         self.resolve_enum_variants(eid as usize);
         self.leave(saved);
+        self.unit_leave(unit_prev);
         Some(eid)
     }
 
@@ -758,6 +788,9 @@ impl<'a> Sema<'a> {
         if self.gen.templates[info.root as usize].failed || self.gen.skip_body.contains(&fid.0) {
             return;
         }
+        if self.unit.is_some() && self.unit_skips_instance(fid) {
+            return;
+        }
         let saved = Saved {
             file: std::mem::replace(&mut self.cur_file, info.file),
             ns: std::mem::replace(&mut self.cur_ns, info.ns),
@@ -767,7 +800,9 @@ impl<'a> Sema<'a> {
             depth: std::mem::replace(&mut self.gen.depth, info.depth),
             muted: false,
         };
+        let unit_prev = self.unit_enter(self.unit_func_node(fid));
         self.check_body_in_scope(fid, decl, body);
+        self.unit_leave(unit_prev);
         self.leave(saved);
     }
 
@@ -781,6 +816,9 @@ impl<'a> Sema<'a> {
 
     /// Drops every declaration created after `m`.
     fn rollback(&mut self, m: Mark) {
+        if let Some(u) = self.unit.as_mut() {
+            u.rollback(m.funcs, m.structs, m.enums);
+        }
         self.reflect_rollback(m.funcs);
         self.funcs.truncate(m.funcs);
         self.func_src.truncate(m.funcs);
@@ -823,6 +861,8 @@ impl<'a> Sema<'a> {
             };
             let before = self.error_count();
             let mark = self.mark();
+            let node = self.unit_file_node(self.gen.templates[t as usize].file);
+            let unit_prev = self.unit_enter(node);
             let saved_fns = std::mem::take(&mut self.fns);
             let args = self.param_types(t);
             match self.gen.templates[t as usize].decl {
@@ -852,6 +892,7 @@ impl<'a> Sema<'a> {
                 }
             }
             self.fns = saved_fns;
+            self.unit_leave(unit_prev);
             self.rollback(mark);
             if self.error_count() > before {
                 self.gen.templates[t as usize].failed = true;

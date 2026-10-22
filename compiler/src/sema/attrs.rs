@@ -388,6 +388,7 @@ impl<'a> Sema<'a> {
     /// first use as an attribute, marked as attribute structs and given
     /// their own attribute values (field defaults, `targets`).
     fn std_attribute_struct(&mut self, t: u32, span: Span) -> Option<u32> {
+        self.force_template(t);
         let tm = &self.gen.templates[t as usize];
         if !tm.is_std || !tm.params.is_empty() {
             return None;

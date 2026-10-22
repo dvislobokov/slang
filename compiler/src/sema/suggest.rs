@@ -34,7 +34,7 @@ pub(crate) fn closest<'c>(name: &str, candidates: impl IntoIterator<Item = &'c s
         .filter(|c| *c != name && !c.is_empty() && !c.starts_with('$'))
         .map(|c| (distance(name, c), c))
         .filter(|(d, _)| *d <= limit)
-        .min_by_key(|(d, c)| (*d, c.len()))
+        .min_by_key(|(d, c)| (*d, c.len(), *c))
         .map(|(_, c)| c)
 }
 

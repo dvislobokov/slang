@@ -245,9 +245,21 @@ impl<'a> Sema<'a> {
 
     /// Builds the model of every context's entities (once).
     pub(crate) fn orm_universe(&mut self) {
+        // Unit mode: the model belongs to every file that needs it.
+        let node = self.unit_memo(super::units::MemoKey::OrmUniverse);
         if self.orm.universe {
             return;
         }
+        let prev = self.unit_enter(node);
+        // Built once for the whole program: its diagnostics do not depend
+        // on the code that needs it first (an instance being muted, say).
+        let saved = (std::mem::take(&mut self.gen.mute), self.gen.note.take());
+        self.orm_universe_build();
+        (self.gen.mute, self.gen.note) = saved;
+        self.unit_leave(prev);
+    }
+
+    fn orm_universe_build(&mut self) {
         self.orm.universe = true;
         let mut contexts = Vec::new();
         for sid in 0..self.structs.len() as u32 {
@@ -278,12 +290,22 @@ impl<'a> Sema<'a> {
     /// The model of entity type `t` (an error was reported if `None`).
     pub(crate) fn orm_model(&mut self, t: TypeId) -> Option<Rc<EntModel>> {
         self.orm_universe();
+        let node = self.unit_memo(super::units::MemoKey::OrmModel(t));
         if let Some(m) = self.orm.models.get(&t) {
             return Some(m.clone());
         }
         if self.orm.failed.contains(&t) {
             return None;
         }
+        let prev = self.unit_enter(node);
+        let saved = (std::mem::take(&mut self.gen.mute), self.gen.note.take());
+        let m = self.orm_model_build(t);
+        (self.gen.mute, self.gen.note) = saved;
+        self.unit_leave(prev);
+        m
+    }
+
+    fn orm_model_build(&mut self, t: TypeId) -> Option<Rc<EntModel>> {
         let m = self.orm_build(t)?;
         // relations of an entity outside every context
         let targets: Vec<TypeId> = m.navs.iter().map(|n| n.target).collect();

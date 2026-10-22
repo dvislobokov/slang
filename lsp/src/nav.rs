@@ -15,7 +15,7 @@
 use crate::assist::Walker;
 use slang::ast;
 use slang::diagnostics::Diagnostics;
-use slang::hir::{FuncId, LocalKind, MethodSig};
+use slang::hir::{FuncId, LocalKind, MethodSig, Program};
 use slang::sema::index::{SymKey, SymbolKind};
 use slang::session::Analysis;
 use slang::span::Span;
@@ -86,39 +86,46 @@ fn ast_name_at(f: &ast::File, span: Span) -> Option<&ast::Ident> {
     None
 }
 
-fn struct_target(a: &Analysis, sid: u32) -> Option<Target> {
-    let st = a.hir.structs.get(sid as usize)?;
-    decl_target(a, Some(SymKey::Struct(sid)), &st.full_name, st.file, st.span)
+/// The program a lookup works in: [`Analysis::hir`] (types only, the ids
+/// of the symbol index) or the full program with functions
+/// ([`Analysis::program_partial`], its own ids).
+fn in_hir(a: &Analysis, p: &Program) -> bool {
+    std::ptr::eq(p, &a.hir)
 }
 
-fn enum_target(a: &Analysis, eid: u32) -> Option<Target> {
-    let e = a.hir.enums.get(eid as usize)?;
-    decl_target(a, Some(SymKey::Enum(eid)), &e.full_name, e.file, e.span)
+fn struct_target(a: &Analysis, p: &Program, sid: u32) -> Option<Target> {
+    let st = p.structs.get(sid as usize)?;
+    decl_target(a, in_hir(a, p).then_some(SymKey::Struct(sid)), &st.full_name, st.file, st.span)
 }
 
-fn iface_target(a: &Analysis, iid: u32) -> Option<Target> {
-    let i = a.hir.interfaces.get(iid as usize)?;
-    decl_target(a, Some(SymKey::Interface(iid)), &i.full_name, i.file, i.span)
+fn enum_target(a: &Analysis, p: &Program, eid: u32) -> Option<Target> {
+    let e = p.enums.get(eid as usize)?;
+    decl_target(a, in_hir(a, p).then_some(SymKey::Enum(eid)), &e.full_name, e.file, e.span)
 }
 
-fn func_target(a: &Analysis, f: FuncId) -> Option<Target> {
-    let func = a.hir.funcs.get(f.0 as usize)?;
-    decl_target(a, Some(SymKey::Func(f.0)), &func.full_name, func.file, func.span)
+fn iface_target(a: &Analysis, p: &Program, iid: u32) -> Option<Target> {
+    let i = p.interfaces.get(iid as usize)?;
+    decl_target(a, in_hir(a, p).then_some(SymKey::Interface(iid)), &i.full_name, i.file, i.span)
+}
+
+fn func_target(a: &Analysis, p: &Program, f: FuncId) -> Option<Target> {
+    let func = p.funcs.get(f.0 as usize)?;
+    decl_target(a, None, &func.full_name, func.file, func.span)
 }
 
 /// Whether function `f` (a method; its `this` is not compared) has the
 /// signature of interface method `m`.
-fn same_signature(a: &Analysis, f: FuncId, m: &MethodSig) -> bool {
-    let Some(func) = a.hir.funcs.get(f.0 as usize) else { return false };
+fn same_signature(p: &Program, f: FuncId, m: &MethodSig) -> bool {
+    let Some(func) = p.funcs.get(f.0 as usize) else { return false };
     let params: Vec<TypeId> = func.params.iter().filter_map(|l| func.locals.get(l.0 as usize)).filter(|l| l.kind != LocalKind::This).map(|l| l.ty).collect();
     params == m.params && func.ret == m.ret && !func.is_async
 }
 
 /// The non-static method `name` of struct `sid`, following embedded
 /// structs (the shallowest promotion wins, as in sema).
-fn find_method(a: &Analysis, sid: u32, name: &str, depth: usize) -> Option<(FuncId, usize)> {
-    let st = a.hir.structs.get(sid as usize)?;
-    if let Some((_, f)) = st.methods.iter().find(|(n, f)| n == name && !is_static(a, *f)) {
+fn find_method(p: &Program, sid: u32, name: &str, depth: usize) -> Option<(FuncId, usize)> {
+    let st = p.structs.get(sid as usize)?;
+    if let Some((_, f)) = st.methods.iter().find(|(n, f)| n == name && !is_static(p, *f)) {
         return Some((*f, depth));
     }
     if depth > 8 {
@@ -127,43 +134,43 @@ fn find_method(a: &Analysis, sid: u32, name: &str, depth: usize) -> Option<(Func
     st.fields
         .iter()
         .filter(|f| f.embedded)
-        .filter_map(|f| match a.hir.types.get(f.ty) {
-            Type::Struct(d) => find_method(a, d.0, name, depth + 1),
+        .filter_map(|f| match p.types.get(f.ty) {
+            Type::Struct(d) => find_method(p, d.0, name, depth + 1),
             _ => None,
         })
         .min_by_key(|x| x.1)
 }
 
-fn is_static(a: &Analysis, f: FuncId) -> bool {
-    a.hir.funcs.get(f.0 as usize).is_some_and(|f| matches!(f.kind, slang::hir::FuncKind::Method { is_static: true, .. }))
+fn is_static(p: &Program, f: FuncId) -> bool {
+    p.funcs.get(f.0 as usize).is_some_and(|f| matches!(f.kind, slang::hir::FuncKind::Method { is_static: true, .. }))
 }
 
-fn method_of(a: &Analysis, imp: Implementor, name: &str) -> Option<FuncId> {
+fn method_of(p: &Program, imp: Implementor, name: &str) -> Option<FuncId> {
     match imp {
-        Implementor::Struct(s) => find_method(a, s, name, 0).map(|x| x.0),
-        Implementor::Enum(e) => a.hir.enums.get(e as usize)?.methods.iter().find(|(n, _)| n == name).map(|x| x.1),
+        Implementor::Struct(s) => find_method(p, s, name, 0).map(|x| x.0),
+        Implementor::Enum(e) => p.enums.get(e as usize)?.methods.iter().find(|(n, _)| n == name).map(|x| x.1),
     }
 }
 
-/// The structs and enums implementing interface `iid`.
-fn implementors(a: &Analysis, iid: u32) -> Vec<Implementor> {
-    let Some(it) = a.hir.interfaces.get(iid as usize) else { return Vec::new() };
+/// The structs and enums implementing interface `iid` of `p`.
+fn implementors(p: &Program, iid: u32) -> Vec<Implementor> {
+    let Some(it) = p.interfaces.get(iid as usize) else { return Vec::new() };
     let is_std = |n: &str| n.starts_with("std.");
     // Sealed: only types of the interface's own namespace.
     let allowed = |ns: slang::hir::NamespaceId, full: &str| !it.sealed || (ns == it.namespace && is_std(full) == is_std(&it.full_name));
     let satisfies = |imp: Implementor| {
-        it.methods.iter().all(|m| match method_of(a, imp, &m.name) {
-            Some(f) => same_signature(a, f, m),
+        it.methods.iter().all(|m| match method_of(p, imp, &m.name) {
+            Some(f) => same_signature(p, f, m),
             None => m.default.is_some(),
         })
     };
     let mut out = Vec::new();
-    for (i, st) in a.hir.structs.iter().enumerate() {
+    for (i, st) in p.structs.iter().enumerate() {
         if allowed(st.namespace, &st.full_name) && !st.is_attribute && satisfies(Implementor::Struct(i as u32)) {
             out.push(Implementor::Struct(i as u32));
         }
     }
-    for (i, e) in a.hir.enums.iter().enumerate() {
+    for (i, e) in p.enums.iter().enumerate() {
         if allowed(e.namespace, &e.full_name) && satisfies(Implementor::Enum(i as u32)) {
             out.push(Implementor::Enum(i as u32));
         }
@@ -179,30 +186,41 @@ fn push_unique(out: &mut Vec<Target>, t: Option<Target>) {
     }
 }
 
+/// The interface of the full program `p` with the full name `full_name`.
+fn iface_in(p: &Program, full_name: &str) -> Option<u32> {
+    let full = strip_type_args(full_name);
+    p.interfaces.iter().position(|i| strip_type_args(&i.full_name) == full).map(|i| i as u32)
+}
+
 /// `textDocument/implementation` at `off`: for an interface, the types
 /// implementing it; for an interface method, the implementing methods
-/// (types that rely on a default body are skipped).
+/// (types that rely on a default body are skipped). Needs the methods of
+/// every type, so it works on the full program ([`Analysis::program_partial`]).
 pub(crate) fn implementations(a: &Analysis, file: usize, off: u32) -> Vec<Target> {
     let Some(id) = a.symbol_at(file, off) else { return Vec::new() };
     let mut out = Vec::new();
     match a.index.symbol(id).key {
-        SymKey::Interface(iid) => {
+        SymKey::Interface(_) => {
+            let p = a.program_partial();
+            let Some(iid) = iface_in(p, &a.index.symbol(id).full_name) else { return out };
             // Interfaces are not their own implementations, and a value of
             // an interface type is not an implementation either.
-            for imp in implementors(a, iid) {
+            for imp in implementors(p, iid) {
                 push_unique(
                     &mut out,
                     match imp {
-                        Implementor::Struct(s) => struct_target(a, s),
-                        Implementor::Enum(e) => enum_target(a, e),
+                        Implementor::Struct(s) => struct_target(a, p, s),
+                        Implementor::Enum(e) => enum_target(a, p, e),
                     },
                 );
             }
         }
-        SymKey::IfaceMethod(iid, m) => {
-            let Some(name) = a.hir.interfaces.get(iid as usize).and_then(|i| i.methods.get(m as usize)).map(|m| m.name.clone()) else { return out };
-            for imp in implementors(a, iid) {
-                push_unique(&mut out, method_of(a, imp, &name).and_then(|f| func_target(a, f)));
+        SymKey::IfaceMethod(i, m) => {
+            let p = a.program_partial();
+            let Some(iid) = a.hir.interfaces.get(i as usize).and_then(|it| iface_in(p, &it.full_name)) else { return out };
+            let Some(name) = p.interfaces[iid as usize].methods.get(m as usize).map(|m| m.name.clone()) else { return out };
+            for imp in implementors(p, iid) {
+                push_unique(&mut out, method_of(p, imp, &name).and_then(|f| func_target(a, p, f)));
             }
         }
         _ => {}
@@ -211,15 +229,15 @@ pub(crate) fn implementations(a: &Analysis, file: usize, off: u32) -> Vec<Target
     out
 }
 
-/// The declared type behind `t`: pointers, `weak`, slices, arrays,
+/// The declared type behind `t` of `p`: pointers, `weak`, slices, arrays,
 /// fallible results, tasks and map values are looked through.
-fn named_type(a: &Analysis, mut t: TypeId) -> Option<Target> {
+fn named_type(a: &Analysis, p: &Program, mut t: TypeId) -> Option<Target> {
     for _ in 0..16 {
-        t = match a.hir.types.get(t) {
+        t = match p.types.get(t) {
             Type::Pointer(x) | Type::Weak(x) | Type::Slice(x) | Type::Array(x, _) | Type::Fallible(x) | Type::Task(x) | Type::Map(_, x) => *x,
-            Type::Struct(d) => return struct_target(a, d.0),
-            Type::Enum(d) => return enum_target(a, d.0),
-            Type::Interface(d) => return iface_target(a, d.0),
+            Type::Struct(d) => return struct_target(a, p, d.0),
+            Type::Enum(d) => return enum_target(a, p, d.0),
+            Type::Interface(d) => return iface_target(a, p, d.0),
             _ => return None,
         };
     }
@@ -235,10 +253,17 @@ pub(crate) fn type_definition(a: &Analysis, file: usize, off: u32) -> Option<Tar
     let s = a.index.symbol(id);
     match s.key {
         SymKey::Struct(_) | SymKey::Enum(_) | SymKey::Interface(_) => s.loc.map(|l| (l.file, l.name_span)),
-        SymKey::Variant(e, _) => enum_target(a, e),
-        SymKey::Func(f) => named_type(a, a.hir.funcs.get(f as usize)?.ret),
-        SymKey::IfaceMethod(i, m) => named_type(a, a.hir.interfaces.get(i as usize)?.methods.get(m as usize)?.ret),
-        _ => named_type(a, s.ty?),
+        SymKey::Variant(e, _) => enum_target(a, &a.hir, e),
+        SymKey::Func(_) => {
+            // Functions are not in `a.hir`: the result type comes from the
+            // full program, found by name.
+            let p = a.program_partial();
+            let full = strip_type_args(&s.full_name);
+            let func = p.funcs.iter().find(|f| strip_type_args(&f.full_name) == full)?;
+            named_type(a, p, func.ret)
+        }
+        SymKey::IfaceMethod(i, m) => named_type(a, &a.hir, a.hir.interfaces.get(i as usize)?.methods.get(m as usize)?.ret),
+        _ => named_type(a, &a.hir, s.ty?),
     }
 }
 

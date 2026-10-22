@@ -134,6 +134,7 @@ impl<'a> Sema<'a> {
         let saved = self.cur_ns;
         self.cur_ns = self.ensure_ns("std.data", Span::DUMMY);
         let t = self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false);
+        self.gen.templates[t as usize].generated = true;
         self.cur_ns = saved;
         self.orm.tmpls.insert(src, t);
         t

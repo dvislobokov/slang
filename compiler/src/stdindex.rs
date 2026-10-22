@@ -10,6 +10,7 @@ use crate::sema::index::SymbolKind;
 use crate::span::{SourceFile, Span};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 /// One declaration of a std file.
 #[derive(Clone, Debug)]
@@ -30,8 +31,8 @@ pub struct StdDecl {
 /// The parsed `std/` tree.
 #[derive(Clone, Debug, Default)]
 pub struct StdIndex {
-    /// Absolute paths and texts.
-    pub files: Vec<SourceFile>,
+    /// Absolute paths and texts (shared with the analyses that list them).
+    pub files: Vec<Arc<SourceFile>>,
     pub decls: Vec<StdDecl>,
     by_name: HashMap<String, usize>,
 }
@@ -128,7 +129,7 @@ impl StdIndex {
                 ast::Decl::Error(_) => {}
             }
         }
-        self.files.push(SourceFile::new(path, text));
+        self.files.push(Arc::new(SourceFile::new(path, text)));
     }
 
     /// The declaration of `full_name` (`std.strings.Split`); generic
