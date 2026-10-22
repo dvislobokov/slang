@@ -494,3 +494,5 @@ Regressions and open items from this wave:
 - `alloc_heavy` with the collector on is within noise of `ZELL_CYCLES=off`
   after the pin-release optimisation; the W0001 warning it prints is
   expected (`Node` is a tree, but the type can form a cycle).
+
+Framework benchmarks (web_api, orm_sqlite, logging, websocket_echo, startup): [RESULTS-framework.md](RESULTS-framework.md).
