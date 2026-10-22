@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-uint64_t slang__zstd_xxh64(const uint8_t *p, size_t n);
+uint64_t zell__zstd_xxh64(const uint8_t *p, size_t n);
 
 typedef struct {
     uint8_t *p;
@@ -784,7 +784,7 @@ static uint8_t *zstd_encode(const uint8_t *src, size_t n, int level, int checksu
         }
         pos += bs;
     } while (pos < n);
-    if (checksum) eb_le(&out, slang__zstd_xxh64(src, n) & 0xFFFFFFFFu, 4);
+    if (checksum) eb_le(&out, zell__zstd_xxh64(src, n) & 0xFFFFFFFFu, 4);
     if (out.oom) goto oom;
     if (m) free(m->chain);
     free(m);
@@ -804,16 +804,16 @@ oom:
 }
 
 /* compress.rtZstdEncode(data, level, checksum) []byte! */
-void slang_compress_rt_zstd_encode(const slang_slice *data, int64_t level, bool checksum, slang_slice *out,
-                                   slang_error **err) {
+void zell_compress_rt_zstd_encode(const zell_slice *data, int64_t level, bool checksum, zell_slice *out,
+                                   zell_error **err) {
     memset(out, 0, sizeof *out);
     size_t n = data ? (size_t)data->len : 0, olen = 0;
     const uint8_t *p = n ? (const uint8_t *)data->data : (const uint8_t *)"";
     uint8_t *r = zstd_encode(p, n, (int)level, checksum, &olen);
     if (!r) {
-        if (err) *err = slang_error_new_cstr("zstd: out of memory");
+        if (err) *err = zell_error_new_cstr("zstd: out of memory");
         return;
     }
-    slang_slice_from(out, 1, NULL, r, (int64_t)olen);
+    zell_slice_from(out, 1, NULL, r, (int64_t)olen);
     free(r);
 }

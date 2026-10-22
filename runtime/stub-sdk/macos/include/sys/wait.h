@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS_WAIT_H
-#define SLANG_STUB_SYS_WAIT_H
+#ifndef ZELL_STUB_SYS_WAIT_H
+#define ZELL_STUB_SYS_WAIT_H
 #include <sys/types.h>
 #include <signal.h>
 #define WNOHANG 0x00000001

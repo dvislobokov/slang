@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS__TYPES_H
-#define SLANG_STUB_SYS__TYPES_H
+#ifndef ZELL_STUB_SYS__TYPES_H
+#define ZELL_STUB_SYS__TYPES_H
 typedef signed char __int8_t;
 typedef unsigned char __uint8_t;
 typedef short __int16_t;

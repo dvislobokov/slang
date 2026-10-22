@@ -1,10 +1,10 @@
 /* std_math_big.c - natural-number (magnitude) arithmetic for std.math.big.
  *
- * A magnitude is a Slang []uint32 of little-endian base-2^32 limbs with no
+ * A magnitude is a Zell []uint32 of little-endian base-2^32 limbs with no
  * high zero limbs (zero is the empty slice). Every function here takes
  * normalized magnitudes (borrowed, NULL = zero) and writes a new
  * normalized one to `out` (owned, ABI.md 14.1). Signs, Rat and Decimal are
- * Slang (compiler/src/sema/stdlib_src/big.sl).
+ * Zell (compiler/src/sema/stdlib_src/big.zl).
  *
  * Multiplication is schoolbook below KARATSUBA_MIN limbs and Karatsuba
  * above; division is Knuth's algorithm D. */
@@ -12,24 +12,24 @@
 
 #include <string.h>
 
-void slang_math_big_rt_add(const slang_slice *a, const slang_slice *b, slang_slice *out);
-void slang_math_big_rt_sub(const slang_slice *a, const slang_slice *b, slang_slice *out);
-int64_t slang_math_big_rt_cmp(const slang_slice *a, const slang_slice *b);
-void slang_math_big_rt_mul(const slang_slice *a, const slang_slice *b, slang_slice *out);
-void slang_math_big_rt_divmod(const slang_slice *a, const slang_slice *b, slang_slice *out);
-void slang_math_big_rt_shl(const slang_slice *a, int64_t n, slang_slice *out);
-void slang_math_big_rt_shr(const slang_slice *a, int64_t n, slang_slice *out);
-int64_t slang_math_big_rt_bit_len(const slang_slice *a);
-slang_string *slang_math_big_rt_format(const slang_slice *a, int64_t base);
-void slang_math_big_rt_parse(const slang_string *s, int64_t base, slang_slice *out, slang_error **err);
-void slang_math_big_rt_from_bytes(const slang_slice *b, slang_slice *out);
-void slang_math_big_rt_to_bytes(const slang_slice *a, slang_slice *out);
-void slang_math_big_rt_from_uint(uint64_t x, slang_slice *out);
+void zell_math_big_rt_add(const zell_slice *a, const zell_slice *b, zell_slice *out);
+void zell_math_big_rt_sub(const zell_slice *a, const zell_slice *b, zell_slice *out);
+int64_t zell_math_big_rt_cmp(const zell_slice *a, const zell_slice *b);
+void zell_math_big_rt_mul(const zell_slice *a, const zell_slice *b, zell_slice *out);
+void zell_math_big_rt_divmod(const zell_slice *a, const zell_slice *b, zell_slice *out);
+void zell_math_big_rt_shl(const zell_slice *a, int64_t n, zell_slice *out);
+void zell_math_big_rt_shr(const zell_slice *a, int64_t n, zell_slice *out);
+int64_t zell_math_big_rt_bit_len(const zell_slice *a);
+zell_string *zell_math_big_rt_format(const zell_slice *a, int64_t base);
+void zell_math_big_rt_parse(const zell_string *s, int64_t base, zell_slice *out, zell_error **err);
+void zell_math_big_rt_from_bytes(const zell_slice *b, zell_slice *out);
+void zell_math_big_rt_to_bytes(const zell_slice *a, zell_slice *out);
+void zell_math_big_rt_from_uint(uint64_t x, zell_slice *out);
 
 typedef uint32_t limb;
 
-static int64_t nlen(const slang_slice *a) { return a ? a->len : 0; }
-static const limb *ndata(const slang_slice *a) { return a && a->len ? (const limb *)a->data : NULL; }
+static int64_t nlen(const zell_slice *a) { return a ? a->len : 0; }
+static const limb *ndata(const zell_slice *a) { return a && a->len ? (const limb *)a->data : NULL; }
 
 static int64_t norm(const limb *p, int64_t n) {
     while (n > 0 && p[n - 1] == 0) n--;
@@ -37,18 +37,18 @@ static int64_t norm(const limb *p, int64_t n) {
 }
 
 /* Writes the normalized copy of p[0..n) to out. */
-static void emit(slang_slice *out, const limb *p, int64_t n) {
+static void emit(zell_slice *out, const limb *p, int64_t n) {
     n = norm(p, n);
     if (n == 0) {
         memset(out, 0, sizeof *out);
         return;
     }
-    slang_slice_new(out, 4, n, n);
+    zell_slice_new(out, 4, n, n);
     memcpy(out->data, p, (size_t)n * 4);
 }
 
 static limb *alloc_limbs(int64_t n) {
-    return slang_alloc((n > 0 ? n : 1) * 4);
+    return zell_alloc((n > 0 ? n : 1) * 4);
 }
 
 static int cmp_raw(const limb *a, int64_t an, const limb *b, int64_t bn) {
@@ -85,24 +85,24 @@ static limb sub_raw(limb *r, const limb *a, int64_t an, const limb *b, int64_t b
     return (limb)borrow;
 }
 
-void slang_math_big_rt_add(const slang_slice *a, const slang_slice *b, slang_slice *out) {
+void zell_math_big_rt_add(const zell_slice *a, const zell_slice *b, zell_slice *out) {
     int64_t an = nlen(a), bn = nlen(b), n = (an > bn ? an : bn) + 1;
     limb *r = alloc_limbs(n);
     add_raw(r, ndata(a), an, ndata(b), bn);
     emit(out, r, n);
-    slang_free(r);
+    zell_free(r);
 }
 
-void slang_math_big_rt_sub(const slang_slice *a, const slang_slice *b, slang_slice *out) {
+void zell_math_big_rt_sub(const zell_slice *a, const zell_slice *b, zell_slice *out) {
     int64_t an = nlen(a), bn = nlen(b);
-    if (cmp_raw(ndata(a), an, ndata(b), bn) < 0) slang_panic("big: internal: negative magnitude");
+    if (cmp_raw(ndata(a), an, ndata(b), bn) < 0) zell_panic("big: internal: negative magnitude");
     limb *r = alloc_limbs(an);
     sub_raw(r, ndata(a), an, ndata(b), bn);
     emit(out, r, an);
-    slang_free(r);
+    zell_free(r);
 }
 
-int64_t slang_math_big_rt_cmp(const slang_slice *a, const slang_slice *b) {
+int64_t zell_math_big_rt_cmp(const zell_slice *a, const zell_slice *b) {
     return cmp_raw(ndata(a), nlen(a), ndata(b), nlen(b));
 }
 
@@ -167,14 +167,14 @@ static void mul_rec(limb *r, const limb *a, int64_t an, const limb *b, int64_t b
         c >>= 32;
         if (i >= z1n && c == 0) break;
     }
-    slang_free(z0);
-    slang_free(z1);
-    slang_free(z2);
-    slang_free(sa);
-    slang_free(sb);
+    zell_free(z0);
+    zell_free(z1);
+    zell_free(z2);
+    zell_free(sa);
+    zell_free(sb);
 }
 
-void slang_math_big_rt_mul(const slang_slice *a, const slang_slice *b, slang_slice *out) {
+void zell_math_big_rt_mul(const zell_slice *a, const zell_slice *b, zell_slice *out) {
     int64_t an = nlen(a), bn = nlen(b);
     if (an == 0 || bn == 0) {
         memset(out, 0, sizeof *out);
@@ -184,7 +184,7 @@ void slang_math_big_rt_mul(const slang_slice *a, const slang_slice *b, slang_sli
     limb *r = alloc_limbs(2 * n + 2);
     mul_rec(r, ndata(a), an, ndata(b), bn);
     emit(out, r, an + bn);
-    slang_free(r);
+    zell_free(r);
 }
 
 /* q = u / v, r = u % v (Knuth D). q has un - vn + 1 limbs, r has vn. */
@@ -240,15 +240,15 @@ static void divmod_raw(limb *q, limb *r, const limb *u0, int64_t un, const limb 
         q[j] = (limb)qhat;
     }
     for (int64_t i = 0; i < vn; i++) r[i] = (u[i] >> s) | (s ? (limb)((uint64_t)u[i + 1] << (32 - s)) : 0);
-    slang_free(u);
-    slang_free(v);
+    zell_free(u);
+    zell_free(v);
 }
 
 /* out = [len(q), q limbs..., r limbs...] (q and r normalized). Panics on
  * division by zero. */
-void slang_math_big_rt_divmod(const slang_slice *a, const slang_slice *b, slang_slice *out) {
+void zell_math_big_rt_divmod(const zell_slice *a, const zell_slice *b, zell_slice *out) {
     int64_t an = nlen(a), bn = nlen(b);
-    if (bn == 0) slang_panic("division by zero");
+    if (bn == 0) zell_panic("division by zero");
     limb *q, *r;
     int64_t qn, rn;
     if (cmp_raw(ndata(a), an, ndata(b), bn) < 0) {
@@ -266,16 +266,16 @@ void slang_math_big_rt_divmod(const slang_slice *a, const slang_slice *b, slang_
     }
     qn = norm(q, qn);
     rn = norm(r, rn);
-    slang_slice_new(out, 4, 1 + qn + rn, 1 + qn + rn);
+    zell_slice_new(out, 4, 1 + qn + rn, 1 + qn + rn);
     limb *o = out->data;
     o[0] = (limb)qn;
     if (qn) memcpy(o + 1, q, (size_t)qn * 4);
     if (rn) memcpy(o + 1 + qn, r, (size_t)rn * 4);
-    slang_free(q);
-    slang_free(r);
+    zell_free(q);
+    zell_free(r);
 }
 
-void slang_math_big_rt_shl(const slang_slice *a, int64_t n, slang_slice *out) {
+void zell_math_big_rt_shl(const zell_slice *a, int64_t n, zell_slice *out) {
     int64_t an = nlen(a);
     if (an == 0 || n <= 0) {
         emit(out, ndata(a), an);
@@ -290,10 +290,10 @@ void slang_math_big_rt_shl(const slang_slice *a, int64_t n, slang_slice *out) {
         r[i + w + 1] |= (limb)(x >> 32);
     }
     emit(out, r, rn);
-    slang_free(r);
+    zell_free(r);
 }
 
-void slang_math_big_rt_shr(const slang_slice *a, int64_t n, slang_slice *out) {
+void zell_math_big_rt_shr(const zell_slice *a, int64_t n, zell_slice *out) {
     int64_t an = nlen(a), w = n / 32, s = n % 32;
     if (n <= 0) {
         emit(out, ndata(a), an);
@@ -312,20 +312,20 @@ void slang_math_big_rt_shr(const slang_slice *a, int64_t n, slang_slice *out) {
         r[i] = (limb)x;
     }
     emit(out, r, rn);
-    slang_free(r);
+    zell_free(r);
 }
 
-int64_t slang_math_big_rt_bit_len(const slang_slice *a) {
+int64_t zell_math_big_rt_bit_len(const zell_slice *a) {
     int64_t an = nlen(a);
     if (an == 0) return 0;
     return (an - 1) * 32 + (32 - __builtin_clz(ndata(a)[an - 1]));
 }
 
-slang_string *slang_math_big_rt_format(const slang_slice *a, int64_t base) {
+zell_string *zell_math_big_rt_format(const zell_slice *a, int64_t base) {
     static const char digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
-    if (base < 2 || base > 36) slang_panic("big: illegal base");
+    if (base < 2 || base > 36) zell_panic("big: illegal base");
     int64_t n = nlen(a);
-    if (n == 0) return slang_string_from_cstr("0");
+    if (n == 0) return zell_string_from_cstr("0");
     /* chunk = base^k <= 2^32 */
     uint64_t chunk = (uint64_t)base;
     int k = 1;
@@ -336,7 +336,7 @@ slang_string *slang_math_big_rt_format(const slang_slice *a, int64_t base) {
     limb *t = alloc_limbs(n);
     memcpy(t, ndata(a), (size_t)n * 4);
     size_t cap = (size_t)n * 33 + 2, len = 0;
-    char *buf = slang_alloc((int64_t)cap);
+    char *buf = zell_alloc((int64_t)cap);
     while (n > 0) {
         uint64_t rem = 0;
         for (int64_t i = n - 1; i >= 0; i--) {
@@ -355,14 +355,14 @@ slang_string *slang_math_big_rt_format(const slang_slice *a, int64_t base) {
         buf[i] = buf[len - 1 - i];
         buf[len - 1 - i] = c;
     }
-    slang_string *s = slang_string_new(buf, (int64_t)len);
-    slang_free(buf);
-    slang_free(t);
+    zell_string *s = zell_string_new(buf, (int64_t)len);
+    zell_free(buf);
+    zell_free(t);
     return s;
 }
 
 /* Digits only (no sign or prefix); '_' is not accepted here. */
-void slang_math_big_rt_parse(const slang_string *s, int64_t base, slang_slice *out, slang_error **err) {
+void zell_math_big_rt_parse(const zell_string *s, int64_t base, zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
     if (err) *err = NULL;
     int64_t n = s ? s->len : 0;
@@ -374,7 +374,7 @@ void slang_math_big_rt_parse(const slang_string *s, int64_t base, slang_slice *o
         char c = s->data[i];
         int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : 99;
         if (d >= base) {
-            slang_free(r);
+            zell_free(r);
             goto bad;
         }
         uint64_t c2 = (uint64_t)d;
@@ -386,18 +386,18 @@ void slang_math_big_rt_parse(const slang_string *s, int64_t base, slang_slice *o
         if (c2) r[rn++] = (limb)c2;
     }
     emit(out, r, rn);
-    slang_free(r);
+    zell_free(r);
     return;
 bad:
     if (err) {
-        slang_string *m = slang_string_from_cstr("invalid syntax");
-        *err = slang_error_new(m);
-        slang_release(m);
+        zell_string *m = zell_string_from_cstr("invalid syntax");
+        *err = zell_error_new(m);
+        zell_release(m);
     }
 }
 
 /* Big-endian bytes -> magnitude. */
-void slang_math_big_rt_from_bytes(const slang_slice *b, slang_slice *out) {
+void zell_math_big_rt_from_bytes(const zell_slice *b, zell_slice *out) {
     int64_t n = b ? b->len : 0;
     const uint8_t *p = n ? b->data : NULL;
     int64_t rn = (n + 3) / 4;
@@ -407,17 +407,17 @@ void slang_math_big_rt_from_bytes(const slang_slice *b, slang_slice *out) {
         r[bit / 32] |= (limb)p[i] << (bit % 32);
     }
     emit(out, r, rn);
-    slang_free(r);
+    zell_free(r);
 }
 
 /* Magnitude -> minimal big-endian bytes (empty for zero). */
-void slang_math_big_rt_to_bytes(const slang_slice *a, slang_slice *out) {
-    int64_t bits = slang_math_big_rt_bit_len(a), n = (bits + 7) / 8;
+void zell_math_big_rt_to_bytes(const zell_slice *a, zell_slice *out) {
+    int64_t bits = zell_math_big_rt_bit_len(a), n = (bits + 7) / 8;
     if (n == 0) {
         memset(out, 0, sizeof *out);
         return;
     }
-    slang_slice_new(out, 1, n, n);
+    zell_slice_new(out, 1, n, n);
     uint8_t *o = out->data;
     const limb *p = ndata(a);
     for (int64_t i = 0; i < n; i++) {
@@ -426,7 +426,7 @@ void slang_math_big_rt_to_bytes(const slang_slice *a, slang_slice *out) {
     }
 }
 
-void slang_math_big_rt_from_uint(uint64_t x, slang_slice *out) {
+void zell_math_big_rt_from_uint(uint64_t x, zell_slice *out) {
     limb r[2] = {(limb)x, (limb)(x >> 32)};
     emit(out, r, 2);
 }

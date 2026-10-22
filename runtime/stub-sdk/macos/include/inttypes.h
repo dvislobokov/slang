@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_INTTYPES_H
-#define SLANG_STUB_INTTYPES_H
+#ifndef ZELL_STUB_INTTYPES_H
+#define ZELL_STUB_INTTYPES_H
 #include <stdint.h>
 #define PRId8 "hhd"
 #define PRId16 "hd"

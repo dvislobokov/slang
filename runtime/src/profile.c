@@ -93,10 +93,10 @@ static void st_free(strtab *t) {
     free(t->v);
 }
 
-/* `slang_app__main__run` -> `app.main.run` (Slang symbol convention). */
+/* `zell_app__main__run` -> `app.main.run` (Zell symbol convention). */
 static void demangle(const char *sym, char *out, size_t cap) {
-    if (strncmp(sym, "slang_", 6) == 0 && strstr(sym + 6, "__")) {
-        const char *s = sym + 6;
+    if (strncmp(sym, "zell_", 5) == 0 && strstr(sym + 5, "__")) {
+        const char *s = sym + 5;
         size_t k = 0;
         while (*s && k + 1 < cap) {
             if (s[0] == '_' && s[1] == '_') {
@@ -121,7 +121,7 @@ static int64_t g_used;      /* words reserved (may exceed the size: dropped) */
 static int64_t g_samples, g_dropped;
 static int g_running;
 static int64_t g_hz, g_start_ns, g_start_wall;
-static slang_string *g_path;
+static zell_string *g_path;
 
 static void on_sample(const uintptr_t *pcs, int n) {
     uintptr_t *buf = __atomic_load_n(&g_buf, __ATOMIC_ACQUIRE);
@@ -136,40 +136,40 @@ static void on_sample(const uintptr_t *pcs, int n) {
     __atomic_fetch_add(&g_samples, 1, __ATOMIC_RELAXED);
 }
 
-void slang_diag_rt_start_cpu_profile(const slang_string *path, int64_t hz, slang_error **err) {
+void zell_diag_rt_start_cpu_profile(const zell_string *path, int64_t hz, zell_error **err) {
     if (err) *err = NULL;
     if (g_running) {
-        if (err) *err = slang_error_new_cstr("diag.StartCPUProfile: profiling already enabled");
+        if (err) *err = zell_error_new_cstr("diag.StartCPUProfile: profiling already enabled");
         return;
     }
-    FILE *probe = fopen(slang_string_cstr(path), "wb");
+    FILE *probe = fopen(zell_string_cstr(path), "wb");
     if (!probe) {
         if (err) {
             char m[600];
-            snprintf(m, sizeof m, "diag.StartCPUProfile: create %.400s: %s", slang_string_cstr(path), strerror(errno));
-            *err = slang_error_new_cstr(m);
+            snprintf(m, sizeof m, "diag.StartCPUProfile: create %.400s: %s", zell_string_cstr(path), strerror(errno));
+            *err = zell_error_new_cstr(m);
         }
         return;
     }
     fclose(probe);
     uintptr_t *buf = calloc(PROF_BUF_WORDS, sizeof *buf);
     if (!buf) {
-        if (err) *err = slang_error_new_cstr("diag.StartCPUProfile: out of memory");
+        if (err) *err = zell_error_new_cstr("diag.StartCPUProfile: out of memory");
         return;
     }
     g_used = g_samples = g_dropped = 0;
     __atomic_store_n(&g_buf, buf, __ATOMIC_RELEASE);
     g_hz = hz > 0 ? hz : 100;
-    g_start_ns = slang__plat_mono_ns();
-    g_start_wall = slang__plat_wall_ns();
-    slang_retain((void *)path);
-    g_path = (slang_string *)path;
-    if (!slang__plat_prof_start((int)g_hz, on_sample)) {
+    g_start_ns = zell__plat_mono_ns();
+    g_start_wall = zell__plat_wall_ns();
+    zell_retain((void *)path);
+    g_path = (zell_string *)path;
+    if (!zell__plat_prof_start((int)g_hz, on_sample)) {
         __atomic_store_n(&g_buf, (uintptr_t *)NULL, __ATOMIC_RELEASE);
         free(buf);
-        slang_release(g_path);
+        zell_release(g_path);
         g_path = NULL;
-        if (err) *err = slang_error_new_cstr("diag.StartCPUProfile: CPU profiling is not supported on this platform");
+        if (err) *err = zell_error_new_cstr("diag.StartCPUProfile: CPU profiling is not supported on this platform");
         return;
     }
     g_running = 1;
@@ -207,14 +207,14 @@ static uint64_t loc_id(loc_map *m, uintptr_t addr) {
 /* One function per distinct symbol name. */
 typedef struct { int64_t name; } fn_ent;
 
-static bool write_file(const slang_string *path, const pbuf *b, slang_error **err, const char *what) {
-    FILE *f = fopen(slang_string_cstr(path), "wb");
+static bool write_file(const zell_string *path, const pbuf *b, zell_error **err, const char *what) {
+    FILE *f = fopen(zell_string_cstr(path), "wb");
     if (!f || b->oom || fwrite(b->p, 1, b->len, f) != b->len) {
         if (f) fclose(f);
         if (err) {
             char m[600];
-            snprintf(m, sizeof m, "%s: write %.400s: %s", what, slang_string_cstr(path), b->oom ? "out of memory" : strerror(errno));
-            *err = slang_error_new_cstr(m);
+            snprintf(m, sizeof m, "%s: write %.400s: %s", what, zell_string_cstr(path), b->oom ? "out of memory" : strerror(errno));
+            *err = zell_error_new_cstr(m);
         }
         return false;
     }
@@ -226,7 +226,7 @@ static bool write_file(const slang_string *path, const pbuf *b, slang_error **er
 static void emit_locations(pbuf *out, strtab *st, const loc_map *lm, bool symbolize) {
     uintptr_t lo = 0, hi = 0;
     char path[512] = "";
-    bool have_map = symbolize && slang__plat_exe_range(&lo, &hi, path, sizeof path);
+    bool have_map = symbolize && zell__plat_exe_range(&lo, &hi, path, sizeof path);
     if (have_map) {
         pbuf m = {0};
         pb_uint(&m, 1, 1);
@@ -246,7 +246,7 @@ static void emit_locations(pbuf *out, strtab *st, const loc_map *lm, bool symbol
         char sym[512], name[512];
         uintptr_t start = 0;
         if (symbolize) {
-            if (!slang__plat_symbolize(s->addr, sym, sizeof sym, &start))
+            if (!zell__plat_symbolize(s->addr, sym, sizeof sym, &start))
                 snprintf(sym, sizeof sym, "0x%llx", (unsigned long long)s->addr);
             demangle(sym, name, sizeof name);
         } else {
@@ -297,17 +297,17 @@ static void emit_strings(pbuf *out, const strtab *st) {
     for (int64_t i = 0; i < st->n; i++) pb_str(out, 6, st->v[i]);
 }
 
-int64_t slang_diag_rt_stop_cpu_profile(slang_error **err) {
+int64_t zell_diag_rt_stop_cpu_profile(zell_error **err) {
     if (err) *err = NULL;
     if (!g_running) {
-        if (err) *err = slang_error_new_cstr("diag.StopCPUProfile: profiling is not enabled");
+        if (err) *err = zell_error_new_cstr("diag.StopCPUProfile: profiling is not enabled");
         return 0;
     }
-    slang__plat_prof_stop();
+    zell__plat_prof_stop();
     g_running = 0;
     uintptr_t *buf = __atomic_exchange_n(&g_buf, (uintptr_t *)NULL, __ATOMIC_ACQ_REL);
     int64_t used = g_used < PROF_BUF_WORDS ? g_used : PROF_BUF_WORDS;
-    int64_t dur = slang__plat_mono_ns() - g_start_ns;
+    int64_t dur = zell__plat_mono_ns() - g_start_ns;
     int64_t period = 1000000000 / g_hz;
 
     strtab st = {0};
@@ -340,7 +340,7 @@ int64_t slang_diag_rt_stop_cpu_profile(slang_error **err) {
     pb_bytes(&out, samples.p, samples.len);
     free(samples.p);
     emit_locations(&out, &st, &lm, true);
-    slang__plat_symbolize_done();
+    zell__plat_symbolize_done();
     pb_uint(&out, 9, (uint64_t)g_start_wall);
     pb_uint(&out, 10, (uint64_t)dur);
     emit_value_type(&out, 11, &st, "cpu", "nanoseconds");
@@ -356,7 +356,7 @@ int64_t slang_diag_rt_stop_cpu_profile(slang_error **err) {
     free(lm.s);
     st_free(&st);
     free(buf);
-    slang_release(g_path);
+    zell_release(g_path);
     g_path = NULL;
     return count;
 }
@@ -391,37 +391,37 @@ static int heap_cmp(const void *a, const void *b) {
 }
 
 static bool heap_collect(heap_tab *t) {
-    if (!slang__heap_each(heap_cb, t)) return false;
+    if (!zell__heap_each(heap_cb, t)) return false;
     if (t->n) qsort(t->v, (size_t)t->n, sizeof *t->v, heap_cmp);
     return true;
 }
 
 /* "N TYPE BYTES" lines, most frequent first; "" without type tracking. */
-slang_string *slang_diag_rt_heap_text(void) {
+zell_string *zell_diag_rt_heap_text(void) {
     heap_tab t = {0};
-    if (!heap_collect(&t)) return slang__string_alloc(0);
+    if (!heap_collect(&t)) return zell__string_alloc(0);
     size_t cap = 64 + (size_t)t.n * 96, len = 0;
     char *s = malloc(cap);
     if (!s) {
         free(t.v);
-        return slang__string_alloc(0);
+        return zell__string_alloc(0);
     }
     for (int64_t i = 0; i < t.n; i++) {
         int w = snprintf(s + len, cap - len, "%lld %s %lld\n", (long long)t.v[i].n, t.v[i].name, (long long)t.v[i].bytes);
         if (w < 0 || (size_t)w >= cap - len) break;
         len += (size_t)w;
     }
-    slang_string *r = slang_string_new(s, (int64_t)len);
+    zell_string *r = zell_string_new(s, (int64_t)len);
     free(s);
     free(t.v);
     return r;
 }
 
-void slang_diag_rt_write_heap_profile(const slang_string *path, slang_error **err) {
+void zell_diag_rt_write_heap_profile(const zell_string *path, zell_error **err) {
     if (err) *err = NULL;
     heap_tab t = {0};
     if (!heap_collect(&t)) {
-        if (err) *err = slang_error_new_cstr("diag.WriteHeapProfile: needs object tracking (run with --leak-check, without --release)");
+        if (err) *err = zell_error_new_cstr("diag.WriteHeapProfile: needs object tracking (run with --leak-check, without --release)");
         return;
     }
     strtab st = {0};
@@ -444,7 +444,7 @@ void slang_diag_rt_write_heap_profile(const slang_string *path, slang_error **er
         free(vals.p);
     }
     emit_locations(&out, &st, &lm, false);
-    pb_uint(&out, 9, (uint64_t)slang__plat_wall_ns());
+    pb_uint(&out, 9, (uint64_t)zell__plat_wall_ns());
     emit_value_type(&out, 11, &st, "space", "bytes");
     pbuf final = {0};
     pb_bytes(&final, out.p, out.len);

@@ -1,7 +1,7 @@
 /* poll_epoll.c - readiness poller on Linux (platform.h): level-triggered,
  * one-shot epoll (EPOLLONESHOT re-armed with EPOLL_CTL_MOD for every wait)
  * plus an eventfd for cross-thread wake-ups; or io_uring readiness polls
- * (poll_uring.c) with SLANG_IO_BACKEND=io_uring when the kernel has them. */
+ * (poll_uring.c) with ZELL_IO_BACKEND=io_uring when the kernel has them. */
 #include "platform.h"
 
 #if defined(__linux__)
@@ -13,24 +13,24 @@
 #include <unistd.h>
 
 /* io_uring backend (poll_uring.c): used instead of epoll when available. */
-typedef struct slang__uring slang__uring;
-slang__uring *slang__uring_new(void);
-void slang__uring_free(slang__uring *u);
-int slang__uring_arm(slang__uring *u, int64_t fd, int32_t interest, uint64_t token, bool registered);
-void slang__uring_remove(slang__uring *u, int64_t fd);
-int slang__uring_wait(slang__uring *u, slang__plat_event *evs, int max, int64_t timeout_ms);
-void slang__uring_wake(slang__uring *u);
+typedef struct zell__uring zell__uring;
+zell__uring *zell__uring_new(void);
+void zell__uring_free(zell__uring *u);
+int zell__uring_arm(zell__uring *u, int64_t fd, int32_t interest, uint64_t token, bool registered);
+void zell__uring_remove(zell__uring *u, int64_t fd);
+int zell__uring_wait(zell__uring *u, zell__plat_event *evs, int max, int64_t timeout_ms);
+void zell__uring_wake(zell__uring *u);
 
-struct slang__plat_poller {
+struct zell__plat_poller {
     int epfd;
     int wakefd;
-    slang__uring *u;  /* non-NULL: every call goes to poll_uring.c */
+    zell__uring *u;  /* non-NULL: every call goes to poll_uring.c */
 };
 
-slang__plat_poller *slang__plat_poller_new(void) {
-    slang__plat_poller *p = malloc(sizeof *p);
+zell__plat_poller *zell__plat_poller_new(void) {
+    zell__plat_poller *p = malloc(sizeof *p);
     if (!p) return NULL;
-    p->u = slang__uring_new();
+    p->u = zell__uring_new();
     if (p->u) {
         p->epfd = p->wakefd = -1;
         return p;
@@ -44,7 +44,7 @@ slang__plat_poller *slang__plat_poller_new(void) {
         return NULL;
     }
     /* The wake-up channel stays armed (level-triggered, not one-shot). */
-    struct epoll_event ev = { .events = EPOLLIN, .data.u64 = SLANG_PLAT_WAKE_TOKEN };
+    struct epoll_event ev = { .events = EPOLLIN, .data.u64 = ZELL_PLAT_WAKE_TOKEN };
     if (epoll_ctl(p->epfd, EPOLL_CTL_ADD, p->wakefd, &ev) != 0) {
         close(p->epfd);
         close(p->wakefd);
@@ -54,10 +54,10 @@ slang__plat_poller *slang__plat_poller_new(void) {
     return p;
 }
 
-void slang__plat_poller_free(slang__plat_poller *p) {
+void zell__plat_poller_free(zell__plat_poller *p) {
     if (!p) return;
     if (p->u) {
-        slang__uring_free(p->u);
+        zell__uring_free(p->u);
         free(p);
         return;
     }
@@ -66,31 +66,31 @@ void slang__plat_poller_free(slang__plat_poller *p) {
     free(p);
 }
 
-int slang__plat_poller_arm(slang__plat_poller *p, int64_t fd, int32_t interest, uint64_t token, bool registered) {
-    if (p->u) return slang__uring_arm(p->u, fd, interest, token, registered);
+int zell__plat_poller_arm(zell__plat_poller *p, int64_t fd, int32_t interest, uint64_t token, bool registered) {
+    if (p->u) return zell__uring_arm(p->u, fd, interest, token, registered);
     struct epoll_event ev = { .events = 0, .data.u64 = token };
-    if (interest & SLANG_PLAT_READ) ev.events |= EPOLLIN | EPOLLRDHUP;
-    if (interest & SLANG_PLAT_WRITE) ev.events |= EPOLLOUT;
+    if (interest & ZELL_PLAT_READ) ev.events |= EPOLLIN | EPOLLRDHUP;
+    if (interest & ZELL_PLAT_WRITE) ev.events |= EPOLLOUT;
     if (ev.events) ev.events |= EPOLLONESHOT;
     int op = registered ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
     int rc = epoll_ctl(p->epfd, op, (int)fd, &ev);
     if (rc != 0 && errno == ENOENT && registered) rc = epoll_ctl(p->epfd, EPOLL_CTL_ADD, (int)fd, &ev);
     else if (rc != 0 && errno == EEXIST && !registered) rc = epoll_ctl(p->epfd, EPOLL_CTL_MOD, (int)fd, &ev);
     if (rc == 0) return 0;
-    return errno == EPERM ? SLANG_PLAT_ENOTPOLLABLE : errno;
+    return errno == EPERM ? ZELL_PLAT_ENOTPOLLABLE : errno;
 }
 
-void slang__plat_poller_remove(slang__plat_poller *p, int64_t fd) {
+void zell__plat_poller_remove(zell__plat_poller *p, int64_t fd) {
     if (p->u) {
-        slang__uring_remove(p->u, fd);
+        zell__uring_remove(p->u, fd);
         return;
     }
     struct epoll_event ev = { 0 };
     epoll_ctl(p->epfd, EPOLL_CTL_DEL, (int)fd, &ev);
 }
 
-int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int max, int64_t timeout_ms) {
-    if (p->u) return slang__uring_wait(p->u, evs, max, timeout_ms);
+int zell__plat_poller_wait(zell__plat_poller *p, zell__plat_event *evs, int max, int64_t timeout_ms) {
+    if (p->u) return zell__uring_wait(p->u, evs, max, timeout_ms);
     struct epoll_event buf[256];
     if (max > 256) max = 256;
     if (max < 1) return 0;
@@ -99,18 +99,18 @@ int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int m
     if (n < 0) return 0;  /* EINTR (a signal): the caller loops */
     int out = 0;
     for (int i = 0; i < n; i++) {
-        if (buf[i].data.u64 == SLANG_PLAT_WAKE_TOKEN) {
+        if (buf[i].data.u64 == ZELL_PLAT_WAKE_TOKEN) {
             uint64_t v;
             while (read(p->wakefd, &v, sizeof v) > 0) {}
-            evs[out].token = SLANG_PLAT_WAKE_TOKEN;
+            evs[out].token = ZELL_PLAT_WAKE_TOKEN;
             evs[out].events = 0;
             out++;
             continue;
         }
         int32_t e = 0;
-        if (buf[i].events & (EPOLLIN | EPOLLRDHUP)) e |= SLANG_PLAT_READ;
-        if (buf[i].events & EPOLLOUT) e |= SLANG_PLAT_WRITE;
-        if (buf[i].events & (EPOLLERR | EPOLLHUP)) e |= SLANG_PLAT_ERROR | SLANG_PLAT_READ | SLANG_PLAT_WRITE;
+        if (buf[i].events & (EPOLLIN | EPOLLRDHUP)) e |= ZELL_PLAT_READ;
+        if (buf[i].events & EPOLLOUT) e |= ZELL_PLAT_WRITE;
+        if (buf[i].events & (EPOLLERR | EPOLLHUP)) e |= ZELL_PLAT_ERROR | ZELL_PLAT_READ | ZELL_PLAT_WRITE;
         evs[out].token = buf[i].data.u64;
         evs[out].events = e;
         out++;
@@ -118,9 +118,9 @@ int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int m
     return out;
 }
 
-void slang__plat_poller_wake(slang__plat_poller *p) {
+void zell__plat_poller_wake(zell__plat_poller *p) {
     if (p->u) {
-        slang__uring_wake(p->u);
+        zell__uring_wake(p->u);
         return;
     }
     uint64_t one = 1;
@@ -130,11 +130,11 @@ void slang__plat_poller_wake(slang__plat_poller *p) {
     }
 }
 
-const char *slang__plat_poller_backend(slang__plat_poller *p) {
+const char *zell__plat_poller_backend(zell__plat_poller *p) {
     return p->u ? "io_uring" : "epoll";
 }
 
 #else
 /* Not Linux: the poller comes from poll_kqueue.c. */
-typedef int slang__poll_epoll_unused;
+typedef int zell__poll_epoll_unused;
 #endif

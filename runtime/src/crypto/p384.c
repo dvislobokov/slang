@@ -45,10 +45,10 @@ static const uint8_t GY_BYTES[NB] = {
 };
 
 static void l6_from_be(limb6 r, const uint8_t b[NB]) {
-    for (int i = 0; i < NL; i++) r[i] = slang__ld64be(b + 8 * (NL - 1) - 8 * i);
+    for (int i = 0; i < NL; i++) r[i] = zell__ld64be(b + 8 * (NL - 1) - 8 * i);
 }
 static void l6_to_be(uint8_t b[NB], const limb6 a) {
-    for (int i = 0; i < NL; i++) slang__st64be(b + 8 * (NL - 1) - 8 * i, a[i]);
+    for (int i = 0; i < NL; i++) zell__st64be(b + 8 * (NL - 1) - 8 * i, a[i]);
 }
 static void l6_copy(limb6 r, const limb6 a) { for (int i = 0; i < NL; i++) r[i] = a[i]; }
 
@@ -273,7 +273,7 @@ static void pt_mul(const curve *k, pt *r, const uint8_t s[NB], const pt *p) {
         acc = t;
     }
     *r = acc;
-    slang__crypto_wipe(tab, sizeof tab);
+    zell__crypto_wipe(tab, sizeof tab);
 }
 
 static bool pt_affine(const curve *k, const pt *p, uint8_t x[NB], uint8_t y[NB]) {
@@ -321,7 +321,7 @@ static bool scalar_ok(const uint8_t s[NB]) {
     return !l6_is_zero(v) && l6_lt(v, N_M);
 }
 
-bool slang__p384_pubkey(uint8_t pub[97], const uint8_t priv[48]) {
+bool zell__p384_pubkey(uint8_t pub[97], const uint8_t priv[48]) {
     if (!scalar_ok(priv)) return false;
     curve k;
     curve_init(&k);
@@ -331,7 +331,7 @@ bool slang__p384_pubkey(uint8_t pub[97], const uint8_t priv[48]) {
     return pt_affine(&k, &q, pub + 1, pub + 1 + NB);
 }
 
-bool slang__p384_ecdh(uint8_t out[48], const uint8_t priv[48], const uint8_t peer[97]) {
+bool zell__p384_ecdh(uint8_t out[48], const uint8_t priv[48], const uint8_t peer[97]) {
     if (!scalar_ok(priv)) return false;
     curve k;
     curve_init(&k);
@@ -341,9 +341,9 @@ bool slang__p384_ecdh(uint8_t out[48], const uint8_t priv[48], const uint8_t pee
     return pt_affine(&k, &q, out, NULL);
 }
 
-bool slang__p384_genkey(uint8_t priv[48]) {
+bool zell__p384_genkey(uint8_t priv[48]) {
     for (int tries = 0; tries < 64; tries++) {
-        if (!slang__crypto_random(priv, NB)) return false;
+        if (!zell__crypto_random(priv, NB)) return false;
         if (scalar_ok(priv)) return true;
     }
     return false;
@@ -362,18 +362,18 @@ static void digest_to_scalar(limb6 e, const uint8_t *digest, size_t dlen) {
 
 static void hmac5(uint8_t out[NB], const uint8_t key[NB], const uint8_t *a, size_t an, const uint8_t *b,
                   size_t bn, const uint8_t *c, size_t cn, const uint8_t *d, size_t dn, const uint8_t *e, size_t en) {
-    slang_hmac_ctx h;
-    slang__hmac_init(&h, SLANG_HASH_SHA384, key, NB);
-    slang__hmac_update(&h, a, an);
-    slang__hmac_update(&h, b, bn);
-    slang__hmac_update(&h, c, cn);
-    slang__hmac_update(&h, d, dn);
-    slang__hmac_update(&h, e, en);
-    slang__hmac_final(&h, out);
-    slang__crypto_wipe(&h, sizeof h);
+    zell_hmac_ctx h;
+    zell__hmac_init(&h, ZELL_HASH_SHA384, key, NB);
+    zell__hmac_update(&h, a, an);
+    zell__hmac_update(&h, b, bn);
+    zell__hmac_update(&h, c, cn);
+    zell__hmac_update(&h, d, dn);
+    zell__hmac_update(&h, e, en);
+    zell__hmac_final(&h, out);
+    zell__crypto_wipe(&h, sizeof h);
 }
 
-bool slang__p384_sign(uint8_t sig[96], const uint8_t priv[48], const uint8_t *digest, size_t dlen,
+bool zell__p384_sign(uint8_t sig[96], const uint8_t priv[48], const uint8_t *digest, size_t dlen,
                       const uint8_t *extra, size_t elen) {
     if (!scalar_ok(priv)) return false;
     curve k;
@@ -421,9 +421,9 @@ bool slang__p384_sign(uint8_t sig[96], const uint8_t priv[48], const uint8_t *di
                         l6_to_be(sig + NB, s);
                         ok = true;
                     }
-                    slang__crypto_wipe(kk, sizeof kk);
-                    slang__crypto_wipe(ki, sizeof ki);
-                    slang__crypto_wipe(dm, sizeof dm);
+                    zell__crypto_wipe(kk, sizeof kk);
+                    zell__crypto_wipe(ki, sizeof ki);
+                    zell__crypto_wipe(dm, sizeof dm);
                 }
             }
         }
@@ -432,13 +432,13 @@ bool slang__p384_sign(uint8_t sig[96], const uint8_t priv[48], const uint8_t *di
             hmac5(V, K, V, NB, NULL, 0, NULL, 0, NULL, 0, NULL, 0);
         }
     }
-    slang__crypto_wipe(V, sizeof V);
-    slang__crypto_wipe(K, sizeof K);
-    slang__crypto_wipe(d, sizeof d);
+    zell__crypto_wipe(V, sizeof V);
+    zell__crypto_wipe(K, sizeof K);
+    zell__crypto_wipe(d, sizeof d);
     return ok;
 }
 
-bool slang__p384_verify(const uint8_t sig[96], const uint8_t pub[97], const uint8_t *digest, size_t dlen) {
+bool zell__p384_verify(const uint8_t sig[96], const uint8_t pub[97], const uint8_t *digest, size_t dlen) {
     if (!scalar_ok(sig) || !scalar_ok(sig + NB)) return false;
     curve k;
     curve_init(&k);

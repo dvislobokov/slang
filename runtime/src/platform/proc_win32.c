@@ -4,7 +4,7 @@
  * reaped.
  *
  * Piped streams, with the IOCP poller (poll_iocp.c, the default): the
- * parent's end is an overlapped named pipe (\\.\pipe\slang-<pid>-<n>, one
+ * parent's end is an overlapped named pipe (\\.\pipe\zell-<pid>-<n>, one
  * instance, local clients only), the child's end a synchronous handle to
  * it. The parent's descriptor is PIPE_FD_BASE + a slot of the pipe table
  * (never a socket, CRT or HANDLE value). The poller waits on it directly:
@@ -35,8 +35,8 @@
 /* ---- handles of live children ----------------------------------------------- */
 
 typedef struct child_rec { int64_t pid; HANDLE h; int killed; struct child_rec *next; } child_rec;
-static slang__plat_mutex g_mu = SLANG_PLAT_MUTEX_INIT;
-static slang__plat_mutex g_spawn_mu = SLANG_PLAT_MUTEX_INIT;  /* one spawn at a time: inheritable handles */
+static zell__plat_mutex g_mu = ZELL_PLAT_MUTEX_INIT;
+static zell__plat_mutex g_spawn_mu = ZELL_PLAT_MUTEX_INIT;  /* one spawn at a time: inheritable handles */
 static child_rec *g_children;
 
 static child_rec *find(int64_t pid) {
@@ -94,7 +94,7 @@ static wchar_t *command_line(char *const *argv) {
         quote(&buf, &len, &cap, *a);
         if (!buf) return NULL;
     }
-    wchar_t *w = slang__w32_wide(buf ? buf : "");
+    wchar_t *w = zell__w32_wide(buf ? buf : "");
     free(buf);
     return w;
 }
@@ -154,13 +154,13 @@ static void *relay_main(void *arg) {
  * INVALID_SOCKET); the relay owns h from then on. */
 static SOCKET start_relay(HANDLE h, bool to_child) {
     SOCKET sv[2];
-    if (slang__w32_socketpair(sv) != 0) return INVALID_SOCKET;
+    if (zell__w32_socketpair(sv) != 0) return INVALID_SOCKET;
     relay *r = malloc(sizeof *r);
     if (!r) { closesocket(sv[0]); closesocket(sv[1]); return INVALID_SOCKET; }
     r->pipe = h;
     r->sock = sv[0];
     r->to_child = to_child;
-    if (!slang__plat_thread_start_detached(relay_main, r)) {
+    if (!zell__plat_thread_start_detached(relay_main, r)) {
         free(r);
         closesocket(sv[0]);
         closesocket(sv[1]);
@@ -187,7 +187,7 @@ typedef struct pipe_slot {
 } pipe_slot;
 
 static pipe_slot g_pipes[PIPE_SLOTS];
-static slang__plat_mutex g_pipes_mu = SLANG_PLAT_MUTEX_INIT;
+static zell__plat_mutex g_pipes_mu = ZELL_PLAT_MUTEX_INIT;
 static volatile LONG g_pipe_seq;
 
 static pipe_slot *pipe_slot_of(int64_t fd) {
@@ -196,7 +196,7 @@ static pipe_slot *pipe_slot_of(int64_t fd) {
     return s->h ? s : NULL;
 }
 
-bool slang__w32_pipe_of(int64_t fd, HANDLE *h, bool *write) {
+bool zell__w32_pipe_of(int64_t fd, HANDLE *h, bool *write) {
     pipe_slot *s = pipe_slot_of(fd);
     if (!s) return false;
     *h = s->h;
@@ -204,12 +204,12 @@ bool slang__w32_pipe_of(int64_t fd, HANDLE *h, bool *write) {
     return true;
 }
 
-bool slang__w32_pipe_write_busy(int64_t fd) {
+bool zell__w32_pipe_write_busy(int64_t fd) {
     pipe_slot *s = pipe_slot_of(fd);
     return s && s->wpending && !HasOverlappedIoCompleted(&s->wov);
 }
 
-bool slang__w32_pipe_write_ov(const void *ov, int64_t *fd) {
+bool zell__w32_pipe_write_ov(const void *ov, int64_t *fd) {
     const char *p = ov, *lo = (const char *)g_pipes, *hi = (const char *)(g_pipes + PIPE_SLOTS);
     if (p < lo || p >= hi) return false;
     size_t i = (size_t)(p - lo) / sizeof(pipe_slot);
@@ -222,17 +222,17 @@ bool slang__w32_pipe_write_ov(const void *ov, int64_t *fd) {
  * (inheritable, synchronous). to_child: the parent writes. */
 static int named_pipe(bool to_child, HANDLE *parent, HANDLE *child) {
     wchar_t name[96];
-    _snwprintf(name, 95, L"\\\\.\\pipe\\slang-%lu-%ld-%lu", (unsigned long)GetCurrentProcessId(),
+    _snwprintf(name, 95, L"\\\\.\\pipe\\zell-%lu-%ld-%lu", (unsigned long)GetCurrentProcessId(),
                (long)InterlockedIncrement(&g_pipe_seq), (unsigned long)GetTickCount());
     name[95] = 0;
     HANDLE p = CreateNamedPipeW(name, (to_child ? PIPE_ACCESS_OUTBOUND : PIPE_ACCESS_INBOUND) | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | 0x8 /* PIPE_REJECT_REMOTE_CLIENTS */, 1, PIPE_CHUNK,
                                 PIPE_CHUNK, 0, NULL);
-    if (p == INVALID_HANDLE_VALUE) return slang__w32_errno(GetLastError());
+    if (p == INVALID_HANDLE_VALUE) return zell__w32_errno(GetLastError());
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
     HANDLE c = CreateFileW(name, to_child ? GENERIC_READ : GENERIC_WRITE, 0, &sa, OPEN_EXISTING, 0, NULL);
     if (c == INVALID_HANDLE_VALUE) {
-        int e = slang__w32_errno(GetLastError());
+        int e = zell__w32_errno(GetLastError());
         CloseHandle(p);
         return e;
     }
@@ -243,7 +243,7 @@ static int named_pipe(bool to_child, HANDLE *parent, HANDLE *child) {
 
 /* Registers parent end h: its descriptor, or -1. */
 static int64_t pipe_register(HANDLE h, bool write) {
-    slang__plat_mutex_lock(&g_pipes_mu);
+    zell__plat_mutex_lock(&g_pipes_mu);
     int64_t fd = -1;
     for (int i = 0; i < PIPE_SLOTS; i++) {
         if (g_pipes[i].h) continue;
@@ -264,7 +264,7 @@ static int64_t pipe_register(HANDLE h, bool write) {
         fd = PIPE_FD_BASE + i;
         break;
     }
-    slang__plat_mutex_unlock(&g_pipes_mu);
+    zell__plat_mutex_unlock(&g_pipes_mu);
     return fd;
 }
 
@@ -276,7 +276,7 @@ static int64_t named_read(pipe_slot *s, void *buf, int64_t n) {
         DWORD e = GetLastError();
         return e == ERROR_BROKEN_PIPE || e == ERROR_PIPE_NOT_CONNECTED ? 0 : -EIO;
     }
-    if (avail == 0) return -SLANG_PLAT_EAGAIN;
+    if (avail == 0) return -ZELL_PLAT_EAGAIN;
     DWORD want = n > (int64_t)avail ? avail : (DWORD)n;
     if (!t_read_ev) t_read_ev = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!t_read_ev) return -EIO;
@@ -298,7 +298,7 @@ static int64_t named_read(pipe_slot *s, void *buf, int64_t n) {
 
 static int64_t named_write(pipe_slot *s, const void *buf, int64_t n) {
     if (s->wpending) {
-        if (!HasOverlappedIoCompleted(&s->wov)) return -SLANG_PLAT_EAGAIN;
+        if (!HasOverlappedIoCompleted(&s->wov)) return -ZELL_PLAT_EAGAIN;
         DWORD w = 0;
         BOOL ok = GetOverlappedResult(s->h, &s->wov, &w, FALSE);
         s->wpending = false;
@@ -328,10 +328,10 @@ static void named_close(pipe_slot *s) {
         CancelIoEx(s->h, &s->wov);
     CloseHandle(s->h);
     if (s->wev) CloseHandle(s->wev);
-    slang__plat_mutex_lock(&g_pipes_mu);
+    zell__plat_mutex_lock(&g_pipes_mu);
     free(s->wbuf);
     memset(s, 0, sizeof *s);
-    slang__plat_mutex_unlock(&g_pipes_mu);
+    zell__plat_mutex_unlock(&g_pipes_mu);
 }
 
 /* ---- spawn --------------------------------------------------------------------------- */
@@ -343,13 +343,13 @@ static HANDLE inheritable(HANDLE h) {
     return d;
 }
 
-int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, const int modes[3],
-                      slang__plat_child *out, const char **op) {
-    slang__w32_wsa_init();
+int zell__plat_spawn(char *const *argv, char *const *envp, const char *dir, const int modes[3],
+                      zell__plat_child *out, const char **op) {
+    zell__w32_wsa_init();
     *op = "exec";
     wchar_t *cmd = command_line(argv);
     wchar_t *wenv = envp ? env_block(envp) : NULL;
-    wchar_t *wdir = dir ? slang__w32_wpath(dir) : NULL;
+    wchar_t *wdir = dir ? zell__w32_wpath(dir) : NULL;
     if (!cmd || (envp && !wenv) || (dir && !wdir)) {
         free(cmd);
         free(wenv);
@@ -360,19 +360,19 @@ int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, con
     HANDLE child_h[3] = {NULL, NULL, NULL}, parent_h[3] = {NULL, NULL, NULL};
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
     int err = 0;
-    bool named = slang__w32_poller_waits_pipes();
-    slang__plat_mutex_lock(&g_spawn_mu);
+    bool named = zell__w32_poller_waits_pipes();
+    zell__plat_mutex_lock(&g_spawn_mu);
     for (int i = 0; i < 3 && !err; i++) {
-        if (modes[i] == SLANG_PLAT_STDIO_PIPE && named) {
+        if (modes[i] == ZELL_PLAT_STDIO_PIPE && named) {
             err = named_pipe(i == 0, &parent_h[i], &child_h[i]);
             if (err) *op = "pipe";
-        } else if (modes[i] == SLANG_PLAT_STDIO_PIPE) {
+        } else if (modes[i] == ZELL_PLAT_STDIO_PIPE) {
             HANDLE rd, wr;
-            if (!CreatePipe(&rd, &wr, &sa, 0)) { err = slang__w32_errno(GetLastError()); *op = "pipe"; break; }
+            if (!CreatePipe(&rd, &wr, &sa, 0)) { err = zell__w32_errno(GetLastError()); *op = "pipe"; break; }
             child_h[i] = i == 0 ? rd : wr;
             parent_h[i] = i == 0 ? wr : rd;
             SetHandleInformation(parent_h[i], HANDLE_FLAG_INHERIT, 0);
-        } else if (modes[i] == SLANG_PLAT_STDIO_NULL) {
+        } else if (modes[i] == ZELL_PLAT_STDIO_NULL) {
             child_h[i] = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
                                      OPEN_EXISTING, 0, NULL);
             if (child_h[i] == INVALID_HANDLE_VALUE) child_h[i] = NULL;
@@ -391,11 +391,11 @@ int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, con
         si.hStdOutput = child_h[1];
         si.hStdError = child_h[2];
         if (!CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_UNICODE_ENVIRONMENT, wenv, wdir, &si, &pi))
-            err = slang__w32_errno(GetLastError());
+            err = zell__w32_errno(GetLastError());
     }
     for (int i = 0; i < 3; i++)
         if (child_h[i]) CloseHandle(child_h[i]);
-    slang__plat_mutex_unlock(&g_spawn_mu);
+    zell__plat_mutex_unlock(&g_spawn_mu);
     free(cmd);
     free(wenv);
     free(wdir);
@@ -426,10 +426,10 @@ int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, con
     if (c) {
         c->pid = out->pid;
         c->h = pi.hProcess;
-        slang__plat_mutex_lock(&g_mu);
+        zell__plat_mutex_lock(&g_mu);
         c->next = g_children;
         g_children = c;
-        slang__plat_mutex_unlock(&g_mu);
+        zell__plat_mutex_unlock(&g_mu);
     } else {
         CloseHandle(pi.hProcess);
     }
@@ -442,25 +442,25 @@ int slang__plat_spawn(char *const *argv, char *const *envp, const char *dir, con
 static int64_t sock_result(int r) {
     if (r >= 0) return r;
     int e = WSAGetLastError();
-    if (e == WSAEWOULDBLOCK) return -SLANG_PLAT_EAGAIN;
+    if (e == WSAEWOULDBLOCK) return -ZELL_PLAT_EAGAIN;
     if (e == WSAECONNRESET || e == WSAECONNABORTED || e == WSAESHUTDOWN) return -EPIPE;
     return -EIO;
 }
 
-int64_t slang__plat_pipe_read(int64_t fd, void *buf, int64_t n) {
+int64_t zell__plat_pipe_read(int64_t fd, void *buf, int64_t n) {
     pipe_slot *ps = pipe_slot_of(fd);
     if (ps) return named_read(ps, buf, n);
     int64_t r = sock_result(recv((SOCKET)fd, buf, n > 0x40000000 ? 0x40000000 : (int)n, 0));
     return r == -EPIPE ? 0 : r;  /* the relay went away: EOF */
 }
 
-int64_t slang__plat_pipe_write(int64_t fd, const void *buf, int64_t n) {
+int64_t zell__plat_pipe_write(int64_t fd, const void *buf, int64_t n) {
     pipe_slot *ps = pipe_slot_of(fd);
     if (ps) return named_write(ps, buf, n);
     return sock_result(send((SOCKET)fd, buf, n > 0x40000000 ? 0x40000000 : (int)n, 0));
 }
 
-void slang__plat_pipe_close(int64_t fd) {
+void zell__plat_pipe_close(int64_t fd) {
     pipe_slot *ps = pipe_slot_of(fd);
     if (ps) {
         named_close(ps);
@@ -471,34 +471,34 @@ void slang__plat_pipe_close(int64_t fd) {
 
 /* ---- wait and kill ---------------------------------------------------------------------- */
 
-int slang__plat_wait_pid(int64_t pid, int64_t *status) {
-    slang__plat_mutex_lock(&g_mu);
+int zell__plat_wait_pid(int64_t pid, int64_t *status) {
+    zell__plat_mutex_lock(&g_mu);
     child_rec *c = find(pid);
     if (!c) {
-        slang__plat_mutex_unlock(&g_mu);
+        zell__plat_mutex_unlock(&g_mu);
         return -ECHILD;
     }
     HANDLE h = c->h;
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     DWORD w = WaitForSingleObject(h, 0);
     if (w == WAIT_TIMEOUT) return 0;
-    if (w != WAIT_OBJECT_0) return -slang__w32_errno(GetLastError());
+    if (w != WAIT_OBJECT_0) return -zell__w32_errno(GetLastError());
     DWORD code = 0;
     GetExitCodeProcess(h, &code);
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     child_rec **pp = &g_children;
     while (*pp && *pp != c) pp = &(*pp)->next;
     if (*pp) *pp = c->next;
     int killed = c->killed;
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     CloseHandle(h);
     free(c);
     *status = killed ? 1000 + killed : (int64_t)code;
     return 1;
 }
 
-int slang__plat_kill(int64_t pid, int sig) {
-    slang__plat_mutex_lock(&g_mu);
+int zell__plat_kill(int64_t pid, int sig) {
+    zell__plat_mutex_lock(&g_mu);
     child_rec *c = find(pid);
     HANDLE h = c ? c->h : NULL;
     bool own = false;
@@ -509,21 +509,21 @@ int slang__plat_kill(int64_t pid, int sig) {
     int e = 0;
     if (!h) {
         DWORD le = GetLastError();
-        e = le == ERROR_INVALID_PARAMETER ? 0 : slang__w32_errno(le);  /* gone */
+        e = le == ERROR_INVALID_PARAMETER ? 0 : zell__w32_errno(le);  /* gone */
     } else if (sig != 0) {
         if (WaitForSingleObject(h, 0) == WAIT_TIMEOUT) {
             if (TerminateProcess(h, 1)) {
                 if (c) c->killed = sig;
             } else {
-                e = slang__w32_errno(GetLastError());
+                e = zell__w32_errno(GetLastError());
             }
         }
     }
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     if (own) CloseHandle(h);
     return e;
 }
 
 #else
-typedef int slang__proc_win32_unused;
+typedef int zell__proc_win32_unused;
 #endif

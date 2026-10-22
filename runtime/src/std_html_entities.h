@@ -1,7 +1,7 @@
 /* Generated from Python html.entities.html5 (WHATWG named character references); do not edit.
  * Names are sorted bytewise; a name without ";" is one of the legacy forms that may appear
  * without the semicolon. */
-static const struct { const char *name; const char *value; } slang__html_entities[] = {
+static const struct { const char *name; const char *value; } zell__html_entities[] = {
     {"AElig", "\xc3\x86"},
     {"AElig;", "\xc3\x86"},
     {"AMP", "\x26"},

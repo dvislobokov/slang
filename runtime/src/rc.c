@@ -6,11 +6,11 @@
  * Swift's and free-threaded CPython's refcounts) splits the count of an
  * object into a part B owned by one thread, updated with plain 16-bit
  * loads and stores, and a shared part S that other threads update with
- * atomic RMW; the count is B + S. The layout of the word is in slang_rt.h.
+ * atomic RMW; the count is B + S. The layout of the word is in zell_rt.h.
  *
  * Owners. A thread that may own objects has a *slot* (1..4095) and the
- * owner tag slang_rc_owner = (BIASED >> 47) | slot: scheduler workers and
- * the thread that called slang_runtime_init (slang__rc_thread_enable).
+ * owner tag zell_rc_owner = (BIASED >> 47) | slot: scheduler workers and
+ * the thread that called zell_runtime_init (zell__rc_thread_enable).
  * Other threads (timers, pollers, std.thread, foreign threads) never own
  * objects; their operations on biased objects are the atomic ones.
  *
@@ -20,7 +20,7 @@
  * BIASED | owner | S = 0 | B = 2 with one CAS (a count of 1 means one
  * holder, so this is usually the creating thread). Single-threaded
  * processes never bias: their unowned counts are already updated with
- * plain stores (slang_threaded). CYCLIC objects are never biased (the cycle
+ * plain stores (zell_threaded). CYCLIC objects are never biased (the cycle
  * collector needs every count change to be an atomic RMW it can check).
  *
  * The protocol (o biased, owned by slot T):
@@ -58,7 +58,7 @@
  * processor's read of an object that is QUEUED: queued objects are freed
  * only by the processor), or by a holder that read B + S == 1 with neither
  * QUEUED nor WEAK set (it held the only reference; with a weak box the
- * transition must be atomic, because slang_weak_get may resurrect).
+ * transition must be atomic, because zell_weak_get may resurrect).
  *
  * Owner exit. A thread's slot is given up when it exits (TLS destructor):
  * it drains its queue and releases the slot lock. Its objects stay biased
@@ -82,48 +82,48 @@
 #error "biased refcounts assume the owner half-word B is at the object's address (little-endian)"
 #endif
 
-#define B_OF(w) ((w) & SLANG_RC_B_MASK)
-#define SF_OF(w) (((w) >> SLANG_RC_S_SHIFT) & SLANG_RC_S_FIELD)
-#define S_OF(w) (SF_OF(w) - SLANG_RC_S_EXCESS)
-#define SLOT_OF(w) ((int)(((uint64_t)(w) >> SLANG_RC_OWNER_SHIFT) & 0xFFF))
-#define S_ONE ((int64_t)1 << SLANG_RC_S_SHIFT)
+#define B_OF(w) ((w) & ZELL_RC_B_MASK)
+#define SF_OF(w) (((w) >> ZELL_RC_S_SHIFT) & ZELL_RC_S_FIELD)
+#define S_OF(w) (SF_OF(w) - ZELL_RC_S_EXCESS)
+#define SLOT_OF(w) ((int)(((uint64_t)(w) >> ZELL_RC_OWNER_SHIFT) & 0xFFF))
+#define S_ONE ((int64_t)1 << ZELL_RC_S_SHIFT)
 #define S_MARGIN ((int64_t)1 << 20)
-#define OWNER_TAG(slot) ((SLANG_RC_BIASED >> SLANG_RC_OWNER_SHIFT) | (int64_t)(slot))
+#define OWNER_TAG(slot) ((ZELL_RC_BIASED >> ZELL_RC_OWNER_SHIFT) | (int64_t)(slot))
 
-_Thread_local int64_t slang_rc_owner = SLANG_RC_NO_OWNER;
+_Thread_local int64_t zell_rc_owner = ZELL_RC_NO_OWNER;
 static _Thread_local int t_slot;            /* 0: none */
 static _Thread_local int t_eligible;        /* may own objects (gets a slot at its first biasing) */
 static _Thread_local int t_held;            /* holds its slot lock (not parked) */
 
-typedef struct qnode { slang_object *o; struct qnode *next; } qnode;
+typedef struct qnode { zell_object *o; struct qnode *next; } qnode;
 typedef struct {
     int held;            /* atomic: the slot lock (its thread keeps it while running) */
     int live;            /* atomic: a thread has the slot */
     qnode *queue;        /* atomic: objects waiting for a merge (a stack) */
 } rc_slot;
-static rc_slot g_slots[SLANG_RC_OWNER_SLOTS];
+static rc_slot g_slots[ZELL_RC_OWNER_SLOTS];
 static int g_slot_hint;
-static slang__plat_once g_once = SLANG_PLAT_ONCE_INIT;
-static slang__plat_tls_key g_key;
+static zell__plat_once g_once = ZELL_PLAT_ONCE_INIT;
+static zell__plat_tls_key g_key;
 static int g_keyed;
-/* SLANG_RC_STATS=1: slow-path counters printed at shutdown (relaxed). */
+/* ZELL_RC_STATS=1: slow-path counters printed at shutdown (relaxed). */
 static int64_t s_biased, s_queued, s_delegated, s_merged;
 
 static inline int is_owner(int64_t w) {
-    return (int64_t)(((uint64_t)w >> SLANG_RC_OWNER_SHIFT) & SLANG_RC_OWNER_MASK) == slang_rc_owner;
+    return (int64_t)(((uint64_t)w >> ZELL_RC_OWNER_SHIFT) & ZELL_RC_OWNER_MASK) == zell_rc_owner;
 }
 
-static inline void store_b(slang_object *o, int64_t b) {
+static inline void store_b(zell_object *o, int64_t b) {
     __atomic_store_n((uint16_t *)&o->refcount, (uint16_t)b, __ATOMIC_RELAXED);
 }
 
-static SLANG_NORETURN void overflow(void) { slang__panicf("reference count overflow (more than 2^30 references from other threads)"); }
+static ZELL_NORETURN void overflow(void) { zell__panicf("reference count overflow (more than 2^30 references from other threads)"); }
 
 /* The object is dead (count zero, observed by the caller): drop and free. */
-static void dead(slang_object *o, int64_t w) {
-    if (w & SLANG_RC_WEAK_FLAG) slang__weak_clear(o);
+static void dead(zell_object *o, int64_t w) {
+    if (w & ZELL_RC_WEAK_FLAG) zell__weak_clear(o);
     if (o->type && o->type->drop) o->type->drop(o);
-    slang__object_free(o);
+    zell__object_free(o);
 }
 
 /* ---- slots ---- */
@@ -132,7 +132,7 @@ static inline void slot_lock(rc_slot *s) {
     int z = 0;
     while (!__atomic_compare_exchange_n(&s->held, &z, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         z = 0;
-        slang__plat_yield();
+        zell__plat_yield();
     }
 }
 
@@ -149,7 +149,7 @@ static void process(rc_slot *s) {
     qnode *q = __atomic_exchange_n(&s->queue, (qnode *)NULL, __ATOMIC_ACQUIRE);
     while (q) {
         qnode *next = q->next;
-        slang_object *o = q->o;
+        zell_object *o = q->o;
         free(q);
         __atomic_add_fetch(&s_merged, 1, __ATOMIC_RELAXED);
         int64_t w = __atomic_load_n(&o->refcount, __ATOMIC_ACQUIRE);
@@ -159,11 +159,11 @@ static void process(rc_slot *s) {
                 dead(o, w);
                 break;
             }
-            int64_t nw = w & ~SLANG_RC_QUEUED;
+            int64_t nw = w & ~ZELL_RC_QUEUED;
             if (S_OF(w) < 0) {
                 /* B += S, S = 0 (total < B, so it fits B) */
-                nw = (nw & ~(SLANG_RC_B_MASK | (SLANG_RC_S_FIELD << SLANG_RC_S_SHIFT))) |
-                     (SLANG_RC_S_EXCESS << SLANG_RC_S_SHIFT) | total;
+                nw = (nw & ~(ZELL_RC_B_MASK | (ZELL_RC_S_FIELD << ZELL_RC_S_SHIFT))) |
+                     (ZELL_RC_S_EXCESS << ZELL_RC_S_SHIFT) | total;
             }
             if (__atomic_compare_exchange_n(&o->refcount, &w, nw, 1, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) break;
         }
@@ -180,9 +180,9 @@ static void delegate(rc_slot *s) {
     }
 }
 
-static void push(int slot, slang_object *o) {
+static void push(int slot, zell_object *o) {
     qnode *n = malloc(sizeof *n);
-    if (!n) slang__panicf("out of memory (refcount queue)");
+    if (!n) zell__panicf("out of memory (refcount queue)");
     n->o = o;
     __atomic_add_fetch(&s_queued, 1, __ATOMIC_RELAXED);
     rc_slot *s = &g_slots[slot];
@@ -203,22 +203,22 @@ static void thread_exit(void *arg) {
     t_held = 0;
     process(s);
     t_slot = 0;
-    slang_rc_owner = SLANG_RC_NO_OWNER;
+    zell_rc_owner = ZELL_RC_NO_OWNER;
     __atomic_store_n(&s->live, 0, __ATOMIC_RELEASE);
     slot_unlock(s);
     delegate(s);   /* pushes that raced with the exit */
 }
 
-static void key_init(void) { g_keyed = slang__plat_tls_new(&g_key, thread_exit); }
+static void key_init(void) { g_keyed = zell__plat_tls_new(&g_key, thread_exit); }
 
-void slang__rc_thread_enable(void) {
+void zell__rc_thread_enable(void) {
     if (t_slot) return;
     t_eligible = 0;   /* one attempt: with no free slot the thread stays unowned */
-    slang__plat_once_run(&g_once, key_init);
+    zell__plat_once_run(&g_once, key_init);
     if (!g_keyed) return;
     int start = __atomic_load_n(&g_slot_hint, __ATOMIC_RELAXED);
-    for (int k = 0; k < SLANG_RC_OWNER_SLOTS - 1; k++) {
-        int i = 1 + (start + k) % (SLANG_RC_OWNER_SLOTS - 1);
+    for (int k = 0; k < ZELL_RC_OWNER_SLOTS - 1; k++) {
+        int i = 1 + (start + k) % (ZELL_RC_OWNER_SLOTS - 1);
         int z = 0;
         if (__atomic_load_n(&g_slots[i].live, __ATOMIC_RELAXED) ||
             !__atomic_compare_exchange_n(&g_slots[i].live, &z, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
@@ -227,36 +227,36 @@ void slang__rc_thread_enable(void) {
         t_held = 1;
         __atomic_store_n(&g_slot_hint, i, __ATOMIC_RELAXED);
         t_slot = i;
-        slang_rc_owner = OWNER_TAG(i);
-        slang__plat_tls_set(g_key, (void *)(intptr_t)i);
+        zell_rc_owner = OWNER_TAG(i);
+        zell__plat_tls_set(g_key, (void *)(intptr_t)i);
         return;
     }
 }
 
-/* SLANG_NO_BIAS=1: no thread owns objects (every count stays unowned). */
+/* ZELL_NO_BIAS=1: no thread owns objects (every count stays unowned). */
 static int g_no_bias = -1;
 
-void slang__rc_thread_eligible(void) {
+void zell__rc_thread_eligible(void) {
     int nb = __atomic_load_n(&g_no_bias, __ATOMIC_RELAXED);
     if (nb < 0) {
-        const char *e = getenv("SLANG_NO_BIAS");
+        const char *e = getenv("ZELL_NO_BIAS");
         nb = e && *e && *e != '0';
         __atomic_store_n(&g_no_bias, nb, __ATOMIC_RELAXED);
     }
     t_eligible = !nb;
 }
 
-void slang__rc_poll(void) {
+void zell__rc_poll(void) {
     int slot = t_slot;
     if (slot && t_held && __atomic_load_n(&g_slots[slot].queue, __ATOMIC_RELAXED)) process(&g_slots[slot]);
 }
 
-int slang__rc_pending(void) {
+int zell__rc_pending(void) {
     int slot = t_slot;
     return slot && t_held && __atomic_load_n(&g_slots[slot].queue, __ATOMIC_RELAXED) != NULL;
 }
 
-void slang__rc_park(int merge) {
+void zell__rc_park(int merge) {
     int slot = t_slot;
     if (!slot || !t_held) return;
     if (merge) process(&g_slots[slot]);
@@ -265,55 +265,55 @@ void slang__rc_park(int merge) {
     if (merge) delegate(&g_slots[slot]);
 }
 
-void slang__rc_unpark(void) {
+void zell__rc_unpark(void) {
     int slot = t_slot;
     if (!slot || t_held) return;
     slot_lock(&g_slots[slot]);
     t_held = 1;
 }
 
-void slang__rc_drain_all(void) {
+void zell__rc_drain_all(void) {
     /* Merging frees objects whose destructors may queue more: repeat until
      * every queue is empty (our own included). */
     /* (bounded: a slot held by a thread that still runs is merged by it) */
     for (int again = 1, round = 0; again && round < 10000; round++) {
         again = 0;
-        for (int i = 1; i < SLANG_RC_OWNER_SLOTS; i++) {
+        for (int i = 1; i < ZELL_RC_OWNER_SLOTS; i++) {
             if (!__atomic_load_n(&g_slots[i].queue, __ATOMIC_ACQUIRE)) continue;
             if (i == t_slot && t_held) process(&g_slots[i]);
             else delegate(&g_slots[i]);
             if (__atomic_load_n(&g_slots[i].queue, __ATOMIC_ACQUIRE)) again = 1;
         }
-        if (again) slang__plat_yield();
+        if (again) zell__plat_yield();
     }
-    const char *e = getenv("SLANG_RC_STATS");
+    const char *e = getenv("ZELL_RC_STATS");
     if (e && *e && *e != '0')
         fprintf(stderr, "rc: %lld objects biased, %lld queued for a merge (%lld merged), %lld delegated merges\n",
                 (long long)__atomic_load_n(&s_biased, __ATOMIC_RELAXED), (long long)__atomic_load_n(&s_queued, __ATOMIC_RELAXED),
                 (long long)__atomic_load_n(&s_merged, __ATOMIC_RELAXED), (long long)__atomic_load_n(&s_delegated, __ATOMIC_RELAXED));
 }
 
-/* ---- the operations (from mem.c's slang_retain / slang_release) ---- */
+/* ---- the operations (from mem.c's zell_retain / zell_release) ---- */
 
-void slang__rc_retain_biased(slang_object *o, int64_t w) {
+void zell__rc_retain_biased(zell_object *o, int64_t w) {
     if (is_owner(w)) {
         int64_t b = B_OF(w);
-        if (b != SLANG_RC_B_MASK) {
+        if (b != ZELL_RC_B_MASK) {
             store_b(o, b + 1);
             return;
         }
         /* B is full: move half of it to S (and count this retain). */
         for (;;) {
-            if (SF_OF(w) + 0x8000 > SLANG_RC_S_FIELD - S_MARGIN) overflow();
+            if (SF_OF(w) + 0x8000 > ZELL_RC_S_FIELD - S_MARGIN) overflow();
             int64_t nw = w - 0x8000 + 1 + 0x8000 * S_ONE;
             if (__atomic_compare_exchange_n(&o->refcount, &w, nw, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return;
         }
     }
     int64_t old = __atomic_fetch_add(&o->refcount, S_ONE, __ATOMIC_RELAXED);
-    if (SF_OF(old) > SLANG_RC_S_FIELD - S_MARGIN) overflow();
+    if (SF_OF(old) > ZELL_RC_S_FIELD - S_MARGIN) overflow();
 }
 
-void slang__rc_release_biased(slang_object *o, int64_t w) {
+void zell__rc_release_biased(zell_object *o, int64_t w) {
     if (is_owner(w)) {
         int64_t b = B_OF(w);
         if (b >= 2) {
@@ -322,17 +322,17 @@ void slang__rc_release_biased(slang_object *o, int64_t w) {
         }
         if (b == 1) {
             for (;;) {
-                if (S_OF(w) == 0 && !(w & (SLANG_RC_QUEUED | SLANG_RC_WEAK_FLAG))) {
+                if (S_OF(w) == 0 && !(w & (ZELL_RC_QUEUED | ZELL_RC_WEAK_FLAG))) {
                     dead(o, w);   /* the only reference */
                     return;
                 }
                 if (__atomic_compare_exchange_n(&o->refcount, &w, w - 1, 1, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) break;
                 if (B_OF(w) != 1) {   /* cannot happen: only we change B */
-                    slang__panicf("biased refcount: owner count changed concurrently");
+                    zell__panicf("biased refcount: owner count changed concurrently");
                 }
             }
-            if (S_OF(w) == 0 && !(w & SLANG_RC_QUEUED)) dead(o, w - 1);
-            slang__rc_poll();
+            if (S_OF(w) == 0 && !(w & ZELL_RC_QUEUED)) dead(o, w - 1);
+            zell__rc_poll();
             return;
         }
         /* b == 0: our references were moved to S; fall through. */
@@ -345,13 +345,13 @@ void slang__rc_release_biased(slang_object *o, int64_t w) {
         if (SF_OF(w) < S_MARGIN) overflow();
         int64_t nw = w - S_ONE;
         int q = 0;
-        if (s < 0 && !(w & SLANG_RC_QUEUED) && B_OF(w) + s != 0) {
-            nw |= SLANG_RC_QUEUED;
+        if (s < 0 && !(w & ZELL_RC_QUEUED) && B_OF(w) + s != 0) {
+            nw |= ZELL_RC_QUEUED;
             q = 1;
         }
         if (__atomic_compare_exchange_n(&o->refcount, &w, nw, 1, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             if (B_OF(w) + s == 0) {
-                if (!(w & SLANG_RC_QUEUED)) dead(o, nw);   /* the last reference */
+                if (!(w & ZELL_RC_QUEUED)) dead(o, nw);   /* the last reference */
             } else if (q) {
                 push(SLOT_OF(w), o);
             }
@@ -360,54 +360,54 @@ void slang__rc_release_biased(slang_object *o, int64_t w) {
     }
 }
 
-void slang__rc_retain_unowned(slang_object *o, int64_t w) {
-    if (__builtin_expect(t_eligible && !t_slot, 0)) slang__rc_thread_enable();
+void zell__rc_retain_unowned(zell_object *o, int64_t w) {
+    if (__builtin_expect(t_eligible && !t_slot, 0)) zell__rc_thread_enable();
     for (;;) {
-        if (w & SLANG_RC_BIASED) {
-            slang__rc_retain_biased(o, w);
+        if (w & ZELL_RC_BIASED) {
+            zell__rc_retain_biased(o, w);
             return;
         }
         int64_t nw = w + 1;
         /* One holder and we may own objects: bias it to us (B = 2). */
-        if ((w & ~SLANG_RC_WEAK_FLAG) == 1 && slang_rc_owner != SLANG_RC_NO_OWNER)
-            nw = (w & SLANG_RC_WEAK_FLAG) | SLANG_RC_BIASED | ((slang_rc_owner & 0xFFF) << SLANG_RC_OWNER_SHIFT) |
-                 (SLANG_RC_S_EXCESS << SLANG_RC_S_SHIFT) | 2;
+        if ((w & ~ZELL_RC_WEAK_FLAG) == 1 && zell_rc_owner != ZELL_RC_NO_OWNER)
+            nw = (w & ZELL_RC_WEAK_FLAG) | ZELL_RC_BIASED | ((zell_rc_owner & 0xFFF) << ZELL_RC_OWNER_SHIFT) |
+                 (ZELL_RC_S_EXCESS << ZELL_RC_S_SHIFT) | 2;
         if (__atomic_compare_exchange_n(&o->refcount, &w, nw, 1, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-            if (nw & SLANG_RC_BIASED) __atomic_add_fetch(&s_biased, 1, __ATOMIC_RELAXED);
+            if (nw & ZELL_RC_BIASED) __atomic_add_fetch(&s_biased, 1, __ATOMIC_RELAXED);
             return;
         }
     }
 }
 
-void slang__rc_release_unowned(slang_object *o, int64_t w) {
+void zell__rc_release_unowned(zell_object *o, int64_t w) {
     for (;;) {
-        if (w & SLANG_RC_BIASED) {
-            slang__rc_release_biased(o, w);
+        if (w & ZELL_RC_BIASED) {
+            zell__rc_release_biased(o, w);
             return;
         }
         if (__atomic_compare_exchange_n(&o->refcount, &w, w - 1, 1, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) break;
     }
-    if (((w - 1) & SLANG_RC_COUNT_MASK) == 0) dead(o, w - 1);
+    if (((w - 1) & ZELL_RC_COUNT_MASK) == 0) dead(o, w - 1);
 }
 
-int64_t slang__rc_count(int64_t w) {
+int64_t zell__rc_count(int64_t w) {
     if (w < 0) return w;
-    if ((w & SLANG_RC_BIASED) && !(w & SLANG_RC_CYCLIC)) return B_OF(w) + S_OF(w);
-    return w & SLANG_RC_COUNT_MASK;
+    if ((w & ZELL_RC_BIASED) && !(w & ZELL_RC_CYCLIC)) return B_OF(w) + S_OF(w);
+    return w & ZELL_RC_COUNT_MASK;
 }
 
-int slang__rc_unique(const slang_object *o) {
+int zell__rc_unique(const zell_object *o) {
     int64_t w = __atomic_load_n(&o->refcount, __ATOMIC_ACQUIRE);
     if (w == 1) return 1;
-    if ((w & (SLANG_RC_BIASED | SLANG_RC_CYCLIC | SLANG_RC_QUEUED | SLANG_RC_WEAK_FLAG)) != SLANG_RC_BIASED || w < 0) return 0;
+    if ((w & (ZELL_RC_BIASED | ZELL_RC_CYCLIC | ZELL_RC_QUEUED | ZELL_RC_WEAK_FLAG)) != ZELL_RC_BIASED || w < 0) return 0;
     return B_OF(w) + S_OF(w) == 1;
 }
 
-int slang__rc_try_retain_biased(slang_object *o) {
+int zell__rc_try_retain_biased(zell_object *o) {
     int64_t w = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
     for (;;) {
         if (B_OF(w) + S_OF(w) <= 0) return 0;
-        if (SF_OF(w) > SLANG_RC_S_FIELD - S_MARGIN) overflow();
+        if (SF_OF(w) > ZELL_RC_S_FIELD - S_MARGIN) overflow();
         if (__atomic_compare_exchange_n(&o->refcount, &w, w + S_ONE, 1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) return 1;
     }
 }

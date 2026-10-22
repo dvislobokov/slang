@@ -1,56 +1,56 @@
 /* std_json.c - the C half of std.encoding.json (runtime/ABI.md 17.4):
  * a tokenizer and string quoting. The parser and the typed (de)coders are
- * written in Slang (compiler/src/sema/reflect_src/json.sl) on top of these.
+ * written in Zell (compiler/src/sema/reflect_src/json.zl) on top of these.
  *
- * slang_encoding_json_scan turns a JSON text (RFC 8259) into a []string of
+ * zell_encoding_json_scan turns a JSON text (RFC 8259) into a []string of
  * tokens, one per lexical element, tagged by their first byte:
  *   "{" "}" "[" "]" ":" ","   punctuation
  *   "s<bytes>"                a string, unescaped (UTF-8)
  *   "n<text>"                 a number, as written (valid JSON syntax)
  *   "t" "f" "z"               true, false, null
- * Grammar (nesting, commas) is checked by the Slang parser; lexical errors
+ * Grammar (nesting, commas) is checked by the Zell parser; lexical errors
  * fail here with "json: <what> at offset N". */
 #include "rt_internal.h"
 
 #include <stdio.h>
 #include <string.h>
 
-static void json_fail(slang_slice *res, slang_error **err, const char *what, int64_t off) {
+static void json_fail(zell_slice *res, zell_error **err, const char *what, int64_t off) {
     char buf[160];
     snprintf(buf, sizeof buf, "json: %s at offset %lld", what, (long long)off);
-    slang_slice_release(res);
-    if (err) *err = slang_error_new_cstr(buf);
+    zell_slice_release(res);
+    if (err) *err = zell_error_new_cstr(buf);
 }
 
 /* One-byte tokens (punctuation, true/false/null) are immortal statics. */
-#define TOK1(name, lit) static SLANG_STRING_STORAGE(2) name = SLANG_STRING_INIT(name, lit)
+#define TOK1(name, lit) static ZELL_STRING_STORAGE(2) name = ZELL_STRING_INIT(name, lit)
 TOK1(tok_lbrace, "{"); TOK1(tok_rbrace, "}"); TOK1(tok_lbrack, "["); TOK1(tok_rbrack, "]");
 TOK1(tok_colon, ":"); TOK1(tok_comma, ","); TOK1(tok_t, "t"); TOK1(tok_f, "f"); TOK1(tok_z, "z");
 
-static slang_string *token1(char c) {
+static zell_string *token1(char c) {
     switch (c) {
-    case '{': return (slang_string *)&tok_lbrace;
-    case '}': return (slang_string *)&tok_rbrace;
-    case '[': return (slang_string *)&tok_lbrack;
-    case ']': return (slang_string *)&tok_rbrack;
-    case ':': return (slang_string *)&tok_colon;
-    case ',': return (slang_string *)&tok_comma;
-    case 't': return (slang_string *)&tok_t;
-    case 'f': return (slang_string *)&tok_f;
-    case 'z': return (slang_string *)&tok_z;
+    case '{': return (zell_string *)&tok_lbrace;
+    case '}': return (zell_string *)&tok_rbrace;
+    case '[': return (zell_string *)&tok_lbrack;
+    case ']': return (zell_string *)&tok_rbrack;
+    case ':': return (zell_string *)&tok_colon;
+    case ',': return (zell_string *)&tok_comma;
+    case 't': return (zell_string *)&tok_t;
+    case 'f': return (zell_string *)&tok_f;
+    case 'z': return (zell_string *)&tok_z;
     default: return NULL;
     }
 }
 
-static void push_token(slang_slice *res, const char *p, int64_t n) {
-    slang_string *t = n == 1 ? token1(p[0]) : NULL;
+static void push_token(zell_slice *res, const char *p, int64_t n) {
+    zell_string *t = n == 1 ? token1(p[0]) : NULL;
     if (t) {
-        slang_slice_append(res, 8, &slang_ops_ref, &t);
+        zell_slice_append(res, 8, &zell_ops_ref, &t);
         return;
     }
-    slang_string *s = slang_string_new(p, n);
-    slang_slice_append(res, 8, &slang_ops_ref, &s);
-    slang_release(s);
+    zell_string *s = zell_string_new(p, n);
+    zell_slice_append(res, 8, &zell_ops_ref, &s);
+    zell_release(s);
 }
 
 static int hexval(uint8_t c) {
@@ -86,19 +86,19 @@ static int64_t put_utf8(char *w, uint32_t c) {
 
 /* Scans the string starting at the opening quote p[*pos]; appends the
  * token. Returns 0 on error (message in *what). */
-static int scan_string(const uint8_t *p, int64_t n, int64_t *pos, slang_slice *res, const char **what) {
+static int scan_string(const uint8_t *p, int64_t n, int64_t *pos, zell_slice *res, const char **what) {
     int64_t i = *pos + 1;
     /* The unescaped text is never longer than the escaped one. */
-    char *buf = slang_alloc(n - *pos + 1);
+    char *buf = zell_alloc(n - *pos + 1);
     int64_t w = 0;
     buf[w++] = 's';
     for (;;) {
-        if (i >= n) { *what = "unterminated string"; slang_free(buf); *pos = i; return 0; }
+        if (i >= n) { *what = "unterminated string"; zell_free(buf); *pos = i; return 0; }
         uint8_t c = p[i];
         if (c == '"') { i++; break; }
-        if (c < 0x20) { *what = "control character in string"; slang_free(buf); *pos = i; return 0; }
+        if (c < 0x20) { *what = "control character in string"; zell_free(buf); *pos = i; return 0; }
         if (c != '\\') { buf[w++] = (char)c; i++; continue; }
-        if (i + 1 >= n) { *what = "unterminated string"; slang_free(buf); *pos = i; return 0; }
+        if (i + 1 >= n) { *what = "unterminated string"; zell_free(buf); *pos = i; return 0; }
         uint8_t e = p[i + 1];
         i += 2;
         switch (e) {
@@ -112,7 +112,7 @@ static int scan_string(const uint8_t *p, int64_t n, int64_t *pos, slang_slice *r
             case 't': buf[w++] = '\t'; break;
             case 'u': {
                 uint32_t cp;
-                if (!read_hex4(p, n, i, &cp)) { *what = "invalid \\u escape"; slang_free(buf); *pos = i; return 0; }
+                if (!read_hex4(p, n, i, &cp)) { *what = "invalid \\u escape"; zell_free(buf); *pos = i; return 0; }
                 i += 4;
                 if (cp >= 0xD800 && cp < 0xDC00) {
                     uint32_t lo;
@@ -130,26 +130,26 @@ static int scan_string(const uint8_t *p, int64_t n, int64_t *pos, slang_slice *r
             }
             default:
                 *what = "invalid escape in string";
-                slang_free(buf);
+                zell_free(buf);
                 *pos = i - 2;
                 return 0;
         }
     }
     push_token(res, buf, w);
-    slang_free(buf);
+    zell_free(buf);
     *pos = i;
     return 1;
 }
 
 static inline int is_digit(uint8_t c) { return c >= '0' && c <= '9'; }
 
-void slang_encoding_json_scan(const slang_string *text, slang_slice *out, slang_error **err) {
+void zell_encoding_json_scan(const zell_string *text, zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
     if (err) *err = NULL;
     const uint8_t *p = (const uint8_t *)(text ? text->data : "");
     int64_t n = text ? text->len : 0;
-    slang_slice res;
-    slang_slice_new_ops(&res, 8, 0, 16, &slang_ops_ref);
+    zell_slice res;
+    zell_slice_new_ops(&res, 8, 0, 16, &zell_ops_ref);
     int64_t i = 0;
     while (i < n) {
         uint8_t c = p[i];
@@ -181,11 +181,11 @@ void slang_encoding_json_scan(const slang_string *text, slang_slice *out, slang_
                 if (i >= n || !is_digit(p[i])) { json_fail(&res, err, "invalid number", s); return; }
                 while (i < n && is_digit(p[i])) i++;
             }
-            char *buf = slang_alloc(i - s + 1);
+            char *buf = zell_alloc(i - s + 1);
             buf[0] = 'n';
             memcpy(buf + 1, p + s, (size_t)(i - s));
             push_token(&res, buf, i - s + 1);
-            slang_free(buf);
+            zell_free(buf);
             continue;
         }
         static const struct { const char *word; char tag; } lits[] = { { "true", 't' }, { "false", 'f' }, { "null", 'z' } };
@@ -209,7 +209,7 @@ void slang_encoding_json_scan(const slang_string *text, slang_slice *out, slang_
     *out = res;
 }
 
-slang_string *slang_encoding_json_quote(const slang_string *s) {
+zell_string *zell_encoding_json_quote(const zell_string *s) {
     const uint8_t *p = (const uint8_t *)(s ? s->data : "");
     int64_t n = s ? s->len : 0;
     int64_t len = 2;
@@ -219,7 +219,7 @@ slang_string *slang_encoding_json_quote(const slang_string *s) {
         else if (c < 0x20) len += 6;
         else len += 1;
     }
-    slang_string *r = slang__string_alloc(len);
+    zell_string *r = zell__string_alloc(len);
     char *w = r->data;
     *w++ = '"';
     for (int64_t i = 0; i < n; i++) {

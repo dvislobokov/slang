@@ -4,8 +4,8 @@
  * curve25519-donna-c64 / ref10's 64-bit variant. Every function is constant
  * time; elements are kept loosely reduced (limbs < 2^52) between operations
  * and fully reduced only by fe_tobytes. Included by x25519.c and ed25519.c. */
-#ifndef SLANG_FE25519_H
-#define SLANG_FE25519_H
+#ifndef ZELL_FE25519_H
+#define ZELL_FE25519_H
 
 #include "crypto.h"
 
@@ -19,7 +19,7 @@ static inline void fe_1(fe h) { h[0] = 1; h[1] = h[2] = h[3] = h[4] = 0; }
 static inline void fe_copy(fe h, const fe f) { for (int i = 0; i < 5; i++) h[i] = f[i]; }
 
 static inline void fe_frombytes(fe h, const uint8_t s[32]) {
-    uint64_t a = slang__ld64le(s), b = slang__ld64le(s + 8), c = slang__ld64le(s + 16), d = slang__ld64le(s + 24);
+    uint64_t a = zell__ld64le(s), b = zell__ld64le(s + 8), c = zell__ld64le(s + 16), d = zell__ld64le(s + 24);
     h[0] = a & FE_MASK51;
     h[1] = ((a >> 51) | (b << 13)) & FE_MASK51;
     h[2] = ((b >> 38) | (c << 26)) & FE_MASK51;
@@ -54,10 +54,10 @@ static inline void fe_tobytes(uint8_t s[32], const fe f) {
     c = t[2] >> 51; t[2] &= FE_MASK51; t[3] += c;
     c = t[3] >> 51; t[3] &= FE_MASK51; t[4] += c;
     t[4] &= FE_MASK51;
-    slang__st64le(s, t[0] | (t[1] << 51));
-    slang__st64le(s + 8, (t[1] >> 13) | (t[2] << 38));
-    slang__st64le(s + 16, (t[2] >> 26) | (t[3] << 25));
-    slang__st64le(s + 24, (t[3] >> 39) | (t[4] << 12));
+    zell__st64le(s, t[0] | (t[1] << 51));
+    zell__st64le(s + 8, (t[1] >> 13) | (t[2] << 38));
+    zell__st64le(s + 16, (t[2] >> 26) | (t[3] << 25));
+    zell__st64le(s + 24, (t[3] >> 39) | (t[4] << 12));
 }
 
 /* h = f + g, carried so every limb stays below 2^52 (fe_sub relies on it). */
@@ -186,7 +186,7 @@ static inline int fe_isnegative(const fe f) {
 static inline int fe_iszero(const fe f) {
     uint8_t s[32], z[32] = { 0 };
     fe_tobytes(s, f);
-    return slang__crypto_ct_eq(s, z, 32);
+    return zell__crypto_ct_eq(s, z, 32);
 }
 
 #endif

@@ -9,21 +9,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-const slang_type_info slang_type_string = { "string", 0, NULL };
+const zell_type_info zell_type_string = { "string", 0, NULL };
 
 /* ---- views (ABI.md 4.1) ----
  * A view shares the bytes of another string. Standalone views are ordinary
  * objects {hdr, len, data, owner} whose drop releases the owner; views made
  * in bulk (Split, Fields, regex matches) live in a view block, and their
- * refcount word forwards to the block (SLANG_RC_VIEW | block). The owner is
+ * refcount word forwards to the block (ZELL_RC_VIEW | block). The owner is
  * always the object that holds the bytes inline (never another view), or
  * NULL for the bytes of an immortal string. */
 
-static void sview_drop(void *o) { slang_release(((slang__sview *)o)->owner); }
-const slang_type_info slang_type_string_view = { "string", 0, sview_drop };
+static void sview_drop(void *o) { zell_release(((zell__sview *)o)->owner); }
+const zell_type_info zell_type_string_view = { "string", 0, sview_drop };
 
-static void vblock_drop(void *o) { slang_release(((slang__vblock *)o)->owner); }
-static const slang_type_info vblock_type = { "string views", 0, vblock_drop };
+static void vblock_drop(void *o) { zell_release(((zell__vblock *)o)->owner); }
+static const zell_type_info vblock_type = { "string views", 0, vblock_drop };
 
 /* Views of a string of len < VIEW_MIN bytes are copies: a small copy costs
  * less than the owner's refcount traffic and does not keep a big parent
@@ -33,67 +33,67 @@ static const slang_type_info vblock_type = { "string views", 0, vblock_drop };
 /* The bytes owner of s for a new view: sets *owner (NULL for static bytes)
  * and returns 1, or returns 0 when s cannot be viewed (arena strings, whose
  * bytes die with the arena). */
-static int view_owner(const slang_string *s, slang_object **owner) {
+static int view_owner(const zell_string *s, zell_object **owner) {
     int64_t rc = __atomic_load_n(&s->hdr.refcount, __ATOMIC_RELAXED);
-    if (rc == SLANG_RC_IMMORTAL) {
+    if (rc == ZELL_RC_IMMORTAL) {
         *owner = NULL;
-    } else if (rc == SLANG_RC_ARENA) {
+    } else if (rc == ZELL_RC_ARENA) {
         return 0;
-    } else if (slang_rc_is_view(rc)) {
-        *owner = ((slang__vblock *)(uintptr_t)(rc & ~SLANG_RC_VIEW))->owner;
-    } else if (s->hdr.type == &slang_type_string_view) {
-        *owner = ((const slang__sview *)s)->owner;
+    } else if (zell_rc_is_view(rc)) {
+        *owner = ((zell__vblock *)(uintptr_t)(rc & ~ZELL_RC_VIEW))->owner;
+    } else if (s->hdr.type == &zell_type_string_view) {
+        *owner = ((const zell__sview *)s)->owner;
     } else {
-        *owner = (slang_object *)&s->hdr;
+        *owner = (zell_object *)&s->hdr;
     }
     return 1;
 }
 
-slang_string *slang__string_sub(const slang_string *s, int64_t lo, int64_t hi) {
+zell_string *zell__string_sub(const zell_string *s, int64_t lo, int64_t hi) {
     int64_t n = hi - lo;
-    if (n <= 0) return slang__string_alloc_uninit(0);
-    slang_object *owner;
-    if (n < VIEW_MIN || !view_owner(s, &owner)) return slang_string_new(s->data + lo, n);
-    slang__sview *v = (slang__sview *)slang__object_new_uninit(&slang_type_string_view, (int64_t)sizeof(slang__sview));
+    if (n <= 0) return zell__string_alloc_uninit(0);
+    zell_object *owner;
+    if (n < VIEW_MIN || !view_owner(s, &owner)) return zell_string_new(s->data + lo, n);
+    zell__sview *v = (zell__sview *)zell__object_new_uninit(&zell_type_string_view, (int64_t)sizeof(zell__sview));
     v->s.len = n;
     v->s.data = s->data + lo;
     v->owner = owner;
-    slang_retain(owner);
+    zell_retain(owner);
     return &v->s;
 }
 
-slang__vblock *slang__vblock_new(const slang_string *parent, int64_t cap) {
-    slang_object *owner;
+zell__vblock *zell__vblock_new(const zell_string *parent, int64_t cap) {
+    zell_object *owner;
     if (!parent || cap <= 0 || !view_owner(parent, &owner)) return NULL;
-    slang__vblock *b = (slang__vblock *)slang__object_new_uninit(
-        &vblock_type, (int64_t)sizeof(slang__vblock) + cap * (int64_t)sizeof(slang_string));
+    zell__vblock *b = (zell__vblock *)zell__object_new_uninit(
+        &vblock_type, (int64_t)sizeof(zell__vblock) + cap * (int64_t)sizeof(zell_string));
     b->owner = owner;
-    slang_retain(owner);
+    zell_retain(owner);
     b->n = 0;
     b->cap = cap;
     return b;
 }
 
-slang_string *slang__vblock_add(slang__vblock *b, const char *p, int64_t n) {
+zell_string *zell__vblock_add(zell__vblock *b, const char *p, int64_t n) {
     if (n <= 0) return NULL;
-    if (!b || b->n == b->cap) return slang_string_new(p, n);
-    slang_string *v = &b->v[b->n++];
-    v->hdr.refcount = SLANG_RC_VIEW | (int64_t)(uintptr_t)b;
-    v->hdr.type = &slang_type_string;
+    if (!b || b->n == b->cap) return zell_string_new(p, n);
+    zell_string *v = &b->v[b->n++];
+    v->hdr.refcount = ZELL_RC_VIEW | (int64_t)(uintptr_t)b;
+    v->hdr.type = &zell_type_string;
     v->len = n;
     v->data = (char *)p;
     b->hdr.refcount++;   /* still private to the caller: no atomics needed */
     return v;
 }
 
-void slang__vblock_done(slang__vblock *b) { slang_release(b); }
+void zell__vblock_done(zell__vblock *b) { zell_release(b); }
 
 /* ---- C strings ---- */
 
 #define CSTR_RING 16
 static _Thread_local struct { char *buf[CSTR_RING]; size_t cap[CSTR_RING]; unsigned next; } t_cstr;
 
-const char *slang_string_cstr(const slang_string *s) {
+const char *zell_string_cstr(const zell_string *s) {
     if (!s) return "";
     if (s->data[s->len] == '\0') return s->data;
     unsigned i = t_cstr.next++ % CSTR_RING;
@@ -101,7 +101,7 @@ const char *slang_string_cstr(const slang_string *s) {
     if (t_cstr.cap[i] < need) {
         size_t cap = need < 64 ? 64 : need;
         char *nb = realloc(t_cstr.buf[i], cap);
-        if (!nb) slang__panicf("out of memory (requested %zu bytes)", cap);
+        if (!nb) zell__panicf("out of memory (requested %zu bytes)", cap);
         t_cstr.buf[i] = nb;
         t_cstr.cap[i] = cap;
     }
@@ -112,49 +112,49 @@ const char *slang_string_cstr(const slang_string *s) {
 
 /* ---- allocation ---- */
 
-static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
-static inline const char *sdata(const slang_string *s) { return s ? s->data : ""; }
+static inline int64_t slen(const zell_string *s) { return s ? s->len : 0; }
+static inline const char *sdata(const zell_string *s) { return s ? s->data : ""; }
 
-slang_string *slang__string_alloc(int64_t len) {
-    if (len < 0) slang__panicf("negative string length %lld", (long long)len);
-    slang_string *s = slang_object_new(&slang_type_string,
-                                       (int64_t)sizeof(slang_string) + len + 1);
+zell_string *zell__string_alloc(int64_t len) {
+    if (len < 0) zell__panicf("negative string length %lld", (long long)len);
+    zell_string *s = zell_object_new(&zell_type_string,
+                                       (int64_t)sizeof(zell_string) + len + 1);
     s->len = len;
     s->data = (char *)(s + 1);
-    s->data[len] = SLANG__STR_END;
+    s->data[len] = ZELL__STR_END;
     return s;
 }
 
-slang_string *slang__string_alloc_uninit(int64_t len) {
-    if (len < 0) slang__panicf("negative string length %lld", (long long)len);
-    slang_string *s = (slang_string *)slang__object_new_uninit(
-        &slang_type_string, (int64_t)sizeof(slang_string) + len + 1);
+zell_string *zell__string_alloc_uninit(int64_t len) {
+    if (len < 0) zell__panicf("negative string length %lld", (long long)len);
+    zell_string *s = (zell_string *)zell__object_new_uninit(
+        &zell_type_string, (int64_t)sizeof(zell_string) + len + 1);
     s->len = len;
     s->data = (char *)(s + 1);
-    s->data[len] = SLANG__STR_END;
+    s->data[len] = ZELL__STR_END;
     return s;
 }
 
-slang_string *slang_string_new(const char *bytes, int64_t len) {
-    slang_string *s = slang__string_alloc_uninit(len);
+zell_string *zell_string_new(const char *bytes, int64_t len) {
+    zell_string *s = zell__string_alloc_uninit(len);
     if (len > 0) memcpy(s->data, bytes, (size_t)len);
     return s;
 }
 
-slang_string *slang_string_from_cstr(const char *cstr) {
+zell_string *zell_string_from_cstr(const char *cstr) {
     if (!cstr) cstr = "";
-    return slang_string_new(cstr, (int64_t)strlen(cstr));
+    return zell_string_new(cstr, (int64_t)strlen(cstr));
 }
 
-slang_string *slang_string_literal(const char *bytes, int64_t len) {
-    slang_string *s = slang_string_new(bytes, len);
+zell_string *zell_string_literal(const char *bytes, int64_t len) {
+    zell_string *s = zell_string_new(bytes, len);
     s->data[len] = '\0';
-    slang__object_immortalize(&s->hdr);
+    zell__object_immortalize(&s->hdr);
     return s;
 }
 
-const char *slang_string_data(const slang_string *s) { return sdata(s); }
-int64_t slang_string_len(const slang_string *s) { return slen(s); }
+const char *zell_string_data(const zell_string *s) { return sdata(s); }
+int64_t zell_string_len(const zell_string *s) { return slen(s); }
 
 /* Decode one rune at p[0..n). Returns rune, sets *w (>=1). Invalid -> U+FFFD, w=1. */
 static int32_t utf8_decode(const unsigned char *p, int64_t n, int64_t *w) {
@@ -175,7 +175,7 @@ static int32_t utf8_decode(const unsigned char *p, int64_t n, int64_t *w) {
     return (int32_t)r;
 }
 
-int slang__utf8_encode(char *buf, int32_t r) {
+int zell__utf8_encode(char *buf, int32_t r) {
     uint32_t c = (uint32_t)r;
     if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) c = 0xFFFD;
     if (c < 0x80) { buf[0] = (char)c; return 1; }
@@ -191,7 +191,7 @@ int slang__utf8_encode(char *buf, int32_t r) {
     return 4;
 }
 
-int64_t slang_string_rune_count(const slang_string *s) {
+int64_t zell_string_rune_count(const zell_string *s) {
     int64_t n = slen(s), count = 0;
     const unsigned char *p = (const unsigned char *)sdata(s);
     for (int64_t i = 0; i < n;) {
@@ -203,48 +203,48 @@ int64_t slang_string_rune_count(const slang_string *s) {
     return count;
 }
 
-int32_t slang_string_decode_rune(const slang_string *s, int64_t i, int64_t *width) {
+int32_t zell_string_decode_rune(const zell_string *s, int64_t i, int64_t *width) {
     int64_t n = slen(s);
-    if (i < 0 || i >= n) slang_panic_bounds(i, n);
+    if (i < 0 || i >= n) zell_panic_bounds(i, n);
     int64_t w;
     int32_t r = utf8_decode((const unsigned char *)sdata(s) + i, n - i, &w);
     if (width) *width = w;
     return r;
 }
 
-slang_string *slang_string_concat(const slang_string *a, const slang_string *b) {
+zell_string *zell_string_concat(const zell_string *a, const zell_string *b) {
     int64_t la = slen(a), lb = slen(b);
-    slang_string *s = slang__string_alloc_uninit(la + lb);
+    zell_string *s = zell__string_alloc_uninit(la + lb);
     if (la) memcpy(s->data, a->data, (size_t)la);
     if (lb) memcpy(s->data + la, b->data, (size_t)lb);
     return s;
 }
 
-slang_string *slang_string_append(slang_string *a, const slang_string *b) {
+zell_string *zell_string_append(zell_string *a, const zell_string *b) {
     int64_t la = slen(a), lb = slen(b);
     if (lb == 0) return a;
-    if (!a || !slang__rc_unique(&a->hdr) || a->data != (char *)(a + 1)) {
+    if (!a || !zell__rc_unique(&a->hdr) || a->data != (char *)(a + 1)) {
         /* Shared, immortal, a view or empty: copy. */
-        slang_string *s = slang_string_concat(a, b);
-        slang_release(a);
+        zell_string *s = zell_string_concat(a, b);
+        zell_release(a);
         return s;
     }
     /* `a` is uniquely referenced by the caller: extend it in place, with
      * geometric growth so that a loop of `s += x` is linear. */
-    int64_t need = (int64_t)sizeof(slang_string) + la + lb + 1;
+    int64_t need = (int64_t)sizeof(zell_string) + la + lb + 1;
     int self = (b == a);
-    if (slang__object_capacity(&a->hdr) < need) {
+    if (zell__object_capacity(&a->hdr) < need) {
         int64_t cap = need + need / 2 + 16;
-        a = (slang_string *)slang__object_resize(&a->hdr, cap);
+        a = (zell_string *)zell__object_resize(&a->hdr, cap);
         a->data = (char *)(a + 1);
     }
     memcpy(a->data + la, self ? a->data : b->data, (size_t)lb);
     a->len = la + lb;
-    a->data[a->len] = SLANG__STR_END;
+    a->data[a->len] = ZELL__STR_END;
     return a;
 }
 
-int32_t slang_string_compare(const slang_string *a, const slang_string *b) {
+int32_t zell_string_compare(const zell_string *a, const zell_string *b) {
     int64_t la = slen(a), lb = slen(b);
     int64_t m = la < lb ? la : lb;
     int c = m ? memcmp(sdata(a), sdata(b), (size_t)m) : 0;
@@ -253,39 +253,39 @@ int32_t slang_string_compare(const slang_string *a, const slang_string *b) {
     return la < lb ? -1 : (la > lb ? 1 : 0);
 }
 
-bool slang_string_eq(const slang_string *a, const slang_string *b) {
+bool zell_string_eq(const zell_string *a, const zell_string *b) {
     if (a == b) return true;
     int64_t la = slen(a);
     if (la != slen(b)) return false;
     return la == 0 || memcmp(a->data, b->data, (size_t)la) == 0;
 }
 
-uint64_t slang_hash_bytes(const void *p, int64_t n) {
+uint64_t zell_hash_bytes(const void *p, int64_t n) {
     const unsigned char *b = p;
     uint64_t h = 1469598103934665603ULL;
     for (int64_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ULL; }
     return h;
 }
 
-uint64_t slang_string_hash(const slang_string *s) { return slang_hash_bytes(sdata(s), slen(s)); }
+uint64_t zell_string_hash(const zell_string *s) { return zell_hash_bytes(sdata(s), slen(s)); }
 
-slang_string *slang_string_slice(const slang_string *s, int64_t lo, int64_t hi) {
+zell_string *zell_string_slice(const zell_string *s, int64_t lo, int64_t hi) {
     int64_t n = slen(s);
-    if (lo < 0 || hi < lo || hi > n) slang_panic_slice_bounds(lo, hi, n);
+    if (lo < 0 || hi < lo || hi > n) zell_panic_slice_bounds(lo, hi, n);
     if (lo == 0 && hi == n && s) {
-        slang_retain((void *)s);
-        return (slang_string *)s;
+        zell_retain((void *)s);
+        return (zell_string *)s;
     }
-    return slang__string_sub(s, lo, hi);
+    return zell__string_sub(s, lo, hi);
 }
 
-uint8_t slang_string_byte_at(const slang_string *s, int64_t i) {
+uint8_t zell_string_byte_at(const zell_string *s, int64_t i) {
     int64_t n = slen(s);
-    if (i < 0 || i >= n) slang_panic_bounds(i, n);
+    if (i < 0 || i >= n) zell_panic_bounds(i, n);
     return (uint8_t)s->data[i];
 }
 
-const char *slang__memmem(const char *hay, int64_t n, const char *needle, int64_t m) {
+const char *zell__memmem(const char *hay, int64_t n, const char *needle, int64_t m) {
     if (m > n) return NULL;
     /* memchr for the first byte (vectorised in libc), then verify. */
     const char *p = hay, *last = hay + (n - m);
@@ -299,24 +299,24 @@ const char *slang__memmem(const char *hay, int64_t n, const char *needle, int64_
     return NULL;
 }
 
-int64_t slang_string_index(const slang_string *s, const slang_string *sub) {
+int64_t zell_string_index(const zell_string *s, const zell_string *sub) {
     int64_t n = slen(s), m = slen(sub);
     if (m == 0) return 0;
     const char *hs = sdata(s);
-    const char *f = slang__memmem(hs, n, sdata(sub), m);
+    const char *f = zell__memmem(hs, n, sdata(sub), m);
     return f ? (int64_t)(f - hs) : -1;
 }
 
-bool slang_string_contains(const slang_string *s, const slang_string *sub) {
-    return slang_string_index(s, sub) >= 0;
+bool zell_string_contains(const zell_string *s, const zell_string *sub) {
+    return zell_string_index(s, sub) >= 0;
 }
 
-bool slang_string_has_prefix(const slang_string *s, const slang_string *p) {
+bool zell_string_has_prefix(const zell_string *s, const zell_string *p) {
     int64_t m = slen(p);
     return m <= slen(s) && (m == 0 || memcmp(sdata(s), sdata(p), (size_t)m) == 0);
 }
 
-bool slang_string_has_suffix(const slang_string *s, const slang_string *p) {
+bool zell_string_has_suffix(const zell_string *s, const zell_string *p) {
     int64_t n = slen(s), m = slen(p);
     return m <= n && (m == 0 || memcmp(sdata(s) + n - m, sdata(p), (size_t)m) == 0);
 }
@@ -330,22 +330,22 @@ static char *utoa_end(char *end, uint64_t v) {
     return p;
 }
 
-slang_string *slang_string_from_int(int64_t v) {
+zell_string *zell_string_from_int(int64_t v) {
     char buf[32];
     char *end = buf + sizeof buf;
     char *p = utoa_end(end, v < 0 ? 0 - (uint64_t)v : (uint64_t)v);
     if (v < 0) *--p = '-';
-    return slang_string_new(p, end - p);
+    return zell_string_new(p, end - p);
 }
 
-slang_string *slang_string_from_uint(uint64_t v) {
+zell_string *zell_string_from_uint(uint64_t v) {
     char buf[32];
     char *end = buf + sizeof buf;
     char *p = utoa_end(end, v);
-    return slang_string_new(p, end - p);
+    return zell_string_new(p, end - p);
 }
 
-/* Fast exact path of slang__format_float for values printed in fixed
+/* Fast exact path of zell__format_float for values printed in fixed
  * notation with few digits (1e-4 <= |v| < 1e6, at most 15 significant
  * digits): finds the smallest k such that m = round(v * 10^k) parses back
  * to v. That m is the shortest round-trip digit string, i.e. exactly what
@@ -393,7 +393,7 @@ static int format_float_fast(char *buf, size_t cap, double v) {
     return -1;
 }
 
-int slang__format_float(char *buf, size_t cap, double v) {
+int zell__format_float(char *buf, size_t cap, double v) {
     if (isnan(v)) return snprintf(buf, cap, "NaN");
     if (isinf(v)) return snprintf(buf, cap, v > 0 ? "+Inf" : "-Inf");
     if (v == 0) return snprintf(buf, cap, signbit(v) ? "-0" : "0");
@@ -447,32 +447,32 @@ int slang__format_float(char *buf, size_t cap, double v) {
     return (int)n;
 }
 
-slang_string *slang_string_from_float(double v) {
+zell_string *zell_string_from_float(double v) {
     char buf[64];
-    int n = slang__format_float(buf, sizeof buf, v);
-    return slang_string_new(buf, n);
+    int n = zell__format_float(buf, sizeof buf, v);
+    return zell_string_new(buf, n);
 }
 
-slang_string *slang_string_from_bool(bool v) {
-    return v ? slang_string_new("true", 4) : slang_string_new("false", 5);
+zell_string *zell_string_from_bool(bool v) {
+    return v ? zell_string_new("true", 4) : zell_string_new("false", 5);
 }
 
-slang_string *slang_string_from_rune(int32_t r) {
+zell_string *zell_string_from_rune(int32_t r) {
     char buf[4];
-    int n = slang__utf8_encode(buf, r);
-    return slang_string_new(buf, n);
+    int n = zell__utf8_encode(buf, r);
+    return zell_string_new(buf, n);
 }
 
-static void set_err(slang_error **err, const char *fmt, const slang_string *s) {
+static void set_err(zell_error **err, const char *fmt, const zell_string *s) {
     if (!err) return;
     char buf[256];
-    snprintf(buf, sizeof buf, fmt, slang_string_cstr(s));
-    *err = slang_error_new_cstr(buf);
+    snprintf(buf, sizeof buf, fmt, zell_string_cstr(s));
+    *err = zell_error_new_cstr(buf);
 }
 
-int64_t slang_string_to_int(const slang_string *s, slang_error **err) {
+int64_t zell_string_to_int(const zell_string *s, zell_error **err) {
     if (err) *err = NULL;
-    const char *p = slang_string_cstr(s);
+    const char *p = zell_string_cstr(s);
     int64_t n = slen(s);
     if (n == 0) { set_err(err, "invalid integer: \"%s\"", s); return 0; }
     /* reject leading whitespace / embedded NULs that strtoll would accept */
@@ -487,9 +487,9 @@ int64_t slang_string_to_int(const slang_string *s, slang_error **err) {
     return (int64_t)v;
 }
 
-double slang_string_to_float(const slang_string *s, slang_error **err) {
+double zell_string_to_float(const zell_string *s, zell_error **err) {
     if (err) *err = NULL;
-    const char *p = slang_string_cstr(s);
+    const char *p = zell_string_cstr(s);
     int64_t n = slen(s);
     if (n == 0 || (int64_t)strlen(p) != n || isspace((unsigned char)p[0])) {
         set_err(err, "invalid float: \"%s\"", s); return 0;

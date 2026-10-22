@@ -1,8 +1,8 @@
 /* std_xml.c - the C half of std.encoding.xml (runtime/ABI.md 19.4): a
  * tokenizer. The pull Reader, namespaces, tag matching, the Writer and the
- * typed (de)coders are Slang (compiler/src/sema/stdlib_src/xml.sl).
+ * typed (de)coders are Zell (compiler/src/sema/stdlib_src/xml.zl).
  *
- * slang_encoding_xml_rt_scan turns a document into a []string of tokens
+ * zell_encoding_xml_rt_scan turns a document into a []string of tokens
  * tagged by their first byte:
  *   "S<line> <qname>"   start tag; followed by attribute pairs
  *   "A<qname>" "V<value>" (value with entities decoded), then
@@ -25,7 +25,7 @@ typedef struct {
     const uint8_t *p;
     int64_t n, i, line;
     bool strict;
-    slang_slice *out;
+    zell_slice *out;
     const char *err;
     int64_t err_line;
     char *buf;
@@ -33,24 +33,24 @@ typedef struct {
 } xs;
 
 static void push(xs *s, char kind, const char *p, int64_t n) {
-    slang_string *t = slang__string_alloc(n + 1);
+    zell_string *t = zell__string_alloc(n + 1);
     t->data[0] = kind;
     if (n) memcpy(t->data + 1, p, (size_t)n);
     t->data[n + 1] = 0;
-    slang_slice_append(s->out, 8, &slang_ops_ref, &t);
-    slang_release(t);
+    zell_slice_append(s->out, 8, &zell_ops_ref, &t);
+    zell_release(t);
 }
 
 static void push_line(xs *s, char kind, int64_t line, const char *p, int64_t n) {
     char num[32];
     int k = snprintf(num, sizeof num, "%lld ", (long long)line);
-    slang_string *t = slang__string_alloc(1 + k + n);
+    zell_string *t = zell__string_alloc(1 + k + n);
     t->data[0] = kind;
     memcpy(t->data + 1, num, (size_t)k);
     if (n) memcpy(t->data + 1 + k, p, (size_t)n);
     t->data[1 + k + n] = 0;
-    slang_slice_append(s->out, 8, &slang_ops_ref, &t);
-    slang_release(t);
+    zell_slice_append(s->out, 8, &zell_ops_ref, &t);
+    zell_release(t);
 }
 
 static int fail(xs *s, const char *what) {
@@ -65,7 +65,7 @@ static void bput(xs *s, const char *p, int64_t n) {
     if (s->blen + n > s->bcap) {
         int64_t cap = s->bcap ? s->bcap * 2 : 256;
         while (cap < s->blen + n) cap *= 2;
-        s->buf = slang_realloc(s->buf, (size_t)cap);
+        s->buf = zell_realloc(s->buf, (size_t)cap);
         s->bcap = cap;
     }
     memcpy(s->buf + s->blen, p, (size_t)n);
@@ -344,32 +344,32 @@ static void scan(xs *s) {
 #undef FLUSH_TEXT
 }
 
-void slang_encoding_xml_rt_scan(const slang_string *text, bool strict, slang_slice *out, slang_error **err) {
+void zell_encoding_xml_rt_scan(const zell_string *text, bool strict, zell_slice *out, zell_error **err) {
     xs s;
     memset(&s, 0, sizeof s);
-    s.p = (const uint8_t *)slang_string_data(text);
-    s.n = slang_string_len(text);
+    s.p = (const uint8_t *)zell_string_data(text);
+    s.n = zell_string_len(text);
     s.line = 1;
     s.strict = strict;
     s.out = out;
-    slang_slice_new_ops(out, 8, 0, 16, &slang_ops_ref);
+    zell_slice_new_ops(out, 8, 0, 16, &zell_ops_ref);
     /* a UTF-8 byte order mark is skipped */
     if (s.n >= 3 && s.p[0] == 0xEF && s.p[1] == 0xBB && s.p[2] == 0xBF) s.i = 3;
     scan(&s);
-    slang_free(s.buf);
+    zell_free(s.buf);
     if (err) *err = NULL;
     if (s.err) {
         char msg[200];
         snprintf(msg, sizeof msg, "xml: %s on line %lld", s.err, (long long)s.err_line);
-        slang_slice_release(out);
-        if (err) *err = slang_error_new_cstr(msg);
+        zell_slice_release(out);
+        if (err) *err = zell_error_new_cstr(msg);
     }
 }
 
 /* Escapes text for character data (attr: also quotes and white space). */
-slang_string *slang_encoding_xml_rt_escape(const slang_string *text, bool attr) {
-    const char *p = slang_string_data(text);
-    int64_t n = slang_string_len(text), extra = 0;
+zell_string *zell_encoding_xml_rt_escape(const zell_string *text, bool attr) {
+    const char *p = zell_string_data(text);
+    int64_t n = zell_string_len(text), extra = 0;
     for (int64_t i = 0; i < n; i++) {
         char c = p[i];
         if (c == '&') extra += 4;
@@ -379,10 +379,10 @@ slang_string *slang_encoding_xml_rt_escape(const slang_string *text, bool attr) 
         else if (!attr && c == '\r') extra += 4;
     }
     if (extra == 0) {
-        slang_retain((void *)text);
-        return text ? (slang_string *)text : slang__string_alloc(0);
+        zell_retain((void *)text);
+        return text ? (zell_string *)text : zell__string_alloc(0);
     }
-    slang_string *r = slang__string_alloc(n + extra);
+    zell_string *r = zell__string_alloc(n + extra);
     char *w = r->data;
     for (int64_t i = 0; i < n; i++) {
         char c = p[i];

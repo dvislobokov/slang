@@ -3,7 +3,7 @@
  * both separate); files are opened with CreateFileW and wrapped in C
  * runtime descriptors (_open_osfhandle) so 0/1/2 stay the standard streams
  * and descriptor numbers stay small. Errors are POSIX errno values
- * (slang__w32_errno). */
+ * (zell__w32_errno). */
 #include "platform.h"
 
 #if defined(_WIN32)
@@ -21,25 +21,25 @@
 #define IO_REPARSE_TAG_SYMLINK 0xA000000CL
 #endif
 
-static int last_errno(void) { return slang__w32_errno(GetLastError()); }
+static int last_errno(void) { return zell__w32_errno(GetLastError()); }
 
 static HANDLE os_handle(int64_t fd) { return (HANDLE)_get_osfhandle((int)fd); }
 
-int64_t slang__plat_open(const char *path, int flags, int perm) {
-    wchar_t *w = slang__w32_wpath(path);
+int64_t zell__plat_open(const char *path, int flags, int perm) {
+    wchar_t *w = zell__w32_wpath(path);
     if (!w) return -EINVAL;
     DWORD access = 0;
     int acc = flags & 3;
-    if (acc == SLANG_PLAT_O_RDONLY || acc == SLANG_PLAT_O_RDWR) access |= GENERIC_READ;
-    if (acc == SLANG_PLAT_O_WRONLY || acc == SLANG_PLAT_O_RDWR) {
+    if (acc == ZELL_PLAT_O_RDONLY || acc == ZELL_PLAT_O_RDWR) access |= GENERIC_READ;
+    if (acc == ZELL_PLAT_O_WRONLY || acc == ZELL_PLAT_O_RDWR) {
         /* O_APPEND: append-only access makes every write go to the end atomically */
-        access |= (flags & SLANG_PLAT_O_APPEND) ? (FILE_APPEND_DATA | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE) : GENERIC_WRITE;
+        access |= (flags & ZELL_PLAT_O_APPEND) ? (FILE_APPEND_DATA | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE) : GENERIC_WRITE;
     }
-    bool create = flags & SLANG_PLAT_O_CREATE, excl = flags & SLANG_PLAT_O_EXCL, trunc = flags & SLANG_PLAT_O_TRUNC;
+    bool create = flags & ZELL_PLAT_O_CREATE, excl = flags & ZELL_PLAT_O_EXCL, trunc = flags & ZELL_PLAT_O_TRUNC;
     DWORD disp = create ? (excl ? CREATE_NEW : trunc ? CREATE_ALWAYS : OPEN_ALWAYS) : (trunc ? TRUNCATE_EXISTING : OPEN_EXISTING);
     DWORD attrs = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS;  /* directories open too, like POSIX O_RDONLY */
     if (create && !(perm & 0200)) attrs |= FILE_ATTRIBUTE_READONLY;
-    if (flags & SLANG_PLAT_O_SYNC) attrs |= FILE_FLAG_WRITE_THROUGH;
+    if (flags & ZELL_PLAT_O_SYNC) attrs |= FILE_FLAG_WRITE_THROUGH;
     HANDLE h = CreateFileW(w, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, disp, attrs, NULL);
     DWORD err = GetLastError();
     if (h == INVALID_HANDLE_VALUE && err == ERROR_ACCESS_DENIED && (access & (GENERIC_WRITE | FILE_APPEND_DATA))) {
@@ -47,9 +47,9 @@ int64_t slang__plat_open(const char *path, int flags, int perm) {
         if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) err = ERROR_DIRECTORY_NOT_SUPPORTED;
     }
     free(w);
-    if (h == INVALID_HANDLE_VALUE) return err == ERROR_DIRECTORY_NOT_SUPPORTED ? -EISDIR : -(int64_t)slang__w32_errno(err);
-    int cf = _O_BINARY | (acc == SLANG_PLAT_O_RDONLY ? _O_RDONLY : acc == SLANG_PLAT_O_WRONLY ? _O_WRONLY : _O_RDWR);
-    if (flags & SLANG_PLAT_O_APPEND) cf |= _O_APPEND;
+    if (h == INVALID_HANDLE_VALUE) return err == ERROR_DIRECTORY_NOT_SUPPORTED ? -EISDIR : -(int64_t)zell__w32_errno(err);
+    int cf = _O_BINARY | (acc == ZELL_PLAT_O_RDONLY ? _O_RDONLY : acc == ZELL_PLAT_O_WRONLY ? _O_WRONLY : _O_RDWR);
+    if (flags & ZELL_PLAT_O_APPEND) cf |= _O_APPEND;
     int fd = _open_osfhandle((intptr_t)h, cf);
     if (fd < 0) {
         CloseHandle(h);
@@ -60,12 +60,12 @@ int64_t slang__plat_open(const char *path, int flags, int perm) {
 
 static unsigned clamp(int64_t n) { return n > 0x40000000 ? 0x40000000u : (unsigned)n; }
 
-int64_t slang__plat_read(int64_t fd, void *buf, int64_t n) {
+int64_t zell__plat_read(int64_t fd, void *buf, int64_t n) {
     int r = _read((int)fd, buf, clamp(n));
     return r < 0 ? -(int64_t)errno : r;
 }
 
-int64_t slang__plat_pread(int64_t fd, void *buf, int64_t n, int64_t off) {
+int64_t zell__plat_pread(int64_t fd, void *buf, int64_t n, int64_t off) {
     HANDLE h = os_handle(fd);
     if (h == INVALID_HANDLE_VALUE) return -EBADF;
     OVERLAPPED ov;
@@ -82,24 +82,24 @@ int64_t slang__plat_pread(int64_t fd, void *buf, int64_t n, int64_t off) {
     if (pos >= 0) _lseeki64((int)fd, pos, SEEK_SET);
     if (!ok) {
         if (e == ERROR_HANDLE_EOF) return 0;
-        return -(int64_t)slang__w32_errno(e);
+        return -(int64_t)zell__w32_errno(e);
     }
     return got;
 }
 
-int64_t slang__plat_write(int64_t fd, const void *buf, int64_t n) {
-    if (slang__w32_is_console_fd(fd)) {
-        slang__w32_console_fd_write(fd, buf, (size_t)n);
+int64_t zell__plat_write(int64_t fd, const void *buf, int64_t n) {
+    if (zell__w32_is_console_fd(fd)) {
+        zell__w32_console_fd_write(fd, buf, (size_t)n);
         return n;
     }
     int r = _write((int)fd, buf, clamp(n));
     return r < 0 ? -(int64_t)errno : r;
 }
 
-int slang__plat_write_all(int64_t fd, const void *buf, int64_t n) {
+int zell__plat_write_all(int64_t fd, const void *buf, int64_t n) {
     const char *p = buf;
     while (n > 0) {
-        int64_t w = slang__plat_write(fd, p, n);
+        int64_t w = zell__plat_write(fd, p, n);
         if (w < 0) return (int)-w;
         if (w == 0) return EIO;
         p += w;
@@ -108,32 +108,32 @@ int slang__plat_write_all(int64_t fd, const void *buf, int64_t n) {
     return 0;
 }
 
-int64_t slang__plat_seek(int64_t fd, int64_t off, int whence) {
+int64_t zell__plat_seek(int64_t fd, int64_t off, int whence) {
     int w = whence == 1 ? SEEK_CUR : whence == 2 ? SEEK_END : SEEK_SET;
     int64_t r = _lseeki64((int)fd, off, w);
     return r < 0 ? -(int64_t)errno : r;
 }
 
-int slang__plat_close(int64_t fd) { return _close((int)fd) == 0 ? 0 : errno; }
+int zell__plat_close(int64_t fd) { return _close((int)fd) == 0 ? 0 : errno; }
 
-int slang__plat_fsync(int64_t fd) {
+int zell__plat_fsync(int64_t fd) {
     HANDLE h = os_handle(fd);
     if (h == INVALID_HANDLE_VALUE) return EBADF;
     if (!FlushFileBuffers(h)) {
         DWORD e = GetLastError();
-        return e == ERROR_INVALID_HANDLE ? EINVAL : slang__w32_errno(e);  /* consoles, pipes */
+        return e == ERROR_INVALID_HANDLE ? EINVAL : zell__w32_errno(e);  /* consoles, pipes */
     }
     return 0;
 }
 
-int slang__plat_ftruncate(int64_t fd, int64_t size) { return _chsize_s((int)fd, size) == 0 ? 0 : errno; }
+int zell__plat_ftruncate(int64_t fd, int64_t size) { return _chsize_s((int)fd, size) == 0 ? 0 : errno; }
 
 static int64_t ft_ns(FILETIME ft) {
     int64_t t = (int64_t)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime);
     return (t - 116444736000000000LL) * 100;
 }
 
-static void fill(slang__plat_stat *o, DWORD attrs, DWORD size_hi, DWORD size_lo, FILETIME mtime, bool link) {
+static void fill(zell__plat_stat *o, DWORD attrs, DWORD size_hi, DWORD size_lo, FILETIME mtime, bool link) {
     o->size = (int64_t)(((uint64_t)size_hi << 32) | size_lo);
     int64_t ns = ft_ns(mtime);
     o->mtime_sec = ns / 1000000000 - (ns % 1000000000 < 0);
@@ -141,17 +141,17 @@ static void fill(slang__plat_stat *o, DWORD attrs, DWORD size_hi, DWORD size_lo,
     /* Go's convention: 0666 / 0444 (read-only), directories 0777 */
     bool dir = attrs & FILE_ATTRIBUTE_DIRECTORY;
     o->perm = dir ? 0777 : (attrs & FILE_ATTRIBUTE_READONLY) ? 0444 : 0666;
-    o->kind = link ? SLANG_PLAT_KIND_LINK : dir ? SLANG_PLAT_KIND_DIR : SLANG_PLAT_KIND_FILE;
+    o->kind = link ? ZELL_PLAT_KIND_LINK : dir ? ZELL_PLAT_KIND_DIR : ZELL_PLAT_KIND_FILE;
     if (link) o->size = 0;
 }
 
-int slang__plat_fstat(int64_t fd, slang__plat_stat *o) {
+int zell__plat_fstat(int64_t fd, zell__plat_stat *o) {
     HANDLE h = os_handle(fd);
     if (h == INVALID_HANDLE_VALUE) return EBADF;
     memset(o, 0, sizeof *o);
     DWORD type = GetFileType(h);
     if (type != FILE_TYPE_DISK) {
-        o->kind = SLANG_PLAT_KIND_OTHER;
+        o->kind = ZELL_PLAT_KIND_OTHER;
         o->perm = 0666;
         return 0;
     }
@@ -170,9 +170,9 @@ static bool is_symlink(const wchar_t *w, DWORD attrs) {
     return fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
 }
 
-int slang__plat_stat_path(const char *path, bool follow, slang__plat_stat *o) {
+int zell__plat_stat_path(const char *path, bool follow, zell__plat_stat *o) {
     if (!*path) return ENOENT;
-    wchar_t *w = slang__w32_wpath(path);
+    wchar_t *w = zell__w32_wpath(path);
     if (!w) return EINVAL;
     memset(o, 0, sizeof *o);
     WIN32_FILE_ATTRIBUTE_DATA a;
@@ -199,14 +199,14 @@ int slang__plat_stat_path(const char *path, bool follow, slang__plat_stat *o) {
     return e;
 }
 
-bool slang__plat_isatty(int64_t fd) {
+bool zell__plat_isatty(int64_t fd) {
     HANDLE h = os_handle(fd);
     DWORD mode;
     return h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode);
 }
 
 #define WCALL(path, call) do { \
-        wchar_t *w = slang__w32_wpath(path); \
+        wchar_t *w = zell__w32_wpath(path); \
         if (!w) return EINVAL; \
         BOOL ok_ = (call); \
         int e_ = ok_ ? 0 : last_errno(); \
@@ -214,12 +214,12 @@ bool slang__plat_isatty(int64_t fd) {
         return e_; \
     } while (0)
 
-int slang__plat_mkdir(const char *path) { WCALL(path, CreateDirectoryW(w, NULL)); }
-int slang__plat_rmdir(const char *path) { WCALL(path, RemoveDirectoryW(w)); }
-int slang__plat_chdir(const char *path) { WCALL(path, SetCurrentDirectoryW(w)); }
+int zell__plat_mkdir(const char *path) { WCALL(path, CreateDirectoryW(w, NULL)); }
+int zell__plat_rmdir(const char *path) { WCALL(path, RemoveDirectoryW(w)); }
+int zell__plat_chdir(const char *path) { WCALL(path, SetCurrentDirectoryW(w)); }
 
-int slang__plat_unlink_file(const char *path) {
-    wchar_t *w = slang__w32_wpath(path);
+int zell__plat_unlink_file(const char *path) {
+    wchar_t *w = zell__w32_wpath(path);
     if (!w) return EINVAL;
     int e = 0;
     if (!DeleteFileW(w)) {
@@ -232,21 +232,21 @@ int slang__plat_unlink_file(const char *path) {
         } else if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) {
             e = (a & FILE_ATTRIBUTE_REPARSE_POINT) && RemoveDirectoryW(w) ? 0 : EISDIR;  /* directory symlink */
         } else {
-            e = slang__w32_errno(le);
+            e = zell__w32_errno(le);
         }
     }
     free(w);
     return e;
 }
 
-int slang__plat_remove(const char *path) {
-    int e = slang__plat_unlink_file(path);
-    if (e == EISDIR) e = slang__plat_rmdir(path);
+int zell__plat_remove(const char *path) {
+    int e = zell__plat_unlink_file(path);
+    if (e == EISDIR) e = zell__plat_rmdir(path);
     return e;
 }
 
-int slang__plat_rename(const char *from, const char *to) {
-    wchar_t *a = slang__w32_wpath(from), *b = slang__w32_wpath(to);
+int zell__plat_rename(const char *from, const char *to) {
+    wchar_t *a = zell__w32_wpath(from), *b = zell__w32_wpath(to);
     int e = 0;
     if (!a || !b) e = EINVAL;
     else if (!MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) e = last_errno();
@@ -255,8 +255,8 @@ int slang__plat_rename(const char *from, const char *to) {
     return e;
 }
 
-int slang__plat_chmod(const char *path, int mode) {
-    wchar_t *w = slang__w32_wpath(path);
+int zell__plat_chmod(const char *path, int mode) {
+    wchar_t *w = zell__w32_wpath(path);
     if (!w) return EINVAL;
     DWORD a = GetFileAttributesW(w);
     int e = 0;
@@ -269,7 +269,7 @@ int slang__plat_chmod(const char *path, int mode) {
     return e;
 }
 
-char *slang__plat_getcwd(int *err) {
+char *zell__plat_getcwd(int *err) {
     DWORD n = GetCurrentDirectoryW(0, NULL);
     wchar_t *w = n ? malloc((size_t)n * sizeof *w) : NULL;
     if (!w) {
@@ -277,15 +277,15 @@ char *slang__plat_getcwd(int *err) {
         return NULL;
     }
     DWORD k = GetCurrentDirectoryW(n, w);
-    char *r = k && k < n ? slang__w32_utf8(w, (int)k) : NULL;
+    char *r = k && k < n ? zell__w32_utf8(w, (int)k) : NULL;
     free(w);
     *err = r ? 0 : EIO;
     return r;
 }
 
-bool slang__plat_is_executable(const char *path) {
+bool zell__plat_is_executable(const char *path) {
     if (!*path) return false;
-    wchar_t *w = slang__w32_wpath(path);
+    wchar_t *w = zell__w32_wpath(path);
     if (!w) return false;
     DWORD a = GetFileAttributesW(w);
     free(w);
@@ -294,7 +294,7 @@ bool slang__plat_is_executable(const char *path) {
     const char *dot = strrchr(path, '.');
     const char *slash = strrchr(path, '\\'), *fslash = strrchr(path, '/');
     if (!dot || (slash && slash > dot) || (fslash && fslash > dot)) return false;
-    char *pe = slang__plat_getenv("PATHEXT");
+    char *pe = zell__plat_getenv("PATHEXT");
     const char *list = pe && *pe ? pe : ".COM;.EXE;.BAT;.CMD";
     bool ok = false;
     size_t el = strlen(dot);
@@ -308,14 +308,14 @@ bool slang__plat_is_executable(const char *path) {
     return ok;
 }
 
-struct slang__plat_dir {
+struct zell__plat_dir {
     HANDLE h;
     WIN32_FIND_DATAW fd;
     bool first, done;
     char *name;
 };
 
-slang__plat_dir *slang__plat_dir_open(const char *path, int *err) {
+zell__plat_dir *zell__plat_dir_open(const char *path, int *err) {
     size_t n = strlen(path);
     char *pat = malloc(n + 3);
     if (!pat) { *err = ENOMEM; return NULL; }
@@ -323,15 +323,15 @@ slang__plat_dir *slang__plat_dir_open(const char *path, int *err) {
     if (n == 0 || (path[n - 1] != '/' && path[n - 1] != '\\')) pat[n++] = '\\';
     pat[n++] = '*';
     pat[n] = 0;
-    wchar_t *w = slang__w32_wpath(pat);
-    wchar_t *wd = slang__w32_wpath(*path ? path : ".");
+    wchar_t *w = zell__w32_wpath(pat);
+    wchar_t *wd = zell__w32_wpath(*path ? path : ".");
     free(pat);
     if (!w || !wd) { free(w); free(wd); *err = EINVAL; return NULL; }
     DWORD a = GetFileAttributesW(wd);
     free(wd);
     if (a == INVALID_FILE_ATTRIBUTES) { free(w); *err = last_errno(); return NULL; }
     if (!(a & FILE_ATTRIBUTE_DIRECTORY)) { free(w); *err = ENOTDIR; return NULL; }
-    slang__plat_dir *d = calloc(1, sizeof *d);
+    zell__plat_dir *d = calloc(1, sizeof *d);
     if (!d) { free(w); *err = ENOMEM; return NULL; }
     d->h = FindFirstFileW(w, &d->fd);
     free(w);
@@ -339,7 +339,7 @@ slang__plat_dir *slang__plat_dir_open(const char *path, int *err) {
         DWORD e = GetLastError();
         if (e == ERROR_FILE_NOT_FOUND) { d->done = true; *err = 0; return d; }  /* empty (root of a drive) */
         free(d);
-        *err = slang__w32_errno(e);
+        *err = zell__w32_errno(e);
         return NULL;
     }
     d->first = true;
@@ -347,7 +347,7 @@ slang__plat_dir *slang__plat_dir_open(const char *path, int *err) {
     return d;
 }
 
-const char *slang__plat_dir_next(slang__plat_dir *d, int *kind, int *err) {
+const char *zell__plat_dir_next(zell__plat_dir *d, int *kind, int *err) {
     *err = 0;
     for (;;) {
         if (d->done) return NULL;
@@ -355,7 +355,7 @@ const char *slang__plat_dir_next(slang__plat_dir *d, int *kind, int *err) {
             if (!FindNextFileW(d->h, &d->fd)) {
                 DWORD e = GetLastError();
                 d->done = true;
-                if (e != ERROR_NO_MORE_FILES) *err = slang__w32_errno(e);
+                if (e != ERROR_NO_MORE_FILES) *err = zell__w32_errno(e);
                 return NULL;
             }
         }
@@ -363,18 +363,18 @@ const char *slang__plat_dir_next(slang__plat_dir *d, int *kind, int *err) {
         const wchar_t *n = d->fd.cFileName;
         if ((n[0] == L'.' && n[1] == 0) || (n[0] == L'.' && n[1] == L'.' && n[2] == 0)) continue;
         free(d->name);
-        d->name = slang__w32_utf8(n, -1);
+        d->name = zell__w32_utf8(n, -1);
         if (!d->name) continue;
         DWORD a = d->fd.dwFileAttributes;
-        if ((a & FILE_ATTRIBUTE_REPARSE_POINT) && d->fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK) *kind = SLANG_PLAT_KIND_LINK;
-        else if (a & FILE_ATTRIBUTE_DIRECTORY) *kind = SLANG_PLAT_KIND_DIR;
-        else if (a & FILE_ATTRIBUTE_DEVICE) *kind = SLANG_PLAT_KIND_OTHER;
-        else *kind = SLANG_PLAT_KIND_FILE;
+        if ((a & FILE_ATTRIBUTE_REPARSE_POINT) && d->fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK) *kind = ZELL_PLAT_KIND_LINK;
+        else if (a & FILE_ATTRIBUTE_DIRECTORY) *kind = ZELL_PLAT_KIND_DIR;
+        else if (a & FILE_ATTRIBUTE_DEVICE) *kind = ZELL_PLAT_KIND_OTHER;
+        else *kind = ZELL_PLAT_KIND_FILE;
         return d->name;
     }
 }
 
-void slang__plat_dir_close(slang__plat_dir *d) {
+void zell__plat_dir_close(zell__plat_dir *d) {
     if (!d) return;
     if (d->h && d->h != INVALID_HANDLE_VALUE) FindClose(d->h);
     free(d->name);
@@ -382,5 +382,5 @@ void slang__plat_dir_close(slang__plat_dir *d) {
 }
 
 #else
-typedef int slang__fs_win32_unused;
+typedef int zell__fs_win32_unused;
 #endif

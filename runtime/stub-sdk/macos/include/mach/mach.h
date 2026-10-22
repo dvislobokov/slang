@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_MACH_MACH_H
-#define SLANG_STUB_MACH_MACH_H
+#ifndef ZELL_STUB_MACH_MACH_H
+#define ZELL_STUB_MACH_MACH_H
 #include <mach/mach_time.h>
 #include <sched.h>
 typedef mach_port_t thread_act_t;

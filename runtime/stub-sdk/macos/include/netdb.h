@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_NETDB_H
-#define SLANG_STUB_NETDB_H
+#ifndef ZELL_STUB_NETDB_H
+#define ZELL_STUB_NETDB_H
 #include <sys/socket.h>
 #include <netinet/in.h>
 struct addrinfo { int ai_flags; int ai_family; int ai_socktype; int ai_protocol; socklen_t ai_addrlen; char *ai_canonname; struct sockaddr *ai_addr; struct addrinfo *ai_next; };

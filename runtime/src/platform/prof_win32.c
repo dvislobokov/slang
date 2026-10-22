@@ -21,7 +21,7 @@
  * ticks. While a thread is suspended the sampler neither allocates nor
  * takes locks; the unwinder may take the loader's function-table lock,
  * which only matters for code that registers dynamic function tables (JITs;
- * Slang has none). */
+ * Zell has none). */
 #include "platform.h"
 
 #if defined(_WIN32)
@@ -39,7 +39,7 @@
 
 static _Thread_local uintptr_t t_stack_lo, t_stack_hi;
 
-void slang__plat_thread_stack_init(void) {
+void zell__plat_thread_stack_init(void) {
     if (t_stack_hi) return;
     ULONG_PTR lo = 0, hi = 0;
     GetCurrentThreadStackLimits(&lo, &hi);
@@ -54,7 +54,7 @@ typedef struct sym_ent {
     uint32_t name;  /* offset in g_names */
 } sym_ent;
 
-static slang__plat_mutex g_sym_mu = SLANG_PLAT_MUTEX_INIT;
+static zell__plat_mutex g_sym_mu = ZELL_PLAT_MUTEX_INIT;
 static int g_syms_loaded;
 static sym_ent *g_syms;
 static size_t g_nsyms;
@@ -234,21 +234,21 @@ static bool symbolize_locked(uintptr_t pc, char *buf, size_t cap, uintptr_t *sta
             if (g_syms[mid].addr <= pc) lo = mid;
             else hi = mid;
         }
-        snprintf(buf, cap, "%s", slang__plat_sym_clean(g_names + g_syms[lo].name));
+        snprintf(buf, cap, "%s", zell__plat_sym_clean(g_names + g_syms[lo].name));
         *start = g_syms[lo].addr;
         return true;
     }
     return dbghelp_lookup(pc, buf, cap, start);
 }
 
-bool slang__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) {
-    slang__plat_mutex_lock(&g_sym_mu);
+bool zell__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) {
+    zell__plat_mutex_lock(&g_sym_mu);
     bool ok = symbolize_locked(pc, buf, cap, start);
-    slang__plat_mutex_unlock(&g_sym_mu);
+    zell__plat_mutex_unlock(&g_sym_mu);
     return ok;
 }
 
-bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap) {
+bool zell__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap) {
     HMODULE m = GetModuleHandleW(NULL);
     if (!m) return false;
     const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)m;
@@ -256,14 +256,14 @@ bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap)
     *lo = (uintptr_t)m;
     *hi = (uintptr_t)m + nt->OptionalHeader.SizeOfImage;
     wchar_t w[MAX_PATH];
-    char *u = GetModuleFileNameW(NULL, w, MAX_PATH) ? slang__w32_utf8(w, -1) : NULL;
+    char *u = GetModuleFileNameW(NULL, w, MAX_PATH) ? zell__w32_utf8(w, -1) : NULL;
     snprintf(path, cap, "%s", u ? u : "");
     free(u);
     return true;
 }
 
-void slang__plat_symbolize_done(void) {
-    slang__plat_mutex_lock(&g_sym_mu);
+void zell__plat_symbolize_done(void) {
+    zell__plat_mutex_lock(&g_sym_mu);
     free(g_syms);
     free(g_names);
     g_syms = NULL;
@@ -273,17 +273,17 @@ void slang__plat_symbolize_done(void) {
     g_text_hi = 0;
     if (g_dbghelp_state == 1 && g_sym_cleanup) g_sym_cleanup(GetCurrentProcess());
     g_dbghelp_state = 0;
-    slang__plat_mutex_unlock(&g_sym_mu);
+    zell__plat_mutex_unlock(&g_sym_mu);
 }
 
 /* ---- backtraces ------------------------------------------------------------------ */
 
 /* Format of glibc's backtrace_symbols_fd: module(function+0xoff) [0xaddr],
  * or module(+0xoff) [0xaddr] without a symbol. */
-void slang__plat_backtrace(int fd, int skip) {
+void zell__plat_backtrace(int fd, int skip) {
     void *frames[62];
     USHORT n = CaptureStackBackTrace((DWORD)(skip > 0 ? skip : 0), 62, frames, NULL);
-    bool symbols = !getenv("SLANG_NO_SYMBOLS");
+    bool symbols = !getenv("ZELL_NO_SYMBOLS");
     for (USHORT i = 0; i < n && frames[i]; i++) {
         char line[800];
         HMODULE mod = NULL;
@@ -293,7 +293,7 @@ void slang__plat_backtrace(int fd, int skip) {
         if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                                (LPCWSTR)frames[i], &mod) &&
             GetModuleFileNameW(mod, wpath, MAX_PATH)) {
-            u = slang__w32_utf8(wpath, -1);
+            u = zell__w32_utf8(wpath, -1);
             if (u) {
                 char *b = strrchr(u, '\\');
                 name = b ? b + 1 : u;
@@ -304,14 +304,14 @@ void slang__plat_backtrace(int fd, int skip) {
         uintptr_t start = 0;
         int k;
         /* return addresses point after the call: look up pc - 1 */
-        if (symbols && slang__plat_symbolize(pc - 1, sym, sizeof sym, &start) && start <= pc)
+        if (symbols && zell__plat_symbolize(pc - 1, sym, sizeof sym, &start) && start <= pc)
             k = snprintf(line, sizeof line, "%s(%s+0x%llx) [0x%llx]\n", name, sym, (unsigned long long)(pc - start),
                          (unsigned long long)pc);
         else
             k = snprintf(line, sizeof line, "%s(+0x%llx) [0x%llx]\n", name, (unsigned long long)(pc - (uintptr_t)mod),
                          (unsigned long long)pc);
         free(u);
-        if (k > 0) slang__plat_write_all(fd, line, k < (int)sizeof line ? k : (int)sizeof line - 1);
+        if (k > 0) zell__plat_write_all(fd, line, k < (int)sizeof line ? k : (int)sizeof line - 1);
     }
 }
 
@@ -337,7 +337,7 @@ typedef struct thread_basic_info {
 } thread_basic_info;
 typedef NTSTATUS(NTAPI *nt_qit_fn)(HANDLE, int, PVOID, ULONG, PULONG);
 
-static slang__plat_prof_fn g_prof_fn;
+static zell__plat_prof_fn g_prof_fn;
 static HANDLE g_prof_thread, g_prof_stop_ev;
 static int g_prof_hz;
 static volatile LONG g_prof_on;
@@ -468,7 +468,7 @@ static DWORD WINAPI prof_main(LPVOID arg) {
         DWORD r = timer ? WaitForMultipleObjects(2, hs, FALSE, INFINITE) : WaitForSingleObject(g_prof_stop_ev, ms > 0 ? (DWORD)ms : 1);
         if (r == WAIT_OBJECT_0) break;
         if (++tick % 10 == 0) refresh_threads();
-        slang__plat_prof_fn fn = __atomic_load_n(&g_prof_fn, __ATOMIC_ACQUIRE);
+        zell__plat_prof_fn fn = __atomic_load_n(&g_prof_fn, __ATOMIC_ACQUIRE);
         if (!fn) continue;
         for (int i = 0; i < g_nthreads; i++) {
             prof_thread *t = &g_threads[i];
@@ -494,13 +494,13 @@ static DWORD WINAPI prof_main(LPVOID arg) {
     return 0;
 }
 
-bool slang__plat_prof_start(int hz, slang__plat_prof_fn fn) {
+bool zell__plat_prof_start(int hz, zell__plat_prof_fn fn) {
     if (g_prof_on || hz <= 0) return false;
     if (!g_nt_qit) {
         HMODULE nt = GetModuleHandleW(L"ntdll.dll");
         if (nt) g_nt_qit = (nt_qit_fn)(void *)GetProcAddress(nt, "NtQueryInformationThread");
     }
-    slang__plat_thread_stack_init();
+    zell__plat_thread_stack_init();
     g_prof_hz = hz > 1000 ? 1000 : hz;
     __atomic_store_n(&g_prof_fn, fn, __ATOMIC_RELEASE);
     g_prof_stop_ev = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -516,9 +516,9 @@ bool slang__plat_prof_start(int hz, slang__plat_prof_fn fn) {
     return true;
 }
 
-void slang__plat_prof_stop(void) {
+void zell__plat_prof_stop(void) {
     if (!g_prof_on) return;
-    __atomic_store_n(&g_prof_fn, (slang__plat_prof_fn)NULL, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_prof_fn, (zell__plat_prof_fn)NULL, __ATOMIC_RELEASE);
     SetEvent(g_prof_stop_ev);
     WaitForSingleObject(g_prof_thread, INFINITE);
     CloseHandle(g_prof_thread);
@@ -528,5 +528,5 @@ void slang__plat_prof_stop(void) {
 }
 
 #else
-typedef int slang__prof_win32_unused;
+typedef int zell__prof_win32_unused;
 #endif

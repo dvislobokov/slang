@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_PWD_H
-#define SLANG_STUB_PWD_H
+#ifndef ZELL_STUB_PWD_H
+#define ZELL_STUB_PWD_H
 #include <sys/types.h>
 struct passwd { char *pw_name; char *pw_passwd; uid_t pw_uid; gid_t pw_gid; time_t pw_change; char *pw_class; char *pw_gecos; char *pw_dir; char *pw_shell; time_t pw_expire; };
 struct passwd *getpwnam(const char *);

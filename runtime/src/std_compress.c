@@ -1,11 +1,11 @@
 /* std_compress.c - the C half of std.compress (runtime/ABI.md 19.2): the
  * DEFLATE (RFC 1951) decoder and encoder and the CRC-32 / Adler-32
  * checksums used by the zlib (RFC 1950) and gzip (RFC 1952) wrappers. The
- * wrappers, headers and the streaming Reader/Writer types are Slang code
- * (compiler/src/sema/stdlib_src/compress*.sl); zstd is std_zstd.c.
+ * wrappers, headers and the streaming Reader/Writer types are Zell code
+ * (compiler/src/sema/stdlib_src/compress*.zl); zstd is std_zstd.c.
  *
  * Inflate is a resumable state machine whose whole state is one POD
- * struct kept in a Slang []byte (slang_compress_rt_inflate_new), so input
+ * struct kept in a Zell []byte (zell_compress_rt_inflate_new), so input
  * can arrive in chunks of any size: every step only consumes bits once
  * everything it needs is buffered. Deflate compresses one chunk per call
  * with the previous 32 KB of input as history; a non-final chunk ends
@@ -22,7 +22,7 @@
 /* ---------------------------------------------------------------------- */
 
 static uint32_t crc_tab[8][256];
-static slang__plat_once crc_once = SLANG_PLAT_ONCE_INIT;
+static zell__plat_once crc_once = ZELL_PLAT_ONCE_INIT;
 
 static void crc_init(void) {
     for (uint32_t i = 0; i < 256; i++) {
@@ -35,7 +35,7 @@ static void crc_init(void) {
 }
 
 static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n) {
-    slang__plat_once_run(&crc_once, crc_init);
+    zell__plat_once_run(&crc_once, crc_init);
     uint32_t c = ~crc;
     while (n >= 8) {
         uint32_t a = c ^ ((uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24);
@@ -50,7 +50,7 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n) {
 }
 
 /* CRC-32 (IEEE) of data continuing from crc (0 to start). */
-int64_t slang_compress_rt_crc32(int64_t crc, const slang_slice *data) {
+int64_t zell_compress_rt_crc32(int64_t crc, const zell_slice *data) {
     if (!data || data->len == 0) return crc & 0xFFFFFFFF;
     return crc32_update((uint32_t)crc, data->data, (size_t)data->len);
 }
@@ -71,7 +71,7 @@ static uint32_t adler32_update(uint32_t adler, const uint8_t *p, size_t n) {
 }
 
 /* Adler-32 of data continuing from adler (1 to start). */
-int64_t slang_compress_rt_adler32(int64_t adler, const slang_slice *data) {
+int64_t zell_compress_rt_adler32(int64_t adler, const zell_slice *data) {
     if (!data || data->len == 0) return adler & 0xFFFFFFFF;
     return adler32_update((uint32_t)adler, data->data, (size_t)data->len);
 }
@@ -90,17 +90,17 @@ static void ob_grow(obuf *b, size_t need) {
     size_t cap = b->cap ? b->cap : 4096;
     while (cap < b->n + need) cap *= 2;
     uint8_t *q = realloc(b->p, cap);
-    if (!q) slang_panic("out of memory");
+    if (!q) zell_panic("out of memory");
     b->p = q;
     b->cap = cap;
 }
 
-static void ob_to_slice(obuf *b, size_t from, slang_slice *out) {
+static void ob_to_slice(obuf *b, size_t from, zell_slice *out) {
     size_t n = b->n - from;
     if (n == 0) {
         memset(out, 0, sizeof *out);
     } else {
-        slang_slice_new(out, 1, (int64_t)n, (int64_t)n);
+        zell_slice_new(out, 1, (int64_t)n, (int64_t)n);
         memcpy(out->data, b->p + from, n);
     }
     free(b->p);
@@ -235,26 +235,26 @@ static void fixed_tables(inflate_state *s) {
     huff_build(&s->dist, l, 30);
 }
 
-void slang_compress_rt_inflate_new(slang_slice *out) {
-    slang_slice_new(out, 1, (int64_t)sizeof(inflate_state), (int64_t)sizeof(inflate_state));
+void zell_compress_rt_inflate_new(zell_slice *out) {
+    zell_slice_new(out, 1, (int64_t)sizeof(inflate_state), (int64_t)sizeof(inflate_state));
     inflate_state *s = out->data;
     s->magic = INFLATE_MAGIC;
     s->mode = M_HEADER;
 }
 
-static inflate_state *istate(const slang_slice *st) {
-    if (!st || st->len != (int64_t)sizeof(inflate_state)) slang_panic("compress: invalid inflate state");
+static inflate_state *istate(const zell_slice *st) {
+    if (!st || st->len != (int64_t)sizeof(inflate_state)) zell_panic("compress: invalid inflate state");
     inflate_state *s = st->data;
-    if (s->magic != INFLATE_MAGIC) slang_panic("compress: invalid inflate state");
+    if (s->magic != INFLATE_MAGIC) zell_panic("compress: invalid inflate state");
     return s;
 }
 
-static void ifail(slang_error **err, const char *msg) {
-    if (err) *err = slang_error_new_cstr(msg);
+static void ifail(zell_error **err, const char *msg) {
+    if (err) *err = zell_error_new_cstr(msg);
 }
 
 /* Decompresses the input chunk; appends the output. */
-void slang_compress_rt_inflate(const slang_slice *st, const slang_slice *input, slang_slice *out, slang_error **err) {
+void zell_compress_rt_inflate(const zell_slice *st, const zell_slice *input, zell_slice *out, zell_error **err) {
     inflate_state *s = istate(st);
     if (err) *err = NULL;
     const uint8_t *in = input && input->len ? input->data : NULL;
@@ -492,25 +492,25 @@ fail:
     s->mode = M_DONE;
 }
 
-bool slang_compress_rt_inflate_done(const slang_slice *st) {
+bool zell_compress_rt_inflate_done(const zell_slice *st) {
     return istate(st)->mode == M_DONE;
 }
 
 /* After the end of the stream: the whole bytes that were read ahead into
  * the bit buffer (they precede the unused rest of the last input chunk). */
-void slang_compress_rt_inflate_tail(const slang_slice *st, slang_slice *out) {
+void zell_compress_rt_inflate_tail(const zell_slice *st, zell_slice *out) {
     inflate_state *s = istate(st);
     if (s->mode != M_DONE || s->tail_n == 0) {
         memset(out, 0, sizeof *out);
         return;
     }
-    slang_slice_new(out, 1, s->tail_n, s->tail_n);
+    zell_slice_new(out, 1, s->tail_n, s->tail_n);
     memcpy(out->data, s->tail, s->tail_n);
 }
 
 /* After the end of the stream: how many bytes at the end of the last
  * input chunk were not consumed. */
-int64_t slang_compress_rt_inflate_unused(const slang_slice *st) {
+int64_t zell_compress_rt_inflate_unused(const zell_slice *st) {
     inflate_state *s = istate(st);
     return s->mode == M_DONE ? s->stored_left : 0;
 }
@@ -859,7 +859,7 @@ static inline uint32_t hash3(const uint8_t *p) {
 static void lz_compress(denc *e, const uint8_t *buf, size_t from, size_t n, int level, int last) {
     int32_t *head = malloc(sizeof(int32_t) << HBITS);
     int32_t *prev = malloc(sizeof(int32_t) * WSIZE);
-    if (!head || !prev) slang_panic("out of memory");
+    if (!head || !prev) zell_panic("out of memory");
     memset(head, 0xFF, sizeof(int32_t) << HBITS);
     int good = level_cfg[level].good, lazy = level_cfg[level].lazy, nice = level_cfg[level].nice, chain0 = level_cfg[level].chain;
     int use_lazy = level >= 4;
@@ -947,12 +947,12 @@ static void lz_compress(denc *e, const uint8_t *buf, size_t from, size_t n, int 
 /* Compresses data (raw DEFLATE) with dict (up to its last 32 KB) as
  * history. final: ends the stream; otherwise ends with a sync flush so the
  * output is byte-aligned and can be followed by the next call's output. */
-void slang_compress_rt_deflate(const slang_slice *dict, const slang_slice *data, int64_t level, bool final, slang_slice *out) {
+void zell_compress_rt_deflate(const zell_slice *dict, const zell_slice *data, int64_t level, bool final, zell_slice *out) {
     if (level < 0 || level > 9) level = 6;
     size_t dn = dict ? (size_t)dict->len : 0, n = data ? (size_t)data->len : 0;
     if (dn > WSIZE) dn = WSIZE;
     uint8_t *buf = malloc(dn + n + 1);
-    if (!buf) slang_panic("out of memory");
+    if (!buf) zell_panic("out of memory");
     if (dn) memcpy(buf, (const uint8_t *)dict->data + dict->len - (int64_t)dn, dn);
     if (n) memcpy(buf + dn, data->data, n);
     denc e;
@@ -981,7 +981,7 @@ void slang_compress_rt_deflate(const slang_slice *dict, const slang_slice *data,
         } while (off < dn + n);
     } else {
         e.syms = malloc(sizeof(lzsym) * BLOCK_SYMS);
-        if (!e.syms) slang_panic("out of memory");
+        if (!e.syms) zell_panic("out of memory");
         lz_compress(&e, buf, dn, dn + n, (int)level, final);
         write_block(&e, dn + n, final);
         free(e.syms);
@@ -1004,20 +1004,20 @@ void slang_compress_rt_deflate(const slang_slice *dict, const slang_slice *data,
     ob_to_slice(&e.w.ob, 0, out);
 }
 
-/* Concatenation of two byte slices (the Slang side's buffer helper). */
-void slang_compress_rt_concat(const slang_slice *a, const slang_slice *b, slang_slice *out) {
+/* Concatenation of two byte slices (the Zell side's buffer helper). */
+void zell_compress_rt_concat(const zell_slice *a, const zell_slice *b, zell_slice *out) {
     int64_t na = a ? a->len : 0, nb = b ? b->len : 0;
     if (na + nb == 0) {
         memset(out, 0, sizeof *out);
         return;
     }
-    slang_slice_new(out, 1, na + nb, na + nb);
+    zell_slice_new(out, 1, na + nb, na + nb);
     if (na) memcpy(out->data, a->data, (size_t)na);
     if (nb) memcpy((uint8_t *)out->data + na, b->data, (size_t)nb);
 }
 
 /* b[lo:hi] as a fresh copy (so a large buffer is not kept alive). */
-void slang_compress_rt_copy(const slang_slice *b, int64_t lo, int64_t hi, slang_slice *out) {
+void zell_compress_rt_copy(const zell_slice *b, int64_t lo, int64_t hi, zell_slice *out) {
     int64_t n = b ? b->len : 0;
     if (lo < 0) lo = 0;
     if (hi > n) hi = n;
@@ -1025,15 +1025,15 @@ void slang_compress_rt_copy(const slang_slice *b, int64_t lo, int64_t hi, slang_
         memset(out, 0, sizeof *out);
         return;
     }
-    slang_slice_new(out, 1, hi - lo, hi - lo);
+    zell_slice_new(out, 1, hi - lo, hi - lo);
     memcpy(out->data, (const uint8_t *)b->data + lo, (size_t)(hi - lo));
 }
 
 /* A zeroed []byte of length n. */
-void slang_compress_rt_zeros(int64_t n, slang_slice *out) {
+void zell_compress_rt_zeros(int64_t n, zell_slice *out) {
     if (n <= 0) {
         memset(out, 0, sizeof *out);
         return;
     }
-    slang_slice_new(out, 1, n, n);
+    zell_slice_new(out, 1, n, n);
 }

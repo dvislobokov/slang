@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_ARPA_INET_H
-#define SLANG_STUB_ARPA_INET_H
+#ifndef ZELL_STUB_ARPA_INET_H
+#define ZELL_STUB_ARPA_INET_H
 #include <netinet/in.h>
 const char *inet_ntop(int, const void *restrict, char *restrict, socklen_t);
 int inet_pton(int, const char *restrict, void *restrict);

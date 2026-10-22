@@ -7,22 +7,22 @@
  * Included by std_sqlite.c after its <sqlite3.h> probe. When the probe
  * failed and the target is Windows, this header declares the subset of the
  * SQLite C API that std_sqlite.c uses as function pointers (same names via
- * macros), defines SLANG_HAVE_SQLITE and SLANG_SQLITE_DYNAMIC, and
- * slang__sqlite_load() binds them (false: no DLL, rtAvailable() is false
+ * macros), defines ZELL_HAVE_SQLITE and ZELL_SQLITE_DYNAMIC, and
+ * zell__sqlite_load() binds them (false: no DLL, rtAvailable() is false
  * and Open fails with "sqlite: not available"). Elsewhere it does nothing:
  * Linux/macOS link -lsqlite3 (stdlib.rs LINK_LIBS) when the headers exist.
  * The compiler leaves -lsqlite3 out when linking for Windows
  * (crosslink.rs). */
-#ifndef SLANG_SQLITE_DYN_H
-#define SLANG_SQLITE_DYN_H
+#ifndef ZELL_SQLITE_DYN_H
+#define ZELL_SQLITE_DYN_H
 
-#if !defined(SLANG_HAVE_SQLITE) && defined(_WIN32)
+#if !defined(ZELL_HAVE_SQLITE) && defined(_WIN32)
 
 #include <stdbool.h>
 #include <stdint.h>
 
-#define SLANG_HAVE_SQLITE 1
-#define SLANG_SQLITE_DYNAMIC 1
+#define ZELL_HAVE_SQLITE 1
+#define ZELL_SQLITE_DYNAMIC 1
 
 typedef struct sqlite3 sqlite3;
 typedef struct sqlite3_stmt sqlite3_stmt;
@@ -40,7 +40,7 @@ typedef unsigned long long sqlite3_uint64;
 #define SQLITE_TRANSIENT ((void (*)(void *)) - 1)
 
 /* ret, name, parameters */
-#define SLANG_SQLITE_API(X)                                                                          \
+#define ZELL_SQLITE_API(X)                                                                          \
     X(const char *, sqlite3_libversion, (void))                                                      \
     X(const char *, sqlite3_errmsg, (sqlite3 *))                                                     \
     X(const char *, sqlite3_errstr, (int))                                                           \
@@ -76,53 +76,53 @@ typedef unsigned long long sqlite3_uint64;
     X(int, sqlite3_extended_errcode, (sqlite3 *))                                                    \
     X(int, sqlite3_get_autocommit, (sqlite3 *))
 
-typedef struct slang__sqlite_fns {
-#define SLANG_SQLITE_FIELD(ret, name, args) ret(*name) args;
-    SLANG_SQLITE_API(SLANG_SQLITE_FIELD)
-#undef SLANG_SQLITE_FIELD
+typedef struct zell__sqlite_fns {
+#define ZELL_SQLITE_FIELD(ret, name, args) ret(*name) args;
+    ZELL_SQLITE_API(ZELL_SQLITE_FIELD)
+#undef ZELL_SQLITE_FIELD
     sqlite3_int64 (*sqlite3_changes64)(sqlite3 *);  /* 3.37+, else sqlite3_changes */
-} slang__sqlite_fns;
+} zell__sqlite_fns;
 
-extern slang__sqlite_fns slang__sqlite;
+extern zell__sqlite_fns zell__sqlite;
 /* Binds the API once; true if the library is there. */
-bool slang__sqlite_load(void);
+bool zell__sqlite_load(void);
 
-#if !defined(SLANG_SQLITE_NO_MACROS)
-#define sqlite3_libversion slang__sqlite.sqlite3_libversion
-#define sqlite3_errmsg slang__sqlite.sqlite3_errmsg
-#define sqlite3_errstr slang__sqlite.sqlite3_errstr
-#define sqlite3_open_v2 slang__sqlite.sqlite3_open_v2
-#define sqlite3_close_v2 slang__sqlite.sqlite3_close_v2
-#define sqlite3_extended_result_codes slang__sqlite.sqlite3_extended_result_codes
-#define sqlite3_busy_timeout slang__sqlite.sqlite3_busy_timeout
-#define sqlite3_exec slang__sqlite.sqlite3_exec
-#define sqlite3_prepare_v2 slang__sqlite.sqlite3_prepare_v2
-#define sqlite3_finalize slang__sqlite.sqlite3_finalize
-#define sqlite3_reset slang__sqlite.sqlite3_reset
-#define sqlite3_clear_bindings slang__sqlite.sqlite3_clear_bindings
-#define sqlite3_bind_parameter_count slang__sqlite.sqlite3_bind_parameter_count
-#define sqlite3_bind_parameter_index slang__sqlite.sqlite3_bind_parameter_index
-#define sqlite3_bind_null slang__sqlite.sqlite3_bind_null
-#define sqlite3_bind_int64 slang__sqlite.sqlite3_bind_int64
-#define sqlite3_bind_double slang__sqlite.sqlite3_bind_double
-#define sqlite3_bind_text64 slang__sqlite.sqlite3_bind_text64
-#define sqlite3_bind_blob64 slang__sqlite.sqlite3_bind_blob64
-#define sqlite3_step slang__sqlite.sqlite3_step
-#define sqlite3_db_handle slang__sqlite.sqlite3_db_handle
-#define sqlite3_column_count slang__sqlite.sqlite3_column_count
-#define sqlite3_column_name slang__sqlite.sqlite3_column_name
-#define sqlite3_column_decltype slang__sqlite.sqlite3_column_decltype
-#define sqlite3_column_type slang__sqlite.sqlite3_column_type
-#define sqlite3_column_int64 slang__sqlite.sqlite3_column_int64
-#define sqlite3_column_double slang__sqlite.sqlite3_column_double
-#define sqlite3_column_text slang__sqlite.sqlite3_column_text
-#define sqlite3_column_blob slang__sqlite.sqlite3_column_blob
-#define sqlite3_column_bytes slang__sqlite.sqlite3_column_bytes
-#define sqlite3_changes slang__sqlite.sqlite3_changes
-#define sqlite3_changes64 slang__sqlite.sqlite3_changes64
-#define sqlite3_last_insert_rowid slang__sqlite.sqlite3_last_insert_rowid
-#define sqlite3_extended_errcode slang__sqlite.sqlite3_extended_errcode
-#define sqlite3_get_autocommit slang__sqlite.sqlite3_get_autocommit
+#if !defined(ZELL_SQLITE_NO_MACROS)
+#define sqlite3_libversion zell__sqlite.sqlite3_libversion
+#define sqlite3_errmsg zell__sqlite.sqlite3_errmsg
+#define sqlite3_errstr zell__sqlite.sqlite3_errstr
+#define sqlite3_open_v2 zell__sqlite.sqlite3_open_v2
+#define sqlite3_close_v2 zell__sqlite.sqlite3_close_v2
+#define sqlite3_extended_result_codes zell__sqlite.sqlite3_extended_result_codes
+#define sqlite3_busy_timeout zell__sqlite.sqlite3_busy_timeout
+#define sqlite3_exec zell__sqlite.sqlite3_exec
+#define sqlite3_prepare_v2 zell__sqlite.sqlite3_prepare_v2
+#define sqlite3_finalize zell__sqlite.sqlite3_finalize
+#define sqlite3_reset zell__sqlite.sqlite3_reset
+#define sqlite3_clear_bindings zell__sqlite.sqlite3_clear_bindings
+#define sqlite3_bind_parameter_count zell__sqlite.sqlite3_bind_parameter_count
+#define sqlite3_bind_parameter_index zell__sqlite.sqlite3_bind_parameter_index
+#define sqlite3_bind_null zell__sqlite.sqlite3_bind_null
+#define sqlite3_bind_int64 zell__sqlite.sqlite3_bind_int64
+#define sqlite3_bind_double zell__sqlite.sqlite3_bind_double
+#define sqlite3_bind_text64 zell__sqlite.sqlite3_bind_text64
+#define sqlite3_bind_blob64 zell__sqlite.sqlite3_bind_blob64
+#define sqlite3_step zell__sqlite.sqlite3_step
+#define sqlite3_db_handle zell__sqlite.sqlite3_db_handle
+#define sqlite3_column_count zell__sqlite.sqlite3_column_count
+#define sqlite3_column_name zell__sqlite.sqlite3_column_name
+#define sqlite3_column_decltype zell__sqlite.sqlite3_column_decltype
+#define sqlite3_column_type zell__sqlite.sqlite3_column_type
+#define sqlite3_column_int64 zell__sqlite.sqlite3_column_int64
+#define sqlite3_column_double zell__sqlite.sqlite3_column_double
+#define sqlite3_column_text zell__sqlite.sqlite3_column_text
+#define sqlite3_column_blob zell__sqlite.sqlite3_column_blob
+#define sqlite3_column_bytes zell__sqlite.sqlite3_column_bytes
+#define sqlite3_changes zell__sqlite.sqlite3_changes
+#define sqlite3_changes64 zell__sqlite.sqlite3_changes64
+#define sqlite3_last_insert_rowid zell__sqlite.sqlite3_last_insert_rowid
+#define sqlite3_extended_errcode zell__sqlite.sqlite3_extended_errcode
+#define sqlite3_get_autocommit zell__sqlite.sqlite3_get_autocommit
 #endif
 
 #endif

@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_POLL_H
-#define SLANG_STUB_POLL_H
+#ifndef ZELL_STUB_POLL_H
+#define ZELL_STUB_POLL_H
 struct pollfd { int fd; short events; short revents; };
 typedef unsigned int nfds_t;
 #define POLLIN 0x0001

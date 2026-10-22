@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_CTYPE_H
-#define SLANG_STUB_CTYPE_H
+#ifndef ZELL_STUB_CTYPE_H
+#define ZELL_STUB_CTYPE_H
 int isalnum(int);
 int isalpha(int);
 int isblank(int);

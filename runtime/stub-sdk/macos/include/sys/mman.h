@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS_MMAN_H
-#define SLANG_STUB_SYS_MMAN_H
+#ifndef ZELL_STUB_SYS_MMAN_H
+#define ZELL_STUB_SYS_MMAN_H
 #include <sys/types.h>
 #define PROT_NONE 0x00
 #define PROT_READ 0x01

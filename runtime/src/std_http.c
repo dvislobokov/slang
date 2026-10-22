@@ -5,7 +5,7 @@
  * into one exact-size string with a per-thread cached Date, comma-token
  * search, HPACK Huffman (RFC 7541 appendix B) and WebSocket masking.
  * Everything here is a pure function of its arguments (plus the per-thread
- * date cache); the protocol state machines stay in Slang. */
+ * date cache); the protocol state machines stay in Zell. */
 #include "rt_internal.h"
 #include "platform/platform.h"
 
@@ -16,7 +16,7 @@
 
 /* ---- interned strings ------------------------------------------------- */
 
-#define IMM(name, lit) SLANG_STATIC_STRING(name, lit)
+#define IMM(name, lit) ZELL_STATIC_STRING(name, lit)
 
 IMM(s_get, "GET");
 IMM(s_post, "POST");
@@ -52,8 +52,8 @@ static const char *const common_names[] = {
 };
 #define NCOMMON (sizeof common_names / sizeof common_names[0])
 
-static slang_string *common_strs[NCOMMON];
-static slang__plat_once common_once = SLANG_PLAT_ONCE_INIT;
+static zell_string *common_strs[NCOMMON];
+static zell__plat_once common_once = ZELL_PLAT_ONCE_INIT;
 
 static int cmp_names(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
@@ -64,16 +64,16 @@ static void common_init(void) {
     memcpy(sorted, common_names, sizeof sorted);
     qsort(sorted, NCOMMON, sizeof sorted[0], cmp_names);
     for (size_t i = 0; i < NCOMMON; i++)
-        common_strs[i] = slang_string_literal(sorted[i], (int64_t)strlen(sorted[i]));
+        common_strs[i] = zell_string_literal(sorted[i], (int64_t)strlen(sorted[i]));
 }
 
 /* The interned string equal to b[0..n), or NULL. */
-static slang_string *common_lookup(const char *b, size_t n) {
-    slang__plat_once_run(&common_once, common_init);
+static zell_string *common_lookup(const char *b, size_t n) {
+    zell__plat_once_run(&common_once, common_init);
     size_t lo = 0, hi = NCOMMON;
     while (lo < hi) { /* the table is sorted (strcmp order) */
         size_t mid = (lo + hi) / 2;
-        const slang_string *s = common_strs[mid];
+        const zell_string *s = common_strs[mid];
         size_t m = (size_t)s->len;
         int c = memcmp(b, s->data, n < m ? n : m);
         if (c == 0) c = n < m ? -1 : (n > m ? 1 : 0);
@@ -118,15 +118,15 @@ static int canon_into(char *d, const char *b, size_t n) {
 }
 
 /* A string for the canonical form of b[0..n) (interned when common). */
-static slang_string *canon_string(const char *b, size_t n) {
+static zell_string *canon_string(const char *b, size_t n) {
     char tmp[64];
     if (n <= sizeof tmp) {
         canon_into(tmp, b, n);
-        slang_string *s = common_lookup(tmp, n);
+        zell_string *s = common_lookup(tmp, n);
         if (s) return s;
-        return slang_string_new(tmp, (int64_t)n);
+        return zell_string_new(tmp, (int64_t)n);
     }
-    slang_string *s = slang__string_alloc_uninit((int64_t)n);
+    zell_string *s = zell__string_alloc_uninit((int64_t)n);
     canon_into(s->data, b, n);
     return s;
 }
@@ -145,15 +145,15 @@ static int is_canonical(const char *b, size_t n) {
 /* rtCanonical(s) string: CanonicalHeader without allocating when s is
  * already canonical (s itself, retained) or a common name. Surrounding
  * spaces and tabs are trimmed first. */
-slang_string *slang_net_http_rt_canonical(const slang_string *s) {
-    const char *b = slang_string_data(s);
-    size_t n = (size_t)slang_string_len(s);
+zell_string *zell_net_http_rt_canonical(const zell_string *s) {
+    const char *b = zell_string_data(s);
+    size_t n = (size_t)zell_string_len(s);
     size_t lo = 0, hi = n;
     while (lo < hi && (b[lo] == ' ' || b[lo] == '\t')) lo++;
     while (hi > lo && (b[hi - 1] == ' ' || b[hi - 1] == '\t')) hi--;
     if (lo == 0 && hi == n && is_canonical(b, n)) {
-        slang_retain((void *)s);
-        return (slang_string *)s;
+        zell_retain((void *)s);
+        return (zell_string *)s;
     }
     return canon_string(b + lo, hi - lo);
 }
@@ -163,7 +163,7 @@ slang_string *slang_net_http_rt_canonical(const slang_string *s) {
 /* rtHeadEnd(buf, from, to) int: the offset just past the blank line that
  * ends a header block in buf[from..to) ("\r\n\r\n" or "\n\n", also
  * "\n\r\n"), or -1. `from` may point anywhere before the terminator. */
-int64_t slang_net_http_rt_head_end(const slang_slice *buf, int64_t from, int64_t to) {
+int64_t zell_net_http_rt_head_end(const zell_slice *buf, int64_t from, int64_t to) {
     if (!buf || to > buf->len) to = buf ? buf->len : 0;
     if (from < 0) from = 0;
     const char *p = (const char *)(buf ? buf->data : NULL);
@@ -180,7 +180,7 @@ int64_t slang_net_http_rt_head_end(const slang_slice *buf, int64_t from, int64_t
     return -1;
 }
 
-static slang_string *method_string(const char *b, size_t n) {
+static zell_string *method_string(const char *b, size_t n) {
     switch (n) {
     case 3:
         if (memcmp(b, "GET", 3) == 0) return s_get;
@@ -202,21 +202,21 @@ static slang_string *method_string(const char *b, size_t n) {
         if (memcmp(b, "CONNECT", 7) == 0) return s_connect;
         break;
     }
-    return slang_string_new(b, (int64_t)n);
+    return zell_string_new(b, (int64_t)n);
 }
 
-static slang_string *proto_string(const char *b, size_t n) {
+static zell_string *proto_string(const char *b, size_t n) {
     if (n == 8 && memcmp(b, "HTTP/1.1", 8) == 0) return s_http11;
     if (n == 8 && memcmp(b, "HTTP/1.0", 8) == 0) return s_http10;
-    return slang_string_new(b, (int64_t)n);
+    return zell_string_new(b, (int64_t)n);
 }
 
-static void push(slang_slice *out, slang_string *s) {
-    slang_slice_append(out, 8, &slang_ops_ref, &s);
-    slang_release(s);
+static void push(zell_slice *out, zell_string *s) {
+    zell_slice_append(out, 8, &zell_ops_ref, &s);
+    zell_release(s);
 }
 
-static void fail(slang_error **err, const char *msg, const char *b, size_t n) {
+static void fail(zell_error **err, const char *msg, const char *b, size_t n) {
     if (!err) return;
     char tmp[160];
     if (n > 60) n = 60;
@@ -227,9 +227,9 @@ static void fail(slang_error **err, const char *msg, const char *b, size_t n) {
     }
     tmp[k++] = '"';
     tmp[k] = 0;
-    slang_string *m = slang_string_from_cstr(tmp);
-    *err = slang_error_new(m);
-    slang_release(m);
+    zell_string *m = zell_string_from_cstr(tmp);
+    *err = zell_error_new(m);
+    zell_release(m);
 }
 
 IMM(s_comma, ", ");
@@ -238,21 +238,21 @@ IMM(s_set_cookie_name, "Set-Cookie");
 
 /* Stores name: value into h, joining repeated names with ", " (Set-Cookie
  * with "\n", since cookie values may contain commas). */
-static void put_header(slang_map *h, slang_string *k, const char *v, size_t vn) {
-    slang_string **slot = (slang_string **)slang_map_get_or_insert_str(h, k);
-    slang_string *old = *slot;
+static void put_header(zell_map *h, zell_string *k, const char *v, size_t vn) {
+    zell_string **slot = (zell_string **)zell_map_get_or_insert_str(h, k);
+    zell_string *old = *slot;
     if (old && old->len > 0) {
-        const slang_string *sep = slang_string_eq(k, s_set_cookie_name) ? s_newline : s_comma;
+        const zell_string *sep = zell_string_eq(k, s_set_cookie_name) ? s_newline : s_comma;
         int64_t on = old->len, sn = sep->len;
-        slang_string *val = slang__string_alloc_uninit(on + sn + (int64_t)vn);
+        zell_string *val = zell__string_alloc_uninit(on + sn + (int64_t)vn);
         memcpy(val->data, old->data, (size_t)on);
         memcpy(val->data + on, sep->data, (size_t)sn);
         memcpy(val->data + on + sn, v, vn);
         *slot = val;
-        slang_release(old);
+        zell_release(old);
     } else {
-        slang_release(old);
-        *slot = vn ? slang_string_new(v, (int64_t)vn) : NULL;
+        zell_release(old);
+        *slot = vn ? zell_string_new(v, (int64_t)vn) : NULL;
     }
 }
 
@@ -319,12 +319,12 @@ static void note_header(const char *k, size_t kn, const char *v, size_t vn) {
 
 /* rtHeadInfo() int: flags of the last rtParseHead on this thread (see the
  * I_* enum) in the low 16 bits, the Content-Length above them. */
-int64_t slang_net_http_rt_head_info(void) {
+int64_t zell_net_http_rt_head_info(void) {
     return (head_info & 0xffff) | ((head_info & I_LENGTH) && !(head_info & I_BADLENGTH) ? head_length << 16 : 0);
 }
 
 /* Parses the header lines of b[0..n) (after the first line) into h. */
-static int parse_fields(const char *b, size_t n, slang_map *h, slang_error **err) {
+static int parse_fields(const char *b, size_t n, zell_map *h, zell_error **err) {
     size_t i = 0;
     while (i < n) {
         const char *nl = memchr(b + i, '\n', n - i);
@@ -351,9 +351,9 @@ static int parse_fields(const char *b, size_t n, slang_map *h, slang_error **err
         while (vs < ve && (b[vs] == ' ' || b[vs] == '\t')) vs++;
         while (ve > vs && (b[ve - 1] == ' ' || b[ve - 1] == '\t')) ve--;
         note_header(b + i, kn, b + vs, ve - vs);
-        slang_string *k = canon_string(b + i, kn);
+        zell_string *k = canon_string(b + i, kn);
         put_header(h, k, b + vs, ve - vs);
-        slang_release(k);
+        zell_release(k);
         i = e + 1;
     }
     return 1;
@@ -365,8 +365,8 @@ static int parse_fields(const char *b, size_t n, slang_map *h, slang_error **err
  * proto] (the target split at '?'; an absolute-form target keeps only its
  * path), kind 1 (response) [proto, status, reason]. Common methods,
  * protocols and header names are interned (no allocation). */
-void slang_net_http_rt_parse_head(const slang_slice *buf, int64_t start, int64_t end, int64_t kind, slang_map *h,
-                                  slang_slice *out, slang_error **err) {
+void zell_net_http_rt_parse_head(const zell_slice *buf, int64_t start, int64_t end, int64_t kind, zell_map *h,
+                                  zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
     if (err) *err = NULL;
     head_info = 0;
@@ -384,20 +384,20 @@ void slang_net_http_rt_parse_head(const slang_slice *buf, int64_t start, int64_t
     size_t le = nl ? (size_t)(nl - b) : n;
     size_t rest = nl ? le + 1 : n;
     if (le > 0 && b[le - 1] == '\r') le--;
-    slang_slice res;
-    slang_slice_new_ops(&res, 8, 0, 4, &slang_ops_ref);
+    zell_slice res;
+    zell_slice_new_ops(&res, 8, 0, 4, &zell_ops_ref);
     if (kind == 0) {
         const char *sp1 = memchr(b, ' ', le);
         const char *sp2 = sp1 ? memchr(sp1 + 1, ' ', le - (size_t)(sp1 + 1 - b)) : NULL;
         if (!sp1 || !sp2 || sp1 == b || sp2 == sp1 + 1 || memchr(sp2 + 1, ' ', le - (size_t)(sp2 + 1 - b))) {
-            slang_slice_release(&res);
+            zell_slice_release(&res);
             fail(err, "malformed request line", b, le);
             return;
         }
         size_t mn = (size_t)(sp1 - b);
         for (size_t j = 0; j < mn; j++)
             if (!is_tchar((unsigned char)b[j])) {
-                slang_slice_release(&res);
+                zell_slice_release(&res);
                 fail(err, "malformed request line", b, le);
                 return;
             }
@@ -406,7 +406,7 @@ void slang_net_http_rt_parse_head(const slang_slice *buf, int64_t start, int64_t
         const char *pr = sp2 + 1;
         size_t pn = le - (size_t)(pr - b);
         if (pn != 8 || memcmp(pr, "HTTP/1.", 7) != 0 || pr[7] < '0' || pr[7] > '9') {
-            slang_slice_release(&res);
+            zell_slice_release(&res);
             fail(err, "malformed request line", b, le);
             return;
         }
@@ -427,13 +427,13 @@ void slang_net_http_rt_parse_head(const slang_slice *buf, int64_t start, int64_t
         const char *q = memchr(t, '?', tn);
         size_t pathn = q ? (size_t)(q - t) : tn;
         push(&res, method_string(b, mn));
-        push(&res, (pathn == 1 && t[0] == '/') ? s_slash : slang_string_new(t, (int64_t)pathn));
-        push(&res, (q && tn - pathn > 1) ? slang_string_new(q + 1, (int64_t)(tn - pathn - 1)) : NULL);
+        push(&res, (pathn == 1 && t[0] == '/') ? s_slash : zell_string_new(t, (int64_t)pathn));
+        push(&res, (q && tn - pathn > 1) ? zell_string_new(q + 1, (int64_t)(tn - pathn - 1)) : NULL);
         push(&res, proto_string(pr, pn));
     } else {
         const char *sp1 = memchr(b, ' ', le);
         if (!sp1 || le < 12 || memcmp(b, "HTTP/", 5) != 0) {
-            slang_slice_release(&res);
+            zell_slice_release(&res);
             fail(err, "malformed status line", b, le);
             return;
         }
@@ -441,18 +441,18 @@ void slang_net_http_rt_parse_head(const slang_slice *buf, int64_t start, int64_t
         size_t stn = 0;
         while (st + stn < b + le && st[stn] != ' ') stn++;
         if (stn != 3 || st[0] < '1' || st[0] > '9' || st[1] < '0' || st[1] > '9' || st[2] < '0' || st[2] > '9') {
-            slang_slice_release(&res);
+            zell_slice_release(&res);
             fail(err, "malformed status line", b, le);
             return;
         }
         const char *rs = st + stn;
         if (rs < b + le) rs++;
         push(&res, proto_string(b, (size_t)(sp1 - b)));
-        push(&res, slang_string_new(st, 3));
-        push(&res, slang_string_new(rs, (int64_t)(le - (size_t)(rs - b))));
+        push(&res, zell_string_new(st, 3));
+        push(&res, zell_string_new(rs, (int64_t)(le - (size_t)(rs - b))));
     }
     if (!parse_fields(b + rest, n - rest, h, err)) {
-        slang_slice_release(&res);
+        zell_slice_release(&res);
         return;
     }
     *out = res;
@@ -463,9 +463,9 @@ void slang_net_http_rt_parse_head(const slang_slice *buf, int64_t start, int64_t
 /* rtHasToken(v, token) bool: whether the comma-separated list v contains
  * token (ASCII case-insensitive, surrounding spaces ignored; a token
  * followed by ";params" also counts). */
-bool slang_net_http_rt_has_token(const slang_string *v, const slang_string *token) {
-    return has_token_raw(slang_string_data(v), (size_t)slang_string_len(v), slang_string_data(token),
-                         (size_t)slang_string_len(token));
+bool zell_net_http_rt_has_token(const zell_string *v, const zell_string *token) {
+    return has_token_raw(zell_string_data(v), (size_t)zell_string_len(v), zell_string_data(token),
+                         (size_t)zell_string_len(token));
 }
 
 static int has_token_raw(const char *b, size_t n, const char *t, size_t tn) {
@@ -546,8 +546,8 @@ static const char *status_text(int64_t code) {
 }
 
 /* rtStatusText(code) string. */
-slang_string *slang_net_http_rt_status_text(int64_t code) {
-    return slang_string_from_cstr(status_text(code));
+zell_string *zell_net_http_rt_status_text(int64_t code) {
+    return zell_string_from_cstr(status_text(code));
 }
 
 /* The current time as an IMF-fixdate ("Mon, 02 Jan 2006 15:04:05 GMT", 29
@@ -560,7 +560,7 @@ static const char *http_date(void) {
         static const char days[] = "SunMonTueWedThuFriSat";
         static const char mons[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
         struct tm tm;
-        slang__plat_utc_tm((int64_t)now, &tm);
+        zell__plat_utc_tm((int64_t)now, &tm);
         snprintf(buf, sizeof buf, "%.3s, %02d %.3s %04d %02d:%02d:%02d GMT", days + 3 * tm.tm_wday, tm.tm_mday & 31,
                  mons + 3 * tm.tm_mon, (tm.tm_year + 1900) % 10000, tm.tm_hour & 31, tm.tm_min & 63, tm.tm_sec & 63);
         cached = now;
@@ -569,8 +569,8 @@ static const char *http_date(void) {
 }
 
 /* rtDate() string: the cached Date header value. */
-slang_string *slang_net_http_rt_date(void) {
-    return slang_string_new(http_date(), 29);
+zell_string *zell_net_http_rt_date(void) {
+    return zell_string_new(http_date(), 29);
 }
 
 
@@ -589,7 +589,7 @@ static void reserve(wbuf *w, size_t more) {
     size_t c = w->cap ? w->cap : 1024;
     while (c < w->n + more) c *= 2;
     w->p = realloc(w->p, c);
-    if (!w->p) slang_panic("out of memory");
+    if (!w->p) zell_panic("out of memory");
     w->cap = c;
 }
 
@@ -662,9 +662,9 @@ enum {
     F_REQUEST = 128, /* a request head: `status` unused, first line is `line` */
 };
 
-static void emit_head(wbuf *w, int64_t status, const slang_string *line, slang_map *h, int64_t blen, int64_t flags) {
+static void emit_head(wbuf *w, int64_t status, const zell_string *line, zell_map *h, int64_t blen, int64_t flags) {
     if (flags & F_REQUEST) {
-        put(w, slang_string_data(line), (size_t)slang_string_len(line));
+        put(w, zell_string_data(line), (size_t)zell_string_len(line));
         put(w, "\r\n", 2);
     } else {
         if (status == 200) put(w, "HTTP/1.1 200 OK\r\n", 17);
@@ -679,21 +679,21 @@ static void emit_head(wbuf *w, int64_t status, const slang_string *line, slang_m
     }
     int has_type = 0, has_date = 0;
     if (h) {
-        slang_map_iter it;
-        slang_map_iter_init(&it, h);
+        zell_map_iter it;
+        zell_map_iter_init(&it, h);
         void *kp, *vp;
-        while (slang_map_iter_next(&it, &kp, &vp)) {
-            const slang_string *k = *(slang_string **)kp;
-            const slang_string *v = *(slang_string **)vp;
-            const char *kb = slang_string_data(k);
-            size_t kn = (size_t)slang_string_len(k);
+        while (zell_map_iter_next(&it, &kp, &vp)) {
+            const zell_string *k = *(zell_string **)kp;
+            const zell_string *v = *(zell_string **)vp;
+            const char *kb = zell_string_data(k);
+            size_t kn = (size_t)zell_string_len(k);
             if (kn == 0) continue;
             int kind = key_kind(kb, kn);
             if (kind == K_SKIP) continue;
             if (kind == K_TYPE && !(flags & F_REQUEST)) has_type = 1;
             if (kind == K_DATE) has_date = 1;
-            const char *vb = slang_string_data(v);
-            size_t vn = (size_t)slang_string_len(v);
+            const char *vb = zell_string_data(v);
+            size_t vn = (size_t)zell_string_len(v);
             /* Set-Cookie values joined by "\n" go out as separate lines */
             size_t s = 0;
             for (;;) {
@@ -733,16 +733,16 @@ static void emit_head(wbuf *w, int64_t status, const slang_string *line, slang_m
  * Header names are written canonically; Content-Length, Connection and
  * Transfer-Encoding from h are ignored (the flags decide them); CR/LF in
  * values become spaces. */
-slang_string *slang_net_http_rt_format_head(int64_t status, const slang_string *line, slang_map *h, int64_t blen,
-                                            int64_t flags, const slang_string *body) {
+zell_string *zell_net_http_rt_format_head(int64_t status, const zell_string *line, zell_map *h, int64_t blen,
+                                            int64_t flags, const zell_string *body) {
     wbuf w = {scratch, 0, scratch_cap};
     emit_head(&w, status, line, h, blen, flags);
     scratch = w.p;
     scratch_cap = w.cap;
-    int64_t bn = (!(flags & F_HEADONLY) && body) ? slang_string_len(body) : 0;
-    slang_string *s = slang__string_alloc_uninit((int64_t)w.n + bn);
+    int64_t bn = (!(flags & F_HEADONLY) && body) ? zell_string_len(body) : 0;
+    zell_string *s = zell__string_alloc_uninit((int64_t)w.n + bn);
     memcpy(s->data, w.p, w.n);
-    if (bn) memcpy(s->data + w.n, slang_string_data(body), (size_t)bn);
+    if (bn) memcpy(s->data + w.n, zell_string_data(body), (size_t)bn);
     return s;
 }
 
@@ -750,7 +750,7 @@ slang_string *slang_net_http_rt_format_head(int64_t status, const slang_string *
 
 /* rtMask(b, off, n, key, phase): XORs b[off..off+n) in place with the
  * 4-byte masking key (big-endian in `key`), starting at key byte `phase`. */
-void slang_net_http_rt_mask(const slang_slice *b, int64_t off, int64_t n, int64_t key, int64_t phase) {
+void zell_net_http_rt_mask(const zell_slice *b, int64_t off, int64_t n, int64_t key, int64_t phase) {
     if (!b || off < 0 || n <= 0 || off + n > b->len) return;
     unsigned char k[4] = {(unsigned char)(key >> 24), (unsigned char)(key >> 16), (unsigned char)(key >> 8),
                           (unsigned char)key};
@@ -774,16 +774,16 @@ void slang_net_http_rt_mask(const slang_slice *b, int64_t off, int64_t n, int64_
 }
 
 /* rtItoa(n) string: decimal. */
-slang_string *slang_net_http_rt_itoa(int64_t n) {
+zell_string *zell_net_http_rt_itoa(int64_t n) {
     char tmp[24];
-    return slang_string_new(tmp, (int64_t)fmt_int(tmp, n));
+    return zell_string_new(tmp, (int64_t)fmt_int(tmp, n));
 }
 
 /* rtAtoi(s) int: a non-negative decimal (no sign, no spaces, at most 18
  * digits), or -1. For Content-Length and chunk-free numbers. */
-int64_t slang_net_http_rt_atoi(const slang_string *s) {
-    const char *b = slang_string_data(s);
-    int64_t n = slang_string_len(s);
+int64_t zell_net_http_rt_atoi(const zell_string *s) {
+    const char *b = zell_string_data(s);
+    int64_t n = zell_string_len(s);
     if (n == 0 || n > 18) return -1;
     int64_t v = 0;
     for (int64_t i = 0; i < n; i++) {
@@ -794,17 +794,17 @@ int64_t slang_net_http_rt_atoi(const slang_string *s) {
 }
 
 /* rtHttpTime(sec) string: Unix seconds as an IMF-fixdate. */
-slang_string *slang_net_http_rt_http_time(int64_t sec) {
+zell_string *zell_net_http_rt_http_time(int64_t sec) {
     static const char days[] = "SunMonTueWedThuFriSat";
     static const char mons[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
     time_t t = (time_t)sec;
     struct tm tm;
-    slang__plat_utc_tm((int64_t)t, &tm);
+    zell__plat_utc_tm((int64_t)t, &tm);
     char buf[64];
     int k = snprintf(buf, sizeof buf, "%.3s, %02d %.3s %04d %02d:%02d:%02d GMT", days + 3 * tm.tm_wday,
                      tm.tm_mday & 31, mons + 3 * tm.tm_mon, (tm.tm_year + 1900) % 10000, tm.tm_hour & 31,
                      tm.tm_min & 63, tm.tm_sec & 63);
-    return slang_string_new(buf, k);
+    return zell_string_new(buf, k);
 }
 
 static int64_t days_from_civil(int64_t y, int64_t m, int64_t d) {
@@ -818,8 +818,8 @@ static int64_t days_from_civil(int64_t y, int64_t m, int64_t d) {
 
 /* rtParseHttpTime(s) int: Unix seconds of an HTTP date (IMF-fixdate,
  * RFC 850 or asctime), or -1. */
-int64_t slang_net_http_rt_parse_http_time(const slang_string *s) {
-    const char *b = slang_string_cstr(s);
+int64_t zell_net_http_rt_parse_http_time(const zell_string *s) {
+    const char *b = zell_string_cstr(s);
     static const char mons[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
     char mon[4] = {0};
     int d = 0, y = 0, hh = 0, mm = 0, ss = 0;
@@ -841,21 +841,21 @@ int64_t slang_net_http_rt_parse_http_time(const slang_string *s) {
 /* ---- sentinel errors (stdlib.rs CONSTS) ---- */
 
 #define SENTINEL(fn, text)                                                                 \
-    static SLANG_STRING_STORAGE(sizeof text) fn##_msg = SLANG_STRING_INIT(fn##_msg, text); \
-    static slang_error fn##_err = {                                                        \
-        .hdr = {SLANG_RC_IMMORTAL, &slang_type_error}, .message = (slang_string *)&fn##_msg, \
+    static ZELL_STRING_STORAGE(sizeof text) fn##_msg = ZELL_STRING_INIT(fn##_msg, text); \
+    static zell_error fn##_err = {                                                        \
+        .hdr = {ZELL_RC_IMMORTAL, &zell_type_error}, .message = (zell_string *)&fn##_msg, \
     };                                                                                     \
-    slang_error *fn(void);                                                                 \
-    slang_error *fn(void) { return &fn##_err; }
+    zell_error *fn(void);                                                                 \
+    zell_error *fn(void) { return &fn##_err; }
 
-SENTINEL(slang_net_http_err_body_too_large, "http: request body too large")
-SENTINEL(slang_net_http_err_hijacked, "http: connection has been hijacked")
-SENTINEL(slang_net_http_err_abort_handler, "http: abort handler")
-SENTINEL(slang_net_http_err_server_closed, "http: Server closed")
-SENTINEL(slang_net_http_err_handler_timeout, "http: Handler timeout")
-SENTINEL(slang_net_http_err_body_closed, "http: read on closed response body")
-SENTINEL(slang_net_ws_err_closed, "websocket: connection closed")
-SENTINEL(slang_net_ws_err_bad_handshake, "websocket: bad handshake")
+SENTINEL(zell_net_http_err_body_too_large, "http: request body too large")
+SENTINEL(zell_net_http_err_hijacked, "http: connection has been hijacked")
+SENTINEL(zell_net_http_err_abort_handler, "http: abort handler")
+SENTINEL(zell_net_http_err_server_closed, "http: Server closed")
+SENTINEL(zell_net_http_err_handler_timeout, "http: Handler timeout")
+SENTINEL(zell_net_http_err_body_closed, "http: read on closed response body")
+SENTINEL(zell_net_ws_err_closed, "websocket: connection closed")
+SENTINEL(zell_net_ws_err_bad_handshake, "websocket: bad handshake")
 
 /* ---- HPACK Huffman code (RFC 7541 appendix B) -------------------------- */
 
@@ -916,7 +916,7 @@ static const uint8_t huff_lens[256] = {
  * leaf for symbol value - 0x1000 (256 = EOS). */
 static uint16_t trie[512][2];
 static int trie_nodes;
-static slang__plat_once trie_once = SLANG_PLAT_ONCE_INIT;
+static zell__plat_once trie_once = ZELL_PLAT_ONCE_INIT;
 
 static void trie_add(uint32_t code, int len, int sym) {
     int n = 0;
@@ -937,21 +937,21 @@ static void trie_init(void) {
 }
 
 /* rtHuffLen(s) int: the Huffman-coded length of s in bytes. */
-int64_t slang_net_http_hpack_rt_huff_len(const slang_string *s) {
-    const unsigned char *b = (const unsigned char *)slang_string_data(s);
-    int64_t n = slang_string_len(s), bits = 0;
+int64_t zell_net_http_hpack_rt_huff_len(const zell_string *s) {
+    const unsigned char *b = (const unsigned char *)zell_string_data(s);
+    int64_t n = zell_string_len(s), bits = 0;
     for (int64_t i = 0; i < n; i++) bits += huff_lens[b[i]];
     return (bits + 7) / 8;
 }
 
 /* rtHuffEncode(s) []byte: s Huffman-coded, padded with the EOS prefix. */
-void slang_net_http_hpack_rt_huff_encode(const slang_string *s, slang_slice *out) {
-    const unsigned char *b = (const unsigned char *)slang_string_data(s);
-    int64_t n = slang_string_len(s);
-    int64_t len = slang_net_http_hpack_rt_huff_len(s);
+void zell_net_http_hpack_rt_huff_encode(const zell_string *s, zell_slice *out) {
+    const unsigned char *b = (const unsigned char *)zell_string_data(s);
+    int64_t n = zell_string_len(s);
+    int64_t len = zell_net_http_hpack_rt_huff_len(s);
     memset(out, 0, sizeof *out);
     if (len == 0) return;
-    slang_slice_new(out, 1, len, len);
+    zell_slice_new(out, 1, len, len);
     unsigned char *d = out->data;
     uint64_t acc = 0;
     int nb = 0;
@@ -970,11 +970,11 @@ void slang_net_http_hpack_rt_huff_encode(const slang_string *s, slang_slice *out
 
 /* rtHuffDecode(b, off, n) string!: decodes b[off..off+n). Fails on EOS in
  * the data, padding longer than 7 bits or not all ones. */
-slang_string *slang_net_http_hpack_rt_huff_decode(const slang_slice *b, int64_t off, int64_t n, slang_error **err) {
+zell_string *zell_net_http_hpack_rt_huff_decode(const zell_slice *b, int64_t off, int64_t n, zell_error **err) {
     if (err) *err = NULL;
-    slang__plat_once_run(&trie_once, trie_init);
+    zell__plat_once_run(&trie_once, trie_init);
     if (!b || off < 0 || n < 0 || off + n > b->len) {
-        if (err) *err = slang_error_new_cstr("hpack: invalid Huffman range");
+        if (err) *err = zell_error_new_cstr("hpack: invalid Huffman range");
         return NULL;
     }
     const unsigned char *p = (const unsigned char *)b->data + off;
@@ -982,7 +982,7 @@ slang_string *slang_net_http_hpack_rt_huff_decode(const slang_slice *b, int64_t 
     size_t cap = (size_t)n * 8 / 5 + 1;
     char stackbuf[256];
     char *d = cap <= sizeof stackbuf ? stackbuf : malloc(cap);
-    if (!d) slang_panic("out of memory");
+    if (!d) zell_panic("out of memory");
     size_t k = 0;
     int node = 0, depth = 0, ones = 1;
     for (int64_t i = 0; i < n; i++) {
@@ -1006,11 +1006,11 @@ slang_string *slang_net_http_hpack_rt_huff_decode(const slang_slice *b, int64_t 
         }
     }
     if (depth > 7 || !ones) goto bad;
-    slang_string *s = slang_string_new(d, (int64_t)k);
+    zell_string *s = zell_string_new(d, (int64_t)k);
     if (d != stackbuf) free(d);
     return s;
 bad:
     if (d != stackbuf) free(d);
-    if (err) *err = slang_error_new_cstr("hpack: invalid Huffman-encoded data");
+    if (err) *err = zell_error_new_cstr("hpack: invalid Huffman-encoded data");
     return NULL;
 }

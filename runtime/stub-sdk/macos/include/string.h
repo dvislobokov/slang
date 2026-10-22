@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_STRING_H
-#define SLANG_STUB_STRING_H
+#ifndef ZELL_STUB_STRING_H
+#define ZELL_STUB_STRING_H
 #include <stddef.h>
 void *memcpy(void *restrict, const void *restrict, size_t);
 void *memmove(void *, const void *, size_t);

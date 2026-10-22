@@ -121,7 +121,7 @@ static bool ge_decode(ge *p, const uint8_t s[32], const ed_consts *k) {
     uint8_t ys[32];
     memcpy(ys, s, 32);
     ys[31] &= 127;
-    if (!slang__crypto_ct_eq(chk, ys, 32)) return false;   /* y >= p */
+    if (!zell__crypto_ct_eq(chk, ys, 32)) return false;   /* y >= p */
     fe u, v, v3, x, t, one;
     fe_1(one);
     fe_sq(u, p->Y);
@@ -211,16 +211,16 @@ static void sc_reduce(uint8_t out[32], const uint8_t *in, size_t n) {
         uint64_t keep = 0 - borrow;   /* borrow: acc < L, keep acc */
         for (int i = 0; i < 5; i++) acc[i] = (acc[i] & keep) | (d[i] & ~keep);
     }
-    for (int i = 0; i < 4; i++) slang__st64le(out + 8 * i, acc[i]);
-    slang__crypto_wipe(acc, sizeof acc);
+    for (int i = 0; i < 4; i++) zell__st64le(out + 8 * i, acc[i]);
+    zell__crypto_wipe(acc, sizeof acc);
 }
 
 /* s = (a * b + c) mod L. */
 static void sc_muladd(uint8_t s[32], const uint8_t a[32], const uint8_t b[32], const uint8_t c[32]) {
     uint64_t x[4], y[4], z[9] = { 0 };
     for (int i = 0; i < 4; i++) {
-        x[i] = slang__ld64le(a + 8 * i);
-        y[i] = slang__ld64le(b + 8 * i);
+        x[i] = zell__ld64le(a + 8 * i);
+        y[i] = zell__ld64le(b + 8 * i);
     }
     for (int i = 0; i < 4; i++) {
         uint64_t carry = 0;
@@ -233,21 +233,21 @@ static void sc_muladd(uint8_t s[32], const uint8_t a[32], const uint8_t b[32], c
     }
     uint64_t carry = 0;
     for (int i = 0; i < 9; i++) {
-        u128 t = (u128)z[i] + (i < 4 ? slang__ld64le(c + 8 * i) : 0) + carry;
+        u128 t = (u128)z[i] + (i < 4 ? zell__ld64le(c + 8 * i) : 0) + carry;
         z[i] = (uint64_t)t;
         carry = (uint64_t)(t >> 64);
     }
     uint8_t buf[72];
-    for (int i = 0; i < 9; i++) slang__st64le(buf + 8 * i, z[i]);
+    for (int i = 0; i < 9; i++) zell__st64le(buf + 8 * i, z[i]);
     sc_reduce(s, buf, 72);
-    slang__crypto_wipe(buf, sizeof buf);
-    slang__crypto_wipe(z, sizeof z);
-    slang__crypto_wipe(x, sizeof x);
+    zell__crypto_wipe(buf, sizeof buf);
+    zell__crypto_wipe(z, sizeof z);
+    zell__crypto_wipe(x, sizeof x);
 }
 
 static bool sc_is_canonical(const uint8_t s[32]) {
     for (int i = 3; i >= 0; i--) {
-        uint64_t v = slang__ld64le(s + 8 * i);
+        uint64_t v = zell__ld64le(s + 8 * i);
         if (v < L64[i]) return true;
         if (v > L64[i]) return false;
     }
@@ -258,16 +258,16 @@ static bool sc_is_canonical(const uint8_t s[32]) {
 
 static void expand_seed(const uint8_t seed[32], uint8_t a[32], uint8_t prefix[32]) {
     uint8_t h[64];
-    slang__hash(SLANG_HASH_SHA512, seed, 32, h);
+    zell__hash(ZELL_HASH_SHA512, seed, 32, h);
     memcpy(a, h, 32);
     a[0] &= 248;
     a[31] &= 127;
     a[31] |= 64;
     memcpy(prefix, h + 32, 32);
-    slang__crypto_wipe(h, sizeof h);
+    zell__crypto_wipe(h, sizeof h);
 }
 
-void slang__ed25519_pubkey(uint8_t pub[32], const uint8_t seed[32]) {
+void zell__ed25519_pubkey(uint8_t pub[32], const uint8_t seed[32]) {
     ed_consts k;
     consts_init(&k);
     uint8_t a[32], prefix[32];
@@ -275,11 +275,11 @@ void slang__ed25519_pubkey(uint8_t pub[32], const uint8_t seed[32]) {
     ge A;
     ge_scalarmult(&A, a, &k.base, &k);
     ge_encode(pub, &A);
-    slang__crypto_wipe(a, sizeof a);
-    slang__crypto_wipe(prefix, sizeof prefix);
+    zell__crypto_wipe(a, sizeof a);
+    zell__crypto_wipe(prefix, sizeof prefix);
 }
 
-void slang__ed25519_sign(uint8_t sig[64], const uint8_t seed[32], const uint8_t *msg, size_t n) {
+void zell__ed25519_sign(uint8_t sig[64], const uint8_t seed[32], const uint8_t *msg, size_t n) {
     ed_consts k;
     consts_init(&k);
     uint8_t a[32], prefix[32], pub[32], h[64], r[32], kk[32];
@@ -287,41 +287,41 @@ void slang__ed25519_sign(uint8_t sig[64], const uint8_t seed[32], const uint8_t 
     ge P;
     ge_scalarmult(&P, a, &k.base, &k);
     ge_encode(pub, &P);
-    slang_hash_ctx c;
-    slang__hash_init(&c, SLANG_HASH_SHA512);
-    slang__hash_update(&c, prefix, 32);
-    slang__hash_update(&c, msg, n);
-    slang__hash_final(&c, h);
+    zell_hash_ctx c;
+    zell__hash_init(&c, ZELL_HASH_SHA512);
+    zell__hash_update(&c, prefix, 32);
+    zell__hash_update(&c, msg, n);
+    zell__hash_final(&c, h);
     sc_reduce(r, h, 64);
     ge_scalarmult(&P, r, &k.base, &k);
     ge_encode(sig, &P);
-    slang__hash_init(&c, SLANG_HASH_SHA512);
-    slang__hash_update(&c, sig, 32);
-    slang__hash_update(&c, pub, 32);
-    slang__hash_update(&c, msg, n);
-    slang__hash_final(&c, h);
+    zell__hash_init(&c, ZELL_HASH_SHA512);
+    zell__hash_update(&c, sig, 32);
+    zell__hash_update(&c, pub, 32);
+    zell__hash_update(&c, msg, n);
+    zell__hash_final(&c, h);
     sc_reduce(kk, h, 64);
     sc_muladd(sig + 32, kk, a, r);
-    slang__crypto_wipe(a, sizeof a);
-    slang__crypto_wipe(prefix, sizeof prefix);
-    slang__crypto_wipe(r, sizeof r);
-    slang__crypto_wipe(h, sizeof h);
-    slang__crypto_wipe(&c, sizeof c);
+    zell__crypto_wipe(a, sizeof a);
+    zell__crypto_wipe(prefix, sizeof prefix);
+    zell__crypto_wipe(r, sizeof r);
+    zell__crypto_wipe(h, sizeof h);
+    zell__crypto_wipe(&c, sizeof c);
 }
 
-bool slang__ed25519_verify(const uint8_t sig[64], const uint8_t pub[32], const uint8_t *msg, size_t n) {
+bool zell__ed25519_verify(const uint8_t sig[64], const uint8_t pub[32], const uint8_t *msg, size_t n) {
     ed_consts k;
     consts_init(&k);
     ge A, R;
     if (!sc_is_canonical(sig + 32)) return false;
     if (!ge_decode(&A, pub, &k) || !ge_decode(&R, sig, &k)) return false;
     uint8_t h[64], kk[32], chk[32];
-    slang_hash_ctx c;
-    slang__hash_init(&c, SLANG_HASH_SHA512);
-    slang__hash_update(&c, sig, 32);
-    slang__hash_update(&c, pub, 32);
-    slang__hash_update(&c, msg, n);
-    slang__hash_final(&c, h);
+    zell_hash_ctx c;
+    zell__hash_init(&c, ZELL_HASH_SHA512);
+    zell__hash_update(&c, sig, 32);
+    zell__hash_update(&c, pub, 32);
+    zell__hash_update(&c, msg, n);
+    zell__hash_final(&c, h);
     sc_reduce(kk, h, 64);
     /* [S]B + [k](-A) */
     fe_neg(A.X, A.X);
@@ -331,5 +331,5 @@ bool slang__ed25519_verify(const uint8_t sig[64], const uint8_t pub[32], const u
     ge_scalarmult(&ka, kk, &A, &k);
     ge_add(&sum, &sb, &ka, &k);
     ge_encode(chk, &sum);
-    return slang__crypto_ct_eq(chk, sig, 32) == 1;
+    return zell__crypto_ct_eq(chk, sig, 32) == 1;
 }

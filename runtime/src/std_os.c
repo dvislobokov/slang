@@ -1,4 +1,4 @@
-/* std_os.c - std.os (slang_os_*). Args is slang_os_args (main.c). Failing
+/* std_os.c - std.os (zell_os_*). Args is zell_os_args (main.c). Failing
  * calls report "<op> <arg>: <strerror>" errors through the `T!` out-param. */
 #include "rt_internal.h"
 #include "platform/platform.h"
@@ -8,64 +8,64 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void set_err(slang_error **err, const char *op, const char *arg, int e) {
+static void set_err(zell_error **err, const char *op, const char *arg, int e) {
     if (!err) return;
     char buf[512];
     if (arg) snprintf(buf, sizeof buf, "%s %.400s: %s", op, arg, strerror(e));
     else snprintf(buf, sizeof buf, "%s: %s", op, strerror(e));
-    *err = slang_error_new_cstr(buf);
+    *err = zell_error_new_cstr(buf);
 }
 
-/* Slang strings may contain NUL bytes; C APIs cannot take them. */
-static bool has_nul(const slang_string *s) {
-    return (int64_t)strlen(slang_string_cstr(s)) != slang_string_len(s);
+/* Zell strings may contain NUL bytes; C APIs cannot take them. */
+static bool has_nul(const zell_string *s) {
+    return (int64_t)strlen(zell_string_cstr(s)) != zell_string_len(s);
 }
 
-slang_string *slang_os_getenv(const slang_string *name) {
-    char *v = has_nul(name) ? NULL : slang__plat_getenv(slang_string_cstr(name));
-    slang_string *r = slang_string_from_cstr(v ? v : "");
+zell_string *zell_os_getenv(const zell_string *name) {
+    char *v = has_nul(name) ? NULL : zell__plat_getenv(zell_string_cstr(name));
+    zell_string *r = zell_string_from_cstr(v ? v : "");
     free(v);
     return r;
 }
 
-void slang_os_setenv(const slang_string *name, const slang_string *value, slang_error **err) {
-    const char *n = slang_string_cstr(name);
-    if (slang_string_len(name) == 0 || strchr(n, '=') || has_nul(name) || has_nul(value)) {
+void zell_os_setenv(const zell_string *name, const zell_string *value, zell_error **err) {
+    const char *n = zell_string_cstr(name);
+    if (zell_string_len(name) == 0 || strchr(n, '=') || has_nul(name) || has_nul(value)) {
         set_err(err, "setenv", n, EINVAL);
         return;
     }
-    int e = slang__plat_setenv(n, slang_string_cstr(value));
+    int e = zell__plat_setenv(n, zell_string_cstr(value));
     if (e) set_err(err, "setenv", n, e);
 }
 
-void slang_os_exit(int64_t code) { slang_exit((int32_t)code); }
+void zell_os_exit(int64_t code) { zell_exit((int32_t)code); }
 
-slang_string *slang_os_hostname(slang_error **err) {
+zell_string *zell_os_hostname(zell_error **err) {
     char buf[300];
-    int e = slang__plat_hostname(buf, sizeof buf);
+    int e = zell__plat_hostname(buf, sizeof buf);
     if (e) {
         set_err(err, "hostname", NULL, e);
         return NULL;
     }
-    return slang_string_from_cstr(buf);
+    return zell_string_from_cstr(buf);
 }
 
-int64_t slang_os_pid(void) { return slang__plat_pid(); }
+int64_t zell_os_pid(void) { return zell__plat_pid(); }
 
-slang_string *slang_os_cwd(slang_error **err) {
+zell_string *zell_os_cwd(zell_error **err) {
     int e = 0;
-    char *p = slang__plat_getcwd(&e);
+    char *p = zell__plat_getcwd(&e);
     if (!p) {
         set_err(err, "getwd", NULL, e);
         return NULL;
     }
-    slang_string *r = slang_string_from_cstr(p);
+    zell_string *r = zell_string_from_cstr(p);
     free(p);
     return r;
 }
 
-void slang_os_chdir(const slang_string *path, slang_error **err) {
-    if (has_nul(path)) { set_err(err, "chdir", slang_string_cstr(path), EINVAL); return; }
-    int e = slang__plat_chdir(slang_string_cstr(path));
-    if (e) set_err(err, "chdir", slang_string_cstr(path), e);
+void zell_os_chdir(const zell_string *path, zell_error **err) {
+    if (has_nul(path)) { set_err(err, "chdir", zell_string_cstr(path), EINVAL); return; }
+    int e = zell__plat_chdir(zell_string_cstr(path));
+    if (e) set_err(err, "chdir", zell_string_cstr(path), e);
 }

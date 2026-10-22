@@ -19,7 +19,7 @@
  * blocks moves to its heap's `full` list; the first remote free into such a
  * page bumps the heap's `hint`, and the owner then sweeps its full pages in
  * its next slow path (or when its worker thread goes idle,
- * slang__heap_collect). Setting `in_full` before the last check of
+ * zell__heap_collect). Setting `in_full` before the last check of
  * `xfree`, against a remote free's push before its read of `in_full`
  * (both sequentially consistent), ensures a wake-up cannot be lost.
  *
@@ -27,14 +27,14 @@
  * is the only page of its class in the heap), where any thread can take it
  * for any class. Free pages and cached large mappings form the *reserve*:
  * synchronously it may hold up to the recent peak of the heap in use minus
- * what is in use now (at least SLANG_HEAP_RESERVE, 16 MB), so rebuilding
+ * what is in use now (at least ZELL_HEAP_RESERVE, 16 MB), so rebuilding
  * data up to the size it had lately reuses the same memory without page
  * faults and in use + reserve stays within that peak; beyond it the oldest
  * free pages are released at once. A background scavenger thread (below)
- * gives back what stayed unused for 0.3 s beyond SLANG_HEAP_RESERVE. A
- * page is released with slang__plat_mem_release (MADV_DONTNEED / MADV_FREE
+ * gives back what stayed unused for 0.3 s beyond ZELL_HEAP_RESERVE. A
+ * page is released with zell__plat_mem_release (MADV_DONTNEED / MADV_FREE
  * / DiscardVirtualMemory: the address range stays, the memory goes back to
- * the OS), a cached mapping with munmap. slang__heap_collect(1)
+ * the OS), a cached mapping with munmap. zell__heap_collect(1)
  * (runtime.FreeOSMemory) releases the whole reserve.
  *
  * When a thread exits, its pages without live blocks are retired and the
@@ -51,7 +51,7 @@
  * not pay a system call and page faults each time.
  *
  * The heap is off (callers use malloc) under AddressSanitizer (so it sees
- * every object), when SLANG_NO_SLAB=1 is set (Valgrind) or when the TLS
+ * every object), when ZELL_NO_SLAB=1 is set (Valgrind) or when the TLS
  * key cannot be created; the choice is made once, at the first allocation.
  * Leak check mode 2 bypasses it (mem.c). */
 #include "heap.h"
@@ -78,13 +78,13 @@
 
 enum { PG_FREE = 1, PG_RELEASED, PG_OWNED, PG_ABANDONED };
 
-const uint32_t slang__hp_sizes[SLANG__HP_CLASSES] = {
+const uint32_t zell__hp_sizes[ZELL__HP_CLASSES] = {
     16, 32, 48, 64, 80, 96, 112, 128,
     160, 192, 224, 256, 320, 384, 448, 512, 640, 768, 896, 1024,
     1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 5120, 6144, 7168, 8192,
     10240, 12288, 14336, 16384,
 };
-_Static_assert(SLANG__HP_SMALL_MAX == 16384, "last class");
+_Static_assert(ZELL__HP_SMALL_MAX == 16384, "last class");
 
 typedef struct hp_segment {
     hp_page pages[HP_PAGES];
@@ -95,20 +95,20 @@ typedef struct hp_segment {
 _Static_assert(HP_SEG_HDR < HP_PAGE / 2, "segment header fits in the first page");
 
 static hp_page hp_empty_page;          /* never has blocks */
-static hp_heap hp_empty_heap = { .cur = { [0 ... SLANG__HP_CLASSES - 1] = &hp_empty_page } };
-_Thread_local hp_heap *slang__hp_tls = &hp_empty_heap;
-#define t_heap slang__hp_tls
+static hp_heap hp_empty_heap = { .cur = { [0 ... ZELL__HP_CLASSES - 1] = &hp_empty_page } };
+_Thread_local hp_heap *zell__hp_tls = &hp_empty_heap;
+#define t_heap zell__hp_tls
 
-uint8_t slang__heap_on;                /* 1 once the heap is in use (rt_internal.h) */
+uint8_t zell__heap_on;                /* 1 once the heap is in use (rt_internal.h) */
 static int g_mode;                     /* 0 undecided, 1 on, 2 off */
-static slang__plat_once g_once = SLANG_PLAT_ONCE_INIT;
-static slang__plat_tls_key g_key;
+static zell__plat_once g_once = ZELL_PLAT_ONCE_INIT;
+static zell__plat_tls_key g_key;
 
 /* The pool (g_mu): free pages (committed, then released), abandoned pages,
  * cached large mappings, segments, heaps of exited threads. */
-static slang__plat_mutex g_mu = SLANG_PLAT_MUTEX_INIT;
+static zell__plat_mutex g_mu = ZELL_PLAT_MUTEX_INIT;
 static hp_list g_free, g_released;
-static hp_list g_abandoned[SLANG__HP_CLASSES];
+static hp_list g_abandoned[ZELL__HP_CLASSES];
 static int64_t g_nabandoned;
 static hp_segment *g_segments, *g_seg_cur;
 static hp_heap *g_heaps_free;
@@ -125,7 +125,7 @@ static int64_t g_released_bytes;       /* released free pages (g_mu) */
 static int64_t g_returned_total;       /* bytes ever given back to the OS */
 static int64_t g_reserve_min = (int64_t)16 << 20;
 
-uint64_t *slang__hp_map[HP_TOP];        /* segment bitmap leaves, set once */
+uint64_t *zell__hp_map[HP_TOP];        /* segment bitmap leaves, set once */
 
 /* ---- lists ---- */
 
@@ -160,7 +160,7 @@ static inline char *page_base(hp_page *pg) {
 static int seg_mark(char *base) {
     uintptr_t r = (uintptr_t)base >> HP_SEG_SHIFT;
     if ((uintptr_t)base >> HP_ADDR_BITS) return 0;
-    uint64_t **slot = &slang__hp_map[r >> HP_LEAF_BITS];
+    uint64_t **slot = &zell__hp_map[r >> HP_LEAF_BITS];
     uint64_t *leaf = *slot;
     if (!leaf) {
         leaf = calloc((1u << HP_LEAF_BITS) / 64, sizeof(uint64_t));
@@ -175,7 +175,7 @@ static int seg_mark(char *base) {
 /* The range of a free page that can go back to the OS (not the segment header). */
 static void page_release_range(hp_page *pg, char **lo, size_t *len) {
     char *b = page_base(pg);
-    size_t ps = slang__plat_page_size();
+    size_t ps = zell__plat_page_size();
     char *s = b;
     if (pg == &((hp_segment *)b)->pages[0]) s = (char *)(((uintptr_t)b + HP_SEG_HDR + ps - 1) & ~(uintptr_t)(ps - 1));
     *lo = s;
@@ -186,7 +186,7 @@ static void page_init(hp_page *pg, uint32_t c, hp_heap *h) {
     char *b = page_base(pg);
     char *s = b;
     if (pg == &((hp_segment *)b)->pages[0]) s = b + HP_SEG_HDR;
-    uint32_t bs = slang__hp_sizes[c];
+    uint32_t bs = zell__hp_sizes[c];
     size_t n = (size_t)(b + HP_PAGE - s) / bs;
     pg->free = pg->local_free = NULL;
     __atomic_store_n(&pg->xfree, (hp_block *)NULL, __ATOMIC_RELAXED);
@@ -268,30 +268,30 @@ static void trim_apply(victim *v, int n) {
     int pages = 0;
     for (int i = 0; i < n; i++) {
         if (v[i].pg) {
-            slang__plat_mem_release(v[i].p, v[i].len);
+            zell__plat_mem_release(v[i].p, v[i].len);
             pages++;
         } else {
-            slang__plat_mem_unmap(v[i].p, v[i].len);
+            zell__plat_mem_unmap(v[i].p, v[i].len);
         }
         __atomic_add_fetch(&g_returned_total, (int64_t)v[i].len, __ATOMIC_RELAXED);
     }
     if (!pages) return;
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     for (int i = 0; i < n; i++) {
         if (!v[i].pg) continue;
         list_push(&g_released, v[i].pg);
         g_released_bytes += (int64_t)HP_PAGE;
     }
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
 }
 
 /* Gives memory back until the reserve is within `limit` (g_mu NOT held). */
 static void trim(int64_t limit) {
     victim v[TRIM_BATCH];
     for (;;) {
-        slang__plat_mutex_lock(&g_mu);
+        zell__plat_mutex_lock(&g_mu);
         int n = trim_pick(limit, INT64_MAX, v);
-        slang__plat_mutex_unlock(&g_mu);
+        zell__plat_mutex_unlock(&g_mu);
         if (!n) return;
         trim_apply(v, n);
     }
@@ -299,7 +299,7 @@ static void trim(int64_t limit) {
 
 /* ---- the scavenger ----
  * A background thread (started the first time free memory exceeds
- * g_reserve_min; it never touches objects, so slang_threaded stays 0):
+ * g_reserve_min; it never touches objects, so zell_threaded stays 0):
  * every HP_SCAV_PERIOD_NS it gives back the free pages and cached mappings
  * that stayed unused for HP_SCAV_AGE_NS, down to g_reserve_min, and starts
  * a new peak period. It sleeps on g_scav_cv while there is nothing over the
@@ -309,7 +309,7 @@ static void trim(int64_t limit) {
 #define HP_SCAV_PERIOD_NS ((int64_t)200000000)
 #define HP_SCAV_AGE_NS ((int64_t)300000000)
 
-static slang__plat_cond g_scav_cv = SLANG_PLAT_COND_INIT;
+static zell__plat_cond g_scav_cv = ZELL_PLAT_COND_INIT;
 static int g_scav_state;              /* 0 not started, 1 working, 2 waiting for work (g_mu) */
 
 /* Whether the scavenger must be started or woken (g_mu held). */
@@ -320,43 +320,43 @@ static inline int scav_wanted_locked(void) {
 static void *scav_main(void *arg) {
     (void)arg;
     victim v[TRIM_BATCH];
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     for (;;) {
         int64_t min = __atomic_load_n(&g_reserve_min, __ATOMIC_RELAXED);
         if (g_free_bytes + g_cache_bytes <= min) {
             g_scav_state = 2;
-            slang__plat_cond_wait(&g_scav_cv, &g_mu);
+            zell__plat_cond_wait(&g_scav_cv, &g_mu);
             g_scav_state = 1;
             continue;
         }
-        slang__plat_mutex_unlock(&g_mu);
-        slang__plat_sleep_ns(HP_SCAV_PERIOD_NS);
+        zell__plat_mutex_unlock(&g_mu);
+        zell__plat_sleep_ns(HP_SCAV_PERIOD_NS);
         __atomic_store_n(&g_peak_prev, __atomic_load_n(&g_peak_cur, __ATOMIC_RELAXED), __ATOMIC_RELAXED);
         __atomic_store_n(&g_peak_cur, __atomic_load_n(&g_in_use, __ATOMIC_RELAXED), __ATOMIC_RELAXED);
-        int64_t before = slang__plat_mono_ns() - HP_SCAV_AGE_NS;
+        int64_t before = zell__plat_mono_ns() - HP_SCAV_AGE_NS;
         for (;;) {
-            slang__plat_mutex_lock(&g_mu);
+            zell__plat_mutex_lock(&g_mu);
             int n = trim_pick(min, before, v);
-            slang__plat_mutex_unlock(&g_mu);
+            zell__plat_mutex_unlock(&g_mu);
             if (!n) break;
             trim_apply(v, n);
         }
-        slang__plat_mutex_lock(&g_mu);
+        zell__plat_mutex_lock(&g_mu);
     }
     return NULL;
 }
 
 /* Starts or wakes the scavenger (g_mu NOT held). */
 static void scav_poke(void) {
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     int st = g_scav_state;
     if (st == 0) g_scav_state = 1;
-    else if (st == 2) slang__plat_cond_signal(&g_scav_cv);
-    slang__plat_mutex_unlock(&g_mu);
-    if (st == 0 && !slang__plat_thread_start_background(scav_main, NULL)) {
-        slang__plat_mutex_lock(&g_mu);
+    else if (st == 2) zell__plat_cond_signal(&g_scav_cv);
+    zell__plat_mutex_unlock(&g_mu);
+    if (st == 0 && !zell__plat_thread_start_background(scav_main, NULL)) {
+        zell__plat_mutex_lock(&g_mu);
         g_scav_state = 0;
-        slang__plat_mutex_unlock(&g_mu);
+        zell__plat_mutex_unlock(&g_mu);
     }
 }
 
@@ -364,7 +364,7 @@ static void scav_poke(void) {
 
 /* A page for class c owned by h (g_mu NOT held), or NULL (out of memory). */
 static hp_page *page_acquire(hp_heap *h, uint32_t c) {
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     hp_page *pg = g_free.head;
     if (pg) {
         list_remove(&g_free, pg);
@@ -374,10 +374,10 @@ static hp_page *page_acquire(hp_heap *h, uint32_t c) {
         g_released_bytes -= (int64_t)HP_PAGE;
     } else {
         if (!g_seg_cur || g_seg_cur->carved == HP_PAGES) {
-            hp_segment *s = slang__plat_mem_map(HP_SEG, HP_SEG);
+            hp_segment *s = zell__plat_mem_map(HP_SEG, HP_SEG);
             if (!s || !seg_mark((char *)s)) {
-                slang__plat_mutex_unlock(&g_mu);
-                if (s) slang__plat_mem_unmap(s, HP_SEG);
+                zell__plat_mutex_unlock(&g_mu);
+                if (s) zell__plat_mem_unmap(s, HP_SEG);
                 return NULL;
             }
             s->next = g_segments;
@@ -387,7 +387,7 @@ static hp_page *page_acquire(hp_heap *h, uint32_t c) {
         pg = &g_seg_cur->pages[g_seg_cur->carved++];
     }
     __atomic_add_fetch(&g_acquired, 1, __ATOMIC_RELAXED);
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     __atomic_add_fetch(&g_in_use, (int64_t)HP_PAGE, __ATOMIC_RELAXED);
     note_peak();
     page_init(pg, c, h);
@@ -396,7 +396,7 @@ static hp_page *page_acquire(hp_heap *h, uint32_t c) {
 
 /* Returns a page without live blocks to the pool (g_mu held). */
 static void page_retire_locked(hp_page *pg) {
-    pg->freed_at = slang__plat_mono_ns();
+    pg->freed_at = zell__plat_mono_ns();
     __atomic_store_n(&pg->heap, (hp_heap *)NULL, __ATOMIC_RELAXED);
     __atomic_store_n(&pg->in_full, 0, __ATOMIC_RELAXED);
     pg->state = PG_FREE;
@@ -408,11 +408,11 @@ static void page_retire_locked(hp_page *pg) {
 
 static void page_retire(hp_page *pg) {
     victim v[TRIM_BATCH];
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     page_retire_locked(pg);
     int n = g_free_bytes + g_cache_bytes > reserve_limit() ? trim_pick(reserve_limit(), INT64_MAX, v) : 0;
     int poke = scav_wanted_locked();
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     if (n) trim_apply(v, n);
     if (poke) scav_poke();
 }
@@ -443,8 +443,8 @@ static inline int page_collect(hp_page *pg) {
 /* Sweeps the abandoned pages: retires those whose blocks are all free. */
 static void sweep_abandoned(void) {
     victim v[TRIM_BATCH];
-    slang__plat_mutex_lock(&g_mu);
-    for (uint32_t c = 0; c < SLANG__HP_CLASSES; c++) {
+    zell__plat_mutex_lock(&g_mu);
+    for (uint32_t c = 0; c < ZELL__HP_CLASSES; c++) {
         hp_page *pg = g_abandoned[c].head;
         while (pg) {
             hp_page *next = pg->next;
@@ -460,7 +460,7 @@ static void sweep_abandoned(void) {
     }
     int n = trim_pick(reserve_limit(), INT64_MAX, v);
     int poke = scav_wanted_locked();
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     if (n) trim_apply(v, n);
     if (poke) scav_poke();
 }
@@ -471,17 +471,17 @@ static void heap_thread_exit(void *arg);
 
 static void mode_init(void);
 
-int slang__hp_start(void) {
-    if (__atomic_load_n(&g_mode, __ATOMIC_ACQUIRE) == 0) slang__plat_once_run(&g_once, mode_init);
+int zell__hp_start(void) {
+    if (__atomic_load_n(&g_mode, __ATOMIC_ACQUIRE) == 0) zell__plat_once_run(&g_once, mode_init);
     return __atomic_load_n(&g_mode, __ATOMIC_ACQUIRE) == 1;
 }
 
 static void mode_init(void) {
     int on = HP_ENABLED;
-    const char *e = getenv("SLANG_NO_SLAB");
+    const char *e = getenv("ZELL_NO_SLAB");
     if (e && *e && *e != '0') on = 0;
-    if (on && !slang__plat_tls_new(&g_key, heap_thread_exit)) on = 0;
-    const char *r = getenv("SLANG_HEAP_RESERVE");
+    if (on && !zell__plat_tls_new(&g_key, heap_thread_exit)) on = 0;
+    const char *r = getenv("ZELL_HEAP_RESERVE");
     if (r && *r) {
         char *end;
         long long v = strtoll(r, &end, 10);
@@ -490,20 +490,20 @@ static void mode_init(void) {
         else if (*end == 'g' || *end == 'G') v <<= 30;
         if (v >= 0) __atomic_store_n(&g_reserve_min, (int64_t)v, __ATOMIC_RELAXED);
     }
-    __atomic_store_n(&slang__heap_on, (uint8_t)on, __ATOMIC_RELAXED);
+    __atomic_store_n(&zell__heap_on, (uint8_t)on, __ATOMIC_RELAXED);
     __atomic_store_n(&g_mode, on ? 1 : 2, __ATOMIC_RELEASE);
 }
 
 static hp_heap *heap_new(void) {
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     hp_heap *h = g_heaps_free;
     if (h) g_heaps_free = h->next_free;
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     if (!h) {
         h = calloc(1, sizeof *h);   /* never freed: remote frees may still bump a stale heap's hint */
-        if (!h) slang__panicf("out of memory (thread heap)");
+        if (!h) zell__panicf("out of memory (thread heap)");
     }
-    for (int c = 0; c < SLANG__HP_CLASSES; c++) {
+    for (int c = 0; c < ZELL__HP_CLASSES; c++) {
         h->cur[c] = &hp_empty_page;
         h->queue[c].head = h->queue[c].tail = NULL;
         h->full[c].head = h->full[c].tail = NULL;
@@ -511,7 +511,7 @@ static hp_heap *heap_new(void) {
     h->seen = __atomic_load_n(&h->hint, __ATOMIC_RELAXED);
     h->epoch = __atomic_load_n(&g_epoch, __ATOMIC_RELAXED);
     h->next_free = NULL;
-    slang__plat_tls_set(g_key, h);
+    zell__plat_tls_set(g_key, h);
     t_heap = h;
     return h;
 }
@@ -521,7 +521,7 @@ static hp_heap *heap_new(void) {
  * the queue (a forced collection). */
 static void heap_sweep(hp_heap *h, int all) {
     h->seen = __atomic_load_n(&h->hint, __ATOMIC_SEQ_CST);
-    for (uint32_t c = 0; c < SLANG__HP_CLASSES; c++) {
+    for (uint32_t c = 0; c < ZELL__HP_CLASSES; c++) {
         hp_page *pg = h->full[c].head;
         while (pg) {
             hp_page *next = pg->next;
@@ -553,7 +553,7 @@ static void heap_thread_exit(void *arg) {
     hp_heap *h = arg;
     if (!h || h == &hp_empty_heap) return;
     t_heap = &hp_empty_heap;   /* frees by later TLS destructors take the remote path */
-    for (uint32_t c = 0; c < SLANG__HP_CLASSES; c++) {
+    for (uint32_t c = 0; c < ZELL__HP_CLASSES; c++) {
         hp_list *ls[2] = { &h->queue[c], &h->full[c] };
         for (int k = 0; k < 2; k++) {
             hp_page *pg;
@@ -564,21 +564,21 @@ static void heap_thread_exit(void *arg) {
                     page_retire(pg);
                     continue;
                 }
-                slang__plat_mutex_lock(&g_mu);
+                zell__plat_mutex_lock(&g_mu);
                 __atomic_store_n(&pg->heap, (hp_heap *)NULL, __ATOMIC_RELEASE);
                 __atomic_store_n(&pg->in_full, 0, __ATOMIC_RELAXED);
                 pg->state = PG_ABANDONED;
                 list_append(&g_abandoned[c], pg);
                 __atomic_add_fetch(&g_nabandoned, 1, __ATOMIC_RELAXED);
-                slang__plat_mutex_unlock(&g_mu);
+                zell__plat_mutex_unlock(&g_mu);
             }
         }
         h->cur[c] = &hp_empty_page;
     }
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     h->next_free = g_heaps_free;
     g_heaps_free = h;
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
 }
 
 /* ---- small objects ---- */
@@ -608,8 +608,8 @@ static int page_refill(hp_page *pg) {
     return 0;
 }
 
-void *slang__hp_alloc_slow(uint32_t c) {
-    slang__rc_poll();   /* a periodic point to merge this thread's refcount queue (rc.c) */
+void *zell__hp_alloc_slow(uint32_t c) {
+    zell__rc_poll();   /* a periodic point to merge this thread's refcount queue (rc.c) */
     hp_heap *h = t_heap;
     if (h == &hp_empty_heap) h = heap_new();
     if (__atomic_load_n(&h->hint, __ATOMIC_RELAXED) != h->seen) heap_sweep(h, 0);
@@ -646,7 +646,7 @@ void *slang__hp_alloc_slow(uint32_t c) {
         /* Adopt an abandoned page of this class, or take a fresh one. */
         pg = NULL;
         if (__atomic_load_n(&g_nabandoned, __ATOMIC_RELAXED)) {
-            slang__plat_mutex_lock(&g_mu);
+            zell__plat_mutex_lock(&g_mu);
             if ((pg = g_abandoned[c].head)) {
                 list_remove(&g_abandoned[c], pg);
                 __atomic_sub_fetch(&g_nabandoned, 1, __ATOMIC_RELAXED);
@@ -654,20 +654,20 @@ void *slang__hp_alloc_slow(uint32_t c) {
                 __atomic_store_n(&pg->in_full, 0, __ATOMIC_RELAXED);
                 __atomic_store_n(&pg->heap, h, __ATOMIC_RELEASE);
             }
-            slang__plat_mutex_unlock(&g_mu);
+            zell__plat_mutex_unlock(&g_mu);
         }
         if (!pg) {
             if ((__atomic_load_n(&g_acquired, __ATOMIC_RELAXED) & 63) == 63 && __atomic_load_n(&g_nabandoned, __ATOMIC_RELAXED))
                 sweep_abandoned();
             pg = page_acquire(h, c);
-            if (!pg) slang__panicf("out of memory (heap page)");
+            if (!pg) zell__panicf("out of memory (heap page)");
         }
         list_push(&h->queue[c], pg);
     }
 }
 
 /* A free by the owner that emptied the page or hit a page in the full list. */
-void slang__hp_free_local_slow(hp_heap *h, hp_page *pg) {
+void zell__hp_free_local_slow(hp_heap *h, hp_page *pg) {
     uint32_t c = pg->cls;
     if (__atomic_load_n(&pg->in_full, __ATOMIC_RELAXED)) {
         list_remove(&h->full[c], pg);
@@ -684,7 +684,7 @@ void slang__hp_free_local_slow(hp_heap *h, hp_page *pg) {
     page_retire(pg);
 }
 
-void slang__hp_free_remote(hp_page *pg, hp_block *b) {
+void zell__hp_free_remote(hp_page *pg, hp_block *b) {
     hp_block *old = __atomic_load_n(&pg->xfree, __ATOMIC_RELAXED);
     do {
         b->next = old;
@@ -705,7 +705,7 @@ typedef struct { uint32_t kind, pad; size_t len; } hp_big;
 _Static_assert(sizeof(hp_big) == HP_BIG_HDR, "big prefix");
 
 static inline size_t large_len(int64_t size) {
-    size_t ps = slang__plat_page_size();
+    size_t ps = zell__plat_page_size();
     return ((size_t)size + HP_BIG_HDR + ps - 1) & ~(ps - 1);
 }
 
@@ -715,7 +715,7 @@ static void *alloc_large(int64_t size, int zero) {
     size_t len = 0;
     if (__atomic_load_n(&g_ncache, __ATOMIC_RELAXED)) {
         size_t slack = need / 4 > ((size_t)64 << 10) ? need / 4 : ((size_t)64 << 10);
-        slang__plat_mutex_lock(&g_mu);
+        zell__plat_mutex_lock(&g_mu);
         int best = -1;
         for (int i = g_ncache - 1; i >= 0; i--) {   /* newest first */
             if (g_cache[i].len >= need && g_cache[i].len - need <= slack && (best < 0 || g_cache[i].len < g_cache[best].len)) best = i;
@@ -727,13 +727,13 @@ static void *alloc_large(int64_t size, int zero) {
             memmove(&g_cache[best], &g_cache[best + 1], (size_t)(g_ncache - best - 1) * sizeof g_cache[0]);
             __atomic_store_n(&g_ncache, g_ncache - 1, __ATOMIC_RELAXED);
         }
-        slang__plat_mutex_unlock(&g_mu);
+        zell__plat_mutex_unlock(&g_mu);
         if (base && zero) memset(base + HP_BIG_HDR, 0, (size_t)size);
     }
     if (!base) {
         len = need;
-        base = slang__plat_mem_map(len, slang__plat_page_size());   /* fresh: already zero */
-        if (!base) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
+        base = zell__plat_mem_map(len, zell__plat_page_size());   /* fresh: already zero */
+        if (!base) zell__panicf("out of memory (requested %lld bytes)", (long long)size);
     }
     ((hp_big *)base)->kind = BIG_LARGE;
     ((hp_big *)base)->len = len;
@@ -746,7 +746,7 @@ static void free_large(char *base, size_t len) {
     __atomic_sub_fetch(&g_in_use, (int64_t)len, __ATOMIC_RELAXED);
     victim v[TRIM_BATCH + 1];
     int n = 0;
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     int64_t limit = reserve_limit();
     if ((int64_t)len <= limit / 2) {
         if (g_ncache == HP_LARGE_SLOTS) {
@@ -760,34 +760,34 @@ static void free_large(char *base, size_t len) {
         }
         g_cache[g_ncache].base = base;
         g_cache[g_ncache].len = len;
-        g_cache[g_ncache].freed_at = slang__plat_mono_ns();
+        g_cache[g_ncache].freed_at = zell__plat_mono_ns();
         __atomic_store_n(&g_ncache, g_ncache + 1, __ATOMIC_RELAXED);
         g_cache_bytes += (int64_t)len;
         n += trim_pick(limit, INT64_MAX, v + n);
         base = NULL;
     }
     int poke = scav_wanted_locked();
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     if (poke) scav_poke();
     if (base) {
-        slang__plat_mem_unmap(base, len);
+        zell__plat_mem_unmap(base, len);
         __atomic_add_fetch(&g_returned_total, (int64_t)len, __ATOMIC_RELAXED);
     }
     if (n) trim_apply(v, n);
 }
 
-void *slang__hp_alloc_big(int64_t size, int zero) {
+void *zell__hp_alloc_big(int64_t size, int zero) {
     if (size + HP_BIG_HDR >= HP_LARGE_MIN) return alloc_large(size, zero);
     char *base = zero ? calloc(1, (size_t)size + HP_BIG_HDR) : malloc((size_t)size + HP_BIG_HDR);
-    if (!base) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
-    size_t len = slang__plat_alloc_size(base);
+    if (!base) zell__panicf("out of memory (requested %lld bytes)", (long long)size);
+    size_t len = zell__plat_alloc_size(base);
     ((hp_big *)base)->kind = BIG_MEDIUM;
     ((hp_big *)base)->len = len;
     __atomic_add_fetch(&g_in_use, (int64_t)len, __ATOMIC_RELAXED);
     return base + HP_BIG_HDR;
 }
 
-void slang__hp_free_big(void *p) {
+void zell__hp_free_big(void *p) {
     hp_big *h = (hp_big *)((char *)p - HP_BIG_HDR);
     if (h->kind == BIG_LARGE) {
         free_large((char *)h, h->len);
@@ -797,18 +797,18 @@ void slang__hp_free_big(void *p) {
     free(h);
 }
 
-int64_t slang__hp_big_capacity(const void *p) {
+int64_t zell__hp_big_capacity(const void *p) {
     return (int64_t)((const hp_big *)((const char *)p - HP_BIG_HDR))->len - HP_BIG_HDR;
 }
 
-void *slang__hp_resize(void *p, int64_t size) {
-    int64_t have = slang__heap_capacity(p);
+void *zell__hp_resize(void *p, int64_t size) {
+    int64_t have = zell__heap_capacity(p);
     if (size <= have) return p;
-    if (!slang__heap_is_small(p)) {
+    if (!zell__heap_is_small(p)) {
         hp_big *h = (hp_big *)((char *)p - HP_BIG_HDR);
         if (h->kind == BIG_LARGE) {
             size_t len = h->len, need = large_len(size);
-            hp_big *n = slang__plat_mem_remap(h, len, need);
+            hp_big *n = zell__plat_mem_remap(h, len, need);
             if (n) {
                 n->len = need;
                 __atomic_add_fetch(&g_in_use, (int64_t)(need - len), __ATOMIC_RELAXED);
@@ -817,27 +817,27 @@ void *slang__hp_resize(void *p, int64_t size) {
         } else if (size + HP_BIG_HDR < HP_LARGE_MIN) {
             size_t len = h->len;
             hp_big *n = realloc(h, (size_t)size + HP_BIG_HDR);
-            if (!n) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
-            n->len = slang__plat_alloc_size(n);
+            if (!n) zell__panicf("out of memory (requested %lld bytes)", (long long)size);
+            n->len = zell__plat_alloc_size(n);
             __atomic_add_fetch(&g_in_use, (int64_t)n->len - (int64_t)len, __ATOMIC_RELAXED);
             return (char *)n + HP_BIG_HDR;
         }
     }
-    void *n = slang__heap_alloc(size, 0);
+    void *n = zell__heap_alloc(size, 0);
     memcpy(n, p, (size_t)have);
-    slang__heap_free(p);
+    zell__heap_free(p);
     return n;
 }
 
-int slang__heap_needs_collect(void) {
+int zell__heap_needs_collect(void) {
     hp_heap *h = t_heap;
     if (h == &hp_empty_heap) return 0;
     return __atomic_load_n(&h->hint, __ATOMIC_RELAXED) != h->seen || __atomic_load_n(&g_epoch, __ATOMIC_RELAXED) != h->epoch;
 }
 
-void slang__heap_collect(int force) {
-    if (!__atomic_load_n(&slang__heap_on, __ATOMIC_RELAXED)) {
-        if (force) slang__plat_malloc_trim();
+void zell__heap_collect(int force) {
+    if (!__atomic_load_n(&zell__heap_on, __ATOMIC_RELAXED)) {
+        if (force) zell__plat_malloc_trim();
         return;
     }
     hp_heap *h = t_heap;
@@ -851,14 +851,14 @@ void slang__heap_collect(int force) {
     if (!force) return;
     if (__atomic_load_n(&g_nabandoned, __ATOMIC_RELAXED)) sweep_abandoned();
     trim(0);
-    slang__plat_malloc_trim();
+    zell__plat_malloc_trim();
 }
 
-void slang__heap_stats(int64_t *in_use, int64_t *retained, int64_t *released, int64_t *returned) {
-    slang__plat_mutex_lock(&g_mu);
+void zell__heap_stats(int64_t *in_use, int64_t *retained, int64_t *released, int64_t *returned) {
+    zell__plat_mutex_lock(&g_mu);
     if (retained) *retained = g_free_bytes + g_cache_bytes;
     if (released) *released = g_released_bytes;
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     if (in_use) *in_use = __atomic_load_n(&g_in_use, __ATOMIC_RELAXED);
     if (returned) *returned = __atomic_load_n(&g_returned_total, __ATOMIC_RELAXED);
 }

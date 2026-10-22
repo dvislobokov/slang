@@ -23,7 +23,7 @@ static const char *const builtin[][2] = {
     {".ods", "application/vnd.oasis.opendocument.spreadsheet"}, {".odt", "application/vnd.oasis.opendocument.text"}, {".oga", "audio/ogg"},
     {".ogg", "audio/ogg"}, {".ogv", "video/ogg"}, {".otf", "font/otf"}, {".pdf", "application/pdf"}, {".png", "image/png"},
     {".ppt", "application/vnd.ms-powerpoint"}, {".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
-    {".rar", "application/vnd.rar"}, {".rtf", "application/rtf"}, {".sh", "application/x-sh"}, {".sl", "text/x-slang; charset=utf-8"},
+    {".rar", "application/vnd.rar"}, {".rtf", "application/rtf"}, {".sh", "application/x-sh"}, {".zl", "text/x-zell; charset=utf-8"},
     {".svg", "image/svg+xml"}, {".tar", "application/x-tar"}, {".tif", "image/tiff"}, {".tiff", "image/tiff"}, {".toml", "application/toml"},
     {".ts", "video/mp2t"}, {".ttf", "font/ttf"}, {".txt", "text/plain; charset=utf-8"}, {".wasm", "application/wasm"}, {".wav", "audio/wav"},
     {".weba", "audio/webm"}, {".webm", "video/webm"}, {".webmanifest", "application/manifest+json"}, {".webp", "image/webp"},
@@ -37,7 +37,7 @@ typedef struct {
     char *type;
 } added_t;
 
-static slang__plat_mutex mu = SLANG_PLAT_MUTEX_INIT;
+static zell__plat_mutex mu = ZELL_PLAT_MUTEX_INIT;
 static added_t *added;
 static size_t nadded, capadded;
 
@@ -48,41 +48,41 @@ static void lower(char *d, const char *s, size_t n) {
 
 /* The media type of an extension like ".html" ("" if unknown; the exact
  * spelling is tried first, then lower case). */
-slang_string *slang_mime_rt_type(const slang_string *ext) {
-    const char *e = slang_string_cstr(ext);
-    size_t n = (size_t)slang_string_len(ext);
+zell_string *zell_mime_rt_type(const zell_string *ext) {
+    const char *e = zell_string_cstr(ext);
+    size_t n = (size_t)zell_string_len(ext);
     char low[64];
-    if (n == 0 || n >= sizeof low) return slang__string_alloc(0);
+    if (n == 0 || n >= sizeof low) return zell__string_alloc(0);
     lower(low, e, n);
     const char *found = NULL;
-    slang__plat_mutex_lock(&mu);
+    zell__plat_mutex_lock(&mu);
     for (size_t i = nadded; i-- > 0;)
         if (strcmp(added[i].ext, e) == 0) { found = added[i].type; break; }
     if (!found)
         for (size_t i = nadded; i-- > 0;)
             if (strcmp(added[i].ext, low) == 0) { found = added[i].type; break; }
-    slang_string *r = found ? slang_string_from_cstr(found) : NULL;
-    slang__plat_mutex_unlock(&mu);
+    zell_string *r = found ? zell_string_from_cstr(found) : NULL;
+    zell__plat_mutex_unlock(&mu);
     if (r) return r;
     for (size_t i = 0; i < sizeof builtin / sizeof builtin[0]; i++)
-        if (strcmp(builtin[i][0], low) == 0) return slang_string_from_cstr(builtin[i][1]);
-    return slang__string_alloc(0);
+        if (strcmp(builtin[i][0], low) == 0) return zell_string_from_cstr(builtin[i][1]);
+    return zell__string_alloc(0);
 }
 
 /* Records ext -> type (copies; kept for the life of the process). */
-void slang_mime_rt_add(const slang_string *ext, const slang_string *type) {
-    slang__plat_mutex_lock(&mu);
+void zell_mime_rt_add(const zell_string *ext, const zell_string *type) {
+    zell__plat_mutex_lock(&mu);
     if (nadded == capadded) {
         capadded = capadded ? capadded * 2 : 8;
         added = realloc(added, capadded * sizeof *added);
-        if (!added) slang_panic("out of memory");
+        if (!added) zell_panic("out of memory");
     }
-    size_t n = (size_t)slang_string_len(ext);
+    size_t n = (size_t)zell_string_len(ext);
     added[nadded].ext = malloc(n + 1);
-    lower(added[nadded].ext, slang_string_cstr(ext), n);
-    added[nadded].type = strdup(slang_string_cstr(type));
+    lower(added[nadded].ext, zell_string_cstr(ext), n);
+    added[nadded].type = strdup(zell_string_cstr(type));
     nadded++;
-    slang__plat_mutex_unlock(&mu);
+    zell__plat_mutex_unlock(&mu);
 }
 
 static int same_type(const char *t, const char *want, size_t wn) {
@@ -93,16 +93,16 @@ static int same_type(const char *t, const char *want, size_t wn) {
 }
 
 /* The extensions known for a media type (no parameters), sorted. */
-void slang_mime_rt_exts(const slang_string *type, slang_slice *out) {
-    const char *w = slang_string_cstr(type);
+void zell_mime_rt_exts(const zell_string *type, zell_slice *out) {
+    const char *w = zell_string_cstr(type);
     size_t wn = strcspn(w, ";");
     while (wn > 0 && w[wn - 1] == ' ') wn--;
-    slang_slice_new_ops(out, 8, 0, 4, &slang_ops_ref);
+    zell_slice_new_ops(out, 8, 0, 4, &zell_ops_ref);
     const char *list[128];
     size_t k = 0;
     for (size_t i = 0; i < sizeof builtin / sizeof builtin[0] && k < 128; i++)
         if (same_type(builtin[i][1], w, wn)) list[k++] = builtin[i][0];
-    slang__plat_mutex_lock(&mu);
+    zell__plat_mutex_lock(&mu);
     for (size_t i = 0; i < nadded && k < 128; i++)
         if (same_type(added[i].type, w, wn)) {
             int dup = 0;
@@ -117,9 +117,9 @@ void slang_mime_rt_exts(const slang_string *type, slang_slice *out) {
             list[j - 1] = t;
         }
     for (size_t i = 0; i < k; i++) {
-        slang_string *s = slang_string_from_cstr(list[i]);
-        slang_slice_append(out, 8, &slang_ops_ref, &s);
-        slang_release(s);
+        zell_string *s = zell_string_from_cstr(list[i]);
+        zell_slice_append(out, 8, &zell_ops_ref, &s);
+        zell_release(s);
     }
-    slang__plat_mutex_unlock(&mu);
+    zell__plat_mutex_unlock(&mu);
 }

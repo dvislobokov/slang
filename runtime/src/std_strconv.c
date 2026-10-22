@@ -1,5 +1,5 @@
-/* std_strconv.c - the C half of std.strconv (the rest is Slang,
- * compiler/src/sema/stdlib_src/strconv.sl): float formatting and parsing,
+/* std_strconv.c - the C half of std.strconv (the rest is Zell,
+ * compiler/src/sema/stdlib_src/strconv.zl): float formatting and parsing,
  * which need correctly rounded conversions (snprintf/strtod), and the
  * sentinel errors ErrSyntax / ErrRange. */
 #include "rt_internal.h"
@@ -10,20 +10,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-slang_error *slang_strconv_err_syntax(void);
-slang_error *slang_strconv_err_range(void);
-slang_string *slang_strconv_rt_format_float(double f, int64_t fmt, int64_t prec);
-double slang_strconv_rt_parse_float(const slang_string *s, slang_error **err);
+zell_error *zell_strconv_err_syntax(void);
+zell_error *zell_strconv_err_range(void);
+zell_string *zell_strconv_rt_format_float(double f, int64_t fmt, int64_t prec);
+double zell_strconv_rt_parse_float(const zell_string *s, zell_error **err);
 
 #define SENTINEL(fn, text)                                                                 \
-    static SLANG_STRING_STORAGE(sizeof text) fn##_msg = SLANG_STRING_INIT(fn##_msg, text); \
-    static slang_error fn##_err = {                                                        \
-        .hdr = {SLANG_RC_IMMORTAL, &slang_type_error}, .message = (slang_string *)&fn##_msg, \
+    static ZELL_STRING_STORAGE(sizeof text) fn##_msg = ZELL_STRING_INIT(fn##_msg, text); \
+    static zell_error fn##_err = {                                                        \
+        .hdr = {ZELL_RC_IMMORTAL, &zell_type_error}, .message = (zell_string *)&fn##_msg, \
     };                                                                                     \
-    slang_error *fn(void) { return &fn##_err; }
+    zell_error *fn(void) { return &fn##_err; }
 
-SENTINEL(slang_strconv_err_syntax, "invalid syntax")
-SENTINEL(slang_strconv_err_range, "value out of range")
+SENTINEL(zell_strconv_err_syntax, "invalid syntax")
+SENTINEL(zell_strconv_err_range, "value out of range")
 
 /* Number of significant digits of the shortest %e form that round-trips. */
 static int shortest_digits(double f) {
@@ -45,17 +45,17 @@ static int exp10_of(double f, int p) {
 
 /* FormatFloat(f, fmt, prec): fmt is 'f', 'e', 'E', 'g' or 'G'; prec < 0
  * means the fewest digits that parse back to f exactly (Go semantics). */
-slang_string *slang_strconv_rt_format_float(double f, int64_t fmt, int64_t prec) {
+zell_string *zell_strconv_rt_format_float(double f, int64_t fmt, int64_t prec) {
     char buf[512];
-    if (isnan(f)) return slang_string_from_cstr("NaN");
-    if (isinf(f)) return slang_string_from_cstr(f > 0 ? "+Inf" : "-Inf");
+    if (isnan(f)) return zell_string_from_cstr("NaN");
+    if (isinf(f)) return zell_string_from_cstr(f > 0 ? "+Inf" : "-Inf");
     if (prec > 300) prec = 300;
     char c = (char)fmt;
     if (c != 'f' && c != 'e' && c != 'E' && c != 'g' && c != 'G') c = 'g';
     if (prec >= 0) {
         char spec[8] = {'%', '.', '*', c, 0};
         snprintf(buf, sizeof buf, spec, (int)prec, f);
-        return slang_string_from_cstr(buf);
+        return zell_string_from_cstr(buf);
     }
     int p = f == 0 ? 1 : shortest_digits(f);
     int x = f == 0 ? 0 : exp10_of(f, p);
@@ -69,29 +69,29 @@ slang_string *slang_strconv_rt_format_float(double f, int64_t fmt, int64_t prec)
         if (dec < 0) dec = 0;
         snprintf(buf, sizeof buf, "%.*f", dec, f);
     }
-    return slang_string_from_cstr(buf);
+    return zell_string_from_cstr(buf);
 }
 
 /* ParseFloat(s): the whole string must be a float (strtod syntax: decimal,
  * hex, inf, infinity, nan; optional sign; no spaces). Overflow gives
  * +-Inf with ErrRange, as in Go. */
-double slang_strconv_rt_parse_float(const slang_string *s, slang_error **err) {
+double zell_strconv_rt_parse_float(const zell_string *s, zell_error **err) {
     if (err) *err = NULL;
-    const char *p = slang_string_cstr(s);
+    const char *p = zell_string_cstr(s);
     int64_t n = s ? s->len : 0;
     if (n == 0 || (int64_t)strlen(p) != n || p[0] == ' ' || (p[0] >= '\t' && p[0] <= '\r')) {
-        if (err) *err = slang_strconv_err_syntax();
+        if (err) *err = zell_strconv_err_syntax();
         return 0;
     }
     errno = 0;
     char *end;
     double v = strtod(p, &end);
     if (end != p + n) {
-        if (err) *err = slang_strconv_err_syntax();
+        if (err) *err = zell_strconv_err_syntax();
         return 0;
     }
     if (errno == ERANGE && isinf(v)) {
-        if (err) *err = slang_strconv_err_range();
+        if (err) *err = zell_strconv_err_range();
         return v;
     }
     return v;

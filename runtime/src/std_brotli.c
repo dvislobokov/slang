@@ -15,7 +15,7 @@
 
 #include "std_brotli_tables.h"
 
-void slang_compress_rt_zstd_decode(const slang_slice *data, slang_slice *out, slang_error **err);
+void zell_compress_rt_zstd_decode(const zell_slice *data, zell_slice *out, zell_error **err);
 
 /* ---- dictionary (expanded on first use) ---- */
 
@@ -28,11 +28,11 @@ static const uint8_t *dictionary(void) {
     while (__atomic_exchange_n(&g_dict_lock, 1, __ATOMIC_ACQUIRE)) {
     }
     if (!g_dict) {
-        slang_slice in, out;
-        slang_error *err = NULL;
-        slang_slice_from(&in, 1, NULL, brotli_dict_zstd, (int64_t)sizeof brotli_dict_zstd);
-        slang_compress_rt_zstd_decode(&in, &out, &err);
-        slang_slice_release(&in);
+        zell_slice in, out;
+        zell_error *err = NULL;
+        zell_slice_from(&in, 1, NULL, brotli_dict_zstd, (int64_t)sizeof brotli_dict_zstd);
+        zell_compress_rt_zstd_decode(&in, &out, &err);
+        zell_slice_release(&in);
         if (!err && out.len == BROTLI_DICT_SIZE) {
             uint8_t *p = malloc(BROTLI_DICT_SIZE);
             if (p) {
@@ -40,8 +40,8 @@ static const uint8_t *dictionary(void) {
                 __atomic_store_n(&g_dict, p, __ATOMIC_RELEASE);
             }
         }
-        slang_release(err);
-        slang_slice_release(&out);
+        zell_release(err);
+        zell_slice_release(&out);
     }
     __atomic_store_n(&g_dict_lock, 0, __ATOMIC_RELEASE);
     return g_dict;
@@ -688,16 +688,16 @@ static const char *decode(const uint8_t *p, size_t n, obuf *out) {
 }
 
 /* compress.rtBrotliDecode(data) []byte! */
-void slang_compress_rt_brotli_decode(const slang_slice *data, slang_slice *out, slang_error **err) {
+void zell_compress_rt_brotli_decode(const zell_slice *data, zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
     obuf o = { 0 };
     size_t n = data ? (size_t)data->len : 0;
     const char *e = decode(n ? (const uint8_t *)data->data : (const uint8_t *)"", n, &o);
     if (e) {
         free(o.p);
-        if (err) *err = slang_error_new_cstr(e);
+        if (err) *err = zell_error_new_cstr(e);
         return;
     }
-    slang_slice_from(out, 1, NULL, o.p ? o.p : (const uint8_t *)"", (int64_t)o.n);
+    zell_slice_from(out, 1, NULL, o.p ? o.p : (const uint8_t *)"", (int64_t)o.n);
     free(o.p);
 }

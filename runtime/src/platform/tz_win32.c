@@ -1,9 +1,9 @@
 /* tz_win32.c - time zones on Windows for std.time (platform.h
- * slang__plat_tz_tzif): Windows has no tzdata files, so the zone rules come
+ * zell__plat_tz_tzif): Windows has no tzdata files, so the zone rules come
  * from the registry (HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\
  * Time Zones\<key>: TZI = bias + the yearly DST rule, "Dynamic DST" = one
  * rule per year) and are turned into TZif (RFC 8536 version 2) bytes that
- * time.sl parses like a file from /usr/share/zoneinfo: one transition per
+ * time.zl parses like a file from /usr/share/zoneinfo: one transition per
  * DST change for the years listed under "Dynamic DST", and the current
  * rule as the POSIX TZ footer for later years.
  *
@@ -16,7 +16,7 @@
  * well-known letters use numeric ones ("+03"), as tzdata does. History
  * before the first "Dynamic DST" year is not known: earlier instants use
  * that year's standard offset. $ZONEINFO pointing at a tzdata directory
- * takes precedence (std_time_zone.c, time.sl). */
+ * takes precedence (std_time_zone.c, time.zl). */
 #include "platform.h"
 
 #if defined(_WIN32)
@@ -447,7 +447,7 @@ static bool tzif_bytes(tz_build *b, const char *foot, char **out, size_t *len) {
 /* ---- registry ---- */
 
 static HKEY open_zone(const char *key) {
-    wchar_t *w = slang__w32_wide(key);
+    wchar_t *w = zell__w32_wide(key);
     if (!w) return NULL;
     wchar_t path[512];
     _snwprintf(path, 511, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones\\%ls", w);
@@ -521,7 +521,7 @@ static const tz_map *by_key(const char *key) {
     return NULL;
 }
 
-bool slang__plat_tz_tzif(const char *name, char **out, size_t *len) {
+bool zell__plat_tz_tzif(const char *name, char **out, size_t *len) {
     if (name) {
         for (size_t i = 0; i < NMAP; i++)
             if (strcmp(g_map[i].iana, name) == 0) return zone_tzif(g_map[i].win, &g_map[i], false, NULL, out, len);
@@ -530,7 +530,7 @@ bool slang__plat_tz_tzif(const char *name, char **out, size_t *len) {
     DYNAMIC_TIME_ZONE_INFORMATION d;
     memset(&d, 0, sizeof d);
     if (GetDynamicTimeZoneInformation(&d) == TIME_ZONE_ID_INVALID) return false;
-    char *key = slang__w32_utf8(d.TimeZoneKeyName, -1);
+    char *key = zell__w32_utf8(d.TimeZoneKeyName, -1);
     reg_tzi fb;
     fb.Bias = d.Bias;
     fb.StandardBias = d.StandardBias;
@@ -543,5 +543,5 @@ bool slang__plat_tz_tzif(const char *name, char **out, size_t *len) {
 }
 
 #else
-typedef int slang__tz_win32_unused;
+typedef int zell__tz_win32_unused;
 #endif

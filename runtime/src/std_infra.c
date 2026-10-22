@@ -1,55 +1,55 @@
 /* std_infra.c - C helpers of the tier-3b infrastructure clients (docs/STDLIB.md
  * "Уровень 3б"; runtime/ABI.md section 24): std.data.redis, std.data.kafka,
- * std.cloud.s3 and std.cloud.blob are Slang (compiler/src/sema/stdlib_src/
- * {redis*,kafka*,s3*,blob}.sl). Here: their immortal sentinel errors, an
+ * std.cloud.s3 and std.cloud.blob are Zell (compiler/src/sema/stdlib_src/
+ * {redis*,kafka*,s3*,blob}.zl). Here: their immortal sentinel errors, an
  * amortized in-place byte append (Go's append(a, b...)), CRC16/XMODEM (Redis
  * Cluster key slots), CRC-32C (Kafka record batches) and murmur2 (the Kafka
  * Java client's default partitioner). */
 #include "rt_internal.h"
 
 #define INFRA_SENTINEL(fn, lit)                                                       \
-    static SLANG_STRING_STORAGE(sizeof(lit)) fn##_msg = SLANG_STRING_INIT(fn##_msg, lit); \
-    static slang_error fn##_err = { .hdr = { SLANG_RC_IMMORTAL, &slang_type_error },     \
-                                    .message = (slang_string *)&fn##_msg };              \
-    slang_error *fn(void) { return &fn##_err; }
+    static ZELL_STRING_STORAGE(sizeof(lit)) fn##_msg = ZELL_STRING_INIT(fn##_msg, lit); \
+    static zell_error fn##_err = { .hdr = { ZELL_RC_IMMORTAL, &zell_type_error },     \
+                                    .message = (zell_string *)&fn##_msg };              \
+    zell_error *fn(void) { return &fn##_err; }
 
 /* std.data.redis */
-INFRA_SENTINEL(slang_data_redis_err_nil, "redis: nil")
-INFRA_SENTINEL(slang_data_redis_err_closed, "redis: client is closed")
-INFRA_SENTINEL(slang_data_redis_err_tx_failed, "redis: transaction failed (a watched key changed)")
-INFRA_SENTINEL(slang_data_redis_err_pool_timeout, "redis: connection pool timeout")
-INFRA_SENTINEL(slang_data_redis_err_cross_slot, "redis: keys of the command map to different cluster slots")
+INFRA_SENTINEL(zell_data_redis_err_nil, "redis: nil")
+INFRA_SENTINEL(zell_data_redis_err_closed, "redis: client is closed")
+INFRA_SENTINEL(zell_data_redis_err_tx_failed, "redis: transaction failed (a watched key changed)")
+INFRA_SENTINEL(zell_data_redis_err_pool_timeout, "redis: connection pool timeout")
+INFRA_SENTINEL(zell_data_redis_err_cross_slot, "redis: keys of the command map to different cluster slots")
 /* std.data.kafka */
-INFRA_SENTINEL(slang_data_kafka_err_closed, "kafka: client is closed")
-INFRA_SENTINEL(slang_data_kafka_err_no_brokers, "kafka: no broker is reachable")
+INFRA_SENTINEL(zell_data_kafka_err_closed, "kafka: client is closed")
+INFRA_SENTINEL(zell_data_kafka_err_no_brokers, "kafka: no broker is reachable")
 /* std.cloud.s3 */
-INFRA_SENTINEL(slang_cloud_s3_err_no_such_key, "s3: NoSuchKey")
-INFRA_SENTINEL(slang_cloud_s3_err_no_such_bucket, "s3: NoSuchBucket")
-INFRA_SENTINEL(slang_cloud_s3_err_access_denied, "s3: AccessDenied")
-INFRA_SENTINEL(slang_cloud_s3_err_precondition, "s3: PreconditionFailed")
+INFRA_SENTINEL(zell_cloud_s3_err_no_such_key, "s3: NoSuchKey")
+INFRA_SENTINEL(zell_cloud_s3_err_no_such_bucket, "s3: NoSuchBucket")
+INFRA_SENTINEL(zell_cloud_s3_err_access_denied, "s3: AccessDenied")
+INFRA_SENTINEL(zell_cloud_s3_err_precondition, "s3: PreconditionFailed")
 /* std.cloud.blob */
-INFRA_SENTINEL(slang_cloud_blob_err_not_found, "blob: not found")
+INFRA_SENTINEL(zell_cloud_blob_err_not_found, "blob: not found")
 
 /* append(a, b...) with Go's growth: out shares a's backing when it has room. */
-void slang_data_rt_append(const slang_slice *a, const slang_slice *b, slang_slice *out) {
+void zell_data_rt_append(const zell_slice *a, const zell_slice *b, zell_slice *out) {
     *out = *a;
-    slang_retain(out->backing);
-    if (b && b->len > 0) slang_slice_append_slice(out, 1, NULL, b);
+    zell_retain(out->backing);
+    if (b && b->len > 0) zell_slice_append_slice(out, 1, NULL, b);
 }
 
 /* append(a, s...) for a string. */
-void slang_data_rt_append_str(const slang_slice *a, const slang_string *s, slang_slice *out) {
+void zell_data_rt_append_str(const zell_slice *a, const zell_string *s, zell_slice *out) {
     *out = *a;
-    slang_retain(out->backing);
+    zell_retain(out->backing);
     int64_t n = s ? s->len : 0;
     if (n == 0) return;
-    slang_slice tmp = { (void *)s->data, n, n, NULL };
-    slang_slice_append_slice(out, 1, NULL, &tmp);
+    zell_slice tmp = { (void *)s->data, n, n, NULL };
+    zell_slice_append_slice(out, 1, NULL, &tmp);
 }
 
 /* CRC16/XMODEM (polynomial 0x1021, init 0) of a string: Redis Cluster's
  * HASH_SLOT = crc16(key) mod 16384. */
-int64_t slang_data_rt_crc16(const slang_string *s) {
+int64_t zell_data_rt_crc16(const zell_string *s) {
     uint16_t crc = 0;
     int64_t n = s ? s->len : 0;
     for (int64_t i = 0; i < n; i++) {
@@ -75,7 +75,7 @@ static void crc32c_init(void) {
     __atomic_store_n(&crc32c_ready, 1, __ATOMIC_RELEASE);
 }
 
-uint32_t slang__crc32c(uint32_t crc, const uint8_t *p, size_t n) {
+uint32_t zell__crc32c(uint32_t crc, const uint8_t *p, size_t n) {
     if (!__atomic_load_n(&crc32c_ready, __ATOMIC_ACQUIRE)) crc32c_init();
     uint32_t c = ~crc;
     while (n >= 8) {
@@ -90,15 +90,15 @@ uint32_t slang__crc32c(uint32_t crc, const uint8_t *p, size_t n) {
     return ~c;
 }
 
-int64_t slang_data_rt_crc32c(int64_t crc, const slang_slice *b) {
+int64_t zell_data_rt_crc32c(int64_t crc, const zell_slice *b) {
     int64_t n = b ? b->len : 0;
-    return (int64_t)slang__crc32c((uint32_t)crc, n ? (const uint8_t *)b->data : NULL, (size_t)n);
+    return (int64_t)zell__crc32c((uint32_t)crc, n ? (const uint8_t *)b->data : NULL, (size_t)n);
 }
 
 /* murmur2 as in the Kafka Java client (Utils.murmur2: seed 0x9747b28c),
  * as a signed 32-bit value; the default partitioner takes
  * (murmur2 & 0x7fffffff) mod partitions. */
-int64_t slang_data_rt_murmur2(const slang_slice *b) {
+int64_t zell_data_rt_murmur2(const zell_slice *b) {
     const uint8_t *d = b && b->len ? (const uint8_t *)b->data : NULL;
     int64_t length = b ? b->len : 0;
     const uint32_t m = 0x5bd1e995u;

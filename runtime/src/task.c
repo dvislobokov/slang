@@ -15,16 +15,16 @@
  * ====================================================================== */
 
 typedef struct job {
-    slang_resume_fn fn;
+    zell_resume_fn fn;
     void *arg;
-    slang_object *ctx;   /* owned: the task context the job runs with */
-    slang_task *cur;     /* owned: the current task the job runs as (10.11) */
+    zell_object *ctx;   /* owned: the task context the job runs with */
+    zell_task *cur;     /* owned: the current task the job runs as (10.11) */
     struct job *next;
 } job;
 
-static slang__plat_mutex q_mu = SLANG_PLAT_MUTEX_INIT;
-static slang__plat_cond q_cv = SLANG_PLAT_COND_INIT;     /* work available / stop */
-static slang__plat_cond idle_cv = SLANG_PLAT_COND_INIT;  /* drained / thread exited */
+static zell__plat_mutex q_mu = ZELL_PLAT_MUTEX_INIT;
+static zell__plat_cond q_cv = ZELL_PLAT_COND_INIT;     /* work available / stop */
+static zell__plat_cond idle_cv = ZELL_PLAT_COND_INIT;  /* drained / thread exited */
 static job *q_head, *q_tail;
 static int q_stopping;
 static int q_started;
@@ -32,18 +32,18 @@ static int64_t q_active;      /* jobs currently running */
 static int64_t q_nworkers;    /* target parallelism N */
 static int64_t q_alive;       /* worker threads alive (N core + spares) */
 static int64_t q_idle;        /* workers parked waiting for work */
-static int64_t q_blocked;     /* workers blocked inside slang_task_await */
+static int64_t q_blocked;     /* workers blocked inside zell_task_await */
 
 static _Thread_local int t_is_worker;
 
 /* The context of the code running on this thread (owned reference, NULL =
  * empty). Jobs carry the context they were posted with; see ABI.md 10.8. */
-static _Thread_local slang_object *t_ctx;
+static _Thread_local zell_object *t_ctx;
 
 /* The task whose code runs on this thread (owned reference, NULL = none):
  * the parent of tasks created now and the target of cancellation hooks.
  * Travels with jobs and continuations like t_ctx; see ABI.md 10.11. */
-static _Thread_local slang_task *t_cur;
+static _Thread_local zell_task *t_cur;
 
 static job *pop_locked(void) {
     job *j = q_head;
@@ -57,9 +57,9 @@ static job *pop_locked(void) {
 static void *worker_main(void *spare_flag) {
     int spare = spare_flag != NULL;
     t_is_worker = 1;
-    slang__rc_thread_eligible();     /* biased refcounts (rc.c) */
-    slang__plat_thread_stack_init(); /* frame walks of the CPU profiler */
-    slang__plat_mutex_lock(&q_mu);
+    zell__rc_thread_eligible();     /* biased refcounts (rc.c) */
+    zell__plat_thread_stack_init(); /* frame walks of the CPU profiler */
+    zell__plat_mutex_lock(&q_mu);
     for (;;) {
         job *j = pop_locked();
         if (!j) {
@@ -68,33 +68,33 @@ static void *worker_main(void *spare_flag) {
             if (spare && q_alive - q_blocked > q_nworkers) break;
             /* Before sleeping, take back pages other threads freed into
              * (and retire empty ones), so idle workers do not pin memory. */
-            if (slang__heap_needs_collect()) {
-                slang__plat_mutex_unlock(&q_mu);
-                slang__heap_collect(0);
-                slang__plat_mutex_lock(&q_mu);
+            if (zell__heap_needs_collect()) {
+                zell__plat_mutex_unlock(&q_mu);
+                zell__heap_collect(0);
+                zell__plat_mutex_lock(&q_mu);
                 continue;
             }
             /* Merge this thread's refcount queue first (rc.c): destructors
              * may run, so not under q_mu. While parked, others merge it. */
-            if (slang__rc_pending()) {
-                slang__plat_mutex_unlock(&q_mu);
-                slang__rc_poll();
-                slang__plat_mutex_lock(&q_mu);
+            if (zell__rc_pending()) {
+                zell__plat_mutex_unlock(&q_mu);
+                zell__rc_poll();
+                zell__plat_mutex_lock(&q_mu);
                 continue;
             }
             q_idle++;
-            slang__rc_park(0);
-            slang__plat_cond_wait(&q_cv, &q_mu);
+            zell__rc_park(0);
+            zell__plat_cond_wait(&q_cv, &q_mu);
             q_idle--;
             continue;
         }
         q_active++;
-        slang__plat_mutex_unlock(&q_mu);
-        slang__rc_unpark();   /* after a park above; no-op otherwise */
-        slang_resume_fn fn = j->fn;
+        zell__plat_mutex_unlock(&q_mu);
+        zell__rc_unpark();   /* after a park above; no-op otherwise */
+        zell_resume_fn fn = j->fn;
         void *arg = j->arg;
-        slang_object *saved = t_ctx;
-        slang_task *saved_cur = t_cur;
+        zell_object *saved = t_ctx;
+        zell_task *saved_cur = t_cur;
         t_ctx = j->ctx;   /* the job's references move to the thread */
         t_cur = j->cur;
         free(j);
@@ -104,33 +104,33 @@ static void *worker_main(void *spare_flag) {
          * (a task result's Drop) that start tasks, which must not see a
          * dying object as their parent (that resurrected and double-freed
          * it). */
-        slang_object *done_ctx = t_ctx;
-        slang_task *done_cur = t_cur;
+        zell_object *done_ctx = t_ctx;
+        zell_task *done_cur = t_cur;
         t_ctx = saved;
         t_cur = saved_cur;
-        slang_release(done_ctx);
-        slang_release(done_cur);
-        slang__plat_mutex_lock(&q_mu);
+        zell_release(done_ctx);
+        zell_release(done_cur);
+        zell__plat_mutex_lock(&q_mu);
         q_active--;
-        if (!q_head && q_active == 0) slang__plat_cond_broadcast(&idle_cv);
+        if (!q_head && q_active == 0) zell__plat_cond_broadcast(&idle_cv);
     }
     q_alive--;
-    slang__plat_cond_broadcast(&idle_cv);
-    slang__plat_mutex_unlock(&q_mu);
+    zell__plat_cond_broadcast(&idle_cv);
+    zell__plat_mutex_unlock(&q_mu);
     return NULL;
 }
 
 /* q_mu must be held. */
 static void spawn_worker_locked(int spare) {
-    if (!slang__plat_thread_start_detached(worker_main, spare ? (void *)1 : NULL))
-        slang_panic("cannot create worker thread");
+    if (!zell__plat_thread_start_detached(worker_main, spare ? (void *)1 : NULL))
+        zell_panic("cannot create worker thread");
     q_alive++;
 }
 
 static int64_t worker_count(void) {
-    const char *env = getenv("SLANG_WORKERS");
+    const char *env = getenv("ZELL_WORKERS");
     long n = env ? strtol(env, NULL, 10) : 0;
-    if (n <= 0) n = slang__plat_cpu_count();
+    if (n <= 0) n = zell__plat_cpu_count();
     if (n <= 0) n = 1;
     if (n > 256) n = 256;
     return n;
@@ -139,89 +139,89 @@ static int64_t worker_count(void) {
 static void timers_start(void);
 static void timers_stop(void);
 
-void (*slang__io_stop_fn)(void);
-void (*slang__net_stop_fn)(void);
+void (*zell__io_stop_fn)(void);
+void (*zell__net_stop_fn)(void);
 
 /* Stops the resolver pool and the I/O pollers if they ever started. */
 static void stop_io(void) {
-    if (slang__net_stop_fn) slang__net_stop_fn();
-    if (slang__io_stop_fn) slang__io_stop_fn();
+    if (zell__net_stop_fn) zell__net_stop_fn();
+    if (zell__io_stop_fn) zell__io_stop_fn();
 }
 
 /* Process-wide setup (SIGPIPE, open-files limit), at most once. */
-void slang__process_init(void) {
-    static slang__plat_once proc_once = SLANG_PLAT_ONCE_INIT;
-    slang__plat_once_run(&proc_once, slang__plat_process_init);
+void zell__process_init(void) {
+    static zell__plat_once proc_once = ZELL_PLAT_ONCE_INIT;
+    zell__plat_once_run(&proc_once, zell__plat_process_init);
 }
 
 /* Starts the workers and the timer thread. Called lazily, by the first
  * post, await or timer: a program that never starts a task stays single-
  * threaded (cheaper startup, non-atomic refcounts, ABI.md 3.2). */
-void slang__sched_start(void) {
-    slang__process_init();
-    slang__plat_mutex_lock(&q_mu);
-    if (q_started) { slang__plat_mutex_unlock(&q_mu); return; }
+void zell__sched_start(void) {
+    zell__process_init();
+    zell__plat_mutex_lock(&q_mu);
+    if (q_started) { zell__plat_mutex_unlock(&q_mu); return; }
     q_stopping = 0;
     q_nworkers = worker_count();
     for (int64_t i = 0; i < q_nworkers; i++) spawn_worker_locked(0);
     __atomic_store_n(&q_started, 1, __ATOMIC_RELEASE);
-    slang__plat_mutex_unlock(&q_mu);
+    zell__plat_mutex_unlock(&q_mu);
     timers_start();
 }
 
-void slang__sched_stop(void) {
-    slang__plat_mutex_lock(&q_mu);
+void zell__sched_stop(void) {
+    zell__plat_mutex_lock(&q_mu);
     if (!q_started) {
-        slang__plat_mutex_unlock(&q_mu);
+        zell__plat_mutex_unlock(&q_mu);
         stop_io();   /* I/O waits may exist without a task ever running */
         return;
     }
-    while (q_head || q_active > 0) slang__plat_cond_wait(&idle_cv, &q_mu);  /* drain */
+    while (q_head || q_active > 0) zell__plat_cond_wait(&idle_cv, &q_mu);  /* drain */
     q_stopping = 1;
-    slang__plat_cond_broadcast(&q_cv);
-    while (q_alive > 0) slang__plat_cond_wait(&idle_cv, &q_mu);
-    slang__plat_mutex_unlock(&q_mu);
+    zell__plat_cond_broadcast(&q_cv);
+    while (q_alive > 0) zell__plat_cond_wait(&idle_cv, &q_mu);
+    zell__plat_mutex_unlock(&q_mu);
     timers_stop();
     stop_io();
-    slang__plat_mutex_lock(&q_mu);
+    zell__plat_mutex_lock(&q_mu);
     q_nworkers = 0;
     __atomic_store_n(&q_started, 0, __ATOMIC_RELEASE);
-    slang__plat_mutex_unlock(&q_mu);
+    zell__plat_mutex_unlock(&q_mu);
 }
 
 /* Posts fn(arg) to run with context `ctx` as task `cur` (owned references, moved). */
-static void sched_post_ctx(slang_resume_fn fn, void *arg, slang_object *ctx, slang_task *cur) {
-    if (!fn) slang_panic_nil();
-    if (!__atomic_load_n(&q_started, __ATOMIC_ACQUIRE)) slang__sched_start();
+static void sched_post_ctx(zell_resume_fn fn, void *arg, zell_object *ctx, zell_task *cur) {
+    if (!fn) zell_panic_nil();
+    if (!__atomic_load_n(&q_started, __ATOMIC_ACQUIRE)) zell__sched_start();
     job *j = malloc(sizeof *j);
-    if (!j) slang_panic("out of memory (job)");
+    if (!j) zell_panic("out of memory (job)");
     j->fn = fn;
     j->arg = arg;
     j->ctx = ctx;
     j->cur = cur;
     j->next = NULL;
-    slang__plat_mutex_lock(&q_mu);
+    zell__plat_mutex_lock(&q_mu);
     if (q_tail) q_tail->next = j; else q_head = j;
     q_tail = j;
-    slang__plat_cond_signal(&q_cv);
-    slang__plat_mutex_unlock(&q_mu);
+    zell__plat_cond_signal(&q_cv);
+    zell__plat_mutex_unlock(&q_mu);
 }
 
-void slang_sched_post(slang_resume_fn fn, void *arg) {
-    slang_retain(t_ctx);
-    slang_retain(t_cur);
+void zell_sched_post(zell_resume_fn fn, void *arg) {
+    zell_retain(t_ctx);
+    zell_retain(t_cur);
     sched_post_ctx(fn, arg, t_ctx, t_cur);
 }
 
-int64_t slang_sched_workers(void) {
-    if (!__atomic_load_n(&q_started, __ATOMIC_ACQUIRE)) slang__sched_start();
+int64_t zell_sched_workers(void) {
+    if (!__atomic_load_n(&q_started, __ATOMIC_ACQUIRE)) zell__sched_start();
     return q_nworkers;
 }
 
-bool slang_sched_is_worker(void) { return t_is_worker != 0; }
+bool zell_sched_is_worker(void) { return t_is_worker != 0; }
 
-void slang_coro_resume(void *frame) {
-    if (!frame) slang_panic_nil();
+void zell_coro_resume(void *frame) {
+    if (!frame) zell_panic_nil();
     /* LLVM switched-resume ABI: the first word of a coroutine frame is the resume fn. */
     void (*resume)(void *) = *(void (**)(void *))frame;
     resume(frame);
@@ -234,45 +234,45 @@ void slang_coro_resume(void *frame) {
 enum { TASK_PENDING = 0, TASK_DONE = 1 };
 
 typedef struct cont {
-    slang_resume_fn fn;
+    zell_resume_fn fn;
     void *frame;
-    slang_object *ctx;          /* owned: context of the registering code */
-    slang_task *cur;            /* owned: current task of the registering code */
+    zell_object *ctx;          /* owned: context of the registering code */
+    zell_task *cur;            /* owned: current task of the registering code */
     struct cont *next;
 } cont;
 
 /* A wait to wake when its task is cancelled (10.11). */
 typedef struct hook {
-    void (*fn)(slang_task *w);
-    slang_task *w;              /* owned */
+    void (*fn)(zell_task *w);
+    zell_task *w;              /* owned */
     struct hook *next;
-    void (*fn_data)(slang_task *w, uintptr_t data);  /* instead of fn when set */
+    void (*fn_data)(zell_task *w, uintptr_t data);  /* instead of fn when set */
     uintptr_t data;
 } hook;
 
-struct slang_task {
-    slang_object hdr;
-    slang__plat_mutex mu;
-    slang__plat_cond cv;
+struct zell_task {
+    zell_object hdr;
+    zell__plat_mutex mu;
+    zell__plat_cond cv;
     int32_t state;              /* atomic */
     int32_t _pad;
     int64_t result_size;
-    const slang_value_ops *ops; /* applied at slot + ops_offset */
+    const zell_value_ops *ops; /* applied at slot + ops_offset */
     int64_t ops_offset;
     cont *conts;                /* LIFO; reversed when fired */
     /* Task tree for cancellation (10.11), guarded by mu (children lists by
-     * the parent's mu). Only tasks made by slang_task_new / scopes have it. */
-    slang_task *parent;         /* owned until the task is freed */
-    slang_task *child_head;     /* children (not owned) */
-    slang_task *sib_prev, *sib_next;
+     * the parent's mu). Only tasks made by zell_task_new / scopes have it. */
+    zell_task *parent;         /* owned until the task is freed */
+    zell_task *child_head;     /* children (not owned) */
+    zell_task *sib_prev, *sib_next;
     hook *hooks;
     int32_t cancelled;          /* atomic */
     int32_t nhooks;
-    /* The caller's context when a coroutine started (slang_task_new; owned,
+    /* The caller's context when a coroutine started (zell_task_new; owned,
      * valid while ctx_saved): put back when the coroutine first suspends or
      * completes, so context changes made inside it (task context values,
      * std.diag spans) never leak into the caller (10.8). */
-    slang_object *caller_ctx;
+    zell_object *caller_ctx;
     int32_t ctx_saved;
     int32_t dbg_id;             /* debug agent record (debug.c), 0 = none */
     unsigned char slot[];       /* result_size bytes (8-aligned) */
@@ -280,50 +280,50 @@ struct slang_task {
 
 static int64_t g_live_tasks; /* std.diag */
 
-int64_t slang__live_tasks(void) { return __atomic_load_n(&g_live_tasks, __ATOMIC_RELAXED); }
+int64_t zell__live_tasks(void) { return __atomic_load_n(&g_live_tasks, __ATOMIC_RELAXED); }
 
-int64_t slang__sched_queue_len(void) {
+int64_t zell__sched_queue_len(void) {
     int64_t n = 0;
-    slang__plat_mutex_lock(&q_mu);
+    zell__plat_mutex_lock(&q_mu);
     for (job *j = q_head; j; j = j->next) n++;
-    slang__plat_mutex_unlock(&q_mu);
+    zell__plat_mutex_unlock(&q_mu);
     return n;
 }
 
 static void task_drop(void *obj) {
-    slang_task *t = obj;
+    zell_task *t = obj;
     __atomic_sub_fetch(&g_live_tasks, 1, __ATOMIC_RELAXED);
     if (t->state == TASK_DONE && t->ops && t->ops->release)
         t->ops->release(t->slot + t->ops_offset);
     cont *c = t->conts;
-    while (c) { cont *n = c->next; slang_release(c->ctx); slang_release(c->cur); free(c); c = n; }
+    while (c) { cont *n = c->next; zell_release(c->ctx); zell_release(c->cur); free(c); c = n; }
     hook *h = t->hooks;
-    while (h) { hook *n = h->next; slang_release(h->w); free(h); h = n; }
-    if (t->ctx_saved) slang_release(t->caller_ctx);
-    if (t->dbg_id) slang__dbg_task_drop(t->dbg_id);
+    while (h) { hook *n = h->next; zell_release(h->w); free(h); h = n; }
+    if (t->ctx_saved) zell_release(t->caller_ctx);
+    if (t->dbg_id) zell__dbg_task_drop(t->dbg_id);
     if (t->parent) {
-        slang_task *p = t->parent;
-        slang__plat_mutex_lock(&p->mu);
+        zell_task *p = t->parent;
+        zell__plat_mutex_lock(&p->mu);
         if (t->sib_prev) t->sib_prev->sib_next = t->sib_next; else p->child_head = t->sib_next;
         if (t->sib_next) t->sib_next->sib_prev = t->sib_prev;
-        slang__plat_mutex_unlock(&p->mu);
-        slang_release(p);
+        zell__plat_mutex_unlock(&p->mu);
+        zell_release(p);
     }
-    slang__plat_mutex_destroy(&t->mu);
-    slang__plat_cond_destroy(&t->cv);
+    zell__plat_mutex_destroy(&t->mu);
+    zell__plat_cond_destroy(&t->cv);
 }
 
-static const slang_type_info task_type = { "Task", 0, task_drop };
+static const zell_type_info task_type = { "Task", 0, task_drop };
 
-static slang_task *task_new_ex(int64_t result_size, const slang_value_ops *ops, int64_t ops_off) {
-    if (result_size < 0) slang__panicf("slang_task_new: negative result size");
-    slang_task *t = slang_object_new(&task_type,
-                                     (int64_t)sizeof(slang_task) + SLANG_ROUND8(result_size));
+static zell_task *task_new_ex(int64_t result_size, const zell_value_ops *ops, int64_t ops_off) {
+    if (result_size < 0) zell__panicf("zell_task_new: negative result size");
+    zell_task *t = zell_object_new(&task_type,
+                                     (int64_t)sizeof(zell_task) + ZELL_ROUND8(result_size));
     /* Tasks move between threads all the time (awaiters, continuations,
      * jobs): biasing them to one thread would only queue merges (rc.c). */
-    t->hdr.refcount |= SLANG_RC_NOBIAS;
-    slang__plat_mutex_init(&t->mu);
-    slang__plat_cond_init(&t->cv);
+    t->hdr.refcount |= ZELL_RC_NOBIAS;
+    zell__plat_mutex_init(&t->mu);
+    zell__plat_cond_init(&t->cv);
     __atomic_add_fetch(&g_live_tasks, 1, __ATOMIC_RELAXED);
     t->result_size = result_size;
     t->ops = ops;
@@ -332,61 +332,61 @@ static slang_task *task_new_ex(int64_t result_size, const slang_value_ops *ops, 
 }
 
 /* Links t under the current task (or `parent`), inheriting cancellation. */
-static void task_attach(slang_task *t, slang_task *parent) {
+static void task_attach(zell_task *t, zell_task *parent) {
     if (!parent) return;
-    slang_retain(parent);
+    zell_retain(parent);
     t->parent = parent;
-    slang__plat_mutex_lock(&parent->mu);
+    zell__plat_mutex_lock(&parent->mu);
     t->sib_next = parent->child_head;
     if (parent->child_head) parent->child_head->sib_prev = t;
     parent->child_head = t;
     if (__atomic_load_n(&parent->cancelled, __ATOMIC_ACQUIRE)) __atomic_store_n(&t->cancelled, 1, __ATOMIC_RELEASE);
-    slang__plat_mutex_unlock(&parent->mu);
+    zell__plat_mutex_unlock(&parent->mu);
 }
 
 /* The task of the code that runs now: a child of the current task, and the
  * current task from here on (until it suspends or completes). */
-slang_task *slang_task_new(int64_t result_size, const slang_value_ops *result_ops) {
-    slang_task *t = task_new_ex(result_size, result_ops, 0);
+zell_task *zell_task_new(int64_t result_size, const zell_value_ops *result_ops) {
+    zell_task *t = task_new_ex(result_size, result_ops, 0);
     task_attach(t, t_cur);
-    slang_retain(t_ctx);
+    zell_retain(t_ctx);
     t->caller_ctx = t_ctx;
     t->ctx_saved = 1;
-    slang_retain(t);
-    slang_task *old = t_cur;
+    zell_retain(t);
+    zell_task *old = t_cur;
     t_cur = t;
-    slang_release(old);  /* t->parent holds its own reference */
+    zell_release(old);  /* t->parent holds its own reference */
     return t;
 }
 
-slang_task *slang_task_new_plain(int64_t result_size, const slang_value_ops *result_ops) {
+zell_task *zell_task_new_plain(int64_t result_size, const zell_value_ops *result_ops) {
     return task_new_ex(result_size, result_ops, 0);
 }
 
 /* The current task stops running on this thread: its parent is current. */
-static void restore_parent(slang_task *t) {
+static void restore_parent(zell_task *t) {
     if (t_cur != t) return;
     if (t->ctx_saved) {
         /* Back on the caller's stack (first suspension or completion): the
          * caller's context too. The task's own context lives on in its
          * continuations. */
-        slang_object *old = t_ctx;
+        zell_object *old = t_ctx;
         t_ctx = t->caller_ctx;
         t->caller_ctx = NULL;
         t->ctx_saved = 0;
-        slang_release(old);
+        zell_release(old);
     }
-    slang_retain(t->parent);
+    zell_retain(t->parent);
     t_cur = t->parent;
-    slang_release(t);
+    zell_release(t);
 }
 
 /* Completes t; returns false (and does nothing) if it already was done. */
-static bool task_complete(slang_task *t, const void *result) {
-    if (!t) slang_panic_nil();
-    slang__plat_mutex_lock(&t->mu);
+static bool task_complete(zell_task *t, const void *result) {
+    if (!t) zell_panic_nil();
+    zell__plat_mutex_lock(&t->mu);
     if (t->state == TASK_DONE) {
-        slang__plat_mutex_unlock(&t->mu);
+        zell__plat_mutex_unlock(&t->mu);
         return false;
     }
     if (result && t->result_size > 0) {
@@ -396,8 +396,8 @@ static bool task_complete(slang_task *t, const void *result) {
     __atomic_store_n(&t->state, TASK_DONE, __ATOMIC_RELEASE);
     cont *c = t->conts, *rev = NULL;
     t->conts = NULL;
-    slang__plat_cond_broadcast(&t->cv);
-    slang__plat_mutex_unlock(&t->mu);
+    zell__plat_cond_broadcast(&t->cv);
+    zell__plat_mutex_unlock(&t->mu);
     restore_parent(t);  /* a coroutine returning: the code after it is its parent's */
     /* After this point `t` may be freed by another thread; use only `rev`. */
     while (c) { cont *n = c->next; c->next = rev; rev = c; c = n; }
@@ -410,16 +410,16 @@ static bool task_complete(slang_task *t, const void *result) {
     return true;
 }
 
-void slang_task_complete(slang_task *t, const void *result) {
-    if (!task_complete(t, result)) slang_panic("task completed twice");
+void zell_task_complete(zell_task *t, const void *result) {
+    if (!task_complete(t, result)) zell_panic("task completed twice");
 }
 
-bool slang_task_try_complete(slang_task *t, const void *result) {
+bool zell_task_try_complete(zell_task *t, const void *result) {
     return task_complete(t, result);
 }
 
-bool slang_task_is_done(const slang_task *t) {
-    if (!t) slang_panic_nil();
+bool zell_task_is_done(const zell_task *t) {
+    if (!t) zell_panic_nil();
     return __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == TASK_DONE;
 }
 
@@ -428,25 +428,25 @@ bool slang_task_is_done(const slang_task *t) {
  * continuation is published: once it is, the continuation may resume on
  * another thread, whose restore_parent must not race with ours on the
  * task's ctx_saved/caller_ctx. */
-static bool add_cont(slang_task *t, slang_resume_fn fn, void *frame, bool suspend) {
-    if (!t || !fn) slang_panic_nil();
-    if (slang_task_is_done(t)) return false;
+static bool add_cont(zell_task *t, zell_resume_fn fn, void *frame, bool suspend) {
+    if (!t || !fn) zell_panic_nil();
+    if (zell_task_is_done(t)) return false;
     cont *c = malloc(sizeof *c);
-    if (!c) slang_panic("out of memory (continuation)");
+    if (!c) zell_panic("out of memory (continuation)");
     c->fn = fn;
     c->frame = frame;
     c->ctx = t_ctx;
     c->cur = t_cur;
-    slang__plat_mutex_lock(&t->mu);
+    zell__plat_mutex_lock(&t->mu);
     if (t->state == TASK_DONE) {
-        slang__plat_mutex_unlock(&t->mu);
+        zell__plat_mutex_unlock(&t->mu);
         free(c);
         return false;
     }
-    slang_retain(c->ctx);
-    slang_retain(c->cur);
-    slang_object *drop_ctx = NULL;
-    slang_task *cur = t_cur;
+    zell_retain(c->ctx);
+    zell_retain(c->cur);
+    zell_object *drop_ctx = NULL;
+    zell_task *cur = t_cur;
     if (suspend && cur && cur->ctx_saved) {
         /* restore_parent's context step (the continuation holds the task's
          * context now, so the old t_ctx is released after unlocking). */
@@ -457,196 +457,196 @@ static bool add_cont(slang_task *t, slang_resume_fn fn, void *frame, bool suspen
     }
     c->next = t->conts;
     t->conts = c;
-    slang__plat_mutex_unlock(&t->mu);
-    slang_release(drop_ctx);
+    zell__plat_mutex_unlock(&t->mu);
+    zell_release(drop_ctx);
     return true;
 }
 
 /* Public: the registering code (a coroutine) suspends when this returns
  * true, so the current task becomes its parent again. */
-bool slang_task_add_continuation(slang_task *t, slang_resume_fn fn, void *frame) {
+bool zell_task_add_continuation(zell_task *t, zell_resume_fn fn, void *frame) {
     if (!add_cont(t, fn, frame, true)) return false;
     if (t_cur) restore_parent(t_cur);
     return true;
 }
 
-void *slang_task_result(const slang_task *t) {
-    if (!slang_task_is_done(t)) slang_panic("task result read before completion");
+void *zell_task_result(const zell_task *t) {
+    if (!zell_task_is_done(t)) zell_panic("task result read before completion");
     return (void *)t->slot;
 }
 
-void *slang_task_await(slang_task *t) {
-    if (!t) slang_panic_nil();
-    if (slang_task_is_done(t)) return t->slot;
+void *zell_task_await(zell_task *t) {
+    if (!t) zell_panic_nil();
+    if (zell_task_is_done(t)) return t->slot;
     if (t_is_worker) {
         /* Blocking a worker: make sure the pool keeps N runnable threads by
          * starting a spare worker if nobody is idle (it retires later). */
-        slang__plat_mutex_lock(&q_mu);
+        zell__plat_mutex_lock(&q_mu);
         q_blocked++;
         if (q_idle == 0 && !q_stopping) spawn_worker_locked(1);
-        slang__plat_mutex_unlock(&q_mu);
+        zell__plat_mutex_unlock(&q_mu);
     }
     int parked = __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) != TASK_DONE;
-    if (parked) slang__rc_park(1);   /* others may merge our refcount queue (rc.c) */
-    slang__plat_mutex_lock(&t->mu);
-    while (t->state != TASK_DONE) slang__plat_cond_wait(&t->cv, &t->mu);
-    slang__plat_mutex_unlock(&t->mu);
-    if (parked) slang__rc_unpark();
+    if (parked) zell__rc_park(1);   /* others may merge our refcount queue (rc.c) */
+    zell__plat_mutex_lock(&t->mu);
+    while (t->state != TASK_DONE) zell__plat_cond_wait(&t->cv, &t->mu);
+    zell__plat_mutex_unlock(&t->mu);
+    if (parked) zell__rc_unpark();
     if (t_is_worker) {
-        slang__plat_mutex_lock(&q_mu);
+        zell__plat_mutex_lock(&q_mu);
         q_blocked--;
-        slang__plat_mutex_unlock(&q_mu);
+        zell__plat_mutex_unlock(&q_mu);
     }
     return t->slot;
 }
 
 typedef struct spawn_ctx {
-    slang_task_fn fn;
-    slang_task *task;
+    zell_task_fn fn;
+    zell_task *task;
     void *ctx;
 } spawn_ctx;
 /* (The spawned job inherits the spawner's task context through
- * slang_sched_post.) */
+ * zell_sched_post.) */
 
 static void spawn_tramp(void *arg) {
     spawn_ctx *sc = arg;
-    slang_task_fn fn = sc->fn;
-    slang_task *t = sc->task;
+    zell_task_fn fn = sc->fn;
+    zell_task *t = sc->task;
     void *ctx = sc->ctx;
     free(sc);
     fn(t, ctx);
-    slang_release(t);  /* the job's reference */
+    zell_release(t);  /* the job's reference */
 }
 
-slang_task *slang_task_spawn_ex(slang_task_fn fn, void *ctx, int64_t result_size,
-                                const slang_value_ops *result_ops) {
-    if (!fn) slang_panic_nil();
-    slang_task *t = task_new_ex(result_size, result_ops, 0);
+zell_task *zell_task_spawn_ex(zell_task_fn fn, void *ctx, int64_t result_size,
+                                const zell_value_ops *result_ops) {
+    if (!fn) zell_panic_nil();
+    zell_task *t = task_new_ex(result_size, result_ops, 0);
     spawn_ctx *sc = malloc(sizeof *sc);
-    if (!sc) slang_panic("out of memory (spawn)");
+    if (!sc) zell_panic("out of memory (spawn)");
     sc->fn = fn;
     sc->task = t;
     sc->ctx = ctx;
-    slang_retain(t);  /* held by the job until fn returns */
-    slang_sched_post(spawn_tramp, sc);
+    zell_retain(t);  /* held by the job until fn returns */
+    zell_sched_post(spawn_tramp, sc);
     return t;
 }
 
-slang_task *slang_task_spawn(slang_task_fn fn, void *ctx) {
-    return slang_task_spawn_ex(fn, ctx, 8, NULL);
+zell_task *zell_task_spawn(zell_task_fn fn, void *ctx) {
+    return zell_task_spawn_ex(fn, ctx, 8, NULL);
 }
 
 /* ======================================================================
- * Timers (slang_task_delay): one thread, sorted list, monotonic clock.
+ * Timers (zell_task_delay): one thread, sorted list, monotonic clock.
  * ====================================================================== */
 
 typedef struct timer {
     int64_t deadline;   /* monotonic ns */
-    slang_task *task;   /* owned: completed at the deadline, or */
-    slang_task *cancel; /* owned: cancelled at the deadline (slang_task_set_deadline) */
+    zell_task *task;   /* owned: completed at the deadline, or */
+    zell_task *cancel; /* owned: cancelled at the deadline (zell_task_set_deadline) */
     struct timer *next;
 } timer;
 
-static slang__plat_mutex tm_mu = SLANG_PLAT_MUTEX_INIT;
-static slang__plat_cond tm_cv;
+static zell__plat_mutex tm_mu = ZELL_PLAT_MUTEX_INIT;
+static zell__plat_cond tm_cv;
 static timer *tm_list;
 static int tm_running, tm_stop;
-static slang__plat_thread tm_thread;
+static zell__plat_thread tm_thread;
 
 static void *timer_main(void *unused) {
     (void)unused;
-    slang__plat_mutex_lock(&tm_mu);
+    zell__plat_mutex_lock(&tm_mu);
     while (!tm_stop) {
-        if (!tm_list) { slang__plat_cond_wait(&tm_cv, &tm_mu); continue; }
-        int64_t left = tm_list->deadline - slang__plat_mono_ns();
+        if (!tm_list) { zell__plat_cond_wait(&tm_cv, &tm_mu); continue; }
+        int64_t left = tm_list->deadline - zell__plat_mono_ns();
         if (left > 0) {
-            slang__plat_cond_wait_ns(&tm_cv, &tm_mu, left);
+            zell__plat_cond_wait_ns(&tm_cv, &tm_mu, left);
             continue;
         }
         timer *t = tm_list;
         tm_list = t->next;
-        slang__plat_mutex_unlock(&tm_mu);
-        if (t->task) slang_task_try_complete(t->task, NULL);  /* may race with rt_fire */
-        if (t->cancel) slang_task_cancel(t->cancel);
-        slang_release(t->task);
-        slang_release(t->cancel);
+        zell__plat_mutex_unlock(&tm_mu);
+        if (t->task) zell_task_try_complete(t->task, NULL);  /* may race with rt_fire */
+        if (t->cancel) zell_task_cancel(t->cancel);
+        zell_release(t->task);
+        zell_release(t->cancel);
         free(t);
-        slang__plat_mutex_lock(&tm_mu);
+        zell__plat_mutex_lock(&tm_mu);
     }
     /* Pending timers at shutdown are dropped without completing. */
     while (tm_list) {
         timer *t = tm_list;
         tm_list = t->next;
-        slang_release(t->task);
-        slang_release(t->cancel);
+        zell_release(t->task);
+        zell_release(t->cancel);
         free(t);
     }
-    slang__plat_mutex_unlock(&tm_mu);
+    zell__plat_mutex_unlock(&tm_mu);
     return NULL;
 }
 
 static void timers_start(void) {
-    slang__plat_mutex_lock(&tm_mu);
+    zell__plat_mutex_lock(&tm_mu);
     if (!tm_running) {
-        slang__plat_cond_init(&tm_cv);  /* monotonic timed waits where available */
+        zell__plat_cond_init(&tm_cv);  /* monotonic timed waits where available */
         tm_stop = 0;
-        if (!slang__plat_thread_start(&tm_thread, timer_main, NULL))
-            slang_panic("cannot create timer thread");
+        if (!zell__plat_thread_start(&tm_thread, timer_main, NULL))
+            zell_panic("cannot create timer thread");
         tm_running = 1;
     }
-    slang__plat_mutex_unlock(&tm_mu);
+    zell__plat_mutex_unlock(&tm_mu);
 }
 
 static void timers_stop(void) {
-    slang__plat_mutex_lock(&tm_mu);
-    if (!tm_running) { slang__plat_mutex_unlock(&tm_mu); return; }
+    zell__plat_mutex_lock(&tm_mu);
+    if (!tm_running) { zell__plat_mutex_unlock(&tm_mu); return; }
     tm_stop = 1;
-    slang__plat_cond_signal(&tm_cv);
-    slang__plat_mutex_unlock(&tm_mu);
-    slang__plat_thread_join(tm_thread);
-    slang__plat_mutex_lock(&tm_mu);
+    zell__plat_cond_signal(&tm_cv);
+    zell__plat_mutex_unlock(&tm_mu);
+    zell__plat_thread_join(tm_thread);
+    zell__plat_mutex_lock(&tm_mu);
     tm_running = 0;
-    slang__plat_cond_destroy(&tm_cv);
-    slang__plat_mutex_unlock(&tm_mu);
+    zell__plat_cond_destroy(&tm_cv);
+    zell__plat_mutex_unlock(&tm_mu);
 }
 
-static void cancel_hook(void (*fn)(slang_task *), slang_task *w);
-static void timer_insert(int64_t ms, slang_task *t, slang_task *cancel);
+static void cancel_hook(void (*fn)(zell_task *), zell_task *w);
+static void timer_insert(int64_t ms, zell_task *t, zell_task *cancel);
 
-static void delay_cancelled(slang_task *w) { slang_task_rt_fire(w); }
+static void delay_cancelled(zell_task *w) { zell_task_rt_fire(w); }
 
 /* A delay completes early when the current task is cancelled (10.11). */
-slang_task *slang_task_delay(int64_t ms) {
-    slang_task *t = task_new_ex(0, NULL, 0);
-    if (ms <= 0) { slang_task_complete(t, NULL); return t; }
+zell_task *zell_task_delay(int64_t ms) {
+    zell_task *t = task_new_ex(0, NULL, 0);
+    if (ms <= 0) { zell_task_complete(t, NULL); return t; }
     timer_insert(ms, t, NULL);
     cancel_hook(delay_cancelled, t);
     return t;
 }
 
-void slang_task_set_deadline(slang_task *t, int64_t ms) {
-    if (!t) slang_panic_nil();
-    if (ms <= 0) { slang_task_cancel(t); return; }
+void zell_task_set_deadline(zell_task *t, int64_t ms) {
+    if (!t) zell_panic_nil();
+    if (ms <= 0) { zell_task_cancel(t); return; }
     timer_insert(ms, NULL, t);
 }
 
 /* Adds a timer for t (completed) or cancel (cancelled); both retained. */
-static void timer_insert(int64_t ms, slang_task *t, slang_task *cancel) {
-    if (!__atomic_load_n(&q_started, __ATOMIC_ACQUIRE)) slang__sched_start();
+static void timer_insert(int64_t ms, zell_task *t, zell_task *cancel) {
+    if (!__atomic_load_n(&q_started, __ATOMIC_ACQUIRE)) zell__sched_start();
     timer *tm = malloc(sizeof *tm);
-    if (!tm) slang_panic("out of memory (timer)");
-    tm->deadline = slang__plat_mono_ns() + ms * 1000000;
-    slang_retain(t);
-    slang_retain(cancel);
+    if (!tm) zell_panic("out of memory (timer)");
+    tm->deadline = zell__plat_mono_ns() + ms * 1000000;
+    zell_retain(t);
+    zell_retain(cancel);
     tm->task = t;
     tm->cancel = cancel;
-    slang__plat_mutex_lock(&tm_mu);
+    zell__plat_mutex_lock(&tm_mu);
     timer **pp = &tm_list;
     while (*pp && (*pp)->deadline <= tm->deadline) pp = &(*pp)->next;
     tm->next = *pp;
     *pp = tm;
-    slang__plat_cond_signal(&tm_cv);
-    slang__plat_mutex_unlock(&tm_mu);
+    zell__plat_cond_signal(&tm_cv);
+    zell__plat_mutex_unlock(&tm_mu);
 }
 
 /* ======================================================================
@@ -654,28 +654,28 @@ static void timer_insert(int64_t ms, slang_task *t, slang_task *cancel) {
  * ====================================================================== */
 
 typedef struct all_state {
-    slang_task *result;    /* owned */
+    zell_task *result;    /* owned */
     int64_t remaining;     /* atomic */
 } all_state;
 
 static void all_one_done(void *arg) {
     all_state *st = arg;
     if (__atomic_sub_fetch(&st->remaining, 1, __ATOMIC_ACQ_REL) == 0) {
-        slang_task_complete(st->result, NULL);
-        slang_release(st->result);
+        zell_task_complete(st->result, NULL);
+        zell_release(st->result);
         free(st);
     }
 }
 
-slang_task *slang_task_all(slang_task *const *tasks, int64_t n) {
-    slang_task *r = task_new_ex(0, NULL, 0);
+zell_task *zell_task_all(zell_task *const *tasks, int64_t n) {
+    zell_task *r = task_new_ex(0, NULL, 0);
     all_state *st = malloc(sizeof *st);
-    if (!st) slang_panic("out of memory (task_all)");
-    slang_retain(r);
+    if (!st) zell_panic("out of memory (task_all)");
+    zell_retain(r);
     st->result = r;
     st->remaining = n + 1;  /* +1 guard released below */
     for (int64_t i = 0; i < n; i++) {
-        if (!tasks[i]) slang_panic_nil();
+        if (!tasks[i]) zell_panic_nil();
         if (!add_cont(tasks[i], all_one_done, st, false)) all_one_done(st);
     }
     all_one_done(st);
@@ -683,11 +683,11 @@ slang_task *slang_task_all(slang_task *const *tasks, int64_t n) {
 }
 
 typedef struct any_state {
-    slang_task *result;    /* owned */
+    zell_task *result;    /* owned */
     int64_t refs;          /* atomic: outstanding callbacks + guard */
     int32_t fired;         /* atomic */
     int64_t n;
-    slang_task **inputs;   /* owned: the losers are cancelled (10.11) */
+    zell_task **inputs;   /* owned: the losers are cancelled (10.11) */
 } any_state;
 
 typedef struct any_node {
@@ -697,8 +697,8 @@ typedef struct any_node {
 
 static void any_unref(any_state *st) {
     if (__atomic_sub_fetch(&st->refs, 1, __ATOMIC_ACQ_REL) == 0) {
-        slang_release(st->result);
-        for (int64_t i = 0; i < st->n; i++) slang_release(st->inputs[i]);
+        zell_release(st->result);
+        for (int64_t i = 0; i < st->n; i++) zell_release(st->inputs[i]);
         free(st->inputs);
         free(st);
     }
@@ -710,33 +710,33 @@ static void any_one_done(void *arg) {
     int64_t idx = nd->index;
     free(nd);
     if (__atomic_exchange_n(&st->fired, 1, __ATOMIC_ACQ_REL) == 0) {
-        slang_task_complete(st->result, &idx);
+        zell_task_complete(st->result, &idx);
         for (int64_t i = 0; i < st->n; i++)
-            if (i != idx && !slang_task_is_done(st->inputs[i])) slang_task_cancel(st->inputs[i]);
+            if (i != idx && !zell_task_is_done(st->inputs[i])) zell_task_cancel(st->inputs[i]);
     }
     any_unref(st);
 }
 
-slang_task *slang_task_any(slang_task *const *tasks, int64_t n) {
-    if (n <= 0) slang_panic("task.Any called with no tasks");
-    slang_task *r = task_new_ex(8, NULL, 0);
+zell_task *zell_task_any(zell_task *const *tasks, int64_t n) {
+    if (n <= 0) zell_panic("task.Any called with no tasks");
+    zell_task *r = task_new_ex(8, NULL, 0);
     any_state *st = malloc(sizeof *st);
-    if (!st) slang_panic("out of memory (task_any)");
-    slang_retain(r);
+    if (!st) zell_panic("out of memory (task_any)");
+    zell_retain(r);
     st->result = r;
     st->refs = n + 1;
     st->fired = 0;
     st->n = n;
     st->inputs = malloc(sizeof *st->inputs * (size_t)n);
-    if (!st->inputs) slang_panic("out of memory (task_any)");
+    if (!st->inputs) zell_panic("out of memory (task_any)");
     for (int64_t i = 0; i < n; i++) {
-        if (!tasks[i]) slang_panic_nil();
-        slang_retain(tasks[i]);
+        if (!tasks[i]) zell_panic_nil();
+        zell_retain(tasks[i]);
         st->inputs[i] = tasks[i];
     }
     for (int64_t i = 0; i < n; i++) {
         any_node *nd = malloc(sizeof *nd);
-        if (!nd) slang_panic("out of memory (task_any)");
+        if (!nd) zell_panic("out of memory (task_any)");
         nd->st = st;
         nd->index = i;
         if (!add_cont(tasks[i], any_one_done, nd, false)) any_one_done(nd);
@@ -750,7 +750,7 @@ slang_task *slang_task_any(slang_task *const *tasks, int64_t n) {
  * ====================================================================== */
 
 typedef struct waiter {
-    slang_task *task;      /* owned */
+    zell_task *task;      /* owned */
     struct waiter *next;
     unsigned char elem[];  /* channel senders: owned element copy */
 } waiter;
@@ -769,72 +769,72 @@ static waiter *wq_pop(wqueue *q) {
     return w;
 }
 
-struct slang_mutex {
-    slang_object hdr;
-    slang__plat_mutex mu;
+struct zell_mutex {
+    zell_object hdr;
+    zell__plat_mutex mu;
     int32_t locked;
     wqueue waiters;
 };
 
 static void mutex_drop(void *obj) {
-    slang_mutex *m = obj;
+    zell_mutex *m = obj;
     waiter *w;
-    while ((w = wq_pop(&m->waiters))) { slang_release(w->task); free(w); }
-    slang__plat_mutex_destroy(&m->mu);
+    while ((w = wq_pop(&m->waiters))) { zell_release(w->task); free(w); }
+    zell__plat_mutex_destroy(&m->mu);
 }
 
-static const slang_type_info mutex_type = { "Mutex", (int64_t)sizeof(struct slang_mutex), mutex_drop };
+static const zell_type_info mutex_type = { "Mutex", (int64_t)sizeof(struct zell_mutex), mutex_drop };
 
-slang_mutex *slang_mutex_new(void) {
-    slang_mutex *m = slang_object_new(&mutex_type, (int64_t)sizeof(struct slang_mutex));
-    slang__plat_mutex_init(&m->mu);
+zell_mutex *zell_mutex_new(void) {
+    zell_mutex *m = zell_object_new(&mutex_type, (int64_t)sizeof(struct zell_mutex));
+    zell__plat_mutex_init(&m->mu);
     return m;
 }
 
-slang_task *slang_mutex_lock_async(slang_mutex *m) {
-    if (!m) slang_panic_nil();
-    slang_task *t = task_new_ex(0, NULL, 0);
-    slang__plat_mutex_lock(&m->mu);
+zell_task *zell_mutex_lock_async(zell_mutex *m) {
+    if (!m) zell_panic_nil();
+    zell_task *t = task_new_ex(0, NULL, 0);
+    zell__plat_mutex_lock(&m->mu);
     if (!m->locked) {
         m->locked = 1;
-        slang__plat_mutex_unlock(&m->mu);
-        slang_task_complete(t, NULL);
+        zell__plat_mutex_unlock(&m->mu);
+        zell_task_complete(t, NULL);
         return t;
     }
     waiter *w = malloc(sizeof *w);
-    if (!w) slang_panic("out of memory (mutex)");
-    slang_retain(t);
+    if (!w) zell_panic("out of memory (mutex)");
+    zell_retain(t);
     w->task = t;
     wq_push(&m->waiters, w);
-    slang__plat_mutex_unlock(&m->mu);
+    zell__plat_mutex_unlock(&m->mu);
     return t;
 }
 
-void slang_mutex_lock(slang_mutex *m) {
-    slang_task *t = slang_mutex_lock_async(m);
-    slang_task_await(t);
-    slang_release(t);
+void zell_mutex_lock(zell_mutex *m) {
+    zell_task *t = zell_mutex_lock_async(m);
+    zell_task_await(t);
+    zell_release(t);
 }
 
-bool slang_mutex_try_lock(slang_mutex *m) {
-    if (!m) slang_panic_nil();
-    slang__plat_mutex_lock(&m->mu);
+bool zell_mutex_try_lock(zell_mutex *m) {
+    if (!m) zell_panic_nil();
+    zell__plat_mutex_lock(&m->mu);
     bool ok = !m->locked;
     if (ok) m->locked = 1;
-    slang__plat_mutex_unlock(&m->mu);
+    zell__plat_mutex_unlock(&m->mu);
     return ok;
 }
 
-void slang_mutex_unlock(slang_mutex *m) {
-    if (!m) slang_panic_nil();
-    slang__plat_mutex_lock(&m->mu);
-    if (!m->locked) { slang__plat_mutex_unlock(&m->mu); slang_panic("unlock of unlocked mutex"); }
+void zell_mutex_unlock(zell_mutex *m) {
+    if (!m) zell_panic_nil();
+    zell__plat_mutex_lock(&m->mu);
+    if (!m->locked) { zell__plat_mutex_unlock(&m->mu); zell_panic("unlock of unlocked mutex"); }
     waiter *w = wq_pop(&m->waiters);
     if (!w) m->locked = 0;           /* else: ownership passes directly to w */
-    slang__plat_mutex_unlock(&m->mu);
+    zell__plat_mutex_unlock(&m->mu);
     if (w) {
-        slang_task_complete(w->task, NULL);
-        slang_release(w->task);
+        zell_task_complete(w->task, NULL);
+        zell_release(w->task);
         free(w);
     }
 }
@@ -843,11 +843,11 @@ void slang_mutex_unlock(slang_mutex *m) {
  * Channels
  * ====================================================================== */
 
-struct slang_chan {
-    slang_object hdr;
-    slang__plat_mutex mu;
+struct zell_chan {
+    zell_object hdr;
+    zell__plat_mutex mu;
     int64_t elem_size;
-    const slang_value_ops *ops;
+    const zell_value_ops *ops;
     int64_t capacity;
     int64_t count, head;     /* ring buffer of `capacity` elements */
     unsigned char *buf;
@@ -856,105 +856,105 @@ struct slang_chan {
     wqueue receivers;
 };
 
-static void val_retain(slang_chan *c, void *v) { if (c->ops && c->ops->retain) c->ops->retain(v); }
-static void val_release(slang_chan *c, void *v) { if (c->ops && c->ops->release) c->ops->release(v); }
+static void val_retain(zell_chan *c, void *v) { if (c->ops && c->ops->retain) c->ops->retain(v); }
+static void val_release(zell_chan *c, void *v) { if (c->ops && c->ops->release) c->ops->release(v); }
 
 static void chan_drop(void *obj) {
-    slang_chan *c = obj;
+    zell_chan *c = obj;
     for (int64_t i = 0; i < c->count; i++)
         val_release(c, c->buf + ((c->head + i) % c->capacity) * c->elem_size);
     waiter *w;
-    while ((w = wq_pop(&c->senders))) { val_release(c, w->elem); slang_release(w->task); free(w); }
-    while ((w = wq_pop(&c->receivers))) { slang_release(w->task); free(w); }
-    slang_free(c->buf);
-    slang__plat_mutex_destroy(&c->mu);
+    while ((w = wq_pop(&c->senders))) { val_release(c, w->elem); zell_release(w->task); free(w); }
+    while ((w = wq_pop(&c->receivers))) { zell_release(w->task); free(w); }
+    zell_free(c->buf);
+    zell__plat_mutex_destroy(&c->mu);
 }
 
-static const slang_type_info chan_type = { "Channel", (int64_t)sizeof(struct slang_chan), chan_drop };
+static const zell_type_info chan_type = { "Channel", (int64_t)sizeof(struct zell_chan), chan_drop };
 
-slang_chan *slang_chan_new(int64_t elem_size, const slang_value_ops *ops, int64_t capacity) {
-    if (elem_size < 0 || capacity < 0) slang_panic("slang_chan_new: invalid size");
-    slang_chan *c = slang_object_new(&chan_type, (int64_t)sizeof(struct slang_chan));
-    slang__plat_mutex_init(&c->mu);
+zell_chan *zell_chan_new(int64_t elem_size, const zell_value_ops *ops, int64_t capacity) {
+    if (elem_size < 0 || capacity < 0) zell_panic("zell_chan_new: invalid size");
+    zell_chan *c = zell_object_new(&chan_type, (int64_t)sizeof(struct zell_chan));
+    zell__plat_mutex_init(&c->mu);
     c->elem_size = elem_size;
     c->ops = ops;
     c->capacity = capacity;
-    c->buf = capacity ? slang_alloc(capacity * (elem_size ? elem_size : 1)) : NULL;
+    c->buf = capacity ? zell_alloc(capacity * (elem_size ? elem_size : 1)) : NULL;
     return c;
 }
 
-int64_t slang_chan_len(const slang_chan *c) {
+int64_t zell_chan_len(const zell_chan *c) {
     if (!c) return 0;
-    slang__plat_mutex_lock((slang__plat_mutex *)&c->mu);
+    zell__plat_mutex_lock((zell__plat_mutex *)&c->mu);
     int64_t n = c->count;
-    slang__plat_mutex_unlock((slang__plat_mutex *)&c->mu);
+    zell__plat_mutex_unlock((zell__plat_mutex *)&c->mu);
     return n;
 }
 
 /* Complete a receive task with {ok, value}. value is borrowed (task retains). */
-static void finish_recv(slang_chan *c, slang_task *t, int64_t ok, const void *value) {
+static void finish_recv(zell_chan *c, zell_task *t, int64_t ok, const void *value) {
     unsigned char tmp[8 + 256];
     int64_t sz = 8 + c->elem_size;
-    unsigned char *r = (size_t)sz <= sizeof tmp ? tmp : slang_alloc(sz);
+    unsigned char *r = (size_t)sz <= sizeof tmp ? tmp : zell_alloc(sz);
     memset(r, 0, (size_t)sz);
     *(int64_t *)r = ok;
     if (value) memcpy(r + 8, value, (size_t)c->elem_size);
-    slang_task_complete(t, r);
-    if (r != tmp) slang_free(r);
+    zell_task_complete(t, r);
+    if (r != tmp) zell_free(r);
 }
 
-static slang_task *recv_task_new(slang_chan *c) {
+static zell_task *recv_task_new(zell_chan *c) {
     return task_new_ex(8 + c->elem_size, c->ops, 8);
 }
 
-slang_task *slang_chan_send_async(slang_chan *c, const void *elem) {
-    if (!c) slang_panic_nil();
-    slang_task *done = task_new_ex(0, NULL, 0);
+zell_task *zell_chan_send_async(zell_chan *c, const void *elem) {
+    if (!c) zell_panic_nil();
+    zell_task *done = task_new_ex(0, NULL, 0);
     waiter *sw = malloc(sizeof(waiter) + (size_t)c->elem_size);  /* holds owned copy */
-    if (!sw) slang_panic("out of memory (channel)");
+    if (!sw) zell_panic("out of memory (channel)");
     memcpy(sw->elem, elem, (size_t)c->elem_size);
     val_retain(c, sw->elem);
 
-    slang__plat_mutex_lock(&c->mu);
+    zell__plat_mutex_lock(&c->mu);
     if (c->closed) {
-        slang__plat_mutex_unlock(&c->mu);
-        slang_panic("send on closed channel");
+        zell__plat_mutex_unlock(&c->mu);
+        zell_panic("send on closed channel");
     }
     waiter *rw = wq_pop(&c->receivers);
     if (rw) {
-        slang__plat_mutex_unlock(&c->mu);
+        zell__plat_mutex_unlock(&c->mu);
         finish_recv(c, rw->task, 1, sw->elem);
-        slang_release(rw->task);
+        zell_release(rw->task);
         free(rw);
         val_release(c, sw->elem);
         free(sw);
-        slang_task_complete(done, NULL);
+        zell_task_complete(done, NULL);
         return done;
     }
     if (c->count < c->capacity) {
         memcpy(c->buf + ((c->head + c->count) % c->capacity) * c->elem_size, sw->elem,
                (size_t)c->elem_size);  /* ownership moves into the buffer */
         c->count++;
-        slang__plat_mutex_unlock(&c->mu);
+        zell__plat_mutex_unlock(&c->mu);
         free(sw);
-        slang_task_complete(done, NULL);
+        zell_task_complete(done, NULL);
         return done;
     }
-    slang_retain(done);
+    zell_retain(done);
     sw->task = done;
     wq_push(&c->senders, sw);
-    slang__plat_mutex_unlock(&c->mu);
+    zell__plat_mutex_unlock(&c->mu);
     return done;
 }
 
-slang_task *slang_chan_recv_async(slang_chan *c) {
-    if (!c) slang_panic_nil();
-    slang_task *t = recv_task_new(c);
+zell_task *zell_chan_recv_async(zell_chan *c) {
+    if (!c) zell_panic_nil();
+    zell_task *t = recv_task_new(c);
     unsigned char tmp[256];
-    unsigned char *v = (size_t)c->elem_size <= sizeof tmp ? tmp : slang_alloc(c->elem_size);
+    unsigned char *v = (size_t)c->elem_size <= sizeof tmp ? tmp : zell_alloc(c->elem_size);
     waiter *sender = NULL;
 
-    slang__plat_mutex_lock(&c->mu);
+    zell__plat_mutex_lock(&c->mu);
     if (c->count > 0) {
         unsigned char *slot = c->buf + c->head * c->elem_size;
         memcpy(v, slot, (size_t)c->elem_size);   /* take ownership */
@@ -969,98 +969,98 @@ slang_task *slang_chan_recv_async(slang_chan *c) {
     } else if ((sender = wq_pop(&c->senders))) {
         memcpy(v, sender->elem, (size_t)c->elem_size);  /* direct hand-off (unbuffered) */
     } else if (c->closed) {
-        slang__plat_mutex_unlock(&c->mu);
+        zell__plat_mutex_unlock(&c->mu);
         finish_recv(c, t, 0, NULL);
-        if (v != tmp) slang_free(v);
+        if (v != tmp) zell_free(v);
         return t;
     } else {
         waiter *w = malloc(sizeof *w);
-        if (!w) slang_panic("out of memory (channel)");
-        slang_retain(t);
+        if (!w) zell_panic("out of memory (channel)");
+        zell_retain(t);
         w->task = t;
         wq_push(&c->receivers, w);
-        slang__plat_mutex_unlock(&c->mu);
-        if (v != tmp) slang_free(v);
+        zell__plat_mutex_unlock(&c->mu);
+        if (v != tmp) zell_free(v);
         return t;
     }
-    slang__plat_mutex_unlock(&c->mu);
+    zell__plat_mutex_unlock(&c->mu);
     finish_recv(c, t, 1, v);
     val_release(c, v);
-    if (v != tmp) slang_free(v);
+    if (v != tmp) zell_free(v);
     if (sender) {
-        slang_task_complete(sender->task, NULL);
-        slang_release(sender->task);
+        zell_task_complete(sender->task, NULL);
+        zell_release(sender->task);
         free(sender);
     }
     return t;
 }
 
-void slang_chan_send(slang_chan *c, const void *elem) {
-    slang_task *t = slang_chan_send_async(c, elem);
-    slang_task_await(t);
-    slang_release(t);
+void zell_chan_send(zell_chan *c, const void *elem) {
+    zell_task *t = zell_chan_send_async(c, elem);
+    zell_task_await(t);
+    zell_release(t);
 }
 
-bool slang_chan_recv(slang_chan *c, void *out) {
-    slang_task *t = slang_chan_recv_async(c);
-    unsigned char *r = slang_task_await(t);
+bool zell_chan_recv(zell_chan *c, void *out) {
+    zell_task *t = zell_chan_recv_async(c);
+    unsigned char *r = zell_task_await(t);
     bool ok = *(int64_t *)r != 0;
     if (out) {
         memcpy(out, r + 8, (size_t)c->elem_size);
         val_retain(c, out);
     }
-    slang_release(t);
+    zell_release(t);
     return ok;
 }
 
-void slang_chan_close(slang_chan *c) {
-    if (!c) slang_panic_nil();
-    slang__plat_mutex_lock(&c->mu);
-    if (c->closed) { slang__plat_mutex_unlock(&c->mu); slang_panic("close of closed channel"); }
-    if (c->senders.head) { slang__plat_mutex_unlock(&c->mu); slang_panic("send on closed channel"); }
+void zell_chan_close(zell_chan *c) {
+    if (!c) zell_panic_nil();
+    zell__plat_mutex_lock(&c->mu);
+    if (c->closed) { zell__plat_mutex_unlock(&c->mu); zell_panic("close of closed channel"); }
+    if (c->senders.head) { zell__plat_mutex_unlock(&c->mu); zell_panic("send on closed channel"); }
     c->closed = 1;
     wqueue rs = c->receivers;
     c->receivers.head = c->receivers.tail = NULL;
-    slang__plat_mutex_unlock(&c->mu);
+    zell__plat_mutex_unlock(&c->mu);
     waiter *w;
     while ((w = wq_pop(&rs))) {
         finish_recv(c, w->task, 0, NULL);
-        slang_release(w->task);
+        zell_release(w->task);
         free(w);
     }
 }
 
 /* ======================================================================
- * Task context (ABI.md 10.8): one owned slang_object pointer per thread,
+ * Task context (ABI.md 10.8): one owned zell_object pointer per thread,
  * carried by every job and continuation, so a coroutine sees the context
  * of the code that started it after every await.
  * ====================================================================== */
 
-slang_object *slang_task_get_ctx(void) {
-    slang_retain(t_ctx);
+zell_object *zell_task_get_ctx(void) {
+    zell_retain(t_ctx);
     return t_ctx;
 }
 
-void slang_task_set_ctx(slang_object *ctx) {
-    slang_retain(ctx);
-    slang_object *old = t_ctx;
+void zell_task_set_ctx(zell_object *ctx) {
+    zell_retain(ctx);
+    zell_object *old = t_ctx;
     t_ctx = ctx;
-    slang_release(old);
+    zell_release(old);
 }
 
 /* ======================================================================
- * Primitives for std.task written in Slang (Channel, Mutex, WaitGroup,
+ * Primitives for std.task written in Zell (Channel, Mutex, WaitGroup,
  * Timeout, Spawn): signals, cancellable timers, spin locks, yield.
  * ====================================================================== */
 
-slang_task *slang_task_rt_waker(void) { return task_new_ex(0, NULL, 0); }
+zell_task *zell_task_rt_waker(void) { return task_new_ex(0, NULL, 0); }
 
 /* Completes a signal (no-op if already done). If it is a pending
- * slang_task_delay timer, the timer is cancelled first. */
-void slang_task_rt_fire(slang_task *t) {
-    if (!t) slang_panic_nil();
+ * zell_task_delay timer, the timer is cancelled first. */
+void zell_task_rt_fire(zell_task *t) {
+    if (!t) zell_panic_nil();
     timer *found = NULL;
-    slang__plat_mutex_lock(&tm_mu);
+    zell__plat_mutex_lock(&tm_mu);
     for (timer **pp = &tm_list; *pp; pp = &(*pp)->next) {
         if ((*pp)->task == t && t) {
             found = *pp;
@@ -1068,90 +1068,90 @@ void slang_task_rt_fire(slang_task *t) {
             break;
         }
     }
-    slang__plat_mutex_unlock(&tm_mu);
-    slang_task_try_complete(t, NULL);
+    zell__plat_mutex_unlock(&tm_mu);
+    zell_task_try_complete(t, NULL);
     if (found) {
-        slang_release(found->task);
+        zell_release(found->task);
         free(found);
     }
 }
 
-void slang_task_spin_lock(int64_t *slot) {
-    if (!slot) slang_panic_nil();
+void zell_task_spin_lock(int64_t *slot) {
+    if (!slot) zell_panic_nil();
     for (int spins = 0;; spins++) {
         if (__atomic_load_n(slot, __ATOMIC_RELAXED) == 0 &&
             __atomic_exchange_n(slot, 1, __ATOMIC_ACQUIRE) == 0)
             return;
-        if (spins > 64) slang__plat_yield();
+        if (spins > 64) zell__plat_yield();
     }
 }
 
-void slang_task_spin_unlock(int64_t *slot) {
-    if (!slot) slang_panic_nil();
+void zell_task_spin_unlock(int64_t *slot) {
+    if (!slot) zell_panic_nil();
     __atomic_store_n(slot, 0, __ATOMIC_RELEASE);
 }
 
 static void yield_job(void *arg) {
-    slang_task *t = arg;
-    slang_task_complete(t, NULL);
-    slang_release(t);
+    zell_task *t = arg;
+    zell_task_complete(t, NULL);
+    zell_release(t);
 }
 
-slang_task *slang_task_yield(void) {
-    slang_task *t = task_new_ex(0, NULL, 0);
-    slang_retain(t);  /* held by the job */
-    slang_sched_post(yield_job, t);
+zell_task *zell_task_yield(void) {
+    zell_task *t = task_new_ex(0, NULL, 0);
+    zell_retain(t);  /* held by the job */
+    zell_sched_post(yield_job, t);
     return t;
 }
 
 /* ======================================================================
  * Cancellation (ABI.md 10.11): a tree of tasks (parent = the current task
- * when slang_task_new ran), a cancelled flag per task inherited by new
+ * when zell_task_new ran), a cancelled flag per task inherited by new
  * children, and per-task hooks that wake the waits of a cancelled task.
  * ====================================================================== */
 
 /* Collects (moves) the hooks of t and its descendants and flags them; locks
  * are taken parent before child. */
-static void cancel_collect(slang_task *t, hook **out) {
-    slang__plat_mutex_lock(&t->mu);
+static void cancel_collect(zell_task *t, hook **out) {
+    zell__plat_mutex_lock(&t->mu);
     if (__atomic_exchange_n(&t->cancelled, 1, __ATOMIC_ACQ_REL) == 0 || t->hooks) {
         hook *h = t->hooks;
         while (h) { hook *n = h->next; h->next = *out; *out = h; h = n; }
         t->hooks = NULL;
         t->nhooks = 0;
     }
-    for (slang_task *c = t->child_head; c; c = c->sib_next) cancel_collect(c, out);
-    slang__plat_mutex_unlock(&t->mu);
+    for (zell_task *c = t->child_head; c; c = c->sib_next) cancel_collect(c, out);
+    zell__plat_mutex_unlock(&t->mu);
 }
 
-void slang_task_cancel(slang_task *t) {
-    if (!t) slang_panic_nil();
+void zell_task_cancel(zell_task *t) {
+    if (!t) zell_panic_nil();
     hook *hs = NULL;
     cancel_collect(t, &hs);
     while (hs) {
         hook *n = hs->next;
         if (hs->fn_data) hs->fn_data(hs->w, hs->data);
         else hs->fn(hs->w);
-        slang_release(hs->w);
+        zell_release(hs->w);
         free(hs);
         hs = n;
     }
 }
 
-bool slang_task_is_cancelled(const slang_task *t) {
+bool zell_task_is_cancelled(const zell_task *t) {
     return t && __atomic_load_n(&t->cancelled, __ATOMIC_ACQUIRE) != 0;
 }
 
-bool slang_task_cur_cancelled(void) { return slang_task_is_cancelled(t_cur); }
+bool zell_task_cur_cancelled(void) { return zell_task_is_cancelled(t_cur); }
 
 /* Registers fn(w) to run when the current task is cancelled (at once if it
  * already is). Hooks of waits that completed meanwhile are pruned. */
-static void cancel_hook_ex(void (*fn)(slang_task *), void (*fn_data)(slang_task *, uintptr_t), uintptr_t data, slang_task *w) {
-    slang_task *t = t_cur;
+static void cancel_hook_ex(void (*fn)(zell_task *), void (*fn_data)(zell_task *, uintptr_t), uintptr_t data, zell_task *w) {
+    zell_task *t = t_cur;
     if (!t) return;
-    slang__plat_mutex_lock(&t->mu);
+    zell__plat_mutex_lock(&t->mu);
     if (__atomic_load_n(&t->cancelled, __ATOMIC_ACQUIRE)) {
-        slang__plat_mutex_unlock(&t->mu);
+        zell__plat_mutex_unlock(&t->mu);
         if (fn_data) fn_data(w, data);
         else fn(w);
         return;
@@ -1160,9 +1160,9 @@ static void cancel_hook_ex(void (*fn)(slang_task *), void (*fn_data)(slang_task 
         hook **pp = &t->hooks;
         while (*pp) {
             hook *h = *pp;
-            if (slang_task_is_done(h->w)) {
+            if (zell_task_is_done(h->w)) {
                 *pp = h->next;
-                slang_release(h->w);
+                zell_release(h->w);
                 free(h);
                 t->nhooks--;
             } else {
@@ -1171,8 +1171,8 @@ static void cancel_hook_ex(void (*fn)(slang_task *), void (*fn_data)(slang_task 
         }
     }
     hook *h = malloc(sizeof *h);
-    if (!h) slang_panic("out of memory (cancel hook)");
-    slang_retain(w);
+    if (!h) zell_panic("out of memory (cancel hook)");
+    zell_retain(w);
     h->fn = fn;
     h->fn_data = fn_data;
     h->data = data;
@@ -1180,71 +1180,71 @@ static void cancel_hook_ex(void (*fn)(slang_task *), void (*fn_data)(slang_task 
     h->next = t->hooks;
     t->hooks = h;
     t->nhooks++;
-    slang__plat_mutex_unlock(&t->mu);
+    zell__plat_mutex_unlock(&t->mu);
 }
 
-static void cancel_hook(void (*fn)(slang_task *), slang_task *w) { cancel_hook_ex(fn, NULL, 0, w); }
+static void cancel_hook(void (*fn)(zell_task *), zell_task *w) { cancel_hook_ex(fn, NULL, 0, w); }
 
-void slang__cancel_hook(void (*fn)(slang_task *), slang_task *w) { cancel_hook(fn, w); }
+void zell__cancel_hook(void (*fn)(zell_task *), zell_task *w) { cancel_hook(fn, w); }
 
-void slang__cancel_hook_data(void (*fn)(slang_task *, uintptr_t), slang_task *w, uintptr_t data) {
+void zell__cancel_hook_data(void (*fn)(zell_task *, uintptr_t), zell_task *w, uintptr_t data) {
     cancel_hook_ex(NULL, fn, data, w);
 }
 
-static void signal_cancelled(slang_task *w) { slang_task_rt_fire(w); }
+static void signal_cancelled(zell_task *w) { zell_task_rt_fire(w); }
 
-slang_task *slang_task_rt_signal(void) {
-    slang_task *t = task_new_ex(0, NULL, 0);
+zell_task *zell_task_rt_signal(void) {
+    zell_task *t = task_new_ex(0, NULL, 0);
     cancel_hook(signal_cancelled, t);
     return t;
 }
 
 /* debug.c: the current task (borrowed) and its debug record id. */
-slang_task *slang__task_cur(void) { return t_cur; }
-int32_t slang__task_dbg_id(const slang_task *t) { return t ? __atomic_load_n(&t->dbg_id, __ATOMIC_ACQUIRE) : 0; }
-void slang__task_set_dbg_id(slang_task *t, int32_t id) { __atomic_store_n(&t->dbg_id, id, __ATOMIC_RELEASE); }
+zell_task *zell__task_cur(void) { return t_cur; }
+int32_t zell__task_dbg_id(const zell_task *t) { return t ? __atomic_load_n(&t->dbg_id, __ATOMIC_ACQUIRE) : 0; }
+void zell__task_set_dbg_id(zell_task *t, int32_t id) { __atomic_store_n(&t->dbg_id, id, __ATOMIC_RELEASE); }
 
-slang_task *slang_task_current(void) {
-    slang_retain(t_cur);
+zell_task *zell_task_current(void) {
+    zell_retain(t_cur);
     return t_cur;
 }
 
-slang_task *slang_task_new_scope(void) {
-    slang_task *t = task_new_ex(0, NULL, 0);
+zell_task *zell_task_new_scope(void) {
+    zell_task *t = task_new_ex(0, NULL, 0);
     task_attach(t, t_cur);
     return t;
 }
 
-slang_task *slang_task_enter_scope(slang_task *scope) {
-    slang_task *prev = t_cur;  /* moved to the caller */
+zell_task *zell_task_enter_scope(zell_task *scope) {
+    zell_task *prev = t_cur;  /* moved to the caller */
     if (scope) {
-        slang_retain(scope);
+        zell_retain(scope);
         t_cur = scope;
     } else {
-        slang_retain(prev);
+        zell_retain(prev);
         t_cur = prev;
     }
     return prev;
 }
 
-void slang_task_leave_scope(slang_task *prev) {
-    slang_retain(prev);
-    slang_task *old = t_cur;
+void zell_task_leave_scope(zell_task *prev) {
+    zell_retain(prev);
+    zell_task *old = t_cur;
     t_cur = prev;
-    slang_release(old);
+    zell_release(old);
 }
 
 /* std.task.ErrCancelled: an immortal sentinel. */
-static SLANG_STRING_STORAGE(15) cancelled_msg = SLANG_STRING_INIT(cancelled_msg, "task cancelled");
+static ZELL_STRING_STORAGE(15) cancelled_msg = ZELL_STRING_INIT(cancelled_msg, "task cancelled");
 
-static slang_error cancelled_error = {
-    .hdr = { SLANG_RC_IMMORTAL, &slang_type_error }, .message = (slang_string *)&cancelled_msg,
+static zell_error cancelled_error = {
+    .hdr = { ZELL_RC_IMMORTAL, &zell_type_error }, .message = (zell_string *)&cancelled_msg,
 };
 
-slang_error *slang_task_err_cancelled(void) { return &cancelled_error; }
+zell_error *zell_task_err_cancelled(void) { return &cancelled_error; }
 
 /* std.task.Key<T>() ids: unique per process. */
-int64_t slang_task_next_key(void) {
+int64_t zell_task_next_key(void) {
     static int64_t next;
     return __atomic_add_fetch(&next, 1, __ATOMIC_RELAXED);
 }
@@ -1252,9 +1252,9 @@ int64_t slang_task_next_key(void) {
 /* Debugger support (ABI.md §20): where the lldb/gdb formatters in tools/
  * find a task's state and result slot. They read memory only (no calls into
  * the debuggee), so this works on core dumps too. */
-const int64_t slang_debug_task_layout[4] = {
+const int64_t zell_debug_task_layout[4] = {
     1, /* version of this table */
-    (int64_t)offsetof(struct slang_task, state),
-    (int64_t)offsetof(struct slang_task, slot),
+    (int64_t)offsetof(struct zell_task, state),
+    (int64_t)offsetof(struct zell_task, slot),
     TASK_DONE,
 };

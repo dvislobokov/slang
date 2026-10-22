@@ -26,17 +26,17 @@ static void chacha_block(const uint32_t in[16], uint8_t out[64]) {
         QR(x[2], x[7], x[8], x[13]);
         QR(x[3], x[4], x[9], x[14]);
     }
-    for (int i = 0; i < 16; i++) slang__st32le(out + 4 * i, x[i] + in[i]);
-    slang__crypto_wipe(x, sizeof x);
+    for (int i = 0; i < 16; i++) zell__st32le(out + 4 * i, x[i] + in[i]);
+    zell__crypto_wipe(x, sizeof x);
 }
 
-void slang__chacha20(const uint8_t key[32], const uint8_t nonce[12], uint32_t counter, const uint8_t *in,
+void zell__chacha20(const uint8_t key[32], const uint8_t nonce[12], uint32_t counter, const uint8_t *in,
                      size_t n, uint8_t *out) {
     uint32_t st[16];
     st[0] = 0x61707865; st[1] = 0x3320646e; st[2] = 0x79622d32; st[3] = 0x6b206574;
-    for (int i = 0; i < 8; i++) st[4 + i] = slang__ld32le(key + 4 * i);
+    for (int i = 0; i < 8; i++) st[4 + i] = zell__ld32le(key + 4 * i);
     st[12] = counter;
-    for (int i = 0; i < 3; i++) st[13 + i] = slang__ld32le(nonce + 4 * i);
+    for (int i = 0; i < 3; i++) st[13 + i] = zell__ld32le(nonce + 4 * i);
     uint8_t ks[64];
     while (n) {
         chacha_block(st, ks);
@@ -47,8 +47,8 @@ void slang__chacha20(const uint8_t key[32], const uint8_t nonce[12], uint32_t co
         out += m;
         n -= m;
     }
-    slang__crypto_wipe(ks, sizeof ks);
-    slang__crypto_wipe(st, sizeof st);
+    zell__crypto_wipe(ks, sizeof ks);
+    zell__crypto_wipe(st, sizeof st);
 }
 
 /* ---- Poly1305 (poly1305-donna style, 5 x 26-bit limbs) ---- */
@@ -58,13 +58,13 @@ typedef struct {
 } poly_state;
 
 static void poly_init(poly_state *p, const uint8_t key[32]) {
-    p->r[0] = (slang__ld32le(key + 0)) & 0x3ffffff;
-    p->r[1] = (slang__ld32le(key + 3) >> 2) & 0x3ffff03;
-    p->r[2] = (slang__ld32le(key + 6) >> 4) & 0x3ffc0ff;
-    p->r[3] = (slang__ld32le(key + 9) >> 6) & 0x3f03fff;
-    p->r[4] = (slang__ld32le(key + 12) >> 8) & 0x00fffff;
+    p->r[0] = (zell__ld32le(key + 0)) & 0x3ffffff;
+    p->r[1] = (zell__ld32le(key + 3) >> 2) & 0x3ffff03;
+    p->r[2] = (zell__ld32le(key + 6) >> 4) & 0x3ffc0ff;
+    p->r[3] = (zell__ld32le(key + 9) >> 6) & 0x3f03fff;
+    p->r[4] = (zell__ld32le(key + 12) >> 8) & 0x00fffff;
     for (int i = 0; i < 5; i++) p->h[i] = 0;
-    for (int i = 0; i < 4; i++) p->pad[i] = slang__ld32le(key + 16 + 4 * i);
+    for (int i = 0; i < 4; i++) p->pad[i] = zell__ld32le(key + 16 + 4 * i);
 }
 
 /* Absorbs whole 16-byte blocks; hibit is 1<<24 for full blocks. */
@@ -73,11 +73,11 @@ static void poly_blocks(poly_state *p, const uint8_t *m, size_t n, uint32_t hibi
     uint32_t s1 = r1 * 5, s2 = r2 * 5, s3 = r3 * 5, s4 = r4 * 5;
     uint32_t h0 = p->h[0], h1 = p->h[1], h2 = p->h[2], h3 = p->h[3], h4 = p->h[4];
     while (n >= 16) {
-        h0 += (slang__ld32le(m + 0)) & 0x3ffffff;
-        h1 += (slang__ld32le(m + 3) >> 2) & 0x3ffffff;
-        h2 += (slang__ld32le(m + 6) >> 4) & 0x3ffffff;
-        h3 += (slang__ld32le(m + 9) >> 6) & 0x3ffffff;
-        h4 += (slang__ld32le(m + 12) >> 8) | hibit;
+        h0 += (zell__ld32le(m + 0)) & 0x3ffffff;
+        h1 += (zell__ld32le(m + 3) >> 2) & 0x3ffffff;
+        h2 += (zell__ld32le(m + 6) >> 4) & 0x3ffffff;
+        h3 += (zell__ld32le(m + 9) >> 6) & 0x3ffffff;
+        h4 += (zell__ld32le(m + 12) >> 8) | hibit;
         uint64_t d0 = (uint64_t)h0 * r0 + (uint64_t)h1 * s4 + (uint64_t)h2 * s3 + (uint64_t)h3 * s2 + (uint64_t)h4 * s1;
         uint64_t d1 = (uint64_t)h0 * r1 + (uint64_t)h1 * r0 + (uint64_t)h2 * s4 + (uint64_t)h3 * s3 + (uint64_t)h4 * s2;
         uint64_t d2 = (uint64_t)h0 * r2 + (uint64_t)h1 * r1 + (uint64_t)h2 * r0 + (uint64_t)h3 * s4 + (uint64_t)h4 * s3;
@@ -142,14 +142,14 @@ static void poly_finish(poly_state *p, uint8_t tag[16]) {
     f = (uint64_t)h1 + p->pad[1] + (f >> 32); h1 = (uint32_t)f;
     f = (uint64_t)h2 + p->pad[2] + (f >> 32); h2 = (uint32_t)f;
     f = (uint64_t)h3 + p->pad[3] + (f >> 32); h3 = (uint32_t)f;
-    slang__st32le(tag, h0);
-    slang__st32le(tag + 4, h1);
-    slang__st32le(tag + 8, h2);
-    slang__st32le(tag + 12, h3);
-    slang__crypto_wipe(p, sizeof *p);
+    zell__st32le(tag, h0);
+    zell__st32le(tag + 4, h1);
+    zell__st32le(tag + 8, h2);
+    zell__st32le(tag + 12, h3);
+    zell__crypto_wipe(p, sizeof *p);
 }
 
-void slang__poly1305(const uint8_t key[32], const uint8_t *msg, size_t n, uint8_t tag[16]) {
+void zell__poly1305(const uint8_t key[32], const uint8_t *msg, size_t n, uint8_t tag[16]) {
     poly_state p;
     poly_init(&p, key);
     poly_update(&p, msg, n, false);
@@ -161,33 +161,33 @@ void slang__poly1305(const uint8_t key[32], const uint8_t *msg, size_t n, uint8_
 static void aead_tag(const uint8_t key[32], const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                      const uint8_t *ct, size_t n, uint8_t tag[16]) {
     uint8_t otk[64] = { 0 };
-    slang__chacha20(key, nonce, 0, otk, 64, otk);
+    zell__chacha20(key, nonce, 0, otk, 64, otk);
     poly_state p;
     poly_init(&p, otk);
     poly_update(&p, aad, alen, true);
     poly_update(&p, ct, n, true);
     uint8_t lens[16];
-    slang__st64le(lens, (uint64_t)alen);
-    slang__st64le(lens + 8, (uint64_t)n);
+    zell__st64le(lens, (uint64_t)alen);
+    zell__st64le(lens + 8, (uint64_t)n);
     poly_blocks(&p, lens, 16, 1u << 24);
     poly_finish(&p, tag);
-    slang__crypto_wipe(otk, sizeof otk);
+    zell__crypto_wipe(otk, sizeof otk);
 }
 
-void slang__chacha20poly1305_seal(const uint8_t key[32], const uint8_t nonce[12], const uint8_t *aad, size_t alen,
+void zell__chacha20poly1305_seal(const uint8_t key[32], const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                                   const uint8_t *in, size_t n, uint8_t *out) {
-    slang__chacha20(key, nonce, 1, in, n, out);
+    zell__chacha20(key, nonce, 1, in, n, out);
     aead_tag(key, nonce, aad, alen, out, n, out + n);
 }
 
-bool slang__chacha20poly1305_open(const uint8_t key[32], const uint8_t nonce[12], const uint8_t *aad, size_t alen,
+bool zell__chacha20poly1305_open(const uint8_t key[32], const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                                   const uint8_t *in, size_t n, uint8_t *out) {
     uint8_t tag[16];
     aead_tag(key, nonce, aad, alen, in, n, tag);
-    if (!slang__crypto_ct_eq(tag, in + n, 16)) {
+    if (!zell__crypto_ct_eq(tag, in + n, 16)) {
         memset(out, 0, n);
         return false;
     }
-    slang__chacha20(key, nonce, 1, in, n, out);
+    zell__chacha20(key, nonce, 1, in, n, out);
     return true;
 }

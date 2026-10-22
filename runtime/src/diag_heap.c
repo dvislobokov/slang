@@ -1,7 +1,7 @@
 /* diag_heap.c - live objects by type in production builds (std.diag
  * HeapByType, the /debug/heap handler; docs/FRAMEWORK.md section 5).
  *
- * With SLANG_DIAG_HEAP=1 in the environment (read once at startup) every
+ * With ZELL_DIAG_HEAP=1 in the environment (read once at startup) every
  * object allocation and free updates a per-thread counter of its type
  * info (an open-addressing table keyed by the type pointer, no atomics on
  * the shared path); a report sums the tables of all threads, and the
@@ -15,9 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-uint8_t slang__diag_heap_on;
+uint8_t zell__diag_heap_on;
 
-typedef struct { const slang_type_info *type; int64_t live, total; } tcount;
+typedef struct { const zell_type_info *type; int64_t live, total; } tcount;
 
 typedef struct ttable {
     tcount *v;                  /* the owner writes, reporters read (relaxed) */
@@ -34,14 +34,14 @@ typedef struct ttable {
 static DH_TLS ttable t_tab;
 static ttable g_head = { NULL, 0, 0, &g_head, &g_head, 1 };
 static ttable g_dead;           /* exited threads (g_mu) */
-static slang__plat_mutex g_mu = SLANG_PLAT_MUTEX_INIT;
-static slang__plat_once g_once = SLANG_PLAT_ONCE_INIT;
-static slang__plat_tls_key g_key;
+static zell__plat_mutex g_mu = ZELL_PLAT_MUTEX_INIT;
+static zell__plat_once g_once = ZELL_PLAT_ONCE_INIT;
+static zell__plat_tls_key g_key;
 static int g_keyed;
 
 __attribute__((constructor)) static void diag_heap_init(void) {
-    const char *e = getenv("SLANG_DIAG_HEAP");
-    if (e && *e && *e != '0') slang__diag_heap_on = 1;
+    const char *e = getenv("ZELL_DIAG_HEAP");
+    if (e && *e && *e != '0') zell__diag_heap_on = 1;
 }
 
 static inline uint64_t hash_ptr(const void *p) {
@@ -54,7 +54,7 @@ static inline uint64_t hash_ptr(const void *p) {
 
 /* The slot of `type` in t (inserted if absent); NULL on out of memory.
  * A resize swaps the array under g_mu unless the caller holds it. */
-static tcount *slot(ttable *t, const slang_type_info *type, int locked) {
+static tcount *slot(ttable *t, const zell_type_info *type, int locked) {
     if ((t->n + 1) * 2 > t->cap) {
         int64_t cap = t->cap ? t->cap * 2 : 256;
         tcount *v = calloc((size_t)cap, sizeof *v);
@@ -66,11 +66,11 @@ static tcount *slot(ttable *t, const slang_type_info *type, int locked) {
             v[h] = t->v[i];
         }
         /* Reporters hold g_mu while reading: swap under it. */
-        if (!locked) slang__plat_mutex_lock(&g_mu);
+        if (!locked) zell__plat_mutex_lock(&g_mu);
         tcount *old = t->v;
         t->v = v;
         t->cap = cap;
-        if (!locked) slang__plat_mutex_unlock(&g_mu);
+        if (!locked) zell__plat_mutex_unlock(&g_mu);
         free(old);
     }
     uint64_t h = hash_ptr(type) & (uint64_t)(t->cap - 1);
@@ -94,32 +94,32 @@ static void fold(ttable *into, ttable *from) {
 
 static void thread_exit(void *arg) {
     ttable *t = arg;
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_mutex_lock(&g_mu);
     t->prev->next = t->next;
     t->next->prev = t->prev;
     fold(&g_dead, t);   /* g_dead is written and read under g_mu only */
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
     free(t->v);
     t->v = NULL;
     t->cap = t->n = 0;
     t->reg = 0;
 }
 
-static void key_init(void) { g_keyed = slang__plat_tls_new(&g_key, thread_exit); }
+static void key_init(void) { g_keyed = zell__plat_tls_new(&g_key, thread_exit); }
 
 __attribute__((noinline)) static void reg(void) {
-    slang__plat_once_run(&g_once, key_init);
-    if (g_keyed) slang__plat_tls_set(g_key, &t_tab);
-    slang__plat_mutex_lock(&g_mu);
+    zell__plat_once_run(&g_once, key_init);
+    if (g_keyed) zell__plat_tls_set(g_key, &t_tab);
+    zell__plat_mutex_lock(&g_mu);
     t_tab.next = g_head.next;
     t_tab.prev = &g_head;
     g_head.next->prev = &t_tab;
     g_head.next = &t_tab;
     t_tab.reg = 1;
-    slang__plat_mutex_unlock(&g_mu);
+    zell__plat_mutex_unlock(&g_mu);
 }
 
-void slang__diag_heap_count(const slang_type_info *type, int64_t d) {
+void zell__diag_heap_count(const zell_type_info *type, int64_t d) {
     if (__builtin_expect(!t_tab.reg, 0)) reg();
     tcount *c = slot(&t_tab, type, 0);
     if (!c) return;
@@ -150,13 +150,13 @@ static void add_row(rows *r, const char *name, int64_t live, int64_t total, int6
     r->v[r->n++] = (row){ name, live, total, bytes };
 }
 
-static const char *tname(const slang_type_info *t) {
+static const char *tname(const zell_type_info *t) {
     return t && t->name ? t->name : "<untyped>";
 }
 
 static void add_table(rows *r, const ttable *t) {
     for (int64_t i = 0; i < t->cap; i++) {
-        const slang_type_info *ty = __atomic_load_n(&t->v[i].type, __ATOMIC_ACQUIRE);
+        const zell_type_info *ty = __atomic_load_n(&t->v[i].type, __ATOMIC_ACQUIRE);
         if (!ty) continue;
         int64_t live = __atomic_load_n(&t->v[i].live, __ATOMIC_RELAXED);
         int64_t total = __atomic_load_n(&t->v[i].total, __ATOMIC_RELAXED);
@@ -173,16 +173,16 @@ static int cmp_row(const void *a, const void *b) {
 }
 
 /* "live\ttotal\tbytes\ttype" lines, most live first; "" when neither the
- * counters (SLANG_DIAG_HEAP=1) nor leak tracking are on. `total` is -1
+ * counters (ZELL_DIAG_HEAP=1) nor leak tracking are on. `total` is -1
  * with leak tracking (it only sees live objects). */
-slang_string *slang_diag_rt_heap_types(void) {
+zell_string *zell_diag_rt_heap_types(void) {
     rows r = { 0 };
-    int tracked = slang__heap_each(track_cb, &r);
-    if (!tracked && __atomic_load_n(&slang__diag_heap_on, __ATOMIC_RELAXED)) {
-        slang__plat_mutex_lock(&g_mu);
+    int tracked = zell__heap_each(track_cb, &r);
+    if (!tracked && __atomic_load_n(&zell__diag_heap_on, __ATOMIC_RELAXED)) {
+        zell__plat_mutex_lock(&g_mu);
         add_table(&r, &g_dead);
         for (ttable *t = g_head.next; t != &g_head; t = t->next) add_table(&r, t);
-        slang__plat_mutex_unlock(&g_mu);
+        zell__plat_mutex_unlock(&g_mu);
     }
     if (r.n) qsort(r.v, (size_t)r.n, sizeof *r.v, cmp_row);
     size_t cap = 64 + (size_t)r.n * 128, len = 0;
@@ -198,12 +198,12 @@ slang_string *slang_diag_rt_heap_types(void) {
         if (w < 0 || (size_t)w >= cap - len) break;
         len += (size_t)w;
     }
-    slang_string *out = len ? slang_string_new(s, (int64_t)len) : NULL;
+    zell_string *out = len ? zell_string_new(s, (int64_t)len) : NULL;
     free(s);
     free(r.v);
     return out;
 }
 
-bool slang_diag_rt_heap_counting(void) {
-    return __atomic_load_n(&slang__diag_heap_on, __ATOMIC_RELAXED) != 0;
+bool zell_diag_rt_heap_counting(void) {
+    return __atomic_load_n(&zell__diag_heap_on, __ATOMIC_RELAXED) != 0;
 }

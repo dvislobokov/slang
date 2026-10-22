@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_MACH_O_DYLD_H
-#define SLANG_STUB_MACH_O_DYLD_H
+#ifndef ZELL_STUB_MACH_O_DYLD_H
+#define ZELL_STUB_MACH_O_DYLD_H
 #include <stdint.h>
 struct mach_header;
 int _NSGetExecutablePath(char *, uint32_t *);

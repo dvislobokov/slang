@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_WCHAR_H
-#define SLANG_STUB_WCHAR_H
+#ifndef ZELL_STUB_WCHAR_H
+#define ZELL_STUB_WCHAR_H
 #include <stddef.h>
 typedef int wint_t;
 typedef struct { char __mbstate8[128]; long long _mbstateL; } mbstate_t;

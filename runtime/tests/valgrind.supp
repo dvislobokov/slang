@@ -1,4 +1,4 @@
-# Valgrind suppressions for Slang programs and runtime tests
+# Valgrind suppressions for Zell programs and runtime tests
 #   valgrind --suppressions=runtime/tests/valgrind.supp ./program
 #
 # glibc keeps a per-thread resolver context (resolv.conf contents) for every

@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-bool slang__x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t point[32]) {
+bool zell__x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t point[32]) {
     uint8_t e[32];
     memcpy(e, scalar, 32);
     e[0] &= 248;
@@ -47,12 +47,12 @@ bool slang__x25519(uint8_t out[32], const uint8_t scalar[32], const uint8_t poin
     fe_invert(z2, z2);
     fe_mul(x2, x2, z2);
     fe_tobytes(out, x2);
-    slang__crypto_wipe(e, sizeof e);
+    zell__crypto_wipe(e, sizeof e);
     uint8_t zero[32] = { 0 };
-    return !slang__crypto_ct_eq(out, zero, 32);
+    return !zell__crypto_ct_eq(out, zero, 32);
 }
 
-void slang__x25519_base(uint8_t out[32], const uint8_t scalar[32]) {
+void zell__x25519_base(uint8_t out[32], const uint8_t scalar[32]) {
     uint8_t base[32] = { 9 };
-    (void)slang__x25519(out, scalar, base);
+    (void)zell__x25519(out, scalar, base);
 }

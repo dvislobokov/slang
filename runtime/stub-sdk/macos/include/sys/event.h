@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS_EVENT_H
-#define SLANG_STUB_SYS_EVENT_H
+#ifndef ZELL_STUB_SYS_EVENT_H
+#define ZELL_STUB_SYS_EVENT_H
 #include <sys/types.h>
 #include <time.h>
 #define EVFILT_READ (-1)

@@ -5,8 +5,8 @@
  * user-added roots are not included). Windows keeps roots in the
  * certificate store: the "ROOT" system store (CertOpenSystemStoreW,
  * crypt32.dll loaded on demand) is exported once per process to a PEM
- * file under %LOCALAPPDATA%\slang (else %TEMP%), whose path is returned,
- * so x509.sl reads and caches it like any bundle. Windows fetches missing
+ * file under %LOCALAPPDATA%\zell (else %TEMP%), whose path is returned,
+ * so x509.zl reads and caches it like any bundle. Windows fetches missing
  * roots on demand (Automatic Root Certificates Update): a root that was
  * never used on the machine may be absent from the store. */
 #include "platform.h"
@@ -32,7 +32,7 @@ typedef struct cert_ctx {
     void *hCertStore;
 } cert_ctx;
 
-static slang__plat_once g_roots_once = SLANG_PLAT_ONCE_INIT;
+static zell__plat_once g_roots_once = ZELL_PLAT_ONCE_INIT;
 static char g_roots_path[1024];
 static bool g_roots_ok;
 
@@ -73,7 +73,7 @@ static void export_roots(void) {
         return;
     }
     while (n > 0 && (dir[n - 1] == L'\\' || dir[n - 1] == L'/')) dir[--n] = 0;
-    wcscat(dir, L"\\slang");
+    wcscat(dir, L"\\zell");
     CreateDirectoryW(dir, NULL);
     wchar_t final[MAX_PATH + 40], tmp[MAX_PATH + 60];
     _snwprintf(final, MAX_PATH + 39, L"%ls\\roots.pem", dir);
@@ -83,7 +83,7 @@ static void export_roots(void) {
     FILE *f = _wfopen(tmp, L"wb");
     int count = 0;
     if (f) {
-        fputs("# Trusted roots exported from the Windows ROOT certificate store by the Slang runtime\n", f);
+        fputs("# Trusted roots exported from the Windows ROOT certificate store by the Zell runtime\n", f);
         for (const cert_ctx *ctx = next(store, NULL); ctx; ctx = next(store, ctx)) {
             if ((ctx->dwCertEncodingType & 1 /* X509_ASN_ENCODING */) && ctx->cbCertEncoded) {
                 b64_pem(f, ctx->pbCertEncoded, ctx->cbCertEncoded);
@@ -93,7 +93,7 @@ static void export_roots(void) {
         bool wrote = fclose(f) == 0;
         /* replace atomically: a concurrent process may be reading the old file */
         if (wrote && count > 0 && MoveFileExW(tmp, final, MOVEFILE_REPLACE_EXISTING)) {
-            char *u = slang__w32_utf8(final, -1);
+            char *u = zell__w32_utf8(final, -1);
             if (u) {
                 snprintf(g_roots_path, sizeof g_roots_path, "%s", u);
                 g_roots_ok = true;
@@ -106,10 +106,10 @@ static void export_roots(void) {
     close(store, 0);
 }
 
-const char *slang__plat_cert_bundle_path(void) {
+const char *zell__plat_cert_bundle_path(void) {
     const char *env = getenv("SSL_CERT_FILE");
     if (env && env[0] && GetFileAttributesA(env) != INVALID_FILE_ATTRIBUTES) return env;
-    slang__plat_once_run(&g_roots_once, export_roots);
+    zell__plat_once_run(&g_roots_once, export_roots);
     return g_roots_ok ? g_roots_path : NULL;
 }
 
@@ -118,7 +118,7 @@ const char *slang__plat_cert_bundle_path(void) {
 #include <stdlib.h>
 #include <unistd.h>
 
-const char *slang__plat_cert_bundle_path(void) {
+const char *zell__plat_cert_bundle_path(void) {
     const char *env = getenv("SSL_CERT_FILE");
     if (env && env[0] && access(env, R_OK) == 0) return env;
     static const char *const paths[] = {

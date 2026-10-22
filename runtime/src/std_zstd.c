@@ -692,14 +692,14 @@ incomplete:
 }
 
 /* Decodes all frames of data (skippable frames are skipped). */
-void slang_compress_rt_zstd_decode(const slang_slice *data, slang_slice *out, slang_error **err) {
+void zell_compress_rt_zstd_decode(const zell_slice *data, zell_slice *out, zell_error **err) {
     if (err) *err = NULL;
     memset(out, 0, sizeof *out);
     const uint8_t *p = data && data->len ? data->data : NULL;
     size_t n = data ? (size_t)data->len : 0, i = 0;
     zbuf ob = {0};
     if (n == 0) {
-        if (err) *err = slang_error_new_cstr("zstd: unexpected end of data");
+        if (err) *err = zell_error_new_cstr("zstd: unexpected end of data");
         return;
     }
     while (i < n) {
@@ -708,13 +708,13 @@ void slang_compress_rt_zstd_decode(const slang_slice *data, slang_slice *out, sl
         if (!e && len == 0) e = "zstd: unexpected end of data";
         if (e) {
             free(ob.p);
-            if (err) *err = slang_error_new_cstr(e);
+            if (err) *err = zell_error_new_cstr(e);
             return;
         }
         i += len;
     }
     if (ob.n) {
-        slang_slice_new(out, 1, (int64_t)ob.n, (int64_t)ob.n);
+        zell_slice_new(out, 1, (int64_t)ob.n, (int64_t)ob.n);
         memcpy(out->data, ob.p, ob.n);
     }
     free(ob.p);
@@ -722,7 +722,7 @@ void slang_compress_rt_zstd_decode(const slang_slice *data, slang_slice *out, sl
 
 /* The length of the complete frame at the start of data, 0 if data ends
  * inside it, -1 if data does not start with a frame. */
-int64_t slang_compress_rt_zstd_frame_len(const slang_slice *data) {
+int64_t zell_compress_rt_zstd_frame_len(const zell_slice *data) {
     const uint8_t *p = data && data->len ? data->data : NULL;
     size_t n = data ? (size_t)data->len : 0, len;
     if (n < 4) return 0;
@@ -731,12 +731,12 @@ int64_t slang_compress_rt_zstd_frame_len(const slang_slice *data) {
     return (int64_t)len;
 }
 
-/* XXH64 of data with seed 0 (exposed for tests and the Slang side). */
-int64_t slang_compress_rt_xxh64(const slang_slice *data) {
+/* XXH64 of data with seed 0 (exposed for tests and the Zell side). */
+int64_t zell_compress_rt_xxh64(const zell_slice *data) {
     const uint8_t *p = data && data->len ? data->data : (const uint8_t *)"";
     return (int64_t)xxh64(p, data ? (size_t)data->len : 0);
 }
 
 /* XXH64 (seed 0) for the encoder (std_zstd_enc.c). */
-uint64_t slang__zstd_xxh64(const uint8_t *p, size_t n);
-uint64_t slang__zstd_xxh64(const uint8_t *p, size_t n) { return xxh64(p, n); }
+uint64_t zell__zstd_xxh64(const uint8_t *p, size_t n);
+uint64_t zell__zstd_xxh64(const uint8_t *p, size_t n) { return xxh64(p, n); }

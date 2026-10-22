@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS_SOCKET_H
-#define SLANG_STUB_SYS_SOCKET_H
+#ifndef ZELL_STUB_SYS_SOCKET_H
+#define ZELL_STUB_SYS_SOCKET_H
 #include <sys/types.h>
 #include <sys/uio.h>
 typedef __darwin_socklen_t socklen_t;

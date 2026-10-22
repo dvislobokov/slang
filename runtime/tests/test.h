@@ -1,6 +1,6 @@
 /* Minimal assert-based test helpers. */
-#ifndef SLANG_TEST_H
-#define SLANG_TEST_H
+#ifndef ZELL_TEST_H
+#define ZELL_TEST_H
 #undef NDEBUG
 #include <assert.h>
 #include <stdio.h>
@@ -29,14 +29,14 @@ static inline int symlink(const char *target, const char *path) {
     return CreateSymbolicLinkA(path, target, 0x2 /* ALLOW_UNPRIVILEGED_CREATE */) ? 0 : -1;
 }
 #endif
-#include "slang_rt.h"
+#include "zell_rt.h"
 #include <pthread.h>  /* Windows (test-wine): mingw's winpthreads */
 /* Threads the tests start themselves touch refcounts too: switch the
- * runtime to atomic refcounting first (slang_threaded, ABI.md 3.2). */
-#define pthread_create(...) (__atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST), pthread_create(__VA_ARGS__))
+ * runtime to atomic refcounting first (zell_threaded, ABI.md 3.2). */
+#define pthread_create(...) (__atomic_store_n(&zell_threaded, 1, __ATOMIC_SEQ_CST), pthread_create(__VA_ARGS__))
 
-#define S(lit) slang_string_new((lit), (int64_t)strlen(lit))
-#define STR_IS(s, lit) (slang_string_len(s) == (int64_t)strlen(lit) && memcmp(slang_string_data(s), (lit), strlen(lit)) == 0)
+#define S(lit) zell_string_new((lit), (int64_t)strlen(lit))
+#define STR_IS(s, lit) (zell_string_len(s) == (int64_t)strlen(lit) && memcmp(zell_string_data(s), (lit), strlen(lit)) == 0)
 
 #define TEST(name) static void name(void)
 #define RUN(name) do { name(); printf("  ok  %s\n", #name); } while (0)
@@ -69,14 +69,14 @@ static inline int run_child_fd(void (*fn)(void), int fd, char *errbuf, size_t ca
 
 #else
 /* Windows (make test-wine): no fork, so the test executable is started
- * again with SLANG_TEST_CHILD = fn's offset in the image; a constructor
+ * again with ZELL_TEST_CHILD = fn's offset in the image; a constructor
  * runs fn in that child before main and exits 0. The child starts fresh
  * (no state inherited from the parent beyond the environment). */
 static inline int run_child_fd(void (*fn)(void), int fd, char *errbuf, size_t cap) {
     char exe[MAX_PATH], env[32];
     GetModuleFileNameA(NULL, exe, MAX_PATH);
     snprintf(env, sizeof env, "%llx", (unsigned long long)((uintptr_t)fn - (uintptr_t)GetModuleHandleA(NULL)));
-    SetEnvironmentVariableA("SLANG_TEST_CHILD", env);
+    SetEnvironmentVariableA("ZELL_TEST_CHILD", env);
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
     HANDLE rd, wr;
     assert(CreatePipe(&rd, &wr, &sa, 0));
@@ -107,13 +107,13 @@ static inline int run_child_fd(void (*fn)(void), int fd, char *errbuf, size_t ca
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    SetEnvironmentVariableA("SLANG_TEST_CHILD", NULL);
+    SetEnvironmentVariableA("ZELL_TEST_CHILD", NULL);
     return (int)code;
 }
 
-__attribute__((constructor)) static void slang_test_child_hook(void) {
+__attribute__((constructor)) static void zell_test_child_hook(void) {
     char v[32];
-    if (!GetEnvironmentVariableA("SLANG_TEST_CHILD", v, sizeof v)) return;
+    if (!GetEnvironmentVariableA("ZELL_TEST_CHILD", v, sizeof v)) return;
     uintptr_t fp = (uintptr_t)GetModuleHandleA(NULL) + (uintptr_t)strtoull(v, NULL, 16);
     void (*fn)(void);
     memcpy(&fn, &fp, sizeof fn);

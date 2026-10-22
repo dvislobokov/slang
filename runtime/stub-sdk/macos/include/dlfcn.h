@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_DLFCN_H
-#define SLANG_STUB_DLFCN_H
+#ifndef ZELL_STUB_DLFCN_H
+#define ZELL_STUB_DLFCN_H
 #define RTLD_LAZY 0x1
 #define RTLD_NOW 0x2
 #define RTLD_LOCAL 0x4

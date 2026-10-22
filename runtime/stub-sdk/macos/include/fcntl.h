@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_FCNTL_H
-#define SLANG_STUB_FCNTL_H
+#ifndef ZELL_STUB_FCNTL_H
+#define ZELL_STUB_FCNTL_H
 #include <sys/types.h>
 #define O_RDONLY 0x0000
 #define O_WRONLY 0x0001

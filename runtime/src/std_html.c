@@ -11,10 +11,10 @@
 
 #include "std_html_entities.h"
 
-static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
-static inline const char *sdata(const slang_string *s) { return s ? s->data : ""; }
+static inline int64_t slen(const zell_string *s) { return s ? s->len : 0; }
+static inline const char *sdata(const zell_string *s) { return s ? s->data : ""; }
 
-slang_string *slang_html_escape(const slang_string *s) {
+zell_string *zell_html_escape(const zell_string *s) {
     const char *p = sdata(s);
     int64_t n = slen(s), extra = 0;
     for (int64_t i = 0; i < n; i++) {
@@ -25,11 +25,11 @@ slang_string *slang_html_escape(const slang_string *s) {
         }
     }
     if (extra == 0) {
-        if (!s) return slang__string_alloc(0);
-        slang_retain((void *)s);
-        return (slang_string *)s;
+        if (!s) return zell__string_alloc(0);
+        zell_retain((void *)s);
+        return (zell_string *)s;
     }
-    slang_string *r = slang__string_alloc(n + extra);
+    zell_string *r = zell__string_alloc(n + extra);
     char *w = r->data;
     for (int64_t i = 0; i < n; i++) {
         const char *e = NULL;
@@ -67,17 +67,17 @@ static const uint16_t c1[32] = {0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 
 static int find_entity(const char *p, int64_t n, int64_t *len) {
     int best = -1;
     int64_t best_len = 0;
-    size_t lo = 0, hi = sizeof slang__html_entities / sizeof slang__html_entities[0];
+    size_t lo = 0, hi = sizeof zell__html_entities / sizeof zell__html_entities[0];
     /* names are at most 32 bytes: try each prefix length by binary search */
     for (int64_t k = 1; k <= n && k <= 32; k++) {
         size_t a = lo, b = hi;
         while (a < b) {
             size_t m = (a + b) / 2;
-            int c = strncmp(slang__html_entities[m].name, p, (size_t)k);
-            if (c == 0 && strlen(slang__html_entities[m].name) > (size_t)k) c = 1;
+            int c = strncmp(zell__html_entities[m].name, p, (size_t)k);
+            if (c == 0 && strlen(zell__html_entities[m].name) > (size_t)k) c = 1;
             if (c < 0) a = m + 1; else b = m;
         }
-        if (a < hi && strlen(slang__html_entities[a].name) == (size_t)k && strncmp(slang__html_entities[a].name, p, (size_t)k) == 0) {
+        if (a < hi && strlen(zell__html_entities[a].name) == (size_t)k && strncmp(zell__html_entities[a].name, p, (size_t)k) == 0) {
             best = (int)a;
             best_len = k;
         }
@@ -86,16 +86,16 @@ static int find_entity(const char *p, int64_t n, int64_t *len) {
     return best;
 }
 
-slang_string *slang_html_unescape(const slang_string *s) {
+zell_string *zell_html_unescape(const zell_string *s) {
     const char *p = sdata(s);
     int64_t n = slen(s);
     if (!memchr(p, '&', (size_t)n)) {
-        if (!s) return slang__string_alloc(0);
-        slang_retain((void *)s);
-        return (slang_string *)s;
+        if (!s) return zell__string_alloc(0);
+        zell_retain((void *)s);
+        return (zell_string *)s;
     }
     /* the result is never longer than 2x... entities expand to at most 4 bytes from >= 2 */
-    char *buf = slang_alloc(n * 2 + 8);
+    char *buf = zell_alloc(n * 2 + 8);
     int64_t w = 0;
     for (int64_t i = 0; i < n;) {
         if (p[i] != '&') {
@@ -138,13 +138,13 @@ slang_string *slang_html_unescape(const slang_string *s) {
             buf[w++] = p[i++];
             continue;
         }
-        const char *val = slang__html_entities[e].value;
+        const char *val = zell__html_entities[e].value;
         size_t vl = strlen(val);
         memcpy(buf + w, val, vl);
         w += (int64_t)vl;
         i += 1 + len;
     }
-    slang_string *r = slang_string_new(buf, w);
-    slang_free(buf);
+    zell_string *r = zell_string_new(buf, w);
+    zell_free(buf);
     return r;
 }

@@ -16,7 +16,7 @@
  * deleting the entry it just returned, as ABI.md 6.3 requires.
  *
  * Keys of int maps are hashed with a 64-bit mixer, string keys with an
- * 8-bytes-at-a-time multiplicative hash (internal; slang_string_hash stays
+ * 8-bytes-at-a-time multiplicative hash (internal; zell_string_hash stays
  * FNV-1a as documented), other keys with desc.hash. */
 #include "rt_internal.h"
 
@@ -30,9 +30,9 @@ enum { KIND_GENERIC, KIND_INT, KIND_STR };
 #define LSBS 0x0101010101010101ULL
 #define MSBS 0x8080808080808080ULL
 
-struct slang_map {
-    slang_object hdr;        /* +0  */
-    slang_map_desc desc;     /* +16 (48 bytes) */
+struct zell_map {
+    zell_object hdr;        /* +0  */
+    zell_map_desc desc;     /* +16 (48 bytes) */
     int64_t count;           /* live entries */
     int64_t cap;             /* slots: 0 or a power of two >= GROUP */
     int64_t growth_left;     /* insertions into EMPTY slots before a resize */
@@ -48,30 +48,30 @@ struct slang_map {
 
 static inline int64_t max_load(int64_t cap) { return cap - cap / 8; }
 
-static void release_slot(slang_map *m, unsigned char *p) {
+static void release_slot(zell_map *m, unsigned char *p) {
     if (m->desc.key_ops && m->desc.key_ops->release) m->desc.key_ops->release(p);
     if (m->desc.val_ops && m->desc.val_ops->release) m->desc.val_ops->release(VAL(m, p));
 }
 
 static void map_drop(void *obj) {
-    slang_map *m = obj;
+    zell_map *m = obj;
     if (m->desc.key_ops || m->desc.val_ops)
         for (int64_t i = 0; i < m->cap; i++)
             if (!(m->ctrl[i] & 0x80)) release_slot(m, SLOT(m, i));
-    slang_free(m->ctrl);
+    zell_free(m->ctrl);
 }
 
-const slang_type_info slang__map_type = { "map", (int64_t)sizeof(struct slang_map), map_drop };
+const zell_type_info zell__map_type = { "map", (int64_t)sizeof(struct zell_map), map_drop };
 
 /* Cycle collector (ABI.md 3.8): the references of every entry. A resize
  * frees the old table, so another thread mutating the map could make the
  * walk read freed memory: once the process has more than one thread the
  * map's entries are not walked (they count as references from outside,
  * so cycles through maps are then not collected; ABI.md 3.8 lists it). */
-void slang__map_visit(void *obj, slang_cycle_cb cb, void *ctx) {
-    slang_map *m = obj;
-    if (__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED)) return;
-    const slang_value_ops *ko = m->desc.key_ops, *vo = m->desc.val_ops;
+void zell__map_visit(void *obj, zell_cycle_cb cb, void *ctx) {
+    zell_map *m = obj;
+    if (__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED)) return;
+    const zell_value_ops *ko = m->desc.key_ops, *vo = m->desc.val_ops;
     ko = ko && ko->visit ? ko : NULL;
     vo = vo && vo->visit ? vo : NULL;
     if (!ko && !vo) return;
@@ -92,15 +92,15 @@ static inline uint64_t mix64(uint64_t x) {
     return x;
 }
 
-uint64_t slang_hash_int(const void *key) { return mix64(*(const uint64_t *)key); }
-bool slang_eq_int(const void *a, const void *b) {
+uint64_t zell_hash_int(const void *key) { return mix64(*(const uint64_t *)key); }
+bool zell_eq_int(const void *a, const void *b) {
     return *(const int64_t *)a == *(const int64_t *)b;
 }
-uint64_t slang_hash_str(const void *key) {
-    return slang_string_hash(*(const slang_string *const *)key);
+uint64_t zell_hash_str(const void *key) {
+    return zell_string_hash(*(const zell_string *const *)key);
 }
-bool slang_eq_str(const void *a, const void *b) {
-    return slang_string_eq(*(const slang_string *const *)a, *(const slang_string *const *)b);
+bool zell_eq_str(const void *a, const void *b) {
+    return zell_string_eq(*(const zell_string *const *)a, *(const zell_string *const *)b);
 }
 
 static inline uint64_t load64(const unsigned char *p) {
@@ -117,7 +117,7 @@ static inline uint64_t load32(const unsigned char *p) {
 /* Fast string hash for string-keyed maps (not part of the ABI): 8 bytes per
  * multiply; the tail is read with fixed-size (overlapping) loads so no
  * variable-length copy is needed. */
-static inline uint64_t str_hash(const slang_string *s) {
+static inline uint64_t str_hash(const zell_string *s) {
     int64_t n = s ? s->len : 0;
     const unsigned char *p = (const unsigned char *)(s ? s->data : "");
     uint64_t h = 0x9E3779B97F4A7C15ULL ^ (uint64_t)n, w;
@@ -151,25 +151,25 @@ static inline void copy_val(void *dst, const void *src, size_t n) {
     }
 }
 
-static inline bool str_eq(const slang_string *a, const slang_string *b) {
+static inline bool str_eq(const zell_string *a, const zell_string *b) {
     if (a == b) return true;
     int64_t la = a ? a->len : 0;
     if (la != (b ? b->len : 0)) return false;
     return la == 0 || memcmp(a->data, b->data, (size_t)la) == 0;
 }
 
-static inline __attribute__((always_inline)) uint64_t hash_key(const slang_map *m, int kind,
+static inline __attribute__((always_inline)) uint64_t hash_key(const zell_map *m, int kind,
                                                                const void *key) {
     if (kind == KIND_INT) return mix64(*(const uint64_t *)key);
-    if (kind == KIND_STR) return str_hash(*(const slang_string *const *)key);
+    if (kind == KIND_STR) return str_hash(*(const zell_string *const *)key);
     return m->desc.hash(key);
 }
 
-static inline __attribute__((always_inline)) bool key_eq(const slang_map *m, int kind,
+static inline __attribute__((always_inline)) bool key_eq(const zell_map *m, int kind,
                                                          const void *a, const void *b) {
     if (kind == KIND_INT) return *(const int64_t *)a == *(const int64_t *)b;
     if (kind == KIND_STR)
-        return str_eq(*(const slang_string *const *)a, *(const slang_string *const *)b);
+        return str_eq(*(const zell_string *const *)a, *(const zell_string *const *)b);
     return m->desc.eq(a, b);
 }
 
@@ -200,7 +200,7 @@ static inline uint8_t h2_of(uint64_t h) { return (uint8_t)(h & 0x7F); }
 static inline uint64_t h1_of(uint64_t h) { return h >> 7; }
 
 /* Slot index of key, or -1. */
-static inline __attribute__((always_inline)) int64_t find(const slang_map *m, int kind,
+static inline __attribute__((always_inline)) int64_t find(const zell_map *m, int kind,
                                                           const void *key, uint64_t h) {
     if (m->cap == 0) return -1;
     uint64_t gmask = (uint64_t)(m->cap / GROUP) - 1;
@@ -218,7 +218,7 @@ static inline __attribute__((always_inline)) int64_t find(const slang_map *m, in
 }
 
 /* First EMPTY or DELETED slot on h's probe sequence. */
-static int64_t find_free(const slang_map *m, uint64_t h) {
+static int64_t find_free(const zell_map *m, uint64_t h) {
     uint64_t gmask = (uint64_t)(m->cap / GROUP) - 1;
     uint64_t g = h1_of(h) & gmask;
     for (uint64_t step = 1;; step++) {
@@ -228,10 +228,10 @@ static int64_t find_free(const slang_map *m, uint64_t h) {
     }
 }
 
-static void alloc_table(slang_map *m, int64_t cap) {
-    if (cap > ((int64_t)1 << 56) / (m->slot_size + 1)) slang__panicf("map too large");
+static void alloc_table(zell_map *m, int64_t cap) {
+    if (cap > ((int64_t)1 << 56) / (m->slot_size + 1)) zell__panicf("map too large");
     size_t cbytes = (size_t)cap;  /* multiple of 8 */
-    unsigned char *mem = slang_realloc(NULL, (int64_t)(cbytes + (size_t)cap * (size_t)m->slot_size));
+    unsigned char *mem = zell_realloc(NULL, (int64_t)(cbytes + (size_t)cap * (size_t)m->slot_size));
     m->ctrl = mem;
     m->slots = mem + cbytes;
     memset(m->ctrl, CTRL_EMPTY, cbytes);
@@ -241,7 +241,7 @@ static void alloc_table(slang_map *m, int64_t cap) {
 
 /* Rehash into a table of new_cap slots (entries are moved bytewise; their
  * references move with them). */
-static void rehash(slang_map *m, int64_t new_cap) {
+static void rehash(zell_map *m, int64_t new_cap) {
     uint8_t *old_ctrl = m->ctrl;
     unsigned char *old_slots = m->slots;
     int64_t old_cap = m->cap;
@@ -254,7 +254,7 @@ static void rehash(slang_map *m, int64_t new_cap) {
         m->ctrl[j] = h2_of(h);
         memcpy(SLOT(m, j), p, (size_t)m->slot_size);
     }
-    slang_free(old_ctrl);
+    zell_free(old_ctrl);
 }
 
 static int64_t cap_for(int64_t n) {
@@ -264,7 +264,7 @@ static int64_t cap_for(int64_t n) {
 }
 
 /* Inserts a new entry for key (known absent) with a zeroed value; retains the key. */
-static __attribute__((noinline)) int64_t insert_new(slang_map *m, const void *key, uint64_t h) {
+static __attribute__((noinline)) int64_t insert_new(zell_map *m, const void *key, uint64_t h) {
     if (m->cap == 0) {
         alloc_table(m, GROUP);
     }
@@ -287,72 +287,72 @@ static __attribute__((noinline)) int64_t insert_new(slang_map *m, const void *ke
 
 /* ---- construction ---- */
 
-slang_map *slang_map_new(const slang_map_desc *desc, int64_t hint) {
+zell_map *zell_map_new(const zell_map_desc *desc, int64_t hint) {
     if (!desc || !desc->hash || !desc->eq || desc->key_size <= 0 || desc->val_size < 0)
-        slang__panicf("slang_map_new: invalid map descriptor");
+        zell__panicf("zell_map_new: invalid map descriptor");
     int cyclic = (desc->key_ops && desc->key_ops->visit) || (desc->val_ops && desc->val_ops->visit);
-    int64_t bytes = (int64_t)sizeof(struct slang_map);
-    cyclic = cyclic && slang__cycles_flag;   /* weak: the collector is linked */
-    slang_map *m = slang_object_new(&slang__map_type, cyclic ? slang__cycles_extra(bytes) : bytes);
+    int64_t bytes = (int64_t)sizeof(struct zell_map);
+    cyclic = cyclic && zell__cycles_flag;   /* weak: the collector is linked */
+    zell_map *m = zell_object_new(&zell__map_type, cyclic ? zell__cycles_extra(bytes) : bytes);
     m->desc = *desc;
-    if (cyclic) slang__cycles_flag(&m->hdr);  /* entries may lie on cycles */
-    m->val_off = SLANG_ROUND8(desc->key_size);
-    m->slot_size = m->val_off + SLANG_ROUND8(desc->val_size);
+    if (cyclic) zell__cycles_flag(&m->hdr);  /* entries may lie on cycles */
+    m->val_off = ZELL_ROUND8(desc->key_size);
+    m->slot_size = m->val_off + ZELL_ROUND8(desc->val_size);
     m->kind = KIND_GENERIC;
-    if (desc->key_size == 8 && desc->hash == slang_hash_int && desc->eq == slang_eq_int)
+    if (desc->key_size == 8 && desc->hash == zell_hash_int && desc->eq == zell_eq_int)
         m->kind = KIND_INT;
-    else if (desc->key_size == 8 && desc->hash == slang_hash_str && desc->eq == slang_eq_str)
+    else if (desc->key_size == 8 && desc->hash == zell_hash_str && desc->eq == zell_eq_str)
         m->kind = KIND_STR;
     if (hint > 0) alloc_table(m, cap_for(hint));
     return m;
 }
 
-slang_map *slang_map_new_str(int64_t val_size, const slang_value_ops *val_ops) {
-    slang_map_desc d = { 8, val_size, slang_hash_str, slang_eq_str, &slang_ops_ref, val_ops };
-    return slang_map_new(&d, 0);
+zell_map *zell_map_new_str(int64_t val_size, const zell_value_ops *val_ops) {
+    zell_map_desc d = { 8, val_size, zell_hash_str, zell_eq_str, &zell_ops_ref, val_ops };
+    return zell_map_new(&d, 0);
 }
 
-slang_map *slang_map_new_int(int64_t val_size, const slang_value_ops *val_ops) {
-    slang_map_desc d = { 8, val_size, slang_hash_int, slang_eq_int, NULL, val_ops };
-    return slang_map_new(&d, 0);
+zell_map *zell_map_new_int(int64_t val_size, const zell_value_ops *val_ops) {
+    zell_map_desc d = { 8, val_size, zell_hash_int, zell_eq_int, NULL, val_ops };
+    return zell_map_new(&d, 0);
 }
 
-int64_t slang_map_len(const slang_map *m) { return m ? m->count : 0; }
+int64_t zell_map_len(const zell_map *m) { return m ? m->count : 0; }
 
 /* ---- operations, specialised per key kind ---- */
 
-static inline __attribute__((always_inline)) void *get_k(const slang_map *m, int kind,
+static inline __attribute__((always_inline)) void *get_k(const zell_map *m, int kind,
                                                          const void *key) {
     if (!m || m->count == 0) return NULL;
     int64_t i = find(m, kind, key, hash_key(m, kind, key));
     return i < 0 ? NULL : VAL(m, SLOT(m, i));
 }
 
-static inline __attribute__((always_inline)) void *get_or_insert_k(slang_map *m, int kind,
+static inline __attribute__((always_inline)) void *get_or_insert_k(zell_map *m, int kind,
                                                                    const void *key) {
-    if (!m) slang_panic("assignment to entry in nil map");
+    if (!m) zell_panic("assignment to entry in nil map");
     uint64_t h = hash_key(m, kind, key);
     int64_t i = find(m, kind, key, h);
     if (i < 0) i = insert_new(m, key, h);
     return VAL(m, SLOT(m, i));
 }
 
-static inline __attribute__((always_inline)) void set_k(slang_map *m, int kind, const void *key,
+static inline __attribute__((always_inline)) void set_k(zell_map *m, int kind, const void *key,
                                                         const void *val) {
-    if (!m) slang_panic("assignment to entry in nil map");
-    const slang_value_ops *vo = m->desc.val_ops;
+    if (!m) zell_panic("assignment to entry in nil map");
+    const zell_value_ops *vo = m->desc.val_ops;
     size_t vs = (size_t)m->desc.val_size;
     if (vo && vo->retain) {
         /* retain the new value before releasing the old one: they may be the
          * same object, and val may point into the map (moved by a resize) */
         unsigned char tmp[256];
-        unsigned char *copy = vs <= sizeof tmp ? tmp : slang_alloc((int64_t)vs);
+        unsigned char *copy = vs <= sizeof tmp ? tmp : zell_alloc((int64_t)vs);
         copy_val(copy, val, vs);
         vo->retain(copy);
         void *slot = get_or_insert_k(m, kind, key);
         if (vo->release) vo->release(slot);
         copy_val(slot, copy, vs);
-        if (copy != tmp) slang_free(copy);
+        if (copy != tmp) zell_free(copy);
     } else if (vs <= 64) {
         unsigned char tmp[64];  /* val may point into the map (moved by a resize) */
         copy_val(tmp, val, vs);
@@ -360,16 +360,16 @@ static inline __attribute__((always_inline)) void set_k(slang_map *m, int kind, 
         if (vo && vo->release) vo->release(slot);
         copy_val(slot, tmp, vs);
     } else {
-        unsigned char *copy = slang_alloc((int64_t)vs);
+        unsigned char *copy = zell_alloc((int64_t)vs);
         memcpy(copy, val, vs);
         void *slot = get_or_insert_k(m, kind, key);
         if (vo && vo->release) vo->release(slot);
         memcpy(slot, copy, vs);
-        slang_free(copy);
+        zell_free(copy);
     }
 }
 
-static inline __attribute__((always_inline)) bool delete_k(slang_map *m, int kind,
+static inline __attribute__((always_inline)) bool delete_k(zell_map *m, int kind,
                                                            const void *key) {
     if (!m || m->count == 0) return false;
     int64_t i = find(m, kind, key, hash_key(m, kind, key));
@@ -386,25 +386,25 @@ static inline __attribute__((always_inline)) bool delete_k(slang_map *m, int kin
     return true;
 }
 
-void *slang_map_get(const slang_map *m, const void *key) {
+void *zell_map_get(const zell_map *m, const void *key) {
     if (m && m->kind == KIND_INT) return get_k(m, KIND_INT, key);
     if (m && m->kind == KIND_STR) return get_k(m, KIND_STR, key);
     return get_k(m, KIND_GENERIC, key);
 }
 
-void *slang_map_get_or_insert(slang_map *m, const void *key) {
+void *zell_map_get_or_insert(zell_map *m, const void *key) {
     if (m && m->kind == KIND_INT) return get_or_insert_k(m, KIND_INT, key);
     if (m && m->kind == KIND_STR) return get_or_insert_k(m, KIND_STR, key);
     return get_or_insert_k(m, KIND_GENERIC, key);
 }
 
-void slang_map_set(slang_map *m, const void *key, const void *val) {
+void zell_map_set(zell_map *m, const void *key, const void *val) {
     if (m && m->kind == KIND_INT) set_k(m, KIND_INT, key, val);
     else if (m && m->kind == KIND_STR) set_k(m, KIND_STR, key, val);
     else set_k(m, KIND_GENERIC, key, val);
 }
 
-bool slang_map_delete(slang_map *m, const void *key) {
+bool zell_map_delete(zell_map *m, const void *key) {
     if (m && m->kind == KIND_INT) return delete_k(m, KIND_INT, key);
     if (m && m->kind == KIND_STR) return delete_k(m, KIND_STR, key);
     return delete_k(m, KIND_GENERIC, key);
@@ -412,38 +412,38 @@ bool slang_map_delete(slang_map *m, const void *key) {
 
 /* ---- fast paths (the map must have been created for that key type) ---- */
 
-void *slang_map_get_str(const slang_map *m, const slang_string *key) {
+void *zell_map_get_str(const zell_map *m, const zell_string *key) {
     return get_k(m, KIND_STR, &key);
 }
-void slang_map_set_str(slang_map *m, const slang_string *key, const void *val) {
+void zell_map_set_str(zell_map *m, const zell_string *key, const void *val) {
     set_k(m, KIND_STR, &key, val);
 }
-void *slang_map_get_or_insert_str(slang_map *m, const slang_string *key) {
+void *zell_map_get_or_insert_str(zell_map *m, const zell_string *key) {
     return get_or_insert_k(m, KIND_STR, &key);
 }
-bool slang_map_delete_str(slang_map *m, const slang_string *key) {
+bool zell_map_delete_str(zell_map *m, const zell_string *key) {
     return delete_k(m, KIND_STR, &key);
 }
-void *slang_map_get_int(const slang_map *m, int64_t key) { return get_k(m, KIND_INT, &key); }
-void slang_map_set_int(slang_map *m, int64_t key, const void *val) {
+void *zell_map_get_int(const zell_map *m, int64_t key) { return get_k(m, KIND_INT, &key); }
+void zell_map_set_int(zell_map *m, int64_t key, const void *val) {
     set_k(m, KIND_INT, &key, val);
 }
-void *slang_map_get_or_insert_int(slang_map *m, int64_t key) {
+void *zell_map_get_or_insert_int(zell_map *m, int64_t key) {
     return get_or_insert_k(m, KIND_INT, &key);
 }
-bool slang_map_delete_int(slang_map *m, int64_t key) { return delete_k(m, KIND_INT, &key); }
+bool zell_map_delete_int(zell_map *m, int64_t key) { return delete_k(m, KIND_INT, &key); }
 
 /* ---- iteration ---- */
 
-void slang_map_iter_init(slang_map_iter *it, slang_map *m) {
+void zell_map_iter_init(zell_map_iter *it, zell_map *m) {
     it->map = m;
     it->bucket = 0;  /* next slot index to examine */
     it->next = NULL;
     it->reserved = 0;
 }
 
-bool slang_map_iter_next(slang_map_iter *it, void **key, void **val) {
-    slang_map *m = it->map;
+bool zell_map_iter_next(zell_map_iter *it, void **key, void **val) {
+    zell_map *m = it->map;
     if (!m) return false;
     for (int64_t i = it->bucket; i < m->cap; i++) {
         if (m->ctrl[i] & 0x80) continue;

@@ -18,38 +18,38 @@ typedef struct obj_stats {
 static _Thread_local obj_stats t_stats;
 static obj_stats g_stats_head = { 0, 0, &g_stats_head, &g_stats_head, 1 };
 static int64_t g_dead_live, g_dead_total;   /* exited threads (g_stats_mu) */
-static slang__plat_mutex g_stats_mu = SLANG_PLAT_MUTEX_INIT;
-static slang__plat_once g_stats_once = SLANG_PLAT_ONCE_INIT;
-static slang__plat_tls_key g_stats_key;
+static zell__plat_mutex g_stats_mu = ZELL_PLAT_MUTEX_INIT;
+static zell__plat_once g_stats_once = ZELL_PLAT_ONCE_INIT;
+static zell__plat_tls_key g_stats_key;
 static int g_stats_keyed;
 
-/* Set before the process gets a second thread (slang_threaded, ABI.md 3.2). */
-uint8_t slang_threaded;
+/* Set before the process gets a second thread (zell_threaded, ABI.md 3.2). */
+uint8_t zell_threaded;
 
 static void stats_exit(void *arg) {
     obj_stats *st = arg;
-    slang__plat_mutex_lock(&g_stats_mu);
+    zell__plat_mutex_lock(&g_stats_mu);
     st->prev->next = st->next;
     st->next->prev = st->prev;
     g_dead_live += st->live;
     g_dead_total += st->total;
     st->live = st->total = 0;
     st->reg = 0;
-    slang__plat_mutex_unlock(&g_stats_mu);
+    zell__plat_mutex_unlock(&g_stats_mu);
 }
 
-static void stats_key_init(void) { g_stats_keyed = slang__plat_tls_new(&g_stats_key, stats_exit); }
+static void stats_key_init(void) { g_stats_keyed = zell__plat_tls_new(&g_stats_key, stats_exit); }
 
 __attribute__((noinline, cold)) static void stats_register(void) {
-    slang__plat_once_run(&g_stats_once, stats_key_init);
-    if (g_stats_keyed) slang__plat_tls_set(g_stats_key, &t_stats);
-    slang__plat_mutex_lock(&g_stats_mu);
+    zell__plat_once_run(&g_stats_once, stats_key_init);
+    if (g_stats_keyed) zell__plat_tls_set(g_stats_key, &t_stats);
+    zell__plat_mutex_lock(&g_stats_mu);
     t_stats.next = g_stats_head.next;
     t_stats.prev = &g_stats_head;
     g_stats_head.next->prev = &t_stats;
     g_stats_head.next = &t_stats;
     t_stats.reg = 1;
-    slang__plat_mutex_unlock(&g_stats_mu);
+    zell__plat_mutex_unlock(&g_stats_mu);
 }
 
 static inline void stats_add(int64_t live, int64_t total) {
@@ -59,11 +59,11 @@ static inline void stats_add(int64_t live, int64_t total) {
 }
 
 static int64_t stats_sum(int which) {
-    slang__plat_mutex_lock(&g_stats_mu);
+    zell__plat_mutex_lock(&g_stats_mu);
     int64_t n = which ? g_dead_total : g_dead_live;
     for (obj_stats *st = g_stats_head.next; st != &g_stats_head; st = st->next)
         n += __atomic_load_n(which ? &st->total : &st->live, __ATOMIC_RELAXED);
-    slang__plat_mutex_unlock(&g_stats_mu);
+    zell__plat_mutex_unlock(&g_stats_mu);
     return n;
 }
 
@@ -78,106 +78,106 @@ typedef struct track {
 static int g_leak_mode;
 static int g_track; /* prefix in use (fixed before the first allocation) */
 static track g_track_head = { &g_track_head, &g_track_head };
-static slang__plat_mutex g_track_mu = SLANG_PLAT_MUTEX_INIT;
+static zell__plat_mutex g_track_mu = ZELL_PLAT_MUTEX_INIT;
 
 static void leak_report(void);
-/* Set by slang_leak_check_enable, so programs built without --leak-check do
+/* Set by zell_leak_check_enable, so programs built without --leak-check do
  * not link the report. */
 static void (*g_leak_report)(void);
 
-void slang_leak_check_enable(int32_t mode) {
+void zell_leak_check_enable(int32_t mode) {
     g_leak_mode = mode;
     g_leak_report = leak_report;
     /* The prefix can only be used if no object exists yet. */
     if (mode >= 2 && stats_sum(0) == 0) g_track = 1;
 }
 
-static void track_add(slang_object *o) {
+static void track_add(zell_object *o) {
     track *t = (track *)o - 1;
-    slang__plat_mutex_lock(&g_track_mu);
+    zell__plat_mutex_lock(&g_track_mu);
     t->next = g_track_head.next;
     t->prev = &g_track_head;
     g_track_head.next->prev = t;
     g_track_head.next = t;
-    slang__plat_mutex_unlock(&g_track_mu);
+    zell__plat_mutex_unlock(&g_track_mu);
 }
 
-static void track_remove(slang_object *o) {
+static void track_remove(zell_object *o) {
     track *t = (track *)o - 1;
-    slang__plat_mutex_lock(&g_track_mu);
+    zell__plat_mutex_lock(&g_track_mu);
     t->prev->next = t->next;
     t->next->prev = t->prev;
     t->prev = t->next = t;
-    slang__plat_mutex_unlock(&g_track_mu);
+    zell__plat_mutex_unlock(&g_track_mu);
 }
 
 /* ---- raw memory ---- */
 
-void *slang_alloc(int64_t size) {
-    if (size < 0) slang__panicf("slang_alloc: negative size %lld", (long long)size);
+void *zell_alloc(int64_t size) {
+    if (size < 0) zell__panicf("zell_alloc: negative size %lld", (long long)size);
     void *p = calloc(1, size == 0 ? 1 : (size_t)size);
-    if (!p) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
+    if (!p) zell__panicf("out of memory (requested %lld bytes)", (long long)size);
     return p;
 }
 
-void *slang_realloc(void *p, int64_t size) {
-    if (size < 0) slang__panicf("slang_realloc: negative size %lld", (long long)size);
+void *zell_realloc(void *p, int64_t size) {
+    if (size < 0) zell__panicf("zell_realloc: negative size %lld", (long long)size);
     void *q = realloc(p, size == 0 ? 1 : (size_t)size);
-    if (!q) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
+    if (!q) zell__panicf("out of memory (requested %lld bytes)", (long long)size);
     return q;
 }
 
-void slang_free(void *p) { free(p); }
+void zell_free(void *p) { free(p); }
 
 /* ---- objects ---- */
 
 /* Allocates an object of `size` bytes (header included) with the header set
  * and the payload zeroed when `zero`. Objects come from the object heap
  * (heap.c) unless it is off or leak check mode 2 tracks them. */
-static inline __attribute__((always_inline)) slang_object *object_alloc(const slang_type_info *type, int64_t size, int zero) {
-    if (size < (int64_t)sizeof(slang_object))
-        slang__panicf("slang_object_new: size %lld smaller than header", (long long)size);
-    slang_object *o = NULL;
+static inline __attribute__((always_inline)) zell_object *object_alloc(const zell_type_info *type, int64_t size, int zero) {
+    if (size < (int64_t)sizeof(zell_object))
+        zell__panicf("zell_object_new: size %lld smaller than header", (long long)size);
+    zell_object *o = NULL;
     if (!g_track) {
         /* Small blocks: zero only the payload; fresh large mappings are zero. */
-        int small = size <= SLANG__HP_SMALL_MAX;
-        o = slang__heap_alloc(size, zero && !small);
-        if (o && zero && small) memset(o + 1, 0, (size_t)size - sizeof(slang_object));
+        int small = size <= ZELL__HP_SMALL_MAX;
+        o = zell__heap_alloc(size, zero && !small);
+        if (o && zero && small) memset(o + 1, 0, (size_t)size - sizeof(zell_object));
     }
     if (!o) {
         if (g_track) {
-            o = (slang_object *)((track *)slang_alloc(size + (int64_t)sizeof(track)) + 1);
+            o = (zell_object *)((track *)zell_alloc(size + (int64_t)sizeof(track)) + 1);
             track_add(o);
         } else {
             o = malloc((size_t)size);
-            if (!o) slang__panicf("out of memory (requested %lld bytes)", (long long)size);
-            if (zero) memset(o + 1, 0, (size_t)size - sizeof(slang_object));
+            if (!o) zell__panicf("out of memory (requested %lld bytes)", (long long)size);
+            if (zero) memset(o + 1, 0, (size_t)size - sizeof(zell_object));
         }
     }
     o->refcount = 1;
     o->type = type;
     stats_add(1, 1);
-    if (SLANG_DIAG_HEAP_ON()) slang__diag_heap_count(type, 1);  /* SLANG_DIAG_HEAP */
+    if (ZELL_DIAG_HEAP_ON()) zell__diag_heap_count(type, 1);  /* ZELL_DIAG_HEAP */
     return o;
 }
 
-void *slang_object_new(const slang_type_info *type, int64_t size) {
+void *zell_object_new(const zell_type_info *type, int64_t size) {
     return object_alloc(type, size, 1);
 }
 
-slang_object *slang__object_new_uninit(const slang_type_info *type, int64_t size) {
+zell_object *zell__object_new_uninit(const zell_type_info *type, int64_t size) {
     return object_alloc(type, size, 0);
 }
 
 /* Memory of a heap object comes from the object heap when it is on and
  * leak tracking is off (both fixed before the first object exists). */
-static inline int from_heap(void) { return !g_track && slang__heap_on; }
+static inline int from_heap(void) { return !g_track && zell__heap_on; }
 
-static inline __attribute__((always_inline)) void object_free(slang_object *o) {
+static inline __attribute__((always_inline)) void object_free(zell_object *o) {
     stats_add(-1, 0);
-    if (SLANG_DIAG_HEAP_ON()) slang__diag_heap_count(o->type, -1);  /* SLANG_DIAG_HEAP */
+    if (ZELL_DIAG_HEAP_ON()) zell__diag_heap_count(o->type, -1);  /* ZELL_DIAG_HEAP */
     if (from_heap()) {
-        slang__heap_free(o);
+        zell__heap_free(o);
     } else if (g_track) {
         track_remove(o);
         free((track *)o - 1);
@@ -186,103 +186,103 @@ static inline __attribute__((always_inline)) void object_free(slang_object *o) {
     }
 }
 
-int64_t slang__object_capacity(slang_object *o) {
-    if (from_heap()) return slang__heap_capacity(o);
-    if (g_track) return (int64_t)slang__plat_alloc_size((track *)o - 1) - (int64_t)sizeof(track);
-    return (int64_t)slang__plat_alloc_size(o);
+int64_t zell__object_capacity(zell_object *o) {
+    if (from_heap()) return zell__heap_capacity(o);
+    if (g_track) return (int64_t)zell__plat_alloc_size((track *)o - 1) - (int64_t)sizeof(track);
+    return (int64_t)zell__plat_alloc_size(o);
 }
 
-slang_object *slang__object_resize(slang_object *o, int64_t size) {
-    if (from_heap()) return slang__hp_resize(o, size);
-    if (!g_track) return slang_realloc(o, size);
-    slang__plat_mutex_lock(&g_track_mu);
+zell_object *zell__object_resize(zell_object *o, int64_t size) {
+    if (from_heap()) return zell__hp_resize(o, size);
+    if (!g_track) return zell_realloc(o, size);
+    zell__plat_mutex_lock(&g_track_mu);
     track *t = (track *)o - 1;
     track *n = realloc(t, (size_t)size + sizeof(track));
     if (!n) {
-        slang__plat_mutex_unlock(&g_track_mu);
-        slang__panicf("out of memory (requested %lld bytes)", (long long)size);
+        zell__plat_mutex_unlock(&g_track_mu);
+        zell__panicf("out of memory (requested %lld bytes)", (long long)size);
     }
     n->prev->next = n;
     n->next->prev = n;
-    slang__plat_mutex_unlock(&g_track_mu);
-    return (slang_object *)(n + 1);
+    zell__plat_mutex_unlock(&g_track_mu);
+    return (zell_object *)(n + 1);
 }
 
-void slang__object_immortalize(slang_object *o) {
+void zell__object_immortalize(zell_object *o) {
     if (o->refcount < 0) return;
-    o->refcount = SLANG_RC_IMMORTAL;
+    o->refcount = ZELL_RC_IMMORTAL;
     stats_add(-1, 0);
-    if (SLANG_DIAG_HEAP_ON()) slang__diag_heap_count(o->type, -1);
+    if (ZELL_DIAG_HEAP_ON()) zell__diag_heap_count(o->type, -1);
     if (g_track) track_remove(o);
 }
 
 /* The view block a view's refcount word forwards to (ABI.md 4.1). */
-static inline slang_object *view_block(int64_t rc) {
-    return (slang_object *)(uintptr_t)(rc & ~SLANG_RC_VIEW);
+static inline zell_object *view_block(int64_t rc) {
+    return (zell_object *)(uintptr_t)(rc & ~ZELL_RC_VIEW);
 }
 
-void slang_retain(void *obj) {
+void zell_retain(void *obj) {
     if (!obj) return;
-    slang_object *o = obj;
+    zell_object *o = obj;
     int64_t n = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
     if (n < 0) {
-        if (!slang_rc_is_view(n)) return;
+        if (!zell_rc_is_view(n)) return;
         o = view_block(n);
         n = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
     }
-    if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED))
+    if (!__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED))
         __atomic_store_n(&o->refcount, n + 1, __ATOMIC_RELAXED);   /* one thread: no RMW (and nothing is biased) */
-    else if ((n & (SLANG_RC_BIASED | SLANG_RC_CYCLIC)) == SLANG_RC_BIASED)
-        slang__rc_retain_biased(o, n);    /* biased counts (rc.c, ABI.md 3.1) */
-    else if (!(n & SLANG_RC_CYCLIC))
-        slang__rc_retain_unowned(o, n);   /* may bias it (rc.c) */
-    else if (__atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED) & SLANG_RC_MARKED)
-        slang__cycles_dirty(o);   /* examined by the cycle collector (ABI.md 3.8) */
+    else if ((n & (ZELL_RC_BIASED | ZELL_RC_CYCLIC)) == ZELL_RC_BIASED)
+        zell__rc_retain_biased(o, n);    /* biased counts (rc.c, ABI.md 3.1) */
+    else if (!(n & ZELL_RC_CYCLIC))
+        zell__rc_retain_unowned(o, n);   /* may bias it (rc.c) */
+    else if (__atomic_add_fetch(&o->refcount, 1, __ATOMIC_RELAXED) & ZELL_RC_MARKED)
+        zell__cycles_dirty(o);   /* examined by the cycle collector (ABI.md 3.8) */
 }
 
 
-void slang_release(void *obj) {
+void zell_release(void *obj) {
     if (!obj) return;
-    slang_object *o = obj;
+    zell_object *o = obj;
     int64_t n = __atomic_load_n(&o->refcount, __ATOMIC_ACQUIRE);
     if (n < 0) {
-        if (!slang_rc_is_view(n)) return;
+        if (!zell_rc_is_view(n)) return;
         o = view_block(n);   /* blocks are never views or immortal */
         n = __atomic_load_n(&o->refcount, __ATOMIC_ACQUIRE);
     }
     if (n != 1) {
         /* One thread, a plain count of at least 2 below every flag bit: a
          * plain store (nothing is biased while single-threaded). */
-        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && (uint64_t)(n - 2) < ((uint64_t)1 << 57) - 2) {
+        if (!__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED) && (uint64_t)(n - 2) < ((uint64_t)1 << 57) - 2) {
             __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
             return;
         }
-        if ((n & (SLANG_RC_BIASED | SLANG_RC_CYCLIC)) == SLANG_RC_BIASED) {
-            slang__rc_release_biased(o, n);   /* rc.c, ABI.md 3.1 */
+        if ((n & (ZELL_RC_BIASED | ZELL_RC_CYCLIC)) == ZELL_RC_BIASED) {
+            zell__rc_release_biased(o, n);   /* rc.c, ABI.md 3.1 */
             return;
         }
         /* Objects of cyclic types record possible cycle roots (ABI.md 3.8). */
-        if (__builtin_expect(n & SLANG_RC_CYCLIC, 0)) {
-            slang__cycles_release(o);
+        if (__builtin_expect(n & ZELL_RC_CYCLIC, 0)) {
+            zell__cycles_release(o);
             return;
         }
         /* Shared (or has a weak box): the decrement must be atomic unless
          * the process has one thread. A count of exactly 1 with no weak
          * flag means the caller holds the only reference and nobody else
          * can retain it, so the RMW is skipped. */
-        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && n > 1 && !(n & (SLANG_RC_WEAK_FLAG | SLANG_RC_NOBIAS))) {
+        if (!__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED) && n > 1 && !(n & (ZELL_RC_WEAK_FLAG | ZELL_RC_NOBIAS))) {
             __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
             return;
         }
         /* Unowned and threaded: a CAS, since another thread may bias it. */
-        if (__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED)) {
-            slang__rc_release_unowned(o, n);
+        if (__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED)) {
+            zell__rc_release_unowned(o, n);
             return;
         }
         n = __atomic_sub_fetch(&o->refcount, 1, __ATOMIC_ACQ_REL);
-        if ((n & SLANG_RC_COUNT_MASK) != 0) return;
+        if ((n & ZELL_RC_COUNT_MASK) != 0) return;
         /* Weak references are cleared before the destructor runs. */
-        if (n & SLANG_RC_WEAK_FLAG) slang__weak_clear(o);
+        if (n & ZELL_RC_WEAK_FLAG) zell__weak_clear(o);
     } else {
         o->refcount = 0;
     }
@@ -290,45 +290,45 @@ void slang_release(void *obj) {
     object_free(o);
 }
 
-int64_t slang_refcount(const void *obj) {
+int64_t zell_refcount(const void *obj) {
     if (!obj) return 0;
-    int64_t rc = __atomic_load_n(&((const slang_object *)obj)->refcount, __ATOMIC_RELAXED);
-    if (slang_rc_is_view(rc)) rc = __atomic_load_n(&view_block(rc)->refcount, __ATOMIC_RELAXED);
-    return slang__rc_count(rc);
+    int64_t rc = __atomic_load_n(&((const zell_object *)obj)->refcount, __ATOMIC_RELAXED);
+    if (zell_rc_is_view(rc)) rc = __atomic_load_n(&view_block(rc)->refcount, __ATOMIC_RELAXED);
+    return zell__rc_count(rc);
 }
 
-int64_t slang_live_objects(void) { return stats_sum(0); }
+int64_t zell_live_objects(void) { return stats_sum(0); }
 
-int64_t slang__total_objects(void) { return stats_sum(1); }
+int64_t zell__total_objects(void) { return stats_sum(1); }
 
-bool slang__heap_each(void (*cb)(const char *type, int64_t bytes, void *arg), void *arg) {
+bool zell__heap_each(void (*cb)(const char *type, int64_t bytes, void *arg), void *arg) {
     if (!g_track) return false;
-    slang__plat_mutex_lock(&g_track_mu);
+    zell__plat_mutex_lock(&g_track_mu);
     for (track *t = g_track_head.next; t != &g_track_head; t = t->next) {
-        slang_object *o = (slang_object *)(t + 1);
+        zell_object *o = (zell_object *)(t + 1);
         const char *name = (o->type && o->type->name) ? o->type->name : "<untyped>";
-        int64_t bytes = (int64_t)slang__plat_alloc_size(t) - (int64_t)sizeof(track);
+        int64_t bytes = (int64_t)zell__plat_alloc_size(t) - (int64_t)sizeof(track);
         cb(name, bytes, arg);
     }
-    slang__plat_mutex_unlock(&g_track_mu);
+    zell__plat_mutex_unlock(&g_track_mu);
     return true;
 }
 
-void slang__live_each(void (*cb)(slang_object *obj, void *arg), void *arg) {
+void zell__live_each(void (*cb)(zell_object *obj, void *arg), void *arg) {
     if (!g_track) return;
-    slang__plat_mutex_lock(&g_track_mu);
-    for (track *t = g_track_head.next; t != &g_track_head; t = t->next) cb((slang_object *)(t + 1), arg);
-    slang__plat_mutex_unlock(&g_track_mu);
+    zell__plat_mutex_lock(&g_track_mu);
+    for (track *t = g_track_head.next; t != &g_track_head; t = t->next) cb((zell_object *)(t + 1), arg);
+    zell__plat_mutex_unlock(&g_track_mu);
 }
 
 /* ---- pointers to payloads (`*T` values) ---- */
 
-void slang_ptr_retain(void *payload) {
-    if (payload) slang_retain((char *)payload - sizeof(slang_object));
+void zell_ptr_retain(void *payload) {
+    if (payload) zell_retain((char *)payload - sizeof(zell_object));
 }
 
-void slang_ptr_release(void *payload) {
-    if (payload) slang_release((char *)payload - sizeof(slang_object));
+void zell_ptr_release(void *payload) {
+    if (payload) zell_release((char *)payload - sizeof(zell_object));
 }
 
 /* ---- leak report ---- */
@@ -341,7 +341,7 @@ static int cmp_count(const void *a, const void *b) {
     return strcmp(x->name, y->name);
 }
 
-void slang__leak_report(void) {
+void zell__leak_report(void) {
     if (g_leak_report) g_leak_report();
 }
 
@@ -349,17 +349,17 @@ static void leak_report(void) {
     if (!g_leak_mode) return;
     /* The cycle collector's last word: a final collection (auto mode) or a
      * count of the cyclic garbage it could free (manual mode). */
-    int64_t collectable = slang__cycles_at_exit ? slang__cycles_at_exit() : -1;
-    int64_t live = slang_live_objects();
+    int64_t collectable = zell__cycles_at_exit ? zell__cycles_at_exit() : -1;
+    int64_t live = zell_live_objects();
     if (live <= 0) return;
     fflush(stdout);
     fprintf(stderr, "leak: %lld objects\n", (long long)live);
     if (g_track) {
-        slang__plat_mutex_lock(&g_track_mu);
+        zell__plat_mutex_lock(&g_track_mu);
         int64_t cap = 16, len = 0;
         type_count *counts = calloc((size_t)cap, sizeof *counts);
         for (track *t = g_track_head.next; t != &g_track_head && counts; t = t->next) {
-            slang_object *o = (slang_object *)(t + 1);
+            zell_object *o = (zell_object *)(t + 1);
             const char *name = (o->type && o->type->name) ? o->type->name : "<untyped>";
             int64_t i = 0;
             while (i < len && strcmp(counts[i].name, name) != 0) i++;
@@ -376,41 +376,41 @@ static void leak_report(void) {
             }
             counts[i].n++;
         }
-        slang__plat_mutex_unlock(&g_track_mu);
+        zell__plat_mutex_unlock(&g_track_mu);
         if (counts) {
             qsort(counts, (size_t)len, sizeof *counts, cmp_count);
             for (int64_t i = 0; i < len; i++)
                 fprintf(stderr, "  %lld x %s\n", (long long)counts[i].n, counts[i].name);
             free(counts);
         }
-        slang__leak_cycles();
+        zell__leak_cycles();
     }
     if (collectable > 0)
-        fprintf(stderr, "  %lld of them in unreachable reference cycles the cycle collector can free (SLANG_CYCLES=auto or runtime.CollectCycles())\n",
+        fprintf(stderr, "  %lld of them in unreachable reference cycles the cycle collector can free (ZELL_CYCLES=auto or runtime.CollectCycles())\n",
                 (long long)collectable);
     fflush(stderr);
-    _Exit(SLANG_LEAK_EXIT_CODE);
+    _Exit(ZELL_LEAK_EXIT_CODE);
 }
 
 /* ---- value ops ---- */
 
-static void ops_ref_retain(void *slot) { slang_retain(*(void **)slot); }
-static void ops_ref_release(void *slot) { slang_release(*(void **)slot); }
-const slang_value_ops slang_ops_ref = { ops_ref_retain, ops_ref_release, NULL };
+static void ops_ref_retain(void *slot) { zell_retain(*(void **)slot); }
+static void ops_ref_release(void *slot) { zell_release(*(void **)slot); }
+const zell_value_ops zell_ops_ref = { ops_ref_retain, ops_ref_release, NULL };
 
-static void ops_ptr_retain(void *slot) { slang_ptr_retain(*(void **)slot); }
-static void ops_ptr_release(void *slot) { slang_ptr_release(*(void **)slot); }
-const slang_value_ops slang_ops_ptr = { ops_ptr_retain, ops_ptr_release, NULL };
+static void ops_ptr_retain(void *slot) { zell_ptr_retain(*(void **)slot); }
+static void ops_ptr_release(void *slot) { zell_ptr_release(*(void **)slot); }
+const zell_value_ops zell_ops_ptr = { ops_ptr_retain, ops_ptr_release, NULL };
 
-static void ops_slice_retain(void *slot) { slang_slice_retain((slang_slice *)slot); }
-static void ops_slice_release(void *slot) { slang_slice_release((slang_slice *)slot); }
-const slang_value_ops slang_ops_slice = { ops_slice_retain, ops_slice_release, NULL };
+static void ops_slice_retain(void *slot) { zell_slice_retain((zell_slice *)slot); }
+static void ops_slice_release(void *slot) { zell_slice_release((zell_slice *)slot); }
+const zell_value_ops zell_ops_slice = { ops_slice_retain, ops_slice_release, NULL };
 
 /* ---- for the cycle collector (cycles.c) ---- */
 
-void slang__object_free(slang_object *o) { object_free(o); }
-void slang__object_uncount(void) { stats_add(-1, 0); }
-void slang__object_recount(void) { stats_add(1, 0); }
+void zell__object_free(zell_object *o) { object_free(o); }
+void zell__object_uncount(void) { stats_add(-1, 0); }
+void zell__object_recount(void) { stats_add(1, 0); }
 
 /* Collection epoch (ABI.md 3.8): bumped when a cycle collection starts and
  * when it ends. Compiled code reads it when it pins a `*T` of a cyclic type
@@ -418,21 +418,21 @@ void slang__object_recount(void) { stats_add(1, 0); }
  * overlapped the pin, that release cannot leave an unrecorded garbage
  * cycle behind (every other reference dropped meanwhile was a recorded
  * decrement), so it skips recording a possible root. */
-int64_t slang_cycles_epoch;
+int64_t zell_cycles_epoch;
 
-void slang_ptr_release_noroot(void *payload, int64_t epoch) {
+void zell_ptr_release_noroot(void *payload, int64_t epoch) {
     if (!payload) return;
-    slang_object *o = (slang_object *)((char *)payload - sizeof(slang_object));
+    zell_object *o = (zell_object *)((char *)payload - sizeof(zell_object));
     int64_t n = __atomic_load_n(&o->refcount, __ATOMIC_RELAXED);
-    if (n >= 0 && (n & SLANG_RC_CYCLIC) && epoch == __atomic_load_n(&slang_cycles_epoch, __ATOMIC_ACQUIRE)) {
+    if (n >= 0 && (n & ZELL_RC_CYCLIC) && epoch == __atomic_load_n(&zell_cycles_epoch, __ATOMIC_ACQUIRE)) {
         /* One thread and not the last reference: a plain decrement (no
          * collection runs concurrently, so DIRTY is not needed). */
-        if (!__atomic_load_n(&slang_threaded, __ATOMIC_RELAXED) && (n & SLANG_RC_COUNT_MASK) > 1) {
+        if (!__atomic_load_n(&zell_threaded, __ATOMIC_RELAXED) && (n & ZELL_RC_COUNT_MASK) > 1) {
             __atomic_store_n(&o->refcount, n - 1, __ATOMIC_RELAXED);
             return;
         }
-        slang__cycles_release_noroot(o);
+        zell__cycles_release_noroot(o);
         return;
     }
-    slang_release(o);
+    zell_release(o);
 }

@@ -6,24 +6,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool slang__pbkdf2(int alg, const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen, uint64_t iter,
+bool zell__pbkdf2(int alg, const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen, uint64_t iter,
                    uint8_t *out, size_t n) {
-    size_t hl = slang__hash_size(alg);
+    size_t hl = zell__hash_size(alg);
     if (!hl || iter == 0) return false;
-    slang_hmac_ctx base, c;
-    slang__hmac_init(&base, alg, pw, pwlen);
+    zell_hmac_ctx base, c;
+    zell__hmac_init(&base, alg, pw, pwlen);
     uint8_t u[64], t[64], ctr[4];
     for (uint32_t block = 1; n > 0; block++) {
-        slang__st32be(ctr, block);
+        zell__st32be(ctr, block);
         c = base;
-        slang__hmac_update(&c, salt, slen);
-        slang__hmac_update(&c, ctr, 4);
-        slang__hmac_final(&c, u);
+        zell__hmac_update(&c, salt, slen);
+        zell__hmac_update(&c, ctr, 4);
+        zell__hmac_final(&c, u);
         memcpy(t, u, hl);
         for (uint64_t i = 1; i < iter; i++) {
             c = base;
-            slang__hmac_update(&c, u, hl);
-            slang__hmac_final(&c, u);
+            zell__hmac_update(&c, u, hl);
+            zell__hmac_final(&c, u);
             for (size_t j = 0; j < hl; j++) t[j] ^= u[j];
         }
         size_t k = n < hl ? n : hl;
@@ -31,10 +31,10 @@ bool slang__pbkdf2(int alg, const uint8_t *pw, size_t pwlen, const uint8_t *salt
         out += k;
         n -= k;
     }
-    slang__crypto_wipe(&base, sizeof base);
-    slang__crypto_wipe(&c, sizeof c);
-    slang__crypto_wipe(u, sizeof u);
-    slang__crypto_wipe(t, sizeof t);
+    zell__crypto_wipe(&base, sizeof base);
+    zell__crypto_wipe(&c, sizeof c);
+    zell__crypto_wipe(u, sizeof u);
+    zell__crypto_wipe(t, sizeof t);
     return true;
 }
 
@@ -81,7 +81,7 @@ static void block_mix(const uint32_t *B, uint32_t *Y, size_t r) {
 static void romix(uint8_t *Bbytes, size_t r, uint64_t N, uint32_t *V, uint32_t *XY) {
     size_t words = 32 * r;
     uint32_t *X = XY, *Y = XY + words;
-    for (size_t k = 0; k < words; k++) X[k] = slang__ld32le(Bbytes + 4 * k);
+    for (size_t k = 0; k < words; k++) X[k] = zell__ld32le(Bbytes + 4 * k);
     for (uint64_t i = 0; i < N; i++) {
         memcpy(V + i * words, X, words * 4);
         block_mix(X, Y, r);
@@ -93,11 +93,11 @@ static void romix(uint8_t *Bbytes, size_t r, uint64_t N, uint32_t *V, uint32_t *
         block_mix(X, Y, r);
         memcpy(X, Y, words * 4);
     }
-    for (size_t k = 0; k < words; k++) slang__st32le(Bbytes + 4 * k, X[k]);
+    for (size_t k = 0; k < words; k++) zell__st32le(Bbytes + 4 * k, X[k]);
 }
 
 /* 0 ok, 1 bad parameters, 2 out of memory. */
-int slang__scrypt(const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen, uint64_t N, uint64_t r,
+int zell__scrypt(const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen, uint64_t N, uint64_t r,
                   uint64_t p, uint8_t *out, size_t n) {
     if (N < 2 || (N & (N - 1)) || r == 0 || p == 0 || r * p >= (1u << 30) || n == 0) return 1;
     if (r > ((size_t)1 << 24) || N > ((uint64_t)1 << 40) / (128 * r)) return 1;
@@ -109,12 +109,12 @@ int slang__scrypt(const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t s
         free(B); free(V); free(XY);
         return 2;
     }
-    slang__pbkdf2(SLANG_HASH_SHA256, pw, pwlen, salt, slen, 1, B, blen);
+    zell__pbkdf2(ZELL_HASH_SHA256, pw, pwlen, salt, slen, 1, B, blen);
     for (uint64_t i = 0; i < p; i++) romix(B + i * 128 * r, (size_t)r, N, V, XY);
-    slang__pbkdf2(SLANG_HASH_SHA256, pw, pwlen, B, blen, 1, out, n);
-    slang__crypto_wipe(B, blen);
-    slang__crypto_wipe(V, (size_t)(128 * r * N));
-    slang__crypto_wipe(XY, 256 * r);
+    zell__pbkdf2(ZELL_HASH_SHA256, pw, pwlen, B, blen, 1, out, n);
+    zell__crypto_wipe(B, blen);
+    zell__crypto_wipe(V, (size_t)(128 * r * N));
+    zell__crypto_wipe(XY, 256 * r);
     free(B);
     free(V);
     free(XY);

@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_ASSERT_H
-#define SLANG_STUB_ASSERT_H
+#ifndef ZELL_STUB_ASSERT_H
+#define ZELL_STUB_ASSERT_H
 #ifdef NDEBUG
 #define assert(e) ((void)0)
 #else

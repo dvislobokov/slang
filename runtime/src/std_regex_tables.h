@@ -1,6 +1,6 @@
 /* Generated from Go 1.24 unicode tables (Unicode 15.0.0) by a one-off generator; do not edit.
  * Ranges are inclusive [lo, hi] pairs, sorted. */
-static const uint32_t slang__regex_uranges[] = {
+static const uint32_t zell__regex_uranges[] = {
     0x1E900,0x1E94B, 0x1E950,0x1E959, 0x1E95E,0x1E95F,
     0x11700,0x1171A, 0x1171D,0x1172B, 0x11730,0x11746,
     0x14400,0x14646,
@@ -1085,7 +1085,7 @@ static const uint32_t slang__regex_uranges[] = {
     0x3000,0x3000,
 };
 
-static const struct { const char *name; int32_t off, cnt; } slang__regex_uclasses[] = {
+static const struct { const char *name; int32_t off, cnt; } zell__regex_uclasses[] = {
     {"Adlam", 0, 3},
     {"Ahom", 3, 3},
     {"Anatolian_Hieroglyphs", 6, 1},
@@ -1287,7 +1287,7 @@ static const struct { const char *name; int32_t off, cnt; } slang__regex_uclasse
     {"Zs", 5808, 7},
 };
 
-static const uint32_t slang__regex_fold[] = {
+static const uint32_t zell__regex_fold[] = {
     0x41,0x61, 0x42,0x62, 0x43,0x63, 0x44,0x64, 0x45,0x65, 0x46,0x66,
     0x47,0x67, 0x48,0x68, 0x49,0x69, 0x4A,0x6A, 0x4B,0x6B, 0x4C,0x6C,
     0x4D,0x6D, 0x4E,0x6E, 0x4F,0x6F, 0x50,0x70, 0x51,0x71, 0x52,0x72,

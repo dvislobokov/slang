@@ -1,4 +1,4 @@
-/* std_strings_ext.c - more std.strings functions (slang_strings_*), Go
+/* std_strings_ext.c - more std.strings functions (zell_strings_*), Go
  * semantics unless ABI.md section 14 says otherwise. Offsets and counts are
  * in bytes except where "runes" is stated; invalid UTF-8 bytes count as one
  * rune each (decoded as U+FFFD). */
@@ -6,18 +6,18 @@
 
 #include <string.h>
 
-static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
-static inline const char *sdata(const slang_string *s) { return s ? s->data : ""; }
+static inline int64_t slen(const zell_string *s) { return s ? s->len : 0; }
+static inline const char *sdata(const zell_string *s) { return s ? s->data : ""; }
 
-static slang_string *same(const slang_string *s) {
-    if (!s) return slang__string_alloc(0);
-    slang_retain((void *)s);
-    return (slang_string *)s;
+static zell_string *same(const zell_string *s) {
+    if (!s) return zell__string_alloc(0);
+    zell_retain((void *)s);
+    return (zell_string *)s;
 }
 
-static slang_string *sub(const slang_string *s, int64_t lo, int64_t hi) {
+static zell_string *sub(const zell_string *s, int64_t lo, int64_t hi) {
     if (lo == 0 && hi == slen(s)) return same(s);
-    return slang__string_sub(s, lo, hi);
+    return zell__string_sub(s, lo, hi);
 }
 
 static bool is_space(int32_t r) {
@@ -32,38 +32,38 @@ static bool is_space(int32_t r) {
 }
 
 /* Start offset of the rune that ends at hi (hi > 0). */
-static int64_t rune_start_before(const slang_string *s, int64_t hi, int32_t *r) {
+static int64_t rune_start_before(const zell_string *s, int64_t hi, int32_t *r) {
     const unsigned char *p = (const unsigned char *)sdata(s);
     int64_t st = hi - 1;
     while (st > 0 && hi - st < 4 && (p[st] & 0xC0) == 0x80) st--;
     int64_t w;
-    int32_t c = slang_string_decode_rune(s, st, &w);
+    int32_t c = zell_string_decode_rune(s, st, &w);
     if (st + w != hi) { st = hi - 1; c = 0xFFFD; }
     *r = c;
     return st;
 }
 
 /* Appends s[off:off+n] (a view or a copy) to out. */
-static void push(slang_slice *out, const slang_string *s, int64_t off, int64_t n) {
-    slang_string *x = slang__string_sub(s, off, off + n);
-    slang_slice_append(out, 8, &slang_ops_ref, &x);
-    slang_release(x);
+static void push(zell_slice *out, const zell_string *s, int64_t off, int64_t n) {
+    zell_string *x = zell__string_sub(s, off, off + n);
+    zell_slice_append(out, 8, &zell_ops_ref, &x);
+    zell_release(x);
 }
 
 /* ---- Fields ---- */
 
-static inline bool field_space(const slang_string *s, int64_t i, int64_t *w) {
+static inline bool field_space(const zell_string *s, int64_t i, int64_t *w) {
     unsigned char c = (unsigned char)s->data[i];
     if (c < 0x80) {
         *w = 1;
         return c == ' ' || (c >= '\t' && c <= '\r');
     }
-    int32_t r = slang_string_decode_rune(s, i, w);
+    int32_t r = zell_string_decode_rune(s, i, w);
     return is_space(r) && !(r == 0xFFFD && *w == 1);
 }
 
 /* Fields' pieces are views in one view block, like Split's. */
-void slang_strings_fields(const slang_string *s, slang_slice *out) {
+void zell_strings_fields(const zell_string *s, zell_slice *out) {
     int64_t n = slen(s), count = 0;
     for (int64_t i = 0, in = 0; i < n;) {
         int64_t w;
@@ -72,27 +72,27 @@ void slang_strings_fields(const slang_string *s, slang_slice *out) {
         in = !sp;
         i += w;
     }
-    slang_slice_new_ops(out, 8, count, count, &slang_ops_ref);
+    zell_slice_new_ops(out, 8, count, count, &zell_ops_ref);
     if (count == 0) return;
-    slang_string **slots = out->data;
-    slang__vblock *b = slang__vblock_new(s, count);
+    zell_string **slots = out->data;
+    zell__vblock *b = zell__vblock_new(s, count);
     int64_t start = -1, k = 0;
     for (int64_t i = 0; i < n;) {
         int64_t w;
         bool sp = field_space(s, i, &w);
-        if (sp && start >= 0) { slots[k++] = slang__vblock_add(b, s->data + start, i - start); start = -1; }
+        if (sp && start >= 0) { slots[k++] = zell__vblock_add(b, s->data + start, i - start); start = -1; }
         if (!sp && start < 0) start = i;
         i += w;
     }
-    if (start >= 0) slots[k++] = slang__vblock_add(b, s->data + start, n - start);
-    if (b) slang__vblock_done(b);
+    if (start >= 0) slots[k++] = zell__vblock_add(b, s->data + start, n - start);
+    if (b) zell__vblock_done(b);
 }
 
 /* ---- Count / LastIndex ---- */
 
-int64_t slang_strings_count(const slang_string *s, const slang_string *substr) {
+int64_t zell_strings_count(const zell_string *s, const zell_string *substr) {
     int64_t n = slen(s), m = slen(substr), c = 0;
-    if (m == 0) return slang_string_rune_count(s) + 1;
+    if (m == 0) return zell_string_rune_count(s) + 1;
     const char *p = sdata(s), *q = sdata(substr);
     for (int64_t i = 0; i + m <= n;) {
         if (memcmp(p + i, q, (size_t)m) == 0) { c++; i += m; } else i++;
@@ -100,7 +100,7 @@ int64_t slang_strings_count(const slang_string *s, const slang_string *substr) {
     return c;
 }
 
-int64_t slang_strings_last_index(const slang_string *s, const slang_string *substr) {
+int64_t zell_strings_last_index(const zell_string *s, const zell_string *substr) {
     int64_t n = slen(s), m = slen(substr);
     if (m > n) return -1;
     const char *p = sdata(s), *q = sdata(substr);
@@ -111,22 +111,22 @@ int64_t slang_strings_last_index(const slang_string *s, const slang_string *subs
 
 /* ---- trimming ---- */
 
-slang_string *slang_strings_trim_prefix(const slang_string *s, const slang_string *prefix) {
-    if (slen(prefix) && slang_string_has_prefix(s, prefix)) return sub(s, slen(prefix), slen(s));
+zell_string *zell_strings_trim_prefix(const zell_string *s, const zell_string *prefix) {
+    if (slen(prefix) && zell_string_has_prefix(s, prefix)) return sub(s, slen(prefix), slen(s));
     return same(s);
 }
 
-slang_string *slang_strings_trim_suffix(const slang_string *s, const slang_string *suffix) {
-    if (slen(suffix) && slang_string_has_suffix(s, suffix)) return sub(s, 0, slen(s) - slen(suffix));
+zell_string *zell_strings_trim_suffix(const zell_string *s, const zell_string *suffix) {
+    if (slen(suffix) && zell_string_has_suffix(s, suffix)) return sub(s, 0, slen(s) - slen(suffix));
     return same(s);
 }
 
 /* Is rune r (of width w at s) in cutset? Invalid bytes match only the same byte. */
-static bool in_cutset(const slang_string *cutset, int32_t r, bool invalid, unsigned char byte) {
+static bool in_cutset(const zell_string *cutset, int32_t r, bool invalid, unsigned char byte) {
     int64_t n = slen(cutset);
     for (int64_t i = 0; i < n;) {
         int64_t w;
-        int32_t c = slang_string_decode_rune(cutset, i, &w);
+        int32_t c = zell_string_decode_rune(cutset, i, &w);
         bool cinv = c == 0xFFFD && w == 1;
         if (invalid ? (cinv && (unsigned char)sdata(cutset)[i] == byte) : (!cinv && c == r)) return true;
         i += w;
@@ -134,18 +134,18 @@ static bool in_cutset(const slang_string *cutset, int32_t r, bool invalid, unsig
     return false;
 }
 
-slang_string *slang_strings_trim_left(const slang_string *s, const slang_string *cutset) {
+zell_string *zell_strings_trim_left(const zell_string *s, const zell_string *cutset) {
     int64_t n = slen(s), lo = 0;
     while (lo < n) {
         int64_t w;
-        int32_t r = slang_string_decode_rune(s, lo, &w);
+        int32_t r = zell_string_decode_rune(s, lo, &w);
         if (!in_cutset(cutset, r, r == 0xFFFD && w == 1, (unsigned char)sdata(s)[lo])) break;
         lo += w;
     }
     return sub(s, lo, n);
 }
 
-slang_string *slang_strings_trim_right(const slang_string *s, const slang_string *cutset) {
+zell_string *zell_strings_trim_right(const zell_string *s, const zell_string *cutset) {
     int64_t hi = slen(s);
     while (hi > 0) {
         int32_t r;
@@ -159,17 +159,17 @@ slang_string *slang_strings_trim_right(const slang_string *s, const slang_string
 
 /* ---- SplitN ---- */
 
-void slang_strings_split_n(const slang_string *s, const slang_string *sep, int64_t n,
-                           slang_slice *out) {
-    if (n < 0) { slang_strings_split(s, sep, out); return; }
-    slang_slice_new_ops(out, 8, 0, n < 16 ? n : 16, &slang_ops_ref);
+void zell_strings_split_n(const zell_string *s, const zell_string *sep, int64_t n,
+                           zell_slice *out) {
+    if (n < 0) { zell_strings_split(s, sep, out); return; }
+    zell_slice_new_ops(out, 8, 0, n < 16 ? n : 16, &zell_ops_ref);
     if (n == 0) return;
     int64_t len = slen(s), m = slen(sep), start = 0, i = 0;
     const char *p = sdata(s), *q = sdata(sep);
     if (m == 0) {
         while (i < len && out->len < n - 1) {
             int64_t w;
-            slang_string_decode_rune(s, i, &w);
+            zell_string_decode_rune(s, i, &w);
             push(out, s, i, w);
             i += w;
         }
@@ -190,80 +190,80 @@ void slang_strings_split_n(const slang_string *s, const slang_string *sep, int64
 
 /* ---- EqualFold / Compare ---- */
 
-bool slang_strings_equal_fold(const slang_string *a, const slang_string *b) {
+bool zell_strings_equal_fold(const zell_string *a, const zell_string *b) {
     /* simple folding: lower(upper(x)) maps ς, σ, Σ (and ſ, s, S) together */
-    slang_string *ua = slang_strings_to_upper(a), *ub = slang_strings_to_upper(b);
-    slang_string *la = slang_strings_to_lower(ua), *lb = slang_strings_to_lower(ub);
-    bool eq = slang_string_eq(la, lb);
-    slang_release(ua); slang_release(ub); slang_release(la); slang_release(lb);
+    zell_string *ua = zell_strings_to_upper(a), *ub = zell_strings_to_upper(b);
+    zell_string *la = zell_strings_to_lower(ua), *lb = zell_strings_to_lower(ub);
+    bool eq = zell_string_eq(la, lb);
+    zell_release(ua); zell_release(ub); zell_release(la); zell_release(lb);
     return eq;
 }
 
-int64_t slang_strings_compare(const slang_string *a, const slang_string *b) {
-    return slang_string_compare(a, b);
+int64_t zell_strings_compare(const zell_string *a, const zell_string *b) {
+    return zell_string_compare(a, b);
 }
 
 /* ---- Reverse / Pad / Title ---- */
 
-slang_string *slang_strings_reverse(const slang_string *s) {
+zell_string *zell_strings_reverse(const zell_string *s) {
     int64_t n = slen(s);
-    slang_string *r = slang__string_alloc(n);
+    zell_string *r = zell__string_alloc(n);
     for (int64_t i = 0; i < n;) {
         int64_t w;
-        slang_string_decode_rune(s, i, &w);
+        zell_string_decode_rune(s, i, &w);
         memcpy(r->data + (n - i - w), sdata(s) + i, (size_t)w);
         i += w;
     }
     return r;
 }
 
-static slang_string *pad(const slang_string *s, int64_t width, const slang_string *padding, bool left) {
-    int64_t have = slang_string_rune_count(s);
+static zell_string *pad(const zell_string *s, int64_t width, const zell_string *padding, bool left) {
+    int64_t have = zell_string_rune_count(s);
     if (have >= width || slen(padding) == 0) return same(s);
     int64_t need = width - have;
     /* `need` runes of padding cycled from `padding`: at most 4 bytes each */
-    if (need > (INT64_MAX / 8)) slang_panic("strings: Pad width overflow");
-    char *buf = slang_alloc(need * 4 + slen(s) + 1);
+    if (need > (INT64_MAX / 8)) zell_panic("strings: Pad width overflow");
+    char *buf = zell_alloc(need * 4 + slen(s) + 1);
     int64_t len = 0, pi = 0, pn = slen(padding);
     if (!left) { memcpy(buf, sdata(s), (size_t)slen(s)); len = slen(s); }
     for (int64_t k = 0; k < need; k++) {
         int64_t w;
-        slang_string_decode_rune(padding, pi, &w);
+        zell_string_decode_rune(padding, pi, &w);
         memcpy(buf + len, sdata(padding) + pi, (size_t)w);
         len += w;
         pi += w;
         if (pi >= pn) pi = 0;
     }
     if (left) { memcpy(buf + len, sdata(s), (size_t)slen(s)); len += slen(s); }
-    slang_string *r = slang_string_new(buf, len);
-    slang_free(buf);
+    zell_string *r = zell_string_new(buf, len);
+    zell_free(buf);
     return r;
 }
 
-slang_string *slang_strings_pad_left(const slang_string *s, int64_t width, const slang_string *padding) {
+zell_string *zell_strings_pad_left(const zell_string *s, int64_t width, const zell_string *padding) {
     return pad(s, width, padding, true);
 }
 
-slang_string *slang_strings_pad_right(const slang_string *s, int64_t width, const slang_string *padding) {
+zell_string *zell_strings_pad_right(const zell_string *s, int64_t width, const zell_string *padding) {
     return pad(s, width, padding, false);
 }
 
-slang_string *slang_strings_title(const slang_string *s) {
+zell_string *zell_strings_title(const zell_string *s) {
     int64_t n = slen(s);
-    char *buf = slang_alloc(n + 1);
+    char *buf = zell_alloc(n + 1);
     int64_t len = 0;
     bool word_start = true;
     for (int64_t i = 0; i < n;) {
         int64_t w;
-        int32_t r = slang_string_decode_rune(s, i, &w);
+        int32_t r = zell_string_decode_rune(s, i, &w);
         bool sp = is_space(r) && !(r == 0xFFFD && w == 1);
         if (word_start && !sp) {
-            slang_string *one = slang_string_new(sdata(s) + i, w);
-            slang_string *up = slang_strings_to_upper(one);   /* never grows (ABI 14.2) */
+            zell_string *one = zell_string_new(sdata(s) + i, w);
+            zell_string *up = zell_strings_to_upper(one);   /* never grows (ABI 14.2) */
             memcpy(buf + len, up->data, (size_t)up->len);
             len += up->len;
-            slang_release(up);
-            slang_release(one);
+            zell_release(up);
+            zell_release(one);
         } else {
             memcpy(buf + len, sdata(s) + i, (size_t)w);
             len += w;
@@ -271,43 +271,43 @@ slang_string *slang_strings_title(const slang_string *s) {
         word_start = sp;
         i += w;
     }
-    slang_string *res = slang_string_new(buf, len);
-    slang_free(buf);
+    zell_string *res = zell_string_new(buf, len);
+    zell_free(buf);
     return res;
 }
 
 /* ---- runes / bytes ---- */
 
-void slang_strings_runes(const slang_string *s, slang_slice *out) {
-    int64_t cnt = slang_string_rune_count(s), n = slen(s);
-    slang_slice_new(out, 4, cnt, cnt);
+void zell_strings_runes(const zell_string *s, zell_slice *out) {
+    int64_t cnt = zell_string_rune_count(s), n = slen(s);
+    zell_slice_new(out, 4, cnt, cnt);
     int32_t *rs = out->data;
     for (int64_t i = 0, k = 0; i < n; k++) {
         int64_t w;
-        rs[k] = slang_string_decode_rune(s, i, &w);
+        rs[k] = zell_string_decode_rune(s, i, &w);
         i += w;
     }
 }
 
-slang_string *slang_strings_from_runes(const slang_slice *runes) {
+zell_string *zell_strings_from_runes(const zell_slice *runes) {
     int64_t cnt = runes ? runes->len : 0;
-    if (cnt == 0) return slang__string_alloc(0);
+    if (cnt == 0) return zell__string_alloc(0);
     const int32_t *rs = runes->data;
-    char *buf = slang_alloc(cnt * 4 + 1);
+    char *buf = zell_alloc(cnt * 4 + 1);
     int64_t len = 0;
     for (int64_t i = 0; i < cnt; i++) {
         int32_t r = rs[i];
         if (r < 0 || r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF)) r = 0xFFFD;
-        len += slang__utf8_encode(buf + len, r);
+        len += zell__utf8_encode(buf + len, r);
     }
-    slang_string *res = slang_string_new(buf, len);
-    slang_free(buf);
+    zell_string *res = zell_string_new(buf, len);
+    zell_free(buf);
     return res;
 }
 
-void slang_strings_bytes(const slang_string *s, slang_slice *out) { slang_string_to_bytes(out, s); }
+void zell_strings_bytes(const zell_string *s, zell_slice *out) { zell_string_to_bytes(out, s); }
 
-slang_string *slang_strings_from_bytes(const slang_slice *bytes) {
-    if (!bytes || bytes->len == 0) return slang__string_alloc(0);
-    return slang_string_from_bytes(bytes);
+zell_string *zell_strings_from_bytes(const zell_slice *bytes) {
+    if (!bytes || bytes->len == 0) return zell__string_alloc(0);
+    return zell_string_from_bytes(bytes);
 }

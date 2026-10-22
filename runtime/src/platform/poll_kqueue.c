@@ -22,12 +22,12 @@
 #include <unistd.h>
 
 #if defined(EVFILT_USER)
-#define SLANG_KQ_USER 1
+#define ZELL_KQ_USER 1
 #else
-#define SLANG_KQ_USER 0
+#define ZELL_KQ_USER 0
 #endif
 
-struct slang__plat_poller {
+struct zell__plat_poller {
     int kq;
     int pipe_rd, pipe_wr;  /* self-pipe when there is no EVFILT_USER */
 };
@@ -40,8 +40,8 @@ static void set_nonblock_cloexec(int fd) {
     fcntl(fd, F_SETFD, FD_CLOEXEC);
 }
 
-slang__plat_poller *slang__plat_poller_new(void) {
-    slang__plat_poller *p = malloc(sizeof *p);
+zell__plat_poller *zell__plat_poller_new(void) {
+    zell__plat_poller *p = malloc(sizeof *p);
     if (!p) return NULL;
     p->kq = kqueue();
     p->pipe_rd = p->pipe_wr = -1;
@@ -51,8 +51,8 @@ slang__plat_poller *slang__plat_poller_new(void) {
     }
     fcntl(p->kq, F_SETFD, FD_CLOEXEC);
     struct kevent kev;
-#if SLANG_KQ_USER
-    EV_SET(&kev, WAKE_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, (void *)(uintptr_t)SLANG_PLAT_WAKE_TOKEN);
+#if ZELL_KQ_USER
+    EV_SET(&kev, WAKE_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, (void *)(uintptr_t)ZELL_PLAT_WAKE_TOKEN);
     if (kevent(p->kq, &kev, 1, NULL, 0, NULL) != 0) {
         close(p->kq);
         free(p);
@@ -69,7 +69,7 @@ slang__plat_poller *slang__plat_poller_new(void) {
     set_nonblock_cloexec(fds[1]);
     p->pipe_rd = fds[0];
     p->pipe_wr = fds[1];
-    EV_SET(&kev, (uintptr_t)p->pipe_rd, EVFILT_READ, EV_ADD, 0, 0, (void *)(uintptr_t)SLANG_PLAT_WAKE_TOKEN);
+    EV_SET(&kev, (uintptr_t)p->pipe_rd, EVFILT_READ, EV_ADD, 0, 0, (void *)(uintptr_t)ZELL_PLAT_WAKE_TOKEN);
     if (kevent(p->kq, &kev, 1, NULL, 0, NULL) != 0) {
         close(p->kq);
         close(fds[0]);
@@ -82,7 +82,7 @@ slang__plat_poller *slang__plat_poller_new(void) {
     return p;
 }
 
-void slang__plat_poller_free(slang__plat_poller *p) {
+void zell__plat_poller_free(zell__plat_poller *p) {
     if (!p) return;
     close(p->kq);
     if (p->pipe_rd >= 0) close(p->pipe_rd);
@@ -90,20 +90,20 @@ void slang__plat_poller_free(slang__plat_poller *p) {
     free(p);
 }
 
-int slang__plat_poller_arm(slang__plat_poller *p, int64_t fd, int32_t interest, uint64_t token, bool registered) {
+int zell__plat_poller_arm(zell__plat_poller *p, int64_t fd, int32_t interest, uint64_t token, bool registered) {
     (void)registered;
     struct kevent ch[2], res[2];
     int n = 0;
     void *ud = (void *)(uintptr_t)token;
     if (interest == 0) {
-        slang__plat_poller_remove(p, fd);
+        zell__plat_poller_remove(p, fd);
         return 0;
     }
-    if (interest & SLANG_PLAT_READ) {
+    if (interest & ZELL_PLAT_READ) {
         EV_SET(&ch[n], (uintptr_t)fd, EVFILT_READ, EV_ADD | EV_ENABLE | EV_ONESHOT | EV_RECEIPT, 0, 0, ud);
         n++;
     }
-    if (interest & SLANG_PLAT_WRITE) {
+    if (interest & ZELL_PLAT_WRITE) {
         EV_SET(&ch[n], (uintptr_t)fd, EVFILT_WRITE, EV_ADD | EV_ENABLE | EV_ONESHOT | EV_RECEIPT, 0, 0, ud);
         n++;
     }
@@ -116,7 +116,7 @@ int slang__plat_poller_arm(slang__plat_poller *p, int64_t fd, int32_t interest, 
     return 0;
 }
 
-void slang__plat_poller_remove(slang__plat_poller *p, int64_t fd) {
+void zell__plat_poller_remove(zell__plat_poller *p, int64_t fd) {
     struct kevent ch[2], res[2];
     EV_SET(&ch[0], (uintptr_t)fd, EVFILT_READ, EV_DELETE | EV_RECEIPT, 0, 0, NULL);
     EV_SET(&ch[1], (uintptr_t)fd, EVFILT_WRITE, EV_DELETE | EV_RECEIPT, 0, 0, NULL);
@@ -125,7 +125,7 @@ void slang__plat_poller_remove(slang__plat_poller *p, int64_t fd) {
     while (r < 0 && errno == EINTR);
 }
 
-int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int max, int64_t timeout_ms) {
+int zell__plat_poller_wait(zell__plat_poller *p, zell__plat_event *evs, int max, int64_t timeout_ms) {
     struct kevent buf[256];
     if (max > 256) max = 256;
     if (max < 1) return 0;
@@ -140,24 +140,24 @@ int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int m
     int out = 0;
     for (int i = 0; i < n; i++) {
         uint64_t token = (uint64_t)(uintptr_t)buf[i].udata;
-        if (token == (uint64_t)(uintptr_t)SLANG_PLAT_WAKE_TOKEN) {
+        if (token == (uint64_t)(uintptr_t)ZELL_PLAT_WAKE_TOKEN) {
             if (p->pipe_rd >= 0) {
                 char drain[64];
                 while (read(p->pipe_rd, drain, sizeof drain) > 0) {}
             }
-            evs[out].token = SLANG_PLAT_WAKE_TOKEN;
+            evs[out].token = ZELL_PLAT_WAKE_TOKEN;
             evs[out].events = 0;
             out++;
             continue;
         }
         if ((buf[i].flags & EV_ERROR) && buf[i].data != 0) {
             evs[out].token = token;
-            evs[out].events = SLANG_PLAT_ERROR | SLANG_PLAT_READ | SLANG_PLAT_WRITE;
+            evs[out].events = ZELL_PLAT_ERROR | ZELL_PLAT_READ | ZELL_PLAT_WRITE;
             out++;
             continue;
         }
-        int32_t e = buf[i].filter == EVFILT_READ ? SLANG_PLAT_READ : buf[i].filter == EVFILT_WRITE ? SLANG_PLAT_WRITE : 0;
-        if (buf[i].flags & EV_EOF) e |= buf[i].fflags ? SLANG_PLAT_ERROR | SLANG_PLAT_READ | SLANG_PLAT_WRITE : 0;
+        int32_t e = buf[i].filter == EVFILT_READ ? ZELL_PLAT_READ : buf[i].filter == EVFILT_WRITE ? ZELL_PLAT_WRITE : 0;
+        if (buf[i].flags & EV_EOF) e |= buf[i].fflags ? ZELL_PLAT_ERROR | ZELL_PLAT_READ | ZELL_PLAT_WRITE : 0;
         evs[out].token = token;
         evs[out].events = e;
         out++;
@@ -165,10 +165,10 @@ int slang__plat_poller_wait(slang__plat_poller *p, slang__plat_event *evs, int m
     return out;
 }
 
-void slang__plat_poller_wake(slang__plat_poller *p) {
-#if SLANG_KQ_USER
+void zell__plat_poller_wake(zell__plat_poller *p) {
+#if ZELL_KQ_USER
     struct kevent kev;
-    EV_SET(&kev, WAKE_IDENT, EVFILT_USER, 0, NOTE_TRIGGER, 0, (void *)(uintptr_t)SLANG_PLAT_WAKE_TOKEN);
+    EV_SET(&kev, WAKE_IDENT, EVFILT_USER, 0, NOTE_TRIGGER, 0, (void *)(uintptr_t)ZELL_PLAT_WAKE_TOKEN);
     int r;
     do r = kevent(p->kq, &kev, 1, NULL, 0, NULL);
     while (r < 0 && errno == EINTR);
@@ -180,12 +180,12 @@ void slang__plat_poller_wake(slang__plat_poller *p) {
 #endif
 }
 
-const char *slang__plat_poller_backend(slang__plat_poller *p) {
+const char *zell__plat_poller_backend(zell__plat_poller *p) {
     (void)p;
     return "kqueue";
 }
 
 #else
 /* Not macOS/BSD: the poller comes from poll_epoll.c. */
-typedef int slang__poll_kqueue_unused;
+typedef int zell__poll_kqueue_unused;
 #endif

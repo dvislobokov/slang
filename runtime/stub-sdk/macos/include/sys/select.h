@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS_SELECT_H
-#define SLANG_STUB_SYS_SELECT_H
+#ifndef ZELL_STUB_SYS_SELECT_H
+#define ZELL_STUB_SYS_SELECT_H
 #include <sys/types.h>
 #include <sys/time.h>
 #define FD_SETSIZE 1024

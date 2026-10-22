@@ -22,7 +22,7 @@ static int64_t days_from_civil(int64_t y, int64_t m, int64_t d) {
 
 static bool is_leap(int64_t y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
 
-void slang__plat_utc_tm(int64_t t, struct tm *tm) {
+void zell__plat_utc_tm(int64_t t, struct tm *tm) {
     int64_t days = t / 86400, rem = t % 86400;
     if (rem < 0) { rem += 86400; days--; }
     memset(tm, 0, sizeof *tm);
@@ -47,7 +47,7 @@ void slang__plat_utc_tm(int64_t t, struct tm *tm) {
     tm->tm_yday = (int)(days - days_from_civil(y, 1, 1));
 }
 
-int64_t slang__plat_timegm(const struct tm *tm) {
+int64_t zell__plat_timegm(const struct tm *tm) {
     int64_t y = (int64_t)tm->tm_year + 1900, mon = tm->tm_mon;
     y += mon / 12;
     mon %= 12;
@@ -58,8 +58,8 @@ int64_t slang__plat_timegm(const struct tm *tm) {
 
 /* ---- strftime / strptime in the "C" locale -------------------------------
  * Always compiled (the POSIX build tests them against the C library);
- * they are the platform's slang__plat_strftime/strptime on Windows and
- * musl (!SLANG_PLAT_LIBC_TIMEFMT). */
+ * they are the platform's zell__plat_strftime/strptime on Windows and
+ * musl (!ZELL_PLAT_LIBC_TIMEFMT). */
 
 static const char *const g_days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 static const char *const g_mons[] = {"January", "February", "March", "April", "May", "June",
@@ -135,7 +135,7 @@ static void fmt(out *o, const char *f, const struct tm *tm) {
         case 'P': puts_(o, tm->tm_hour < 12 ? "am" : "pm"); break;
         case 'r': fmt(o, "%I:%M:%S %p", tm); break;
         case 'R': fmt(o, "%H:%M", tm); break;
-        case 's': putn(o, slang__plat_timegm(tm), 0, 0); break;
+        case 's': putn(o, zell__plat_timegm(tm), 0, 0); break;
         case 'S': putn(o, tm->tm_sec, 2, '0'); break;
         case 't': put(o, "\t", 1); break;
         case 'T': fmt(o, "%H:%M:%S", tm); break;
@@ -155,7 +155,7 @@ static void fmt(out *o, const char *f, const struct tm *tm) {
     }
 }
 
-size_t slang__plat_strftime_portable(char *buf, size_t cap, const char *f, const struct tm *tm) {
+size_t zell__plat_strftime_portable(char *buf, size_t cap, const char *f, const struct tm *tm) {
     if (cap == 0) return 0;
     out o = { buf, cap, 0, false };
     fmt(&o, f, tm);
@@ -258,7 +258,7 @@ static const char *parse(const char *s, const char *f, struct tm *tm, long *gmto
     return s;
 }
 
-const char *slang__plat_strptime_portable(const char *s, const char *f, struct tm *tm, long *gmtoff) {
+const char *zell__plat_strptime_portable(const char *s, const char *f, struct tm *tm, long *gmtoff) {
     int century = -1, pm = -1;
     *gmtoff = 0;
     const char *end = parse(s, f, tm, gmtoff, &century, &pm);
@@ -268,11 +268,11 @@ const char *slang__plat_strptime_portable(const char *s, const char *f, struct t
     return end;
 }
 
-#if !defined(SLANG_PLAT_LIBC_TIMEFMT)
-size_t slang__plat_strftime(char *buf, size_t cap, const char *f, const struct tm *tm) {
-    return slang__plat_strftime_portable(buf, cap, f, tm);
+#if !defined(ZELL_PLAT_LIBC_TIMEFMT)
+size_t zell__plat_strftime(char *buf, size_t cap, const char *f, const struct tm *tm) {
+    return zell__plat_strftime_portable(buf, cap, f, tm);
 }
-const char *slang__plat_strptime(const char *s, const char *f, struct tm *tm, long *gmtoff) {
-    return slang__plat_strptime_portable(s, f, tm, gmtoff);
+const char *zell__plat_strptime(const char *s, const char *f, struct tm *tm, long *gmtoff) {
+    return zell__plat_strptime_portable(s, f, tm, gmtoff);
 }
 #endif

@@ -205,8 +205,8 @@ static void modexp_ct(const mctx *c, uint64_t *r, const uint64_t *a, const uint6
         mmul(c, acc, acc, sel);
     }
     mmul(c, r, acc, one);
-    slang__crypto_wipe(tab, sizeof tab);
-    slang__crypto_wipe(sel, sizeof sel);
+    zell__crypto_wipe(tab, sizeof tab);
+    zell__crypto_wipe(sel, sizeof sel);
 }
 
 /* ---- encodings ---- */
@@ -224,13 +224,13 @@ static bool emsa_pkcs1(uint8_t *em, size_t k, int alg, const uint8_t *digest, si
     const uint8_t *di;
     size_t dil;
     switch (alg) {
-    case SLANG_HASH_SHA1: di = DI_SHA1; dil = sizeof DI_SHA1; break;
-    case SLANG_HASH_SHA256: di = DI_SHA256; dil = sizeof DI_SHA256; break;
-    case SLANG_HASH_SHA384: di = DI_SHA384; dil = sizeof DI_SHA384; break;
-    case SLANG_HASH_SHA512: di = DI_SHA512; dil = sizeof DI_SHA512; break;
+    case ZELL_HASH_SHA1: di = DI_SHA1; dil = sizeof DI_SHA1; break;
+    case ZELL_HASH_SHA256: di = DI_SHA256; dil = sizeof DI_SHA256; break;
+    case ZELL_HASH_SHA384: di = DI_SHA384; dil = sizeof DI_SHA384; break;
+    case ZELL_HASH_SHA512: di = DI_SHA512; dil = sizeof DI_SHA512; break;
     default: return false;
     }
-    if (dlen != slang__hash_size(alg) || k < dil + dlen + 11) return false;
+    if (dlen != zell__hash_size(alg) || k < dil + dlen + 11) return false;
     em[0] = 0;
     em[1] = 1;
     size_t ps = k - 3 - dil - dlen;
@@ -242,15 +242,15 @@ static bool emsa_pkcs1(uint8_t *em, size_t k, int alg, const uint8_t *digest, si
 }
 
 static void mgf1_xor(int alg, uint8_t *out, size_t n, const uint8_t *seed, size_t slen) {
-    size_t hl = slang__hash_size(alg);
+    size_t hl = zell__hash_size(alg);
     uint8_t ctr[4], h[64];
     for (uint32_t i = 0; n; i++) {
-        slang__st32be(ctr, i);
-        slang_hash_ctx c;
-        slang__hash_init(&c, alg);
-        slang__hash_update(&c, seed, slen);
-        slang__hash_update(&c, ctr, 4);
-        slang__hash_final(&c, h);
+        zell__st32be(ctr, i);
+        zell_hash_ctx c;
+        zell__hash_init(&c, alg);
+        zell__hash_update(&c, seed, slen);
+        zell__hash_update(&c, ctr, 4);
+        zell__hash_final(&c, h);
         size_t k = n < hl ? n : hl;
         for (size_t j = 0; j < k; j++) out[j] ^= h[j];
         out += k;
@@ -261,13 +261,13 @@ static void mgf1_xor(int alg, uint8_t *out, size_t n, const uint8_t *seed, size_
 /* EMSA-PSS-ENCODE with sLen = hLen; em has emLen = ceil((modbits-1)/8) bytes. */
 static bool emsa_pss_encode(uint8_t *em, size_t emlen, size_t embits, int alg, const uint8_t *digest,
                             size_t dlen) {
-    size_t hl = slang__hash_size(alg);
+    size_t hl = zell__hash_size(alg);
     if (hl == 0 || dlen != hl || emlen < 2 * hl + 2) return false;
     uint8_t salt[64], m1[8 + 64 + 64] = { 0 }, H[64];
-    if (!slang__crypto_random(salt, hl)) return false;
+    if (!zell__crypto_random(salt, hl)) return false;
     memcpy(m1 + 8, digest, hl);
     memcpy(m1 + 8 + hl, salt, hl);
-    slang__hash(alg, m1, 8 + 2 * hl, H);
+    zell__hash(alg, m1, 8 + 2 * hl, H);
     size_t dblen = emlen - hl - 1;
     memset(em, 0, dblen);
     em[dblen - hl - 1] = 1;
@@ -281,7 +281,7 @@ static bool emsa_pss_encode(uint8_t *em, size_t emlen, size_t embits, int alg, c
 
 static bool emsa_pss_verify(const uint8_t *emin, size_t emlen, size_t embits, int alg, const uint8_t *digest,
                             size_t dlen, int saltlen) {
-    size_t hl = slang__hash_size(alg);
+    size_t hl = zell__hash_size(alg);
     if (hl == 0 || dlen != hl || emlen < hl + 2 || emlen > 1024) return false;
     uint8_t em[1024];
     memcpy(em, emin, emlen);
@@ -301,8 +301,8 @@ static bool emsa_pss_verify(const uint8_t *emin, size_t emlen, size_t embits, in
     memset(m1, 0, 8);
     memcpy(m1 + 8, digest, hl);
     memcpy(m1 + 8 + hl, em + i + 1, slen);
-    slang__hash(alg, m1, 8 + hl + slen, h2);
-    return slang__crypto_ct_eq(h2, H, hl) == 1;
+    zell__hash(alg, m1, 8 + hl + slen, h2);
+    return zell__crypto_ct_eq(h2, H, hl) == 1;
 }
 
 /* ---- public operations ---- */
@@ -342,23 +342,23 @@ static bool pub_op(const pubkey *pk, const uint8_t *sig, size_t slen, uint8_t *o
     return true;
 }
 
-bool slang__rsa_public(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, const uint8_t *in,
+bool zell__rsa_public(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, const uint8_t *in,
                        size_t ilen, uint8_t *out) {
     pubkey pk;
     return pub_load(&pk, n, nlen, e, elen) && pub_op(&pk, in, ilen, out);
 }
 
-bool slang__rsa_verify_pkcs1(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
+bool zell__rsa_verify_pkcs1(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
                              const uint8_t *digest, size_t dlen, const uint8_t *sig, size_t slen) {
     pubkey pk;
     if (!pub_load(&pk, n, nlen, e, elen)) return false;
     uint8_t m[1024], want[1024];
     if (!pub_op(&pk, sig, slen, m)) return false;
     if (!emsa_pkcs1(want, pk.k, alg, digest, dlen)) return false;
-    return slang__crypto_ct_eq(m, want, pk.k) == 1;
+    return zell__crypto_ct_eq(m, want, pk.k) == 1;
 }
 
-bool slang__rsa_verify_pss(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
+bool zell__rsa_verify_pss(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
                            const uint8_t *digest, size_t dlen, const uint8_t *sig, size_t slen, int saltlen) {
     pubkey pk;
     if (!pub_load(&pk, n, nlen, e, elen)) return false;
@@ -413,7 +413,7 @@ static bool priv_parse(const uint8_t *der, size_t derlen, privkey_der *k) {
     return true;
 }
 
-size_t slang__rsa_priv_size(const uint8_t *der, size_t derlen) {
+size_t zell__rsa_priv_size(const uint8_t *der, size_t derlen) {
     privkey_der k;
     if (!priv_parse(der, derlen, &k)) return 0;
     return k.n.len;
@@ -442,7 +442,7 @@ static bool priv_op(const uint8_t *der, size_t derlen, const uint8_t *in, uint8_
     }
     /* blinded exponents dp + r (p - 1), dq + r' (q - 1), hl + 1 limbs */
     uint64_t r2[2];
-    if (!slang__crypto_random((uint8_t *)r2, sizeof r2)) return false;
+    if (!zell__crypto_random((uint8_t *)r2, sizeof r2)) return false;
     uint64_t dpb[MAXL] = { 0 }, dqb[MAXL] = { 0 };
     if (!bn_from_be(dpb, hl + 1, kd.dp.p, kd.dp.len) || !bn_from_be(dqb, hl + 1, kd.dq.p, kd.dq.len)) return false;
     for (int which = 0; which < 2; which++) {
@@ -492,28 +492,28 @@ static bool priv_op(const uint8_t *der, size_t derlen, const uint8_t *in, uint8_
     bn_to_be(out, k, s, 2 * hl + 1);
     /* verify: s^e mod n == input */
     uint8_t chk[1024];
-    if (!pub_op(&pk, out, k, chk) || !slang__crypto_ct_eq(chk, in, k)) {
+    if (!pub_op(&pk, out, k, chk) || !zell__crypto_ct_eq(chk, in, k)) {
         memset(out, 0, k);
         return false;
     }
-    slang__crypto_wipe(dpb, sizeof dpb);
-    slang__crypto_wipe(dqb, sizeof dqb);
-    slang__crypto_wipe(m1, sizeof m1);
-    slang__crypto_wipe(m2, sizeof m2);
-    slang__crypto_wipe(h, sizeof h);
+    zell__crypto_wipe(dpb, sizeof dpb);
+    zell__crypto_wipe(dqb, sizeof dqb);
+    zell__crypto_wipe(m1, sizeof m1);
+    zell__crypto_wipe(m2, sizeof m2);
+    zell__crypto_wipe(h, sizeof h);
     *klen = k;
     return true;
 }
 
-bool slang__rsa_sign_pkcs1(const uint8_t *der, size_t derlen, int alg, const uint8_t *digest, size_t dlen,
+bool zell__rsa_sign_pkcs1(const uint8_t *der, size_t derlen, int alg, const uint8_t *digest, size_t dlen,
                            uint8_t *sig, size_t *siglen) {
-    size_t k = slang__rsa_priv_size(der, derlen);
+    size_t k = zell__rsa_priv_size(der, derlen);
     uint8_t em[1024];
     if (k == 0 || k > 1024 || !emsa_pkcs1(em, k, alg, digest, dlen)) return false;
     return priv_op(der, derlen, em, sig, siglen);
 }
 
-bool slang__rsa_sign_pss(const uint8_t *der, size_t derlen, int alg, const uint8_t *digest, size_t dlen,
+bool zell__rsa_sign_pss(const uint8_t *der, size_t derlen, int alg, const uint8_t *digest, size_t dlen,
                          uint8_t *sig, size_t *siglen) {
     privkey_der kd;
     if (!priv_parse(der, derlen, &kd) || kd.n.len > 1024 || kd.n.len < 64) return false;
@@ -529,11 +529,11 @@ bool slang__rsa_sign_pss(const uint8_t *der, size_t derlen, int alg, const uint8
 
 /* ---- RSAES-OAEP (RFC 8017 7.1), MGF1 with the same hash ---- */
 
-bool slang__rsa_encrypt_oaep(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
+bool zell__rsa_encrypt_oaep(const uint8_t *n, size_t nlen, const uint8_t *e, size_t elen, int alg,
                              const uint8_t *msg, size_t mlen, const uint8_t *label, size_t llen,
                              uint8_t *out, size_t *olen) {
     pubkey pk;
-    size_t hl = slang__hash_size(alg);
+    size_t hl = zell__hash_size(alg);
     if (!hl || !pub_load(&pk, n, nlen, e, elen)) return false;
     size_t k = pk.k;
     if (k < 2 * hl + 2 || mlen > k - 2 * hl - 2) return false;
@@ -541,22 +541,22 @@ bool slang__rsa_encrypt_oaep(const uint8_t *n, size_t nlen, const uint8_t *e, si
     memset(em, 0, k);
     uint8_t *seed = em + 1, *db = em + 1 + hl;
     size_t dblen = k - hl - 1;
-    slang__hash(alg, label, llen, db);
+    zell__hash(alg, label, llen, db);
     db[dblen - mlen - 1] = 1;
     memcpy(db + dblen - mlen, msg, mlen);
-    if (!slang__crypto_random(seed, hl)) return false;
+    if (!zell__crypto_random(seed, hl)) return false;
     mgf1_xor(alg, db, dblen, seed, hl);
     mgf1_xor(alg, seed, hl, db, dblen);
     bool ok = pub_op(&pk, em, k, out);
-    slang__crypto_wipe(em, sizeof em);
+    zell__crypto_wipe(em, sizeof em);
     if (ok) *olen = k;
     return ok;
 }
 
-bool slang__rsa_decrypt_oaep(const uint8_t *der, size_t derlen, int alg, const uint8_t *ct, size_t clen,
+bool zell__rsa_decrypt_oaep(const uint8_t *der, size_t derlen, int alg, const uint8_t *ct, size_t clen,
                              const uint8_t *label, size_t llen, uint8_t *out, size_t *mlen) {
-    size_t hl = slang__hash_size(alg);
-    size_t k = slang__rsa_priv_size(der, derlen);
+    size_t hl = zell__hash_size(alg);
+    size_t k = zell__rsa_priv_size(der, derlen);
     if (!hl || k == 0 || k > 1024 || clen != k || k < 2 * hl + 2) return false;
     uint8_t em[1024], lh[64];
     size_t klen = 0;
@@ -565,9 +565,9 @@ bool slang__rsa_decrypt_oaep(const uint8_t *der, size_t derlen, int alg, const u
     size_t dblen = k - hl - 1;
     mgf1_xor(alg, seed, hl, db, dblen);
     mgf1_xor(alg, db, dblen, seed, hl);
-    slang__hash(alg, label, llen, lh);
+    zell__hash(alg, label, llen, lh);
     /* constant-time checks: em[0] == 0, lHash matches, PS zeros then 0x01 */
-    uint32_t good = (uint32_t)slang__crypto_ct_eq(db, lh, hl);
+    uint32_t good = (uint32_t)zell__crypto_ct_eq(db, lh, hl);
     good &= (uint32_t)(((uint32_t)em[0] - 1) >> 31) & 1;   /* em[0] == 0 */
     uint32_t looking = 1, index = 0, invalid = 0;
     for (size_t i = hl; i < dblen; i++) {
@@ -586,7 +586,7 @@ bool slang__rsa_decrypt_oaep(const uint8_t *der, size_t derlen, int alg, const u
         *mlen = dblen - start;
         memcpy(out, db + start, *mlen);
     }
-    slang__crypto_wipe(em, sizeof em);
+    zell__crypto_wipe(em, sizeof em);
     return ok;
 }
 
@@ -626,7 +626,7 @@ static bool miller_rabin(const uint64_t *nn, int nl, int rounds) {
         uint64_t a[MAXL] = { 0 }, t[MAXL], x[MAXL];
         /* random base in [2, n-2]: random nl-limb value reduced below n-3 */
         do {
-            if (!slang__crypto_random((uint8_t *)a, (size_t)nl * 8)) return false;
+            if (!zell__crypto_random((uint8_t *)a, (size_t)nl * 8)) return false;
             int top = bn_bits(nn, nl) - 1;
             a[top / 64] &= ((uint64_t)1 << (top % 64)) - 1;   /* a < 2^top <= n - 1 */
             if (top % 64 == 0) a[top / 64] = 0;
@@ -648,7 +648,7 @@ static bool miller_rabin(const uint64_t *nn, int nl, int rounds) {
     return true;
 }
 
-bool slang__rsa_is_probable_prime(const uint8_t *p, size_t plen, int rounds) {
+bool zell__rsa_is_probable_prime(const uint8_t *p, size_t plen, int rounds) {
     while (plen && *p == 0) { p++; plen--; }
     if (plen == 0 || plen > 512) return false;
     int nl = (int)((plen + 7) / 8);
@@ -667,13 +667,13 @@ bool slang__rsa_is_probable_prime(const uint8_t *p, size_t plen, int rounds) {
     return miller_rabin(a, nl, rounds);
 }
 
-bool slang__rsa_gen_prime(uint8_t *out, int bits, uint64_t e) {
+bool zell__rsa_gen_prime(uint8_t *out, int bits, uint64_t e) {
     if (bits < 64 || bits > 4096 || bits % 8 != 0) return false;
     size_t len = (size_t)bits / 8;
     int nl = (bits + 63) / 64;
     int rounds = bits >= 1024 ? 8 : bits >= 512 ? 12 : 20;
     for (int tries = 0; tries < 100000; tries++) {
-        if (!slang__crypto_random(out, len)) return false;
+        if (!zell__crypto_random(out, len)) return false;
         out[0] |= 0xC0;
         out[len - 1] |= 1;
         uint64_t a[MAXL] = { 0 };

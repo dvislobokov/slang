@@ -1,4 +1,4 @@
-/* std_random.c - std.random (slang_random_*): a non-cryptographic PRNG,
+/* std_random.c - std.random (zell_random_*): a non-cryptographic PRNG,
  * xoshiro256** (Blackman & Vigna) seeded through splitmix64. One state per
  * process, guarded by a mutex; seeded from getrandom(2) on first use unless
  * Seed() is called. The sequence after Seed(n) is fixed for a given n
@@ -9,7 +9,7 @@
 #include <string.h>
 #include <time.h>
 
-static slang__plat_mutex g_lock = SLANG_PLAT_MUTEX_INIT;
+static zell__plat_mutex g_lock = ZELL_PLAT_MUTEX_INIT;
 static uint64_t g_s[4];
 static bool g_seeded;
 
@@ -31,9 +31,9 @@ static inline uint64_t rotl(uint64_t x, int k) { return (x << k) | (x >> (64 - k
 static uint64_t next_locked(void) {
     if (!g_seeded) {
         uint64_t seed = 0;
-        if (!slang__plat_random_bytes(&seed, sizeof seed)) {
-            int64_t ns = slang__plat_wall_ns();
-            seed = (uint64_t)(ns / 1000000000) * 1000000007ULL ^ (uint64_t)(ns % 1000000000) ^ ((uint64_t)slang__plat_pid() << 32);
+        if (!zell__plat_random_bytes(&seed, sizeof seed)) {
+            int64_t ns = zell__plat_wall_ns();
+            seed = (uint64_t)(ns / 1000000000) * 1000000007ULL ^ (uint64_t)(ns % 1000000000) ^ ((uint64_t)zell__plat_pid() << 32);
         }
         seed_locked(seed);
     }
@@ -48,9 +48,9 @@ static uint64_t next_locked(void) {
 }
 
 static uint64_t next(void) {
-    slang__plat_mutex_lock(&g_lock);
+    zell__plat_mutex_lock(&g_lock);
     uint64_t r = next_locked();
-    slang__plat_mutex_unlock(&g_lock);
+    zell__plat_mutex_unlock(&g_lock);
     return r;
 }
 
@@ -62,46 +62,46 @@ static uint64_t below_locked(uint64_t n) {
     return r % n;
 }
 
-void slang_random_seed(int64_t seed) {
-    slang__plat_mutex_lock(&g_lock);
+void zell_random_seed(int64_t seed) {
+    zell__plat_mutex_lock(&g_lock);
     seed_locked((uint64_t)seed);
-    slang__plat_mutex_unlock(&g_lock);
+    zell__plat_mutex_unlock(&g_lock);
 }
 
-int64_t slang_random_int(void) { return (int64_t)(next() >> 1); }
+int64_t zell_random_int(void) { return (int64_t)(next() >> 1); }
 
-int64_t slang_random_int_n(int64_t n) {
-    if (n <= 0) slang_panic("random: invalid argument to IntN");
-    slang__plat_mutex_lock(&g_lock);
+int64_t zell_random_int_n(int64_t n) {
+    if (n <= 0) zell_panic("random: invalid argument to IntN");
+    zell__plat_mutex_lock(&g_lock);
     uint64_t r = below_locked((uint64_t)n);
-    slang__plat_mutex_unlock(&g_lock);
+    zell__plat_mutex_unlock(&g_lock);
     return (int64_t)r;
 }
 
-double slang_random_float(void) { return (double)(next() >> 11) * 0x1.0p-53; }
+double zell_random_float(void) { return (double)(next() >> 11) * 0x1.0p-53; }
 
-void slang_random_bytes(int64_t n, slang_slice *out) {
-    if (n < 0) slang_panic("random: negative length in Bytes");
-    slang_slice_new(out, 1, n, n);
+void zell_random_bytes(int64_t n, zell_slice *out) {
+    if (n < 0) zell_panic("random: negative length in Bytes");
+    zell_slice_new(out, 1, n, n);
     uint8_t *p = out->data;
-    slang__plat_mutex_lock(&g_lock);
+    zell__plat_mutex_lock(&g_lock);
     for (int64_t i = 0; i < n; i += 8) {
         uint64_t r = next_locked();
         int64_t k = n - i < 8 ? n - i : 8;
         memcpy(p + i, &r, (size_t)k);   /* little-endian byte order of r */
     }
-    slang__plat_mutex_unlock(&g_lock);
+    zell__plat_mutex_unlock(&g_lock);
 }
 
 /* In-place Fisher-Yates shuffle of an []int (slices share their buffer). */
-void slang_random_shuffle(const slang_slice *s) {
+void zell_random_shuffle(const zell_slice *s) {
     int64_t n = s ? s->len : 0;
     if (n < 2) return;
     int64_t *a = s->data;
-    slang__plat_mutex_lock(&g_lock);
+    zell__plat_mutex_lock(&g_lock);
     for (int64_t i = n - 1; i > 0; i--) {
         int64_t j = (int64_t)below_locked((uint64_t)i + 1);
         int64_t t = a[i]; a[i] = a[j]; a[j] = t;
     }
-    slang__plat_mutex_unlock(&g_lock);
+    zell__plat_mutex_unlock(&g_lock);
 }

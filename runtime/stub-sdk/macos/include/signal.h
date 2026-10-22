@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SIGNAL_H
-#define SLANG_STUB_SIGNAL_H
+#ifndef ZELL_STUB_SIGNAL_H
+#define ZELL_STUB_SIGNAL_H
 #include <sys/types.h>
 #include <sys/_mcontext.h>
 typedef __uint32_t sigset_t;

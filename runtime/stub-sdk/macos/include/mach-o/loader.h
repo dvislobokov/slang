@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_MACH_O_LOADER_H
-#define SLANG_STUB_MACH_O_LOADER_H
+#ifndef ZELL_STUB_MACH_O_LOADER_H
+#define ZELL_STUB_MACH_O_LOADER_H
 #include <stdint.h>
 struct mach_header_64 { uint32_t magic; int32_t cputype; int32_t cpusubtype; uint32_t filetype; uint32_t ncmds; uint32_t sizeofcmds; uint32_t flags; uint32_t reserved; };
 struct load_command { uint32_t cmd; uint32_t cmdsize; };

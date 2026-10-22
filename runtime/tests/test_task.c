@@ -11,59 +11,59 @@ static int64_t now_ms(void) {
 
 /* ---- spawn / await ---- */
 
-static void square(slang_task *t, void *ctx) {
+static void square(zell_task *t, void *ctx) {
     int64_t v = (int64_t)(intptr_t)ctx;
     v *= v;
-    slang_task_complete(t, &v);
+    zell_task_complete(t, &v);
 }
 
 TEST(spawn_await) {
-    slang_task *t = slang_task_spawn(square, (void *)(intptr_t)12);
-    int64_t *r = slang_task_await(t);
+    zell_task *t = zell_task_spawn(square, (void *)(intptr_t)12);
+    int64_t *r = zell_task_await(t);
     assert(*r == 144);
-    assert(slang_task_is_done(t));
-    assert(*(int64_t *)slang_task_result(t) == 144);
-    slang_release(t);
+    assert(zell_task_is_done(t));
+    assert(*(int64_t *)zell_task_result(t) == 144);
+    zell_release(t);
 }
 
 static int64_t counter;
-static void bump(slang_task *t, void *ctx) {
+static void bump(zell_task *t, void *ctx) {
     (void)ctx;
     __atomic_add_fetch(&counter, 1, __ATOMIC_RELAXED);
-    slang_task_complete(t, NULL);
+    zell_task_complete(t, NULL);
 }
 
 TEST(many_spawns_all) {
     enum { N = 2000 };
-    static slang_task *ts[N];
-    for (int i = 0; i < N; i++) ts[i] = slang_task_spawn(bump, NULL);
-    slang_task *all = slang_task_all(ts, N);
-    slang_task_await(all);
+    static zell_task *ts[N];
+    for (int i = 0; i < N; i++) ts[i] = zell_task_spawn(bump, NULL);
+    zell_task *all = zell_task_all(ts, N);
+    zell_task_await(all);
     assert(counter == N);
-    for (int i = 0; i < N; i++) { assert(slang_task_is_done(ts[i])); slang_release(ts[i]); }
-    slang_release(all);
-    slang_task *empty = slang_task_all(NULL, 0);
-    assert(slang_task_is_done(empty));
-    slang_release(empty);
+    for (int i = 0; i < N; i++) { assert(zell_task_is_done(ts[i])); zell_release(ts[i]); }
+    zell_release(all);
+    zell_task *empty = zell_task_all(NULL, 0);
+    assert(zell_task_is_done(empty));
+    zell_release(empty);
 }
 
 /* ---- nested blocking await inside a worker (help mode, no deadlock) ---- */
 
-static void outer(slang_task *t, void *ctx) {
+static void outer(zell_task *t, void *ctx) {
     (void)ctx;
     int64_t sum = 0;
-    slang_task *inner[8];
-    for (int i = 0; i < 8; i++) inner[i] = slang_task_spawn(square, (void *)(intptr_t)i);
-    for (int i = 0; i < 8; i++) { sum += *(int64_t *)slang_task_await(inner[i]); slang_release(inner[i]); }
-    slang_task_complete(t, &sum);
+    zell_task *inner[8];
+    for (int i = 0; i < 8; i++) inner[i] = zell_task_spawn(square, (void *)(intptr_t)i);
+    for (int i = 0; i < 8; i++) { sum += *(int64_t *)zell_task_await(inner[i]); zell_release(inner[i]); }
+    zell_task_complete(t, &sum);
 }
 
 TEST(nested_await_on_worker) {
-    slang_task *ts[64];
-    for (int i = 0; i < 64; i++) ts[i] = slang_task_spawn(outer, NULL);
+    zell_task *ts[64];
+    for (int i = 0; i < 64; i++) ts[i] = zell_task_spawn(outer, NULL);
     for (int i = 0; i < 64; i++) {
-        assert(*(int64_t *)slang_task_await(ts[i]) == 140);
-        slang_release(ts[i]);
+        assert(*(int64_t *)zell_task_await(ts[i]) == 140);
+        zell_release(ts[i]);
     }
 }
 
@@ -73,8 +73,8 @@ typedef struct frame {
     void (*resume)(void *);   /* +0: what llvm.coro.resume calls */
     void (*destroy)(void *);  /* +8 */
     int state;
-    slang_task *self;
-    slang_task *awaited;
+    zell_task *self;
+    zell_task *awaited;
     int64_t arg, acc;
 } frame;
 
@@ -82,48 +82,48 @@ static void co_body(void *p) {
     frame *f = p;
     switch (f->state) {
     case 0:
-        f->awaited = slang_task_delay(5 + f->arg % 7);
+        f->awaited = zell_task_delay(5 + f->arg % 7);
         f->state = 1;
-        if (slang_task_add_continuation(f->awaited, slang_coro_resume, f)) return; /* suspend */
+        if (zell_task_add_continuation(f->awaited, zell_coro_resume, f)) return; /* suspend */
         __attribute__((fallthrough)); /* already done: continue without suspending */
     case 1:
-        slang_release(f->awaited);
-        f->awaited = slang_task_spawn(square, (void *)(intptr_t)f->arg);
+        zell_release(f->awaited);
+        f->awaited = zell_task_spawn(square, (void *)(intptr_t)f->arg);
         f->state = 2;
-        if (slang_task_add_continuation(f->awaited, slang_coro_resume, f)) return;
+        if (zell_task_add_continuation(f->awaited, zell_coro_resume, f)) return;
         __attribute__((fallthrough));
     case 2:
-        f->acc = *(int64_t *)slang_task_result(f->awaited) + 1;
-        slang_release(f->awaited);
-        slang_task_complete(f->self, &f->acc);  /* return value */
-        slang_release(f->self);                 /* frame's reference */
-        slang_free(f);                          /* final suspend + coro.free */
+        f->acc = *(int64_t *)zell_task_result(f->awaited) + 1;
+        zell_release(f->awaited);
+        zell_task_complete(f->self, &f->acc);  /* return value */
+        zell_release(f->self);                 /* frame's reference */
+        zell_free(f);                          /* final suspend + coro.free */
         return;
     }
 }
 
 /* Ramp function of `async func f(arg int) int`. */
-static slang_task *async_f(int64_t arg) {
-    frame *f = slang_alloc(sizeof *f);
+static zell_task *async_f(int64_t arg) {
+    frame *f = zell_alloc(sizeof *f);
     f->resume = co_body;
-    f->self = slang_task_new(8, NULL);
-    slang_retain(f->self);        /* +1 for the frame, +1 returned to caller */
+    f->self = zell_task_new(8, NULL);
+    zell_retain(f->self);        /* +1 for the frame, +1 returned to caller */
     f->arg = arg;
-    slang_task *t = f->self;
+    zell_task *t = f->self;
     co_body(f);                   /* run synchronously until the first suspend */
     return t;
 }
 
 TEST(coroutine_protocol) {
     enum { N = 200 };
-    slang_task *ts[N];
+    zell_task *ts[N];
     for (int i = 0; i < N; i++) ts[i] = async_f(i);
-    slang_task *all = slang_task_all(ts, N);
-    slang_task_await(all);
-    slang_release(all);
+    zell_task *all = zell_task_all(ts, N);
+    zell_task_await(all);
+    zell_release(all);
     for (int i = 0; i < N; i++) {
-        assert(*(int64_t *)slang_task_result(ts[i]) == (int64_t)i * i + 1);
-        slang_release(ts[i]);
+        assert(*(int64_t *)zell_task_result(ts[i]) == (int64_t)i * i + 1);
+        zell_release(ts[i]);
     }
 }
 
@@ -131,142 +131,142 @@ TEST(coroutine_protocol) {
 
 TEST(delay_any) {
     int64_t t0 = now_ms();
-    slang_task *d = slang_task_delay(50);
-    slang_task_await(d);
+    zell_task *d = zell_task_delay(50);
+    zell_task_await(d);
     assert(now_ms() - t0 >= 50);
-    slang_release(d);
-    slang_task *z = slang_task_delay(0);
-    assert(slang_task_is_done(z));
-    slang_release(z);
-    slang_task *ds[3] = { slang_task_delay(300), slang_task_delay(10), slang_task_delay(200) };
-    slang_task *any = slang_task_any(ds, 3);
-    assert(*(int64_t *)slang_task_await(any) == 1);
-    slang_release(any);
-    slang_task *all = slang_task_all(ds, 3);
-    slang_task_await(all);
-    slang_release(all);
-    for (int i = 0; i < 3; i++) slang_release(ds[i]);
+    zell_release(d);
+    zell_task *z = zell_task_delay(0);
+    assert(zell_task_is_done(z));
+    zell_release(z);
+    zell_task *ds[3] = { zell_task_delay(300), zell_task_delay(10), zell_task_delay(200) };
+    zell_task *any = zell_task_any(ds, 3);
+    assert(*(int64_t *)zell_task_await(any) == 1);
+    zell_release(any);
+    zell_task *all = zell_task_all(ds, 3);
+    zell_task_await(all);
+    zell_release(all);
+    for (int i = 0; i < 3; i++) zell_release(ds[i]);
 }
 
 /* ---- results with refcounted payloads ---- */
 
-static void make_str(slang_task *t, void *ctx) {
+static void make_str(zell_task *t, void *ctx) {
     (void)ctx;
-    slang_string *s = S("result");
-    slang_task_complete(t, &s);   /* task retains */
-    slang_release(s);
+    zell_string *s = S("result");
+    zell_task_complete(t, &s);   /* task retains */
+    zell_release(s);
 }
 
 TEST(refcounted_result) {
-    slang_task *t = slang_task_spawn_ex(make_str, NULL, sizeof(slang_string *), &slang_ops_ref);
-    slang_string *s = *(slang_string **)slang_task_await(t);
+    zell_task *t = zell_task_spawn_ex(make_str, NULL, sizeof(zell_string *), &zell_ops_ref);
+    zell_string *s = *(zell_string **)zell_task_await(t);
     assert(STR_IS(s, "result"));
-    slang_retain(s);              /* take our own copy before the task dies */
-    slang_release(t);
+    zell_retain(s);              /* take our own copy before the task dies */
+    zell_release(t);
     /* the worker may still be inside make_str or hold its job reference to t, so the
      * exact count is 1..3 here; leaks are checked after shutdown in main() */
-    assert(STR_IS(s, "result") && slang_refcount(s) >= 1 && slang_refcount(s) <= 3);
-    slang_release(s);
+    assert(STR_IS(s, "result") && zell_refcount(s) >= 1 && zell_refcount(s) <= 3);
+    zell_release(s);
 }
 
 /* ---- mutex ---- */
 
-static slang_mutex *mu;
+static zell_mutex *mu;
 static int64_t guarded;
 
-static void locker(slang_task *t, void *ctx) {
+static void locker(zell_task *t, void *ctx) {
     (void)ctx;
     for (int i = 0; i < 2000; i++) {
-        slang_mutex_lock(mu);
+        zell_mutex_lock(mu);
         int64_t v = guarded;
         guarded = v + 1;
-        slang_mutex_unlock(mu);
+        zell_mutex_unlock(mu);
     }
-    slang_task_complete(t, NULL);
+    zell_task_complete(t, NULL);
 }
 
 TEST(mutex) {
-    mu = slang_mutex_new();
-    assert(slang_mutex_try_lock(mu));
-    assert(!slang_mutex_try_lock(mu));
-    slang_task *pending = slang_mutex_lock_async(mu);
-    assert(!slang_task_is_done(pending));
-    slang_mutex_unlock(mu);                 /* hands ownership to `pending` */
-    slang_task_await(pending);
-    assert(!slang_mutex_try_lock(mu));
-    slang_mutex_unlock(mu);
-    slang_release(pending);
+    mu = zell_mutex_new();
+    assert(zell_mutex_try_lock(mu));
+    assert(!zell_mutex_try_lock(mu));
+    zell_task *pending = zell_mutex_lock_async(mu);
+    assert(!zell_task_is_done(pending));
+    zell_mutex_unlock(mu);                 /* hands ownership to `pending` */
+    zell_task_await(pending);
+    assert(!zell_mutex_try_lock(mu));
+    zell_mutex_unlock(mu);
+    zell_release(pending);
 
-    slang_task *ts[8];
-    for (int i = 0; i < 8; i++) ts[i] = slang_task_spawn(locker, NULL);
-    for (int i = 0; i < 8; i++) { slang_task_await(ts[i]); slang_release(ts[i]); }
+    zell_task *ts[8];
+    for (int i = 0; i < 8; i++) ts[i] = zell_task_spawn(locker, NULL);
+    for (int i = 0; i < 8; i++) { zell_task_await(ts[i]); zell_release(ts[i]); }
     assert(guarded == 8 * 2000);
-    slang_release(mu);
+    zell_release(mu);
 }
 
 /* ---- channels ---- */
 
-typedef struct { slang_chan *ch; int64_t n; } prod_ctx;
+typedef struct { zell_chan *ch; int64_t n; } prod_ctx;
 
-static void producer(slang_task *t, void *ctx) {
+static void producer(zell_task *t, void *ctx) {
     prod_ctx *pc = ctx;
-    for (int64_t i = 1; i <= pc->n; i++) slang_chan_send(pc->ch, &i);
-    slang_chan_close(pc->ch);
-    slang_task_complete(t, NULL);
+    for (int64_t i = 1; i <= pc->n; i++) zell_chan_send(pc->ch, &i);
+    zell_chan_close(pc->ch);
+    zell_task_complete(t, NULL);
 }
 
 static void chan_roundtrip(int64_t cap) {
-    slang_chan *ch = slang_chan_new(8, NULL, cap);
+    zell_chan *ch = zell_chan_new(8, NULL, cap);
     prod_ctx pc = { ch, 5000 };
-    slang_task *p = slang_task_spawn(producer, &pc);
+    zell_task *p = zell_task_spawn(producer, &pc);
     int64_t v, sum = 0, n = 0;
-    while (slang_chan_recv(ch, &v)) { sum += v; n++; }
+    while (zell_chan_recv(ch, &v)) { sum += v; n++; }
     assert(n == 5000 && sum == 5000 * 5001 / 2);
-    assert(!slang_chan_recv(ch, &v) && v == 0);   /* closed: zero value, ok=false */
-    slang_task_await(p);
-    slang_release(p);
-    slang_release(ch);
+    assert(!zell_chan_recv(ch, &v) && v == 0);   /* closed: zero value, ok=false */
+    zell_task_await(p);
+    zell_release(p);
+    zell_release(ch);
 }
 
 TEST(channel_unbuffered) { chan_roundtrip(0); }
 TEST(channel_buffered) { chan_roundtrip(16); }
 
 TEST(channel_async_and_strings) {
-    slang_chan *ch = slang_chan_new(sizeof(slang_string *), &slang_ops_ref, 2);
-    slang_task *r1 = slang_chan_recv_async(ch);         /* waits */
-    assert(!slang_task_is_done(r1));
-    slang_string *a = S("a"), *b = S("b"), *c = S("c");
-    slang_task *s1 = slang_chan_send_async(ch, &a);      /* hands off to r1 */
-    assert(slang_task_is_done(s1) && slang_task_is_done(r1));
-    unsigned char *res = slang_task_result(r1);
-    assert(*(int64_t *)res == 1 && *(slang_string **)(res + 8) == a);
-    slang_task *s2 = slang_chan_send_async(ch, &b);      /* buffered */
-    slang_task *s3 = slang_chan_send_async(ch, &c);      /* buffered */
-    slang_task *s4 = slang_chan_send_async(ch, &a);      /* blocks: buffer full */
-    assert(slang_task_is_done(s2) && slang_task_is_done(s3) && !slang_task_is_done(s4));
-    assert(slang_chan_len(ch) == 2);
-    slang_string *got;
-    assert(slang_chan_recv(ch, &got) && got == b);       /* refills from s4 */
-    slang_release(got);
-    assert(slang_task_is_done(s4));
-    slang_release(s1); slang_release(s2); slang_release(s3); slang_release(s4);
-    slang_release(r1);
-    slang_release(ch);                                   /* drops buffered c, a */
-    assert(slang_refcount(a) == 1 && slang_refcount(b) == 1 && slang_refcount(c) == 1);
-    slang_release(a); slang_release(b); slang_release(c);
+    zell_chan *ch = zell_chan_new(sizeof(zell_string *), &zell_ops_ref, 2);
+    zell_task *r1 = zell_chan_recv_async(ch);         /* waits */
+    assert(!zell_task_is_done(r1));
+    zell_string *a = S("a"), *b = S("b"), *c = S("c");
+    zell_task *s1 = zell_chan_send_async(ch, &a);      /* hands off to r1 */
+    assert(zell_task_is_done(s1) && zell_task_is_done(r1));
+    unsigned char *res = zell_task_result(r1);
+    assert(*(int64_t *)res == 1 && *(zell_string **)(res + 8) == a);
+    zell_task *s2 = zell_chan_send_async(ch, &b);      /* buffered */
+    zell_task *s3 = zell_chan_send_async(ch, &c);      /* buffered */
+    zell_task *s4 = zell_chan_send_async(ch, &a);      /* blocks: buffer full */
+    assert(zell_task_is_done(s2) && zell_task_is_done(s3) && !zell_task_is_done(s4));
+    assert(zell_chan_len(ch) == 2);
+    zell_string *got;
+    assert(zell_chan_recv(ch, &got) && got == b);       /* refills from s4 */
+    zell_release(got);
+    assert(zell_task_is_done(s4));
+    zell_release(s1); zell_release(s2); zell_release(s3); zell_release(s4);
+    zell_release(r1);
+    zell_release(ch);                                   /* drops buffered c, a */
+    assert(zell_refcount(a) == 1 && zell_refcount(b) == 1 && zell_refcount(c) == 1);
+    zell_release(a); zell_release(b); zell_release(c);
 }
 
 /* ---- misuse ---- */
 
 static void double_complete(void) {
-    slang_task *t = slang_task_new(0, NULL);
-    slang_task_complete(t, NULL);
-    slang_task_complete(t, NULL);
+    zell_task *t = zell_task_new(0, NULL);
+    zell_task_complete(t, NULL);
+    zell_task_complete(t, NULL);
 }
 
 static void early_result(void) {
-    slang_task *t = slang_task_new(8, NULL);
-    slang_task_result(t);
+    zell_task *t = zell_task_new(8, NULL);
+    zell_task_result(t);
 }
 
 /* ---- a destructor run by a worker's release of the job's task starts a
@@ -277,13 +277,13 @@ static int64_t drop_job_go, drop_ran;
 
 static void guard_drop(void *obj) {
     (void)obj;
-    slang_task *n = slang_task_new(0, NULL);   /* parent = the current task */
-    slang_task_complete(n, NULL);
-    slang_release(n);
+    zell_task *n = zell_task_new(0, NULL);   /* parent = the current task */
+    zell_task_complete(n, NULL);
+    zell_release(n);
     __atomic_store_n(&drop_ran, 1, __ATOMIC_RELEASE);
 }
 
-static const slang_type_info guard_type = { "Guard", 0, guard_drop };
+static const zell_type_info guard_type = { "Guard", 0, guard_drop };
 
 static void wait_flag(void *arg) {
     (void)arg;
@@ -293,15 +293,15 @@ static void wait_flag(void *arg) {
 TEST(drop_in_job_teardown_starts_task) {
     for (int round = 0; round < 50; round++) {
         drop_job_go = drop_ran = 0;
-        slang_task *t = slang_task_new_plain(8, &slang_ops_ref);
-        void *g = slang_object_new(&guard_type, 16);
-        slang_task_complete(t, &g);              /* the result holds the guard */
-        slang_release(g);
-        slang_task *prev = slang_task_enter_scope(t);
-        slang_sched_post(wait_flag, NULL);       /* the job runs as task t */
-        slang_task_leave_scope(prev);
-        slang_release(prev);
-        slang_release(t);                        /* the job's is the last reference */
+        zell_task *t = zell_task_new_plain(8, &zell_ops_ref);
+        void *g = zell_object_new(&guard_type, 16);
+        zell_task_complete(t, &g);              /* the result holds the guard */
+        zell_release(g);
+        zell_task *prev = zell_task_enter_scope(t);
+        zell_sched_post(wait_flag, NULL);       /* the job runs as task t */
+        zell_task_leave_scope(prev);
+        zell_release(prev);
+        zell_release(t);                        /* the job's is the last reference */
         __atomic_store_n(&drop_job_go, 1, __ATOMIC_RELEASE);
         int64_t t0 = now_ms();
         while (!__atomic_load_n(&drop_ran, __ATOMIC_ACQUIRE)) {
@@ -321,16 +321,16 @@ TEST(misuse_panics) {
 
 int main(int argc, char **argv) {
     printf("test_task\n");
-    setenv("SLANG_WORKERS", "3", 1);
-    int64_t live = slang_live_objects();
-    slang_runtime_init(argc, argv);
-    assert(slang_sched_workers() == 3);
-    assert(!slang_sched_is_worker());
-    slang_slice args;
-    slang_os_args(&args);
+    setenv("ZELL_WORKERS", "3", 1);
+    int64_t live = zell_live_objects();
+    zell_runtime_init(argc, argv);
+    assert(zell_sched_workers() == 3);
+    assert(!zell_sched_is_worker());
+    zell_slice args;
+    zell_os_args(&args);
     assert(args.len == argc);
-    assert(strstr(slang_string_data(*(slang_string **)slang_slice_index(&args, 0, 8)), "test_task"));
-    slang_slice_release(&args);
+    assert(strstr(zell_string_data(*(zell_string **)zell_slice_index(&args, 0, 8)), "test_task"));
+    zell_slice_release(&args);
 
     RUN(misuse_panics);   /* forks: run before worker threads are busy */
     RUN(spawn_await);
@@ -345,7 +345,7 @@ int main(int argc, char **argv) {
     RUN(channel_async_and_strings);
     RUN(drop_in_job_teardown_starts_task);
 
-    slang_runtime_shutdown();
-    assert(slang_live_objects() == live);
+    zell_runtime_shutdown();
+    assert(zell_live_objects() == live);
     return 0;
 }

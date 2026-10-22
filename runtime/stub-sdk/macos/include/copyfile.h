@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_COPYFILE_H
-#define SLANG_STUB_COPYFILE_H
+#ifndef ZELL_STUB_COPYFILE_H
+#define ZELL_STUB_COPYFILE_H
 #include <stdint.h>
 typedef uint32_t copyfile_flags_t;
 typedef struct _copyfile_state *copyfile_state_t;

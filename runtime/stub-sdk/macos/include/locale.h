@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_LOCALE_H
-#define SLANG_STUB_LOCALE_H
+#ifndef ZELL_STUB_LOCALE_H
+#define ZELL_STUB_LOCALE_H
 #define LC_ALL 0
 #define LC_COLLATE 1
 #define LC_CTYPE 2

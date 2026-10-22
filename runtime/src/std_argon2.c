@@ -47,7 +47,7 @@ static inline uint64_t rotr64(uint64_t x, int r) { return (x >> r) | (x << (64 -
 
 static void b2b_compress(b2b *s, const uint8_t blk[128], int last) {
     uint64_t m[16], v[16];
-    for (int i = 0; i < 16; i++) m[i] = slang__ld64le(blk + 8 * i);
+    for (int i = 0; i < 16; i++) m[i] = zell__ld64le(blk + 8 * i);
     for (int i = 0; i < 8; i++) {
         v[i] = s->h[i];
         v[i + 8] = B2_IV[i];
@@ -103,20 +103,20 @@ static void b2b_final(b2b *s, uint8_t *out) {
     memset(s->buf + s->n, 0, 128 - s->n);
     b2b_compress(s, s->buf, 1);
     uint8_t full[64];
-    for (int i = 0; i < 8; i++) slang__st64le(full + 8 * i, s->h[i]);
+    for (int i = 0; i < 8; i++) zell__st64le(full + 8 * i, s->h[i]);
     memcpy(out, full, s->outlen);
-    slang__crypto_wipe(full, sizeof full);
-    slang__crypto_wipe(s, sizeof *s);
+    zell__crypto_wipe(full, sizeof full);
+    zell__crypto_wipe(s, sizeof *s);
 }
 
-void slang__blake2b(uint8_t *out, size_t outlen, const uint8_t *key, size_t klen, const uint8_t *p, size_t n) {
+void zell__blake2b(uint8_t *out, size_t outlen, const uint8_t *key, size_t klen, const uint8_t *p, size_t n) {
     b2b s;
     b2b_init(&s, outlen, key, klen);
     b2b_update(&s, p, n);
     b2b_final(&s, out);
 }
 
-static void le32(uint8_t b[4], uint32_t v) { slang__st32le(b, v); }
+static void le32(uint8_t b[4], uint32_t v) { zell__st32le(b, v); }
 
 /* H' (RFC 9106 3.3): variable-length hash of (prefix || p). */
 static void hprime(uint8_t *out, size_t T, const uint8_t *a, size_t an, const uint8_t *b, size_t bn) {
@@ -140,12 +140,12 @@ static void hprime(uint8_t *out, size_t T, const uint8_t *a, size_t an, const ui
     size_t r = (T + 31) / 32 - 2;
     memcpy(out, v, 32);
     for (size_t i = 1; i < r; i++) {
-        slang__blake2b(v, 64, NULL, 0, v, 64);
+        zell__blake2b(v, 64, NULL, 0, v, 64);
         memcpy(out + 32 * i, v, 32);
     }
     size_t last = T - 32 * r;
-    slang__blake2b(out + 32 * r, last, NULL, 0, v, 64);
-    slang__crypto_wipe(v, sizeof v);
+    zell__blake2b(out + 32 * r, last, NULL, 0, v, 64);
+    zell__crypto_wipe(v, sizeof v);
 }
 
 /* ---- Argon2 ---- */
@@ -193,16 +193,16 @@ static void fill_block(const blk *prev, const blk *ref, blk *next, int with_xor)
 }
 
 static void blk_from_bytes(blk *b, const uint8_t *p) {
-    for (int i = 0; i < 128; i++) b->v[i] = slang__ld64le(p + 8 * i);
+    for (int i = 0; i < 128; i++) b->v[i] = zell__ld64le(p + 8 * i);
 }
 
 static void blk_to_bytes(uint8_t *p, const blk *b) {
-    for (int i = 0; i < 128; i++) slang__st64le(p + 8 * i, b->v[i]);
+    for (int i = 0; i < 128; i++) zell__st64le(p + 8 * i, b->v[i]);
 }
 
 /* type: 0 Argon2d, 1 Argon2i, 2 Argon2id. Returns 0 ok, 1 bad parameters,
  * 2 out of memory. */
-int slang__argon2(int type, const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen, const uint8_t *secret,
+int zell__argon2(int type, const uint8_t *pw, size_t pwlen, const uint8_t *salt, size_t slen, const uint8_t *secret,
                   size_t klen, const uint8_t *ad, size_t adlen, uint32_t t, uint32_t m, uint32_t p, uint8_t *out,
                   size_t T) {
     if (type < 0 || type > 2 || t < 1 || p < 1 || p > 0xFFFFFF || T < 4 || m < 8 * p || slen < 8 ||
@@ -306,61 +306,61 @@ int slang__argon2(int type, const uint8_t *pw, size_t pwlen, const uint8_t *salt
         for (int i = 0; i < 128; i++) c.v[i] ^= B[(size_t)l * q + q - 1].v[i];
     blk_to_bytes(tmp, &c);
     hprime(out, T, tmp, 1024, NULL, 0);
-    slang__crypto_wipe(tmp, sizeof tmp);
-    slang__crypto_wipe(h0, sizeof h0);
-    slang__crypto_wipe(&c, sizeof c);
-    slang__crypto_wipe(B, (size_t)mprime * sizeof(blk));
+    zell__crypto_wipe(tmp, sizeof tmp);
+    zell__crypto_wipe(h0, sizeof h0);
+    zell__crypto_wipe(&c, sizeof c);
+    zell__crypto_wipe(B, (size_t)mprime * sizeof(blk));
     free(B);
     return 0;
 }
 
-/* ---- Slang wrappers: std.crypto.kdf (ABI.md 23) ---- */
+/* ---- Zell wrappers: std.crypto.kdf (ABI.md 23) ---- */
 
-static inline int64_t blen(const slang_slice *s) { return s ? s->len : 0; }
-static inline const uint8_t *bdata(const slang_slice *s) {
+static inline int64_t blen(const zell_slice *s) { return s ? s->len : 0; }
+static inline const uint8_t *bdata(const zell_slice *s) {
     return s && s->len ? (const uint8_t *)s->data : (const uint8_t *)"";
 }
 
-static uint8_t *new_bytes(slang_slice *out, int64_t n) {
-    slang_slice_new(out, 1, n, n);
+static uint8_t *new_bytes(zell_slice *out, int64_t n) {
+    zell_slice_new(out, 1, n, n);
     return n ? (uint8_t *)out->data : NULL;
 }
 
 /* kdf.rtArgon2(type, password, salt, secret, ad, time, memoryKiB, threads, keyLen) []byte! */
-void slang_crypto_kdf_rt_argon2(int64_t type, const slang_slice *pw, const slang_slice *salt, const slang_slice *secret,
-                                const slang_slice *ad, int64_t t, int64_t m, int64_t p, int64_t n, slang_slice *out,
-                                slang_error **err) {
+void zell_crypto_kdf_rt_argon2(int64_t type, const zell_slice *pw, const zell_slice *salt, const zell_slice *secret,
+                                const zell_slice *ad, int64_t t, int64_t m, int64_t p, int64_t n, zell_slice *out,
+                                zell_error **err) {
     memset(out, 0, sizeof *out);
     if (t < 1 || t > 0xFFFFFFFFLL || p < 1 || p > 0xFFFFFF || m < 8 * p || m > 0xFFFFFFFFLL || n < 4 || n > (1 << 20)) {
-        if (err) *err = slang_error_new_cstr("argon2: invalid parameters (time >= 1, threads >= 1, memory >= 8*threads KiB, keyLen >= 4)");
+        if (err) *err = zell_error_new_cstr("argon2: invalid parameters (time >= 1, threads >= 1, memory >= 8*threads KiB, keyLen >= 4)");
         return;
     }
     if (blen(salt) < 8) {
-        if (err) *err = slang_error_new_cstr("argon2: salt must be at least 8 bytes");
+        if (err) *err = zell_error_new_cstr("argon2: salt must be at least 8 bytes");
         return;
     }
     if (blen(secret) > 32) {
-        if (err) *err = slang_error_new_cstr("argon2: secret longer than 32 bytes");
+        if (err) *err = zell_error_new_cstr("argon2: secret longer than 32 bytes");
         return;
     }
     uint8_t *o = new_bytes(out, n);
-    int rc = slang__argon2((int)type, bdata(pw), (size_t)blen(pw), bdata(salt), (size_t)blen(salt), bdata(secret),
+    int rc = zell__argon2((int)type, bdata(pw), (size_t)blen(pw), bdata(salt), (size_t)blen(salt), bdata(secret),
                            (size_t)blen(secret), bdata(ad), (size_t)blen(ad), (uint32_t)t, (uint32_t)m, (uint32_t)p, o,
                            (size_t)n);
     if (rc != 0) {
-        slang_slice_release(out);
-        if (err) *err = slang_error_new_cstr(rc == 2 ? "argon2: out of memory" : "argon2: invalid parameters");
+        zell_slice_release(out);
+        if (err) *err = zell_error_new_cstr(rc == 2 ? "argon2: out of memory" : "argon2: invalid parameters");
     }
 }
 
 /* kdf.rtBlake2b(key, data, size) []byte! */
-void slang_crypto_kdf_rt_blake2b(const slang_slice *key, const slang_slice *data, int64_t size, slang_slice *out,
-                                 slang_error **err) {
+void zell_crypto_kdf_rt_blake2b(const zell_slice *key, const zell_slice *data, int64_t size, zell_slice *out,
+                                 zell_error **err) {
     memset(out, 0, sizeof *out);
     if (size < 1 || size > 64 || blen(key) > 64) {
-        if (err) *err = slang_error_new_cstr("blake2b: size must be 1..64 and the key at most 64 bytes");
+        if (err) *err = zell_error_new_cstr("blake2b: size must be 1..64 and the key at most 64 bytes");
         return;
     }
     uint8_t *o = new_bytes(out, size);
-    slang__blake2b(o, (size_t)size, bdata(key), (size_t)blen(key), bdata(data), (size_t)blen(data));
+    zell__blake2b(o, (size_t)size, bdata(key), (size_t)blen(key), bdata(data), (size_t)blen(data));
 }

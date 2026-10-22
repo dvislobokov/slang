@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_NETINET_IN_H
-#define SLANG_STUB_NETINET_IN_H
+#ifndef ZELL_STUB_NETINET_IN_H
+#define ZELL_STUB_NETINET_IN_H
 #include <sys/socket.h>
 #include <stdint.h>
 typedef __uint32_t in_addr_t;

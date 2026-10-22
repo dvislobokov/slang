@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS_TIME_H
-#define SLANG_STUB_SYS_TIME_H
+#ifndef ZELL_STUB_SYS_TIME_H
+#define ZELL_STUB_SYS_TIME_H
 #include <sys/types.h>
 #include <time.h>
 struct timeval { __darwin_time_t tv_sec; __darwin_suseconds_t tv_usec; };

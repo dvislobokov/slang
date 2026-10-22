@@ -26,7 +26,7 @@
 
 /* ---- UTF-8 <-> UTF-16, errors ---------------------------------------------- */
 
-wchar_t *slang__w32_wide(const char *s) {
+wchar_t *zell__w32_wide(const char *s) {
     if (!s) s = "";
     int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, NULL, 0);
     if (n <= 0) return NULL;
@@ -36,15 +36,15 @@ wchar_t *slang__w32_wide(const char *s) {
     return w;
 }
 
-wchar_t *slang__w32_wpath(const char *s) {
-    wchar_t *w = slang__w32_wide(s);
+wchar_t *zell__w32_wpath(const char *s) {
+    wchar_t *w = zell__w32_wide(s);
     if (w)
         for (wchar_t *p = w; *p; p++)
             if (*p == L'/') *p = L'\\';
     return w;
 }
 
-char *slang__w32_utf8(const wchar_t *w, int len) {
+char *zell__w32_utf8(const wchar_t *w, int len) {
     int n = WideCharToMultiByte(CP_UTF8, 0, w, len, NULL, 0, NULL, NULL);
     if (n < 0) return NULL;
     char *s = malloc((size_t)n + 1);
@@ -54,7 +54,7 @@ char *slang__w32_utf8(const wchar_t *w, int len) {
     return s;
 }
 
-int slang__w32_errno(DWORD e) {
+int zell__w32_errno(DWORD e) {
     switch (e) {
     case ERROR_SUCCESS: return 0;
     case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE: case ERROR_BAD_NETPATH:
@@ -82,7 +82,7 @@ int slang__w32_errno(DWORD e) {
 
 /* ---- threads ----------------------------------------------------------------- */
 
-typedef struct trampoline { slang__plat_thread_fn fn; void *arg; } trampoline;
+typedef struct trampoline { zell__plat_thread_fn fn; void *arg; } trampoline;
 
 static DWORD WINAPI thread_entry(LPVOID p) {
     trampoline t = *(trampoline *)p;
@@ -92,12 +92,12 @@ static DWORD WINAPI thread_entry(LPVOID p) {
 }
 
 /* mem.c: refcounts switch to atomic RMW for good before a second thread runs. */
-extern uint8_t slang_threaded;
+extern uint8_t zell_threaded;
 
-static HANDLE start_ex(slang__plat_thread_fn fn, void *arg, int threaded) {
+static HANDLE start_ex(zell__plat_thread_fn fn, void *arg, int threaded) {
     trampoline *t = malloc(sizeof *t);
     if (!t) return NULL;
-    if (threaded) __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
+    if (threaded) __atomic_store_n(&zell_threaded, 1, __ATOMIC_SEQ_CST);
     t->fn = fn;
     t->arg = arg;
     HANDLE h = CreateThread(NULL, 0, thread_entry, t, 0, NULL);
@@ -105,36 +105,36 @@ static HANDLE start_ex(slang__plat_thread_fn fn, void *arg, int threaded) {
     return h;
 }
 
-static HANDLE start(slang__plat_thread_fn fn, void *arg) { return start_ex(fn, arg, 1); }
+static HANDLE start(zell__plat_thread_fn fn, void *arg) { return start_ex(fn, arg, 1); }
 
-bool slang__plat_thread_start(slang__plat_thread *t, slang__plat_thread_fn fn, void *arg) {
+bool zell__plat_thread_start(zell__plat_thread *t, zell__plat_thread_fn fn, void *arg) {
     HANDLE h = start(fn, arg);
     if (!h) return false;
     t->handle = (uintptr_t)h;
     return true;
 }
 
-bool slang__plat_thread_start_detached(slang__plat_thread_fn fn, void *arg) {
+bool zell__plat_thread_start_detached(zell__plat_thread_fn fn, void *arg) {
     HANDLE h = start(fn, arg);
     if (!h) return false;
     CloseHandle(h);
     return true;
 }
 
-bool slang__plat_thread_start_background(slang__plat_thread_fn fn, void *arg) {
+bool zell__plat_thread_start_background(zell__plat_thread_fn fn, void *arg) {
     HANDLE h = start_ex(fn, arg, 0);
     if (!h) return false;
     CloseHandle(h);
     return true;
 }
 
-void slang__plat_thread_join(slang__plat_thread t) {
+void zell__plat_thread_join(zell__plat_thread t) {
     HANDLE h = (HANDLE)t.handle;
     WaitForSingleObject(h, INFINITE);
     CloseHandle(h);
 }
 
-int64_t slang__plat_cpu_count(void) {
+int64_t zell__plat_cpu_count(void) {
     DWORD n = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
     if (n == 0) {
         SYSTEM_INFO si;
@@ -144,31 +144,31 @@ int64_t slang__plat_cpu_count(void) {
     return n > 0 ? (int64_t)n : 1;
 }
 
-void slang__plat_yield(void) { SwitchToThread(); }
+void zell__plat_yield(void) { SwitchToThread(); }
 
 /* ---- locks ------------------------------------------------------------------- */
 
-_Static_assert(sizeof(SRWLOCK) == sizeof(slang__plat_mutex), "SRWLOCK layout");
-_Static_assert(sizeof(CONDITION_VARIABLE) == sizeof(slang__plat_cond), "CONDITION_VARIABLE layout");
-_Static_assert(sizeof(INIT_ONCE) == sizeof(slang__plat_once), "INIT_ONCE layout");
+_Static_assert(sizeof(SRWLOCK) == sizeof(zell__plat_mutex), "SRWLOCK layout");
+_Static_assert(sizeof(CONDITION_VARIABLE) == sizeof(zell__plat_cond), "CONDITION_VARIABLE layout");
+_Static_assert(sizeof(INIT_ONCE) == sizeof(zell__plat_once), "INIT_ONCE layout");
 
-void slang__plat_mutex_init(slang__plat_mutex *m) { InitializeSRWLock((PSRWLOCK)m); }
-void slang__plat_mutex_destroy(slang__plat_mutex *m) { (void)m; }
-void slang__plat_mutex_lock(slang__plat_mutex *m) { AcquireSRWLockExclusive((PSRWLOCK)m); }
-void slang__plat_mutex_unlock(slang__plat_mutex *m) { ReleaseSRWLockExclusive((PSRWLOCK)m); }
-void slang__plat_cond_init(slang__plat_cond *c) { InitializeConditionVariable((PCONDITION_VARIABLE)c); }
-void slang__plat_cond_destroy(slang__plat_cond *c) { (void)c; }
-void slang__plat_cond_wait(slang__plat_cond *c, slang__plat_mutex *m) {
+void zell__plat_mutex_init(zell__plat_mutex *m) { InitializeSRWLock((PSRWLOCK)m); }
+void zell__plat_mutex_destroy(zell__plat_mutex *m) { (void)m; }
+void zell__plat_mutex_lock(zell__plat_mutex *m) { AcquireSRWLockExclusive((PSRWLOCK)m); }
+void zell__plat_mutex_unlock(zell__plat_mutex *m) { ReleaseSRWLockExclusive((PSRWLOCK)m); }
+void zell__plat_cond_init(zell__plat_cond *c) { InitializeConditionVariable((PCONDITION_VARIABLE)c); }
+void zell__plat_cond_destroy(zell__plat_cond *c) { (void)c; }
+void zell__plat_cond_wait(zell__plat_cond *c, zell__plat_mutex *m) {
     SleepConditionVariableSRW((PCONDITION_VARIABLE)c, (PSRWLOCK)m, INFINITE, 0);
 }
-bool slang__plat_cond_wait_ns(slang__plat_cond *c, slang__plat_mutex *m, int64_t ns) {
+bool zell__plat_cond_wait_ns(zell__plat_cond *c, zell__plat_mutex *m, int64_t ns) {
     int64_t ms = ns <= 0 ? 0 : (ns + 999999) / 1000000;
     if (ms >= (int64_t)INFINITE) ms = (int64_t)INFINITE - 1;
     if (SleepConditionVariableSRW((PCONDITION_VARIABLE)c, (PSRWLOCK)m, (DWORD)ms, 0)) return true;
     return GetLastError() != ERROR_TIMEOUT;
 }
-void slang__plat_cond_signal(slang__plat_cond *c) { WakeConditionVariable((PCONDITION_VARIABLE)c); }
-void slang__plat_cond_broadcast(slang__plat_cond *c) { WakeAllConditionVariable((PCONDITION_VARIABLE)c); }
+void zell__plat_cond_signal(zell__plat_cond *c) { WakeConditionVariable((PCONDITION_VARIABLE)c); }
+void zell__plat_cond_broadcast(zell__plat_cond *c) { WakeAllConditionVariable((PCONDITION_VARIABLE)c); }
 
 typedef void (*once_fn)(void);
 static BOOL CALLBACK once_cb(PINIT_ONCE o, PVOID param, PVOID *ctx) {
@@ -179,7 +179,7 @@ static BOOL CALLBACK once_cb(PINIT_ONCE o, PVOID param, PVOID *ctx) {
     fn();
     return TRUE;
 }
-void slang__plat_once_run(slang__plat_once *o, void (*fn)(void)) {
+void zell__plat_once_run(zell__plat_once *o, void (*fn)(void)) {
     PVOID param;
     memcpy(&param, &fn, sizeof param);
     InitOnceExecuteOnce((PINIT_ONCE)o, once_cb, param, NULL);
@@ -202,7 +202,7 @@ static PFLS_CALLBACK_FUNCTION const g_tls_thunks[TLS_MAX] = {
     tls_thunk0, tls_thunk1, tls_thunk2, tls_thunk3, tls_thunk4, tls_thunk5, tls_thunk6, tls_thunk7,
 };
 
-bool slang__plat_tls_new(slang__plat_tls_key *k, void (*dtor)(void *)) {
+bool zell__plat_tls_new(zell__plat_tls_key *k, void (*dtor)(void *)) {
     LONG i = InterlockedIncrement(&g_tls_n) - 1;
     if (i >= TLS_MAX) return false;
     g_tls_dtor[i] = dtor;
@@ -212,17 +212,17 @@ bool slang__plat_tls_new(slang__plat_tls_key *k, void (*dtor)(void *)) {
     return true;
 }
 
-void slang__plat_tls_set(slang__plat_tls_key k, void *v) { FlsSetValue(k.idx, v); }
+void zell__plat_tls_set(zell__plat_tls_key k, void *v) { FlsSetValue(k.idx, v); }
 
 /* ---- memory ------------------------------------------------------------------ */
 
-void *slang__plat_aligned_alloc(size_t align, size_t size) { return _aligned_malloc(size, align); }
-void slang__plat_aligned_free(void *p) { _aligned_free(p); }
-size_t slang__plat_alloc_size(void *p) { return _msize(p); }
+void *zell__plat_aligned_alloc(size_t align, size_t size) { return _aligned_malloc(size, align); }
+void zell__plat_aligned_free(void *p) { _aligned_free(p); }
+size_t zell__plat_alloc_size(void *p) { return _msize(p); }
 
-size_t slang__plat_page_size(void) { return 4096; }
+size_t zell__plat_page_size(void) { return 4096; }
 
-void *slang__plat_mem_map(size_t len, size_t align) {
+void *zell__plat_mem_map(size_t len, size_t align) {
     if (align <= 65536) return VirtualAlloc(NULL, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     /* Reserve an over-sized range to find an aligned address, release it
      * and map exactly there (another thread may take it: retry). */
@@ -237,7 +237,7 @@ void *slang__plat_mem_map(size_t len, size_t align) {
     return NULL;
 }
 
-void slang__plat_mem_unmap(void *p, size_t len) {
+void zell__plat_mem_unmap(void *p, size_t len) {
     (void)len;
     if (p) VirtualFree(p, 0, MEM_RELEASE);
 }
@@ -246,7 +246,7 @@ void slang__plat_mem_unmap(void *p, size_t len) {
  * physical memory but keeps them committed, so the range needs no
  * re-commit before reuse (MEM_DECOMMIT would). Older systems: MEM_RESET. */
 typedef DWORD(WINAPI *discard_fn)(PVOID, SIZE_T);
-void slang__plat_mem_release(void *p, size_t len) {
+void zell__plat_mem_release(void *p, size_t len) {
     static discard_fn fn;
     static int looked;
     if (!__atomic_load_n(&looked, __ATOMIC_ACQUIRE)) {
@@ -260,18 +260,18 @@ void slang__plat_mem_release(void *p, size_t len) {
     VirtualAlloc(p, len, MEM_RESET, PAGE_READWRITE);
 }
 
-void *slang__plat_mem_remap(void *p, size_t old_len, size_t new_len) {
+void *zell__plat_mem_remap(void *p, size_t old_len, size_t new_len) {
     (void)p;
     (void)old_len;
     (void)new_len;
     return NULL;
 }
 
-void slang__plat_malloc_trim(void) { _heapmin(); }
+void zell__plat_malloc_trim(void) { _heapmin(); }
 
 /* ---- time and entropy ----------------------------------------------------------- */
 
-int64_t slang__plat_mono_ns(void) {
+int64_t zell__plat_mono_ns(void) {
     static LARGE_INTEGER freq;
     if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
     LARGE_INTEGER c;
@@ -280,14 +280,14 @@ int64_t slang__plat_mono_ns(void) {
     return c.QuadPart / f * 1000000000 + c.QuadPart % f * 1000000000 / f;
 }
 
-int64_t slang__plat_wall_ns(void) {
+int64_t zell__plat_wall_ns(void) {
     FILETIME ft;
     GetSystemTimePreciseAsFileTime(&ft);
     int64_t t = (int64_t)(((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime);
     return (t - 116444736000000000LL) * 100;  /* 100 ns ticks since 1601 */
 }
 
-void slang__plat_sleep_ns(int64_t ns) {
+void zell__plat_sleep_ns(int64_t ns) {
     if (ns <= 0) return;
     int64_t ms = (ns + 999999) / 1000000;
     while (ms > 0) {
@@ -297,10 +297,10 @@ void slang__plat_sleep_ns(int64_t ns) {
     }
 }
 
-const char *slang__plat_localtime_path(void) { return NULL; }
-const char *slang__plat_zoneinfo_dir(void) { return NULL; }
+const char *zell__plat_localtime_path(void) { return NULL; }
+const char *zell__plat_zoneinfo_dir(void) { return NULL; }
 
-bool slang__plat_random_bytes(void *buf, size_t n) {
+bool zell__plat_random_bytes(void *buf, size_t n) {
     unsigned char *p = buf;
     while (n > 0) {
         ULONG k = n > 0x10000000 ? 0x10000000 : (ULONG)n;
@@ -325,8 +325,8 @@ static void dl_set_error(void) {
     if (n == 0) snprintf(t_dl_err, sizeof t_dl_err, "error %lu", (unsigned long)e);
 }
 
-void *slang__plat_dl_open(const char *path) {
-    wchar_t *w = slang__w32_wpath(path);
+void *zell__plat_dl_open(const char *path) {
+    wchar_t *w = zell__w32_wpath(path);
     if (!w) {
         snprintf(t_dl_err, sizeof t_dl_err, "invalid path");
         return NULL;
@@ -337,7 +337,7 @@ void *slang__plat_dl_open(const char *path) {
     return h;
 }
 
-void *slang__plat_dl_sym(void *h, const char *name) {
+void *zell__plat_dl_sym(void *h, const char *name) {
     if (!h) return NULL;
     FARPROC p = GetProcAddress((HMODULE)h, name);
     if (!p) {
@@ -349,11 +349,11 @@ void *slang__plat_dl_sym(void *h, const char *name) {
     return r;
 }
 
-void slang__plat_dl_close(void *h) {
+void zell__plat_dl_close(void *h) {
     if (h) FreeLibrary((HMODULE)h);
 }
 
-const char *slang__plat_dl_error(void) { return t_dl_err[0] ? t_dl_err : "unknown error"; }
+const char *zell__plat_dl_error(void) { return t_dl_err[0] ? t_dl_err : "unknown error"; }
 
 /* ---- command line and console --------------------------------------------------- */
 
@@ -361,7 +361,7 @@ static bool g_console[3];
 static unsigned char g_carry[3][5];
 
 /* Before main (and before anything can panic): binary standard streams
- * and console setup; the UTF-8 argv comes with slang_runtime_init. */
+ * and console setup; the UTF-8 argv comes with zell_runtime_init. */
 __attribute__((constructor)) static void console_init(void) {
     g_main_thread = GetCurrentThreadId();
     /* println writes \n: no CRLF translation in the C runtime. */
@@ -380,7 +380,7 @@ __attribute__((constructor)) static void console_init(void) {
     if (g_console[1] || g_console[2]) SetConsoleOutputCP(CP_UTF8);
 }
 
-void slang__plat_runtime_init(int *argc, char ***argv) {
+void zell__plat_runtime_init(int *argc, char ***argv) {
     /* The UTF-8 command line (the C runtime's argv is in the ANSI code page). */
     int n = 0;
     LPWSTR *w = CommandLineToArgvW(GetCommandLineW(), &n);
@@ -388,7 +388,7 @@ void slang__plat_runtime_init(int *argc, char ***argv) {
     char **v = calloc((size_t)n + 1, sizeof *v);
     if (!v) { LocalFree(w); return; }
     for (int i = 0; i < n; i++) {
-        v[i] = slang__w32_utf8(w[i], -1);
+        v[i] = zell__w32_utf8(w[i], -1);
         if (!v[i]) v[i] = "";
     }
     LocalFree(w);
@@ -396,7 +396,7 @@ void slang__plat_runtime_init(int *argc, char ***argv) {
     *argv = v;  /* lives for the whole process */
 }
 
-void slang__w32_console_write(HANDLE h, unsigned char carry[5], const char *p, size_t n) {
+void zell__w32_console_write(HANDLE h, unsigned char carry[5], const char *p, size_t n) {
     /* Prepend an incomplete sequence left by the previous call. */
     while (n > 0) {
         char buf[4096 + 4];
@@ -429,19 +429,19 @@ void slang__w32_console_write(HANDLE h, unsigned char carry[5], const char *p, s
     }
 }
 
-bool slang__w32_is_console_fd(int64_t fd) { return (fd == 1 || fd == 2) && g_console[fd]; }
+bool zell__w32_is_console_fd(int64_t fd) { return (fd == 1 || fd == 2) && g_console[fd]; }
 
-void slang__w32_console_fd_write(int64_t fd, const char *p, size_t n) {
-    slang__w32_console_write(GetStdHandle(fd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE), g_carry[fd], p, n);
+void zell__w32_console_fd_write(int64_t fd, const char *p, size_t n) {
+    zell__w32_console_write(GetStdHandle(fd == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE), g_carry[fd], p, n);
 }
 
-void slang__plat_stream_write(FILE *f, const char *p, size_t n) {
+void zell__plat_stream_write(FILE *f, const char *p, size_t n) {
     if (!n) return;
     int fd = _fileno(f);
     if (fd == 1 || fd == 2) {
         if (g_console[fd]) {
             fflush(f);
-            slang__w32_console_fd_write(fd, p, n);
+            zell__w32_console_fd_write(fd, p, n);
             return;
         }
     }
@@ -450,10 +450,10 @@ void slang__plat_stream_write(FILE *f, const char *p, size_t n) {
 
 /* ---- environment and identity ---------------------------------------------------- */
 
-int64_t slang__plat_pid(void) { return (int64_t)GetCurrentProcessId(); }
+int64_t zell__plat_pid(void) { return (int64_t)GetCurrentProcessId(); }
 
-char *slang__plat_getenv(const char *name) {
-    wchar_t *wn = slang__w32_wide(name);
+char *zell__plat_getenv(const char *name) {
+    wchar_t *wn = zell__w32_wide(name);
     if (!wn) return NULL;
     DWORD n = GetEnvironmentVariableW(wn, NULL, 0);
     if (n == 0) {
@@ -464,21 +464,21 @@ char *slang__plat_getenv(const char *name) {
     char *r = NULL;
     if (v) {
         DWORD k = GetEnvironmentVariableW(wn, v, n);
-        if (k < n) r = slang__w32_utf8(v, (int)k);
+        if (k < n) r = zell__w32_utf8(v, (int)k);
         free(v);
     }
     free(wn);
     return r;
 }
 
-int slang__plat_setenv(const char *name, const char *value) {
+int zell__plat_setenv(const char *name, const char *value) {
     size_t nl = strlen(name), vl = value ? strlen(value) : 0;
     char *kv = malloc(nl + vl + 2);
     if (!kv) return ENOMEM;
     memcpy(kv, name, nl);
     kv[nl] = '=';
     memcpy(kv + nl + 1, value ? value : "", vl + 1);
-    wchar_t *w = slang__w32_wide(kv);
+    wchar_t *w = zell__w32_wide(kv);
     free(kv);
     if (!w) return EINVAL;
     /* _wputenv updates the C runtime's copy and the process environment;
@@ -487,7 +487,7 @@ int slang__plat_setenv(const char *name, const char *value) {
     free(w);
     if (rc != 0) return errno ? errno : EINVAL;
     if (value && !*value) {
-        wchar_t *wn = slang__w32_wide(name);
+        wchar_t *wn = zell__w32_wide(name);
         if (wn) {
             SetEnvironmentVariableW(wn, L"");
             free(wn);
@@ -496,7 +496,7 @@ int slang__plat_setenv(const char *name, const char *value) {
     return 0;
 }
 
-char **slang__plat_environ(void) {
+char **zell__plat_environ(void) {
     LPWCH block = GetEnvironmentStringsW();
     if (!block) return calloc(1, sizeof(char *));
     size_t n = 0;
@@ -505,46 +505,46 @@ char **slang__plat_environ(void) {
     size_t k = 0;
     for (LPWCH p = block; *p && v; p += wcslen(p) + 1) {
         if (*p == L'=') continue;  /* hidden per-drive directories ("=C:=C:\\x") */
-        v[k] = slang__w32_utf8(p, -1);
+        v[k] = zell__w32_utf8(p, -1);
         if (v[k]) k++;
     }
     FreeEnvironmentStringsW(block);
     return v;
 }
 
-void slang__plat_free_strv(char **v) {
+void zell__plat_free_strv(char **v) {
     if (!v) return;
     for (char **p = v; *p; p++) free(*p);
     free(v);
 }
 
-int slang__plat_hostname(char *buf, size_t cap) {
+int zell__plat_hostname(char *buf, size_t cap) {
     wchar_t w[256];
     DWORD n = 256;
-    if (!GetComputerNameExW(ComputerNameDnsHostname, w, &n)) return slang__w32_errno(GetLastError());
-    char *u = slang__w32_utf8(w, (int)n);
+    if (!GetComputerNameExW(ComputerNameDnsHostname, w, &n)) return zell__w32_errno(GetLastError());
+    char *u = zell__w32_utf8(w, (int)n);
     if (!u) return ENOMEM;
     snprintf(buf, cap, "%s", u);
     free(u);
     return 0;
 }
 
-char *slang__plat_temp_dir(void) {
+char *zell__plat_temp_dir(void) {
     wchar_t w[MAX_PATH + 2];
     DWORD n = GetTempPathW(MAX_PATH + 1, w);
     if (n == 0 || n > MAX_PATH + 1) return _strdup("C:\\Windows\\Temp");
     if (n > 3 && w[n - 1] == L'\\') w[--n] = 0;  /* like Go: no trailing separator */
-    return slang__w32_utf8(w, (int)n);
+    return zell__w32_utf8(w, (int)n);
 }
 
-char slang__plat_path_sep(void) { return '\\'; }
+char zell__plat_path_sep(void) { return '\\'; }
 
 /* ---- signals: console control events ----------------------------------------------- */
 
 #define NSIG_MAX 65
 static void (*g_deliver)(int);
 static volatile LONG g_sig_state[NSIG_MAX];  /* 0 default, 1 caught, 2 ignored */
-static slang__plat_once g_sig_once = SLANG_PLAT_ONCE_INIT;
+static zell__plat_once g_sig_once = ZELL_PLAT_ONCE_INIT;
 
 static BOOL WINAPI ctrl_handler(DWORD ev) {
     int sig = (ev == CTRL_C_EVENT || ev == CTRL_BREAK_EVENT) ? 2 : 15;
@@ -558,17 +558,17 @@ static BOOL WINAPI ctrl_handler(DWORD ev) {
 
 static void sig_init(void) { SetConsoleCtrlHandler(ctrl_handler, TRUE); }
 
-void slang__plat_sig_start(void (*deliver)(int sig)) {
+void zell__plat_sig_start(void (*deliver)(int sig)) {
     g_deliver = deliver;
-    slang__plat_once_run(&g_sig_once, sig_init);
+    zell__plat_once_run(&g_sig_once, sig_init);
 }
 
-bool slang__plat_sig_catchable(int64_t sig) { return sig > 0 && sig < NSIG_MAX && sig != 9 && sig != 19; }
-void slang__plat_sig_catch(int sig) { InterlockedExchange(&g_sig_state[sig], 1); }
-void slang__plat_sig_ignore(int sig) { InterlockedExchange(&g_sig_state[sig], 2); }
-void slang__plat_sig_default(int sig) { InterlockedExchange(&g_sig_state[sig], 0); }
+bool zell__plat_sig_catchable(int64_t sig) { return sig > 0 && sig < NSIG_MAX && sig != 9 && sig != 19; }
+void zell__plat_sig_catch(int sig) { InterlockedExchange(&g_sig_state[sig], 1); }
+void zell__plat_sig_ignore(int sig) { InterlockedExchange(&g_sig_state[sig], 2); }
+void zell__plat_sig_default(int sig) { InterlockedExchange(&g_sig_state[sig], 0); }
 
-void slang__plat_sig_raise(int sig) {
+void zell__plat_sig_raise(int sig) {
     if (sig <= 0 || sig >= NSIG_MAX) return;
     LONG st = g_sig_state[sig];
     if (st == 1 && g_deliver) { g_deliver(sig); return; }
@@ -580,13 +580,13 @@ void slang__plat_sig_raise(int sig) {
 
 /* ---- users: the current one ----------------------------------------------------------- */
 
-int64_t slang__plat_uid(void) { return -1; }
+int64_t zell__plat_uid(void) { return -1; }
 
-int slang__plat_user_lookup(const char *name, int64_t uid, bool by_id, slang__plat_user *u) {
+int zell__plat_user_lookup(const char *name, int64_t uid, bool by_id, zell__plat_user *u) {
     wchar_t w[257];
     DWORD n = 257;
-    if (!GetUserNameW(w, &n)) return slang__w32_errno(GetLastError());
-    char *me = slang__w32_utf8(w, -1);
+    if (!GetUserNameW(w, &n)) return zell__w32_errno(GetLastError());
+    char *me = zell__w32_utf8(w, -1);
     if (!me) return ENOMEM;
     bool match = by_id ? uid == -1 : _stricmp(name, me) == 0;
     if (!match) {
@@ -598,13 +598,13 @@ int slang__plat_user_lookup(const char *name, int64_t uid, bool by_id, slang__pl
     snprintf(u->name, sizeof u->name, "%s", me);
     snprintf(u->full, sizeof u->full, "%s", me);
     free(me);
-    char *home = slang__plat_getenv("USERPROFILE");
+    char *home = zell__plat_getenv("USERPROFILE");
     snprintf(u->home, sizeof u->home, "%s", home ? home : "");
     free(home);
     return 0;
 }
 
-int slang__plat_group_lookup(const char *name, int64_t gid, bool by_id, int64_t *gid_out, char *gname, size_t cap) {
+int zell__plat_group_lookup(const char *name, int64_t gid, bool by_id, int64_t *gid_out, char *gname, size_t cap) {
     (void)name;
     (void)gid;
     (void)by_id;
@@ -616,5 +616,5 @@ int slang__plat_group_lookup(const char *name, int64_t gid, bool by_id, int64_t 
 
 #else
 /* POSIX: posix.c, fs_posix.c. */
-typedef int slang__win32_unused;
+typedef int zell__win32_unused;
 #endif

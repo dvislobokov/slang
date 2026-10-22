@@ -62,7 +62,7 @@ static void inv_shift_sub(uint8_t *s) {
     for (int i = 0; i < 16; i++) s[i] = inv_sbox(t[i]);
 }
 
-static void pt_decrypt(const slang_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
+static void pt_decrypt(const zell_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
     uint8_t s[16];
     unsigned nr = k->nr;
     for (int i = 0; i < 16; i++) s[i] = in[i] ^ k->rk[16 * nr + i];
@@ -73,15 +73,15 @@ static void pt_decrypt(const slang_aes_key *k, const uint8_t in[16], uint8_t out
     }
     inv_shift_sub(s);
     for (int i = 0; i < 16; i++) out[i] = s[i] ^ k->rk[i];
-    slang__crypto_wipe(s, sizeof s);
+    zell__crypto_wipe(s, sizeof s);
 }
 
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
-#define SLANG_HAVE_AESNI_DEC 1
+#define ZELL_HAVE_AESNI_DEC 1
 #include <wmmintrin.h>
 #define NI_DEC __attribute__((target("aes,sse2")))
 
-NI_DEC static void ni_decrypt(const slang_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
+NI_DEC static void ni_decrypt(const zell_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
     unsigned nr = k->nr;
     __m128i b = _mm_loadu_si128((const __m128i *)in);
     b = _mm_xor_si128(b, _mm_loadu_si128((const __m128i *)(k->rk + 16 * nr)));
@@ -92,8 +92,8 @@ NI_DEC static void ni_decrypt(const slang_aes_key *k, const uint8_t in[16], uint
 }
 #endif
 
-void slang__aes_decrypt_block(const slang_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
-#ifdef SLANG_HAVE_AESNI_DEC
+void zell__aes_decrypt_block(const zell_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
+#ifdef ZELL_HAVE_AESNI_DEC
     if (k->ni) {
         ni_decrypt(k, in, out);
         return;
@@ -102,31 +102,31 @@ void slang__aes_decrypt_block(const slang_aes_key *k, const uint8_t in[16], uint
     pt_decrypt(k, in, out);
 }
 
-void slang__cbc_encrypt(const slang_aes_key *k, const uint8_t iv[16], const uint8_t *in, size_t n, uint8_t *out) {
+void zell__cbc_encrypt(const zell_aes_key *k, const uint8_t iv[16], const uint8_t *in, size_t n, uint8_t *out) {
     uint8_t x[16];
     memcpy(x, iv, 16);
     for (size_t off = 0; off + 16 <= n; off += 16) {
         for (int i = 0; i < 16; i++) x[i] ^= in[off + i];
-        slang__aes_encrypt_block(k, x, x);
+        zell__aes_encrypt_block(k, x, x);
         memcpy(out + off, x, 16);
     }
 }
 
-void slang__cbc_decrypt(const slang_aes_key *k, const uint8_t iv[16], const uint8_t *in, size_t n, uint8_t *out) {
+void zell__cbc_decrypt(const zell_aes_key *k, const uint8_t iv[16], const uint8_t *in, size_t n, uint8_t *out) {
     uint8_t prev[16], cur[16], x[16];
     memcpy(prev, iv, 16);
     for (size_t off = 0; off + 16 <= n; off += 16) {
         memcpy(cur, in + off, 16);
-        slang__aes_decrypt_block(k, cur, x);
+        zell__aes_decrypt_block(k, cur, x);
         for (int i = 0; i < 16; i++) out[off + i] = x[i] ^ prev[i];
         memcpy(prev, cur, 16);
     }
-    slang__crypto_wipe(x, sizeof x);
+    zell__crypto_wipe(x, sizeof x);
 }
 
 /* Length of the PKCS#7 padding of a block-aligned buffer, or 0 if the
  * padding is invalid; constant time in the padding bytes. */
-size_t slang__pkcs7_unpad_len(const uint8_t *p, size_t n, size_t block) {
+size_t zell__pkcs7_unpad_len(const uint8_t *p, size_t n, size_t block) {
     if (n == 0 || n % block != 0 || block == 0 || block > 255) return 0;
     uint8_t pad = p[n - 1];
     uint32_t bad = (uint32_t)((pad - 1u) >> 8 & 1) | (uint32_t)(((uint32_t)block - pad) >> 31);   /* pad == 0 || pad > block */

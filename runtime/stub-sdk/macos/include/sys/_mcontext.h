@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SYS__MCONTEXT_H
-#define SLANG_STUB_SYS__MCONTEXT_H
+#ifndef ZELL_STUB_SYS__MCONTEXT_H
+#define ZELL_STUB_SYS__MCONTEXT_H
 #include <sys/_types.h>
 #if defined(__aarch64__) || defined(__arm64__)
 struct __darwin_arm_exception_state64 { __uint64_t __far; __uint32_t __esr; __uint32_t __exception; };

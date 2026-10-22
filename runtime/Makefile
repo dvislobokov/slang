@@ -1,19 +1,19 @@
-# Slang runtime library (v0.1)
-#   make        -> build/libslang_rt.a (also copied to ./libslang_rt.a)
+# Zell runtime library (v0.1)
+#   make        -> build/libzell_rt.a (also copied to ./libzell_rt.a)
 #   make test   -> build and run tests/*.c
 #   make clean
 #   make asan   -> clean rebuild + tests under AddressSanitizer
 #   make tsan   -> build/tsan/: the poller/network/scheduler tests under ThreadSanitizer
 #   CFLAGS_EXTRA=... is appended to CFLAGS (and to the coro test link, done with $(CC)),
 #   e.g. make clean && make CFLAGS_EXTRA=-fsanitize=address test
-#   make CROSS=x86_64-w64-mingw32 -> build/win64/libslang_rt.a (Windows, mingw ABI;
-#               also copied to build/x86_64-pc-windows-gnu/ where `slang build
+#   make CROSS=x86_64-w64-mingw32 -> build/win64/libzell_rt.a (Windows, mingw ABI;
+#               also copied to build/x86_64-pc-windows-gnu/ where `zell build
 #               --target windows-amd64` looks), compiled with clang -target
 #               $(CROSS) (or $(CROSS)-gcc without clang) against the mingw-w64 headers
 #   make CROSS=x86_64-w64-mingw32 test-wine -> the C unit tests built for Windows
 #               and run under wine (WINE=wine); prints which pass
 #   make CROSS=aarch64-apple-darwin (or x86_64-apple-darwin) -> macOS: with an SDK
-#               (SDKROOT, or xcrun on a Mac) build/<triple>/libslang_rt.a; without
+#               (SDKROOT, or xcrun on a Mac) build/<triple>/libzell_rt.a; without
 #               one, a compile check of every file against stub-sdk/macos/
 #               (objects in build/<triple>-stubcheck/, never linked)
 #   make CROSS=aarch64-linux-gnu / x86_64-linux-musl / aarch64-linux-musl -> Linux
@@ -29,7 +29,7 @@ HAVE_CLANG := $(shell command -v $(CLANG) >/dev/null 2>&1 && echo yes)
 
 ifneq ($(CROSS),)
 # Cross build. clang is preferred: one compiler for every target, and the
-# same TLS model (native, not emutls) as the code LLVM generates for Slang.
+# same TLS model (native, not emutls) as the code LLVM generates for Zell.
 ifeq ($(HAVE_CLANG),yes)
 CC      := $(CLANG) -target $(CROSS)
 AR      := $(shell command -v llvm-ar-18 >/dev/null 2>&1 && echo llvm-ar-18 || (command -v llvm-ar >/dev/null 2>&1 && echo llvm-ar || echo $(CROSS)-ar))
@@ -100,9 +100,9 @@ endif
 CFLAGS  += -std=c11 -Wall -Wextra -Werror $(PICFLAG) -fno-omit-frame-pointer -ffunction-sections -fdata-sections -D_GNU_SOURCE $(OSFLAGS) -Iinclude -g $(CFLAGS_EXTRA)
 SRCS    := $(wildcard src/*.c) $(wildcard src/platform/*.c) $(wildcard src/crypto/*.c)
 OBJS    := $(patsubst src/%.c,$(BUILD)/%.o,$(SRCS))
-LIB     := $(BUILD)/libslang_rt.a
+LIB     := $(BUILD)/libzell_rt.a
 TESTS   := $(patsubst tests/%.c,$(BUILD)/tests/%,$(wildcard tests/test_*.c))
-# Extra environment for test_task only. `make asan` sets SLANG_NO_BACKTRACE=1:
+# Extra environment for test_task only. `make asan` sets ZELL_NO_BACKTRACE=1:
 # under ASan, backtrace() in a panicking fork()ed child can deadlock on the
 # sanitizer allocator lock inherited from a worker thread (intermittent hang).
 TASK_TEST_ENV ?=
@@ -110,18 +110,18 @@ TASK_TEST_ENV ?=
 .PHONY: all test clean asan tsan test-wine test-cross
 
 ifeq ($(CROSS),)
-all: libslang_rt.a
+all: libzell_rt.a
 
-libslang_rt.a: $(LIB)
+libzell_rt.a: $(LIB)
 	cp $(LIB) $@
 else ifeq ($(STUBCHECK),yes)
 all: $(OBJS)
 	@for t in tests/test_*.c; do $(CC) $(CFLAGS) -fsyntax-only $$t || exit 1; done
 	@echo "macOS stub-SDK compile check passed: $(words $(OBJS)) runtime files + tests ($(BUILD)/; not a usable runtime: set SDKROOT or build on a Mac)"
 else
-all: build/$(TRIPLE)/libslang_rt.a
+all: build/$(TRIPLE)/libzell_rt.a
 
-build/$(TRIPLE)/libslang_rt.a: $(LIB)
+build/$(TRIPLE)/libzell_rt.a: $(LIB)
 	@mkdir -p build/$(TRIPLE)
 	cp $(LIB) $@
 endif
@@ -129,7 +129,7 @@ endif
 $(LIB): $(OBJS)
 	$(AR) rcs $@ $^
 
-$(BUILD)/%.o: src/%.c include/slang_rt.h src/rt_internal.h src/heap.h src/platform/platform.h $(wildcard src/crypto/*.h) | $(BUILD) $(BUILD)/platform $(BUILD)/crypto
+$(BUILD)/%.o: src/%.c include/zell_rt.h src/rt_internal.h src/heap.h src/platform/platform.h $(wildcard src/crypto/*.h) | $(BUILD) $(BUILD)/platform $(BUILD)/crypto
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/tests/%: tests/%.c tests/test.h $(wildcard tests/vectors/*.h) $(LIB) | $(BUILD)/tests
@@ -162,7 +162,7 @@ test: $(TESTS) $(CORO_TEST)
 	echo "ALL TESTS PASSED ($$pass binaries)"
 
 clean:
-	rm -rf $(BUILD) libslang_rt.a
+	rm -rf $(BUILD) libzell_rt.a
 
 # The C unit tests cross-built for Windows and run under wine (the test code
 # itself may use mingw's winpthreads and POSIX shims from tests/test.h; the
@@ -216,7 +216,7 @@ asan:
 	$(MAKE) clean
 	LSAN_OPTIONS=suppressions=$(CURDIR)/tests/lsan.supp:print_suppressions=0 \
 	  $(MAKE) CFLAGS_EXTRA="-fsanitize=address -fno-omit-frame-pointer" \
-	  TASK_TEST_ENV=SLANG_NO_BACKTRACE=1 test
+	  TASK_TEST_ENV=ZELL_NO_BACKTRACE=1 test
 
 # ThreadSanitizer run of the concurrency-heavy tests (sharded pollers, socket
 # close races, resolver pool, scheduler, cycle collector) in its own build directory, so it
@@ -227,5 +227,5 @@ tsan:
 	@set -e; for t in $(TSAN_TESTS); do \
 	  echo "== tsan $$t"; \
 	  TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1 suppressions=$(CURDIR)/tests/tsan.supp" \
-	    SLANG_NO_BACKTRACE=1 ./build/tsan/tests/$$t; \
+	    ZELL_NO_BACKTRACE=1 ./build/tsan/tests/$$t; \
 	done; echo "TSAN TESTS PASSED"

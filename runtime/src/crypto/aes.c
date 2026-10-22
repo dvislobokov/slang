@@ -9,7 +9,7 @@
  *    GHASH uses carry-less multiplication built from integer multiplies with
  *    "holes" (no secret-indexed tables), after BearSSL's ghash_ctmul64.
  *  - x86-64 AES-NI + PCLMULQDQ through intrinsics, chosen at run time by
- *    cpuid (slang__cpu_has_aesni; SLANG_NO_AESNI=1 forces the portable path).
+ *    cpuid (zell__cpu_has_aesni; ZELL_NO_AESNI=1 forces the portable path).
  *
  * The key schedule is always computed by the portable code (constant time)
  * and its byte round keys are what AESENC consumes. Only encryption is
@@ -92,7 +92,7 @@ static inline uint64_t transpose8(uint64_t x) {
 static void bs_load(uint64_t q[8], const uint8_t in[64]) {
     for (int i = 0; i < 8; i++) q[i] = 0;
     for (int k = 0; k < 8; k++) {
-        uint64_t x = transpose8(slang__ld64le(in + 8 * k));
+        uint64_t x = transpose8(zell__ld64le(in + 8 * k));
         for (int c = 0; c < 8; c++) q[c] |= ((x >> (8 * c)) & 0xFF) << (8 * k);
     }
 }
@@ -101,7 +101,7 @@ static void bs_store(uint8_t out[64], const uint64_t q[8]) {
     for (int k = 0; k < 8; k++) {
         uint64_t x = 0;
         for (int c = 0; c < 8; c++) x |= ((q[c] >> (8 * k)) & 0xFF) << (8 * c);
-        slang__st64le(out + 8 * k, transpose8(x));
+        zell__st64le(out + 8 * k, transpose8(x));
     }
 }
 
@@ -182,17 +182,17 @@ static uint32_t sub_word(uint32_t w) {
     return r;
 }
 
-uint8_t slang__aes_sbox_ct(uint8_t x) {
+uint8_t zell__aes_sbox_ct(uint8_t x) {
     return (uint8_t)sub_word(x);
 }
 
-bool slang__aes_init(slang_aes_key *k, const uint8_t *key, size_t klen) {
+bool zell__aes_init(zell_aes_key *k, const uint8_t *key, size_t klen) {
     if (klen != 16 && klen != 24 && klen != 32) return false;
     memset(k, 0, sizeof *k);
     unsigned nk = (unsigned)(klen / 4), nr = nk + 6, total = 4 * (nr + 1);
     uint32_t w[60];
     /* words are little-endian loads: byte 0 of the word is the first key byte */
-    for (unsigned i = 0; i < nk; i++) w[i] = slang__ld32le(key + 4 * i);
+    for (unsigned i = 0; i < nk; i++) w[i] = zell__ld32le(key + 4 * i);
     uint32_t rcon = 1;
     for (unsigned i = nk; i < total; i++) {
         uint32_t t = w[i - 1];
@@ -205,18 +205,18 @@ bool slang__aes_init(slang_aes_key *k, const uint8_t *key, size_t klen) {
         }
         w[i] = w[i - nk] ^ t;
     }
-    for (unsigned i = 0; i < total; i++) slang__st32le(k->rk + 4 * i, w[i]);
+    for (unsigned i = 0; i < total; i++) zell__st32le(k->rk + 4 * i, w[i]);
     k->nr = nr;
-    k->ni = slang__cpu_has_aesni() ? 1 : 0;
+    k->ni = zell__cpu_has_aesni() ? 1 : 0;
     if (!k->ni) {
         uint8_t rep[64];
         for (unsigned r = 0; r <= nr; r++) {
             for (int b = 0; b < 4; b++) memcpy(rep + 16 * b, k->rk + 16 * r, 16);
             bs_load(k->sk + 8 * r, rep);
         }
-        slang__crypto_wipe(rep, sizeof rep);
+        zell__crypto_wipe(rep, sizeof rep);
     }
-    slang__crypto_wipe(w, sizeof w);
+    zell__crypto_wipe(w, sizeof w);
     return true;
 }
 
@@ -224,7 +224,7 @@ bool slang__aes_init(slang_aes_key *k, const uint8_t *key, size_t klen) {
 /* AES-NI + PCLMULQDQ                                                      */
 
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
-#define SLANG_HAVE_AESNI 1
+#define ZELL_HAVE_AESNI 1
 #include <emmintrin.h>
 #include <smmintrin.h>
 #include <tmmintrin.h>
@@ -238,11 +238,11 @@ NI_TARGET static inline __m128i ni_encrypt(const __m128i *rk, unsigned nr, __m12
     return _mm_aesenclast_si128(b, rk[nr]);
 }
 
-NI_TARGET static void ni_load_keys(const slang_aes_key *k, __m128i *rk) {
+NI_TARGET static void ni_load_keys(const zell_aes_key *k, __m128i *rk) {
     for (unsigned r = 0; r <= k->nr; r++) rk[r] = _mm_loadu_si128((const __m128i *)(k->rk + 16 * r));
 }
 
-NI_TARGET static void ni_encrypt_block(const slang_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
+NI_TARGET static void ni_encrypt_block(const zell_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
     __m128i rk[15];
     ni_load_keys(k, rk);
     _mm_storeu_si128((__m128i *)out, ni_encrypt(rk, k->nr, _mm_loadu_si128((const __m128i *)in)));
@@ -312,12 +312,12 @@ NI_TARGET static __m128i ni_ghash(__m128i y, __m128i h, const uint8_t *p, size_t
 /* CTR keystream XOR, 32-bit big-endian counter in the last 4 bytes of ctr. */
 NI_TARGET static void ni_ctr(const __m128i *rk, unsigned nr, uint8_t ctr[16], const uint8_t *in, size_t n,
                              uint8_t *out) {
-    uint32_t c = slang__ld32be(ctr + 12);
+    uint32_t c = zell__ld32be(ctr + 12);
     uint8_t cb[64];
     while (n >= 64) {
         for (int j = 0; j < 4; j++) {
             memcpy(cb + 16 * j, ctr, 12);
-            slang__st32be(cb + 16 * j + 12, c + (uint32_t)j);
+            zell__st32be(cb + 16 * j + 12, c + (uint32_t)j);
         }
         c += 4;
         __m128i b0 = _mm_xor_si128(_mm_loadu_si128((const __m128i *)cb), rk[0]);
@@ -344,7 +344,7 @@ NI_TARGET static void ni_ctr(const __m128i *rk, unsigned nr, uint8_t ctr[16], co
     }
     while (n) {
         memcpy(cb, ctr, 12);
-        slang__st32be(cb + 12, c++);
+        zell__st32be(cb + 12, c++);
         uint8_t ks[16];
         _mm_storeu_si128((__m128i *)ks, ni_encrypt(rk, nr, _mm_loadu_si128((const __m128i *)cb)));
         size_t k = n < 16 ? n : 16;
@@ -353,11 +353,11 @@ NI_TARGET static void ni_ctr(const __m128i *rk, unsigned nr, uint8_t ctr[16], co
         out += k;
         n -= k;
     }
-    slang__st32be(ctr + 12, c);
+    zell__st32be(ctr + 12, c);
 }
 
 /* Full GCM in the AES-NI path; returns the tag in tag[16]. */
-NI_TARGET static void ni_gcm(const slang_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
+NI_TARGET static void ni_gcm(const zell_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                              const uint8_t *in, size_t n, uint8_t *out, bool enc, uint8_t tag[16]) {
     __m128i rk[15];
     ni_load_keys(&c->k, rk);
@@ -366,7 +366,7 @@ NI_TARGET static void ni_gcm(const slang_gcm_ctx *c, const uint8_t nonce[12], co
     y = ni_ghash(y, h, aad, alen);
     uint8_t ctr[16];
     memcpy(ctr, nonce, 12);
-    slang__st32be(ctr + 12, 2);
+    zell__st32be(ctr + 12, 2);
     if (enc) {
         ni_ctr(rk, c->k.nr, ctr, in, n, out);
         y = ni_ghash(y, h, out, n);
@@ -375,11 +375,11 @@ NI_TARGET static void ni_gcm(const slang_gcm_ctx *c, const uint8_t nonce[12], co
         ni_ctr(rk, c->k.nr, ctr, in, n, out);
     }
     uint8_t lens[16];
-    slang__st64be(lens, (uint64_t)alen * 8);
-    slang__st64be(lens + 8, (uint64_t)n * 8);
+    zell__st64be(lens, (uint64_t)alen * 8);
+    zell__st64be(lens + 8, (uint64_t)n * 8);
     y = ni_ghash(y, h, lens, 16);
     memcpy(ctr, nonce, 12);
-    slang__st32be(ctr + 12, 1);
+    zell__st32be(ctr + 12, 1);
     __m128i ej = ni_encrypt(rk, c->k.nr, _mm_loadu_si128((const __m128i *)ctr));
     _mm_storeu_si128((__m128i *)tag, _mm_xor_si128(ni_bswap(y), ej));
 }
@@ -388,15 +388,15 @@ NI_TARGET static void ni_gcm(const slang_gcm_ctx *c, const uint8_t nonce[12], co
 /* ---------------------------------------------------------------------- */
 /* Portable block/CTR/GHASH                                                */
 
-static void bs_encrypt4(const slang_aes_key *k, const uint8_t in[64], uint8_t out[64]) {
+static void bs_encrypt4(const zell_aes_key *k, const uint8_t in[64], uint8_t out[64]) {
     uint64_t q[8];
     bs_load(q, in);
     bs_encrypt(k->sk, k->nr, q);
     bs_store(out, q);
 }
 
-void slang__aes_encrypt_block(const slang_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
-#ifdef SLANG_HAVE_AESNI
+void zell__aes_encrypt_block(const zell_aes_key *k, const uint8_t in[16], uint8_t out[16]) {
+#ifdef ZELL_HAVE_AESNI
     if (k->ni) {
         ni_encrypt_block(k, in, out);
         return;
@@ -406,16 +406,16 @@ void slang__aes_encrypt_block(const slang_aes_key *k, const uint8_t in[16], uint
     memcpy(buf, in, 16);
     bs_encrypt4(k, buf, buf);
     memcpy(out, buf, 16);
-    slang__crypto_wipe(buf, sizeof buf);
+    zell__crypto_wipe(buf, sizeof buf);
 }
 
-static void pt_ctr(const slang_aes_key *k, uint8_t ctr[16], const uint8_t *in, size_t n, uint8_t *out) {
-    uint32_t c = slang__ld32be(ctr + 12);
+static void pt_ctr(const zell_aes_key *k, uint8_t ctr[16], const uint8_t *in, size_t n, uint8_t *out) {
+    uint32_t c = zell__ld32be(ctr + 12);
     uint8_t cb[64], ks[64];
     while (n) {
         for (int j = 0; j < 4; j++) {
             memcpy(cb + 16 * j, ctr, 12);
-            slang__st32be(cb + 16 * j + 12, c + (uint32_t)j);
+            zell__st32be(cb + 16 * j + 12, c + (uint32_t)j);
         }
         bs_encrypt4(k, cb, ks);
         size_t m = n < 64 ? n : 64;
@@ -425,8 +425,8 @@ static void pt_ctr(const slang_aes_key *k, uint8_t ctr[16], const uint8_t *in, s
         out += m;
         n -= m;
     }
-    slang__st32be(ctr + 12, c);
-    slang__crypto_wipe(ks, sizeof ks);
+    zell__st32be(ctr + 12, c);
+    zell__crypto_wipe(ks, sizeof ks);
 }
 
 /* Low 64 bits of the carry-less product x*y (integer multiplies on
@@ -461,7 +461,7 @@ static inline uint64_t rev64(uint64_t x) {
 /* One GHASH step y = (y ^ blk) * H; y1:y0 are the big-endian halves of the
  * (reflected) state. */
 static inline void ghash_step(uint64_t *py1, uint64_t *py0, uint64_t h1, uint64_t h0, const uint8_t *src) {
-    uint64_t y1 = *py1 ^ slang__ld64be(src), y0 = *py0 ^ slang__ld64be(src + 8);
+    uint64_t y1 = *py1 ^ zell__ld64be(src), y0 = *py0 ^ zell__ld64be(src + 8);
     uint64_t h0r = rev64(h0), h1r = rev64(h1), h2 = h0 ^ h1, h2r = h0r ^ h1r;
     uint64_t y0r = rev64(y0), y1r = rev64(y1), y2 = y0 ^ y1, y2r = y0r ^ y1r;
     uint64_t z0 = bmul64(y0, h0), z1 = bmul64(y1, h1), z2 = bmul64(y2, h2);
@@ -494,13 +494,13 @@ static void pt_ghash(uint64_t *py1, uint64_t *py0, uint64_t h1, uint64_t h0, con
     }
 }
 
-static void pt_gcm(const slang_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
+static void pt_gcm(const zell_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                    const uint8_t *in, size_t n, uint8_t *out, bool enc, uint8_t tag[16]) {
     uint64_t y1 = 0, y0 = 0;
     pt_ghash(&y1, &y0, c->h1, c->h0, aad, alen);
     uint8_t ctr[16];
     memcpy(ctr, nonce, 12);
-    slang__st32be(ctr + 12, 2);
+    zell__st32be(ctr + 12, 2);
     if (enc) {
         pt_ctr(&c->k, ctr, in, n, out);
         pt_ghash(&y1, &y0, c->h1, c->h0, out, n);
@@ -509,34 +509,34 @@ static void pt_gcm(const slang_gcm_ctx *c, const uint8_t nonce[12], const uint8_
         pt_ctr(&c->k, ctr, in, n, out);
     }
     uint8_t lens[16];
-    slang__st64be(lens, (uint64_t)alen * 8);
-    slang__st64be(lens + 8, (uint64_t)n * 8);
+    zell__st64be(lens, (uint64_t)alen * 8);
+    zell__st64be(lens + 8, (uint64_t)n * 8);
     pt_ghash(&y1, &y0, c->h1, c->h0, lens, 16);
     memcpy(ctr, nonce, 12);
-    slang__st32be(ctr + 12, 1);
+    zell__st32be(ctr + 12, 1);
     uint8_t ej[16];
-    slang__aes_encrypt_block(&c->k, ctr, ej);
-    slang__st64be(tag, y1);
-    slang__st64be(tag + 8, y0);
+    zell__aes_encrypt_block(&c->k, ctr, ej);
+    zell__st64be(tag, y1);
+    zell__st64be(tag + 8, y0);
     for (int i = 0; i < 16; i++) tag[i] ^= ej[i];
 }
 
 /* ---------------------------------------------------------------------- */
 /* GCM API                                                                 */
 
-bool slang__gcm_init(slang_gcm_ctx *c, const uint8_t *key, size_t klen) {
+bool zell__gcm_init(zell_gcm_ctx *c, const uint8_t *key, size_t klen) {
     memset(c, 0, sizeof *c);
-    if (!slang__aes_init(&c->k, key, klen)) return false;
+    if (!zell__aes_init(&c->k, key, klen)) return false;
     uint8_t zero[16] = { 0 };
-    slang__aes_encrypt_block(&c->k, zero, c->h);
-    c->h1 = slang__ld64be(c->h);
-    c->h0 = slang__ld64be(c->h + 8);
+    zell__aes_encrypt_block(&c->k, zero, c->h);
+    c->h1 = zell__ld64be(c->h);
+    c->h0 = zell__ld64be(c->h + 8);
     return true;
 }
 
-static void gcm_run(const slang_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
+static void gcm_run(const zell_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                     const uint8_t *in, size_t n, uint8_t *out, bool enc, uint8_t tag[16]) {
-#ifdef SLANG_HAVE_AESNI
+#ifdef ZELL_HAVE_AESNI
     if (c->k.ni) {
         ni_gcm(c, nonce, aad, alen, in, n, out, enc, tag);
         return;
@@ -545,17 +545,17 @@ static void gcm_run(const slang_gcm_ctx *c, const uint8_t nonce[12], const uint8
     pt_gcm(c, nonce, aad, alen, in, n, out, enc, tag);
 }
 
-void slang__gcm_seal(const slang_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
+void zell__gcm_seal(const zell_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                      const uint8_t *in, size_t n, uint8_t *out) {
     gcm_run(c, nonce, aad, alen, in, n, out, true, out + n);
 }
 
-bool slang__gcm_open(const slang_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
+bool zell__gcm_open(const zell_gcm_ctx *c, const uint8_t nonce[12], const uint8_t *aad, size_t alen,
                      const uint8_t *in, size_t n, uint8_t *out) {
     uint8_t tag[16];
     gcm_run(c, nonce, aad, alen, in, n, out, false, tag);
-    if (!slang__crypto_ct_eq(tag, in + n, 16)) {
-        slang__crypto_wipe(out, n);
+    if (!zell__crypto_ct_eq(tag, in + n, 16)) {
+        zell__crypto_wipe(out, n);
         return false;
     }
     return true;

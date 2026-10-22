@@ -12,7 +12,7 @@
 #if defined(__has_include)
 #if __has_include(<execinfo.h>)
 #include <execinfo.h>
-#define SLANG_HAVE_EXECINFO 1
+#define ZELL_HAVE_EXECINFO 1
 #endif
 #endif
 #include <dlfcn.h>
@@ -39,87 +39,87 @@
 _Static_assert(sizeof(pthread_t) <= sizeof(uintptr_t), "pthread_t must fit in uintptr_t");
 
 /* mem.c: refcounts switch to atomic RMW for good before a second thread runs. */
-extern uint8_t slang_threaded;
+extern uint8_t zell_threaded;
 
-bool slang__plat_thread_start(slang__plat_thread *t, slang__plat_thread_fn fn, void *arg) {
+bool zell__plat_thread_start(zell__plat_thread *t, zell__plat_thread_fn fn, void *arg) {
     pthread_t th;
-    __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&zell_threaded, 1, __ATOMIC_SEQ_CST);
     if (pthread_create(&th, NULL, fn, arg) != 0) return false;
     t->handle = (uintptr_t)th;
     return true;
 }
 
-static bool start_detached(slang__plat_thread_fn fn, void *arg, int threaded) {
+static bool start_detached(zell__plat_thread_fn fn, void *arg, int threaded) {
     pthread_t th;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    if (threaded) __atomic_store_n(&slang_threaded, 1, __ATOMIC_SEQ_CST);
+    if (threaded) __atomic_store_n(&zell_threaded, 1, __ATOMIC_SEQ_CST);
     int rc = pthread_create(&th, &attr, fn, arg);
     pthread_attr_destroy(&attr);
     return rc == 0;
 }
 
-bool slang__plat_thread_start_detached(slang__plat_thread_fn fn, void *arg) { return start_detached(fn, arg, 1); }
+bool zell__plat_thread_start_detached(zell__plat_thread_fn fn, void *arg) { return start_detached(fn, arg, 1); }
 
-bool slang__plat_thread_start_background(slang__plat_thread_fn fn, void *arg) { return start_detached(fn, arg, 0); }
+bool zell__plat_thread_start_background(zell__plat_thread_fn fn, void *arg) { return start_detached(fn, arg, 0); }
 
-void slang__plat_thread_join(slang__plat_thread t) {
+void zell__plat_thread_join(zell__plat_thread t) {
     pthread_join((pthread_t)t.handle, NULL);
 }
 
-int64_t slang__plat_cpu_count(void) {
+int64_t zell__plat_cpu_count(void) {
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     return n > 0 ? (int64_t)n : 1;
 }
 
-void slang__plat_yield(void) { sched_yield(); }
+void zell__plat_yield(void) { sched_yield(); }
 
-int64_t slang__plat_mono_ns(void) {
+int64_t zell__plat_mono_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
 }
 
-int64_t slang__plat_wall_ns(void) {
+int64_t zell__plat_wall_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
 }
 
-void slang__plat_sleep_ns(int64_t ns) {
+void zell__plat_sleep_ns(int64_t ns) {
     if (ns <= 0) return;
     struct timespec ts = { (time_t)(ns / 1000000000), (long)(ns % 1000000000) };
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
 }
 
-#if defined(SLANG_PLAT_LIBC_TIMEFMT)
-size_t slang__plat_strftime(char *buf, size_t cap, const char *fmt, const struct tm *tm) {
+#if defined(ZELL_PLAT_LIBC_TIMEFMT)
+size_t zell__plat_strftime(char *buf, size_t cap, const char *fmt, const struct tm *tm) {
     return strftime(buf, cap, fmt, tm);
 }
 
-const char *slang__plat_strptime(const char *s, const char *fmt, struct tm *tm, long *gmtoff) {
+const char *zell__plat_strptime(const char *s, const char *fmt, struct tm *tm, long *gmtoff) {
     const char *end = strptime(s, fmt, tm);
     *gmtoff = end ? (long)tm->tm_gmtoff : 0;  /* set by %z (glibc, BSD), 0 otherwise */
     return end;
 }
 #endif /* else timefmt.c (musl: no %k/%l in strftime, no %z in strptime) */
 
-const char *slang__plat_localtime_path(void) { return "/etc/localtime"; }
-const char *slang__plat_zoneinfo_dir(void) { return "/usr/share/zoneinfo"; }
-bool slang__plat_tz_tzif(const char *name, char **out, size_t *len) {
+const char *zell__plat_localtime_path(void) { return "/etc/localtime"; }
+const char *zell__plat_zoneinfo_dir(void) { return "/usr/share/zoneinfo"; }
+bool zell__plat_tz_tzif(const char *name, char **out, size_t *len) {
     (void)name;
     (void)out;
     (void)len;
-    return false;  /* tzdata files: std_time_zone.c and time.sl read them */
+    return false;  /* tzdata files: std_time_zone.c and time.zl read them */
 }
 
 /* ---- memory ------------------------------------------------------------ */
 
-void *slang__plat_aligned_alloc(size_t align, size_t size) { return aligned_alloc(align, size); }
-void slang__plat_aligned_free(void *p) { free(p); }
+void *zell__plat_aligned_alloc(size_t align, size_t size) { return aligned_alloc(align, size); }
+void zell__plat_aligned_free(void *p) { free(p); }
 
-size_t slang__plat_alloc_size(void *p) {
+size_t zell__plat_alloc_size(void *p) {
 #if defined(__APPLE__)
     return malloc_size(p);
 #else
@@ -127,7 +127,7 @@ size_t slang__plat_alloc_size(void *p) {
 #endif
 }
 
-size_t slang__plat_page_size(void) {
+size_t zell__plat_page_size(void) {
     static size_t ps;
     size_t v = __atomic_load_n(&ps, __ATOMIC_RELAXED);
     if (!v) {
@@ -138,8 +138,8 @@ size_t slang__plat_page_size(void) {
     return v;
 }
 
-void *slang__plat_mem_map(size_t len, size_t align) {
-    size_t ps = slang__plat_page_size();
+void *zell__plat_mem_map(size_t len, size_t align) {
+    size_t ps = zell__plat_page_size();
     if (align < ps) align = ps;
     size_t over = align > ps ? len + align : len;
     if (over < len) return NULL;
@@ -154,11 +154,11 @@ void *slang__plat_mem_map(size_t len, size_t align) {
     return a;
 }
 
-void slang__plat_mem_unmap(void *p, size_t len) {
+void zell__plat_mem_unmap(void *p, size_t len) {
     if (p) munmap(p, len);
 }
 
-void slang__plat_mem_release(void *p, size_t len) {
+void zell__plat_mem_release(void *p, size_t len) {
 #if defined(__APPLE__) && defined(MADV_FREE)
     madvise(p, len, MADV_FREE);
 #else
@@ -166,7 +166,7 @@ void slang__plat_mem_release(void *p, size_t len) {
 #endif
 }
 
-void *slang__plat_mem_remap(void *p, size_t old_len, size_t new_len) {
+void *zell__plat_mem_remap(void *p, size_t old_len, size_t new_len) {
 #if defined(__linux__) && defined(MREMAP_MAYMOVE)
     void *q = mremap(p, old_len, new_len, MREMAP_MAYMOVE);
     return q == MAP_FAILED ? NULL : q;
@@ -178,7 +178,7 @@ void *slang__plat_mem_remap(void *p, size_t old_len, size_t new_len) {
 #endif
 }
 
-void slang__plat_malloc_trim(void) {
+void zell__plat_malloc_trim(void) {
 #if defined(__GLIBC__)
     malloc_trim(0);
 #endif
@@ -186,30 +186,30 @@ void slang__plat_malloc_trim(void) {
 
 /* ---- process, console, environment -------------------------------------- */
 
-void slang__plat_runtime_init(int *argc, char ***argv) {
+void zell__plat_runtime_init(int *argc, char ***argv) {
     (void)argc;
     (void)argv;
 }
 
-void slang__plat_stream_write(FILE *f, const char *p, size_t n) {
+void zell__plat_stream_write(FILE *f, const char *p, size_t n) {
     if (n) fwrite(p, 1, n, f);
 }
 
-int64_t slang__plat_pid(void) { return (int64_t)getpid(); }
+int64_t zell__plat_pid(void) { return (int64_t)getpid(); }
 
-char *slang__plat_getenv(const char *name) {
+char *zell__plat_getenv(const char *name) {
     const char *v = getenv(name);
     return v ? strdup(v) : NULL;
 }
 
-int slang__plat_setenv(const char *name, const char *value) {
+int zell__plat_setenv(const char *name, const char *value) {
     int rc = value ? setenv(name, value, 1) : unsetenv(name);
     return rc == 0 ? 0 : errno;
 }
 
 extern char **environ;
 
-char **slang__plat_environ(void) {
+char **zell__plat_environ(void) {
     size_t n = 0;
     for (char **e = environ; *e; e++) n++;
     char **v = calloc(n + 1, sizeof *v);
@@ -218,26 +218,26 @@ char **slang__plat_environ(void) {
     return v;
 }
 
-void slang__plat_free_strv(char **v) {
+void zell__plat_free_strv(char **v) {
     if (!v) return;
     for (char **p = v; *p; p++) free(*p);
     free(v);
 }
 
-int slang__plat_hostname(char *buf, size_t cap) {
+int zell__plat_hostname(char *buf, size_t cap) {
     if (gethostname(buf, cap) != 0) return errno;
     buf[cap - 1] = 0;
     return 0;
 }
 
-char *slang__plat_temp_dir(void) {
+char *zell__plat_temp_dir(void) {
     const char *t = getenv("TMPDIR");
     return strdup(t && *t ? t : "/tmp");
 }
 
-char slang__plat_path_sep(void) { return '/'; }
+char zell__plat_path_sep(void) { return '/'; }
 
-bool slang__plat_random_bytes(void *buf, size_t n) {
+bool zell__plat_random_bytes(void *buf, size_t n) {
     unsigned char *p = buf;
     size_t got = 0;
 #if defined(__linux__)
@@ -286,25 +286,25 @@ static void bt_frame(int fd, uintptr_t pc) {
     if (dladdr((void *)pc, &di) && di.dli_fname) mod = di.dli_fname;
     int k;
     /* a return address points after the call: look up pc - 1 */
-    if (!getenv("SLANG_NO_SYMBOLS") && bt_symbolize(pc - 1, sym, sizeof sym, &start) && start <= pc)
+    if (!getenv("ZELL_NO_SYMBOLS") && bt_symbolize(pc - 1, sym, sizeof sym, &start) && start <= pc)
         k = snprintf(line, sizeof line, "%s(%s+0x%lx)[0x%lx]\n", mod, sym, (unsigned long)(pc - start), (unsigned long)pc);
     else if (di.dli_fbase && *mod)
         k = snprintf(line, sizeof line, "%s(+0x%lx)[0x%lx]\n", mod, (unsigned long)(pc - (uintptr_t)di.dli_fbase), (unsigned long)pc);
     else
         k = snprintf(line, sizeof line, "[0x%lx]\n", (unsigned long)pc);
-    if (k > 0) slang__plat_write_all(fd, line, k < (int)sizeof line ? k : (int)sizeof line - 1);
+    if (k > 0) zell__plat_write_all(fd, line, k < (int)sizeof line ? k : (int)sizeof line - 1);
 }
 
-#if defined(SLANG_HAVE_EXECINFO)
-void slang__plat_backtrace(int fd, int skip) {
+#if defined(ZELL_HAVE_EXECINFO)
+void zell__plat_backtrace(int fd, int skip) {
     void *frames[64];
     int n = backtrace(frames, 64);
     for (int i = skip; i < n; i++) bt_frame(fd, (uintptr_t)frames[i]);
 }
 #else
 /* No <execinfo.h> (musl): walk the frame-pointer chain (the runtime and
- * Slang code keep frame pointers). */
-void slang__plat_backtrace(int fd, int skip) {
+ * Zell code keep frame pointers). */
+void zell__plat_backtrace(int fd, int skip) {
     uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
     for (int i = 0; i < 64 && fp && !(fp & (sizeof(void *) - 1)); i++) {
         uintptr_t next = ((uintptr_t *)fp)[0], ret = ((uintptr_t *)fp)[1];
@@ -339,11 +339,11 @@ void slang__plat_backtrace(int fd, int skip) {
 #define PROF_MAX_FRAMES 64
 
 static _Thread_local uintptr_t t_stack_lo, t_stack_hi;
-static slang__plat_prof_fn g_prof_fn;
+static zell__plat_prof_fn g_prof_fn;
 static struct sigaction g_prof_old;
 static int g_prof_on;
 
-void slang__plat_thread_stack_init(void) {
+void zell__plat_thread_stack_init(void) {
     if (t_stack_hi) return;
 #if defined(__linux__)
     pthread_attr_t a;
@@ -420,14 +420,14 @@ static void prof_handler(int sig, siginfo_t *info, void *uc) {
             }
         }
     }
-    slang__plat_prof_fn fn = __atomic_load_n(&g_prof_fn, __ATOMIC_ACQUIRE);
+    zell__plat_prof_fn fn = __atomic_load_n(&g_prof_fn, __ATOMIC_ACQUIRE);
     if (fn && n > 0) fn(pcs, n);
     errno = saved;
 }
 
-bool slang__plat_prof_start(int hz, slang__plat_prof_fn fn) {
+bool zell__plat_prof_start(int hz, zell__plat_prof_fn fn) {
     if (g_prof_on || hz <= 0) return false;
-    slang__plat_thread_stack_init();
+    zell__plat_thread_stack_init();
     __atomic_store_n(&g_prof_fn, fn, __ATOMIC_RELEASE);
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
@@ -450,7 +450,7 @@ bool slang__plat_prof_start(int hz, slang__plat_prof_fn fn) {
     return true;
 }
 
-void slang__plat_prof_stop(void) {
+void zell__plat_prof_stop(void) {
     if (!g_prof_on) return;
     struct itimerval it;
     memset(&it, 0, sizeof it);
@@ -458,7 +458,7 @@ void slang__plat_prof_stop(void) {
     /* A signal already in flight still finds a handler; it sees fn == NULL
      * once the store below is visible. Keep our handler installed (ignoring
      * SIGPROF afterwards would be equivalent). */
-    __atomic_store_n(&g_prof_fn, (slang__plat_prof_fn)NULL, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_prof_fn, (zell__plat_prof_fn)NULL, __ATOMIC_RELEASE);
     g_prof_on = 0;
 }
 
@@ -618,7 +618,7 @@ static void load_syms(void) {
 }
 #endif
 
-bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap) {
+bool zell__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap) {
     if (!g_syms_loaded) load_syms();
     if (!g_exe_hi) return false;
     *lo = g_exe_lo;
@@ -627,7 +627,7 @@ bool slang__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *path, size_t cap)
     return true;
 }
 
-bool slang__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) {
+bool zell__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) {
     if (!g_syms_loaded) load_syms();
     if (g_nsyms && pc >= g_syms[0].addr) {
         size_t lo = 0, hi = g_nsyms;
@@ -638,23 +638,23 @@ bool slang__plat_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start
         }
         const sym_ent *e = &g_syms[lo];
         if (pc < e->addr + (e->size ? e->size : 1 << 20)) {
-            snprintf(buf, cap, "%s", slang__plat_sym_clean(e->name));
+            snprintf(buf, cap, "%s", zell__plat_sym_clean(e->name));
             *start = e->addr;
             return true;
         }
     }
     Dl_info di;
     if (dladdr((void *)pc, &di) && di.dli_sname) {
-        snprintf(buf, cap, "%s", slang__plat_sym_clean(di.dli_sname));
+        snprintf(buf, cap, "%s", zell__plat_sym_clean(di.dli_sname));
         *start = (uintptr_t)di.dli_saddr;
         return true;
     }
     return false;
 }
 
-static bool bt_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) { return slang__plat_symbolize(pc, buf, cap, start); }
+static bool bt_symbolize(uintptr_t pc, char *buf, size_t cap, uintptr_t *start) { return zell__plat_symbolize(pc, buf, cap, start); }
 
-void slang__plat_symbolize_done(void) {
+void zell__plat_symbolize_done(void) {
     free(g_syms);
     free(g_symstr);
     g_syms = NULL;
@@ -666,15 +666,15 @@ void slang__plat_symbolize_done(void) {
 
 /* ---- dynamic loading (std.plugin) ---- */
 
-void *slang__plat_dl_open(const char *path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
+void *zell__plat_dl_open(const char *path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
 
-void *slang__plat_dl_sym(void *h, const char *name) { return h ? dlsym(h, name) : NULL; }
+void *zell__plat_dl_sym(void *h, const char *name) { return h ? dlsym(h, name) : NULL; }
 
-void slang__plat_dl_close(void *h) {
+void zell__plat_dl_close(void *h) {
     if (h) dlclose(h);
 }
 
-const char *slang__plat_dl_error(void) {
+const char *zell__plat_dl_error(void) {
     const char *e = dlerror();
     return e ? e : "unknown error";
 }

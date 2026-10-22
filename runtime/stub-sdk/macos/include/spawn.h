@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_SPAWN_H
-#define SLANG_STUB_SPAWN_H
+#ifndef ZELL_STUB_SPAWN_H
+#define ZELL_STUB_SPAWN_H
 #include <sys/types.h>
 #include <signal.h>
 typedef void *posix_spawnattr_t;

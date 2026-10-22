@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_NETINET_TCP_H
-#define SLANG_STUB_NETINET_TCP_H
+#ifndef ZELL_STUB_NETINET_TCP_H
+#define ZELL_STUB_NETINET_TCP_H
 #define TCP_NODELAY 0x01
 #define TCP_MAXSEG 0x02
 #define TCP_NOPUSH 0x04

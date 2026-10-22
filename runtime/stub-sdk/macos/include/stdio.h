@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_STDIO_H
-#define SLANG_STUB_STDIO_H
+#ifndef ZELL_STUB_STDIO_H
+#define ZELL_STUB_STDIO_H
 #include <stddef.h>
 #include <stdarg.h>
 #include <sys/types.h>

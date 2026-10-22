@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_NET_IF_H
-#define SLANG_STUB_NET_IF_H
+#ifndef ZELL_STUB_NET_IF_H
+#define ZELL_STUB_NET_IF_H
 #include <sys/socket.h>
 #define IF_NAMESIZE 16
 #define IFNAMSIZ IF_NAMESIZE

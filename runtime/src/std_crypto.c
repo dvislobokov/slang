@@ -2,7 +2,7 @@
  * std.crypto.hmac (HMAC-SHA256) and std.crypto.rand (getrandom(2), with a
  * /dev/urandom fallback). Implemented from FIPS 180-4, RFC 1321, RFC 2104 and
  * the IEEE 802.3 CRC-32 polynomial; no external libraries. Inputs are the raw
- * bytes of the Slang string. */
+ * bytes of the Zell string. */
 #include "rt_internal.h"
 #include "platform/platform.h"
 
@@ -11,8 +11,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static inline int64_t slen(const slang_string *s) { return s ? s->len : 0; }
-static inline const uint8_t *sbytes(const slang_string *s) {
+static inline int64_t slen(const zell_string *s) { return s ? s->len : 0; }
+static inline const uint8_t *sbytes(const zell_string *s) {
     return (const uint8_t *)(s ? s->data : "");
 }
 
@@ -225,13 +225,13 @@ static uint32_t crc32_ieee(const uint8_t *p, uint64_t n) {
 
 /* ---- result helpers ---- */
 
-static void bytes_out(slang_slice *out, const uint8_t *d, int64_t n) {
-    slang_slice_from(out, 1, NULL, d, n);
+static void bytes_out(zell_slice *out, const uint8_t *d, int64_t n) {
+    zell_slice_from(out, 1, NULL, d, n);
 }
 
-static slang_string *hex_str(const uint8_t *d, int64_t n) {
+static zell_string *hex_str(const uint8_t *d, int64_t n) {
     static const char hx[] = "0123456789abcdef";
-    slang_string *r = slang__string_alloc(2 * n);
+    zell_string *r = zell__string_alloc(2 * n);
     for (int64_t i = 0; i < n; i++) {
         r->data[2 * i] = hx[d[i] >> 4];
         r->data[2 * i + 1] = hx[d[i] & 15];
@@ -240,12 +240,12 @@ static slang_string *hex_str(const uint8_t *d, int64_t n) {
 }
 
 #define HASH_FUNCS(name, fn, size)                                                       \
-    void slang_crypto_hash_##name(const slang_string *data, slang_slice *out) {         \
+    void zell_crypto_hash_##name(const zell_string *data, zell_slice *out) {         \
         uint8_t d[size];                                                                 \
         fn(sbytes(data), (uint64_t)slen(data), d);                                       \
         bytes_out(out, d, size);                                                         \
     }                                                                                    \
-    slang_string *slang_crypto_hash_##name##_hex(const slang_string *data) {            \
+    zell_string *zell_crypto_hash_##name##_hex(const zell_string *data) {            \
         uint8_t d[size];                                                                 \
         fn(sbytes(data), (uint64_t)slen(data), d);                                       \
         return hex_str(d, size);                                                         \
@@ -256,41 +256,41 @@ HASH_FUNCS(sha512, sha512, 64)
 HASH_FUNCS(sha1, sha1, 20)
 HASH_FUNCS(md5, md5, 16)
 
-int64_t slang_crypto_hash_crc32(const slang_string *data) {
+int64_t zell_crypto_hash_crc32(const zell_string *data) {
     return (int64_t)crc32_ieee(sbytes(data), (uint64_t)slen(data));
 }
 
 /* ---- HMAC-SHA256 (RFC 2104, B = 64) ---- */
 
-static void hmac_sha256(const slang_string *key, const slang_string *data, uint8_t out[32]) {
+static void hmac_sha256(const zell_string *key, const zell_string *data, uint8_t out[32]) {
     uint8_t k[64] = { 0 }, inner[32];
     if (slen(key) > 64) sha256(sbytes(key), (uint64_t)slen(key), k);
     else if (slen(key)) memcpy(k, sbytes(key), (size_t)slen(key));
     int64_t n = slen(data);
-    uint8_t *buf = slang_alloc(64 + (n > 32 ? n : 32));
+    uint8_t *buf = zell_alloc(64 + (n > 32 ? n : 32));
     for (int i = 0; i < 64; i++) buf[i] = k[i] ^ 0x36;
     if (n) memcpy(buf + 64, sbytes(data), (size_t)n);
     sha256(buf, (uint64_t)(64 + n), inner);
     for (int i = 0; i < 64; i++) buf[i] = k[i] ^ 0x5c;
     memcpy(buf + 64, inner, 32);
     sha256(buf, 96, out);
-    slang_free(buf);
+    zell_free(buf);
 }
 
-void slang_crypto_hmac_sha256(const slang_string *key, const slang_string *data, slang_slice *out) {
+void zell_crypto_hmac_sha256(const zell_string *key, const zell_string *data, zell_slice *out) {
     uint8_t d[32];
     hmac_sha256(key, data, d);
     bytes_out(out, d, 32);
 }
 
-slang_string *slang_crypto_hmac_sha256_hex(const slang_string *key, const slang_string *data) {
+zell_string *zell_crypto_hmac_sha256_hex(const zell_string *key, const zell_string *data) {
     uint8_t d[32];
     hmac_sha256(key, data, d);
     return hex_str(d, 32);
 }
 
 /* Constant-time (in the contents) comparison of two MACs. */
-bool slang_crypto_hmac_equal(const slang_slice *a, const slang_slice *b) {
+bool zell_crypto_hmac_equal(const zell_slice *a, const zell_slice *b) {
     int64_t na = a ? a->len : 0, nb = b ? b->len : 0;
     if (na != nb) return false;
     const uint8_t *pa = na ? a->data : NULL, *pb = nb ? b->data : NULL;
@@ -303,43 +303,43 @@ bool slang_crypto_hmac_equal(const slang_slice *a, const slang_slice *b) {
 
 /* Fills buf with n random bytes; returns 0 or an errno value. */
 static int fill_random(uint8_t *buf, size_t n) {
-    return slang__plat_random_bytes(buf, n) ? 0 : (errno ? errno : EIO);
+    return zell__plat_random_bytes(buf, n) ? 0 : (errno ? errno : EIO);
 }
 
-static void rand_err(slang_error **err, int e) {
+static void rand_err(zell_error **err, int e) {
     if (!err) return;
     char buf[160];
     snprintf(buf, sizeof buf, "crypto/rand: %s", strerror(e));
-    *err = slang_error_new_cstr(buf);
+    *err = zell_error_new_cstr(buf);
 }
 
-static bool check_n(int64_t n, slang_error **err) {
+static bool check_n(int64_t n, zell_error **err) {
     if (n >= 0) return true;
-    if (err) *err = slang_error_new_cstr("crypto/rand: negative length");
+    if (err) *err = zell_error_new_cstr("crypto/rand: negative length");
     return false;
 }
 
-void slang_crypto_rand_bytes(int64_t n, slang_slice *out, slang_error **err) {
+void zell_crypto_rand_bytes(int64_t n, zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
     if (!check_n(n, err)) return;
-    slang_slice_new(out, 1, n, n);
+    zell_slice_new(out, 1, n, n);
     int e = n ? fill_random(out->data, (size_t)n) : 0;
-    if (e) { slang_slice_release(out); rand_err(err, e); }
+    if (e) { zell_slice_release(out); rand_err(err, e); }
 }
 
-int64_t slang_crypto_rand_int(slang_error **err) {
+int64_t zell_crypto_rand_int(zell_error **err) {
     uint64_t v = 0;
     int e = fill_random((uint8_t *)&v, sizeof v);
     if (e) { rand_err(err, e); return 0; }
     return (int64_t)(v >> 1);   /* uniform in [0, 2^63) */
 }
 
-slang_string *slang_crypto_rand_hex(int64_t n, slang_error **err) {
+zell_string *zell_crypto_rand_hex(int64_t n, zell_error **err) {
     if (!check_n(n, err)) return NULL;
-    uint8_t *b = slang_alloc(n ? n : 1);
+    uint8_t *b = zell_alloc(n ? n : 1);
     int e = n ? fill_random(b, (size_t)n) : 0;
-    if (e) { slang_free(b); rand_err(err, e); return NULL; }
-    slang_string *r = hex_str(b, n);
-    slang_free(b);
+    if (e) { zell_free(b); rand_err(err, e); return NULL; }
+    zell_string *r = hex_str(b, n);
+    zell_free(b);
     return r;
 }

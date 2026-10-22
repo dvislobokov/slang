@@ -30,10 +30,10 @@
 #include <sys/sendfile.h>
 #endif
 
-_Static_assert(sizeof(struct sockaddr_storage) <= sizeof(((slang__plat_addr *)0)->u.bytes), "sockaddr_storage fits");
+_Static_assert(sizeof(struct sockaddr_storage) <= sizeof(((zell__plat_addr *)0)->u.bytes), "sockaddr_storage fits");
 
 static int64_t neg(int e) {
-    if (e == EAGAIN || e == EWOULDBLOCK || e == EINPROGRESS) return -SLANG_PLAT_EAGAIN;
+    if (e == EAGAIN || e == EWOULDBLOCK || e == EINPROGRESS) return -ZELL_PLAT_EAGAIN;
     return -(int64_t)(e ? e : EIO);
 }
 
@@ -45,7 +45,7 @@ static int64_t neg(int e) {
 
 /* ---- process setup ---------------------------------------------------- */
 
-void slang__plat_process_init(void) {
+void zell__plat_process_init(void) {
     struct sigaction sa;
     if (sigaction(SIGPIPE, NULL, &sa) == 0 && sa.sa_handler == SIG_DFL) {
         memset(&sa, 0, sizeof sa);
@@ -68,25 +68,25 @@ void slang__plat_process_init(void) {
 
 /* ---- errors ----------------------------------------------------------- */
 
-int slang__plat_err_class(int code) {
+int zell__plat_err_class(int code) {
     switch (code) {
-    case ECONNREFUSED: return SLANG_PLAT_E_REFUSED;
-    case ECONNRESET: case EPIPE: case ECONNABORTED: return SLANG_PLAT_E_RESET;
+    case ECONNREFUSED: return ZELL_PLAT_E_REFUSED;
+    case ECONNRESET: case EPIPE: case ECONNABORTED: return ZELL_PLAT_E_RESET;
     case ENETUNREACH: case EHOSTUNREACH: case ENETDOWN:
 #ifdef EHOSTDOWN
     case EHOSTDOWN:
 #endif
-        return SLANG_PLAT_E_UNREACHABLE;
-    case EADDRINUSE: return SLANG_PLAT_E_ADDRINUSE;
-    case ETIMEDOUT: return SLANG_PLAT_E_TIMEOUT;
-    case EBADF: return SLANG_PLAT_E_CLOSED;
-    case EINVAL: return SLANG_PLAT_E_INVAL;
-    default: return SLANG_PLAT_E_OTHER;
+        return ZELL_PLAT_E_UNREACHABLE;
+    case EADDRINUSE: return ZELL_PLAT_E_ADDRINUSE;
+    case ETIMEDOUT: return ZELL_PLAT_E_TIMEOUT;
+    case EBADF: return ZELL_PLAT_E_CLOSED;
+    case EINVAL: return ZELL_PLAT_E_INVAL;
+    default: return ZELL_PLAT_E_OTHER;
     }
 }
 
-const char *slang__plat_strerror(int code, char *buf, size_t cap) {
-    if (code == SLANG_PLAT_EAGAIN) code = EAGAIN;
+const char *zell__plat_strerror(int code, char *buf, size_t cap) {
+    if (code == ZELL_PLAT_EAGAIN) code = EAGAIN;
     if (code < 0) code = -code;
     char tmp[256];
     const char *m = NULL;
@@ -104,7 +104,7 @@ const char *slang__plat_strerror(int code, char *buf, size_t cap) {
 
 /* ---- addresses --------------------------------------------------------- */
 
-bool slang__plat_addr_ip(slang__plat_addr *a, const unsigned char *ip, int iplen, int64_t port, uint32_t scope) {
+bool zell__plat_addr_ip(zell__plat_addr *a, const unsigned char *ip, int iplen, int64_t port, uint32_t scope) {
     memset(a, 0, sizeof *a);
     if (port < 0 || port > 65535) return false;
     if (iplen == 4) {
@@ -133,7 +133,7 @@ bool slang__plat_addr_ip(slang__plat_addr *a, const unsigned char *ip, int iplen
     return false;
 }
 
-bool slang__plat_addr_unix(slang__plat_addr *a, const char *path) {
+bool zell__plat_addr_unix(zell__plat_addr *a, const char *path) {
     memset(a, 0, sizeof *a);
     struct sockaddr_un *s = (struct sockaddr_un *)a->u.bytes;
     size_t n = strlen(path);
@@ -158,16 +158,16 @@ bool slang__plat_addr_unix(slang__plat_addr *a, const char *path) {
     return true;
 }
 
-int slang__plat_addr_family(const slang__plat_addr *a) {
+int zell__plat_addr_family(const zell__plat_addr *a) {
     switch (((const struct sockaddr *)a->u.bytes)->sa_family) {
-    case AF_INET: return SLANG_PLAT_AF_INET;
-    case AF_INET6: return SLANG_PLAT_AF_INET6;
-    case AF_UNIX: return SLANG_PLAT_AF_UNIX;
+    case AF_INET: return ZELL_PLAT_AF_INET;
+    case AF_INET6: return ZELL_PLAT_AF_INET6;
+    case AF_UNIX: return ZELL_PLAT_AF_UNIX;
     default: return 0;
     }
 }
 
-void slang__plat_addr_parts(const slang__plat_addr *a, unsigned char ip[16], int *iplen, int64_t *port, uint32_t *scope) {
+void zell__plat_addr_parts(const zell__plat_addr *a, unsigned char ip[16], int *iplen, int64_t *port, uint32_t *scope) {
     *iplen = 0;
     *port = 0;
     *scope = 0;
@@ -186,10 +186,10 @@ void slang__plat_addr_parts(const slang__plat_addr *a, unsigned char ip[16], int
     }
 }
 
-void slang__plat_addr_format(const slang__plat_addr *a, char *buf, size_t cap) {
+void zell__plat_addr_format(const zell__plat_addr *a, char *buf, size_t cap) {
     buf[0] = 0;
-    int fam = slang__plat_addr_family(a);
-    if (fam == SLANG_PLAT_AF_UNIX) {
+    int fam = zell__plat_addr_family(a);
+    if (fam == ZELL_PLAT_AF_UNIX) {
         const struct sockaddr_un *s = (const struct sockaddr_un *)a->u.bytes;
         size_t off = offsetof(struct sockaddr_un, sun_path);
         if (a->len <= off) return;  /* unnamed */
@@ -205,42 +205,42 @@ void slang__plat_addr_format(const slang__plat_addr *a, char *buf, size_t cap) {
     int len;
     int64_t port;
     uint32_t scope;
-    slang__plat_addr_parts(a, ip, &len, &port, &scope);
+    zell__plat_addr_parts(a, ip, &len, &port, &scope);
     char t[INET6_ADDRSTRLEN];
-    if (!slang__plat_format_ip(ip, len, t, sizeof t)) return;
+    if (!zell__plat_format_ip(ip, len, t, sizeof t)) return;
     if (len == 16) {
         char z[IF_NAMESIZE + 1] = "";
-        if (scope && !slang__plat_if_name(scope, z, sizeof z)) snprintf(z, sizeof z, "%u", scope);
+        if (scope && !zell__plat_if_name(scope, z, sizeof z)) snprintf(z, sizeof z, "%u", scope);
         snprintf(buf, cap, "[%s%s%s]:%lld", t, scope ? "%" : "", z, (long long)port);
     } else {
         snprintf(buf, cap, "%s:%lld", t, (long long)port);
     }
 }
 
-int slang__plat_parse_ip(const char *s, unsigned char out[16]) {
+int zell__plat_parse_ip(const char *s, unsigned char out[16]) {
     if (inet_pton(AF_INET, s, out) == 1) return 4;
     if (inet_pton(AF_INET6, s, out) == 1) return 16;
     return 0;
 }
 
-bool slang__plat_format_ip(const unsigned char *ip, int len, char *buf, size_t cap) {
+bool zell__plat_format_ip(const unsigned char *ip, int len, char *buf, size_t cap) {
     if (len == 4) return inet_ntop(AF_INET, ip, buf, (socklen_t)cap) != NULL;
     if (len == 16) return inet_ntop(AF_INET6, ip, buf, (socklen_t)cap) != NULL;
     return false;
 }
 
-uint32_t slang__plat_if_index(const char *name) { return (uint32_t)if_nametoindex(name); }
+uint32_t zell__plat_if_index(const char *name) { return (uint32_t)if_nametoindex(name); }
 
-bool slang__plat_if_name(uint32_t index, char *buf, size_t cap) {
+bool zell__plat_if_name(uint32_t index, char *buf, size_t cap) {
     char n[IF_NAMESIZE + 1];
     if (!if_indextoname(index, n)) return false;
     snprintf(buf, cap, "%s", n);
     return true;
 }
 
-bool slang__plat_is_ip(const char *s) {
+bool zell__plat_is_ip(const char *s) {
     unsigned char b[16];
-    return slang__plat_parse_ip(s, b) != 0;
+    return zell__plat_parse_ip(s, b) != 0;
 }
 
 /* ---- sockets ----------------------------------------------------------- */
@@ -256,9 +256,9 @@ static int setup_fd(int fd) {
     return 0;
 }
 
-int64_t slang__plat_sock_open(int family, int type) {
-    int af = family == SLANG_PLAT_AF_INET ? AF_INET : family == SLANG_PLAT_AF_INET6 ? AF_INET6 : family == SLANG_PLAT_AF_UNIX ? AF_UNIX : -1;
-    int st = type == SLANG_PLAT_STREAM ? SOCK_STREAM : type == SLANG_PLAT_DGRAM ? SOCK_DGRAM : -1;
+int64_t zell__plat_sock_open(int family, int type) {
+    int af = family == ZELL_PLAT_AF_INET ? AF_INET : family == ZELL_PLAT_AF_INET6 ? AF_INET6 : family == ZELL_PLAT_AF_UNIX ? AF_UNIX : -1;
+    int st = type == ZELL_PLAT_STREAM ? SOCK_STREAM : type == ZELL_PLAT_DGRAM ? SOCK_DGRAM : -1;
     if (af < 0 || st < 0) return -EINVAL;
 #if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
     int fd = socket(af, st | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
@@ -277,31 +277,31 @@ int64_t slang__plat_sock_open(int family, int type) {
     return fd;
 }
 
-int64_t slang__plat_sock_connect(int64_t fd, const slang__plat_addr *a) {
+int64_t zell__plat_sock_connect(int64_t fd, const zell__plat_addr *a) {
     if (connect((int)fd, (const struct sockaddr *)a->u.bytes, a->len) == 0) return 0;
     /* EINTR: the connect goes on asynchronously, like EINPROGRESS. */
-    if (errno == EINTR) return -SLANG_PLAT_EAGAIN;
+    if (errno == EINTR) return -ZELL_PLAT_EAGAIN;
     return neg(errno);
 }
 
-int slang__plat_sock_error(int64_t fd) {
+int zell__plat_sock_error(int64_t fd) {
     int err = 0;
     socklen_t len = sizeof err;
     if (getsockopt((int)fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) return errno;
     return err;
 }
 
-int64_t slang__plat_sock_bind(int64_t fd, const slang__plat_addr *a) {
+int64_t zell__plat_sock_bind(int64_t fd, const zell__plat_addr *a) {
     if (bind((int)fd, (const struct sockaddr *)a->u.bytes, a->len) != 0) return neg(errno);
     return 0;
 }
 
-int64_t slang__plat_sock_listen(int64_t fd, int backlog) {
+int64_t zell__plat_sock_listen(int64_t fd, int backlog) {
     if (listen((int)fd, backlog) != 0) return neg(errno);
     return 0;
 }
 
-int64_t slang__plat_sock_accept(int64_t lfd, slang__plat_addr *from) {
+int64_t zell__plat_sock_accept(int64_t lfd, zell__plat_addr *from) {
     for (;;) {
         struct sockaddr_storage ss;
         socklen_t len = sizeof ss;
@@ -334,7 +334,7 @@ int64_t slang__plat_sock_accept(int64_t lfd, slang__plat_addr *from) {
     }
 }
 
-int64_t slang__plat_sock_recv(int64_t fd, void *buf, int64_t n) {
+int64_t zell__plat_sock_recv(int64_t fd, void *buf, int64_t n) {
     for (;;) {
         ssize_t r = recv((int)fd, buf, (size_t)n, 0);
         if (r >= 0) return r;
@@ -343,7 +343,7 @@ int64_t slang__plat_sock_recv(int64_t fd, void *buf, int64_t n) {
     }
 }
 
-int64_t slang__plat_sock_send(int64_t fd, const void *buf, int64_t n) {
+int64_t zell__plat_sock_send(int64_t fd, const void *buf, int64_t n) {
     for (;;) {
         ssize_t r = send((int)fd, buf, (size_t)n, SEND_FLAGS);
         if (r >= 0) return r;
@@ -352,7 +352,7 @@ int64_t slang__plat_sock_send(int64_t fd, const void *buf, int64_t n) {
     }
 }
 
-int64_t slang__plat_sock_sendv(int64_t fd, const slang__plat_iovec *iov, int n) {
+int64_t zell__plat_sock_sendv(int64_t fd, const zell__plat_iovec *iov, int n) {
     struct iovec v[64];
     if (n > 64) n = 64;
     for (int i = 0; i < n; i++) {
@@ -371,7 +371,7 @@ int64_t slang__plat_sock_sendv(int64_t fd, const slang__plat_iovec *iov, int n) 
     }
 }
 
-int64_t slang__plat_sock_recvfrom(int64_t fd, void *buf, int64_t n, slang__plat_addr *from, bool *truncated) {
+int64_t zell__plat_sock_recvfrom(int64_t fd, void *buf, int64_t n, zell__plat_addr *from, bool *truncated) {
     struct sockaddr_storage ss;
     struct iovec v = { buf, (size_t)n };
     struct msghdr m;
@@ -396,7 +396,7 @@ int64_t slang__plat_sock_recvfrom(int64_t fd, void *buf, int64_t n, slang__plat_
     }
 }
 
-int64_t slang__plat_sock_sendto(int64_t fd, const void *buf, int64_t n, const slang__plat_addr *to) {
+int64_t zell__plat_sock_sendto(int64_t fd, const void *buf, int64_t n, const zell__plat_addr *to) {
     for (;;) {
         ssize_t r = to ? sendto((int)fd, buf, (size_t)n, SEND_FLAGS, (const struct sockaddr *)to->u.bytes, to->len)
                        : send((int)fd, buf, (size_t)n, SEND_FLAGS);
@@ -406,19 +406,19 @@ int64_t slang__plat_sock_sendto(int64_t fd, const void *buf, int64_t n, const sl
     }
 }
 
-int slang__plat_sock_shutdown(int64_t fd, int how) {
-    int h = how == (SLANG_PLAT_READ | SLANG_PLAT_WRITE) ? SHUT_RDWR : how == SLANG_PLAT_READ ? SHUT_RD : SHUT_WR;
+int zell__plat_sock_shutdown(int64_t fd, int how) {
+    int h = how == (ZELL_PLAT_READ | ZELL_PLAT_WRITE) ? SHUT_RDWR : how == ZELL_PLAT_READ ? SHUT_RD : SHUT_WR;
     return shutdown((int)fd, h) == 0 ? 0 : errno;
 }
 
-void slang__plat_sock_close(int64_t fd) {
+void zell__plat_sock_close(int64_t fd) {
     if (fd < 0) return;
     /* close(2) releases the descriptor even when it reports EINTR (Linux,
      * the BSDs): never retry, the number may already be reused. */
     close((int)fd);
 }
 
-bool slang__plat_sock_name(int64_t fd, bool peer, slang__plat_addr *a) {
+bool zell__plat_sock_name(int64_t fd, bool peer, zell__plat_addr *a) {
     memset(a, 0, sizeof *a);
     socklen_t len = sizeof a->u.bytes;
     int rc = peer ? getpeername((int)fd, (struct sockaddr *)a->u.bytes, &len) : getsockname((int)fd, (struct sockaddr *)a->u.bytes, &len);
@@ -438,40 +438,40 @@ static int sock_family(int fd) {
 
 static bool opt_of(int fd, int opt, int *level, int *name) {
     switch (opt) {
-    case SLANG_PLAT_OPT_NODELAY: *level = IPPROTO_TCP; *name = TCP_NODELAY; return true;
-    case SLANG_PLAT_OPT_KEEPALIVE: *level = SOL_SOCKET; *name = SO_KEEPALIVE; return true;
+    case ZELL_PLAT_OPT_NODELAY: *level = IPPROTO_TCP; *name = TCP_NODELAY; return true;
+    case ZELL_PLAT_OPT_KEEPALIVE: *level = SOL_SOCKET; *name = SO_KEEPALIVE; return true;
 #if defined(TCP_KEEPIDLE)
-    case SLANG_PLAT_OPT_KEEPIDLE: *level = IPPROTO_TCP; *name = TCP_KEEPIDLE; return true;
+    case ZELL_PLAT_OPT_KEEPIDLE: *level = IPPROTO_TCP; *name = TCP_KEEPIDLE; return true;
 #elif defined(TCP_KEEPALIVE)
-    case SLANG_PLAT_OPT_KEEPIDLE: *level = IPPROTO_TCP; *name = TCP_KEEPALIVE; return true;  /* macOS */
+    case ZELL_PLAT_OPT_KEEPIDLE: *level = IPPROTO_TCP; *name = TCP_KEEPALIVE; return true;  /* macOS */
 #endif
 #if defined(TCP_KEEPINTVL)
-    case SLANG_PLAT_OPT_KEEPINTVL: *level = IPPROTO_TCP; *name = TCP_KEEPINTVL; return true;
+    case ZELL_PLAT_OPT_KEEPINTVL: *level = IPPROTO_TCP; *name = TCP_KEEPINTVL; return true;
 #endif
 #if defined(TCP_KEEPCNT)
-    case SLANG_PLAT_OPT_KEEPCNT: *level = IPPROTO_TCP; *name = TCP_KEEPCNT; return true;
+    case ZELL_PLAT_OPT_KEEPCNT: *level = IPPROTO_TCP; *name = TCP_KEEPCNT; return true;
 #endif
-    case SLANG_PLAT_OPT_RCVBUF: *level = SOL_SOCKET; *name = SO_RCVBUF; return true;
-    case SLANG_PLAT_OPT_SNDBUF: *level = SOL_SOCKET; *name = SO_SNDBUF; return true;
-    case SLANG_PLAT_OPT_REUSEADDR: *level = SOL_SOCKET; *name = SO_REUSEADDR; return true;
+    case ZELL_PLAT_OPT_RCVBUF: *level = SOL_SOCKET; *name = SO_RCVBUF; return true;
+    case ZELL_PLAT_OPT_SNDBUF: *level = SOL_SOCKET; *name = SO_SNDBUF; return true;
+    case ZELL_PLAT_OPT_REUSEADDR: *level = SOL_SOCKET; *name = SO_REUSEADDR; return true;
 #if defined(SO_REUSEPORT)
-    case SLANG_PLAT_OPT_REUSEPORT: *level = SOL_SOCKET; *name = SO_REUSEPORT; return true;
+    case ZELL_PLAT_OPT_REUSEPORT: *level = SOL_SOCKET; *name = SO_REUSEPORT; return true;
 #endif
-    case SLANG_PLAT_OPT_BROADCAST: *level = SOL_SOCKET; *name = SO_BROADCAST; return true;
+    case ZELL_PLAT_OPT_BROADCAST: *level = SOL_SOCKET; *name = SO_BROADCAST; return true;
 #if defined(TCP_CORK)
-    case SLANG_PLAT_OPT_CORK: *level = IPPROTO_TCP; *name = TCP_CORK; return true;
+    case ZELL_PLAT_OPT_CORK: *level = IPPROTO_TCP; *name = TCP_CORK; return true;
 #elif defined(TCP_NOPUSH)
-    case SLANG_PLAT_OPT_CORK: *level = IPPROTO_TCP; *name = TCP_NOPUSH; return true;
+    case ZELL_PLAT_OPT_CORK: *level = IPPROTO_TCP; *name = TCP_NOPUSH; return true;
 #endif
-    case SLANG_PLAT_OPT_V6ONLY: *level = IPPROTO_IPV6; *name = IPV6_V6ONLY; return true;
+    case ZELL_PLAT_OPT_V6ONLY: *level = IPPROTO_IPV6; *name = IPV6_V6ONLY; return true;
 #if defined(TCP_FASTOPEN)
-    case SLANG_PLAT_OPT_FASTOPEN: *level = IPPROTO_TCP; *name = TCP_FASTOPEN; return true;
+    case ZELL_PLAT_OPT_FASTOPEN: *level = IPPROTO_TCP; *name = TCP_FASTOPEN; return true;
 #endif
-    case SLANG_PLAT_OPT_MCAST_LOOP:
+    case ZELL_PLAT_OPT_MCAST_LOOP:
         if (sock_family(fd) == AF_INET6) { *level = IPPROTO_IPV6; *name = IPV6_MULTICAST_LOOP; }
         else { *level = IPPROTO_IP; *name = IP_MULTICAST_LOOP; }
         return true;
-    case SLANG_PLAT_OPT_MCAST_TTL:
+    case ZELL_PLAT_OPT_MCAST_TTL:
         if (sock_family(fd) == AF_INET6) { *level = IPPROTO_IPV6; *name = IPV6_MULTICAST_HOPS; }
         else { *level = IPPROTO_IP; *name = IP_MULTICAST_TTL; }
         return true;
@@ -479,8 +479,8 @@ static bool opt_of(int fd, int opt, int *level, int *name) {
     }
 }
 
-int slang__plat_sock_setopt(int64_t fd, int opt, int64_t value) {
-    if (opt == SLANG_PLAT_OPT_MCAST_IF) {
+int zell__plat_sock_setopt(int64_t fd, int opt, int64_t value) {
+    if (opt == ZELL_PLAT_OPT_MCAST_IF) {
         if (sock_family((int)fd) == AF_INET6) {
             unsigned idx = (unsigned)value;
             return setsockopt((int)fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &idx, sizeof idx) == 0 ? 0 : errno;
@@ -511,7 +511,7 @@ int slang__plat_sock_setopt(int64_t fd, int opt, int64_t value) {
         return setsockopt((int)fd, IPPROTO_IP, IP_MULTICAST_IF, &ia, sizeof ia) == 0 ? 0 : errno;
 #endif
     }
-    if (opt == SLANG_PLAT_OPT_LINGER) {
+    if (opt == ZELL_PLAT_OPT_LINGER) {
         struct linger l = { value >= 0, value >= 0 ? (int)value : 0 };
         return setsockopt((int)fd, SOL_SOCKET, SO_LINGER, &l, sizeof l) == 0 ? 0 : errno;
     }
@@ -519,11 +519,11 @@ int slang__plat_sock_setopt(int64_t fd, int opt, int64_t value) {
     if (!opt_of((int)fd, opt, &level, &name)) return ENOPROTOOPT;
     int v = value > 0x7fffffff ? 0x7fffffff : value < 0 ? 0 : (int)value;
 #if !defined(__linux__)
-    if (opt == SLANG_PLAT_OPT_MCAST_LOOP && level == IPPROTO_IP) {
+    if (opt == ZELL_PLAT_OPT_MCAST_LOOP && level == IPPROTO_IP) {
         unsigned char c = (unsigned char)(v != 0);
         return setsockopt((int)fd, level, name, &c, sizeof c) == 0 ? 0 : errno;
     }
-    if (opt == SLANG_PLAT_OPT_MCAST_TTL && level == IPPROTO_IP) {
+    if (opt == ZELL_PLAT_OPT_MCAST_TTL && level == IPPROTO_IP) {
         unsigned char c = (unsigned char)(v > 255 ? 255 : v);
         return setsockopt((int)fd, level, name, &c, sizeof c) == 0 ? 0 : errno;
     }
@@ -531,8 +531,8 @@ int slang__plat_sock_setopt(int64_t fd, int opt, int64_t value) {
     return setsockopt((int)fd, level, name, &v, sizeof v) == 0 ? 0 : errno;
 }
 
-int64_t slang__plat_sock_getopt(int64_t fd, int opt) {
-    if (opt == SLANG_PLAT_OPT_LINGER) {
+int64_t zell__plat_sock_getopt(int64_t fd, int opt) {
+    if (opt == ZELL_PLAT_OPT_LINGER) {
         struct linger l;
         socklen_t len = sizeof l;
         if (getsockopt((int)fd, SOL_SOCKET, SO_LINGER, &l, &len) != 0) return -(int64_t)errno;
@@ -547,7 +547,7 @@ int64_t slang__plat_sock_getopt(int64_t fd, int opt) {
     return v;
 }
 
-int slang__plat_sock_mcast(int64_t fd, bool join, const unsigned char *group, int len, uint32_t ifindex) {
+int zell__plat_sock_mcast(int64_t fd, bool join, const unsigned char *group, int len, uint32_t ifindex) {
     if (len == 4) {
 #if defined(__linux__)
         struct ip_mreqn m;
@@ -582,24 +582,24 @@ int slang__plat_sock_mcast(int64_t fd, bool join, const unsigned char *group, in
 
 /* ---- files and sendfile ------------------------------------------------- */
 
-int64_t slang__plat_file_open(const char *path) {
+int64_t zell__plat_file_open(const char *path) {
     int fd;
     do fd = open(path, O_RDONLY | O_CLOEXEC);
     while (fd < 0 && errno == EINTR);
     return fd < 0 ? -(int64_t)errno : fd;
 }
 
-int64_t slang__plat_file_size(int64_t fd) {
+int64_t zell__plat_file_size(int64_t fd) {
     struct stat st;
     if (fstat((int)fd, &st) != 0) return -(int64_t)errno;
     return (int64_t)st.st_size;
 }
 
-void slang__plat_file_close(int64_t fd) {
+void zell__plat_file_close(int64_t fd) {
     if (fd >= 0) close((int)fd);
 }
 
-int64_t slang__plat_sendfile(int64_t sock, int64_t fd, int64_t off, int64_t n) {
+int64_t zell__plat_sendfile(int64_t sock, int64_t fd, int64_t off, int64_t n) {
     if (n <= 0) return 0;
 #if defined(__linux__)
     for (;;) {
@@ -618,7 +618,7 @@ int64_t slang__plat_sendfile(int64_t sock, int64_t fd, int64_t off, int64_t n) {
         if (sent > 0) return (int64_t)sent;
         if (r == 0) return 0;
         if (errno == EINTR) continue;
-        if (errno == EAGAIN) return -SLANG_PLAT_EAGAIN;
+        if (errno == EAGAIN) return -ZELL_PLAT_EAGAIN;
         if (errno == EINVAL || errno == ENOTSOCK || errno == EOPNOTSUPP) break;
         return neg(errno);
     }
@@ -629,7 +629,7 @@ int64_t slang__plat_sendfile(int64_t sock, int64_t fd, int64_t off, int64_t n) {
         if (len > 0) return (int64_t)len;
         if (r == 0) return 0;
         if (errno == EINTR) continue;
-        if (errno == EAGAIN) return -SLANG_PLAT_EAGAIN;
+        if (errno == EAGAIN) return -ZELL_PLAT_EAGAIN;
         if (errno == EINVAL || errno == ENOTSOCK || errno == EOPNOTSUPP) break;
         return neg(errno);
     }
@@ -642,17 +642,17 @@ int64_t slang__plat_sendfile(int64_t sock, int64_t fd, int64_t off, int64_t n) {
     while (got < 0 && errno == EINTR);
     if (got < 0) return neg(errno);
     if (got == 0) return 0;
-    return slang__plat_sock_send(sock, buf, got);
+    return zell__plat_sock_send(sock, buf, got);
 }
 
-void slang__plat_unlink(const char *path) {
+void zell__plat_unlink(const char *path) {
     if (path && path[0] && path[0] != '@') unlink(path);
 }
 
 /* ---- name resolution ---------------------------------------------------- */
 
 static bool addr_text(const struct sockaddr *sa, char *ip, size_t cap) {
-    slang__plat_addr a;
+    zell__plat_addr a;
     memset(&a, 0, sizeof a);
     size_t len = sa->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
     memcpy(a.u.bytes, sa, len);
@@ -661,12 +661,12 @@ static bool addr_text(const struct sockaddr *sa, char *ip, size_t cap) {
     int bl;
     int64_t port;
     uint32_t scope;
-    slang__plat_addr_parts(&a, b, &bl, &port, &scope);
+    zell__plat_addr_parts(&a, b, &bl, &port, &scope);
     char t[INET6_ADDRSTRLEN];
-    if (!slang__plat_format_ip(b, bl, t, sizeof t)) return false;
+    if (!zell__plat_format_ip(b, bl, t, sizeof t)) return false;
     if (bl == 16 && scope) {
         char z[IF_NAMESIZE + 1];
-        if (!slang__plat_if_name(scope, z, sizeof z)) snprintf(z, sizeof z, "%u", scope);
+        if (!zell__plat_if_name(scope, z, sizeof z)) snprintf(z, sizeof z, "%u", scope);
         snprintf(ip, cap, "%s%%%s", t, z);
     } else {
         snprintf(ip, cap, "%s", t);
@@ -685,13 +685,13 @@ static bool gai_notfound(int rc) {
     return false;
 }
 
-const char *slang__plat_resolve(const char *host, int flags, char ***out, int *n, bool *notfound) {
+const char *zell__plat_resolve(const char *host, int flags, char ***out, int *n, bool *notfound) {
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_ADDRCONFIG;
-    if (flags & SLANG_PLAT_RESOLVE_PASSIVE) hints.ai_flags |= AI_PASSIVE;
+    if (flags & ZELL_PLAT_RESOLVE_PASSIVE) hints.ai_flags |= AI_PASSIVE;
     *out = NULL;
     *n = 0;
     *notfound = false;
@@ -718,7 +718,7 @@ const char *slang__plat_resolve(const char *host, int flags, char ***out, int *n
     for (struct addrinfo *a = res; a; a = a->ai_next) cap++;
     char **v = calloc((size_t)cap + 1, sizeof *v);
     int k = 0;
-    int passes = (flags & SLANG_PLAT_RESOLVE_V4FIRST) ? 2 : 1;
+    int passes = (flags & ZELL_PLAT_RESOLVE_V4FIRST) ? 2 : 1;
     for (int pass = 0; pass < passes && v; pass++) {
         for (struct addrinfo *a = res; a; a = a->ai_next) {
             if (a->ai_family != AF_INET && a->ai_family != AF_INET6) continue;
@@ -743,15 +743,15 @@ const char *slang__plat_resolve(const char *host, int flags, char ***out, int *n
     return NULL;
 }
 
-const char *slang__plat_reverse(const char *ip, char ***out, int *n, bool *notfound) {
+const char *zell__plat_reverse(const char *ip, char ***out, int *n, bool *notfound) {
     *out = NULL;
     *n = 0;
     *notfound = false;
     unsigned char b[16];
-    int len = slang__plat_parse_ip(ip, b);
+    int len = zell__plat_parse_ip(ip, b);
     if (!len) return "not an IP address";
-    slang__plat_addr a;
-    slang__plat_addr_ip(&a, b, len, 0, 0);
+    zell__plat_addr a;
+    zell__plat_addr_ip(&a, b, len, 0, 0);
     char host[NI_MAXHOST];
     int rc = getnameinfo((const struct sockaddr *)a.u.bytes, a.len, host, sizeof host, NULL, 0, NI_NAMEREQD);
     if (rc != 0) {
@@ -767,7 +767,7 @@ const char *slang__plat_reverse(const char *ip, char ***out, int *n, bool *notfo
     return NULL;
 }
 
-int64_t slang__plat_lookup_port(const char *network, const char *service) {
+int64_t zell__plat_lookup_port(const char *network, const char *service) {
     char *end;
     long p = strtol(service, &end, 10);
     if (*service && !*end) return p >= 0 && p <= 65535 ? p : -1;
@@ -797,7 +797,7 @@ static int prefix_len(const struct sockaddr *mask) {
     return bits;
 }
 
-int slang__plat_interfaces(char ***out, int *n) {
+int zell__plat_interfaces(char ***out, int *n) {
     *out = NULL;
     *n = 0;
     struct ifaddrs *ifs = NULL;

@@ -5,8 +5,8 @@
 
 #include <string.h>
 
-uint64_t slang_hash_maphash_rt_sip13(uint64_t k0, uint64_t k1, const slang_slice *b);
-uint64_t slang_hash_maphash_rt_sip13_str(uint64_t k0, uint64_t k1, const slang_string *s);
+uint64_t zell_hash_maphash_rt_sip13(uint64_t k0, uint64_t k1, const zell_slice *b);
+uint64_t zell_hash_maphash_rt_sip13_str(uint64_t k0, uint64_t k1, const zell_string *s);
 
 #define ROTL(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))
 #define SIPROUND                                                     \
@@ -40,10 +40,10 @@ static uint64_t sip13(uint64_t k0, uint64_t k1, const uint8_t *p, int64_t n) {
     return v0 ^ v1 ^ v2 ^ v3;
 }
 
-uint64_t slang_hash_maphash_rt_sip13(uint64_t k0, uint64_t k1, const slang_slice *b) {
+uint64_t zell_hash_maphash_rt_sip13(uint64_t k0, uint64_t k1, const zell_slice *b) {
     return sip13(k0, k1, b && b->len ? b->data : NULL, b ? b->len : 0);
 }
 
-uint64_t slang_hash_maphash_rt_sip13_str(uint64_t k0, uint64_t k1, const slang_string *s) {
+uint64_t zell_hash_maphash_rt_sip13_str(uint64_t k0, uint64_t k1, const zell_string *s) {
     return sip13(k0, k1, (const uint8_t *)(s ? s->data : ""), s ? s->len : 0);
 }

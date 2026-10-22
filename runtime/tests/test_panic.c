@@ -1,19 +1,19 @@
 #include "test.h"
 
-static void p_msg(void) { slang_panic("something broke"); }
-static void p_nil(void) { slang_panic_nil(); }
-static void p_bounds(void) { slang_panic_bounds(5, 3); }
+static void p_msg(void) { zell_panic("something broke"); }
+static void p_nil(void) { zell_panic_nil(); }
+static void p_bounds(void) { zell_panic_bounds(5, 3); }
 static void p_err(void) {
-    slang_string *c = S("ctx");
-    slang_error *e = slang_error_wrap(slang_error_new_cstr("inner"), c);
-    slang_panic_error(e);
+    zell_string *c = S("ctx");
+    zell_error *e = zell_error_wrap(zell_error_new_cstr("inner"), c);
+    zell_panic_error(e);
 }
-static void p_str(void) { slang_panic_str(S("from string")); }
+static void p_str(void) { zell_panic_str(S("from string")); }
 static void p_stdout_flushed(void) {
-    slang_print_cstr("before panic");
-    slang_panic("x");
+    zell_print_cstr("before panic");
+    zell_panic("x");
 }
-static void p_exit(void) { slang_print_cstr("bye"); slang_exit(7); }
+static void p_exit(void) { zell_print_cstr("bye"); zell_exit(7); }
 
 TEST(messages) {
     char buf[16384];

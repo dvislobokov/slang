@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_MATH_H
-#define SLANG_STUB_MATH_H
+#ifndef ZELL_STUB_MATH_H
+#define ZELL_STUB_MATH_H
 #define HUGE_VAL __builtin_huge_val()
 #define HUGE_VALF __builtin_huge_valf()
 #define INFINITY __builtin_inff()
@@ -34,15 +34,15 @@
 #define isunordered(x, y) __builtin_isunordered(x, y)
 typedef float float_t;
 typedef double double_t;
-#define SLANG_STUB_MATH1(n) double n(double); float n##f(float); long double n##l(long double);
-#define SLANG_STUB_MATH2(n) double n(double, double); float n##f(float, float); long double n##l(long double, long double);
-SLANG_STUB_MATH1(sin) SLANG_STUB_MATH1(cos) SLANG_STUB_MATH1(tan) SLANG_STUB_MATH1(asin) SLANG_STUB_MATH1(acos) SLANG_STUB_MATH1(atan)
-SLANG_STUB_MATH1(sinh) SLANG_STUB_MATH1(cosh) SLANG_STUB_MATH1(tanh) SLANG_STUB_MATH1(asinh) SLANG_STUB_MATH1(acosh) SLANG_STUB_MATH1(atanh)
-SLANG_STUB_MATH1(exp) SLANG_STUB_MATH1(exp2) SLANG_STUB_MATH1(expm1) SLANG_STUB_MATH1(log) SLANG_STUB_MATH1(log2) SLANG_STUB_MATH1(log10) SLANG_STUB_MATH1(log1p)
-SLANG_STUB_MATH1(sqrt) SLANG_STUB_MATH1(cbrt) SLANG_STUB_MATH1(fabs) SLANG_STUB_MATH1(floor) SLANG_STUB_MATH1(ceil) SLANG_STUB_MATH1(round) SLANG_STUB_MATH1(trunc)
-SLANG_STUB_MATH1(rint) SLANG_STUB_MATH1(nearbyint) SLANG_STUB_MATH1(erf) SLANG_STUB_MATH1(erfc) SLANG_STUB_MATH1(tgamma) SLANG_STUB_MATH1(lgamma) SLANG_STUB_MATH1(logb)
-SLANG_STUB_MATH2(atan2) SLANG_STUB_MATH2(pow) SLANG_STUB_MATH2(fmod) SLANG_STUB_MATH2(remainder) SLANG_STUB_MATH2(hypot) SLANG_STUB_MATH2(copysign)
-SLANG_STUB_MATH2(fmax) SLANG_STUB_MATH2(fmin) SLANG_STUB_MATH2(fdim) SLANG_STUB_MATH2(nextafter)
+#define ZELL_STUB_MATH1(n) double n(double); float n##f(float); long double n##l(long double);
+#define ZELL_STUB_MATH2(n) double n(double, double); float n##f(float, float); long double n##l(long double, long double);
+ZELL_STUB_MATH1(sin) ZELL_STUB_MATH1(cos) ZELL_STUB_MATH1(tan) ZELL_STUB_MATH1(asin) ZELL_STUB_MATH1(acos) ZELL_STUB_MATH1(atan)
+ZELL_STUB_MATH1(sinh) ZELL_STUB_MATH1(cosh) ZELL_STUB_MATH1(tanh) ZELL_STUB_MATH1(asinh) ZELL_STUB_MATH1(acosh) ZELL_STUB_MATH1(atanh)
+ZELL_STUB_MATH1(exp) ZELL_STUB_MATH1(exp2) ZELL_STUB_MATH1(expm1) ZELL_STUB_MATH1(log) ZELL_STUB_MATH1(log2) ZELL_STUB_MATH1(log10) ZELL_STUB_MATH1(log1p)
+ZELL_STUB_MATH1(sqrt) ZELL_STUB_MATH1(cbrt) ZELL_STUB_MATH1(fabs) ZELL_STUB_MATH1(floor) ZELL_STUB_MATH1(ceil) ZELL_STUB_MATH1(round) ZELL_STUB_MATH1(trunc)
+ZELL_STUB_MATH1(rint) ZELL_STUB_MATH1(nearbyint) ZELL_STUB_MATH1(erf) ZELL_STUB_MATH1(erfc) ZELL_STUB_MATH1(tgamma) ZELL_STUB_MATH1(lgamma) ZELL_STUB_MATH1(logb)
+ZELL_STUB_MATH2(atan2) ZELL_STUB_MATH2(pow) ZELL_STUB_MATH2(fmod) ZELL_STUB_MATH2(remainder) ZELL_STUB_MATH2(hypot) ZELL_STUB_MATH2(copysign)
+ZELL_STUB_MATH2(fmax) ZELL_STUB_MATH2(fmin) ZELL_STUB_MATH2(fdim) ZELL_STUB_MATH2(nextafter)
 double fma(double, double, double);
 float fmaf(float, float, float);
 double frexp(double, int *);
@@ -63,6 +63,6 @@ double y0(double);
 double y1(double);
 double yn(int, double);
 double lgamma_r(double, int *);
-#undef SLANG_STUB_MATH1
-#undef SLANG_STUB_MATH2
+#undef ZELL_STUB_MATH1
+#undef ZELL_STUB_MATH2
 #endif

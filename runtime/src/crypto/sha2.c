@@ -1,6 +1,6 @@
 /* sha2.c - streaming SHA-256, SHA-384, SHA-512 (FIPS 180-4) and SHA-1
  * (FIPS 180-4, only for legacy formats), plus HMAC (RFC 2104) over them.
- * Contexts are plain bytes (slang_hash_ctx), so the Slang wrappers keep
+ * Contexts are plain bytes (zell_hash_ctx), so the Zell wrappers keep
  * them inside a []byte. */
 #include "crypto.h"
 
@@ -46,7 +46,7 @@ static const uint64_t K512[80] = {
 
 static void sha256_block(uint32_t *h, const uint8_t *p) {
     uint32_t w[64];
-    for (int t = 0; t < 16; t++) w[t] = slang__ld32be(p + 4 * t);
+    for (int t = 0; t < 16; t++) w[t] = zell__ld32be(p + 4 * t);
     for (int t = 16; t < 64; t++) {
         uint32_t s0 = ror32(w[t - 15], 7) ^ ror32(w[t - 15], 18) ^ (w[t - 15] >> 3);
         uint32_t s1 = ror32(w[t - 2], 17) ^ ror32(w[t - 2], 19) ^ (w[t - 2] >> 10);
@@ -63,7 +63,7 @@ static void sha256_block(uint32_t *h, const uint8_t *p) {
 
 static void sha512_block(uint64_t *h, const uint8_t *p) {
     uint64_t w[80];
-    for (int t = 0; t < 16; t++) w[t] = slang__ld64be(p + 8 * t);
+    for (int t = 0; t < 16; t++) w[t] = zell__ld64be(p + 8 * t);
     for (int t = 16; t < 80; t++) {
         uint64_t s0 = ror64(w[t - 15], 1) ^ ror64(w[t - 15], 8) ^ (w[t - 15] >> 7);
         uint64_t s1 = ror64(w[t - 2], 19) ^ ror64(w[t - 2], 61) ^ (w[t - 2] >> 6);
@@ -80,7 +80,7 @@ static void sha512_block(uint64_t *h, const uint8_t *p) {
 
 static void sha1_block(uint32_t *h, const uint8_t *p) {
     uint32_t w[80];
-    for (int t = 0; t < 16; t++) w[t] = slang__ld32be(p + 4 * t);
+    for (int t = 0; t < 16; t++) w[t] = zell__ld32be(p + 4 * t);
     for (int t = 16; t < 80; t++) w[t] = rol32(w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16], 1);
     uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
     for (int t = 0; t < 80; t++) {
@@ -95,21 +95,21 @@ static void sha1_block(uint32_t *h, const uint8_t *p) {
     h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
 }
 
-size_t slang__hash_size(int alg) {
+size_t zell__hash_size(int alg) {
     switch (alg) {
-    case SLANG_HASH_SHA256: return 32;
-    case SLANG_HASH_SHA384: return 48;
-    case SLANG_HASH_SHA512: return 64;
-    case SLANG_HASH_SHA1: return 20;
+    case ZELL_HASH_SHA256: return 32;
+    case ZELL_HASH_SHA384: return 48;
+    case ZELL_HASH_SHA512: return 64;
+    case ZELL_HASH_SHA1: return 20;
     default: return 0;
     }
 }
 
-size_t slang__hash_block(int alg) {
-    return alg == SLANG_HASH_SHA384 || alg == SLANG_HASH_SHA512 ? 128 : 64;
+size_t zell__hash_block(int alg) {
+    return alg == ZELL_HASH_SHA384 || alg == ZELL_HASH_SHA512 ? 128 : 64;
 }
 
-bool slang__hash_init(slang_hash_ctx *c, int alg) {
+bool zell__hash_init(zell_hash_ctx *c, int alg) {
     static const uint32_t iv256[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                                        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
     static const uint64_t iv384[8] = { 0xcbbb9d5dc1059ed8ULL, 0x629a292a367cd507ULL, 0x9159015a3070dd17ULL,
@@ -122,24 +122,24 @@ bool slang__hash_init(slang_hash_ctx *c, int alg) {
     memset(c, 0, sizeof *c);
     c->alg = (uint32_t)alg;
     switch (alg) {
-    case SLANG_HASH_SHA256: memcpy(c->h.h32, iv256, sizeof iv256); return true;
-    case SLANG_HASH_SHA384: memcpy(c->h.h64, iv384, sizeof iv384); return true;
-    case SLANG_HASH_SHA512: memcpy(c->h.h64, iv512, sizeof iv512); return true;
-    case SLANG_HASH_SHA1: memcpy(c->h.h32, iv1, sizeof iv1); return true;
+    case ZELL_HASH_SHA256: memcpy(c->h.h32, iv256, sizeof iv256); return true;
+    case ZELL_HASH_SHA384: memcpy(c->h.h64, iv384, sizeof iv384); return true;
+    case ZELL_HASH_SHA512: memcpy(c->h.h64, iv512, sizeof iv512); return true;
+    case ZELL_HASH_SHA1: memcpy(c->h.h32, iv1, sizeof iv1); return true;
     default: return false;
     }
 }
 
-static void compress(slang_hash_ctx *c, const uint8_t *blk) {
+static void compress(zell_hash_ctx *c, const uint8_t *blk) {
     switch (c->alg) {
-    case SLANG_HASH_SHA256: sha256_block(c->h.h32, blk); break;
-    case SLANG_HASH_SHA1: sha1_block(c->h.h32, blk); break;
+    case ZELL_HASH_SHA256: sha256_block(c->h.h32, blk); break;
+    case ZELL_HASH_SHA1: sha1_block(c->h.h32, blk); break;
     default: sha512_block(c->h.h64, blk); break;
     }
 }
 
-void slang__hash_update(slang_hash_ctx *c, const uint8_t *p, size_t n) {
-    size_t bs = slang__hash_block((int)c->alg);
+void zell__hash_update(zell_hash_ctx *c, const uint8_t *p, size_t n) {
+    size_t bs = zell__hash_block((int)c->alg);
     c->total += n;
     if (c->buflen) {
         size_t k = bs - c->buflen;
@@ -163,31 +163,31 @@ void slang__hash_update(slang_hash_ctx *c, const uint8_t *p, size_t n) {
     }
 }
 
-void slang__hash_final(slang_hash_ctx *c, uint8_t *out) {
-    size_t bs = slang__hash_block((int)c->alg), lenb = bs == 128 ? 16 : 8;
+void zell__hash_final(zell_hash_ctx *c, uint8_t *out) {
+    size_t bs = zell__hash_block((int)c->alg), lenb = bs == 128 ? 16 : 8;
     uint64_t bits = c->total * 8;
     uint8_t pad[256];
     memset(pad, 0, sizeof pad);
     pad[0] = 0x80;
     size_t used = c->buflen + 1 + lenb;
     size_t padlen = (used <= bs ? bs : 2 * bs) - c->buflen;
-    slang__st64be(pad + padlen - 8, bits);
-    slang__hash_update(c, pad, padlen);
-    size_t n = slang__hash_size((int)c->alg);
-    if (c->alg == SLANG_HASH_SHA256 || c->alg == SLANG_HASH_SHA1) {
-        for (size_t i = 0; i < n / 4; i++) slang__st32be(out + 4 * i, c->h.h32[i]);
+    zell__st64be(pad + padlen - 8, bits);
+    zell__hash_update(c, pad, padlen);
+    size_t n = zell__hash_size((int)c->alg);
+    if (c->alg == ZELL_HASH_SHA256 || c->alg == ZELL_HASH_SHA1) {
+        for (size_t i = 0; i < n / 4; i++) zell__st32be(out + 4 * i, c->h.h32[i]);
     } else {
         uint8_t tmp[64];
-        for (int i = 0; i < 8; i++) slang__st64be(tmp + 8 * i, c->h.h64[i]);
+        for (int i = 0; i < 8; i++) zell__st64be(tmp + 8 * i, c->h.h64[i]);
         memcpy(out, tmp, n);
     }
 }
 
-void slang__hash(int alg, const uint8_t *p, size_t n, uint8_t *out) {
-    slang_hash_ctx c;
-    slang__hash_init(&c, alg);
-    slang__hash_update(&c, p, n);
-    slang__hash_final(&c, out);
+void zell__hash(int alg, const uint8_t *p, size_t n, uint8_t *out) {
+    zell_hash_ctx c;
+    zell__hash_init(&c, alg);
+    zell__hash_update(&c, p, n);
+    zell__hash_final(&c, out);
 }
 
 static int name_eq(const char *a, size_t n, const char *lit) {
@@ -203,47 +203,47 @@ static int name_eq(const char *a, size_t n, const char *lit) {
     return lit[j] == 0;
 }
 
-int slang__hash_by_name(const char *name, size_t len) {
-    if (name_eq(name, len, "sha256")) return SLANG_HASH_SHA256;
-    if (name_eq(name, len, "sha384")) return SLANG_HASH_SHA384;
-    if (name_eq(name, len, "sha512")) return SLANG_HASH_SHA512;
-    if (name_eq(name, len, "sha1")) return SLANG_HASH_SHA1;
+int zell__hash_by_name(const char *name, size_t len) {
+    if (name_eq(name, len, "sha256")) return ZELL_HASH_SHA256;
+    if (name_eq(name, len, "sha384")) return ZELL_HASH_SHA384;
+    if (name_eq(name, len, "sha512")) return ZELL_HASH_SHA512;
+    if (name_eq(name, len, "sha1")) return ZELL_HASH_SHA1;
     return 0;
 }
 
-void slang__hmac_init(slang_hmac_ctx *c, int alg, const uint8_t *key, size_t klen) {
-    size_t bs = slang__hash_block(alg);
+void zell__hmac_init(zell_hmac_ctx *c, int alg, const uint8_t *key, size_t klen) {
+    size_t bs = zell__hash_block(alg);
     uint8_t k[128], pad[128];
     memset(k, 0, sizeof k);
-    if (klen > bs) slang__hash(alg, key, klen, k);
+    if (klen > bs) zell__hash(alg, key, klen, k);
     else if (klen) memcpy(k, key, klen);
     for (size_t i = 0; i < bs; i++) pad[i] = k[i] ^ 0x36;
-    slang__hash_init(&c->inner, alg);
-    slang__hash_update(&c->inner, pad, bs);
+    zell__hash_init(&c->inner, alg);
+    zell__hash_update(&c->inner, pad, bs);
     for (size_t i = 0; i < bs; i++) pad[i] = k[i] ^ 0x5c;
-    slang__hash_init(&c->outer, alg);
-    slang__hash_update(&c->outer, pad, bs);
-    slang__crypto_wipe(k, sizeof k);
-    slang__crypto_wipe(pad, sizeof pad);
+    zell__hash_init(&c->outer, alg);
+    zell__hash_update(&c->outer, pad, bs);
+    zell__crypto_wipe(k, sizeof k);
+    zell__crypto_wipe(pad, sizeof pad);
 }
 
-void slang__hmac_update(slang_hmac_ctx *c, const uint8_t *p, size_t n) {
-    slang__hash_update(&c->inner, p, n);
+void zell__hmac_update(zell_hmac_ctx *c, const uint8_t *p, size_t n) {
+    zell__hash_update(&c->inner, p, n);
 }
 
-void slang__hmac_final(slang_hmac_ctx *c, uint8_t *out) {
+void zell__hmac_final(zell_hmac_ctx *c, uint8_t *out) {
     uint8_t ih[64];
-    size_t n = slang__hash_size((int)c->inner.alg);
-    slang__hash_final(&c->inner, ih);
-    slang__hash_update(&c->outer, ih, n);
-    slang__hash_final(&c->outer, out);
-    slang__crypto_wipe(ih, sizeof ih);
+    size_t n = zell__hash_size((int)c->inner.alg);
+    zell__hash_final(&c->inner, ih);
+    zell__hash_update(&c->outer, ih, n);
+    zell__hash_final(&c->outer, out);
+    zell__crypto_wipe(ih, sizeof ih);
 }
 
-void slang__hmac(int alg, const uint8_t *key, size_t klen, const uint8_t *msg, size_t n, uint8_t *out) {
-    slang_hmac_ctx c;
-    slang__hmac_init(&c, alg, key, klen);
-    slang__hmac_update(&c, msg, n);
-    slang__hmac_final(&c, out);
-    slang__crypto_wipe(&c, sizeof c);
+void zell__hmac(int alg, const uint8_t *key, size_t klen, const uint8_t *msg, size_t n, uint8_t *out) {
+    zell_hmac_ctx c;
+    zell__hmac_init(&c, alg, key, klen);
+    zell__hmac_update(&c, msg, n);
+    zell__hmac_final(&c, out);
+    zell__crypto_wipe(&c, sizeof c);
 }

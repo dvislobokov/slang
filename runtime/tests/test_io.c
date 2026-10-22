@@ -2,18 +2,18 @@
 #include <fcntl.h>
 
 static void prints(void) {
-    SLANG_STATIC_STRING(hi, "hi");
-    slang_print_str(hi); slang_print_space(); slang_print_int(-42); slang_print_space();
-    slang_print_float(2.5); slang_print_space(); slang_print_bool(true); slang_print_space();
-    slang_print_rune(0x1F600); slang_print_newline();
-    slang_println_str(NULL);
-    slang_println_int(7);
-    slang_println_uint(18446744073709551615ULL);
-    slang_println_float(0.1);
-    slang_println_bool(false);
-    slang_println_cstr("end");
-    slang_println_rune('z');
-    slang_flush();
+    ZELL_STATIC_STRING(hi, "hi");
+    zell_print_str(hi); zell_print_space(); zell_print_int(-42); zell_print_space();
+    zell_print_float(2.5); zell_print_space(); zell_print_bool(true); zell_print_space();
+    zell_print_rune(0x1F600); zell_print_newline();
+    zell_println_str(NULL);
+    zell_println_int(7);
+    zell_println_uint(18446744073709551615ULL);
+    zell_println_float(0.1);
+    zell_println_bool(false);
+    zell_println_cstr("end");
+    zell_println_rune('z');
+    zell_flush();
 }
 
 TEST(print) {
@@ -23,45 +23,45 @@ TEST(print) {
 }
 
 TEST(files) {
-    char dir[] = "/tmp/slang_rt_test_XXXXXX";
+    char dir[] = "/tmp/zell_rt_test_XXXXXX";
     assert(mkdtemp(dir));
     char path[256];
     snprintf(path, sizeof path, "%s/out.txt", dir);
-    slang_string *p = S(path);
-    slang_string *data = slang_string_new("line1\nline2\0bin", 15);
-    assert(slang_write_file(p, data) == NULL);
-    slang_error *err = (slang_error *)1;
-    slang_string *back = slang_read_file(p, &err);
-    assert(err == NULL && slang_string_eq(back, data));
-    slang_slice bytes;
-    slang_string_to_bytes(&bytes, data);
-    assert(slang_write_file_bytes(p, &bytes) == NULL);
-    slang_slice_release(&bytes);
-    slang_release(back);
-    back = slang_read_file(p, &err);
-    assert(slang_string_len(back) == 15);
-    slang_release(back);
+    zell_string *p = S(path);
+    zell_string *data = zell_string_new("line1\nline2\0bin", 15);
+    assert(zell_write_file(p, data) == NULL);
+    zell_error *err = (zell_error *)1;
+    zell_string *back = zell_read_file(p, &err);
+    assert(err == NULL && zell_string_eq(back, data));
+    zell_slice bytes;
+    zell_string_to_bytes(&bytes, data);
+    assert(zell_write_file_bytes(p, &bytes) == NULL);
+    zell_slice_release(&bytes);
+    zell_release(back);
+    back = zell_read_file(p, &err);
+    assert(zell_string_len(back) == 15);
+    zell_release(back);
     /* large file exercises buffer growth */
     char *big = malloc(100000);
     for (int i = 0; i < 100000; i++) big[i] = (char)('a' + i % 26);
-    slang_string *bigs = slang_string_new(big, 100000);
+    zell_string *bigs = zell_string_new(big, 100000);
     free(big);
-    assert(slang_write_file(p, bigs) == NULL);
-    back = slang_read_file(p, &err);
-    assert(slang_string_eq(back, bigs));
-    slang_release(back); slang_release(bigs);
+    assert(zell_write_file(p, bigs) == NULL);
+    back = zell_read_file(p, &err);
+    assert(zell_string_eq(back, bigs));
+    zell_release(back); zell_release(bigs);
     unlink(path);
     rmdir(dir);
-    slang_string *missing = S("/nonexistent/dir/file");
-    back = slang_read_file(missing, &err);
+    zell_string *missing = S("/nonexistent/dir/file");
+    back = zell_read_file(missing, &err);
     assert(back == NULL && err != NULL);
-    slang_string *m = slang_error_message(err);
-    assert(strstr(slang_string_data(m), "open /nonexistent/dir/file: No such file"));
-    slang_release(m); slang_release(err);
-    err = slang_write_file(missing, data);
+    zell_string *m = zell_error_message(err);
+    assert(strstr(zell_string_data(m), "open /nonexistent/dir/file: No such file"));
+    zell_release(m); zell_release(err);
+    err = zell_write_file(missing, data);
     assert(err);
-    slang_release(err);
-    slang_release(missing); slang_release(p); slang_release(data);
+    zell_release(err);
+    zell_release(missing); zell_release(p); zell_release(data);
 }
 
 TEST(read_line) {
@@ -74,24 +74,24 @@ TEST(read_line) {
     dup2(fds[0], 0);
     close(fds[0]);
     const char *want[] = { "first", "second", "", "last" };
-    slang_error *err;
+    zell_error *err;
     for (int i = 0; i < 4; i++) {
-        slang_string *l = slang_read_line(&err);
+        zell_string *l = zell_read_line(&err);
         assert(err == NULL && STR_IS(l, want[i]));
-        slang_release(l);
+        zell_release(l);
     }
-    assert(slang_read_line(&err) == NULL && err == slang_err_eof);
-    assert(slang_error_is(err, slang_err_eof));
+    assert(zell_read_line(&err) == NULL && err == zell_err_eof);
+    assert(zell_error_is(err, zell_err_eof));
     dup2(saved, 0);
     close(saved);
 }
 
 int main(void) {
     printf("test_io\n");
-    int64_t live = slang_live_objects();
+    int64_t live = zell_live_objects();
     RUN(print);
     RUN(files);
     RUN(read_line);
-    assert(slang_live_objects() == live);
+    assert(zell_live_objects() == live);
     return 0;
 }

@@ -1,20 +1,20 @@
 /* task_io.c - readiness waits for async I/O (ABI.md 10.9).
  *
- * Sharded pollers. The runtime runs S poller shards (S = SLANG_IO_POLLERS,
+ * Sharded pollers. The runtime runs S poller shards (S = ZELL_IO_POLLERS,
  * default: half the scheduler workers, at least 1, at most 8). Each shard
  * owns one platform poller (an epoll instance on Linux, a kqueue on
  * macOS/BSD), one thread that waits on it, a mutex, and a binary min-heap
  * of the deadlines of its waits. A descriptor is assigned to the least
- * loaded shard when it is registered (slang_io_register at socket
- * creation, or its first wait) and stays there until slang_io_forget, so
+ * loaded shard when it is registered (zell_io_register at socket
+ * creation, or its first wait) and stays there until zell_io_forget, so
  * the shards share nothing on the hot path: two connections on different
  * shards never touch the same lock or poller.
  *
- * slang_io_wait_readable/writable(fd, timeout) add a pending Task<int> to
+ * zell_io_wait_readable/writable(fd, timeout) add a pending Task<int> to
  * the fd's reader or writer list and arm the fd one-shot in its shard's
  * poller (one epoll_ctl per wait, level-triggered: readiness that is
  * already there is reported at once). When the poller reports the fd (or
- * the deadline passes, or slang_io_forget releases the fd, or the waiting
+ * the deadline passes, or zell_io_forget releases the fd, or the waiting
  * task is cancelled) the waits are completed, which posts their
  * continuations to the scheduler like a timer does. Every waiter of a
  * direction is woken; reports may be spurious and callers retry the
@@ -31,7 +31,7 @@
 enum { IO_READY = 0, IO_TIMEOUT = 1, IO_CLOSED = 2, IO_CANCELLED = 3 };
 
 typedef struct io_wait {
-    slang_task *task;        /* owned */
+    zell_task *task;        /* owned */
     int64_t deadline;        /* monotonic ns, 0 = none */
     int64_t fd;
     int32_t heap;            /* index in the shard's deadline heap, -1 = none */
@@ -49,9 +49,9 @@ typedef struct io_fd {
 } io_fd;
 
 typedef struct io_shard {
-    slang__plat_mutex mu;
-    slang__plat_poller *poller;
-    slang__plat_thread thread;
+    zell__plat_mutex mu;
+    zell__plat_poller *poller;
+    zell__plat_thread thread;
     io_wait **heap;
     int32_t nheap, capheap;
     int64_t sleep_until;     /* deadline the thread sleeps toward, INT64_MAX = none */
@@ -61,7 +61,7 @@ typedef struct io_shard {
 } io_shard;
 
 typedef struct io_done {
-    slang_task *task;        /* owned */
+    zell_task *task;        /* owned */
     int64_t code;
 } io_done;
 
@@ -70,7 +70,7 @@ typedef struct io_done {
 #define IO_MAX_CHUNKS 4096   /* descriptors up to 16M */
 
 static io_fd *io_chunks[IO_MAX_CHUNKS];  /* atomic pointers, never moved */
-static slang__plat_mutex io_start_mu = SLANG_PLAT_MUTEX_INIT;
+static zell__plat_mutex io_start_mu = ZELL_PLAT_MUTEX_INIT;
 static io_shard *io_shards;
 static int32_t io_nshards;
 static int32_t io_running;               /* atomic */
@@ -81,14 +81,14 @@ static uint32_t io_rr;                   /* atomic: round-robin tie breaker */
 static io_fd *entry(int64_t fd, bool create) {
     if (fd < 0 || fd >= (int64_t)IO_MAX_CHUNKS * IO_CHUNK) {
         if (!create) return NULL;
-        slang__panicf("slang_io_wait: file descriptor %lld out of range", (long long)fd);
+        zell__panicf("zell_io_wait: file descriptor %lld out of range", (long long)fd);
     }
     int64_t ci = fd >> IO_CHUNK_BITS;
     io_fd *c = __atomic_load_n(&io_chunks[ci], __ATOMIC_ACQUIRE);
     if (!c) {
         if (!create) return NULL;
         io_fd *n = calloc(IO_CHUNK, sizeof *n);
-        if (!n) slang_panic("out of memory (io)");
+        if (!n) zell_panic("out of memory (io)");
         for (int i = 0; i < IO_CHUNK; i++) n[i].shard = -1;
         io_fd *expected = NULL;
         if (__atomic_compare_exchange_n(&io_chunks[ci], &expected, n, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) c = n;
@@ -126,9 +126,9 @@ static io_shard *shard_lock(io_fd *e, bool assign) {
             s = pick;
         }
         io_shard *sh = &io_shards[s];
-        slang__plat_mutex_lock(&sh->mu);
+        zell__plat_mutex_lock(&sh->mu);
         if (__atomic_load_n(&e->shard, __ATOMIC_ACQUIRE) == s) return sh;
-        slang__plat_mutex_unlock(&sh->mu);
+        zell__plat_mutex_unlock(&sh->mu);
     }
 }
 
@@ -166,7 +166,7 @@ static void heap_push(io_shard *sh, io_wait *w) {
     if (sh->nheap == sh->capheap) {
         int32_t cap = sh->capheap ? sh->capheap * 2 : 64;
         io_wait **nh = realloc(sh->heap, sizeof *nh * (size_t)cap);
-        if (!nh) slang_panic("out of memory (io)");
+        if (!nh) zell_panic("out of memory (io)");
         sh->heap = nh;
         sh->capheap = cap;
     }
@@ -202,11 +202,11 @@ static void done_init(done_buf *d) {
     d->cap = 8;
 }
 
-static void done_push(done_buf *d, slang_task *t, int64_t code) {
+static void done_push(done_buf *d, zell_task *t, int64_t code) {
     if (d->n == d->cap) {
         int cap = d->cap * 2;
         io_done *nv = malloc(sizeof *nv * (size_t)cap);
-        if (!nv) slang_panic("out of memory (io)");
+        if (!nv) zell_panic("out of memory (io)");
         memcpy(nv, d->v, sizeof *nv * (size_t)d->n);
         if (d->v != d->local) free(d->v);
         d->v = nv;
@@ -220,8 +220,8 @@ static void done_push(done_buf *d, slang_task *t, int64_t code) {
 /* Completes the collected waits (no lock held) and empties the buffer. */
 static void done_finish(done_buf *d) {
     for (int i = 0; i < d->n; i++) {
-        slang_task_complete(d->v[i].task, &d->v[i].code);
-        slang_release(d->v[i].task);
+        zell_task_complete(d->v[i].task, &d->v[i].code);
+        zell_release(d->v[i].task);
     }
     d->n = 0;
 }
@@ -253,9 +253,9 @@ static void unlink_wait(io_fd *e, io_wait *w) {
 
 /* Shard mutex held: arms the fd for whatever its waiters still need. */
 static void rearm(io_shard *sh, io_fd *e, int64_t fd) {
-    int32_t want = (e->rd ? SLANG_PLAT_READ : 0) | (e->wr ? SLANG_PLAT_WRITE : 0);
+    int32_t want = (e->rd ? ZELL_PLAT_READ : 0) | (e->wr ? ZELL_PLAT_WRITE : 0);
     if (want == 0 || (want & ~e->armed) == 0) return;
-    if (slang__plat_poller_arm(sh->poller, fd, want, token_of(e, fd), e->registered != 0) == 0) {
+    if (zell__plat_poller_arm(sh->poller, fd, want, token_of(e, fd), e->registered != 0) == 0) {
         e->registered = 1;
         e->armed = want;
     }
@@ -265,10 +265,10 @@ static void rearm(io_shard *sh, io_fd *e, int64_t fd) {
 
 static void *io_main(void *arg) {
     io_shard *sh = arg;
-    slang__plat_event evs[256];
+    zell__plat_event evs[256];
     done_buf d;
     done_init(&d);
-    slang__plat_mutex_lock(&sh->mu);
+    zell__plat_mutex_lock(&sh->mu);
     for (;;) {
         if (sh->stopping) break;
         int64_t timeout = -1;
@@ -276,25 +276,25 @@ static void *io_main(void *arg) {
         if (sh->nheap > 0) {
             int64_t next = sh->heap[0]->deadline;
             sh->sleep_until = next;
-            int64_t left = next - slang__plat_mono_ns();
+            int64_t left = next - zell__plat_mono_ns();
             timeout = left <= 0 ? 0 : (left + 999999) / 1000000;
         }
-        slang__plat_mutex_unlock(&sh->mu);
-        int n = slang__plat_poller_wait(sh->poller, evs, 256, timeout);
-        slang__plat_mutex_lock(&sh->mu);
+        zell__plat_mutex_unlock(&sh->mu);
+        int n = zell__plat_poller_wait(sh->poller, evs, 256, timeout);
+        zell__plat_mutex_lock(&sh->mu);
         for (int i = 0; i < n; i++) {
-            if (evs[i].token == SLANG_PLAT_WAKE_TOKEN) continue;
+            if (evs[i].token == ZELL_PLAT_WAKE_TOKEN) continue;
             int64_t fd = (int64_t)(uint32_t)evs[i].token;
             uint32_t gen = (uint32_t)(evs[i].token >> 32);
             io_fd *e = entry(fd, false);
             /* stale: the fd was forgotten (and maybe reused) since it was armed */
             if (!e || __atomic_load_n(&e->shard, __ATOMIC_RELAXED) != sh->index || e->gen != gen) continue;
             e->armed = 0;  /* one-shot: the report disarmed it */
-            if (evs[i].events & SLANG_PLAT_READ) take_all(sh, &e->rd, IO_READY, &d);
-            if (evs[i].events & SLANG_PLAT_WRITE) take_all(sh, &e->wr, IO_READY, &d);
+            if (evs[i].events & ZELL_PLAT_READ) take_all(sh, &e->rd, IO_READY, &d);
+            if (evs[i].events & ZELL_PLAT_WRITE) take_all(sh, &e->wr, IO_READY, &d);
             rearm(sh, e, fd);
         }
-        int64_t now = slang__plat_mono_ns();
+        int64_t now = zell__plat_mono_ns();
         while (sh->nheap > 0 && sh->heap[0]->deadline <= now) {
             io_wait *w = sh->heap[0];
             heap_remove(sh, w);
@@ -304,20 +304,20 @@ static void *io_main(void *arg) {
             free(w);
         }
         if (d.n) {
-            slang__plat_mutex_unlock(&sh->mu);
+            zell__plat_mutex_unlock(&sh->mu);
             done_finish(&d);
-            slang__plat_mutex_lock(&sh->mu);
+            zell__plat_mutex_lock(&sh->mu);
         }
     }
-    slang__plat_mutex_unlock(&sh->mu);
+    zell__plat_mutex_unlock(&sh->mu);
     done_free(&d);
     return NULL;
 }
 
 static int32_t shard_count(void) {
-    const char *env = getenv("SLANG_IO_POLLERS");
+    const char *env = getenv("ZELL_IO_POLLERS");
     long n = env ? strtol(env, NULL, 10) : 0;
-    if (n <= 0) n = (long)((slang_sched_workers() + 1) / 2);
+    if (n <= 0) n = (long)((zell_sched_workers() + 1) / 2);
     if (n < 1) n = 1;
     if (n > 8 && !env) n = 8;
     if (n > 64) n = 64;
@@ -327,31 +327,31 @@ static int32_t shard_count(void) {
 static void io_start(void) {
     if (__atomic_load_n(&io_running, __ATOMIC_ACQUIRE)) return;
     int32_t n = shard_count();  /* may start the scheduler: outside io_start_mu */
-    slang__plat_mutex_lock(&io_start_mu);
+    zell__plat_mutex_lock(&io_start_mu);
     if (!io_running) {
         io_shard *s = calloc((size_t)n, sizeof *s);
-        if (!s) slang_panic("out of memory (io)");
+        if (!s) zell_panic("out of memory (io)");
         for (int32_t i = 0; i < n; i++) {
-            slang__plat_mutex_init(&s[i].mu);
+            zell__plat_mutex_init(&s[i].mu);
             s[i].index = i;
             s[i].sleep_until = INT64_MAX;
-            s[i].poller = slang__plat_poller_new();
-            if (!s[i].poller) slang_panic("cannot create the I/O poller");
+            s[i].poller = zell__plat_poller_new();
+            if (!s[i].poller) zell_panic("cannot create the I/O poller");
         }
         io_shards = s;
         io_nshards = n;
-        slang__io_stop_fn = slang__io_stop;  /* shutdown stops the shards */
+        zell__io_stop_fn = zell__io_stop;  /* shutdown stops the shards */
         for (int32_t i = 0; i < n; i++)
-            if (!slang__plat_thread_start(&s[i].thread, io_main, &s[i])) slang_panic("cannot create an I/O poller thread");
+            if (!zell__plat_thread_start(&s[i].thread, io_main, &s[i])) zell_panic("cannot create an I/O poller thread");
         __atomic_store_n(&io_running, 1, __ATOMIC_RELEASE);
     }
-    slang__plat_mutex_unlock(&io_start_mu);
+    zell__plat_mutex_unlock(&io_start_mu);
 }
 
 /* ---- waits ---- */
 
 /* Cancellation hook: completes the wait of task `t` (data = fd << 1 | write) with IO_CANCELLED. */
-static void io_cancelled(slang_task *t, uintptr_t data) {
+static void io_cancelled(zell_task *t, uintptr_t data) {
     int64_t fd = (int64_t)(data >> 1);
     int write = (int)(data & 1);
     io_fd *e = entry(fd, false);
@@ -368,43 +368,43 @@ static void io_cancelled(slang_task *t, uintptr_t data) {
         }
     }
     if (found) heap_remove(sh, found);
-    slang__plat_mutex_unlock(&sh->mu);
+    zell__plat_mutex_unlock(&sh->mu);
     if (found) {
         int64_t code = IO_CANCELLED;
-        slang_task_complete(found->task, &code);
-        slang_release(found->task);
+        zell_task_complete(found->task, &code);
+        zell_release(found->task);
         free(found);
     }
 }
 
-static slang_task *io_wait_for(int64_t fd, bool write, int64_t timeout_ms) {
-    if (fd < 0) slang_panic("slang_io_wait: invalid file descriptor");
-    slang_task *t = slang_task_new_plain(8, NULL);
+static zell_task *io_wait_for(int64_t fd, bool write, int64_t timeout_ms) {
+    if (fd < 0) zell_panic("zell_io_wait: invalid file descriptor");
+    zell_task *t = zell_task_new_plain(8, NULL);
     io_start();
     io_fd *e = entry(fd, true);
     io_wait *w = malloc(sizeof *w);
-    if (!w) slang_panic("out of memory (io)");
-    slang_retain(t);
+    if (!w) zell_panic("out of memory (io)");
+    zell_retain(t);
     w->task = t;
     w->fd = fd;
     w->write = write;
     w->heap = -1;
-    w->deadline = timeout_ms >= 0 ? slang__plat_mono_ns() + timeout_ms * 1000000 + 1 : 0;
+    w->deadline = timeout_ms >= 0 ? zell__plat_mono_ns() + timeout_ms * 1000000 + 1 : 0;
     io_shard *sh = shard_lock(e, true);
     io_wait **list = write ? &e->wr : &e->rd;
     w->next = *list;
     *list = w;
     int64_t immediate = -1;
-    int32_t want = (e->rd ? SLANG_PLAT_READ : 0) | (e->wr ? SLANG_PLAT_WRITE : 0);
+    int32_t want = (e->rd ? ZELL_PLAT_READ : 0) | (e->wr ? ZELL_PLAT_WRITE : 0);
     if ((want & ~e->armed) != 0) {
-        int rc = slang__plat_poller_arm(sh->poller, fd, want, token_of(e, fd), e->registered != 0);
+        int rc = zell__plat_poller_arm(sh->poller, fd, want, token_of(e, fd), e->registered != 0);
         if (rc == 0) {
             e->registered = 1;
             e->armed = want;
         } else {
             /* EPERM: cannot be polled (a regular file), so always ready;
              * anything else (EBADF: closed) fails the wait. */
-            immediate = rc == SLANG_PLAT_ENOTPOLLABLE ? IO_READY : IO_CLOSED;
+            immediate = rc == ZELL_PLAT_ENOTPOLLABLE ? IO_READY : IO_CLOSED;
             *list = w->next;
         }
     }
@@ -414,30 +414,30 @@ static slang_task *io_wait_for(int64_t fd, bool write, int64_t timeout_ms) {
         wake = w->deadline < sh->sleep_until;
         if (wake) sh->sleep_until = w->deadline;
     }
-    slang__plat_poller *p = sh->poller;
-    slang__plat_mutex_unlock(&sh->mu);
-    if (wake) slang__plat_poller_wake(p);
+    zell__plat_poller *p = sh->poller;
+    zell__plat_mutex_unlock(&sh->mu);
+    if (wake) zell__plat_poller_wake(p);
     if (immediate >= 0) {
-        slang_task_complete(t, &immediate);
-        slang_release(t);
+        zell_task_complete(t, &immediate);
+        zell_release(t);
         free(w);
         return t;
     }
-    slang__cancel_hook_data(io_cancelled, t, ((uintptr_t)fd << 1) | (write ? 1u : 0u));
+    zell__cancel_hook_data(io_cancelled, t, ((uintptr_t)fd << 1) | (write ? 1u : 0u));
     return t;
 }
 
-slang_task *slang_io_wait_readable(int64_t fd, int64_t timeout_ms) { return io_wait_for(fd, false, timeout_ms); }
-slang_task *slang_io_wait_writable(int64_t fd, int64_t timeout_ms) { return io_wait_for(fd, true, timeout_ms); }
+zell_task *zell_io_wait_readable(int64_t fd, int64_t timeout_ms) { return io_wait_for(fd, false, timeout_ms); }
+zell_task *zell_io_wait_writable(int64_t fd, int64_t timeout_ms) { return io_wait_for(fd, true, timeout_ms); }
 
-void slang_io_register(int64_t fd) {
+void zell_io_register(int64_t fd) {
     if (fd < 0) return;
     io_start();
     io_shard *sh = shard_lock(entry(fd, true), true);
-    slang__plat_mutex_unlock(&sh->mu);
+    zell__plat_mutex_unlock(&sh->mu);
 }
 
-void slang_io_forget(int64_t fd) {
+void zell_io_forget(int64_t fd) {
     io_fd *e = entry(fd, false);
     if (!e || !__atomic_load_n(&io_running, __ATOMIC_ACQUIRE)) return;
     io_shard *sh = shard_lock(e, false);
@@ -446,35 +446,35 @@ void slang_io_forget(int64_t fd) {
     done_init(&d);
     take_all(sh, &e->rd, IO_CLOSED, &d);
     take_all(sh, &e->wr, IO_CLOSED, &d);
-    if (e->registered) slang__plat_poller_remove(sh->poller, fd);
+    if (e->registered) zell__plat_poller_remove(sh->poller, fd);
     e->registered = 0;
     e->armed = 0;
     e->gen++;
     __atomic_store_n(&e->shard, -1, __ATOMIC_RELEASE);
     __atomic_sub_fetch(&sh->nfds, 1, __ATOMIC_RELAXED);
-    slang__plat_mutex_unlock(&sh->mu);
+    zell__plat_mutex_unlock(&sh->mu);
     done_finish(&d);
     done_free(&d);
 }
 
-int64_t slang__io_shard_of(int64_t fd) {
+int64_t zell__io_shard_of(int64_t fd) {
     io_fd *e = entry(fd, false);
     return e ? __atomic_load_n(&e->shard, __ATOMIC_ACQUIRE) : -1;
 }
 
-int64_t slang__io_shards(void) { return __atomic_load_n(&io_running, __ATOMIC_ACQUIRE) ? io_nshards : 0; }
+int64_t zell__io_shards(void) { return __atomic_load_n(&io_running, __ATOMIC_ACQUIRE) ? io_nshards : 0; }
 
-void slang__io_stop(void) {
-    slang__net_stop();
-    slang__plat_mutex_lock(&io_start_mu);
-    if (!io_running) { slang__plat_mutex_unlock(&io_start_mu); return; }
+void zell__io_stop(void) {
+    zell__net_stop();
+    zell__plat_mutex_lock(&io_start_mu);
+    if (!io_running) { zell__plat_mutex_unlock(&io_start_mu); return; }
     for (int32_t i = 0; i < io_nshards; i++) {
-        slang__plat_mutex_lock(&io_shards[i].mu);
+        zell__plat_mutex_lock(&io_shards[i].mu);
         io_shards[i].stopping = 1;
-        slang__plat_mutex_unlock(&io_shards[i].mu);
-        slang__plat_poller_wake(io_shards[i].poller);
+        zell__plat_mutex_unlock(&io_shards[i].mu);
+        zell__plat_poller_wake(io_shards[i].poller);
     }
-    for (int32_t i = 0; i < io_nshards; i++) slang__plat_thread_join(io_shards[i].thread);
+    for (int32_t i = 0; i < io_nshards; i++) zell__plat_thread_join(io_shards[i].thread);
     /* Waits still pending at shutdown are dropped without completing (the
      * scheduler has stopped: nobody would run their continuations). */
     for (int64_t c = 0; c < IO_MAX_CHUNKS; c++) {
@@ -485,7 +485,7 @@ void slang__io_stop(void) {
                 io_wait *w = dir ? chunk[i].wr : chunk[i].rd;
                 while (w) {
                     io_wait *n = w->next;
-                    slang_release(w->task);
+                    zell_release(w->task);
                     free(w);
                     w = n;
                 }
@@ -495,13 +495,13 @@ void slang__io_stop(void) {
         io_chunks[c] = NULL;
     }
     for (int32_t i = 0; i < io_nshards; i++) {
-        slang__plat_poller_free(io_shards[i].poller);
+        zell__plat_poller_free(io_shards[i].poller);
         free(io_shards[i].heap);
-        slang__plat_mutex_destroy(&io_shards[i].mu);
+        zell__plat_mutex_destroy(&io_shards[i].mu);
     }
     free(io_shards);
     io_shards = NULL;
     io_nshards = 0;
     __atomic_store_n(&io_running, 0, __ATOMIC_RELEASE);
-    slang__plat_mutex_unlock(&io_start_mu);
+    zell__plat_mutex_unlock(&io_start_mu);
 }

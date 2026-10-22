@@ -1,6 +1,6 @@
 /* macOS stub SDK (runtime/stub-sdk/macos/README.md): compile checks only. */
-#ifndef SLANG_STUB_TERMIOS_H
-#define SLANG_STUB_TERMIOS_H
+#ifndef ZELL_STUB_TERMIOS_H
+#define ZELL_STUB_TERMIOS_H
 #include <sys/types.h>
 typedef unsigned long tcflag_t;
 typedef unsigned char cc_t;
