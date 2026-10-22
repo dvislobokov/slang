@@ -26,7 +26,7 @@ variants="zell zap zerolog slog"
 for ((i = 1; i <= RUNS; i++)); do
     for v in $variants; do
         if [ $v = zell ]; then bin=("$out/zell"); else bin=("$out/go" "-impl=$v"); fi
-        "${bin[@]}" "$log" > "$out/stdout.$v" 2> "$out/scen.$v.$i"
+        KEEP_LOG=1 "${bin[@]}" "$log" > "$out/stdout.$v" 2> "$out/scen.$v.$i"
         if [ $v = zell ]; then cp "$out/stdout.zell" "$out/ref"; elif ! cmp -s "$out/ref" "$out/stdout.$v"; then
             echo "MISMATCH: stdout of $v differs from zell" >&2
             exit 1

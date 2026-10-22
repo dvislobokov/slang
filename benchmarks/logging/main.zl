@@ -7,7 +7,8 @@ import io
 // SCALE=small: 100k):
 //   devnull   JSON (CLEF) sink to /dev/null
 //   file      JSON sink to a file (argument 1, default /tmp/zell-bench.log;
-//             kept for run.sh to verify, then deleted by it)
+//             deleted at exit unless KEEP_LOG=1, which run.sh sets to
+//             verify it)
 //   disabled  logger.Debug on an Information logger: the cost of a call
 //             whose level is off
 // Every record: a 4-property template plus 2 context properties
@@ -71,6 +72,9 @@ async func main() {
     }
     await run("devnull", "/dev/null", paths, n)
     await run("file", file, paths, n)
+    if os.Getenv("KEEP_LOG") != "1" {
+        _ = fs.Remove(file)
+    }
 
     var off = log.New().MinimumLevel(log.Level.Information).WriteTo.Json(log.JsonOptions{Path: "/dev/null"}).CreateLogger()
     var t0 = time.NowNanos()

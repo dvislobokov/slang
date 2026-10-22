@@ -1,0 +1,109 @@
+namespace bench.websocket_echo
+
+import io
+import net
+
+// websocket_echo: net.ws echo server and client (the Go side is main.go,
+// gorilla/websocket). CONNS connections (default 1000) each send MSGS
+// binary messages of 128 bytes (default 10000; SCALE=small: 100 x 200),
+// one in flight per connection, and check every echo byte for byte.
+//   main                server and client in one process
+//   main --server       only the server: prints its port (stderr), serves until killed
+//   main --load url     only the client (ws://host:port/ws, any server)
+// stdout: "messages <n> bytes <n>" (equal for every client/server pair);
+// stderr: messages/s.
+
+async func echo(req *http.Request, res *http.Response) void! {
+    var conn = try await ws.Upgrade(req, res) catch err {
+        return
+    }
+    for msg in conn {
+        await conn.Send(msg)?
+    }
+}
+
+// The 128-byte payload of message i of connection c is
+// payloads[(c + i) % 26]: byte k is 'a' + (c + i + k) % 26.
+func makePayloads() [][]byte {
+    var out [][]byte = []
+    for s in 0..26 {
+        var b []byte = []
+        for k in 0..128 {
+            b = append(b, byte(97 + (s + k) % 26))
+        }
+        out = append(out, b)
+    }
+    return out
+}
+
+var payloads = makePayloads()
+
+async func client(url string, c int, msgs int) int! {
+    var conn = await ws.Dial(url)?
+    var n = 0
+    for i in 0..msgs {
+        var p = payloads[(c + i) % 26]
+        await conn.SendBinary(p)?
+        var m = await conn.Recv()?
+        if m.Type != ws.BinaryMessage || !bytes.Equal(m.Data, p) {
+            return error(fmt.Format("connection {0}: bad echo of message {1}", c, i))
+        }
+        n += len(m.Data)
+    }
+    await conn.Close()?
+    return n
+}
+
+async func load(url string, conns int, msgs int) void! {
+    _ = await client(url, 0, 100)? // warm-up
+    var t0 = time.NowNanos()
+    var tasks []Task<int!> = []
+    for c in 0..conns {
+        tasks = append(tasks, client(url, c, msgs))
+    }
+    var total = 0
+    for t in tasks {
+        total += await t?
+    }
+    var secs = float(time.NowNanos() - t0) / 1e9
+    var n = conns * msgs
+    io.Eprintln(fmt.Format("websocket_echo zell client: {0} messages over {1} connections in {2} s: {3} msg/s", n, conns, secs, float(n) / secs))
+    println("messages", n, "bytes", total)
+}
+
+func envInt(name string, def int) int {
+    var v = os.Getenv(name)
+    if v == "" {
+        return def
+    }
+    return try strings.ToInt(v) else def
+}
+
+async func main() void! {
+    var conns = 1000
+    var msgs = 10000
+    if os.Getenv("SCALE") == "small" {
+        conns = 100
+        msgs = 200
+    }
+    conns = envInt("CONNS", conns)
+    msgs = envInt("MSGS", msgs)
+    var args = os.Args()
+    if len(args) > 2 && args[1] == "--load" {
+        await load(args[2], conns, msgs)?
+        return
+    }
+    var r = http.NewRouter()
+    r.Get("/ws", echo)
+    var srv = http.Server{Addr: "127.0.0.1:0", Handler: r}
+    srv.Listen()?
+    var serving = srv.Serve()
+    if len(args) > 1 && args[1] == "--server" {
+        io.Eprintln(fmt.Format("{0}", srv.Port()))
+        await serving?
+        return
+    }
+    await load(fmt.Format("ws://127.0.0.1:{0}/ws", srv.Port()), conns, msgs)?
+    await srv.Shutdown()
+    await serving?
+}

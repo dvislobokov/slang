@@ -1,6 +1,7 @@
 // logging, Go side: the scenarios of main.zl with zap (default), zerolog
 // (-impl=zerolog) or log/slog (-impl=slog), each with a JSON encoder.
-// Usage: main [-impl=zap|zerolog|slog] [file]  (default /tmp/zell-bench.log).
+// Usage: main [-impl=zap|zerolog|slog] [file]  (default /tmp/zell-bench.log,
+// deleted at exit unless KEEP_LOG=1).
 // RECORDS records per scenario (default 5M, SCALE=small: 100k). stdout:
 // the record counts (equal to main.zl); stderr: "scenario <name>
 // <records/s> <allocs/record>" (allocations: runtime.MemStats.Mallocs).
@@ -137,6 +138,9 @@ func main() {
 	}
 	run(*impl, "devnull", "/dev/null", paths, n)
 	run(*impl, "file", file, paths, n)
+	if os.Getenv("KEEP_LOG") != "1" {
+		os.Remove(file)
+	}
 
 	f, closer := open("/dev/null")
 	off := newLogger(*impl, f, closer)
