@@ -738,16 +738,18 @@ fn host_clang_command(objs: &[PathBuf], rt: &Path, output: &Path, libs: &[&str],
         // its code layout cost 15% on benchmarks/fib, so it is not the default.
         cmd.arg("-fuse-ld=lld");
     }
+    // ld64 (macOS) spells these differently and links no static executables.
+    let macos = cfg!(target_os = "macos");
     if opts.release {
-        cmd.arg("-Wl,--gc-sections");
+        cmd.arg(if macos { "-Wl,-dead_strip" } else { "-Wl,--gc-sections" });
     } else if !opts.static_link {
         cmd.arg("-rdynamic");
     }
     // Release builds are stripped unless `-g` asked for debug info.
     if opts.strip || (opts.release && !opts.debug_info) {
-        cmd.arg("-s");
+        cmd.arg(if macos { "-Wl,-S,-x" } else { "-s" });
     }
-    if opts.static_link {
+    if opts.static_link && !macos {
         cmd.arg("-static");
     }
     cmd
