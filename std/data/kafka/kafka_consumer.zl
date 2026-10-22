@@ -6,7 +6,7 @@
 // and fetching from the partition leaders (one Fetch per leader, in
 // parallel). Without a Group the consumer reads every partition of its
 // topics and does not commit.
-namespace std.data.kafka
+namespace data.kafka
 
 // Options of a Consumer. Durations are milliseconds; zero values take the
 // defaults in brackets.
@@ -61,15 +61,15 @@ struct consumerState {
     hbRunning bool
     lastCommit int
     rebalances int
-    mu std.task.Mutex
+    mu task.Mutex
     err error
 
     func lock() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
     }
 
     func unlock() {
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     func unlockMu() {
@@ -186,7 +186,7 @@ async func NewConsumerWith(brokers []string, opts ConsumerOptions) *Consumer! {
         o.Assignor = "range"
     }
     if o.Assignor != "range" && o.Assignor != "roundrobin" {
-        return error("kafka: unknown assignor " + std.strconv.Quote(o.Assignor))
+        return error("kafka: unknown assignor " + strconv.Quote(o.Assignor))
     }
     if o.SessionTimeout <= 0 {
         o.SessionTimeout = 10000
@@ -226,7 +226,7 @@ async func NewConsumerWith(brokers []string, opts ConsumerOptions) *Consumer! {
         cfg.RequestTimeout = o.RebalanceTimeout + 5000
     }
     var c = newClient(cfg, brokers)?
-    var st = new consumerState{c: c, o: o, generation: -1, coordinator: -1, positions: map[string]int{}, consumed: map[string]int{}, needJoin: true, lastCommit: monoMs(), hbDone: std.task.rtWaker()}
+    var st = new consumerState{c: c, o: o, generation: -1, coordinator: -1, positions: map[string]int{}, consumed: map[string]int{}, needJoin: true, lastCommit: monoMs(), hbDone: task.rtWaker()}
     try {
         await refreshMetadata(c, o.Topics)?
         await st.mu.Lock()
@@ -237,7 +237,7 @@ async func NewConsumerWith(brokers []string, opts ConsumerOptions) *Consumer! {
         st.mu.Unlock()
     } catch err {
         c.closeAll()
-        std.task.rtFire(st.hbDone)
+        task.rtFire(st.hbDone)
         return err
     }
     return new Consumer{st: st}
@@ -250,14 +250,14 @@ async func NewConsumerWith(brokers []string, opts ConsumerOptions) *Consumer! {
 // first ones get one more when it does not divide).
 func AssignRange(members map[string][]string, partitions map[string]int) map[string][]TopicPartition {
     var out = map[string][]TopicPartition{}
-    var ids = std.maps.SortedKeys(members)
+    var ids = maps.SortedKeys(members)
     for id in ids {
         out[id] = []
     }
-    for topic in std.maps.SortedKeys(partitions) {
+    for topic in maps.SortedKeys(partitions) {
         var subs []string = []
         for id in ids {
-            if std.slices.Contains(members[id], topic) {
+            if slices.Contains(members[id], topic) {
                 subs = append(subs, id)
             }
         }
@@ -286,7 +286,7 @@ func AssignRange(members map[string][]string, partitions map[string]int) map[str
 // turn to the members (sorted) subscribed to its topic.
 func AssignRoundRobin(members map[string][]string, partitions map[string]int) map[string][]TopicPartition {
     var out = map[string][]TopicPartition{}
-    var ids = std.maps.SortedKeys(members)
+    var ids = maps.SortedKeys(members)
     for id in ids {
         out[id] = []
     }
@@ -294,12 +294,12 @@ func AssignRoundRobin(members map[string][]string, partitions map[string]int) ma
         return out
     }
     var next = 0
-    for topic in std.maps.SortedKeys(partitions) {
+    for topic in maps.SortedKeys(partitions) {
         for p in 0..partitions[topic] {
             for _ in 0..len(ids) {
                 var id = ids[next % len(ids)]
                 next += 1
-                if std.slices.Contains(members[id], topic) {
+                if slices.Contains(members[id], topic) {
                     out[id] = append(out[id], TopicPartition{Topic: topic, Partition: p})
                     break
                 }
@@ -339,7 +339,7 @@ func encodeAssignment(tps []TopicPartition) []byte {
     }
     var e = Encoder{}
     e.Int16(0)
-    var topics = std.maps.SortedKeys(byTopic)
+    var topics = maps.SortedKeys(byTopic)
     e.ArrayLen(len(topics))
     for t in topics {
         e.String(t)
@@ -408,7 +408,7 @@ async func rejoin(st *consumerState) void! {
     for {
         attempt += 1
         if attempt > 30 {
-            return error("kafka: could not join group " + std.strconv.Quote(st.o.Group))
+            return error("kafka: could not join group " + strconv.Quote(st.o.Group))
         }
         var bc = try await groupConn(st) catch err {
             if isNetErr(err) {
@@ -476,7 +476,7 @@ async func rejoin(st *consumerState) void! {
             var all []string = []
             for _, ts in subs {
                 for t in ts {
-                    if !std.slices.Contains(all, t) {
+                    if !slices.Contains(all, t) {
                         all = append(all, t)
                     }
                 }
@@ -499,7 +499,7 @@ async func rejoin(st *consumerState) void! {
         s.String(st.o.Group)
         s.Int32(gen)
         s.String(member)
-        var ids = std.maps.SortedKeys(assignments)
+        var ids = maps.SortedKeys(assignments)
         s.ArrayLen(len(ids))
         for id in ids {
             s.String(id)
@@ -584,7 +584,7 @@ async func fetchCommitted(st *consumerState, tps []TopicPartition) map[string]in
         var bc = await groupConn(st)?
         var e = Encoder{}
         e.String(st.o.Group)
-        var topics = std.maps.SortedKeys(byTopic)
+        var topics = maps.SortedKeys(byTopic)
         e.ArrayLen(len(topics))
         for t in topics {
             e.String(t)
@@ -661,7 +661,7 @@ async func commitPositions(st *consumerState, offsets map[string]int) void! {
     e.Int32(st.generation)
     e.String(st.memberID)
     e.Int64(-1)
-    var topics = std.maps.SortedKeys(byTopic)
+    var topics = maps.SortedKeys(byTopic)
     e.ArrayLen(len(topics))
     for t in topics {
         e.String(t)
@@ -721,7 +721,7 @@ func startHeartbeats(st *consumerState) {
         return
     }
     st.hbRunning = true
-    st.hbSleep = std.task.Delay(0)
+    st.hbSleep = task.Delay(0)
     st.unlock()
     _ = heartbeatLoop(st)
 }
@@ -735,7 +735,7 @@ async func heartbeatLoop(st *consumerState) {
             st.unlock()
             break
         }
-        var sleep = std.task.Delay(st.o.HeartbeatInterval)
+        var sleep = task.Delay(st.o.HeartbeatInterval)
         st.hbSleep = sleep
         st.unlock()
         await sleep
@@ -769,7 +769,7 @@ async func heartbeatLoop(st *consumerState) {
         }
     }
     st.hbRunning = false
-    std.task.rtFire(st.hbDone)
+    task.rtFire(st.hbDone)
 }
 
 // ---- fetching -----------------------------------------------------------------
@@ -1000,7 +1000,7 @@ async func pollLocked(st *consumerState, maxWait int) void! {
             st.lastCommit = monoMs()
         }
         if len(st.assignment) == 0 {
-            await std.task.Delay(st.o.MaxWait)
+            await task.Delay(st.o.MaxWait)
         } else {
             await fetchRound(st)?
         }
@@ -1052,7 +1052,7 @@ async func closeConsumer(st *consumerState) {
     var sleep = st.hbSleep
     st.unlock()
     if running {
-        std.task.rtFire(sleep)
+        task.rtFire(sleep)
         await st.hbDone
     }
     st.c.closeAll()

@@ -193,7 +193,7 @@ static zell_string *join(const char *a, const char *b) {
     return r;
 }
 
-/* Expected paths are written with '/'; std.fs gives the platform's
+/* Expected paths are written with '/'; fs gives the platform's
  * separator (Windows: '\\'). */
 static const char *native_path(const char *lit) {
     static char buf[4][256];

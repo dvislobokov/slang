@@ -1,5 +1,5 @@
-// std.database.postgres: a PostgreSQL driver for std.database.sql written
-// in Zell over std.net (and std.net.tls for sslmode): frontend/backend
+// database.postgres: a PostgreSQL driver for database.sql written
+// in Zell over net (and net.tls for sslmode): frontend/backend
 // protocol 3.0, startup and authentication (trust, cleartext password,
 // MD5, SCRAM-SHA-256), the simple query protocol (no arguments) and the
 // extended protocol (Parse/Describe/Bind/Execute/Sync) for prepared
@@ -9,7 +9,7 @@
 // Postgres types and Zell values: see decodeBinary/decodeText
 // (postgres_types.zl); numeric, uuid, json/jsonb, interval and unknown
 // types come as strings, arrays as []any.
-namespace std.database.postgres
+namespace database.postgres
 
 // The driver: sql.Register("postgres", postgres.Driver{}). OnNotice gets
 // NOTICE/WARNING messages, OnNotification LISTEN/NOTIFY messages.
@@ -17,7 +17,7 @@ struct Driver {
     OnNotice       func(Error)
     OnNotification func(Notification)
 
-    func Open(dsn string) Task<std.database.sql.DriverConn!> {
+    func Open(dsn string) Task<database.sql.DriverConn!> {
         return connect(dsn, this.OnNotice, this.OnNotification)
     }
 }
@@ -30,14 +30,14 @@ struct Notification {
 }
 
 // Opens a pool over the driver without registering it.
-func Open(dsn string) *std.database.sql.DB! {
+func Open(dsn string) *database.sql.DB! {
     _ = ParseDSN(dsn)?
-    return std.database.sql.OpenDriver(Driver{}, dsn)
+    return database.sql.OpenDriver(Driver{}, dsn)
 }
 
 // ---- byte streams ---------------------------------------------------------------
 
-// A std.net.Conn or a std.net.tls.Conn.
+// A net.Conn or a net.tls.Conn.
 interface stream {
     func Read(n int) Task<[]byte!>
     func Write(data []byte) Task<int!>
@@ -71,7 +71,7 @@ struct reader {
         for this.p < len(this.b) && this.b[this.p] != 0 {
             this.p += 1
         }
-        var s = std.strings.FromBytes(this.b[start..this.p])
+        var s = strings.FromBytes(this.b[start..this.p])
         if this.p < len(this.b) {
             this.p += 1
         }
@@ -122,12 +122,12 @@ struct writer {
     }
 
     func str(s string) {
-        this.raw(std.strings.Bytes(s))
+        this.raw(strings.Bytes(s))
         this.b = append(this.b, 0)
     }
 
     func raw(d []byte) {
-        this.b = std.compress.rtConcat(this.b, d)
+        this.b = compress.rtConcat(this.b, d)
     }
 }
 
@@ -149,7 +149,7 @@ struct conn {
     pid      int
     secret   int
     params   map[string]string
-    mu       std.task.Mutex
+    mu       task.Mutex
     cur      *rows
     stmtSeq  int
     toClose  []string
@@ -173,7 +173,7 @@ struct conn {
                 this.buf = this.buf[this.pos..]
                 this.pos = 0
             }
-            this.buf = std.compress.rtConcat(this.buf, chunk)
+            this.buf = compress.rtConcat(this.buf, chunk)
         }
     }
 
@@ -189,7 +189,7 @@ struct conn {
                 return error("postgres: protocol error (bad message length)")
             }
             await this.fill(1 + n)?
-            var payload = std.compress.rtCopy(this.buf, this.pos + 5, this.pos + 1 + n)
+            var payload = compress.rtCopy(this.buf, this.pos + 5, this.pos + 1 + n)
             this.pos += 1 + n
             if t == 78 {
                 // 'N' NoticeResponse
@@ -303,23 +303,23 @@ struct conn {
                     if !ok {
                         return error(
                             "postgres: no supported SASL mechanism among " +
-                                std.strings.Join(mechs, ", "),
+                                strings.Join(mechs, ", "),
                         )
                     }
-                    sc.ClientNonce = std.encoding.base64.Encode(std.crypto.rand.Bytes(18)?)
-                    var first = std.strings.Bytes(sc.First())
+                    sc.ClientNonce = encoding.base64.Encode(crypto.rand.Bytes(18)?)
+                    var first = strings.Bytes(sc.First())
                     m.str("SCRAM-SHA-256")
                     m.i32(len(first))
                     m.raw(first)
                 } else if code == 11 {
-                    m.raw(std.strings.Bytes(sc.Final(std.strings.FromBytes(r.bytes(len(p) - 4)))?))
+                    m.raw(strings.Bytes(sc.Final(strings.FromBytes(r.bytes(len(p) - 4)))?))
                 } else if code == 12 {
-                    sc.Verify(std.strings.FromBytes(r.bytes(len(p) - 4)))?
+                    sc.Verify(strings.FromBytes(r.bytes(len(p) - 4)))?
                     continue
                 } else {
                     return error(
                         "postgres: unsupported authentication method " +
-                            std.fmt.Format("{0}", code),
+                            fmt.Format("{0}", code),
                     )
                 }
                 m.end()
@@ -351,7 +351,7 @@ struct conn {
         }
         if this.closed || this.bad {
             this.mu.Unlock()
-            return std.database.sql.ErrConnDone
+            return database.sql.ErrConnDone
         }
     }
 
@@ -359,11 +359,11 @@ struct conn {
         this.mu.Unlock()
     }
 
-    func Exec(query string, args []any) Task<std.database.sql.Result!> {
+    func Exec(query string, args []any) Task<database.sql.Result!> {
         return this.execAsync(query, args)
     }
 
-    async func execAsync(query string, args []any) std.database.sql.Result! {
+    async func execAsync(query string, args []any) database.sql.Result! {
         await this.lock()?
         defer this.unlock()
         if len(args) == 0 {
@@ -375,13 +375,13 @@ struct conn {
 
     // Simple query protocol: may hold several statements; the affected
     // rows of the last command.
-    async func simpleExec(query string) std.database.sql.Result! {
+    async func simpleExec(query string) database.sql.Result! {
         var w = writer{}
         w.begin(81)
         w.str(query)
         w.end()
         await this.send(w)?
-        var res = std.database.sql.Result{}
+        var res = database.sql.Result{}
         var err error
         for {
             var (t, p) = await this.recv()?
@@ -411,11 +411,11 @@ struct conn {
         return res
     }
 
-    func Query(query string, args []any) Task<std.database.sql.DriverRows!> {
+    func Query(query string, args []any) Task<database.sql.DriverRows!> {
         return this.queryAsync(query, args)
     }
 
-    async func queryAsync(query string, args []any) std.database.sql.DriverRows! {
+    async func queryAsync(query string, args []any) database.sql.DriverRows! {
         await this.lock()?
         defer this.unlock()
         if len(args) == 0 {
@@ -470,9 +470,9 @@ struct conn {
             if len(args) != len(st.params) {
                 return error(
                     "postgres: expected " +
-                        std.fmt.Format("{0}", len(st.params)) +
+                        fmt.Format("{0}", len(st.params)) +
                         " arguments, got " +
-                        std.fmt.Format("{0}", len(args)),
+                        fmt.Format("{0}", len(args)),
                 )
             }
         }
@@ -501,7 +501,7 @@ struct conn {
                     w.raw(b)
                 default:
                     var t = encodeText(a)?
-                    var tb = std.strings.Bytes(t)
+                    var tb = strings.Bytes(t)
                     w.i32(len(tb))
                     w.raw(tb)
             }
@@ -539,15 +539,15 @@ struct conn {
         return r
     }
 
-    func Prepare(query string) Task<std.database.sql.DriverStmt!> {
+    func Prepare(query string) Task<database.sql.DriverStmt!> {
         return this.prepareAsync(query)
     }
 
-    async func prepareAsync(query string) std.database.sql.DriverStmt! {
+    async func prepareAsync(query string) database.sql.DriverStmt! {
         await this.lock()?
         defer this.unlock()
         this.stmtSeq += 1
-        var name = "zell_" + std.fmt.Format("{0}", this.stmtSeq)
+        var name = "zell_" + fmt.Format("{0}", this.stmtSeq)
         var w = writer{}
         w = this.flushCloses(w)
         w.begin(80)
@@ -590,11 +590,11 @@ struct conn {
         return st
     }
 
-    func Begin() Task<std.database.sql.DriverTx!> {
+    func Begin() Task<database.sql.DriverTx!> {
         return this.beginAsync()
     }
 
-    async func beginAsync() std.database.sql.DriverTx! {
+    async func beginAsync() database.sql.DriverTx! {
         await this.lock()?
         defer this.unlock()
         _ = await this.simpleExec("BEGIN")?
@@ -631,7 +631,7 @@ struct conn {
     }
 
     func Placeholder() int {
-        return std.database.sql.PlaceholderDollar
+        return database.sql.PlaceholderDollar
     }
 
     // Transaction status: 'I' idle, 'T' in a transaction, 'E' failed
@@ -702,11 +702,11 @@ struct conn {
 // The affected-rows count of a CommandComplete tag ("INSERT 0 5", "UPDATE 3").
 func affected(tag string) int {
     var t = tag
-    var sp = std.strings.LastIndex(t, " ")
+    var sp = strings.LastIndex(t, " ")
     if sp < 0 {
         return 0
     }
-    return try std.strconv.Atoi(t[sp + 1..]) else 0
+    return try strconv.Atoi(t[sp + 1..]) else 0
 }
 
 // A NUL-terminated payload as a string.
@@ -733,9 +733,9 @@ func parseRowDesc(p []byte) []column {
 }
 
 // COPY ... FROM STDIN through a pool: runs on one of db's connections.
-async func CopyFrom(db *std.database.sql.DB, query string, data []byte) int! {
+async func CopyFrom(db *database.sql.DB, query string, data []byte) int! {
     var n = 0
-    await db.Raw(async func(c std.database.sql.DriverConn) void! {
+    await db.Raw(async func(c database.sql.DriverConn) void! {
         switch c {
             case *conn pc:
                 n = await pc.CopyFrom(query, data)?
@@ -767,11 +767,11 @@ struct stmt {
         }
     }
 
-    func Exec(args []any) Task<std.database.sql.Result!> {
+    func Exec(args []any) Task<database.sql.Result!> {
         return this.execAsync(args)
     }
 
-    async func execAsync(args []any) std.database.sql.Result! {
+    async func execAsync(args []any) database.sql.Result! {
         await this.c.lock()?
         defer this.c.unlock()
         if this.closed {
@@ -781,11 +781,11 @@ struct stmt {
         return await r.finishExec()?
     }
 
-    func Query(args []any) Task<std.database.sql.DriverRows!> {
+    func Query(args []any) Task<database.sql.DriverRows!> {
         return this.queryAsync(args)
     }
 
-    async func queryAsync(args []any) std.database.sql.DriverRows! {
+    async func queryAsync(args []any) database.sql.DriverRows! {
         await this.c.lock()?
         defer this.c.unlock()
         if this.closed {
@@ -919,8 +919,8 @@ struct rows {
 
     func decodeRow(p []byte, dest []any) void! {
         if this.copyOut {
-            var line = std.strings.FromBytes(p)
-            if std.strings.HasSuffix(line, "\n") {
+            var line = strings.FromBytes(p)
+            if strings.HasSuffix(line, "\n") {
                 line = line[..len(line) - 1]
             }
             dest[0] = line
@@ -931,9 +931,9 @@ struct rows {
         if n != len(dest) {
             return error(
                 "postgres: row has " +
-                    std.fmt.Format("{0}", n) +
+                    fmt.Format("{0}", n) +
                     " columns, expected " +
-                    std.fmt.Format("{0}", len(dest)),
+                    fmt.Format("{0}", len(dest)),
             )
         }
         for i in 0..n {
@@ -947,7 +947,7 @@ struct rows {
             if c.format == 1 {
                 dest[i] = decodeBinary(c.oid, b)?
             } else {
-                dest[i] = decodeText(c.oid, std.strings.FromBytes(b))?
+                dest[i] = decodeText(c.oid, strings.FromBytes(b))?
             }
         }
     }
@@ -1042,7 +1042,7 @@ struct rows {
     }
 
     // Exec through the extended protocol: reads to the end.
-    async func finishExec() std.database.sql.Result! {
+    async func finishExec() database.sql.Result! {
         if !this.done {
             for {
                 var (t, p) = await this.c.recv()?
@@ -1065,27 +1065,27 @@ struct rows {
             this.done = true
             this.finished = true
         }
-        return std.database.sql.Result{RowsAffected: affected(this.tag)}
+        return database.sql.Result{RowsAffected: affected(this.tag)}
     }
 }
 
 // ---- connecting and authentication ---------------------------------------------------
 
-async func dial(cfg Config) std.net.Conn! {
-    if std.strings.HasPrefix(cfg.Host, "/") || std.strings.HasPrefix(cfg.Host, "@") {
-        var path = cfg.Host + "/.s.PGSQL." + std.fmt.Format("{0}", cfg.Port)
-        return await std.net.DialUnix(path)?
+async func dial(cfg Config) net.Conn! {
+    if strings.HasPrefix(cfg.Host, "/") || strings.HasPrefix(cfg.Host, "@") {
+        var path = cfg.Host + "/.s.PGSQL." + fmt.Format("{0}", cfg.Port)
+        return await net.DialUnix(path)?
     }
-    var addr = std.net.JoinHostPort(cfg.Host, cfg.Port)
+    var addr = net.JoinHostPort(cfg.Host, cfg.Port)
     if cfg.ConnectTimeout > 0 {
-        return await std.net.DialTimeout(addr, cfg.ConnectTimeout)?
+        return await net.DialTimeout(addr, cfg.ConnectTimeout)?
     }
-    return await std.net.Dial(addr)?
+    return await net.Dial(addr)?
 }
 
 // Negotiates TLS per cfg.SSLMode; nil stream means plain text.
-async func upgrade(cfg Config, raw std.net.Conn) stream! {
-    if cfg.SSLMode == "disable" || cfg.SSLMode == "allow" || std.strings.HasPrefix(cfg.Host, "/") {
+async func upgrade(cfg Config, raw net.Conn) stream! {
+    if cfg.SSLMode == "disable" || cfg.SSLMode == "allow" || strings.HasPrefix(cfg.Host, "/") {
         return raw
     }
     var w = writer{}
@@ -1101,36 +1101,36 @@ async func upgrade(cfg Config, raw std.net.Conn) stream! {
         raw.Close()
         return error("postgres: the server does not support SSL (sslmode=" + cfg.SSLMode + ")")
     }
-    var tc = std.net.tls.Config{ServerName: cfg.Host}
+    var tc = net.tls.Config{ServerName: cfg.Host}
     if cfg.SSLMode == "prefer" || cfg.SSLMode == "require" {
         tc.InsecureSkipVerify = cfg.SSLRootCert == "" || cfg.SSLMode == "prefer"
     }
     if cfg.SSLMode == "verify-ca" {
         tc.InsecureSkipVerify = true
     }
-    var roots *std.crypto.x509.CertPool
+    var roots *crypto.x509.CertPool
     if cfg.SSLRootCert != "" {
-        var pem = std.io.ReadFile(cfg.SSLRootCert)?("postgres: sslrootcert")
-        roots = std.crypto.x509.NewCertPool()
+        var pem = io.ReadFile(cfg.SSLRootCert)?("postgres: sslrootcert")
+        roots = crypto.x509.NewCertPool()
         if roots.AppendPEM(pem) == 0 {
             return error("postgres: no certificates in " + cfg.SSLRootCert)
         }
         tc.RootCAs = roots
     }
-    var tconn = await std.net.tls.Client(raw, tc)?
+    var tconn = await net.tls.Client(raw, tc)?
     await tconn.Handshake()?
     if cfg.SSLMode == "verify-ca" || (cfg.SSLMode == "require" && cfg.SSLRootCert != "") {
         var st = tconn.ConnectionState()
         if len(st.PeerCertificates) == 0 {
             return error("postgres: server sent no certificate")
         }
-        var inter []*std.crypto.x509.Certificate = []
+        var inter []*crypto.x509.Certificate = []
         for i, c in st.PeerCertificates {
             if i > 0 {
                 inter = append(inter, c)
             }
         }
-        _ = std.crypto.x509.Verify(st.PeerCertificates[0], std.crypto.x509.VerifyOptions{
+        _ = crypto.x509.Verify(st.PeerCertificates[0], crypto.x509.VerifyOptions{
             Roots: roots,
             Intermediates: inter,
         })?("postgres: server certificate")
@@ -1142,7 +1142,7 @@ async func connect(
     dsn string,
     onNotice func(Error),
     onNotify func(Notification),
-) std.database.sql.DriverConn! {
+) database.sql.DriverConn! {
     var cfg = ParseDSN(dsn)?
     var raw = await dial(cfg)?
     var s = try await upgrade(cfg, raw) catch err {
@@ -1174,8 +1174,8 @@ func xorBytes(a []byte, b []byte) []byte {
 
 // The value of attribute k ("r", "s", "i", "v", "e") of a SCRAM message.
 func scramAttr(msg string, k string) string {
-    for part in std.strings.Split(msg, ",") {
-        if std.strings.HasPrefix(part, k + "=") {
+    for part in strings.Split(msg, ",") {
+        if strings.HasPrefix(part, k + "=") {
             return part[len(k) + 1..]
         }
     }
@@ -1200,31 +1200,31 @@ struct Scram {
     // The client-final-message for the server-first-message.
     func Final(serverFirst string) string! {
         var nonce = scramAttr(serverFirst, "r")
-        var salt = std.encoding.base64.Decode(scramAttr(serverFirst, "s"))?("postgres: SCRAM salt")
-        var iter = std.strconv.Atoi(scramAttr(serverFirst, "i"))?("postgres: SCRAM iteration count")
-        if !std.strings.HasPrefix(nonce, this.ClientNonce) || len(nonce) <= len(this.ClientNonce) {
+        var salt = encoding.base64.Decode(scramAttr(serverFirst, "s"))?("postgres: SCRAM salt")
+        var iter = strconv.Atoi(scramAttr(serverFirst, "i"))?("postgres: SCRAM iteration count")
+        if !strings.HasPrefix(nonce, this.ClientNonce) || len(nonce) <= len(this.ClientNonce) {
             return error("postgres: SCRAM server nonce does not extend the client nonce")
         }
         if iter < 1 {
             return error("postgres: SCRAM iteration count must be positive")
         }
-        this.saltedPassword = std.crypto.kdf.Pbkdf2(
-            std.strings.Bytes(this.Password),
+        this.saltedPassword = crypto.kdf.Pbkdf2(
+            strings.Bytes(this.Password),
             salt,
             iter,
             32,
             "sha256",
         )?
-        var clientKey = std.crypto.hmac.Sum(
+        var clientKey = crypto.hmac.Sum(
             "sha256",
             this.saltedPassword,
-            std.strings.Bytes("Client Key"),
+            strings.Bytes("Client Key"),
         )?
-        var storedKey = std.crypto.hash.Sum("sha256", clientKey)?
+        var storedKey = crypto.hash.Sum("sha256", clientKey)?
         var withoutProof = "c=biws,r=" + nonce
         this.authMessage = this.clientFirstBare + "," + serverFirst + "," + withoutProof
-        var sig = std.crypto.hmac.Sum("sha256", storedKey, std.strings.Bytes(this.authMessage))?
-        return withoutProof + ",p=" + std.encoding.base64.Encode(xorBytes(clientKey, sig))
+        var sig = crypto.hmac.Sum("sha256", storedKey, strings.Bytes(this.authMessage))?
+        return withoutProof + ",p=" + encoding.base64.Encode(xorBytes(clientKey, sig))
     }
 
     // Checks the server-final-message ("v=<signature>").
@@ -1233,22 +1233,22 @@ struct Scram {
         if e != "" {
             return error("postgres: SCRAM authentication failed: " + e)
         }
-        var serverKey = std.crypto.hmac.Sum(
+        var serverKey = crypto.hmac.Sum(
             "sha256",
             this.saltedPassword,
-            std.strings.Bytes("Server Key"),
+            strings.Bytes("Server Key"),
         )?
-        var want = std.crypto.hmac.Sum("sha256", serverKey, std.strings.Bytes(this.authMessage))?
-        var got = std.encoding.base64.Decode(
+        var want = crypto.hmac.Sum("sha256", serverKey, strings.Bytes(this.authMessage))?
+        var got = encoding.base64.Decode(
             scramAttr(serverFinal, "v"),
         )?("postgres: SCRAM server signature")
-        if !std.crypto.hmac.Equal(want, got) {
+        if !crypto.hmac.Equal(want, got) {
             return error("postgres: SCRAM server signature mismatch")
         }
     }
 }
 
 func md5Password(user string, password string, salt []byte) string {
-    var inner = std.crypto.hash.Md5Hex(password + user)
-    return "md5" + std.crypto.hash.Md5Hex(inner + std.strings.FromBytes(salt))
+    var inner = crypto.hash.Md5Hex(password + user)
+    return "md5" + crypto.hash.Md5Hex(inner + strings.FromBytes(salt))
 }

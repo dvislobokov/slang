@@ -1,6 +1,6 @@
-//! Compile-time expansion for `std.data` (docs/FRAMEWORK.md section 3),
+//! Compile-time expansion for `data` (docs/FRAMEWORK.md section 3),
 //! with the technique of [`super::web`]: the compiler generates Zell
-//! source of stdlib templates in namespace `std.data` whose type
+//! source of stdlib templates in namespace `data` whose type
 //! parameters are bound to the concrete types, and instantiates them.
 //!
 //! * `data.modelOf<T>()` (called by the runtime library) becomes the
@@ -96,7 +96,7 @@ fn parsed_template(src: &str, span: Span) -> &'static ast::File {
         Some(f) if !d.has_errors() => f,
         _ => {
             let errs: Vec<String> = d.items.iter().map(|x| x.message.clone()).collect();
-            panic!("internal error: generated std.data code does not parse: {errs:?}\n{src}")
+            panic!("internal error: generated data code does not parse: {errs:?}\n{src}")
         }
     };
     let file: &'static ast::File = Box::leak(Box::new(file));
@@ -130,9 +130,9 @@ impl<'a> Sema<'a> {
             eprintln!("{src}");
         }
         let file = parsed_template(&src, span);
-        let ast::Decl::Func(f) = &file.decls[0] else { panic!("internal error: generated std.data code is not a function") };
+        let ast::Decl::Func(f) = &file.decls[0] else { panic!("internal error: generated data code is not a function") };
         let saved = self.cur_ns;
-        self.cur_ns = self.ensure_ns("std.data", Span::DUMMY);
+        self.cur_ns = self.ensure_ns("data", Span::DUMMY);
         let t = self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false);
         self.gen.templates[t as usize].generated = true;
         self.cur_ns = saved;
@@ -156,7 +156,7 @@ impl<'a> Sema<'a> {
         format!("{base}{}", self.orm.counter)
     }
 
-    /// Calls method `m` of the std.data struct value `recv` (generic
+    /// Calls method `m` of the data struct value `recv` (generic
     /// methods instantiated with `tys`).
     fn orm_mcall(&mut self, recv: hir::Expr, m: &str, tys: Vec<TypeId>, args: Vec<hir::Expr>, span: Span) -> hir::Expr {
         let Some(sid) = self.struct_of(recv.ty) else { return self.invalid(span) };
@@ -168,7 +168,7 @@ impl<'a> Sema<'a> {
         } else {
             match self.find_method(sid, m) {
                 Some((f, _)) => f,
-                None => panic!("internal error: std.data method {m} not found on {}", self.structs[sid as usize].name),
+                None => panic!("internal error: data method {m} not found on {}", self.structs[sid as usize].name),
             }
         };
         let recv = if matches!(self.tt.get(recv.ty), Type::Pointer(_)) { recv } else { self.addr_of(recv) };
@@ -217,11 +217,11 @@ impl<'a> Sema<'a> {
 
     // -- entry points ------------------------------------------------------------------
 
-    /// Generic std.data functions expanded at compile time: `modelOf<T>()`,
+    /// Generic data functions expanded at compile time: `modelOf<T>()`,
     /// `migrationsOf()`, `Open<C>(p, dsn)`, `OpenDB<C>(p, db)`.
     pub(crate) fn orm_generic_call(&mut self, t: u32, targs: Option<&[ast::TypeExpr]>, args: &[ast::Expr], span: Span) -> Option<hir::Expr> {
         let tm = &self.gen.templates[t as usize];
-        if !tm.is_std || self.nss[tm.ns].path != "std.data" {
+        if !tm.is_std || self.nss[tm.ns].path != "data" {
             return None;
         }
         let name = tm.name.clone();
@@ -339,13 +339,13 @@ impl<'a> Sema<'a> {
         let mut values = String::new();
         let mut set = String::new();
         for (i, c) in m.cols.iter().enumerate() {
-            scan.push_str(&format!("            std.database.sql.convertInto(&__e.{}, __v[__o + {i}], {})?\n", c.field, lit(&c.name)));
+            scan.push_str(&format!("            database.sql.convertInto(&__e.{}, __v[__o + {i}], {})?\n", c.field, lit(&c.name)));
             if c.kind == "enum" {
-                values.push_str(&format!("            __r = append(__r, std.fmt.Format(\"{{0}}\", __e.{}))\n", c.field));
+                values.push_str(&format!("            __r = append(__r, fmt.Format(\"{{0}}\", __e.{}))\n", c.field));
             } else {
-                values.push_str(&format!("            __r = append(__r, std.database.sql.argOf(__e.{}))\n", c.field));
+                values.push_str(&format!("            __r = append(__r, database.sql.argOf(__e.{}))\n", c.field));
             }
-            set.push_str(&format!("            if __i == {i} {{\n                std.database.sql.convertInto(&__e.{}, __x, {})?\n            }}\n", c.field, lit(&c.name)));
+            set.push_str(&format!("            if __i == {i} {{\n                database.sql.convertInto(&__e.{}, __x, {})?\n            }}\n", c.field, lit(&c.name)));
         }
         let mut unlink = String::new();
         for n in &m.navs {
@@ -357,7 +357,7 @@ impl<'a> Sema<'a> {
         }
         let fname = format!("ormModel_{}", m.name);
         let src = format!(
-            "namespace std.data\n\nfunc {fname}<T0>() *Entity<T0> {{\n    return new Entity<T0>{{\n        Meta: {},\n        scan: func(__v []any, __o int, __e *T0) void! {{\n{scan}        }},\n        values: func(__e *T0) []any {{\n            var __r []any = []\n{values}            return __r\n        }},\n        set: func(__e *T0, __i int, __x any) void! {{\n{set}        }},\n        unlink: func(__e *T0) {{\n{unlink}        }},\n    }}\n}}\n",
+            "namespace data\n\nfunc {fname}<T0>() *Entity<T0> {{\n    return new Entity<T0>{{\n        Meta: {},\n        scan: func(__v []any, __o int, __e *T0) void! {{\n{scan}        }},\n        values: func(__e *T0) []any {{\n            var __r []any = []\n{values}            return __r\n        }},\n        set: func(__e *T0, __i int, __x any) void! {{\n{set}        }},\n        unlink: func(__e *T0) {{\n{unlink}        }},\n    }}\n}}\n",
             self.meta_src(&m)
         );
         self.orm_call(src, vec![t], vec![], span)
@@ -435,12 +435,12 @@ impl<'a> Sema<'a> {
         }
         let n = self.orm_name("ormOpen");
         let (params, ret, open) = if with_db {
-            ("__p Provider, __db *std.database.sql.DB".to_string(), format!("*{cp}"), String::new())
+            ("__p Provider, __db *database.sql.DB".to_string(), format!("*{cp}"), String::new())
         } else {
             ("__p Provider, __dsn string".to_string(), format!("*{cp}!"), "    var __db = openDB(__p, __dsn)?\n".to_string())
         };
         let src = format!(
-            "namespace std.data\n\nfunc {n}{}({params}) {ret} {{\n{open}    var __st = newState(__p, __db)\n    var __c {cp}\n    __c.Context = Context{{st: __st}}\n{body}    return &__c\n}}\n",
+            "namespace data\n\nfunc {n}{}({params}) {ret} {{\n{open}    var __st = newState(__p, __db)\n    var __c {cp}\n    __c.Context = Context{{st: __st}}\n{body}    return &__c\n}}\n",
             tys.generics()
         );
         let prov = match self.orm_provider_ty(span) {
@@ -449,7 +449,7 @@ impl<'a> Sema<'a> {
         };
         let a0 = self.expr_to(&args[0], prov, Ctx::Arg(0, format!("data.{who}")));
         let a1 = if with_db {
-            let Some(dbs) = self.std_struct_ty("std.database.sql", "DB", span) else { return self.invalid(span) };
+            let Some(dbs) = self.std_struct_ty("database.sql", "DB", span) else { return self.invalid(span) };
             let p = self.tt.pointer(dbs);
             self.expr_to(&args[1], p, Ctx::Arg(1, format!("data.{who}")))
         } else {
@@ -460,7 +460,7 @@ impl<'a> Sema<'a> {
     }
 
     fn orm_provider_ty(&mut self, span: Span) -> Option<TypeId> {
-        let nsi = *self.ns_index.get("std.data")?;
+        let nsi = *self.ns_index.get("data")?;
         let Some((Member::Generic(t), _, _)) = self.nss[nsi].members.get("Provider").cloned() else { return None };
         self.plain_std_type(t, span)
     }
@@ -475,7 +475,7 @@ impl<'a> Sema<'a> {
     fn orm_migrations_expr(&mut self, span: Span) -> hir::Expr {
         let mut migs: Vec<(String, u32)> = Vec::new();
         for sid in 0..self.structs.len() as u32 {
-            if self.gen.inst_structs.contains_key(&sid) || self.structs[sid as usize].full_name.starts_with("std.") {
+            if self.gen.inst_structs.contains_key(&sid) || crate::sema::stdlib::is_std_namespace(&self.structs[sid as usize].full_name) {
                 continue;
             }
             let attrs = self.structs[sid as usize].attrs.clone();
@@ -528,7 +528,7 @@ impl<'a> Sema<'a> {
             ));
         }
         let n = self.orm_name("ormMigrations");
-        let src = format!("namespace std.data\n\nfunc {n}{}() []MigrationEntry {{\n    var __l []MigrationEntry = []\n{body}    return __l\n}}\n", tys.generics());
+        let src = format!("namespace data\n\nfunc {n}{}() []MigrationEntry {{\n    var __l []MigrationEntry = []\n{body}    return __l\n}}\n", tys.generics());
         self.orm_call(src, tys.0, vec![], span)
     }
 
@@ -741,22 +741,22 @@ impl<'a> Sema<'a> {
             }
         }
         match shape {
-            Shape::Leaf(_) => body.push_str("        std.database.sql.convertInto(__o, __v[0], \"0\")?\n"),
+            Shape::Leaf(_) => body.push_str("        database.sql.convertInto(__o, __v[0], \"0\")?\n"),
             Shape::Struct(fs) => {
                 for (f, i) in fs {
-                    body.push_str(&format!("        std.database.sql.convertInto(&__o.{f}, __v[{i}], {})?\n", lit(f)));
+                    body.push_str(&format!("        database.sql.convertInto(&__o.{f}, __v[{i}], {})?\n", lit(f)));
                 }
             }
             Shape::Tuple(_) => {
                 for (i, (_, t)) in leaves.iter().enumerate() {
                     let p = tys.p(*t);
-                    body.push_str(&format!("        var __a{i} {p}\n        std.database.sql.convertInto(&__a{i}, __v[{i}], \"{i}\")?\n"));
+                    body.push_str(&format!("        var __a{i} {p}\n        database.sql.convertInto(&__a{i}, __v[{i}], \"{i}\")?\n"));
                 }
                 body.push_str(&format!("        *__o = {}\n", tuple_expr(shape)));
             }
         }
         let n = self.orm_name("ormMap");
-        let src = format!("namespace std.data\n\nfunc {n}{}() func([]any, *{r}) void! {{\n    return func(__v []any, __o *{r}) void! {{\n{body}    }}\n}}\n", tys.generics());
+        let src = format!("namespace data\n\nfunc {n}{}() func([]any, *{r}) void! {{\n    return func(__v []any, __o *{r}) void! {{\n{body}    }}\n}}\n", tys.generics());
         self.orm_call(src, tys.0, vec![], span)
     }
 
@@ -966,7 +966,7 @@ impl<'a> Sema<'a> {
             NavKind::ManyMany => {
                 let pk = need(owner)?;
                 let src = format!(
-                    "{head}        var __keys []any = []\n        for __p in __ps {{\n            __keys = append(__keys, std.database.sql.argOf(__p.{pk}))\n        }}\n        var __r = await loadThrough(__st, __e1, {}, {}, {}, __keys, __tr)?\n        for __p in __ps {{\n            var __pk = keyText(std.database.sql.argOf(__p.{pk}))\n            {reset}\n            for __i, __k in __r.items {{\n                if __r.owners[__i] == __pk {{\n                    {}\n                }}\n            }}\n        }}\n    }}",
+                    "{head}        var __keys []any = []\n        for __p in __ps {{\n            __keys = append(__keys, database.sql.argOf(__p.{pk}))\n        }}\n        var __r = await loadThrough(__st, __e1, {}, {}, {}, __keys, __tr)?\n        for __p in __ps {{\n            var __pk = keyText(database.sql.argOf(__p.{pk}))\n            {reset}\n            for __i, __k in __r.items {{\n                if __r.owners[__i] == __pk {{\n                    {}\n                }}\n            }}\n        }}\n    }}",
                     lit(&n.through),
                     lit(&n.owner_col),
                     lit(&n.target_col),
@@ -976,7 +976,7 @@ impl<'a> Sema<'a> {
             }
         };
         Ok(format!(
-            "{head}        var __keys []any = []\n        for __p in __ps {{\n            __keys = append(__keys, std.database.sql.argOf(__p.{pkey}))\n        }}\n        var __kids = await loadIn(__st, __e1, {}, __keys, __tr)?\n        for __p in __ps {{\n            var __pk = keyText(std.database.sql.argOf(__p.{pkey}))\n            {reset}\n            for __k in __kids {{\n                if keyText(std.database.sql.argOf(__k.{kidkey})) == __pk {{\n                    {}\n                }}\n            }}\n        }}\n    }}",
+            "{head}        var __keys []any = []\n        for __p in __ps {{\n            __keys = append(__keys, database.sql.argOf(__p.{pkey}))\n        }}\n        var __kids = await loadIn(__st, __e1, {}, __keys, __tr)?\n        for __p in __ps {{\n            var __pk = keyText(database.sql.argOf(__p.{pkey}))\n            {reset}\n            for __k in __kids {{\n                if keyText(database.sql.argOf(__k.{kidkey})) == __pk {{\n                    {}\n                }}\n            }}\n        }}\n    }}",
             lit(&col),
             assign("__k")
         ))
@@ -1023,7 +1023,7 @@ impl<'a> Sema<'a> {
         };
         let name = self.orm_name("ormInclude");
         let src = format!(
-            "namespace std.data\n\nfunc {name}<T0, T1>() Include<T0> {{\n    var __e1 = modelOf<T1>()\n    return Include<T0>{{\n        name: {},\n        load: {loader},\n        join: Frag{{pg: {j}, lite: {j}, args: []}},\n        cols: {},\n        ncols: {},\n        childKey: {tk},\n        attach: func(__st *ctxState, __p *T0, __v []any, __o int, __tr bool) void! {{\n            var __k = materialize(__st, __e1, __v, __o, __tr)?\n            {attach}\n        }},\n        reset: func(__p *T0) {{\n            {reset}\n        }},\n    }}\n}}\n",
+            "namespace data\n\nfunc {name}<T0, T1>() Include<T0> {{\n    var __e1 = modelOf<T1>()\n    return Include<T0>{{\n        name: {},\n        load: {loader},\n        join: Frag{{pg: {j}, lite: {j}, args: []}},\n        cols: {},\n        ncols: {},\n        childKey: {tk},\n        attach: func(__st *ctxState, __p *T0, __v []any, __o int, __tr bool) void! {{\n            var __k = materialize(__st, __e1, __v, __o, __tr)?\n            {attach}\n        }},\n        reset: func(__p *T0) {{\n            {reset}\n        }},\n    }}\n}}\n",
             lit(&n.field),
             lit(&cols.join(", ")),
             target.cols.len(),
@@ -1070,7 +1070,7 @@ impl<'a> Sema<'a> {
         };
         let fname = self.orm_name("ormNav");
         let src = format!(
-            "namespace std.data\n\nfunc {fname}<T0, T1>(__en Entry<T0>) NavLoader {{\n    var __e1 = modelOf<T1>()\n    var __st = __en.state()\n    var __p = __en.entity()\n    var __load = {loader}\n    return NavLoader{{load: async func() void! {{\n        await __load(__st, [__p], true)?\n    }}}}\n}}\n"
+            "namespace data\n\nfunc {fname}<T0, T1>(__en Entry<T0>) NavLoader {{\n    var __e1 = modelOf<T1>()\n    var __st = __en.state()\n    var __p = __en.entity()\n    var __load = {loader}\n    return NavLoader{{load: async func() void! {{\n        await __load(__st, [__p], true)?\n    }}}}\n}}\n"
         );
         self.orm_call(src, vec![t, nav.target], vec![base], span)
     }

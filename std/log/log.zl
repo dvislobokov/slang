@@ -1,4 +1,4 @@
-// std.log: structured logging in the style of Serilog (docs/FRAMEWORK.md
+// log: structured logging in the style of Serilog (docs/FRAMEWORK.md
 // section 4). See sema/stdsrc.rs for the rules of these sources.
 //
 // Message templates are compiled: `logger.Info("user {UserId} paid
@@ -13,10 +13,10 @@
 // `destructure`, others converted by `capture`).
 //
 // Global state (the default logger) lives in the runtime's slot map
-// (std.diag.rtSlots, guarded by std.diag.rtLock). Context properties
+// (diag.rtSlots, guarded by diag.rtLock). Context properties
 // (log.Context.Push) are frames of the task context (ABI.md 10.8) with the
 // reserved key -101; diag spans use -102.
-namespace std.log
+namespace log
 
 // Severity of an event, from the most verbose to the most severe.
 enum Level { Verbose, Debug, Information, Warning, Error, Fatal }
@@ -87,7 +87,7 @@ struct Event {
         if len(this.parts) == 0 {
             return this.Message
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         for i, p in this.parts {
             b.Write(p)
             if i < len(this.names) {
@@ -131,13 +131,13 @@ struct Dictionary {
 // compiled templates available on every Logger.
 interface Logger {
     // IsEnabled reports whether events of level would be written.
-    func IsEnabled(level std.log.Level) bool
+    func IsEnabled(level log.Level) bool
     // Write sends a complete event through the logger's enrichers, filters and sinks.
-    func Write(e *std.log.Event)
+    func Write(e *log.Event)
     // ForContext returns a logger that adds property name = value to every event.
-    func ForContext(name string, value any) std.log.Logger
+    func ForContext(name string, value any) log.Logger
     // ForCategory returns a logger whose events have the SourceContext category.
-    func ForCategory(category string) std.log.Logger
+    func ForCategory(category string) log.Logger
     // Close flushes and closes the logger's sinks.
     func Close() Task<void>
 }
@@ -145,7 +145,7 @@ interface Logger {
 // A destination of events.
 interface Sink {
     // Emit writes one event.
-    func Emit(e *std.log.Event)
+    func Emit(e *log.Event)
     // Close flushes buffered events and releases the sink.
     func Close() Task<void>
 }
@@ -153,7 +153,7 @@ interface Sink {
 // Adds properties to events.
 interface Enricher {
     // Enrich adds or changes properties of e.
-    func Enrich(e *std.log.Event)
+    func Enrich(e *log.Event)
 }
 
 // A minimum level that can be changed while the program runs
@@ -278,17 +278,17 @@ struct EnrichConfiguration {
 
     // MachineName = the host name.
     func WithMachineName() Configuration {
-        var h = try std.os.Hostname() else "unknown"
+        var h = try os.Hostname() else "unknown"
         return this.With(new propertyEnricher{name: "MachineName", value: h})
     }
 
     // ProcessId = the process id.
     func WithProcessId() Configuration {
-        return this.With(new propertyEnricher{name: "ProcessId", value: std.os.Pid()})
+        return this.With(new propertyEnricher{name: "ProcessId", value: os.Pid()})
     }
 
     // Properties pushed with log.Context.Push, and TraceId / SpanId of the
-    // current std.diag span.
+    // current diag span.
     func FromContext() Configuration {
         return this.With(new contextEnricher{})
     }
@@ -386,7 +386,7 @@ struct Pipeline {
         if this.clock != nil {
             e.Timestamp = this.clock()
         } else if e.Timestamp == 0 {
-            e.Timestamp = std.time.Now()
+            e.Timestamp = time.Now()
         }
         if e.Category == "" {
             e.Category = this.category
@@ -442,7 +442,7 @@ struct Pipeline {
         p.category = category
         var best = -1
         for o in this.overrides {
-            if (category == o.prefix || std.strings.HasPrefix(category, o.prefix + ".")) &&
+            if (category == o.prefix || strings.HasPrefix(category, o.prefix + ".")) &&
                 len(o.prefix) > best {
                 best = len(o.prefix)
                 p.min = o.level
@@ -473,35 +473,35 @@ struct globalHolder {
 // The default logger: Information and above as "LEVEL message" lines on
 // stderr until SetGlobal replaces it.
 func Global() Logger {
-    std.diag.rtLock()
-    var m = std.diag.rtSlots()
+    diag.rtLock()
+    var m = diag.rtSlots()
     if m == nil {
         m = map[string]any{}
-        std.diag.rtSetSlots(m)
+        diag.rtSetSlots(m)
     }
     switch m["log.global"] {
         case globalHolder h:
-            std.diag.rtUnlock()
+            diag.rtUnlock()
             return h.l
     }
     var l = New().WriteTo.Console(ConsoleOptions{
         Template: "{Level:u4} {Message:lj}{NewLine}{Exception}",
     }).CreateLogger()
     m["log.global"] = globalHolder{l: l}
-    std.diag.rtUnlock()
+    diag.rtUnlock()
     return l
 }
 
 // Replaces the default logger (used by log.Info(...) and log.For<T>()).
 func SetGlobal(l Logger) {
-    std.diag.rtLock()
-    var m = std.diag.rtSlots()
+    diag.rtLock()
+    var m = diag.rtSlots()
     if m == nil {
         m = map[string]any{}
-        std.diag.rtSetSlots(m)
+        diag.rtSetSlots(m)
     }
     m["log.global"] = globalHolder{l: l}
-    std.diag.rtUnlock()
+    diag.rtUnlock()
 }
 
 // Flushes and closes the default logger's sinks.
@@ -511,7 +511,7 @@ func CloseAndFlush() Task<void> {
 
 // A logger whose category is the full name of T.
 func For<T>() Logger {
-    return Global().ForCategory(std.reflect.TypeOf<T>().FullName)
+    return Global().ForCategory(reflect.TypeOf<T>().FullName)
 }
 
 // ForContext of the default logger.
@@ -605,7 +605,7 @@ func emit(
     }
     if err != nil {
         e.Set("ErrorMessage", err.Message())
-        var tr = std.errors.Trace(err)
+        var tr = errors.Trace(err)
         if tr != "" {
             e.Set("ErrorTrace", tr)
         }
@@ -620,41 +620,41 @@ func emit(
 // variant name, slices and arrays element-wise, pointers by their target,
 // other types (structs, maps, functions) by their type name.
 func capture<T>(v T) any {
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Any ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Error {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.String ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Bool ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Any ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Error {
         return v
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 {
         return int(v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
         return float(v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Char {
         return string(v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
-        return std.fmt.Format("{0}", v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Enum {
+        return fmt.Format("{0}", v)
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Slice ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Array {
         var xs []any = []
         for x in v {
             xs = append(xs, capture(x))
         }
         return xs
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Pointer {
         if v == nil {
             return nil
         }
         return capture(*v)
     } else {
-        return std.reflect.TypeOf<T>().Name
+        return reflect.TypeOf<T>().Name
     }
 }
 
@@ -670,11 +670,11 @@ func destructureAt<T>(v T, depth int) any {
     if depth > 10 {
         return "..."
     }
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
         var names []string = []
         var values []any = []
-        for f in std.reflect.Fields<T>() {
-            var tag = f.Attribute<std.reflect.logAttr>()
+        for f in reflect.Fields<T>() {
+            var tag = f.Attribute<reflect.logAttr>()
             if tag != nil && tag.skip {
                 continue
             }
@@ -684,21 +684,21 @@ func destructureAt<T>(v T, depth int) any {
             names = append(names, f.Name)
             values = append(values, destructureAt(f.Get(v), depth + 1))
         }
-        return Structure{TypeTag: std.reflect.TypeOf<T>().Name, Names: names, Values: values}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+        return Structure{TypeTag: reflect.TypeOf<T>().Name, Names: names, Values: values}
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Pointer {
         if v == nil {
             return nil
         }
         return destructureAt(*v, depth)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Slice ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Array {
         var xs []any = []
         for x in v {
             xs = append(xs, destructureAt(x, depth + 1))
         }
         return xs
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
-        if std.reflect.TypeOf<T>().Key.Kind == std.reflect.Kind.String {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Map {
+        if reflect.TypeOf<T>().Key.Kind == reflect.Kind.String {
             var keys []string = []
             for k, _ in v {
                 keys = append(keys, k)
@@ -710,7 +710,7 @@ func destructureAt<T>(v T, depth int) any {
             }
             return Dictionary{Keys: keys, Values: vals}
         } else {
-            return std.reflect.TypeOf<T>().Name
+            return reflect.TypeOf<T>().Name
         }
     } else {
         return capture(v)
@@ -737,23 +737,23 @@ func sortStrings(s []string) {
 struct Context {
     // Push adds property name = value to the events of the current task until the scope is popped.
     static func Push(name string, value any) ContextScope {
-        var old = std.task.rtGetCtx()
-        var c = std.task.CurrentContext()
-        var fr = new std.task.ctxFrame{
+        var old = task.rtGetCtx()
+        var c = task.CurrentContext()
+        var fr = new task.ctxFrame{
             key: -101,
             val: new prop{name: name, value: value},
             next: c.top(),
         }
         var m = map[string]any{}
         m[""] = fr
-        std.task.rtSetCtx(m)
+        task.rtSetCtx(m)
         return ContextScope{old: old}
     }
 
     // The pushed properties, innermost first.
     static func Properties() []prop {
         var out []prop = []
-        var c = std.task.CurrentContext()
+        var c = task.CurrentContext()
         var f = c.top()
         for f != nil {
             if f.key == -101 {
@@ -774,7 +774,7 @@ struct ContextScope {
 
     // Pop removes the property (restores the context of before Push).
     func Pop() {
-        std.task.rtSetCtx(this.old)
+        task.rtSetCtx(this.old)
     }
 }
 
@@ -792,7 +792,7 @@ struct contextEnricher {
         for p in Context.Properties() {
             e.AddIfAbsent(p.name, p.value)
         }
-        var sp = std.diag.CurrentSpan()
+        var sp = diag.CurrentSpan()
         if sp != nil {
             e.AddIfAbsent("TraceId", sp.TraceId)
             e.AddIfAbsent("SpanId", sp.SpanId)
@@ -812,7 +812,7 @@ struct funcEnricher {
 
 // `,10:0.00` -> `0.00`.
 func formatOf(spec string) string {
-    var i = std.strings.Index(spec, ":")
+    var i = strings.Index(spec, ":")
     if i < 0 {
         return ""
     }
@@ -821,23 +821,23 @@ func formatOf(spec string) string {
 
 // Applies the `,N` (right-aligned) / `,-N` (left-aligned) part of spec.
 func applyAlign(s string, spec string) string {
-    if !std.strings.HasPrefix(spec, ",") {
+    if !strings.HasPrefix(spec, ",") {
         return s
     }
     var w = spec[1..]
-    var i = std.strings.Index(w, ":")
+    var i = strings.Index(w, ":")
     if i >= 0 {
         w = w[..i]
     }
-    var n = try std.strings.ToInt(w) else 0
+    var n = try strings.ToInt(w) else 0
     if n < 0 {
-        return std.strings.PadRight(s, -n, " ")
+        return strings.PadRight(s, -n, " ")
     }
-    return std.strings.PadLeft(s, n, " ")
+    return strings.PadLeft(s, n, " ")
 }
 
 func quote(s string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("\"")
     var start = 0
     for i in 0..len(s) {
@@ -854,7 +854,7 @@ func quote(s string) string {
         } else if c == "\t" {
             esc = "\\t"
         } else if s[i] < 32 {
-            esc = std.fmt.Sprintf("\\u%04x", int(s[i]))
+            esc = fmt.Sprintf("\\u%04x", int(s[i]))
         }
         if esc != "" {
             b.Write(s[start..i])
@@ -869,27 +869,27 @@ func quote(s string) string {
 
 func fmtInt(n int, f string) string {
     if f == "" {
-        return std.fmt.Format("{0}", n)
+        return fmt.Format("{0}", n)
     }
     var c = f[0..1]
     var rest = f[1..]
     if c == "x" || c == "X" {
-        var s = std.fmt.Sprintf("%" + "x", n)
+        var s = fmt.Sprintf("%" + "x", n)
         if c == "X" {
-            s = std.strings.ToUpper(s)
+            s = strings.ToUpper(s)
         }
         if rest != "" {
-            var w = try std.strings.ToInt(rest) else 0
-            s = std.strings.PadLeft(s, w, "0")
+            var w = try strings.ToInt(rest) else 0
+            s = strings.PadLeft(s, w, "0")
         }
         return s
     }
     if c == "D" || c == "d" {
-        var w = try std.strings.ToInt(rest) else 0
+        var w = try strings.ToInt(rest) else 0
         if n < 0 {
-            return "-" + std.strings.PadLeft(std.fmt.Format("{0}", -n), w, "0")
+            return "-" + strings.PadLeft(fmt.Format("{0}", -n), w, "0")
         }
-        return std.strings.PadLeft(std.fmt.Format("{0}", n), w, "0")
+        return strings.PadLeft(fmt.Format("{0}", n), w, "0")
     }
     return fmtFloat(float(n), f)
 }
@@ -899,31 +899,31 @@ func fmtInt(n int, f string) string {
 // (rounded); anything else is ignored.
 func fmtFloat(x float, f string) string {
     if f == "" {
-        return std.fmt.Format("{0}", x)
+        return fmt.Format("{0}", x)
     }
     var c = f[0..1]
     if c == "0" || c == "#" {
-        var dot = std.strings.Index(f, ".")
+        var dot = strings.Index(f, ".")
         var d = 0
         if dot >= 0 {
             d = len(f) - dot - 1
         }
-        return std.fmt.Sprintf("%." + std.fmt.Format("{0}", d) + "f", x)
+        return fmt.Sprintf("%." + fmt.Format("{0}", d) + "f", x)
     }
     var d = 2
     if len(f) > 1 {
-        d = try std.strings.ToInt(f[1..]) else 2
+        d = try strings.ToInt(f[1..]) else 2
     }
     if c == "F" || c == "f" || c == "N" || c == "n" {
-        return std.fmt.Sprintf("%." + std.fmt.Format("{0}", d) + "f", x)
+        return fmt.Sprintf("%." + fmt.Format("{0}", d) + "f", x)
     }
     if c == "E" || c == "e" {
-        return std.fmt.Sprintf("%." + std.fmt.Format("{0}", d) + "e", x)
+        return fmt.Sprintf("%." + fmt.Format("{0}", d) + "e", x)
     }
     if c == "P" || c == "p" {
-        return std.fmt.Sprintf("%." + std.fmt.Format("{0}", d) + "f", x * 100.0) + "%"
+        return fmt.Sprintf("%." + fmt.Format("{0}", d) + "f", x * 100.0) + "%"
     }
-    return std.fmt.Format("{0}", x)
+    return fmt.Format("{0}", x)
 }
 
 // Text of a property value: strings quoted when `quoted` (unless the
@@ -948,7 +948,7 @@ func renderValue(v any, f string, quoted bool) string {
         case error e:
             return e.Message()
         case Structure st:
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             if st.TypeTag != "" {
                 b.Write(st.TypeTag)
                 b.Write(" ")
@@ -966,7 +966,7 @@ func renderValue(v any, f string, quoted bool) string {
             b.Write(" }")
             return b.String()
         case Dictionary d:
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             b.Write("[")
             for i, k in d.Keys {
                 if i > 0 {
@@ -977,7 +977,7 @@ func renderValue(v any, f string, quoted bool) string {
             b.Write("]")
             return b.String()
         case []any xs:
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             b.Write("[")
             for i, x in xs {
                 if i > 0 {
@@ -991,7 +991,7 @@ func renderValue(v any, f string, quoted bool) string {
     if v == nil {
         return "null"
     }
-    return std.fmt.Format("{0}", v)
+    return fmt.Format("{0}", v)
 }
 
 // JSON text of a property value.
@@ -1000,12 +1000,12 @@ func jsonValue(v any) string {
         case string s:
             return quote(s)
         case int n:
-            return std.fmt.Format("{0}", n)
+            return fmt.Format("{0}", n)
         case float x:
-            if std.math.IsNaN(x) || std.math.IsInf(x, 0) {
-                return quote(std.fmt.Format("{0}", x))
+            if math.IsNaN(x) || math.IsInf(x, 0) {
+                return quote(fmt.Format("{0}", x))
             }
-            return std.fmt.Format("{0}", x)
+            return fmt.Format("{0}", x)
         case bool t:
             if t {
                 return "true"
@@ -1014,7 +1014,7 @@ func jsonValue(v any) string {
         case error e:
             return quote(e.Message())
         case Structure st:
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             b.Write("{")
             var first = true
             if st.TypeTag != "" {
@@ -1031,7 +1031,7 @@ func jsonValue(v any) string {
             b.Write("}")
             return b.String()
         case Dictionary d:
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             b.Write("{")
             for i, k in d.Keys {
                 if i > 0 {
@@ -1042,7 +1042,7 @@ func jsonValue(v any) string {
             b.Write("}")
             return b.String()
         case []any xs:
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             b.Write("[")
             for i, x in xs {
                 if i > 0 {
@@ -1056,7 +1056,7 @@ func jsonValue(v any) string {
     if v == nil {
         return "null"
     }
-    return quote(std.fmt.Format("{0}", v))
+    return quote(fmt.Format("{0}", v))
 }
 
 func levelName(l Level) string {
@@ -1081,33 +1081,33 @@ func levelText(l Level, f string) string {
     if f == "u3" || f == "w3" || f == "t3" {
         var s = ["VRB", "DBG", "INF", "WRN", "ERR", "FTL"][i]
         if f == "w3" {
-            return std.strings.ToLower(s)
+            return strings.ToLower(s)
         }
         if f == "t3" {
-            return s[0..1] + std.strings.ToLower(s[1..])
+            return s[0..1] + strings.ToLower(s[1..])
         }
         return s
     }
     if f == "u4" || f == "w4" {
         var s = ["VERB", "DBUG", "INFO", "WARN", "EROR", "FATL"][i]
         if f == "w4" {
-            return std.strings.ToLower(s)
+            return strings.ToLower(s)
         }
         return s
     }
     if f == "u" {
-        return std.strings.ToUpper(levelName(l))
+        return strings.ToUpper(levelName(l))
     }
     if f == "w" {
-        return std.strings.ToLower(levelName(l))
+        return strings.ToLower(levelName(l))
     }
     return levelName(l)
 }
 
-// .NET-style date format -> strftime (std.time.Format): yyyy yy MM dd HH
+// .NET-style date format -> strftime (time.Format): yyyy yy MM dd HH
 // hh mm ss fff tt zzz; other letters in quotes are literal.
 func timeLayout(f string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var i = 0
     for i < len(f) {
         var c = f[i..i + 1]
@@ -1139,7 +1139,7 @@ func timeLayout(f string) string {
         } else if tok == "zzz" {
             b.Write("+00:00")
         } else if c == "%" {
-            b.Write(std.strings.Repeat("%%", n))
+            b.Write(strings.Repeat("%%", n))
         } else {
             b.Write(tok)
         }
@@ -1153,7 +1153,7 @@ func formatTime(ms int, f string) string {
     if layout == "" {
         layout = "yyyy-MM-dd HH:mm:ss.fff zzz"
     }
-    return std.time.Format(ms, timeLayout(layout))
+    return time.Format(ms, timeLayout(layout))
 }
 
 // ---- output templates -----------------------------------------------------
@@ -1183,7 +1183,7 @@ func parseOutput(t string) []segment {
             continue
         }
         if c == "{" {
-            var end = std.strings.Index(t[i..], "}")
+            var end = strings.Index(t[i..], "}")
             if end < 0 {
                 lit += t[i..]
                 break
@@ -1196,12 +1196,12 @@ func parseOutput(t string) []segment {
             var name = hole
             var format = ""
             var align = ""
-            var colon = std.strings.Index(hole, ":")
+            var colon = strings.Index(hole, ":")
             if colon >= 0 {
                 name = hole[..colon]
                 format = hole[colon + 1..]
             }
-            var comma = std.strings.Index(name, ",")
+            var comma = strings.Index(name, ",")
             if comma >= 0 {
                 align = "," + name[comma + 1..]
                 name = name[..comma]
@@ -1240,10 +1240,10 @@ func exceptionText(e *Event) string {
         return ""
     }
     var s = e.Error.Message() + "\n"
-    var tr = std.errors.Trace(e.Error)
+    var tr = errors.Trace(e.Error)
     if tr != "" {
         s += tr
-        if !std.strings.HasSuffix(tr, "\n") {
+        if !strings.HasSuffix(tr, "\n") {
             s += "\n"
         }
     }
@@ -1251,7 +1251,7 @@ func exceptionText(e *Event) string {
 }
 
 func propertiesText(e *Event, f string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("{")
     for i, k in e.keys {
         if i > 0 {
@@ -1261,7 +1261,7 @@ func propertiesText(e *Event, f string) string {
     }
     b.Write(" }")
     if f == "j" {
-        var j = std.strings.Builder{}
+        var j = strings.Builder{}
         j.Write("{")
         for i, k in e.keys {
             if i > 0 {
@@ -1277,7 +1277,7 @@ func propertiesText(e *Event, f string) string {
 
 // Renders e with an output template.
 func renderOutput(segs []segment, e *Event, colors bool) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     for s in segs {
         if s.name == "" {
             b.Write(s.text)
@@ -1315,7 +1315,7 @@ func renderOutput(segs []segment, e *Event, colors bool) string {
 
 // One compact JSON (CLEF) line.
 func clef(e *Event) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("{\"@t\":" + quote(formatTime(e.Timestamp, "yyyy-MM-ddTHH:mm:ss.fffZ")))
     b.Write(",\"@mt\":" + quote(e.Template))
     b.Write(",\"@m\":" + quote(e.Message))
@@ -1330,7 +1330,7 @@ func clef(e *Event) string {
             continue
         }
         var name = k
-        if std.strings.HasPrefix(k, "@") {
+        if strings.HasPrefix(k, "@") {
             name = "@" + k
         }
         b.Write("," + quote(name) + ":" + jsonValue(e.Properties[k]))
@@ -1361,15 +1361,15 @@ struct ConsoleSink {
     func Emit(e *Event) {
         var s = renderOutput(this.segs, e, this.colors)
         if this.stdout {
-            std.io.print(s)
+            io.print(s)
         } else {
-            std.io.Eprint(s)
+            io.Eprint(s)
         }
     }
 
     // Close does nothing (the console is not buffered).
     func Close() Task<void> {
-        return std.task.Delay(0)
+        return task.Delay(0)
     }
 }
 
@@ -1414,15 +1414,15 @@ struct FileSink {
     err     string
 
     func pathFor(period string, seq int) string {
-        var dir = std.fs.Dir(this.base)
-        var name = std.fs.Base(this.base)
-        var ext = std.fs.Ext(name)
+        var dir = fs.Dir(this.base)
+        var name = fs.Base(this.base)
+        var ext = fs.Ext(name)
         var stem = name[..len(name) - len(ext)]
         var suffix = period
         if seq > 0 {
-            suffix += "_" + std.strings.PadLeft(std.fmt.Format("{0}", seq), 3, "0")
+            suffix += "_" + strings.PadLeft(fmt.Format("{0}", seq), 3, "0")
         }
-        return std.fs.Join(dir, stem + suffix + ext)
+        return fs.Join(dir, stem + suffix + ext)
     }
 
     func open(period string) {
@@ -1430,9 +1430,9 @@ struct FileSink {
             rtClose(this.fd)
             this.fd = -1
         }
-        var dir = std.fs.Dir(this.base)
+        var dir = fs.Dir(this.base)
         if dir != "" && dir != "." {
-            _ = std.fs.MkdirAll(dir)
+            _ = fs.MkdirAll(dir)
         }
         var p = this.pathFor(period, this.seq)
         this.fd = try rtOpen(p) catch err {
@@ -1441,7 +1441,7 @@ struct FileSink {
         }
         this.current = p
         this.period = period
-        this.size = try std.fs.Size(p) else 0
+        this.size = try fs.Size(p) else 0
         this.retain()
     }
 
@@ -1450,23 +1450,23 @@ struct FileSink {
         if this.opts.Retain <= 0 {
             return
         }
-        var dir = std.fs.Dir(this.base)
-        var name = std.fs.Base(this.base)
-        var ext = std.fs.Ext(name)
+        var dir = fs.Dir(this.base)
+        var name = fs.Base(this.base)
+        var ext = fs.Ext(name)
         var stem = name[..len(name) - len(ext)]
-        var entries = try std.fs.ReadDir(dir) else []
+        var entries = try fs.ReadDir(dir) else []
         var mine []string = []
         for n in entries {
-            var b = std.fs.Base(n)
-            if std.strings.HasPrefix(b, stem) && std.strings.HasSuffix(b, ext) {
+            var b = fs.Base(n)
+            if strings.HasPrefix(b, stem) && strings.HasSuffix(b, ext) {
                 mine = append(mine, b)
             }
         }
         sortStrings(mine)
         var extra = len(mine) - this.opts.Retain
         for i in 0..extra {
-            if std.fs.Join(dir, mine[i]) != this.current {
-                _ = std.fs.Remove(std.fs.Join(dir, mine[i]))
+            if fs.Join(dir, mine[i]) != this.current {
+                _ = fs.Remove(fs.Join(dir, mine[i]))
             }
         }
     }
@@ -1474,16 +1474,16 @@ struct FileSink {
     func periodOf(ms int) string {
         var r = this.opts.RollingInterval
         if r == RollingInterval.Day {
-            return std.time.Format(ms, "%Y%m%d")
+            return time.Format(ms, "%Y%m%d")
         }
         if r == RollingInterval.Hour {
-            return std.time.Format(ms, "%Y%m%d%H")
+            return time.Format(ms, "%Y%m%d%H")
         }
         if r == RollingInterval.Month {
-            return std.time.Format(ms, "%Y%m")
+            return time.Format(ms, "%Y%m")
         }
         if r == RollingInterval.Year {
-            return std.time.Format(ms, "%Y")
+            return time.Format(ms, "%Y")
         }
         return ""
     }
@@ -1496,7 +1496,7 @@ struct FileSink {
         } else {
             line = renderOutput(this.segs, e, false)
         }
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var period = this.periodOf(e.Timestamp)
         if this.fd < 0 || period != this.period {
             if period != this.period {
@@ -1513,18 +1513,18 @@ struct FileSink {
             _ = rtWrite(this.fd, line)
             this.size += len(line)
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     // Close closes the current file.
     func Close() Task<void> {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if this.fd >= 0 {
             rtClose(this.fd)
             this.fd = -1
         }
-        std.task.rtUnlock(&this.guard)
-        return std.task.Delay(0)
+        task.rtUnlock(&this.guard)
+        return task.Delay(0)
     }
 
     // The file being written ("" before the first event).
@@ -1563,9 +1563,9 @@ struct JsonSink {
         }
         var s = clef(e)
         if this.stdout {
-            std.io.print(s)
+            io.print(s)
         } else {
-            std.io.Eprint(s)
+            io.Eprint(s)
         }
     }
 
@@ -1574,7 +1574,7 @@ struct JsonSink {
         if this.file != nil {
             return this.file.Close()
         }
-        return std.task.Delay(0)
+        return task.Delay(0)
     }
 }
 
@@ -1590,7 +1590,7 @@ func NewJsonSink(opts JsonOptions) *JsonSink {
 // AsyncSink hands events to a background task through a channel (Emit
 // never blocks the caller while the queue has room); Close drains it.
 struct AsyncSink {
-    ch     std.task.Channel<*Event>
+    ch     task.Channel<*Event>
     done   Task<void>
     closed bool
 
@@ -1611,7 +1611,7 @@ struct AsyncSink {
     }
 }
 
-async func pump(ch std.task.Channel<*Event>, inner Sink) {
+async func pump(ch task.Channel<*Event>, inner Sink) {
     for {
         var e = try await ch.Recv() else break
         inner.Emit(e)
@@ -1625,6 +1625,6 @@ func NewAsyncSink(inner Sink, capacity int) *AsyncSink {
     if n <= 0 {
         n = 1024
     }
-    var ch = std.task.Channel<*Event>(n)
+    var ch = task.Channel<*Event>(n)
     return new AsyncSink{ch: ch, done: pump(ch, inner)}
 }

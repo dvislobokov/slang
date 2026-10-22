@@ -1,4 +1,4 @@
-/* std_time.c - std.time (zell_time_*). Times are int64 milliseconds since the
+/* std_time.c - time (zell_time_*). Times are int64 milliseconds since the
  * Unix epoch; calendar functions use UTC. Format/Parse layouts are strftime /
  * strptime patterns (plus `%L` = 3-digit milliseconds in Format). */
 #include "rt_internal.h"

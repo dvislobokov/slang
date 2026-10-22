@@ -6,7 +6,7 @@
 // the metadata (leader changes) and retry with backoff; an idempotent
 // producer retries with the same sequence, so a retry is never
 // duplicated (DUPLICATE_SEQUENCE_NUMBER counts as success).
-namespace std.data.kafka
+namespace data.kafka
 
 // Options of a Producer. Durations are milliseconds; zero values take the
 // defaults in brackets.
@@ -49,7 +49,7 @@ struct partBatch {
 }
 
 struct partState {
-    mu std.task.Mutex
+    mu task.Mutex
     seq int
 }
 
@@ -64,17 +64,17 @@ struct producerState {
     rr map[string]int
     pid int
     epoch int
-    wg std.task.WaitGroup
+    wg task.WaitGroup
     closed bool
     sentBatches int
     retries int
 
     func lock() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
     }
 
     func unlock() {
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     func part(key string) *partState {
@@ -91,7 +91,7 @@ struct producerState {
 
 // The Java client's murmur2 of b (signed 32-bit).
 func Murmur2(b []byte) int {
-    return std.data.rtMurmur2(b)
+    return data.rtMurmur2(b)
 }
 
 // The default partition of a key among n partitions.
@@ -107,11 +107,11 @@ func bytesOf(v any) []byte {
     }
     switch v {
         case string s:
-            return std.strings.Bytes(s)
+            return strings.Bytes(s)
         case []byte b:
             return b
     }
-    return std.strings.Bytes(std.fmt.Format("{0}", v))
+    return strings.Bytes(fmt.Format("{0}", v))
 }
 
 // A Kafka producer. Safe for concurrent use.
@@ -267,12 +267,12 @@ async func sendRecord(st *producerState, r Record) RecordMetadata! {
     if rec.Partition < 0 {
         rec.Partition = choosePartition(st, rec, n)
     } else if rec.Partition >= n {
-        return error("kafka: topic " + std.strconv.Quote(rec.Topic) + " has no partition " + std.strconv.Itoa(rec.Partition))
+        return error("kafka: topic " + strconv.Quote(rec.Topic) + " has no partition " + strconv.Itoa(rec.Partition))
     }
     if rec.Timestamp == 0 {
         rec.Timestamp = nowMs()
     }
-    var pr = new pendingRec{rec: rec, done: std.task.rtWaker()}
+    var pr = new pendingRec{rec: rec, done: task.rtWaker()}
     enqueue(st, pr)
     await pr.done
     if pr.err != nil {
@@ -311,7 +311,7 @@ func enqueue(st *producerState, pr *pendingRec) {
 
 async func linger(st *producerState, key string, b *partBatch) {
     if st.opts.LingerMs > 0 {
-        await std.task.Delay(st.opts.LingerMs)
+        await task.Delay(st.opts.LingerMs)
     }
     st.lock()
     if st.batches[key] != b {
@@ -331,7 +331,7 @@ async func dispatch(st *producerState, b *partBatch) {
     var res = try await produceBatch(st, ps, b) catch err {
         for pr in b.recs {
             pr.err = err
-            std.task.rtFire(pr.done)
+            task.rtFire(pr.done)
         }
         ps.mu.Unlock()
         st.wg.Done()
@@ -347,7 +347,7 @@ async func dispatch(st *producerState, b *partBatch) {
             off = res.base + i
         }
         pr.meta = RecordMetadata{Topic: b.topic, Partition: b.partition, Offset: off, Timestamp: ts}
-        std.task.rtFire(pr.done)
+        task.rtFire(pr.done)
     }
     ps.mu.Unlock()
     st.wg.Done()

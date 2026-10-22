@@ -26,7 +26,7 @@
 //!   receiver `this` as their first parameter, of type `*S`.
 //! * There are no generics: every instantiation of a generic function,
 //!   struct or enum is an ordinary item named after it (`Max<int>`,
-//!   `std.collections.List<string>`, `Pair<int, bool>.Swap`) with a mangled
+//!   `collections.List<string>`, `Pair<int, bool>.Swap`) with a mangled
 //!   symbol (`zell_app__Max__int`); `Type::Param` never appears.
 //! * `async func f() T` is a [`Function`] with `is_async = true` and
 //!   `ret = T`; calling it yields `Task<T>`, and its `Type::Func` signature
@@ -95,28 +95,28 @@ pub struct Program {
     /// Source files by [`FileId`] (for error-trace sites); filled in by
     /// [`crate::driver`] after analysis, empty otherwise.
     pub sources: Vec<SourceInfo>,
-    /// Reflection metadata wanted by the program (`std.reflect` was used),
+    /// Reflection metadata wanted by the program (`reflect` was used),
     /// see [`Reflect`]; `None` when the program uses no reflection.
     pub reflect: Option<Reflect>,
 }
 
 /// What code generation needs for reflection (DESIGN.md "Рефлексия",
-/// runtime/ABI.md §17). Present only when the program uses `std.reflect`
+/// runtime/ABI.md §17). Present only when the program uses `reflect`
 /// (directly, through `typeof`, `json`, or an attribute type): then every
 /// run-time type id (`zell_type_info`) is the header of a full
-/// `std.reflect.TypeInfo` table.
+/// `reflect.TypeInfo` table.
 #[derive(Debug, Clone, Default)]
 pub struct Reflect {
-    /// Struct ids of `std.reflect.TypeInfo`, `FieldInfo`, `MethodInfo`,
+    /// Struct ids of `reflect.TypeInfo`, `FieldInfo`, `MethodInfo`,
     /// `VariantInfo`.
     pub type_info: u32,
     pub field_info: u32,
     pub method_info: u32,
     pub variant_info: u32,
-    /// Enum id of `std.reflect.Kind`.
+    /// Enum id of `reflect.Kind`.
     pub kind: u32,
     /// Builtin attribute name (`json`, `deprecated`, ...) -> the struct id
-    /// of its value type in `std.reflect`.
+    /// of its value type in `reflect`.
     pub attr_structs: Vec<(String, u32)>,
     /// Types whose tables also list methods (and `New` works): named in
     /// `reflect.TypeOf<T>()`, a static `typeof(x)`, `reflect.Fields<T>()`,
@@ -135,7 +135,7 @@ pub struct Reflect {
     pub method_types: Vec<(FuncId, TypeId)>,
 }
 
-/// Name of the `std.reflect.Kind` variant describing type `t`.
+/// Name of the `reflect.Kind` variant describing type `t`.
 pub fn reflect_kind_name(tt: &TypeTable, t: TypeId) -> &'static str {
     use crate::types::{IntKind as I, Type};
     match tt.get(t) {
@@ -173,7 +173,7 @@ pub fn reflect_kind_name(tt: &TypeTable, t: TypeId) -> &'static str {
     }
 }
 
-/// Bodies of `std.reflect` functions emitted by code generation.
+/// Bodies of `reflect` functions emitted by code generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Intrinsic {
     /// `TypeOf<T>() *TypeInfo`: the static table of `T`.
@@ -452,7 +452,7 @@ pub struct Global {
 /// A runtime (C) function referenced by the program.
 #[derive(Debug, Clone)]
 pub struct Extern {
-    /// Zell path, e.g. `std.strings.Split`.
+    /// Zell path, e.g. `strings.Split`.
     pub path: String,
     /// C symbol, e.g. `zell_strings_split`.
     pub symbol: String,

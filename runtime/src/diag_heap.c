@@ -1,4 +1,4 @@
-/* diag_heap.c - live objects by type in production builds (std.diag
+/* diag_heap.c - live objects by type in production builds (diag
  * HeapByType, the /debug/heap handler; docs/FRAMEWORK.md section 5).
  *
  * With ZELL_DIAG_HEAP=1 in the environment (read once at startup) every

@@ -1,4 +1,4 @@
-/* std_os_signal.c - std.os.signal: signals delivered to tasks.
+/* std_os_signal.c - os.signal: signals delivered to tasks.
  *
  * The platform layer catches the signal (POSIX: a sigaction handler writes
  * to a self-pipe read by a delivery thread; Windows: SetConsoleCtrlHandler)

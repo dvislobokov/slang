@@ -1,9 +1,9 @@
-// std.net.mail: RFC 5322 addresses and messages, MIME building (text,
+// net.mail: RFC 5322 addresses and messages, MIME building (text,
 // HTML alternatives, attachments, inline parts) and an SMTP client
 // (RFC 5321) with STARTTLS (RFC 3207) and implicit TLS (SMTPS, port 465)
-// over std.net.tls, and AUTH PLAIN, LOGIN and CRAM-MD5 (RFC 4954, 2195).
+// over net.tls, and AUTH PLAIN, LOGIN and CRAM-MD5 (RFC 4954, 2195).
 // DKIM signing is not implemented.
-namespace std.net.mail
+namespace net.mail
 
 // ---- addresses --------------------------------------------------------------------
 
@@ -64,7 +64,7 @@ func displayName(name string) string {
     if atoms {
         return name
     }
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("\"")
     for i in 0..len(name) {
         var ch = name[i..i + 1]
@@ -78,7 +78,7 @@ func displayName(name string) string {
 }
 
 func validAddr(a string) bool {
-    var at = std.strings.LastIndex(a, "@")
+    var at = strings.LastIndex(a, "@")
     if at <= 0 || at == len(a) - 1 {
         return false
     }
@@ -89,9 +89,9 @@ func validAddr(a string) bool {
         }
     }
     var domain = a[at + 1..]
-    return !std.strings.HasPrefix(domain, ".") &&
-        !std.strings.HasSuffix(domain, ".") &&
-        !std.strings.Contains(domain, "..")
+    return !strings.HasPrefix(domain, ".") &&
+        !strings.HasSuffix(domain, ".") &&
+        !strings.Contains(domain, "..")
 }
 
 // Parses one address: "user@host", "<user@host>", "Name <user@host>",
@@ -110,7 +110,7 @@ func ParseAddress(s string) Address! {
 func ParseAddressList(s string) []Address! {
     var out []Address = []
     var parts []string = []
-    var cur = std.strings.Builder{}
+    var cur = strings.Builder{}
     var quoted = false
     var angle = false
     var depth = 0
@@ -146,7 +146,7 @@ func ParseAddressList(s string) []Address! {
         } else if (c == "," || c == ";") && !angle && depth == 0 {
             parts = append(parts, cur.String())
             cur.Reset()
-        } else if c == ":" && !angle && depth == 0 && !std.strings.Contains(cur.String(), "@") {
+        } else if c == ":" && !angle && depth == 0 && !strings.Contains(cur.String(), "@") {
             // group name: drop it
             cur.Reset()
         } else {
@@ -159,7 +159,7 @@ func ParseAddressList(s string) []Address! {
     }
     parts = append(parts, cur.String())
     for p in parts {
-        var t = std.strings.Trim(p)
+        var t = strings.Trim(p)
         if t == "" {
             continue
         }
@@ -172,9 +172,9 @@ func ParseAddressList(s string) []Address! {
 }
 
 func unquote(s string) string {
-    var t = std.strings.Trim(s)
-    if len(t) >= 2 && std.strings.HasPrefix(t, "\"") && std.strings.HasSuffix(t, "\"") {
-        var b = std.strings.Builder{}
+    var t = strings.Trim(s)
+    if len(t) >= 2 && strings.HasPrefix(t, "\"") && strings.HasSuffix(t, "\"") {
+        var b = strings.Builder{}
         var i = 1
         for i < len(t) - 1 {
             var c = t[i..i + 1]
@@ -191,30 +191,30 @@ func unquote(s string) string {
 }
 
 func parseOne(t string) Address! {
-    var lt = std.strings.LastIndex(t, "<")
+    var lt = strings.LastIndex(t, "<")
     if lt >= 0 {
-        var gt = std.strings.LastIndex(t, ">")
+        var gt = strings.LastIndex(t, ">")
         if gt < lt {
             return error("mail: missing '>' in \"" + t + "\"")
         }
-        var addr = std.strings.Trim(t[lt + 1..gt])
+        var addr = strings.Trim(t[lt + 1..gt])
         if !validAddr(addr) {
             return error("mail: invalid address \"" + addr + "\"")
         }
         var name = unquote(t[..lt])
-        if std.strings.Contains(name, "=?") {
-            name = std.mime.DecodeHeader(name)?
+        if strings.Contains(name, "=?") {
+            name = mime.DecodeHeader(name)?
         }
         return Address{Name: name, Address: addr}
     }
     // "user@host (Name)"
-    var op = std.strings.Index(t, "(")
-    if op >= 0 && std.strings.HasSuffix(t, ")") {
-        var addr = std.strings.Trim(t[..op])
+    var op = strings.Index(t, "(")
+    if op >= 0 && strings.HasSuffix(t, ")") {
+        var addr = strings.Trim(t[..op])
         if !validAddr(addr) {
             return error("mail: invalid address \"" + addr + "\"")
         }
-        return Address{Name: std.strings.Trim(t[op + 1..len(t) - 1]), Address: addr}
+        return Address{Name: strings.Trim(t[op + 1..len(t) - 1]), Address: addr}
     }
     if !validAddr(t) {
         return error("mail: invalid address \"" + t + "\"")
@@ -228,7 +228,7 @@ func parseOne(t string) Address! {
 // sequence boundaries), separated by folding white space.
 func encodeWords(s string) string {
     var words []string = []
-    var cur = std.strings.Builder{}
+    var cur = strings.Builder{}
     var curLen = 0
     var i = 0
     var n = len(s)
@@ -246,7 +246,7 @@ func encodeWords(s string) string {
         if i + k > n {
             k = n - i
         }
-        var enc = std.strings.Builder{}
+        var enc = strings.Builder{}
         for j in i..i + k {
             var b = int(s[j])
             if b == 32 {
@@ -278,7 +278,7 @@ func encodeWords(s string) string {
     if curLen > 0 || len(words) == 0 {
         words = append(words, "=?utf-8?q?" + cur.String() + "?=")
     }
-    return std.strings.Join(words, "\r\n ")
+    return strings.Join(words, "\r\n ")
 }
 
 func needsEncoding(s string) bool {
@@ -295,15 +295,15 @@ func needsEncoding(s string) bool {
 // within 78 characters where possible (RFC 5322 2.2.3).
 func FoldHeader(name string, value string) string {
     var line = name + ": "
-    var out = std.strings.Builder{}
+    var out = strings.Builder{}
     var lineLen = len(line)
     out.Write(line)
-    var words = std.strings.Split(value, " ")
+    var words = strings.Split(value, " ")
     for i, w in words {
-        if std.strings.Contains(w, "\r\n") {
+        if strings.Contains(w, "\r\n") {
             // already folded (encoded words)
             out.Write(w)
-            lineLen = len(w) - std.strings.LastIndex(w, "\n")
+            lineLen = len(w) - strings.LastIndex(w, "\n")
             continue
         }
         if i > 0 {
@@ -328,7 +328,7 @@ func FoldHeader(name string, value string) string {
 // referenced from the HTML body as "cid:<ContentID>".
 struct Attachment {
     Filename string
-    // Default: by the file extension (std.mime), else application/octet-stream.
+    // Default: by the file extension (mime), else application/octet-stream.
     ContentType string
     Data        []byte
     Inline      bool
@@ -353,7 +353,7 @@ struct Message {
     // Extra headers ("X-Mailer", "List-Unsubscribe", ...).
     Headers map[string]string
     // Default: now.
-    Date std.time.Time
+    Date time.Time
     // Default: a random <...@sender-domain>.
     MessageID string
     // Fixed MIME boundaries for reproducible output (tests); default random.
@@ -382,10 +382,10 @@ struct Message {
         if len(this.To) + len(this.Cc) + len(this.Bcc) == 0 {
             return error("mail: message has no recipients")
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var date = this.Date
         if date.IsZero() {
-            date = std.time.Time.Now()
+            date = time.Time.Now()
         }
         b.Write("Date: " + date.Format("Mon, 02 Jan 2006 15:04:05 -0700") + "\r\n")
         b.Write(FoldHeader("From", this.From.String()))
@@ -405,9 +405,9 @@ struct Message {
         b.Write(FoldHeader("Subject", subject))
         var mid = this.MessageID
         if mid == "" {
-            var at = std.strings.LastIndex(this.From.Address, "@")
+            var at = strings.LastIndex(this.From.Address, "@")
             mid = "<" +
-                std.encoding.hex.Encode(std.crypto.rand.Bytes(12)?) +
+                encoding.hex.Encode(crypto.rand.Bytes(12)?) +
                 "@" +
                 this.From.Address[at + 1..] +
                 ">"
@@ -424,7 +424,7 @@ struct Message {
                 if needsEncoding(v) {
                     v = encodeWords(v)
                 }
-                b.Write(FoldHeader(std.net.textproto.CanonicalKey(k), v))
+                b.Write(FoldHeader(net.textproto.CanonicalKey(k), v))
             }
         }
         b.Write("MIME-Version: 1.0\r\n")
@@ -441,7 +441,7 @@ struct Message {
         var body = this.alternative(&seq, inline)?
         if len(files) > 0 {
             var bd = this.boundary(&seq)?
-            var mb = std.strings.Builder{}
+            var mb = strings.Builder{}
             mb.Write("Content-Type: multipart/mixed; boundary=\"" + bd + "\"\r\n\r\n")
             mb.Write("--" + bd + "\r\n")
             mb.Write(body)
@@ -459,9 +459,9 @@ struct Message {
     func boundary(seq *int) string! {
         *seq = *seq + 1
         if this.Boundary != "" {
-            return this.Boundary + "_" + std.fmt.Format("{0}", *seq)
+            return this.Boundary + "_" + fmt.Format("{0}", *seq)
         }
-        return "=_zell_" + std.encoding.hex.Encode(std.crypto.rand.Bytes(12)?)
+        return "=_zell_" + encoding.hex.Encode(crypto.rand.Bytes(12)?)
     }
 
     // The text/HTML part (with inline parts): headers + body.
@@ -473,7 +473,7 @@ struct Message {
         var html = textPart("text/html", this.HTML)
         if len(inline) > 0 {
             var rb = this.boundary(seq)?
-            var r = std.strings.Builder{}
+            var r = strings.Builder{}
             r.Write("Content-Type: multipart/related; boundary=\"" + rb + "\"\r\n\r\n")
             r.Write("--" + rb + "\r\n" + html)
             for a in inline {
@@ -486,7 +486,7 @@ struct Message {
             return html
         }
         var ab = this.boundary(seq)?
-        var m = std.strings.Builder{}
+        var m = strings.Builder{}
         m.Write("Content-Type: multipart/alternative; boundary=\"" + ab + "\"\r\n\r\n")
         m.Write("--" + ab + "\r\n" + text)
         m.Write("\r\n--" + ab + "\r\n" + html)
@@ -500,7 +500,7 @@ func joinAddrs(list []Address) string {
     for a in list {
         parts = append(parts, a.String())
     }
-    return std.strings.Join(parts, ", ")
+    return strings.Join(parts, ", ")
 }
 
 func sortStrings(a []string) {
@@ -542,19 +542,19 @@ func textPart(ctype string, body string) string {
     return "Content-Type: " +
         ctype +
         "; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" +
-        std.mime.quotedprintable.Encode(body)
+        mime.quotedprintable.Encode(body)
 }
 
 func crlf(s string) string {
-    return std.strings.Replace(std.strings.Replace(s, "\r\n", "\n"), "\n", "\r\n")
+    return strings.Replace(strings.Replace(s, "\r\n", "\n"), "\n", "\r\n")
 }
 
 func attachmentPart(a Attachment) string {
     var ct = a.ContentType
     if ct == "" {
-        var dot = std.strings.LastIndex(a.Filename, ".")
+        var dot = strings.LastIndex(a.Filename, ".")
         if dot >= 0 {
-            ct = std.mime.TypeByExtension(a.Filename[dot..])
+            ct = mime.TypeByExtension(a.Filename[dot..])
         }
         if ct == "" {
             ct = "application/octet-stream"
@@ -562,10 +562,10 @@ func attachmentPart(a Attachment) string {
     }
     var name = a.Filename
     var nameParam = "\"" + name + "\""
-    if needsEncoding(name) || std.strings.Contains(name, "\"") {
+    if needsEncoding(name) || strings.Contains(name, "\"") {
         nameParam = "\"" + encodeWords(name) + "\""
     }
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("Content-Type: " + ct + "; name=" + nameParam + "\r\n")
     var disp = "attachment"
     if a.Inline {
@@ -576,7 +576,7 @@ func attachmentPart(a Attachment) string {
         b.Write("Content-ID: <" + a.ContentID + ">\r\n")
     }
     b.Write("Content-Transfer-Encoding: base64\r\n\r\n")
-    var enc = std.encoding.base64.Encode(a.Data)
+    var enc = encoding.base64.Encode(a.Data)
     var i = 0
     for i < len(enc) {
         var end = i + 76
@@ -621,7 +621,7 @@ struct Config {
     // offered), "starttls" (required), "implicit", "none".
     TLS string = "auto"
     // TLS settings (ServerName defaults to the host).
-    TLSConfig std.net.tls.Config
+    TLSConfig net.tls.Config
     // EHLO name (default "localhost").
     HelloName string = "localhost"
     // Per-operation timeout in ms (0: none).
@@ -637,7 +637,7 @@ struct SMTPError {
 
     // Message returns "smtp: CODE text".
     func Message() string {
-        return "smtp: " + std.fmt.Format("{0}", this.Code) + " " + this.Msg
+        return "smtp: " + fmt.Format("{0}", this.Code) + " " + this.Msg
     }
 
     // 4xx: try again later.
@@ -660,7 +660,7 @@ struct Reply {
 
     // Text returns the lines of the reply joined with newlines.
     func Text() string {
-        return std.strings.Join(this.Lines, "\n")
+        return strings.Join(this.Lines, "\n")
     }
 }
 
@@ -668,7 +668,7 @@ struct Reply {
 // Hello (done by Dial), StartTLS, Authenticate, Mail, Rcpt, Data, Quit.
 struct Client {
     s    stream
-    raw  std.net.Conn
+    raw  net.Conn
     buf  string
     host string
     cfg  Config
@@ -677,11 +677,11 @@ struct Client {
 
     async func line() string! {
         for {
-            var i = std.strings.Index(this.buf, "\n")
+            var i = strings.Index(this.buf, "\n")
             if i >= 0 {
                 var l = this.buf[..i]
                 this.buf = this.buf[i + 1..]
-                if std.strings.HasSuffix(l, "\r") {
+                if strings.HasSuffix(l, "\r") {
                     l = l[..len(l) - 1]
                 }
                 return l
@@ -690,7 +690,7 @@ struct Client {
             if len(chunk) == 0 {
                 return error("smtp: connection closed by the server")
             }
-            this.buf = this.buf + std.strings.FromBytes(chunk)
+            this.buf = this.buf + strings.FromBytes(chunk)
         }
     }
 
@@ -702,7 +702,7 @@ struct Client {
             if len(l) < 3 {
                 return error("smtp: malformed reply \"" + l + "\"")
             }
-            var code = std.strconv.Atoi(l[0..3])?("smtp: malformed reply")
+            var code = strconv.Atoi(l[0..3])?("smtp: malformed reply")
             r.Code = code
             var rest = ""
             if len(l) > 4 {
@@ -718,7 +718,7 @@ struct Client {
     // Sends a command and reads the reply; codes outside expect fail.
     async func Cmd(line string, expect int) Reply! {
         if line != "" {
-            _ = await this.s.Write(std.strings.Bytes(line + "\r\n"))?
+            _ = await this.s.Write(strings.Bytes(line + "\r\n"))?
         }
         var r = await this.reply()?
         if expect > 0 && r.Code / 100 != expect / 100 {
@@ -738,11 +738,11 @@ struct Client {
             if i == 0 {
                 continue
             }
-            var sp = std.strings.Index(l, " ")
+            var sp = strings.Index(l, " ")
             if sp < 0 {
-                this.ext[std.strings.ToUpper(l)] = ""
+                this.ext[strings.ToUpper(l)] = ""
             } else {
-                this.ext[std.strings.ToUpper(l[..sp])] = l[sp + 1..]
+                this.ext[strings.ToUpper(l[..sp])] = l[sp + 1..]
             }
         }
     }
@@ -750,7 +750,7 @@ struct Client {
     // Whether the server advertised an extension ("STARTTLS", "AUTH",
     // "SIZE", "8BITMIME", ...), and its parameters.
     func Extension(name string) (bool, string) {
-        var k = std.strings.ToUpper(name)
+        var k = strings.ToUpper(name)
         for key, v in this.ext {
             if key == k {
                 return (true, v)
@@ -772,7 +772,7 @@ struct Client {
             tc.ServerName = this.host
         }
         this.buf = ""
-        var t = await std.net.tls.Client(this.raw, tc)?
+        var t = await net.tls.Client(this.raw, tc)?
         await t.Handshake()?
         t.SetTimeout(this.cfg.Timeout)
         this.s = t
@@ -786,8 +786,8 @@ struct Client {
         if !ok {
             return error("smtp: the server does not support AUTH")
         }
-        var list = std.strings.Split(std.strings.ToUpper(mechs), " ")
-        var mech = std.strings.ToUpper(a.Mechanism)
+        var list = strings.Split(strings.ToUpper(mechs), " ")
+        var mech = strings.ToUpper(a.Mechanism)
         if mech == "" {
             for m in ["CRAM-MD5", "PLAIN", "LOGIN"] {
                 if mech == "" && contains(list, m) {
@@ -802,21 +802,21 @@ struct Client {
             return error("smtp: refusing AUTH " + mech + " over an unencrypted connection")
         }
         if mech == "PLAIN" {
-            var resp = std.encoding.base64.EncodeString("\u{0}" + a.Username + "\u{0}" + a.Password)
+            var resp = encoding.base64.EncodeString("\u{0}" + a.Username + "\u{0}" + a.Password)
             _ = await this.Cmd("AUTH PLAIN " + resp, 235)?
         } else if mech == "LOGIN" {
             _ = await this.Cmd("AUTH LOGIN", 334)?
-            _ = await this.Cmd(std.encoding.base64.EncodeString(a.Username), 334)?
-            _ = await this.Cmd(std.encoding.base64.EncodeString(a.Password), 235)?
+            _ = await this.Cmd(encoding.base64.EncodeString(a.Username), 334)?
+            _ = await this.Cmd(encoding.base64.EncodeString(a.Password), 235)?
         } else if mech == "CRAM-MD5" {
             var r = await this.Cmd("AUTH CRAM-MD5", 334)?
-            var challenge = std.encoding.base64.DecodeString(
-                std.strings.Trim(r.Lines[0]),
+            var challenge = encoding.base64.DecodeString(
+                strings.Trim(r.Lines[0]),
             )?("smtp: CRAM-MD5 challenge")
-            var digest = std.encoding.hex.Encode(
-                HmacMD5(std.strings.Bytes(a.Password), std.strings.Bytes(challenge)),
+            var digest = encoding.hex.Encode(
+                HmacMD5(strings.Bytes(a.Password), strings.Bytes(challenge)),
             )
-            _ = await this.Cmd(std.encoding.base64.EncodeString(a.Username + " " + digest), 235)?
+            _ = await this.Cmd(encoding.base64.EncodeString(a.Username + " " + digest), 235)?
         } else {
             return error("smtp: unsupported AUTH mechanism " + mech)
         }
@@ -835,7 +835,7 @@ struct Client {
     // Sends the message text (dot-stuffed).
     async func Data(text string) void! {
         _ = await this.Cmd("DATA", 354)?
-        _ = await this.s.Write(std.strings.Bytes(std.net.textproto.DotEncode(text)))?
+        _ = await this.s.Write(strings.Bytes(net.textproto.DotEncode(text)))?
         _ = await this.Cmd("", 250)?
     }
 
@@ -869,7 +869,7 @@ func contains(list []string, s string) bool {
 func HmacMD5(key []byte, msg []byte) []byte {
     var k = key
     if len(k) > 64 {
-        k = std.crypto.hash.Md5(std.strings.FromBytes(k))
+        k = crypto.hash.Md5(strings.FromBytes(k))
     }
     var ipad []byte = []
     var opad []byte = []
@@ -881,15 +881,15 @@ func HmacMD5(key []byte, msg []byte) []byte {
         ipad = append(ipad, byte(b ^ 54))
         opad = append(opad, byte(b ^ 92))
     }
-    var inner = std.crypto.hash.Md5(std.strings.FromBytes(ipad) + std.strings.FromBytes(msg))
-    return std.crypto.hash.Md5(std.strings.FromBytes(opad) + std.strings.FromBytes(inner))
+    var inner = crypto.hash.Md5(strings.FromBytes(ipad) + strings.FromBytes(msg))
+    return crypto.hash.Md5(strings.FromBytes(opad) + strings.FromBytes(inner))
 }
 
 // Connects to addr ("host:port"), reads the greeting and says EHLO;
 // TLS per cfg.TLS.
 async func Dial(addr string, cfg Config) *Client! {
-    var hp = std.net.SplitHostPort(addr)?
-    var raw = await std.net.DialTimeout(addr, cfg.Timeout)?
+    var hp = net.SplitHostPort(addr)?
+    var raw = await net.DialTimeout(addr, cfg.Timeout)?
     raw.SetTimeout(cfg.Timeout)
     var c = new Client{s: raw, raw: raw, host: hp.Host, cfg: cfg}
     var mode = cfg.TLS
@@ -901,7 +901,7 @@ async func Dial(addr string, cfg Config) *Client! {
         if tc.ServerName == "" {
             tc.ServerName = hp.Host
         }
-        var t = try await std.net.tls.Client(raw, tc) catch err {
+        var t = try await net.tls.Client(raw, tc) catch err {
             raw.Close()
             return err
         }

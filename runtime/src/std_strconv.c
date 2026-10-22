@@ -1,4 +1,4 @@
-/* std_strconv.c - the C half of std.strconv (the rest is Zell,
+/* std_strconv.c - the C half of strconv (the rest is Zell,
  * compiler/src/sema/stdlib_src/strconv.zl): float formatting and parsing,
  * which need correctly rounded conversions (snprintf/strtod), and the
  * sentinel errors ErrSyntax / ErrRange. */

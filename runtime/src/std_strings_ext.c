@@ -1,4 +1,4 @@
-/* std_strings_ext.c - more std.strings functions (zell_strings_*), Go
+/* std_strings_ext.c - more strings functions (zell_strings_*), Go
  * semantics unless ABI.md section 14 says otherwise. Offsets and counts are
  * in bytes except where "runes" is stated; invalid UTF-8 bytes count as one
  * rune each (decoded as U+FFFD). */

@@ -84,7 +84,7 @@ struct InNs<'a> {
 
 impl InNs<'_> {
     fn pick(&self, ns: NamespaceId, name: &str, full: &str) -> String {
-        if self.ns == Some(ns) && !full.starts_with("std.") { name.to_string() } else { full.to_string() }
+        if self.ns == Some(ns) && !crate::sema::stdlib::is_std_namespace(&full) { name.to_string() } else { full.to_string() }
     }
 }
 

@@ -3,7 +3,7 @@
 // session reuse, HTTP/2 multiplexing via ALPN), proxies (HTTP_PROXY /
 // HTTPS_PROXY / NO_PROXY, CONNECT for https), transparent gzip, cookies
 // (CookieJar) and streamed response bodies (BodyReader).
-namespace std.net.http
+namespace net.http
 
 // ---- the request builder -----------------------------------------------------
 
@@ -33,7 +33,7 @@ struct ClientRequest {
         return this
     }
 
-    // The body: a string, a []byte or a std.io.Reader (read to its end
+    // The body: a string, a []byte or a io.Reader (read to its end
     // when the request is sent).
     func Body(x any) *ClientRequest {
         this.hasBody = true
@@ -41,9 +41,9 @@ struct ClientRequest {
             case string s:
                 this.body = s
             case []byte b:
-                this.body = std.strings.FromBytes(b)
-            case std.io.Reader r:
-                this.body = try std.io.ReadAllString(r) else ""
+                this.body = strings.FromBytes(b)
+            case io.Reader r:
+                this.body = try io.ReadAllString(r) else ""
             default:
                 this.body = ""
         }
@@ -52,7 +52,7 @@ struct ClientRequest {
 
     // A JSON body (Content-Type application/json).
     func JSON<T>(v T) *ClientRequest {
-        this.body = std.encoding.json.Format<T>(v)
+        this.body = encoding.json.Format<T>(v)
         this.hasBody = true
         return this.Header("Content-Type", "application/json")
     }
@@ -63,12 +63,12 @@ struct ClientRequest {
         for k in values {
             keys = append(keys, k)
         }
-        std.slices.Sort(keys)
+        slices.Sort(keys)
         var parts []string = []
         for k in keys {
             parts = append(parts, QueryEscape(k) + "=" + QueryEscape(values[k]))
         }
-        this.body = std.strings.Join(parts, "&")
+        this.body = strings.Join(parts, "&")
         this.hasBody = true
         return this.Header("Content-Type", "application/x-www-form-urlencoded")
     }
@@ -95,7 +95,7 @@ struct ClientRequest {
     func BasicAuth(user string, password string) *ClientRequest {
         return this.Header(
             "Authorization",
-            "Basic " + std.encoding.base64.EncodeString(user + ":" + password),
+            "Basic " + encoding.base64.EncodeString(user + ":" + password),
         )
     }
 
@@ -118,16 +118,16 @@ struct ClientRequest {
             return this.URL
         }
         var sep = "?"
-        if std.strings.Contains(this.URL, "?") {
+        if strings.Contains(this.URL, "?") {
             sep = "&"
         }
-        return this.URL + sep + std.strings.Join(this.query, "&")
+        return this.URL + sep + strings.Join(this.query, "&")
     }
 }
 
 // A request to build with the ClientRequest setters.
 func NewRequest(method string, url string) *ClientRequest {
-    return new ClientRequest{Method: std.strings.ToUpper(method), URL: url}
+    return new ClientRequest{Method: strings.ToUpper(method), URL: url}
 }
 
 // ---- client -------------------------------------------------------------------
@@ -146,7 +146,7 @@ struct Client {
     Headers map[string]string
     // TLS settings for https URLs (nil: system roots, SNI and host name
     // from the URL); overrides Transport.TLS.
-    TLS       *std.net.tls.Config
+    TLS       *net.tls.Config
     Transport *Transport
     Jar       *CookieJar
 
@@ -192,7 +192,7 @@ struct Client {
         }
         var cl = *this
         if total > 0 {
-            return std.task.WithTimeout(total, func() Task<Response!> {
+            return task.WithTimeout(total, func() Task<Response!> {
                 return send(cl, req, stream)
             })
         }
@@ -218,7 +218,7 @@ async func GetJSON<T>(url string) T! {
     if res.Status < 200 || res.Status > 299 {
         return error("GET " + url + ": " + itoa(res.Status) + " " + StatusText(res.Status))
     }
-    return std.encoding.json.Parse<T>(res.Body)?
+    return encoding.json.Parse<T>(res.Body)?
 }
 
 func isRedirect(st int) bool {
@@ -281,12 +281,12 @@ async func send(cl Client, req *ClientRequest, stream bool) Response! {
             hasBody,
             stream || (limit >= 0),
         ) catch err {
-            return std.errors.Wrap(err, method + " " + u.String())
+            return errors.Wrap(err, method + " " + u.String())
         }
         if cl.Jar != nil && res.Headers["Set-Cookie"] != "" {
             var got []Cookie = []
-            var now = std.time.Now() / 1000
-            for line in std.strings.Split(res.Headers["Set-Cookie"], "\n") {
+            var now = time.Now() / 1000
+            for line in strings.Split(res.Headers["Set-Cookie"], "\n") {
                 var c = try ParseSetCookie(line, now) else Cookie{}
                 if c.Name != "" {
                     got = append(got, c)
@@ -301,7 +301,7 @@ async func send(cl Client, req *ClientRequest, stream bool) Response! {
                 try {
                     res.Body = await res.Reader.ReadAll()?
                 } catch err {
-                    return std.errors.Wrap(err, method + " " + u.String())
+                    return errors.Wrap(err, method + " " + u.String())
                 }
                 res.Reader = nil
             }
@@ -357,7 +357,7 @@ struct Transport {
     ResponseHeaderTimeout int
     // TLS settings for https (Client.TLS wins); sessions are resumed from
     // the transport's session cache.
-    TLS *std.net.tls.Config
+    TLS *net.tls.Config
     // Proxy URL ("http://host:port", user:password@ allowed) for every
     // request; "" with ProxyFromEnvironment reads HTTP_PROXY, HTTPS_PROXY
     // and NO_PROXY (and their lower-case forms).
@@ -375,22 +375,22 @@ struct Transport {
     func state() *pool {
         // Created on first use; concurrent first requests must share one
         // pool (a second one would be dropped, closing its connections).
-        std.diag.rtLock()
+        diag.rtLock()
         if this.p == nil {
             this.p = new pool{
                 hosts: map[string]*hostPool{},
-                sessions: std.net.tls.NewSessionCache(),
+                sessions: net.tls.NewSessionCache(),
             }
         }
         var p = this.p
-        std.diag.rtUnlock()
+        diag.rtUnlock()
         return p
     }
 
     // Closes the idle connections.
     func CloseIdleConnections() {
         var p = this.state()
-        std.task.rtLock(&p.guard)
+        task.rtLock(&p.guard)
         var all []*pconn = []
         var idleH2 []*h2conn = []
         for _, hp in p.hosts {
@@ -406,7 +406,7 @@ struct Transport {
                 hp.active -= 1
             }
         }
-        std.task.rtUnlock(&p.guard)
+        task.rtUnlock(&p.guard)
         for pc in all {
             pc.c.close()
         }
@@ -418,7 +418,7 @@ struct Transport {
     // Idle connections in the pool (all hosts) and connections open.
     func Stats() PoolStats {
         var p = this.state()
-        std.task.rtLock(&p.guard)
+        task.rtLock(&p.guard)
         var s = PoolStats{}
         for _, hp in p.hosts {
             s.Idle += len(hp.idle)
@@ -429,7 +429,7 @@ struct Transport {
         }
         s.Dials = p.dials
         s.Reused = p.reused
-        std.task.rtUnlock(&p.guard)
+        task.rtUnlock(&p.guard)
         return s
     }
 
@@ -462,27 +462,27 @@ struct defaultTransportHolder {
 
 // The process-wide transport of clients without one (and of http.Get).
 func DefaultTransport() *Transport {
-    std.diag.rtLock()
-    var m = std.diag.rtSlots()
+    diag.rtLock()
+    var m = diag.rtSlots()
     if m == nil {
         m = map[string]any{}
-        std.diag.rtSetSlots(m)
+        diag.rtSetSlots(m)
     }
     switch m["http.transport"] {
         case defaultTransportHolder h:
-            std.diag.rtUnlock()
+            diag.rtUnlock()
             return h.t
     }
     var t = new Transport{ProxyFromEnvironment: true}
     m["http.transport"] = defaultTransportHolder{t: t}
-    std.diag.rtUnlock()
+    diag.rtUnlock()
     return t
 }
 
 struct pool {
     guard    int
     hosts    map[string]*hostPool
-    sessions *std.net.tls.SessionCache
+    sessions *net.tls.SessionCache
     dials    int
     reused   int
 
@@ -555,7 +555,7 @@ func wakeAll(hp *hostPool) {
     var ws = hp.waiters
     hp.waiters = []
     for w in ws {
-        std.task.rtFire(w)
+        task.rtFire(w)
     }
 }
 
@@ -565,7 +565,7 @@ func wakeOne(hp *hostPool) {
         var none Task<void>
         hp.waiters[0] = none
         hp.waiters = hp.waiters[1..]
-        std.task.rtFire(s)
+        task.rtFire(s)
     }
 }
 
@@ -585,20 +585,20 @@ async func getConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
         var mayDial = false
         var wait Task<void>
         var waiting = false
-        std.task.rtLock(&p.guard)
+        task.rtLock(&p.guard)
         var hp = hostOf(p, key)
         if hp.h2 != nil {
             if h2Usable(hp.h2) {
                 var pc = new pconn{c: hp.h2.c, key: key, h2: hp.h2, reused: true}
                 p.reused += 1
-                std.task.rtUnlock(&p.guard)
+                task.rtUnlock(&p.guard)
                 return pc
             }
             // closed or draining (GOAWAY): it finishes on its own
             hp.h2 = nil
             hp.active -= 1
         }
-        var now = std.time.Now()
+        var now = time.Now()
         for found == nil && len(hp.idle) > 0 {
             var pc = hp.idle[len(hp.idle) - 1]
             hp.idle = hp.idle[..len(hp.idle) - 1]
@@ -614,7 +614,7 @@ async func getConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
             p.reused += 1
         } else if hp.dialing && h2Likely {
             // one HTTP/2 connection serves everyone: wait for it
-            wait = std.task.rtWaker()
+            wait = task.rtWaker()
             hp.waiters = append(hp.waiters, wait)
             waiting = true
         } else if t.MaxConnsPerHost <= 0 || hp.active < t.MaxConnsPerHost {
@@ -625,11 +625,11 @@ async func getConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
                 hp.dialing = true
             }
         } else {
-            wait = std.task.rtWaker()
+            wait = task.rtWaker()
             hp.waiters = append(hp.waiters, wait)
             waiting = true
         }
-        std.task.rtUnlock(&p.guard)
+        task.rtUnlock(&p.guard)
         for pc in stale {
             pc.c.close()
         }
@@ -639,26 +639,26 @@ async func getConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
         }
         if mayDial {
             var pc = try await dialConn(t, cl, u, proxy) catch err {
-                std.task.rtLock(&p.guard)
+                task.rtLock(&p.guard)
                 hp.active -= 1
                 hp.dialing = false
                 wakeAll(hp)
-                std.task.rtUnlock(&p.guard)
+                task.rtUnlock(&p.guard)
                 return err
             }
             pc.key = key
             if pc.h2 == nil {
-                std.task.rtLock(&p.guard)
+                task.rtLock(&p.guard)
                 if hp.dialing {
                     hp.dialing = false
                     hp.knownH2 = false
                     wakeAll(hp)
                 }
-                std.task.rtUnlock(&p.guard)
+                task.rtUnlock(&p.guard)
             }
             if pc.h2 != nil {
                 var extra = false
-                std.task.rtLock(&p.guard)
+                task.rtLock(&p.guard)
                 hp.dialing = false
                 hp.knownH2 = true
                 wakeAll(hp)
@@ -673,7 +673,7 @@ async func getConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
                     hp.active -= 1
                 }
                 var shared = hp.h2
-                std.task.rtUnlock(&p.guard)
+                task.rtUnlock(&p.guard)
                 if extra {
                     pc.c.close()
                     return new pconn{c: shared.c, key: key, h2: shared, reused: true}
@@ -698,17 +698,17 @@ func putConn(t *Transport, pc *pconn, keep bool) {
         max = 8
     }
     var drop = !keep || t.DisableKeepAlives || pc.c.isClosed()
-    std.task.rtLock(&p.guard)
+    task.rtLock(&p.guard)
     var hp = hostOf(p, pc.key)
     if !drop && len(hp.idle) < max {
-        pc.idleSince = std.time.Now()
+        pc.idleSince = time.Now()
         hp.idle = append(hp.idle, pc)
     } else {
         drop = true
         hp.active -= 1
     }
     wakeOne(hp)
-    std.task.rtUnlock(&p.guard)
+    task.rtUnlock(&p.guard)
     if drop {
         pc.c.close()
     }
@@ -721,11 +721,11 @@ func discardConn(t *Transport, pc *pconn) {
         return
     }
     var p = t.state()
-    std.task.rtLock(&p.guard)
+    task.rtLock(&p.guard)
     var hp = hostOf(p, pc.key)
     hp.active -= 1
     wakeOne(hp)
-    std.task.rtUnlock(&p.guard)
+    task.rtUnlock(&p.guard)
 }
 
 // The proxy for u ("" if none).
@@ -748,16 +748,16 @@ func proxyFor(t *Transport, u URL) string {
     if noProxy(envOr("NO_PROXY", "no_proxy"), u) {
         return ""
     }
-    if !std.strings.Contains(p, "://") {
+    if !strings.Contains(p, "://") {
         p = "http://" + p
     }
     return p
 }
 
 func envOr(a string, b string) string {
-    var v = std.os.Getenv(a)
+    var v = os.Getenv(a)
     if v == "" {
-        v = std.os.Getenv(b)
+        v = os.Getenv(b)
     }
     return v
 }
@@ -768,24 +768,24 @@ func noProxy(list string, u URL) bool {
     if list == "" {
         return false
     }
-    var host = std.strings.ToLower(u.Hostname)
-    for raw in std.strings.Split(list, ",") {
-        var e = std.strings.ToLower(std.strings.Trim(raw))
+    var host = strings.ToLower(u.Hostname)
+    for raw in strings.Split(list, ",") {
+        var e = strings.ToLower(strings.Trim(raw))
         if e == "" {
             continue
         }
         if e == "*" {
             return true
         }
-        var c = std.strings.LastIndex(e, ":")
-        if c > 0 && !std.strings.Contains(e[..c], ":") {
+        var c = strings.LastIndex(e, ":")
+        if c > 0 && !strings.Contains(e[..c], ":") {
             if e[c + 1..] != itoa(u.Port) {
                 continue
             }
             e = e[..c]
         }
-        e = std.strings.TrimPrefix(e, ".")
-        if host == e || std.strings.HasSuffix(host, "." + e) {
+        e = strings.TrimPrefix(e, ".")
+        if host == e || strings.HasSuffix(host, "." + e) {
             return true
         }
     }
@@ -807,18 +807,18 @@ async func dialConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
         tlsMs = 10000
     }
     var secure = u.Scheme == "https" || u.Scheme == "wss"
-    var raw std.net.Conn
+    var raw net.Conn
     var viaProxy = false
     if proxy != "" {
         var pu = ParseURL(proxy)?
-        raw = await std.net.DialTimeout(pu.Addr(), dialMs)?
+        raw = await net.DialTimeout(pu.Addr(), dialMs)?
         if secure {
             await connectTunnel(raw, pu, u, dialMs)?
         } else {
             viaProxy = true
         }
     } else {
-        raw = await std.net.DialTimeout(u.Addr(), dialMs)?
+        raw = await net.DialTimeout(u.Addr(), dialMs)?
     }
     if !secure {
         var c = plainConn(raw)
@@ -828,7 +828,7 @@ async func dialConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
         }
         return pc
     }
-    var cfg = std.net.tls.Config{}
+    var cfg = net.tls.Config{}
     if cl.TLS != nil {
         cfg = *cl.TLS
     } else if t.TLS != nil {
@@ -847,12 +847,12 @@ async func dialConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
     if cfg.Sessions == nil {
         cfg.Sessions = t.state().sessions
     }
-    var tc = try await std.net.tls.Client(raw, cfg) catch err {
+    var tc = try await net.tls.Client(raw, cfg) catch err {
         raw.Close()
         return err
     }
     var hs = tc.Handshake()
-    if !await std.task.Timeout(hs, tlsMs) {
+    if !await task.Timeout(hs, tlsMs) {
         tc.Close()
         return error("TLS handshake timeout")
     }
@@ -869,12 +869,12 @@ async func dialConn(t *Transport, cl Client, u URL, proxy string) *pconn! {
 }
 
 // CONNECT host:port through an HTTP proxy (for https).
-async func connectTunnel(raw std.net.Conn, pu URL, u URL, ms int) void! {
+async func connectTunnel(raw net.Conn, pu URL, u URL, ms int) void! {
     var addr = u.Addr()
     var req = "CONNECT " + addr + " HTTP/1.1\r\nHost: " + addr + "\r\n"
     if pu.User != "" {
         req += "Proxy-Authorization: Basic " +
-            std.encoding.base64.EncodeString(unescape(pu.User)) +
+            encoding.base64.EncodeString(unescape(pu.User)) +
             "\r\n"
     }
     req += "\r\n"
@@ -887,7 +887,7 @@ async func connectTunnel(raw std.net.Conn, pu URL, u URL, ms int) void! {
     var b = newRbuf(4096)
     var res = try await readHead(c, b) catch err {
         raw.Close()
-        return std.errors.Wrap(err, "proxy CONNECT")
+        return errors.Wrap(err, "proxy CONNECT")
     }
     if res.Status != 200 {
         raw.Close()
@@ -938,8 +938,8 @@ func formatRequest(
     if gz {
         line += "\r\nAccept-Encoding: gzip"
     }
-    // std.diag: W3C trace context of the current span.
-    var traceparent = std.diag.Traceparent()
+    // diag: W3C trace context of the current span.
+    var traceparent = diag.Traceparent()
     if traceparent != "" && h["Traceparent"] == "" {
         line += "\r\nTraceparent: " + traceparent
     }
@@ -947,7 +947,7 @@ func formatRequest(
         var pu = try ParseURL(proxy) else URL{}
         if pu.User != "" {
             line += "\r\nProxy-Authorization: Basic " +
-                std.encoding.base64.EncodeString(unescape(pu.User))
+                encoding.base64.EncodeString(unescape(pu.User))
         }
     }
     var flags = 128
@@ -1046,7 +1046,7 @@ async func transportRoundTrip(
             br.keep = false
         }
         if gz && res.Headers["Content-Encoding"] == "gzip" {
-            br.gz = std.compress.gzip.NewReader()
+            br.gz = compress.gzip.NewReader()
             delete(res.Headers, "Content-Encoding")
             delete(res.Headers, "Content-Length")
         }
@@ -1071,14 +1071,14 @@ async func transportRoundTrip(
 
 // Errors that mean "the server closed this idle connection" (retry).
 func staleError(err error) bool {
-    if std.errors.Is(err, std.net.ErrReset) ||
-        std.errors.Is(err, std.net.ErrEOF) ||
-        std.errors.Is(err, std.net.ErrClosed) {
+    if errors.Is(err, net.ErrReset) ||
+        errors.Is(err, net.ErrEOF) ||
+        errors.Is(err, net.ErrClosed) {
         return true
     }
     var m = err.Message()
-    return std.strings.Contains(m, "closed the connection without a response") ||
-        std.strings.Contains(m, "unexpected end of stream")
+    return strings.Contains(m, "closed the connection without a response") ||
+        strings.Contains(m, "unexpected end of stream")
 }
 
 // Reads the next response head (1xx responses other than 101 skipped).
@@ -1121,7 +1121,7 @@ struct BodyReader {
     mode    int
     left    int
     keep    bool
-    gz      *std.compress.gzip.Reader
+    gz      *compress.gzip.Reader
     pending []byte
     closed  bool
     // HTTP/2: the stream's data channel
@@ -1218,7 +1218,7 @@ async func bodyRaw(br *BodyReader, n int) []byte! {
             }
         }
         var k = minInt(minInt(n, br.left), b.buffered())
-        var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+        var out = bytes.Clone(b.buf[b.r..b.r + k])
         b.skip(k)
         br.left -= k
         if br.left == 0 {
@@ -1229,7 +1229,7 @@ async func bodyRaw(br *BodyReader, n int) []byte! {
     if br.mode == 1 {
         if br.left == 0 {
             var line = await readLine(c, b, 4096)?
-            var semi = std.strings.Index(line, ";")
+            var semi = strings.Index(line, ";")
             if semi >= 0 {
                 line = line[..semi]
             }
@@ -1252,7 +1252,7 @@ async func bodyRaw(br *BodyReader, n int) []byte! {
             }
         }
         var k = minInt(minInt(n, br.left), b.buffered())
-        var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+        var out = bytes.Clone(b.buf[b.r..b.r + k])
         b.skip(k)
         br.left -= k
         if br.left == 0 {
@@ -1270,7 +1270,7 @@ async func bodyRaw(br *BodyReader, n int) []byte! {
         }
     }
     var k = minInt(n, b.buffered())
-    var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+    var out = bytes.Clone(b.buf[b.r..b.r + k])
     b.skip(k)
     return out
 }
@@ -1289,7 +1289,7 @@ async func bodyRead(br *BodyReader, n int) []byte! {
     for {
         if len(br.pending) > 0 {
             var k = minInt(n, len(br.pending))
-            var out = std.bytes.Clone(br.pending[..k])
+            var out = bytes.Clone(br.pending[..k])
             br.pending = br.pending[k..]
             return out
         }
@@ -1327,7 +1327,7 @@ async func bodyReadAll(br *BodyReader) string! {
         if len(chunk) == 0 {
             return out
         }
-        out += std.strings.FromBytes(chunk)
+        out += strings.FromBytes(chunk)
     }
 }
 
@@ -1335,14 +1335,14 @@ async func bodyReadAll(br *BodyReader) string! {
 
 // Opens a raw connection to u (http/ws: TCP, https/wss: TLS with ALPN
 // http/1.1) for protocols that start with an HTTP/1.1 upgrade.
-async func DialRaw(u URL, cfg *std.net.tls.Config, timeoutMs int) RawConn! {
+async func DialRaw(u URL, cfg *net.tls.Config, timeoutMs int) RawConn! {
     var ms = timeoutMs
     if ms <= 0 {
         ms = 30000
     }
-    var raw = await std.net.DialTimeout(u.Addr(), ms)?
+    var raw = await net.DialTimeout(u.Addr(), ms)?
     if u.Scheme == "https" || u.Scheme == "wss" {
-        var conf = std.net.tls.Config{}
+        var conf = net.tls.Config{}
         if cfg != nil {
             conf = *cfg
         }
@@ -1350,7 +1350,7 @@ async func DialRaw(u URL, cfg *std.net.tls.Config, timeoutMs int) RawConn! {
             conf.ServerName = u.Hostname
         }
         conf.ALPN = ["http/1.1"]
-        var tc = try await std.net.tls.Client(raw, conf) catch err {
+        var tc = try await net.tls.Client(raw, conf) catch err {
             raw.Close()
             return err
         }
@@ -1370,16 +1370,16 @@ struct CookieJar {
 
     // Stores the cookies of a response from u.
     func SetCookies(u URL, cookies []Cookie) {
-        var now = std.time.Now() / 1000
-        std.task.rtLock(&this.guard)
+        var now = time.Now() / 1000
+        task.rtLock(&this.guard)
         for c in cookies {
             var e = jarEntry{c: c, hostOnly: c.Domain == ""}
             if e.hostOnly {
-                e.c.Domain = std.strings.ToLower(u.Hostname)
-            } else if !domainMatch(std.strings.ToLower(u.Hostname), e.c.Domain) {
+                e.c.Domain = strings.ToLower(u.Hostname)
+            } else if !domainMatch(strings.ToLower(u.Hostname), e.c.Domain) {
                 continue
             }
-            if e.c.Path == "" || !std.strings.HasPrefix(e.c.Path, "/") {
+            if e.c.Path == "" || !strings.HasPrefix(e.c.Path, "/") {
                 e.c.Path = defaultPath(u.Path)
             }
             var keep []jarEntry = []
@@ -1394,15 +1394,15 @@ struct CookieJar {
             }
             this.entries = keep
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     // The cookies to send to u (longest paths first).
     func Cookies(u URL) []Cookie {
-        var now = std.time.Now() / 1000
-        var host = std.strings.ToLower(u.Hostname)
+        var now = time.Now() / 1000
+        var host = strings.ToLower(u.Hostname)
         var out []Cookie = []
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var live []jarEntry = []
         for e in this.entries {
             if e.c.Expires > 0 && e.c.Expires <= now {
@@ -1419,7 +1419,7 @@ struct CookieJar {
             out = append(out, e.c)
         }
         this.entries = live
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         // longest path first (insertion order otherwise)
         var i = 1
         for i < len(out) {
@@ -1437,9 +1437,9 @@ struct CookieJar {
 
     // Number of stored cookies.
     func Len() int {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var n = len(this.entries)
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return n
     }
 }
@@ -1458,15 +1458,15 @@ func domainMatch(host string, domain string) bool {
     if host == domain {
         return true
     }
-    return std.strings.HasSuffix(host, "." + domain) && !std.net.rtIsIP(host)
+    return strings.HasSuffix(host, "." + domain) && !net.rtIsIP(host)
 }
 
 func pathMatch(reqPath string, cookiePath string) bool {
     if reqPath == cookiePath {
         return true
     }
-    if std.strings.HasPrefix(reqPath, cookiePath) {
-        return std.strings.HasSuffix(cookiePath, "/") || reqPath[len(cookiePath)] == 47
+    if strings.HasPrefix(reqPath, cookiePath) {
+        return strings.HasSuffix(cookiePath, "/") || reqPath[len(cookiePath)] == 47
     }
     return false
 }
@@ -1475,7 +1475,7 @@ func defaultPath(p string) string {
     if p == "" || p[0] != 47 {
         return "/"
     }
-    var i = std.strings.LastIndex(p, "/")
+    var i = strings.LastIndex(p, "/")
     if i == 0 {
         return "/"
     }

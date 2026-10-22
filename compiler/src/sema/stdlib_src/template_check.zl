@@ -3,18 +3,18 @@
 // compiler/src/sema/tmplcheck.rs): every field path must exist in the
 // static type it is applied to; range needs a list, array, map or int.
 // Unknown types (any, interfaces, function results) end checking of a path.
-namespace std.text.template
+namespace text.template
 
 struct checker {
     t     *tmpl
     names []string
-    types []*std.reflect.TypeInfo
+    types []*reflect.TypeInfo
 
     func fail(line int, msg string) error {
         return this.t.fail(line, msg)
     }
 
-    func list(nodes []int, dot *std.reflect.TypeInfo) void! {
+    func list(nodes []int, dot *reflect.TypeInfo) void! {
         for idx in nodes {
             var n = this.t.nodes[idx]
             if n.kind == 2 {
@@ -58,14 +58,14 @@ struct checker {
         }
     }
 
-    func bind(name string, t *std.reflect.TypeInfo) {
+    func bind(name string, t *reflect.TypeInfo) {
         this.names = append(this.names, name)
         this.types = append(this.types, t)
     }
 
-    func pipe(pi int, dot *std.reflect.TypeInfo, declare bool) *std.reflect.TypeInfo! {
+    func pipe(pi int, dot *reflect.TypeInfo, declare bool) *reflect.TypeInfo! {
         var p = this.t.pipes[pi]
-        var t *std.reflect.TypeInfo = nil
+        var t *reflect.TypeInfo = nil
         for c in p.cmds {
             t = this.command(c, dot, p.line)?
         }
@@ -75,10 +75,10 @@ struct checker {
         return t
     }
 
-    func command(c tcmd, dot *std.reflect.TypeInfo, line int) *std.reflect.TypeInfo! {
+    func command(c tcmd, dot *reflect.TypeInfo, line int) *reflect.TypeInfo! {
         var first = c.args[0]
         if first.kind == 4 {
-            var argTypes []*std.reflect.TypeInfo = []
+            var argTypes []*reflect.TypeInfo = []
             for k in 1..len(c.args) {
                 argTypes = append(argTypes, this.arg(c.args[k], dot, line)?)
             }
@@ -95,8 +95,8 @@ struct checker {
         return this.arg(first, dot, line)?
     }
 
-    func arg(a targ, dot *std.reflect.TypeInfo, line int) *std.reflect.TypeInfo! {
-        var t *std.reflect.TypeInfo = nil
+    func arg(a targ, dot *reflect.TypeInfo, line int) *reflect.TypeInfo! {
+        var t *reflect.TypeInfo = nil
         if a.kind == 1 {
             t = dot
         } else if a.kind == 2 {
@@ -121,23 +121,23 @@ struct checker {
         return t
     }
 
-    func field(t0 *std.reflect.TypeInfo, name string, line int) *std.reflect.TypeInfo! {
+    func field(t0 *reflect.TypeInfo, name string, line int) *reflect.TypeInfo! {
         var t = deref(t0)
-        if t == nil || t.Kind == std.reflect.Kind.Any || t.Kind == std.reflect.Kind.Interface {
+        if t == nil || t.Kind == reflect.Kind.Any || t.Kind == reflect.Kind.Interface {
             return nil
         }
-        if t == std.reflect.TypeOf<Value>() {
+        if t == reflect.TypeOf<Value>() {
             return nil
         }
-        if t.Kind == std.reflect.Kind.Struct {
+        if t.Kind == reflect.Kind.Struct {
             var f = t.Field(name)
             if f == nil {
                 return this.fail(line, "can't evaluate field " + name + " in type " + t.Name)
             }
             return f.Type
         }
-        if t.Kind == std.reflect.Kind.Map {
-            if t.Key != nil && t.Key.Kind == std.reflect.Kind.String {
+        if t.Kind == reflect.Kind.Map {
+            if t.Key != nil && t.Key.Kind == reflect.Kind.String {
                 return t.Elem
             }
             return this.fail(
@@ -152,54 +152,54 @@ struct checker {
         return this.fail(line, "can't evaluate field " + name + " in type " + t.Name)
     }
 
-    func elem(t0 *std.reflect.TypeInfo, line int) *std.reflect.TypeInfo! {
+    func elem(t0 *reflect.TypeInfo, line int) *reflect.TypeInfo! {
         var t = deref(t0)
         if t == nil ||
-            t.Kind == std.reflect.Kind.Any ||
-            t.Kind == std.reflect.Kind.Interface ||
-            t == std.reflect.TypeOf<Value>() {
+            t.Kind == reflect.Kind.Any ||
+            t.Kind == reflect.Kind.Interface ||
+            t == reflect.TypeOf<Value>() {
             return nil
         }
-        if t.Kind == std.reflect.Kind.Slice ||
-            t.Kind == std.reflect.Kind.Array ||
-            t.Kind == std.reflect.Kind.Map {
+        if t.Kind == reflect.Kind.Slice ||
+            t.Kind == reflect.Kind.Array ||
+            t.Kind == reflect.Kind.Map {
             return t.Elem
         }
-        if t.Kind == std.reflect.Kind.Int {
+        if t.Kind == reflect.Kind.Int {
             return t
         }
         return this.fail(line, "range can't iterate over " + t.Name)
     }
 }
 
-func deref(t0 *std.reflect.TypeInfo) *std.reflect.TypeInfo {
+func deref(t0 *reflect.TypeInfo) *reflect.TypeInfo {
     var t = t0
-    for t != nil && t.Kind == std.reflect.Kind.Pointer {
+    for t != nil && t.Kind == reflect.Kind.Pointer {
         t = t.Elem
     }
     return t
 }
 
-func elemOf(t0 *std.reflect.TypeInfo) *std.reflect.TypeInfo {
+func elemOf(t0 *reflect.TypeInfo) *reflect.TypeInfo {
     var t = deref(t0)
     if t != nil &&
-        (t.Kind == std.reflect.Kind.Slice ||
-            t.Kind == std.reflect.Kind.Array ||
-            t.Kind == std.reflect.Kind.Map) {
+        (t.Kind == reflect.Kind.Slice ||
+            t.Kind == reflect.Kind.Array ||
+            t.Kind == reflect.Kind.Map) {
         return t.Elem
     }
     return nil
 }
 
-func keyType(t0 *std.reflect.TypeInfo) *std.reflect.TypeInfo {
+func keyType(t0 *reflect.TypeInfo) *reflect.TypeInfo {
     var t = deref(t0)
-    if t != nil && t.Kind == std.reflect.Kind.Map {
+    if t != nil && t.Kind == reflect.Kind.Map {
         return t.Key
     }
     return nil
 }
 
-func checkTypes(t *tmpl, root *std.reflect.TypeInfo) void! {
+func checkTypes(t *tmpl, root *reflect.TypeInfo) void! {
     var c = checker{t: t}
     c.names = ["$"]
     c.types = [root]

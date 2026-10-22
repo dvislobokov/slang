@@ -29,7 +29,7 @@ impl<'a> Sema<'a> {
         if let Some(&i) = self.ns_index.get(path) {
             return i;
         }
-        let is_std = path == "std" || path.starts_with("std.");
+        let is_std = stdlib::is_std_namespace(path);
         let parent = path.rfind('.').map(|p| self.ensure_ns(&path[..p], span));
         let idx = self.nss.len();
         let hir_id = if is_std {
@@ -92,8 +92,13 @@ impl<'a> Sema<'a> {
         for (fi, file) in files.iter().enumerate() {
             self.cur_file = fi;
             let ns = self.ensure_ns(&file.namespace.to_string(), file.namespace.span);
+            let path = &self.nss[ns].path;
             if self.nss[ns].is_std {
-                self.err("user code cannot declare a std namespace", file.namespace.span);
+                let root = path.split('.').next().unwrap_or(path);
+                let msg = if root == path { format!("namespace `{path}` belongs to the standard library") } else { format!("namespace `{path}` belongs to the standard library (`{root}` is a standard library root)") };
+                self.err_help(msg, file.namespace.span, "choose another root namespace, e.g. the package name");
+            } else if let Some(msg) = stdlib::removed_std_root(path) {
+                self.err(format!("namespace `{path}` is reserved: {msg}"), file.namespace.span);
             }
             self.cur_ns = ns;
             self.file_scopes.push(FileScope { ns, imports: Vec::new(), import_uses: Vec::new() });
@@ -299,6 +304,14 @@ impl<'a> Sema<'a> {
             self.cur_ns = self.file_scopes[fi].ns;
             for imp in &file.imports {
                 let path = imp.path.to_string();
+                if let Some(msg) = stdlib::removed_std_root(&path) {
+                    let fixes = match path.strip_prefix("std.") {
+                        Some(rest) => vec![Fix::edit(format!("Use `import {rest}`"), imp.path.span, rest.to_string())],
+                        None => vec![Fix::edit("Remove `import std`", imp.span, String::new())],
+                    };
+                    self.err_fix(format!("unknown namespace {path} in import: {msg}"), imp.path.span, codes::REMOVED_STD_ROOT, fixes);
+                    continue;
+                }
                 if let Err(msg) = self.check_capability(fi, &path) {
                     self.err(msg, imp.path.span);
                     continue;
@@ -347,8 +360,8 @@ impl<'a> Sema<'a> {
             let path = self.nss[ns].path.clone();
             self.err(format!("{} is private to namespace {path} (only capitalised names are exported)", name.name), name.span);
         }
-        // A gated module reached by its full path (`std.unsafe.ReadInt`)
-        // needs the capability just like `import std.unsafe`.
+        // A gated module reached by its full path (`unsafe.ReadInt`)
+        // needs the capability just like `import unsafe`.
         if report && !self.nss[self.cur_ns].is_std && super::debug_agent::gate_of(&self.nss[ns].path).is_some() {
             let path = self.nss[ns].path.clone();
             if let Err(msg) = self.check_capability(self.cur_file, &path) {
@@ -364,6 +377,14 @@ impl<'a> Sema<'a> {
         if let Some((m, _, _)) = self.nss[self.cur_ns].members.get(n) {
             return Some(PathRes::Member(*m));
         }
+        // Stdlib code is instantiated in the scope of the user file that
+        // uses it, but a stdlib root it names (`hash.fnv`) is never hidden
+        // by that file's imports (`import crypto` gives `crypto.hash`).
+        if self.nss[self.cur_ns].is_std && stdlib::is_std_namespace(n) {
+            if let Some(&r) = self.roots.get(n) {
+                return Some(PathRes::Member(Member::Ns(r)));
+            }
+        }
         self.std_glob_hook(n);
         let mut found: Vec<(Member, NsIdx)> = Vec::new();
         let mut private: Option<NsIdx> = None;
@@ -372,7 +393,7 @@ impl<'a> Sema<'a> {
             match e {
                 ImportEntry::Glob(ns) => {
                     // A stdlib attribute named like a builtin (`@delete` of
-                    // std.web) does not hide the builtin outside attributes.
+                    // web) does not hide the builtin outside attributes.
                     if self.nss[*ns].is_std && !self.refl.in_attr && matches!(n, "delete" | "len" | "append" | "panic" | "typeof" | "error") {
                         continue;
                     }
@@ -997,7 +1018,7 @@ impl<'a> Sema<'a> {
 
 /// Strict dependency isolation for package builds (docs/PACKAGES.md,
 /// "строгая изоляция"): a file may reach, by `import` or by a fully
-/// qualified path, only `std`, the namespace root of its own package and
+/// qualified path, only the standard library roots, the namespace root of its own package and
 /// the roots of the packages its manifest declares as dependencies.
 ///
 /// Built by `crate::package` and passed to [`super::analyze_with_policy`].
@@ -1038,7 +1059,7 @@ impl ImportPolicy {
     pub fn check(&self, file: usize, path: &str) -> Result<(), String> {
         let root = path.split('.').next().unwrap_or(path);
         let Some(&me) = self.file_package.get(file) else { return Ok(()) };
-        if root == "std" {
+        if super::stdlib::is_std_namespace(root) {
             return Ok(());
         }
         let Some(owner) = self.packages.iter().position(|p| p.namespace == root) else {

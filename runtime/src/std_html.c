@@ -1,4 +1,4 @@
-/* std_html.c - std.html (runtime/ABI.md 19.5): HTML escaping and
+/* std_html.c - html (runtime/ABI.md 19.5): HTML escaping and
  * unescaping with the full WHATWG named character reference table
  * (std_html_entities.h). Semantics follow Go's html package: Escape
  * replaces < > & ' " ; Unescape decodes named references (also the legacy

@@ -1,8 +1,7 @@
-// Examples for std.os.
+// Examples for os.
 namespace os_test
 
-import std
-import std.io
+import io
 
 func ExampleGetenv() void! {
     os.Setenv("ZELL_EXAMPLE_COLOR", "blue")?

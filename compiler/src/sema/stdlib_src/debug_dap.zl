@@ -1,16 +1,16 @@
-// std.debug, part 3: Debug Adapter Protocol framing (Content-Length
+// debug, part 3: Debug Adapter Protocol framing (Content-Length
 // headers over the agent's blocking socket) and JSON output helpers.
-namespace std.debug
+namespace debug
 
 // A DAP request.
 struct request {
     seq     int
     command string
-    args    std.encoding.json.Value
+    args    encoding.json.Value
 }
 
 func parseRequest(body string) request! {
-    var v = std.encoding.json.ParseValue(body)?
+    var v = encoding.json.ParseValue(body)?
     var seq = try v.Get("seq").Int() else 0
     var cmd = v.Get("command").String()?
     return request{seq: seq, command: cmd, args: v.Get("arguments")}
@@ -28,14 +28,14 @@ struct reader {
 
     func next() string! {
         for {
-            var end = std.strings.Index(this.buf, "\r\n\r\n")
+            var end = strings.Index(this.buf, "\r\n\r\n")
             if end >= 0 {
                 var n = -1
-                for line in std.strings.Split(this.buf[..end], "\r\n") {
-                    var colon = std.strings.Index(line, ":")
+                for line in strings.Split(this.buf[..end], "\r\n") {
+                    var colon = strings.Index(line, ":")
                     if colon > 0 &&
-                        std.strings.EqualFold(std.strings.Trim(line[..colon]), "Content-Length") {
-                        n = std.strconv.Atoi(std.strings.Trim(line[colon + 1..]))?
+                        strings.EqualFold(strings.Trim(line[..colon]), "Content-Length") {
+                        n = strconv.Atoi(strings.Trim(line[colon + 1..]))?
                     }
                 }
                 if n < 0 {
@@ -52,14 +52,14 @@ struct reader {
             if len(chunk) == 0 {
                 return error("debug: connection closed")
             }
-            this.buf = this.buf + std.strings.FromBytes(chunk)
+            this.buf = this.buf + strings.FromBytes(chunk)
         }
     }
 }
 
 // A JSON string literal.
 func q(s string) string {
-    return std.encoding.json.Quote(s)
+    return encoding.json.Quote(s)
 }
 
 // A JSON object from alternating keys and already encoded values.
@@ -70,5 +70,5 @@ func obj(kv []string) string {
         parts = append(parts, q(kv[i]) + ":" + kv[i + 1])
         i += 2
     }
-    return "{" + std.strings.Join(parts, ",") + "}"
+    return "{" + strings.Join(parts, ",") + "}"
 }

@@ -21,7 +21,7 @@ use std::collections::HashSet;
 /// Stable identity of a declaration inside one analysis.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SymKey {
-    /// Namespace by full path (`app.models`, `std.io`).
+    /// Namespace by full path (`app.models`, `io`).
     Ns(String),
     Struct(u32),
     Interface(u32),
@@ -39,7 +39,7 @@ pub enum SymKey {
     Local(u32, u32),
     /// Local `const`: (file, start offset of its name).
     LocalConst(usize, u32),
-    /// Stdlib member by full path (`std.strings.Split`).
+    /// Stdlib member by full path (`strings.Split`).
     Std(String),
     /// Builtin function or type (`len`, `int`).
     Builtin(String),
@@ -83,7 +83,7 @@ pub struct Symbol {
     pub key: SymKey,
     pub kind: SymbolKind,
     pub name: String,
-    /// `app.models.User.Display`, `std.strings.Split`, `x` for locals.
+    /// `app.models.User.Display`, `strings.Split`, `x` for locals.
     pub full_name: String,
     /// `None` for stdlib members and builtins (no user source).
     pub loc: Option<Location>,
@@ -299,12 +299,12 @@ pub(crate) struct Extras {
 /// specials only lose their parameter list until listed here).
 fn special_sig(ns: &str, name: &str) -> String {
     match (ns, name) {
-        ("std.io", "println") => "func println(args ...any)".into(),
-        ("std.io", "print") => "func print(args ...any)".into(),
-        ("std.fmt", "Format") => "func Format(template string, args ...any) string".into(),
-        ("std.task", "All") => "func All(tasks ...Task<T>) Task<void>".into(),
-        ("std.errors", "New") => "func New(msg string) error".into(),
-        ("std.errors", "As") => "func As(err error, target *T) bool".into(),
+        ("io", "println") => "func println(args ...any)".into(),
+        ("io", "print") => "func print(args ...any)".into(),
+        ("fmt", "Format") => "func Format(template string, args ...any) string".into(),
+        ("task", "All") => "func All(tasks ...Task<T>) Task<void>".into(),
+        ("errors", "New") => "func New(msg string) error".into(),
+        ("errors", "As") => "func As(err error, target *T) bool".into(),
         _ => format!("func {name}(...)"),
     }
 }
@@ -314,7 +314,7 @@ impl<'a> Sema<'a> {
         self.ide.is_some()
     }
 
-    /// Checking stdlib code written in Zell (`std.collections`, `std.net`,
+    /// Checking stdlib code written in Zell (`collections`, `net`,
     /// ...): its spans are not in any user file, so nothing is recorded.
     fn ide_in_std(&self) -> bool {
         let std = self.nss.get(self.cur_ns).is_some_and(|n| n.is_std);
@@ -893,7 +893,7 @@ pub(crate) fn implicit_symbol(key: &SymKey, info: Option<(SymbolKind, String)>) 
         }
         _ => return None,
     };
-    let is_std = !matches!(key, SymKey::Ns(p) if !(p == "std" || p.starts_with("std.")));
+    let is_std = !matches!(key, SymKey::Ns(p) if !crate::sema::stdlib::is_std_namespace(p));
     Some(Symbol {
         id: SymbolId(0),
         key: key.clone(),

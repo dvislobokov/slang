@@ -1,4 +1,4 @@
-/* std_thread.c - std.thread: OS threads outside the task scheduler
+/* std_thread.c - thread: OS threads outside the task scheduler
  * (runtime/ABI.md section 22.6). The debug agent runs on one, so it keeps
  * answering while every task is paused. A thread runs a Zell closure
  * `func()`; it is no scheduler worker, so `await` inside it blocks. */
@@ -23,7 +23,7 @@ static void *thread_main(void *arg) {
     return NULL;
 }
 
-/* std.thread.Spawn(f func()) int: starts f on a new thread; the handle is
+/* thread.Spawn(f func()) int: starts f on a new thread; the handle is
  * for Join. The closure is passed as its two words (fn, env). */
 int64_t zell_thread_spawn(void *fn, void *env) {
     if (!fn) zell_panic_nil();

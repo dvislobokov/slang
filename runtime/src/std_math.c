@@ -1,4 +1,4 @@
-/* std_math.c - std.math (zell_math_*). IEEE-754 double semantics as in Go's
+/* std_math.c - math (zell_math_*). IEEE-754 double semantics as in Go's
  * math package; Min/Max follow Go (NaN propagates, -0 < +0). */
 #include "rt_internal.h"
 

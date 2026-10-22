@@ -17,7 +17,7 @@
 //!
 //! The static tables (statements, functions, locals, files, breakpoint
 //! bytes) are described in ABI.md §22.1; `zell_dbg_boot(&tables, entry)`
-//! in the C `main` starts the agent (`std.debug.AgentMain`, wrapped as a C
+//! in the C `main` starts the agent (`debug.AgentMain`, wrapped as a C
 //! function) when `ZELL_DEBUG` is set. Functions of the standard library
 //! (including the agent itself) get no hooks.
 
@@ -127,7 +127,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Whether `f` gets hooks: user code with a source span.
     fn agent_wants(&self, f: &hir::Function) -> bool {
-        !f.full_name.starts_with("std.") && f.file < self.prog.sources.len() && f.span != Span::DUMMY
+        !crate::sema::stdlib::is_std_namespace(&f.full_name) && f.file < self.prog.sources.len() && f.span != Span::DUMMY
     }
 
     fn agent_cur(&self) -> Option<&CurFn<'ctx>> {
@@ -412,7 +412,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn dbga_boot(&mut self) {
         let Some(a) = self.dbga.as_ref() else { return };
         let tables = a.tables.as_pointer_value();
-        let entry = self.prog.funcs.iter().position(|f| (f.full_name == "std.debug.AgentMain" || f.full_name == "std.debug.AgentMain<>") && f.params.is_empty());
+        let entry = self.prog.funcs.iter().position(|f| (f.full_name == "debug.AgentMain" || f.full_name == "debug.AgentMain<>") && f.params.is_empty());
         let wrapper = match entry {
             Some(i) => {
                 let target = self.funcs[i];

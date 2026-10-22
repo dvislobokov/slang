@@ -61,7 +61,7 @@ impl Analysis {
             out.push(format!("file {} ns={} {:?} {:?} imports={imports:?}", path(i), f.namespace, f.namespace_span, f.span));
         }
         for (ns, members) in &self.index.ns_members {
-            if ns == "std" || ns.starts_with("std.") {
+            if crate::sema::stdlib::is_std_namespace(ns) {
                 continue;
             }
             let mut ms: Vec<String> = members.iter().map(|(n, id)| format!("{n}={}", self.sym_id(*id))).collect();

@@ -12,7 +12,7 @@
  * `F` (zell_dbg_frame) lives in the function's frame (the coroutine frame
  * for async functions) and links into a per-thread chain: the shadow stack
  * the agent walks for stack traces and variables. Everything else is
- * decided in Zell (std.debug): this file only filters the hot path,
+ * decided in Zell (debug): this file only filters the hot path,
  * keeps per-task pause/step state and blocks a paused task's thread on a
  * condition variable until the agent resumes it. */
 #include "rt_internal.h"
@@ -125,7 +125,7 @@ static rec **g_chunks[NCHUNKS];
 static int64_t g_nrecs;           /* ids 1..g_nrecs are taken; 1 = main */
 static rec *g_steps;              /* records with step != STEP_NONE */
 
-/* The agent's own locks (std.debug.rtLock(n)): 0 = agent state, 1 = output. */
+/* The agent's own locks (debug.rtLock(n)): 0 = agent state, 1 = output. */
 static zell__plat_mutex g_user_mu[2] = { ZELL_PLAT_MUTEX_INIT, ZELL_PLAT_MUTEX_INIT };
 static zell__plat_mutex g_ready_mu = ZELL_PLAT_MUTEX_INIT;
 static zell__plat_cond g_ready_cv = ZELL_PLAT_COND_INIT;
@@ -461,7 +461,7 @@ int zell__dbg_error_wanted(void) { return __atomic_load_n(&g_on_error, __ATOMIC_
 
 /* ---- program entry and exit (called by the compiled C main) ------------------ */
 
-/* `entry` is std.debug.AgentMain wrapped as a C function (NULL if the
+/* `entry` is debug.AgentMain wrapped as a C function (NULL if the
  * program was built without the agent): it listens, starts the agent
  * thread and, with `--wait`, returns once the client is ready. */
 void zell_dbg_boot(const void *tables, void (*entry)(void)) {
@@ -484,7 +484,7 @@ void zell_dbg_exit(int32_t code) {
 }
 
 /* ======================================================================
- * std.debug internal externs (rt*): the agent's view of the state above.
+ * debug internal externs (rt*): the agent's view of the state above.
  * ====================================================================== */
 
 int64_t zell_debug_rt_tables(void) { return (int64_t)(intptr_t)g_tables; }
@@ -698,7 +698,7 @@ ZELL_NORETURN void zell_debug_rt_exit(int64_t code) {
 int64_t zell_debug_rt_now_ms(void) { return zell__plat_mono_ns() / 1000000; }
 
 /* ======================================================================
- * Memory views used by std.debug's variable formatter (ABI.md 22.4).
+ * Memory views used by debug's variable formatter (ABI.md 22.4).
  * ====================================================================== */
 
 /* The `string` stored at addr (a zell_string *), retained ("" for NULL). */

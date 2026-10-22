@@ -1,13 +1,13 @@
-// TLS client handshake (part of std.net.tls, see tls.zl): TLS 1.3 with
+// TLS client handshake (part of net.tls, see tls.zl): TLS 1.3 with
 // HelloRetryRequest, PSK resumption from tickets, client certificates and
 // the middlebox-compatibility change_cipher_spec; TLS 1.2 ECDHE + AEAD
 // with extended_master_secret (required), RFC 5077 tickets and the
 // RFC 8446 4.1.3 downgrade sentinel check.
-namespace std.net.tls
+namespace net.tls
 
 // SHA-256("HelloRetryRequest"), the ServerHello.random of a HelloRetryRequest.
 func hrrRandom() []byte {
-    return try std.encoding.hex.Decode(
+    return try encoding.hex.Decode(
         "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c",
     ) else []
 }
@@ -35,7 +35,7 @@ func signedContent13(server bool, th []byte) []byte {
 }
 
 // The handshake messages for a certificate chain.
-func certificateBody(chain []*std.crypto.x509.Certificate, v13 bool, context []byte) []byte {
+func certificateBody(chain []*crypto.x509.Certificate, v13 bool, context []byte) []byte {
     var b = newBuilder()
     if v13 {
         b.vec8(context)
@@ -52,7 +52,7 @@ func certificateBody(chain []*std.crypto.x509.Certificate, v13 bool, context []b
 }
 
 // Parses a Certificate message into certificates (leaf first).
-func parseCertificates(c *conn, body []byte, v13 bool) []*std.crypto.x509.Certificate! {
+func parseCertificates(c *conn, body []byte, v13 bool) []*crypto.x509.Certificate! {
     var p = newParser(body)
     if v13 {
         var ctx = p.vec8()
@@ -64,7 +64,7 @@ func parseCertificates(c *conn, body []byte, v13 bool) []*std.crypto.x509.Certif
     if !p.ok() || !p.empty() {
         return c.fail(50, "malformed Certificate message")
     }
-    var out []*std.crypto.x509.Certificate = []
+    var out []*crypto.x509.Certificate = []
     for !list.empty() {
         var der = list.vec24()
         if v13 {
@@ -73,7 +73,7 @@ func parseCertificates(c *conn, body []byte, v13 bool) []*std.crypto.x509.Certif
         if !list.ok() {
             return c.fail(50, "malformed Certificate message")
         }
-        var cert = try std.crypto.x509.ParseDER(der) catch err {
+        var cert = try crypto.x509.ParseDER(der) catch err {
             return c.fail(42, "bad certificate from the peer: " + err.Message())
         }
         out = append(out, cert)
@@ -83,10 +83,10 @@ func parseCertificates(c *conn, body []byte, v13 bool) []*std.crypto.x509.Certif
 
 // Alert for a certificate verification error.
 func certAlert(msg string) int {
-    if std.strings.Contains(msg, "unknown authority") {
+    if strings.Contains(msg, "unknown authority") {
         return 48
     }
-    if std.strings.Contains(msg, "expired") || std.strings.Contains(msg, "not valid yet") {
+    if strings.Contains(msg, "expired") || strings.Contains(msg, "not valid yet") {
         return 45
     }
     return 42
@@ -97,18 +97,18 @@ func verifyServer(c *conn) void! {
     if c.cfg.InsecureSkipVerify {
         return
     }
-    var inter []*std.crypto.x509.Certificate = []
+    var inter []*crypto.x509.Certificate = []
     for i in 1..len(c.peerCerts) {
         inter = append(inter, c.peerCerts[i])
     }
-    var chain = try std.crypto.x509.Verify(c.peerCerts[0], std.crypto.x509.VerifyOptions{
+    var chain = try crypto.x509.Verify(c.peerCerts[0], crypto.x509.VerifyOptions{
         DNSName: c.serverName,
         Roots: c.cfg.RootCAs,
         Intermediates: inter,
     }) catch err {
         return c.fail(
             certAlert(err.Message()),
-            "server certificate: " + std.strings.TrimPrefix(err.Message(), "x509: "),
+            "server certificate: " + strings.TrimPrefix(err.Message(), "x509: "),
         )
     }
     c.verified = chain
@@ -149,12 +149,12 @@ struct clientHS {
         b.u8(1)
         b.u8(0)
         var ext = b.open(2)
-        if host != "" && !std.net.rtIsIP(host) {
+        if host != "" && !net.rtIsIP(host) {
             b.u16(0)
             var e = b.open(2)
             var l = b.open(2)
             b.u8(0)
-            b.vec16(bytesOf(std.strings.TrimSuffix(host, ".")))
+            b.vec16(bytesOf(strings.TrimSuffix(host, ".")))
             b.close(l, 2)
             b.close(e, 2)
         }
@@ -237,7 +237,7 @@ struct clientHS {
             if withPSK {
                 // pre_shared_key must be the last extension
                 var s = this.sess
-                var age = (std.time.Now() - s.received + s.ageAdd) % 4294967296
+                var age = (time.Now() - s.received + s.ageAdd) % 4294967296
                 b.u16(41)
                 var pe = b.open(2)
                 var ids = b.open(2)
@@ -339,7 +339,7 @@ func parseServerHello(c *conn, body []byte) serverHello! {
                 sh.cookie = e.vec16()
             case 16:
                 var list = newParser(e.vec16())
-                sh.alpn = std.strings.FromBytes(list.vec8())
+                sh.alpn = strings.FromBytes(list.vec8())
                 sh.hasALPN = true
                 if !list.ok() || !list.empty() {
                     return c.fail(50, "malformed ALPN extension")
@@ -355,10 +355,10 @@ func parseServerHello(c *conn, body []byte) serverHello! {
             case 22, 11, 0:
                 e.off = len(data)
             default:
-                return c.fail(110, std.fmt.Format("unsupported extension {0} in ServerHello", typ))
+                return c.fail(110, fmt.Format("unsupported extension {0} in ServerHello", typ))
         }
         if !e.ok() || !e.empty() {
-            return c.fail(50, std.fmt.Format("malformed extension {0} in ServerHello", typ))
+            return c.fail(50, fmt.Format("malformed extension {0} in ServerHello", typ))
         }
     }
     return sh
@@ -523,7 +523,7 @@ async func client13(h *clientHS, sh serverHello) void! {
         if typ == 16 {
             var e = newParser(data)
             var list = newParser(e.vec16())
-            var proto = std.strings.FromBytes(list.vec8())
+            var proto = strings.FromBytes(list.vec8())
             if !e.ok() || !list.ok() || !list.empty() {
                 return c.fail(50, "malformed ALPN extension")
             }
@@ -584,13 +584,13 @@ async func client13(h *clientHS, sh serverHello) void! {
         }
         var content = signedContent13(true, c.transcriptHash()?)
         try verifyWith(c.peerCerts[0], scheme, content, sig, true) catch err {
-            return c.fail(51, std.strings.TrimPrefix(err.Message(), "tls: "))
+            return c.fail(51, strings.TrimPrefix(err.Message(), "tls: "))
         }
         c.addTranscript(cv)
     }
     var fin = await c.expect(20, "Finished")?
     var want = finishedMAC(hh, sHS, c.transcriptHash()?)?
-    if !std.crypto.hmac.Equal(want, fin.body) {
+    if !crypto.hmac.Equal(want, fin.body) {
         return c.fail(51, "server Finished verification failed")
     }
     c.addTranscript(fin)
@@ -605,7 +605,7 @@ async func client13(h *clientHS, sh serverHello) void! {
     c.wr = cipher13(s, cHS)?
     if certReq {
         var cc = c.cfg.ClientCert
-        var chain []*std.crypto.x509.Certificate = []
+        var chain []*crypto.x509.Certificate = []
         if cc != nil {
             chain = cc.Chain
         }
@@ -657,7 +657,7 @@ func handleTicket13(c *conn, m hsMsg) void! {
             ticket: ticket,
             secret: psk,
             ageAdd: ageAdd,
-            received: std.time.Now(),
+            received: time.Now(),
             lifetime: lifetime,
             alpn: c.alpn,
             peerCerts: c.peerCerts,
@@ -743,7 +743,7 @@ async func client12(h *clientHS, sh serverHello) void! {
             return c.fail(10, "expected the server Finished")
         }
         var want = finished12(c, "server finished")?
-        if !std.crypto.hmac.Equal(want, m.body) {
+        if !crypto.hmac.Equal(want, m.body) {
             return c.fail(51, "server Finished verification failed")
         }
         c.addTranscript(m)
@@ -790,7 +790,7 @@ async func client12(h *clientHS, sh serverHello) void! {
     }
     var signed = cat3(c.clientRandom, c.serverRandom, ske.body[..paramsLen])
     try verifyWith(leaf, scheme, signed, sig, false) catch err {
-        return c.fail(51, std.strings.TrimPrefix(err.Message(), "tls: "))
+        return c.fail(51, strings.TrimPrefix(err.Message(), "tls: "))
     }
     c.addTranscript(ske)
     var next = await c.readHandshake()?
@@ -821,7 +821,7 @@ async func client12(h *clientHS, sh serverHello) void! {
     }
     var cc = cfg.ClientCert
     if certReq {
-        var chain []*std.crypto.x509.Certificate = []
+        var chain []*crypto.x509.Certificate = []
         if cc != nil {
             chain = cc.Chain
         }
@@ -857,7 +857,7 @@ async func client12(h *clientHS, sh serverHello) void! {
         return c.fail(10, "expected the server Finished")
     }
     var want = finished12(c, "server finished")?
-    if !std.crypto.hmac.Equal(want, m.body) {
+    if !crypto.hmac.Equal(want, m.body) {
         return c.fail(51, "server Finished verification failed")
     }
     c.addTranscript(m)
@@ -885,7 +885,7 @@ func store12Ticket(c *conn, m hsMsg) void! {
             suite: c.suite.id,
             ticket: ticket,
             secret: c.master,
-            received: std.time.Now(),
+            received: time.Now(),
             lifetime: lifetime,
             alpn: c.alpn,
             peerCerts: c.peerCerts,

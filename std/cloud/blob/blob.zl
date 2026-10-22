@@ -1,15 +1,15 @@
-// std.cloud.blob: one interface for object storage (docs/STDLIB.md level
-// 3b), implemented over std.cloud.s3 (OpenS3) and over a local directory
+// cloud.blob: one interface for object storage (docs/STDLIB.md level
+// 3b), implemented over cloud.s3 (OpenS3) and over a local directory
 // (OpenDir), so code and tests can switch between a bucket and the file
 // system. Keys are "/"-separated; a missing key fails with
 // blob.ErrNotFound (errors.Is) in both implementations.
-namespace std.cloud.blob
+namespace cloud.blob
 
 // Metadata of a blob.
 struct Attributes {
     Key string
     Size int
-    ModTime std.time.Time
+    ModTime time.Time
     ETag string
     ContentType string
 }
@@ -25,9 +25,9 @@ interface Bucket {
     // Exists reports whether key exists.
     func Exists(key string) Task<bool!>
     // Attributes returns the size, content type and modification time of key.
-    func Attributes(key string) Task<std.cloud.blob.Attributes!>
+    func Attributes(key string) Task<cloud.blob.Attributes!>
     // Every blob whose key starts with prefix, sorted by key.
-    func List(prefix string) Task<[]std.cloud.blob.Attributes!>
+    func List(prefix string) Task<[]cloud.blob.Attributes!>
     // Copy copies src to dst within the bucket.
     func Copy(dst string, src string) Task<void!>
     // A URL that grants method on key for expires seconds (S3 only).
@@ -35,14 +35,14 @@ interface Bucket {
 }
 
 func notFound(key string) error {
-    return std.errors.Wrap(ErrNotFound, "blob: " + key)
+    return errors.Wrap(ErrNotFound, "blob: " + key)
 }
 
 // ---- S3 -----------------------------------------------------------------------
 
 // A Bucket over an S3 bucket; keys live under prefix ("" or "dir/").
 struct S3Bucket {
-    c *std.cloud.s3.Client
+    c *cloud.s3.Client
     bucket string
     prefix string
 
@@ -88,19 +88,19 @@ struct S3Bucket {
 }
 
 // OpenS3 returns a bucket over an S3 client; keys are relative to prefix.
-func OpenS3(c *std.cloud.s3.Client, bucket string, prefix string) *S3Bucket {
+func OpenS3(c *cloud.s3.Client, bucket string, prefix string) *S3Bucket {
     return new S3Bucket{c: c, bucket: bucket, prefix: prefix}
 }
 
 func mapS3(err error, key string) error {
-    if std.errors.Is(err, std.cloud.s3.ErrNoSuchKey) || std.cloud.s3.ErrorCode(err) == "NotFound" {
+    if errors.Is(err, cloud.s3.ErrNoSuchKey) || cloud.s3.ErrorCode(err) == "NotFound" {
         return notFound(key)
     }
     return err
 }
 
 async func s3Write(b *S3Bucket, key string, data []byte, contentType string) void! {
-    _ = await b.c.PutObject(b.bucket, b.prefix + key, data, std.cloud.s3.PutOptions{ContentType: contentType})?
+    _ = await b.c.PutObject(b.bucket, b.prefix + key, data, cloud.s3.PutOptions{ContentType: contentType})?
 }
 
 async func s3Read(b *S3Bucket, key string) []byte! {
@@ -112,7 +112,7 @@ async func s3Read(b *S3Bucket, key string) []byte! {
 
 async func s3Exists(b *S3Bucket, key string) bool! {
     try await b.c.HeadObject(b.bucket, b.prefix + key) catch err {
-        if std.errors.Is(mapS3(err, key), ErrNotFound) {
+        if errors.Is(mapS3(err, key), ErrNotFound) {
             return false
         }
         return err
@@ -120,7 +120,7 @@ async func s3Exists(b *S3Bucket, key string) bool! {
     return true
 }
 
-func attrsOf(o std.cloud.s3.ObjectInfo, key string) Attributes {
+func attrsOf(o cloud.s3.ObjectInfo, key string) Attributes {
     return Attributes{Key: key, Size: o.Size, ModTime: o.LastModified, ETag: o.ETag, ContentType: o.ContentType}
 }
 
@@ -144,7 +144,7 @@ async func s3List(b *S3Bucket, prefix string) []Attributes! {
 }
 
 async func s3Copy(b *S3Bucket, dst string, src string) void! {
-    try await b.c.CopyObject(b.bucket, b.prefix + src, b.bucket, b.prefix + dst, std.cloud.s3.PutOptions{}) catch err {
+    try await b.c.CopyObject(b.bucket, b.prefix + src, b.bucket, b.prefix + dst, cloud.s3.PutOptions{}) catch err {
         return mapS3(err, src)
     }
 }
@@ -157,12 +157,12 @@ struct DirBucket {
     dir string
 
     func path(key string) string! {
-        if key == "" || std.strings.HasPrefix(key, "/") || std.strings.Contains(key, "\\") {
-            return error("blob: invalid key " + std.strconv.Quote(key))
+        if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, "\\") {
+            return error("blob: invalid key " + strconv.Quote(key))
         }
-        for seg in std.strings.Split(key, "/") {
+        for seg in strings.Split(key, "/") {
             if seg == "" || seg == "." || seg == ".." {
-                return error("blob: invalid key " + std.strconv.Quote(key))
+                return error("blob: invalid key " + strconv.Quote(key))
             }
         }
         return this.dir + "/" + key
@@ -211,19 +211,19 @@ struct DirBucket {
 
 // A Bucket over dir (created if missing).
 func OpenDir(dir string) *DirBucket! {
-    std.fs.MkdirAll(dir)?("blob: " + dir)
-    var abs = std.fs.Abs(dir)?
+    fs.MkdirAll(dir)?("blob: " + dir)
+    var abs = fs.Abs(dir)?
     return new DirBucket{dir: abs}
 }
 
 async func dirWrite(b *DirBucket, key string, data []byte) void! {
     var p = b.path(key)?
-    std.fs.MkdirAll(std.fs.Dir(p))?
+    fs.MkdirAll(fs.Dir(p))?
     // write a temporary file, then rename: readers never see a partial blob
-    var tmp = p + ".tmp-" + std.strconv.Itoa(std.random.IntN(1000000000))
-    std.io.WriteFile(tmp, std.strings.FromBytes(data))?
-    try std.fs.Rename(tmp, p) catch err {
-        try std.fs.Remove(tmp) catch _ {
+    var tmp = p + ".tmp-" + strconv.Itoa(random.IntN(1000000000))
+    io.WriteFile(tmp, strings.FromBytes(data))?
+    try fs.Rename(tmp, p) catch err {
+        try fs.Remove(tmp) catch _ {
         }
         return err
     }
@@ -231,47 +231,47 @@ async func dirWrite(b *DirBucket, key string, data []byte) void! {
 
 async func dirRead(b *DirBucket, key string) []byte! {
     var p = b.path(key)?
-    if !std.fs.Exists(p) || std.fs.IsDir(p) {
+    if !fs.Exists(p) || fs.IsDir(p) {
         return notFound(key)
     }
-    return std.strings.Bytes(std.io.ReadFile(p)?)
+    return strings.Bytes(io.ReadFile(p)?)
 }
 
 async func dirDelete(b *DirBucket, key string) void! {
     var p = b.path(key)?
-    if !std.fs.Exists(p) || std.fs.IsDir(p) {
+    if !fs.Exists(p) || fs.IsDir(p) {
         return
     }
-    std.fs.Remove(p)?
+    fs.Remove(p)?
     // drop directories the key left empty
-    var d = std.fs.Dir(p)
-    for d != b.dir && std.strings.HasPrefix(d, b.dir) {
-        var names = try std.fs.ReadDir(d) else ["x"]
+    var d = fs.Dir(p)
+    for d != b.dir && strings.HasPrefix(d, b.dir) {
+        var names = try fs.ReadDir(d) else ["x"]
         if len(names) > 0 {
             break
         }
-        try std.fs.Remove(d) catch _ {
+        try fs.Remove(d) catch _ {
             break
         }
-        d = std.fs.Dir(d)
+        d = fs.Dir(d)
     }
 }
 
 async func dirExists(b *DirBucket, key string) bool! {
     var p = b.path(key)?
-    return std.fs.Exists(p) && !std.fs.IsDir(p)
+    return fs.Exists(p) && !fs.IsDir(p)
 }
 
 func fileAttrs(path string, key string) Attributes! {
-    var size = std.fs.Size(path)?
-    var mt = std.fs.ModTime(path)?
-    var ct = std.mime.TypeByExtension(std.fs.Ext(path))
-    return Attributes{Key: key, Size: size, ModTime: std.time.UnixMilli(mt), ContentType: ct}
+    var size = fs.Size(path)?
+    var mt = fs.ModTime(path)?
+    var ct = mime.TypeByExtension(fs.Ext(path))
+    return Attributes{Key: key, Size: size, ModTime: time.UnixMilli(mt), ContentType: ct}
 }
 
 async func dirAttrs(b *DirBucket, key string) Attributes! {
     var p = b.path(key)?
-    if !std.fs.Exists(p) || std.fs.IsDir(p) {
+    if !fs.Exists(p) || fs.IsDir(p) {
         return notFound(key)
     }
     return fileAttrs(p, key)?
@@ -279,8 +279,8 @@ async func dirAttrs(b *DirBucket, key string) Attributes! {
 
 func walk(dir string, rel string, out []Attributes) []Attributes! {
     var acc = out
-    for name in std.fs.ReadDir(dir)? {
-        if std.strings.Contains(name, ".tmp-") {
+    for name in fs.ReadDir(dir)? {
+        if strings.Contains(name, ".tmp-") {
             continue
         }
         var full = dir + "/" + name
@@ -288,7 +288,7 @@ func walk(dir string, rel string, out []Attributes) []Attributes! {
         if rel != "" {
             key = rel + "/" + name
         }
-        if std.fs.IsDir(full) {
+        if fs.IsDir(full) {
             acc = walk(full, key, acc)?
         } else {
             acc = append(acc, fileAttrs(full, key)?)
@@ -301,11 +301,11 @@ async func dirList(b *DirBucket, prefix string) []Attributes! {
     var all = walk(b.dir, "", [])?
     var out []Attributes = []
     for a in all {
-        if std.strings.HasPrefix(a.Key, prefix) {
+        if strings.HasPrefix(a.Key, prefix) {
             out = append(out, a)
         }
     }
-    std.slices.SortFunc(out, func(x Attributes, y Attributes) bool {
+    slices.SortFunc(out, func(x Attributes, y Attributes) bool {
         return x.Key < y.Key
     })
     return out
@@ -322,18 +322,18 @@ async func dirCopy(b *DirBucket, dst string, src string) void! {
 // "s3://bucket/prefix/?endpoint=http://localhost:9000&region=us-east-1&path_style=true"
 // (credentials from the environment or ~/.aws/credentials).
 func Open(raw string) Bucket! {
-    if std.strings.HasPrefix(raw, "file://") {
+    if strings.HasPrefix(raw, "file://") {
         return OpenDir(raw[7..])?
     }
-    if !std.strings.HasPrefix(raw, "s3://") {
-        return error("blob: unsupported URL " + std.strconv.Quote(raw) + " (want file:// or s3://)")
+    if !strings.HasPrefix(raw, "s3://") {
+        return error("blob: unsupported URL " + strconv.Quote(raw) + " (want file:// or s3://)")
     }
-    var u = std.net.url.Parse(raw)?("blob: invalid URL")
-    var q = std.net.url.ParseQuery(u.RawQuery)?("blob: invalid URL query")
-    var cfg = std.cloud.s3.Config{Endpoint: q.Get("endpoint"), Region: q.Get("region"), PathStyle: q.Get("path_style") == "true"}
-    var c = std.cloud.s3.NewClient(cfg)?
+    var u = net.url.Parse(raw)?("blob: invalid URL")
+    var q = net.url.ParseQuery(u.RawQuery)?("blob: invalid URL query")
+    var cfg = cloud.s3.Config{Endpoint: q.Get("endpoint"), Region: q.Get("region"), PathStyle: q.Get("path_style") == "true"}
+    var c = cloud.s3.NewClient(cfg)?
     var prefix = u.Path
-    if std.strings.HasPrefix(prefix, "/") {
+    if strings.HasPrefix(prefix, "/") {
         prefix = prefix[1..]
     }
     return OpenS3(c, u.Host, prefix)

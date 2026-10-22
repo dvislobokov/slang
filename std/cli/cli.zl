@@ -1,4 +1,4 @@
-// std.cli: command-line apps with subcommands, typed flags from struct
+// cli: command-line apps with subcommands, typed flags from struct
 // fields (compile-time reflection), env fallbacks, generated help,
 // "did you mean" suggestions and shell completion scripts.
 //
@@ -23,11 +23,11 @@
 // unset flags fall back to their env variable, then to that default. -h/--help on any command and `help [command]`
 // print help; --version prints the version. Exit codes of App.Run: 0 ok,
 // 1 the command failed, 2 usage error.
-namespace std.cli
+namespace cli
 
 // Field attribute of a flags struct (all parameters optional). The flag
 // name defaults to the field name in kebab-case (MaxConns -> max-conns).
-@attribute(targets: [std.reflect.Target.Field])
+@attribute(targets: [reflect.Target.Field])
 struct flag {
     name     string = ""
     short    string = ""
@@ -73,8 +73,8 @@ struct Context {
         }
         for f in this.flags {
             if f.Name == name {
-                if f.Env != "" && std.os.Getenv(f.Env) != "" {
-                    return std.os.Getenv(f.Env)
+                if f.Env != "" && os.Getenv(f.Env) != "" {
+                    return os.Getenv(f.Env)
                 }
                 return f.Default
             }
@@ -88,7 +88,7 @@ struct Context {
     }
 
     func Int(name string) int! {
-        return std.strconv.ParseInt(this.String(name), 0)?("flag --" + name)
+        return strconv.ParseInt(this.String(name), 0)?("flag --" + name)
     }
 
     func Bool(name string) bool {
@@ -101,7 +101,7 @@ struct Context {
             return true
         }
         for f in this.flags {
-            if f.Name == name && f.Env != "" && std.os.Getenv(f.Env) != "" {
+            if f.Name == name && f.Env != "" && os.Getenv(f.Env) != "" {
                 return true
             }
         }
@@ -139,7 +139,7 @@ struct App {
     // Runs when the app has no Commands (or none was given and Action is set).
     Action func(*Context) void!
     // Where error messages go (nil: stderr).
-    Errors std.io.Writer
+    Errors io.Writer
 
     // Parses args (os.Args() form: args[0] is the program) and runs the
     // selected command. Returns the process exit code.
@@ -165,7 +165,7 @@ struct App {
         for i < len(rest) {
             var a = rest[i]
             i += 1
-            if flagsDone || a == "-" || !std.strings.HasPrefix(a, "-") {
+            if flagsDone || a == "-" || !strings.HasPrefix(a, "-") {
                 if !flagsDone && len(positional) == 0 && len(cmd.Commands) > 0 {
                     if a == "help" {
                         this.printHelpFor(rest[i..])
@@ -176,7 +176,7 @@ struct App {
                         return usageError(
                             this.Errors,
                             "unknown command " +
-                                std.strconv.Quote(a) +
+                                strconv.Quote(a) +
                                 suggest(a, commandNames(cmd.Commands)),
                             path,
                         )
@@ -196,24 +196,24 @@ struct App {
                 continue
             }
             if a == "-h" || a == "--help" {
-                std.io.print(helpText(*this, cmd, path, flags))
+                io.print(helpText(*this, cmd, path, flags))
                 return 0
             }
             if a == "--version" && this.Version != "" {
-                std.io.println(this.Name + " " + this.Version)
+                io.println(this.Name + " " + this.Version)
                 return 0
             }
             var name = a
             var value = ""
             var hasValue = false
-            var eq = std.strings.Index(a, "=")
+            var eq = strings.Index(a, "=")
             if eq > 0 {
                 name = a[..eq]
                 value = a[eq + 1..]
                 hasValue = true
             }
             var fi = -1
-            if std.strings.HasPrefix(name, "--") {
+            if strings.HasPrefix(name, "--") {
                 fi = findFlag(flags, name[2..], false)
             } else {
                 fi = findFlag(flags, name[1..], true)
@@ -230,18 +230,18 @@ struct App {
                 if !hasValue {
                     value = "true"
                 } else if value != "true" && value != "false" {
-                    var b = try std.strconv.ParseBool(value) catch err {
+                    var b = try strconv.ParseBool(value) catch err {
                         return usageError(
                             this.Errors,
                             "invalid value " +
-                                std.strconv.Quote(value) +
+                                strconv.Quote(value) +
                                 " for flag --" +
                                 f.Name +
                                 " (want true or false)",
                             path,
                         )
                     }
-                    value = std.strconv.FormatBool(b)
+                    value = strconv.FormatBool(b)
                 }
             } else if !hasValue {
                 if i >= len(rest) {
@@ -259,11 +259,11 @@ struct App {
         for f in flags {
             if f.Required &&
                 len(values[f.Name]) == 0 &&
-                (f.Env == "" || std.os.Getenv(f.Env) == "") {
+                (f.Env == "" || os.Getenv(f.Env) == "") {
                 return usageError(this.Errors, "missing required flag --" + f.Name, path)
             }
-            if len(values[f.Name]) == 0 && f.Env != "" && std.os.Getenv(f.Env) != "" {
-                var bad = checkValue(f, std.os.Getenv(f.Env))
+            if len(values[f.Name]) == 0 && f.Env != "" && os.Getenv(f.Env) != "" {
+                var bad = checkValue(f, os.Getenv(f.Env))
                 if bad != "" {
                     return usageError(this.Errors, bad + " (from $" + f.Env + ")", path)
                 }
@@ -271,7 +271,7 @@ struct App {
         }
         if cmd.Run == nil {
             if len(cmd.Commands) > 0 {
-                std.io.print(helpText(*this, cmd, path, flags))
+                io.print(helpText(*this, cmd, path, flags))
                 return 2
             }
             return 0
@@ -301,7 +301,7 @@ struct App {
                     this.Errors,
                     this.Name +
                         ": unknown command " +
-                        std.strconv.Quote(n) +
+                        strconv.Quote(n) +
                         suggest(n, commandNames(cmd.Commands)),
                 )
                 return
@@ -312,7 +312,7 @@ struct App {
                 flags = append(flags, f)
             }
         }
-        std.io.print(helpText(*this, cmd, path, flags))
+        io.print(helpText(*this, cmd, path, flags))
     }
 
     // The help text of the command at path (names after the app name).
@@ -354,33 +354,33 @@ struct App {
         if shell == "fish" {
             return fishCompletion(*this)
         }
-        return error("cli: unsupported shell " + std.strconv.Quote(shell) + " (bash, zsh or fish)")
+        return error("cli: unsupported shell " + strconv.Quote(shell) + " (bash, zsh or fish)")
     }
 }
 
 func checkValue(f Flag, value string) string {
     if f.Kind == "int" {
-        var ok = try std.strconv.ParseInt(value, 0) catch err {
+        var ok = try strconv.ParseInt(value, 0) catch err {
             return "invalid value " +
-                std.strconv.Quote(value) +
+                strconv.Quote(value) +
                 " for flag --" +
                 f.Name +
                 " (want an integer)"
         }
         _ = ok
     } else if f.Kind == "uint" {
-        var ok = try std.strconv.ParseUint(value, 0) catch err {
+        var ok = try strconv.ParseUint(value, 0) catch err {
             return "invalid value " +
-                std.strconv.Quote(value) +
+                strconv.Quote(value) +
                 " for flag --" +
                 f.Name +
                 " (want a non-negative integer)"
         }
         _ = ok
     } else if f.Kind == "float" {
-        var ok = try std.strconv.ParseFloat(value) catch err {
+        var ok = try strconv.ParseFloat(value) catch err {
             return "invalid value " +
-                std.strconv.Quote(value) +
+                strconv.Quote(value) +
                 " for flag --" +
                 f.Name +
                 " (want a number)"
@@ -390,19 +390,19 @@ func checkValue(f Flag, value string) string {
     return ""
 }
 
-func eprintln(w std.io.Writer, msg string) {
+func eprintln(w io.Writer, msg string) {
     if w == nil {
-        std.io.Eprintln(msg)
+        io.Eprintln(msg)
         return
     }
     try {
-        _ = std.io.WriteString(w, msg + "\n")?
+        _ = io.WriteString(w, msg + "\n")?
     } catch err {}
 }
 
-func usageError(w std.io.Writer, msg string, path []string) int {
+func usageError(w io.Writer, msg string, path []string) int {
     eprintln(w, "error: " + msg)
-    eprintln(w, "Run '" + std.strings.Join(path, " ") + " --help' for usage.")
+    eprintln(w, "Run '" + strings.Join(path, " ") + " --help' for usage.")
     return 2
 }
 
@@ -475,7 +475,7 @@ func suggest(word string, candidates []string) string {
     var bestD = 3
     for c in candidates {
         var d = distance(word, c)
-        if std.strings.HasPrefix(c, word) && len(word) >= 2 {
+        if strings.HasPrefix(c, word) && len(word) >= 2 {
             d = 1
         }
         if d < bestD {
@@ -486,7 +486,7 @@ func suggest(word string, candidates []string) string {
     if best == "" {
         return ""
     }
-    return " (did you mean " + std.strconv.Quote(best) + "?)"
+    return " (did you mean " + strconv.Quote(best) + "?)"
 }
 
 func padRight(s string, n int) string {
@@ -523,7 +523,7 @@ func helpText(app App, cmd Command, path []string, flags []Flag) string {
     if cmd.Description != "" {
         out += cmd.Description + "\n\n"
     }
-    out += "Usage:\n  " + std.strings.Join(path, " ")
+    out += "Usage:\n  " + strings.Join(path, " ")
     if len(flags) > 0 {
         out += " [flags]"
     }
@@ -579,9 +579,9 @@ func helpText(app App, cmd Command, path []string, flags []Flag) string {
             if desc != "" {
                 desc += " "
             }
-            desc += "(" + std.strings.Join(extra, ", ") + ")"
+            desc += "(" + strings.Join(extra, ", ") + ")"
         }
-        out += std.strings.TrimRight(padRight(labels[i], w + 2) + desc, " ") + "\n"
+        out += strings.TrimRight(padRight(labels[i], w + 2) + desc, " ") + "\n"
     }
     out += padRight("  -h, --help", w + 2) + "Show help\n"
     if app.Version != "" && len(path) == 1 {
@@ -604,13 +604,13 @@ func collectWords(cmd Command, prefix string, out *[]string) {
         for f in c.Flags {
             words = append(words, "--" + f.Name)
         }
-        *out = append(*out, prefix + c.Name + "=" + std.strings.Join(words, " "))
+        *out = append(*out, prefix + c.Name + "=" + strings.Join(words, " "))
         collectWords(c, prefix + c.Name + "_", out)
     }
 }
 
 func bashCompletion(app App) string {
-    var fn = "_" + std.strings.Replace(app.Name, "-", "_") + "_complete"
+    var fn = "_" + strings.Replace(app.Name, "-", "_") + "_complete"
     var top []string = []
     for c in app.Commands {
         if !c.Hidden {
@@ -630,10 +630,10 @@ func bashCompletion(app App) string {
     out += "    for w in \"${COMP_WORDS[@]:1:COMP_CWORD-1}\"; do\n"
     out += "        case \"$w\" in -*) ;; *) path=\"${path:+${path}_}$w\" ;; esac\n"
     out += "    done\n"
-    out += "    local words=\"" + std.strings.Join(top, " ") + "\"\n"
+    out += "    local words=\"" + strings.Join(top, " ") + "\"\n"
     out += "    case \"$path\" in\n"
     for c in cases {
-        var eq = std.strings.Index(c, "=")
+        var eq = strings.Index(c, "=")
         out += "        " + c[..eq] + ") words=\"" + c[eq + 1..] + " --help\" ;;\n"
     }
     out += "    esac\n"
@@ -658,11 +658,11 @@ func fishCompletion(app App) string {
         out += "complete -c " +
             app.Name +
             " -f -n \"not __fish_seen_subcommand_from " +
-            std.strings.Join(top, " ") +
+            strings.Join(top, " ") +
             "\" -a " +
             c.Name +
             " -d " +
-            std.strconv.Quote(c.Help) +
+            strconv.Quote(c.Help) +
             "\n"
         for f in c.Flags {
             out += "complete -c " +
@@ -677,7 +677,7 @@ func fishCompletion(app App) string {
             if f.Kind != "bool" {
                 out += " -r"
             }
-            out += " -d " + std.strconv.Quote(f.Help) + "\n"
+            out += " -d " + strconv.Quote(f.Help) + "\n"
         }
     }
     for f in app.Flags {
@@ -685,7 +685,7 @@ func fishCompletion(app App) string {
         if f.Short != "" {
             out += " -s " + f.Short
         }
-        out += " -d " + std.strconv.Quote(f.Help) + "\n"
+        out += " -d " + strconv.Quote(f.Help) + "\n"
     }
     return out
 }
@@ -701,38 +701,38 @@ func kebab(name string) string {
             } else if i > 0 && i + 1 < len(name) && name[i + 1] >= 97 && name[i + 1] <= 122 {
                 out += "-"
             }
-            out += std.strings.FromBytes([c + 32])
+            out += strings.FromBytes([c + 32])
         } else {
-            out += std.strings.FromBytes([c])
+            out += strings.FromBytes([c])
         }
     }
     return out
 }
 
 func kindOf<F>() string {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.Bool {
         return "bool"
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.String {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.String {
         return "string"
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Float32 {
         return "float"
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint32 {
         return "uint"
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Slice {
         return "strings"
     }
     return "int"
 }
 
 func defaultText<F>(v F) string {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
-        return std.strings.Join(v, ",")
+    if reflect.TypeOf<F>().Kind == reflect.Kind.Slice {
+        return strings.Join(v, ",")
     } else {
-        return std.strconv.Format(v)
+        return strconv.Format(v)
     }
 }
 
@@ -759,7 +759,7 @@ func flagOf<F>(name string, tag *flag, v F) Flag {
 func FlagsOf<T>() []Flag {
     var zero T
     var out []Flag = []
-    for f in std.reflect.Fields<T>() {
+    for f in reflect.Fields<T>() {
         var tag = f.Attribute<flag>()
         if tag != nil && tag.skip {
             continue
@@ -770,11 +770,11 @@ func FlagsOf<T>() []Flag {
 }
 
 func setFrom<F>(p *F, values []string, fallback string) void! {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.Slice {
         if len(values) > 0 {
             *p = values
         } else if fallback != "" {
-            *p = std.strings.Split(fallback, ",")
+            *p = strings.Split(fallback, ",")
         }
     } else {
         var s = fallback
@@ -784,15 +784,15 @@ func setFrom<F>(p *F, values []string, fallback string) void! {
         if s == "" {
             return
         }
-        if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
-            std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
-            std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
-            std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 {
+        if reflect.TypeOf<F>().Kind == reflect.Kind.Int ||
+            reflect.TypeOf<F>().Kind == reflect.Kind.Int32 ||
+            reflect.TypeOf<F>().Kind == reflect.Kind.Int16 ||
+            reflect.TypeOf<F>().Kind == reflect.Kind.Int8 {
             // accept 0x / 0o / 0b prefixes like checkValue
-            var n = std.strconv.ParseInt(s, 0)?
-            *p = std.strconv.Parse<F>(std.strconv.Itoa(n))?
+            var n = strconv.ParseInt(s, 0)?
+            *p = strconv.Parse<F>(strconv.Itoa(n))?
         } else {
-            *p = std.strconv.Parse<F>(s)?
+            *p = strconv.Parse<F>(s)?
         }
     }
 }
@@ -801,7 +801,7 @@ func setFrom<F>(p *F, values []string, fallback string) void! {
 // field defaults.
 func Bind<T>(c *Context) T! {
     var out T
-    for f in std.reflect.Fields<T>() {
+    for f in reflect.Fields<T>() {
         var tag = f.Attribute<flag>()
         if tag != nil && tag.skip {
             continue
@@ -816,7 +816,7 @@ func Bind<T>(c *Context) T! {
         }
         var fallback = ""
         if env != "" {
-            fallback = std.os.Getenv(env)
+            fallback = os.Getenv(env)
         }
         if fallback == "" && tag != nil {
             fallback = tag.default

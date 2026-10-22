@@ -1,10 +1,10 @@
-// The Zell-source part of std.task (see sema/stdsrc.rs for the rules).
+// The Zell-source part of task (see sema/stdsrc.rs for the rules).
 // Delay, Yield, All and Any are runtime functions (stdlib.rs); the types
 // here are built from three runtime primitives: signals (rtSignal: a
 // pending Task<void> that rtFire completes once), per-object spin locks
 // (rtLock/rtUnlock on an int field, held only for a few statements, never
 // across an await) and the task context slot (rtGetCtx/rtSetCtx).
-namespace std.task
+namespace task
 
 // Mutex is an async mutual-exclusion lock. The zero value is unlocked;
 // `await m.Lock()` waits until the caller owns it, `m.Unlock()` hands it

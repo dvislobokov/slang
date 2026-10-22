@@ -1,4 +1,4 @@
-/* std_sync.c - lock-free primitives for std.sync (stdlib_src/sync.zl):
+/* std_sync.c - lock-free primitives for sync (stdlib_src/sync.zl):
  * sequentially consistent atomic operations on an int64 field (passed as
  * &field, like task.rtLock) and a thread yield for spin waits. */
 #include "rt_internal.h"

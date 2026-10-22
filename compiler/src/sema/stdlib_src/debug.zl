@@ -1,8 +1,8 @@
-// std.debug: the in-process debug agent (docs/DEBUGGER.md stage 2). A
+// debug: the in-process debug agent (docs/DEBUGGER.md stage 2). A
 // program built with `--debug-agent` (the default for debug builds) and
 // started with ZELL_DEBUG=[host]:port[,wait] runs AgentMain before main:
 // it listens on a local TCP socket and serves the Debug Adapter Protocol
-// from a dedicated OS thread (std.thread), outside the task scheduler, so
+// from a dedicated OS thread (thread), outside the task scheduler, so
 // it keeps answering while every task is paused. The C side
 // (runtime/src/debug.c, ABI.md section 23) calls back into `hook` from the
 // statement hooks when a breakpoint, step, pause, panic or error asks for
@@ -11,7 +11,7 @@
 //
 // Files: debug.zl (start-up, stop decisions, DAP requests), debug_dap.zl
 // (framing and JSON output), debug_vars.zl (tables, values, expressions).
-namespace std.debug
+namespace debug
 
 // Reasons passed to the hook (ABI.md 23.3).
 func rBp() int { return 1 }
@@ -114,7 +114,7 @@ struct Agent {
         if this.conn >= 0 {
             if !rtSend(
                 this.conn,
-                "Content-Length: " + std.strconv.Itoa(len(body)) + "\r\n\r\n" + body,
+                "Content-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body,
             ) {
                 rtClose(this.conn)
                 this.conn = -1
@@ -138,7 +138,7 @@ struct Agent {
         }
         this.send(
             "{\"seq\":" +
-                std.strconv.Itoa(this.nextSeq()) +
+                strconv.Itoa(this.nextSeq()) +
                 ",\"type\":\"event\",\"event\":" +
                 q(name) +
                 ",\"body\":" +
@@ -154,9 +154,9 @@ struct Agent {
         }
         this.send(
             "{\"seq\":" +
-                std.strconv.Itoa(this.nextSeq()) +
+                strconv.Itoa(this.nextSeq()) +
                 ",\"type\":\"response\",\"request_seq\":" +
-                std.strconv.Itoa(req.seq) +
+                strconv.Itoa(req.seq) +
                 ",\"success\":true,\"command\":" +
                 q(req.command) +
                 ",\"body\":" +
@@ -168,9 +168,9 @@ struct Agent {
     func fail(req request, msg string) {
         this.send(
             "{\"seq\":" +
-                std.strconv.Itoa(this.nextSeq()) +
+                strconv.Itoa(this.nextSeq()) +
                 ",\"type\":\"response\",\"request_seq\":" +
-                std.strconv.Itoa(req.seq) +
+                strconv.Itoa(req.seq) +
                 ",\"success\":false,\"command\":" +
                 q(req.command) +
                 ",\"message\":" +
@@ -232,7 +232,7 @@ struct Agent {
             var ty = rtErrorType(e)
             var want = len(this.errTypes) == 0
             for t in this.errTypes {
-                if t == ty || std.strings.HasSuffix(ty, "." + t) {
+                if t == ty || strings.HasSuffix(ty, "." + t) {
                     want = true
                 }
             }
@@ -269,7 +269,7 @@ struct Agent {
             "reason",
             q(why),
             "threadId",
-            std.strconv.Itoa(task),
+            strconv.Itoa(task),
             "allThreadsStopped",
             "true",
         ]
@@ -277,7 +277,7 @@ struct Agent {
             fields = append(fields, "text", q(text), "description", q(text))
         }
         if hit > 0 {
-            fields = append(fields, "hitBreakpointIds", "[" + std.strconv.Itoa(hit) + "]")
+            fields = append(fields, "hitBreakpointIds", "[" + strconv.Itoa(hit) + "]")
         }
         this.event("stopped", obj(fields))
         rtUnlock(0)
@@ -310,11 +310,11 @@ struct Agent {
         var out = ""
         var rest = msg
         for {
-            var open = std.strings.Index(rest, "{")
+            var open = strings.Index(rest, "{")
             if open < 0 {
                 break
             }
-            var close = std.strings.Index(rest[open..], "}")
+            var close = strings.Index(rest[open..], "}")
             if close < 0 {
                 break
             }
@@ -339,7 +339,7 @@ struct Agent {
     func exitHook(code int) {
         rtLock(0)
         this.exited = true
-        this.event("exited", obj(["exitCode", std.strconv.Itoa(code)]))
+        this.event("exited", obj(["exitCode", strconv.Itoa(code)]))
         this.event("terminated", "")
         rtUnlock(0)
     }
@@ -385,7 +385,7 @@ struct Agent {
                         "presentationHint",
                         q("locals"),
                         "variablesReference",
-                        std.strconv.Itoa(r),
+                        strconv.Itoa(r),
                         "expensive",
                         "false",
                     ]) + "]",
@@ -449,7 +449,7 @@ struct Agent {
         this.stopped = false
         // The response goes first: the program may end right away.
         if mode == 0 {
-            this.respond(req, obj(["allThreadsContinued", std.strconv.FormatBool(!single)]))
+            this.respond(req, obj(["allThreadsContinued", strconv.FormatBool(!single)]))
         } else {
             this.respond(req, "")
         }
@@ -457,9 +457,9 @@ struct Agent {
         // attached views) learn that the task runs again.
         this.event("continued", obj([
             "threadId",
-            std.strconv.Itoa(task),
+            strconv.Itoa(task),
             "allThreadsContinued",
-            std.strconv.FormatBool(!single),
+            strconv.FormatBool(!single),
         ]))
         if !rtResume(task, mode, single) && mode == 0 {
             // Not stopped (or gone): still let everything run.
@@ -477,8 +477,8 @@ struct Agent {
         var best = -1
         for i in 0..len(this.t.files) {
             var f = this.t.files[i]
-            if std.strings.HasSuffix(f, "/" + path) ||
-                std.strings.HasSuffix(path, "/" + baseName(f)) && baseName(f) == baseName(path) {
+            if strings.HasSuffix(f, "/" + path) ||
+                strings.HasSuffix(path, "/" + baseName(f)) && baseName(f) == baseName(path) {
                 best = i
             }
         }
@@ -556,11 +556,11 @@ struct Agent {
             if len(at) == 0 {
                 results = append(results, obj([
                     "id",
-                    std.strconv.Itoa(id),
+                    strconv.Itoa(id),
                     "verified",
                     "false",
                     "line",
-                    std.strconv.Itoa(line),
+                    strconv.Itoa(line),
                     "message",
                     q("no code at this line"),
                 ]))
@@ -571,8 +571,8 @@ struct Agent {
             bp.log = try b.Get("logMessage").String() else ""
             var hc = try b.Get("hitCondition").String() else ""
             if hc != "" {
-                bp.hitCond = try std.strconv.Atoi(
-                    std.strings.TrimPrefix(std.strings.Trim(hc), ">="),
+                bp.hitCond = try strconv.Atoi(
+                    strings.TrimPrefix(strings.Trim(hc), ">="),
                 ) else 0
             }
             for st in at {
@@ -582,11 +582,11 @@ struct Agent {
             }
             results = append(results, obj([
                 "id",
-                std.strconv.Itoa(id),
+                strconv.Itoa(id),
                 "verified",
                 "true",
                 "line",
-                std.strconv.Itoa(bp.line),
+                strconv.Itoa(bp.line),
                 "source",
                 obj(["path", q(this.t.fileName(file))]),
             ]))
@@ -594,7 +594,7 @@ struct Agent {
         if file >= 0 {
             this.fileBps[file] = stmts
         }
-        this.respond(req, obj(["breakpoints", "[" + std.strings.Join(results, ",") + "]"]))
+        this.respond(req, obj(["breakpoints", "[" + strings.Join(results, ",") + "]"]))
     }
 
     func setFunctionBreakpoints(req request) {
@@ -614,7 +614,7 @@ struct Agent {
                 var full = this.t.funcName(f)
                 if full == name ||
                     this.t.funcShort(f) == name ||
-                    std.strings.HasSuffix(full, "." + name) {
+                    strings.HasSuffix(full, "." + name) {
                     found = f
                     break
                 }
@@ -622,7 +622,7 @@ struct Agent {
             if found < 0 {
                 results = append(results, obj([
                     "id",
-                    std.strconv.Itoa(this.nextBp),
+                    strconv.Itoa(this.nextBp),
                     "verified",
                     "false",
                     "message",
@@ -635,16 +635,16 @@ struct Agent {
             rtSetBp(s, true)
             results = append(results, obj([
                 "id",
-                std.strconv.Itoa(this.nextBp),
+                strconv.Itoa(this.nextBp),
                 "verified",
                 "true",
                 "line",
-                std.strconv.Itoa(this.t.stmtLine(s)),
+                strconv.Itoa(this.t.stmtLine(s)),
                 "source",
                 obj(["path", q(this.t.fileName(this.t.stmtFile(s)))]),
             ]))
         }
-        this.respond(req, obj(["breakpoints", "[" + std.strings.Join(results, ",") + "]"]))
+        this.respond(req, obj(["breakpoints", "[" + strings.Join(results, ",") + "]"]))
     }
 
     func setExceptionBreakpoints(req request) {
@@ -669,8 +669,8 @@ struct Agent {
                 this.excPanic = true
             } else if id == "error" {
                 this.excError = true
-                for part in std.strings.Split(cond, ",") {
-                    var p = std.strings.Trim(part)
+                for part in strings.Split(cond, ",") {
+                    var p = strings.Trim(part)
                     if p != "" {
                         this.errTypes = append(this.errTypes, p)
                     }
@@ -686,7 +686,7 @@ struct Agent {
         if task == 1 || fn == "main" {
             return "main"
         }
-        return "task " + std.strconv.Itoa(task) + " " + fn
+        return "task " + strconv.Itoa(task) + " " + fn
     }
 
     func threads(req request) {
@@ -694,7 +694,7 @@ struct Agent {
         for task in rtTasks() {
             items = append(items, obj([
                 "id",
-                std.strconv.Itoa(task),
+                strconv.Itoa(task),
                 "name",
                 q(this.taskName(task)),
             ]))
@@ -702,7 +702,7 @@ struct Agent {
         if len(items) == 0 {
             items = append(items, obj(["id", "1", "name", q("main")]))
         }
-        this.respond(req, obj(["threads", "[" + std.strings.Join(items, ",") + "]"]))
+        this.respond(req, obj(["threads", "[" + strings.Join(items, ",") + "]"]))
     }
 
     func stackTrace(req request) {
@@ -728,13 +728,13 @@ struct Agent {
                 var fid = this.frameId(f, task)
                 items = append(items, obj([
                     "id",
-                    std.strconv.Itoa(fid),
+                    strconv.Itoa(fid),
                     "name",
                     q(this.t.funcName(fi)),
                     "line",
-                    std.strconv.Itoa(line),
+                    strconv.Itoa(line),
                     "column",
-                    std.strconv.Itoa(col),
+                    strconv.Itoa(col),
                     "source",
                     obj(["name", q(baseName(path)), "path", q(path)]),
                 ]))
@@ -744,9 +744,9 @@ struct Agent {
         }
         this.respond(req, obj([
             "stackFrames",
-            "[" + std.strings.Join(items, ",") + "]",
+            "[" + strings.Join(items, ",") + "]",
             "totalFrames",
-            std.strconv.Itoa(n),
+            strconv.Itoa(n),
         ]))
     }
 
@@ -760,11 +760,11 @@ struct Agent {
             "type",
             q(tiName(ti)),
             "variablesReference",
-            std.strconv.Itoa(r),
+            strconv.Itoa(r),
         ]
         var n = indexedCount(addr, ti)
         if r > 0 && n > 0 {
-            fields = append(fields, "indexedVariables", std.strconv.Itoa(n))
+            fields = append(fields, "indexedVariables", strconv.Itoa(n))
         }
         return obj(fields)
     }
@@ -791,7 +791,7 @@ struct Agent {
                 items = append(items, this.variable(c.name, c.addr, c.ti))
             }
         }
-        this.respond(req, obj(["variables", "[" + std.strings.Join(items, ",") + "]"]))
+        this.respond(req, obj(["variables", "[" + strings.Join(items, ",") + "]"]))
     }
 
     func evaluateReq(req request) {
@@ -824,7 +824,7 @@ struct Agent {
             "type",
             q(showType(v)),
             "variablesReference",
-            std.strconv.Itoa(r),
+            strconv.Itoa(r),
         ]))
     }
 
@@ -860,7 +860,7 @@ struct Agent {
         var r = reader{fd: c}
         for {
             var body = try r.next() catch err {
-                if std.os.Getenv("ZELL_DEBUG_TRACE") != "" {
+                if os.Getenv("ZELL_DEBUG_TRACE") != "" {
                     rtEprint("zell-debug: " + err.Message() + "\n")
                 }
                 return
@@ -921,7 +921,7 @@ func capabilities() string {
 }
 
 func baseName(p string) string {
-    var i = std.strings.LastIndex(p, "/")
+    var i = strings.LastIndex(p, "/")
     if i < 0 {
         return p
     }
@@ -936,39 +936,39 @@ struct config {
 }
 
 func parseConfig(s string) config! {
-    var c = config{host: "127.0.0.1", wait: std.os.Getenv("ZELL_DEBUG_WAIT") == "1"}
+    var c = config{host: "127.0.0.1", wait: os.Getenv("ZELL_DEBUG_WAIT") == "1"}
     var spec = s
-    for part in std.strings.Split(s, ",") {
-        if std.strings.Trim(part) == "wait" {
+    for part in strings.Split(s, ",") {
+        if strings.Trim(part) == "wait" {
             c.wait = true
         }
     }
-    var comma = std.strings.Index(spec, ",")
+    var comma = strings.Index(spec, ",")
     if comma >= 0 {
         spec = spec[..comma]
     }
     if spec == "1" || spec == "on" || spec == "" {
         spec = ":0"
     }
-    var colon = std.strings.LastIndex(spec, ":")
+    var colon = strings.LastIndex(spec, ":")
     if colon < 0 {
-        c.port = std.strconv.Atoi(spec)?
+        c.port = strconv.Atoi(spec)?
         return c
     }
     if colon > 0 {
         c.host = spec[..colon]
     }
-    c.port = std.strconv.Atoi(spec[colon + 1..])?
+    c.port = strconv.Atoi(spec[colon + 1..])?
     return c
 }
 
 // The agent's entry point, called by the runtime before main when
 // ZELL_DEBUG is set (zell_dbg_boot, ABI.md 23.2).
 func AgentMain() {
-    var env = std.os.Getenv("ZELL_DEBUG")
+    var env = os.Getenv("ZELL_DEBUG")
     var cfg = try parseConfig(env) catch err {
         rtEprint(
-            "zell-debug: bad ZELL_DEBUG " + std.strconv.Quote(env) + ": " + err.Message() + "\n",
+            "zell-debug: bad ZELL_DEBUG " + strconv.Quote(env) + ": " + err.Message() + "\n",
         )
         return
     }
@@ -991,9 +991,9 @@ func AgentMain() {
         a.exitHook(code)
     })
     rtEprint(
-        "zell-debug: listening on " + cfg.host + ":" + std.strconv.Itoa(rtSockPort(fd)) + "\n",
+        "zell-debug: listening on " + cfg.host + ":" + strconv.Itoa(rtSockPort(fd)) + "\n",
     )
-    std.thread.Spawn(func() {
+    thread.Spawn(func() {
         a.serve()
     })
     if cfg.wait {

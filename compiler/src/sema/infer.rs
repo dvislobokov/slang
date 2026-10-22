@@ -199,7 +199,7 @@ impl<'a> Sema<'a> {
         if let Some(e) = self.reflect_generic_call(t, span) {
             return e;
         }
-        // std.data: models, contexts and migrations generated at compile time (orm.rs).
+        // data: models, contexts and migrations generated at compile time (orm.rs).
         if recv.is_none() {
             if let Some(e) = self.orm_generic_call(t, targs, args, span) {
                 return e;

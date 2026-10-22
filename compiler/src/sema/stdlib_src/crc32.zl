@@ -1,6 +1,6 @@
-// std.hash.crc32: CRC-32 with the IEEE, Castagnoli or Koopman polynomial
-// (Go's hash/crc32). ChecksumIEEE matches std.crypto.hash.Crc32.
-namespace std.hash.crc32
+// hash.crc32: CRC-32 with the IEEE, Castagnoli or Koopman polynomial
+// (Go's hash/crc32). ChecksumIEEE matches crypto.hash.Crc32.
+namespace hash.crc32
 
 // Table is a precomputed CRC-32 table (MakeTable).
 struct Table {
@@ -43,7 +43,7 @@ func ChecksumIEEE(data []byte) uint32 {
     return Update(0, MakeTable(0xEDB88320), data)
 }
 
-// A streaming CRC-32 (std.hash.Hash32).
+// A streaming CRC-32 (hash.Hash32).
 struct Digest {
     crc uint32
     tab Table
@@ -56,7 +56,7 @@ struct Digest {
 
     // WriteString adds the bytes of s to the checksum.
     func WriteString(s string) int! {
-        this.crc = Update(this.crc, this.tab, std.strings.Bytes(s))
+        this.crc = Update(this.crc, this.tab, strings.Bytes(s))
         return len(s)
     }
 
@@ -67,7 +67,7 @@ struct Digest {
 
     // Sum returns the checksum as 4 big-endian bytes.
     func Sum() []byte {
-        return std.hash.Bytes32(this.crc)
+        return hash.Bytes32(this.crc)
     }
 
     // Reset restores the initial state.

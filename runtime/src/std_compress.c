@@ -1,4 +1,4 @@
-/* std_compress.c - the C half of std.compress (runtime/ABI.md 19.2): the
+/* std_compress.c - the C half of compress (runtime/ABI.md 19.2): the
  * DEFLATE (RFC 1951) decoder and encoder and the CRC-32 / Adler-32
  * checksums used by the zlib (RFC 1950) and gzip (RFC 1952) wrappers. The
  * wrappers, headers and the streaming Reader/Writer types are Zell code

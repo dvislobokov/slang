@@ -1,8 +1,8 @@
-// std.encoding.base32: RFC 4648 base32 (Go's encoding/base32). Encode /
-// Decode use the standard alphabet with padding, like std.encoding.base64;
+// encoding.base32: RFC 4648 base32 (Go's encoding/base32). Encode /
+// Decode use the standard alphabet with padding, like encoding.base64;
 // EncodeHex / DecodeHex the "extended hex" alphabet; NewEncoding makes
 // others, with or without padding.
-namespace std.encoding.base32
+namespace encoding.base32
 
 // An alphabet of 32 distinct ASCII characters and a padding choice.
 struct Encoding {
@@ -41,12 +41,12 @@ struct Encoding {
             }
             i += 5
         }
-        return std.strings.FromBytes(out)
+        return strings.FromBytes(out)
     }
 
     // EncodeString returns the base32 encoding of the bytes of s.
     func EncodeString(s string) string {
-        return this.Encode(std.strings.Bytes(s))
+        return this.Encode(strings.Bytes(s))
     }
 
     // Decodes s; padding is required iff the encoding pads. Line breaks
@@ -64,21 +64,21 @@ struct Encoding {
                 continue
             }
             if padding > 0 {
-                return error("base32: illegal data at input byte " + std.strconv.Itoa(i))
+                return error("base32: illegal data at input byte " + strconv.Itoa(i))
             }
-            var v = std.strings.Index(this.alphabet, std.strings.FromBytes([c]))
+            var v = strings.Index(this.alphabet, strings.FromBytes([c]))
             if v < 0 {
-                return error("base32: illegal data at input byte " + std.strconv.Itoa(i))
+                return error("base32: illegal data at input byte " + strconv.Itoa(i))
             }
             vals = append(vals, v)
         }
         var total = len(vals) + padding
         if this.pad && total % 8 != 0 {
-            return error("base32: illegal data at input byte " + std.strconv.Itoa(len(s)))
+            return error("base32: illegal data at input byte " + strconv.Itoa(len(s)))
         }
         var rem = len(vals) % 8
         if rem == 1 || rem == 3 || rem == 6 {
-            return error("base32: illegal data at input byte " + std.strconv.Itoa(len(s)))
+            return error("base32: illegal data at input byte " + strconv.Itoa(len(s)))
         }
         var out []byte = []
         var i = 0
@@ -105,7 +105,7 @@ struct Encoding {
 
     // DecodeString decodes s into a string.
     func DecodeString(s string) string! {
-        return std.strings.FromBytes(this.Decode(s)?)
+        return strings.FromBytes(this.Decode(s)?)
     }
 }
 

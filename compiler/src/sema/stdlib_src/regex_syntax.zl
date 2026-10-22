@@ -1,4 +1,4 @@
-// The parser of std.regex: RE2 syntax -> syntax tree (see regex.zl for the
+// The parser of regex: RE2 syntax -> syntax tree (see regex.zl for the
 // engine overview). The tree lives in an arena of `node`s addressed by
 // index. Every character test is a rune class (sorted, merged [lo, hi]
 // pairs): a literal is a one-rune class, `(?i)` literals are classes of
@@ -10,7 +10,7 @@
 // (subs[0], min, max (-1 = unbounded), greedy).
 // Parser flags: 1 (?i) fold case, 2 (?m) multi-line, 4 (?s) dot matches
 // \n, 8 (?U) ungreedy.
-namespace std.regex
+namespace regex
 
 struct node {
     op     int
@@ -41,9 +41,9 @@ struct parser {
             "regex: " +
                 msg +
                 " at offset " +
-                std.fmt.Format("{0}", off) +
+                fmt.Format("{0}", off) +
                 " in " +
-                std.encoding.json.Quote(this.pattern),
+                encoding.json.Quote(this.pattern),
         )
     }
 
@@ -603,7 +603,7 @@ struct parser {
                 name = string(this.peek())
                 this.pos += 1
             }
-            if std.strings.HasPrefix(name, "^") {
+            if strings.HasPrefix(name, "^") {
                 neg = !neg
                 name = name[1..]
             }
@@ -654,7 +654,7 @@ struct parser {
                 if end > 0 {
                     var name = this.text(this.pos + 2, end - 2)
                     var pneg = false
-                    if std.strings.HasPrefix(name, "^") {
+                    if strings.HasPrefix(name, "^") {
                         pneg = true
                         name = name[1..]
                     }
@@ -751,7 +751,7 @@ struct parser {
 // Parses pattern into the arena of p; returns the root node.
 func parse(pattern string, p *parser) int! {
     p.pattern = pattern
-    p.rs = std.strings.Runes(pattern)
+    p.rs = strings.Runes(pattern)
     p.names = [""]
     var offs []int = []
     var off = 0
@@ -909,8 +909,8 @@ func sortPairs(r []int) []int {
     for width < n {
         var i = 0
         for i < n {
-            var mid = std.math.IMin(i + width, n)
-            var hi = std.math.IMin(i + 2 * width, n)
+            var mid = math.IMin(i + width, n)
+            var hi = math.IMin(i + 2 * width, n)
             var x = i
             var y = mid
             var k = i
@@ -966,14 +966,14 @@ func foldClass(r0 []int) []int {
         var lo = r[i * 2]
         var hi = r[i * 2 + 1]
         // ASCII letters directly
-        var a = std.math.IMax(lo, 65)
-        var b = std.math.IMin(hi, 90)
+        var a = math.IMax(lo, 65)
+        var b = math.IMin(hi, 90)
         if a <= b {
             out = append(out, a + 32)
             out = append(out, b + 32)
         }
-        a = std.math.IMax(lo, 97)
-        b = std.math.IMin(hi, 122)
+        a = math.IMax(lo, 97)
+        b = math.IMin(hi, 122)
         if a <= b {
             out = append(out, a - 32)
             out = append(out, b - 32)
@@ -988,8 +988,8 @@ func foldClass(r0 []int) []int {
             out = append(out, 383)
         }
         // other runes through the fold table (no fold beyond U+1E943)
-        var c = std.math.IMax(lo, 128)
-        var end = std.math.IMin(hi, 125251)
+        var c = math.IMax(lo, 128)
+        var end = math.IMin(hi, 125251)
         for c <= end {
             var f = rtFold(c)
             for f != c {

@@ -9,7 +9,7 @@
  * process is short-lived); locks the function held stay held. Panics on
  * other threads (tasks the function started) still end the process.
  * Platforms without the capture (ZELL_PLAT_HAS_PANIC_CAPTURE 0) return
- * -1, and std.testing falls back to re-running the test in a child. */
+ * -1, and testing falls back to re-running the test in a child. */
 #include "rt_internal.h"
 #include "platform/platform.h"
 

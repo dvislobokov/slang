@@ -1,5 +1,5 @@
 // Compilation of the syntax tree to a byte-level program, the Pike VM and
-// the lazy DFA of std.regex (overview in regex.zl).
+// the lazy DFA of regex (overview in regex.zl).
 //
 // Instructions (parallel slices of `prog`): 1 byte set (arg = set index,
 // a 256-entry membership table in `sets`), 2 split (out preferred over
@@ -7,7 +7,7 @@
 // `flagsAt`), 5 match, 6 no-op jump, 7 fail. Rune classes are compiled to
 // alternations of UTF-8 byte-range sequences (a trie on the leading
 // ranges), so both engines consume bytes.
-namespace std.regex
+namespace regex
 
 struct prog {
     op      []int
@@ -34,7 +34,7 @@ struct prog {
                 mask[b >> 3] = mask[b >> 3] | byte(1 << (b & 7))
             }
         }
-        var key = std.strings.FromBytes(mask)
+        var key = strings.FromBytes(mask)
         var id = this.setKeys[key]
         if id > 0 {
             return id - 1
@@ -776,7 +776,7 @@ struct dfa {
             this.key = append(this.key, byte((pc >> 8) & 255))
             this.key = append(this.key, byte(pc >> 16))
         }
-        var k = std.strings.FromBytes(this.key)
+        var k = strings.FromBytes(this.key)
         var id = this.keys[k]
         if id > 0 {
             return id - 1

@@ -1,8 +1,7 @@
-// Examples for std.strings (run by `zell test std`, shown by `zell doc`).
+// Examples for strings (run by `zell test std`, shown by `zell doc`).
 namespace strings_test
 
-import std
-import std.io
+import io
 
 func ExampleSplit() {
     var parts = strings.Split("a,b,c", ",")

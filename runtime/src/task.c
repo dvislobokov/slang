@@ -1,5 +1,5 @@
 /* task.c - thread-pool scheduler, tasks, timers, mutex, channels, the
- * per-task context slot and small primitives for std.task (signals, spin
+ * per-task context slot and small primitives for task (signals, spin
  * locks, yield). Threads, the CPU count and the clock come from the platform
  * layer (platform/platform.h); the I/O poller is in task_io.c. */
 #include "rt_internal.h"
@@ -271,14 +271,14 @@ struct zell_task {
     /* The caller's context when a coroutine started (zell_task_new; owned,
      * valid while ctx_saved): put back when the coroutine first suspends or
      * completes, so context changes made inside it (task context values,
-     * std.diag spans) never leak into the caller (10.8). */
+     * diag spans) never leak into the caller (10.8). */
     zell_object *caller_ctx;
     int32_t ctx_saved;
     int32_t dbg_id;             /* debug agent record (debug.c), 0 = none */
     unsigned char slot[];       /* result_size bytes (8-aligned) */
 };
 
-static int64_t g_live_tasks; /* std.diag */
+static int64_t g_live_tasks; /* diag */
 
 int64_t zell__live_tasks(void) { return __atomic_load_n(&g_live_tasks, __ATOMIC_RELAXED); }
 
@@ -1049,7 +1049,7 @@ void zell_task_set_ctx(zell_object *ctx) {
 }
 
 /* ======================================================================
- * Primitives for std.task written in Zell (Channel, Mutex, WaitGroup,
+ * Primitives for task written in Zell (Channel, Mutex, WaitGroup,
  * Timeout, Spawn): signals, cancellable timers, spin locks, yield.
  * ====================================================================== */
 
@@ -1234,7 +1234,7 @@ void zell_task_leave_scope(zell_task *prev) {
     zell_release(old);
 }
 
-/* std.task.ErrCancelled: an immortal sentinel. */
+/* task.ErrCancelled: an immortal sentinel. */
 static ZELL_STRING_STORAGE(15) cancelled_msg = ZELL_STRING_INIT(cancelled_msg, "task cancelled");
 
 static zell_error cancelled_error = {
@@ -1243,7 +1243,7 @@ static zell_error cancelled_error = {
 
 zell_error *zell_task_err_cancelled(void) { return &cancelled_error; }
 
-/* std.task.Key<T>() ids: unique per process. */
+/* task.Key<T>() ids: unique per process. */
 int64_t zell_task_next_key(void) {
     static int64_t next;
     return __atomic_add_fetch(&next, 1, __ATOMIC_RELAXED);

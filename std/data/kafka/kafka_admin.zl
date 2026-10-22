@@ -1,7 +1,7 @@
 // Topic administration (see kafka.zl for the file layout): CreateTopics v2
 // and DeleteTopics v1 sent to the controller, topic listing and
 // description from Metadata v1.
-namespace std.data.kafka
+namespace data.kafka
 
 // A topic to create. ReplicationFactor 0 means 1; Configs are topic
 // configs ("retention.ms", "cleanup.policy"...).
@@ -55,7 +55,7 @@ struct Admin {
             out = append(out, b)
         }
         this.c.unlock()
-        std.slices.SortFunc(out, func(a Broker, b Broker) bool {
+        slices.SortFunc(out, func(a Broker, b Broker) bool {
             return a.ID < b.ID
         })
         return out
@@ -117,7 +117,7 @@ async func createTopics(c *client, specs []TopicSpec) void! {
             e.Int32(n)
             e.Int16(rf)
             e.ArrayLen(0)
-            var keys = std.maps.SortedKeys(s.Configs)
+            var keys = maps.SortedKeys(s.Configs)
             e.ArrayLen(len(keys))
             for k in keys {
                 e.String(k)
@@ -145,7 +145,7 @@ async func createTopics(c *client, specs []TopicSpec) void! {
             if code == 41 && attempt < c.cfg.MaxRetries {
                 retry = true
             } else if code != 0 {
-                return Error{Code: code, Text: "topic " + std.strconv.Quote(name) + ": " + msg}
+                return Error{Code: code, Text: "topic " + strconv.Quote(name) + ": " + msg}
             }
         }
         if retry {
@@ -180,7 +180,7 @@ async func deleteTopics(c *client, names []string) void! {
         var name = d.String()
         var code = d.Int16()
         if code != 0 {
-            return Error{Code: code, Text: "topic " + std.strconv.Quote(name)}
+            return Error{Code: code, Text: "topic " + strconv.Quote(name)}
         }
     }
     c.lock()
@@ -209,7 +209,7 @@ async func listTopics(c *client) []TopicInfo! {
             out = append(out, t)
         }
     }
-    std.slices.SortFunc(out, func(a TopicInfo, b TopicInfo) bool {
+    slices.SortFunc(out, func(a TopicInfo, b TopicInfo) bool {
         return a.Name < b.Name
     })
     return out
@@ -219,7 +219,7 @@ async func describeTopic(c *client, name string) TopicInfo! {
     await refreshMetadata(c, [name])?
     var t = c.topic(name)
     if t.Err != 0 {
-        return Error{Code: t.Err, Text: "topic " + std.strconv.Quote(name)}
+        return Error{Code: t.Err, Text: "topic " + strconv.Quote(name)}
     }
     return t
 }

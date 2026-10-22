@@ -11,10 +11,10 @@
 // (compile-time reflection) and interprets the template over it. Struct
 // methods cannot be called (fields only).
 //
-// std.html.template uses this engine with contextual escaping: every
+// html.template uses this engine with contextual escaping: every
 // action is escaped for where it appears (text, attribute, URL, JS, CSS),
 // as Go's html/template does (see htmlctx.zl).
-namespace std.text.template
+namespace text.template
 
 // A dynamic value: nil, bool, int, float, string, list, map (sorted keys),
 // struct (fields in order), or safe HTML / URL / JS text (html templates).
@@ -71,7 +71,7 @@ struct Value {
         if this.kind == 2 {
             return this.i
         }
-        if this.kind == 3 && this.f == std.math.Trunc(this.f) {
+        if this.kind == 3 && this.f == math.Trunc(this.f) {
             return int(this.f)
         }
         return error("template: " + kindName(this.kind) + " is not an int")
@@ -156,72 +156,72 @@ func kindName(k int) string {
 
 // The dynamic Value of v (compile-time reflection).
 func ValueOf<T>(v T) Value {
-    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+    if reflect.TypeOf<T>() == reflect.TypeOf<Value>() {
         return v
-    } else if std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.html.template.HTML>() {
+    } else if reflect.TypeOf<T>() == reflect.TypeOf<html.template.HTML>() {
         return Value{kind: 8, s: v.Text}
-    } else if std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.html.template.URL>() {
+    } else if reflect.TypeOf<T>() == reflect.TypeOf<html.template.URL>() {
         return Value{kind: 9, s: v.Text}
-    } else if std.reflect.TypeOf<T>() == std.reflect.TypeOf<std.html.template.JS>() {
+    } else if reflect.TypeOf<T>() == reflect.TypeOf<html.template.JS>() {
         return Value{kind: 10, s: v.Text}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
         var keys []string = []
         var vals []Value = []
-        for f in std.reflect.Fields<T>() {
+        for f in reflect.Fields<T>() {
             keys = append(keys, f.Name)
             vals = append(vals, ValueOf(f.Get(v)))
         }
-        return Value{kind: 7, keys: keys, items: vals, typeName: std.reflect.TypeOf<T>().Name}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+        return Value{kind: 7, keys: keys, items: vals, typeName: reflect.TypeOf<T>().Name}
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.String {
         return Value{kind: 4, s: v}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Bool {
         return Value{kind: 1, b: v}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 {
         return Value{kind: 2, i: int(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
         return Value{kind: 3, f: float(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Char {
         return Value{kind: 4, s: string(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
-        return Value{kind: 4, s: std.fmt.Format("{0}", v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Enum {
+        return Value{kind: 4, s: fmt.Format("{0}", v)}
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Slice ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Array {
         var items []Value = []
         for x in v {
             items = append(items, ValueOf(x))
         }
         return Value{kind: 5, items: items}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Map {
         var keys []string = []
         var vals []Value = []
         var nums []int = []
-        var numeric = std.reflect.TypeOf<T>().Key.Kind == std.reflect.Kind.Int
+        var numeric = reflect.TypeOf<T>().Key.Kind == reflect.Kind.Int
         for k, x in v {
-            keys = append(keys, std.fmt.Format("{0}", k))
+            keys = append(keys, fmt.Format("{0}", k))
             vals = append(vals, ValueOf(x))
             if numeric {
-                nums = append(nums, try std.strings.ToInt(std.fmt.Format("{0}", k)) else 0)
+                nums = append(nums, try strings.ToInt(fmt.Format("{0}", k)) else 0)
             }
         }
         sortPairs(keys, vals, nums, numeric)
         return Value{kind: 6, keys: keys, items: vals, zero: [mapZero(v)]}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Pointer {
         if v == nil {
             return Value{s: "<nil>"}
         }
         return ValueOf(*v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Any {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Any {
         return anyValue(v)
     } else {
-        return Value{kind: 4, s: std.reflect.TypeOf<T>().Name}
+        return Value{kind: 4, s: reflect.TypeOf<T>().Name}
     }
 }
 
@@ -284,7 +284,7 @@ struct Template<T> {
         if n == 0 {
             return error(
                 "template: no template " +
-                    std.encoding.json.Quote(name) +
+                    encoding.json.Quote(name) +
                     " defined in " +
                     this.t.name,
             )
@@ -322,21 +322,21 @@ func Parse<T>(src string) Template<T>! {
 func ParseNamed<T>(name string, src string) Template<T>! {
     var none = map[string]func([]Value) Value!{}
     var t = build(name, src, none, false)?
-    checkTypes(t, std.reflect.TypeOf<T>())?
+    checkTypes(t, reflect.TypeOf<T>())?
     return Template<T>{t: t}
 }
 
 // Parses with custom functions (callable as {{name args}}).
 func ParseWith<T>(src string, funcs map[string]func([]Value) Value!) Template<T>! {
     var t = build("template", src, funcs, false)?
-    checkTypes(t, std.reflect.TypeOf<T>())?
+    checkTypes(t, reflect.TypeOf<T>())?
     return Template<T>{t: t}
 }
 
-// For std.html.template: parse with contextual escaping.
+// For html.template: parse with contextual escaping.
 func parseHTML<T>(name string, src string, funcs map[string]func([]Value) Value!) Template<T>! {
     var t = build(name, src, funcs, true)?
-    checkTypes(t, std.reflect.TypeOf<T>())?
+    checkTypes(t, reflect.TypeOf<T>())?
     return Template<T>{t: t}
 }
 
@@ -418,7 +418,7 @@ struct tmpl {
     html   bool
 
     func fail(line int, msg string) error {
-        return error(std.fmt.Format("template: {0}:{1}: {2}", this.name, line, msg))
+        return error(fmt.Format("template: {0}:{1}: {2}", this.name, line, msg))
     }
 
     func add(n tnode) int {
@@ -427,7 +427,7 @@ struct tmpl {
     }
 
     func execute(node int, data Value) string! {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var ex = executor{t: this, out: &b}
         ex.names = ["$"]
         ex.vals = [data]
@@ -465,14 +465,14 @@ struct tparser {
     func list() listResult! {
         var nodes []int = []
         for {
-            var open = std.regex.rtIndex(this.src, "{{", this.pos)
+            var open = regex.rtIndex(this.src, "{{", this.pos)
             var textEnd = open
             if open < 0 {
                 textEnd = len(this.src)
             }
             var text = this.src[this.pos..textEnd]
             if this.trimNext {
-                text = std.strings.TrimLeft(text, " \t\r\n")
+                text = strings.TrimLeft(text, " \t\r\n")
                 this.trimNext = false
             }
             var trimLeft = open >= 0 &&
@@ -481,7 +481,7 @@ struct tparser {
                 open + 3 < len(this.src) &&
                 isSpace(int(this.src[open + 3]))
             if trimLeft {
-                text = std.strings.TrimRight(text, " \t\r\n")
+                text = strings.TrimRight(text, " \t\r\n")
             }
             if text != "" {
                 nodes = append(nodes, this.t.add(tnode{kind: 1, text: text, line: this.line}))
@@ -497,8 +497,8 @@ struct tparser {
             }
             this.skipSpace()
             // comment
-            if std.strings.HasPrefix(this.src[this.pos..], "/*") {
-                var close = std.regex.rtIndex(this.src, "*/", this.pos + 2)
+            if strings.HasPrefix(this.src[this.pos..], "/*") {
+                var close = regex.rtIndex(this.src, "*/", this.pos + 2)
                 if close < 0 {
                     return this.fail("unclosed comment")
                 }
@@ -639,7 +639,7 @@ struct tparser {
             return this.fail("unexpected EOF: missing {{end}} for {{define}}")
         }
         if this.t.defs[name] != 0 {
-            return this.fail("template " + std.encoding.json.Quote(name) + " redefined")
+            return this.fail("template " + encoding.json.Quote(name) + " redefined")
         }
         this.t.nodes = append(this.t.nodes, tnode{kind: 0, list: body.list})
         this.t.defs[name] = len(this.t.nodes)
@@ -652,12 +652,12 @@ struct tparser {
     // Expects the end of an action (" -}}" trims the following text).
     func closeAction() void! {
         this.skipSpace()
-        if std.strings.HasPrefix(this.src[this.pos..], "-}}") {
+        if strings.HasPrefix(this.src[this.pos..], "-}}") {
             this.pos += 3
             this.trimNext = true
             return
         }
-        if std.strings.HasPrefix(this.src[this.pos..], "}}") {
+        if strings.HasPrefix(this.src[this.pos..], "}}") {
             this.pos += 2
             return
         }
@@ -666,8 +666,8 @@ struct tparser {
         }
         return this.fail(
             "unexpected " +
-                std.encoding.json.Quote(
-                    this.src[this.pos..std.math.IMin(this.pos + 10, len(this.src))],
+                encoding.json.Quote(
+                    this.src[this.pos..math.IMin(this.pos + 10, len(this.src))],
                 ) +
                 " in action",
         )
@@ -675,7 +675,7 @@ struct tparser {
 
     func atActionEnd() bool {
         var r = this.src[this.pos..]
-        return std.strings.HasPrefix(r, "}}") || std.strings.HasPrefix(r, "-}}") || r == ""
+        return strings.HasPrefix(r, "}}") || strings.HasPrefix(r, "-}}") || r == ""
     }
 
     func skipSpace() {
@@ -704,7 +704,7 @@ struct tparser {
             return this.quoted()?
         }
         if c == 96 {
-            var close = std.regex.rtIndex(this.src, "`", this.pos + 1)
+            var close = regex.rtIndex(this.src, "`", this.pos + 1)
             if close < 0 {
                 return this.fail("unterminated raw string")
             }
@@ -717,7 +717,7 @@ struct tparser {
 
     func quoted() string! {
         this.pos += 1
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         for {
             if this.pos >= len(this.src) || int(this.src[this.pos]) == 10 {
                 return this.fail("unterminated quoted string")
@@ -765,13 +765,13 @@ struct tparser {
                 }
                 names = append(names, this.src[start..this.pos])
                 this.skipSpace()
-                if std.strings.HasPrefix(this.src[this.pos..], ":=") {
+                if strings.HasPrefix(this.src[this.pos..], ":=") {
                     this.pos += 2
                     ok = true
                     break
                 }
-                if std.strings.HasPrefix(this.src[this.pos..], "=") &&
-                    !std.strings.HasPrefix(this.src[this.pos..], "==") {
+                if strings.HasPrefix(this.src[this.pos..], "=") &&
+                    !strings.HasPrefix(this.src[this.pos..], "==") {
                     this.pos += 1
                     p.assign = true
                     ok = true
@@ -907,13 +907,13 @@ struct tparser {
         }
         if c == 39 {
             // a character constant: its code point
-            var close = std.regex.rtIndex(this.src, "'", this.pos + 1)
+            var close = regex.rtIndex(this.src, "'", this.pos + 1)
             if close < 0 {
                 return this.fail("unterminated character constant")
             }
             var body = this.src[this.pos + 1..close]
             this.pos = close + 1
-            var r = std.strings.Runes(body)
+            var r = strings.Runes(body)
             if len(r) != 1 {
                 return this.fail("invalid character constant")
             }
@@ -941,30 +941,30 @@ struct tparser {
                 this.pos += 1
             }
             var text = this.src[start..this.pos]
-            if std.strings.Contains(text, ".") ||
-                ((std.strings.Contains(text, "e") || std.strings.Contains(text, "E")) &&
-                    !std.strings.HasPrefix(std.strings.TrimLeft(text, "+-"), "0x")) {
-                var f = try std.strings.ToFloat(text) catch err {
-                    return this.fail("bad number syntax: " + std.encoding.json.Quote(text))
+            if strings.Contains(text, ".") ||
+                ((strings.Contains(text, "e") || strings.Contains(text, "E")) &&
+                    !strings.HasPrefix(strings.TrimLeft(text, "+-"), "0x")) {
+                var f = try strings.ToFloat(text) catch err {
+                    return this.fail("bad number syntax: " + encoding.json.Quote(text))
                 }
                 return targ{kind: 7, f: f}
             }
-            var body = std.strings.TrimLeft(text, "+-")
+            var body = strings.TrimLeft(text, "+-")
             var v = 0
-            if std.strings.HasPrefix(body, "0x") {
+            if strings.HasPrefix(body, "0x") {
                 for k in 2..len(body) {
                     var h = hexVal(int(body[k]))
                     if h < 0 {
-                        return this.fail("bad number syntax: " + std.encoding.json.Quote(text))
+                        return this.fail("bad number syntax: " + encoding.json.Quote(text))
                     }
                     v = v * 16 + h
                 }
-                if std.strings.HasPrefix(text, "-") {
+                if strings.HasPrefix(text, "-") {
                     v = -v
                 }
             } else {
-                v = try std.strings.ToInt(text) catch err {
-                    return this.fail("bad number syntax: " + std.encoding.json.Quote(text))
+                v = try strings.ToInt(text) catch err {
+                    return this.fail("bad number syntax: " + encoding.json.Quote(text))
                 }
             }
             return targ{kind: 6, i: v}
@@ -979,11 +979,11 @@ struct tparser {
                 return targ{kind: 9}
             }
             if !isBuiltin(w) && !this.t.fnames[w] {
-                return this.fail("function " + std.encoding.json.Quote(w) + " not defined")
+                return this.fail("function " + encoding.json.Quote(w) + " not defined")
             }
             return targ{kind: 4, name: w}
         }
-        return this.fail("unexpected " + std.encoding.json.Quote(string(char(c))) + " in operand")
+        return this.fail("unexpected " + encoding.json.Quote(string(char(c))) + " in operand")
     }
 }
 
@@ -1013,7 +1013,7 @@ func hexVal(c int) int {
 }
 
 func countLines(s string) int {
-    return std.strings.Count(s, "\n")
+    return strings.Count(s, "\n")
 }
 
 func isBuiltin(name string) bool {

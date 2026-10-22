@@ -1,4 +1,4 @@
-/* std_math_bits.c - std.math.bits (Go's math/bits) on uint64 / uint32
+/* std_math_bits.c - math.bits (Go's math/bits) on uint64 / uint32
  * with compiler builtins; the tuple-returning Add64/Sub64/Mul64/Div64 are
  * Zell wrappers (stdlib_src/bits.zl) over the rt* helpers here. */
 #include "rt_internal.h"
@@ -73,7 +73,7 @@ uint64_t zell_math_bits_rt_div_rem(uint64_t hi, uint64_t lo, uint64_t y) {
     return (uint64_t)((((unsigned __int128)hi << 64) | lo) % y);
 }
 
-/* std.math.Float64bits & co (IEEE 754 bit patterns, Go's math package). */
+/* math.Float64bits & co (IEEE 754 bit patterns, Go's math package). */
 uint64_t zell_math_float64bits(double f);
 double zell_math_float64frombits(uint64_t b);
 uint32_t zell_math_float32bits(float f);

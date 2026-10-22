@@ -51,7 +51,7 @@ pub(crate) fn facts(text: &str, tokens: &[Token], file: &ast::File) -> FileFacts
     let mut skip: Vec<Span> = Vec::new();
     let mut generic: Vec<Span> = Vec::new();
     let body = |f: &ast::FuncDecl, in_generic: bool, skip: &mut Vec<Span>, generic: &mut Vec<Span>| {
-        // `Configure` bodies are read by std.data (the fluent model).
+        // `Configure` bodies are read by data (the fluent model).
         if in_generic || !f.generics.is_empty() {
             generic.push(f.span);
         } else if let Some(b) = &f.body {

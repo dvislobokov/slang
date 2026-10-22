@@ -1,4 +1,4 @@
-/* std_errors.c - std.errors.Wrap / Unwrap / Is / Trace / Frames (zell_errors_*), aliases over
+/* std_errors.c - errors.Wrap / Unwrap / Is / Trace / Frames (zell_errors_*), aliases over
  * error.c. errors.New and errors.As are lowered by the compiler to
  * zell_error_new and zell_error_as. */
 #include "rt_internal.h"

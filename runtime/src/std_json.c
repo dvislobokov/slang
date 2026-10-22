@@ -1,4 +1,4 @@
-/* std_json.c - the C half of std.encoding.json (runtime/ABI.md 17.4):
+/* std_json.c - the C half of encoding.json (runtime/ABI.md 17.4):
  * a tokenizer and string quoting. The parser and the typed (de)coders are
  * written in Zell (compiler/src/sema/reflect_src/json.zl) on top of these.
  *

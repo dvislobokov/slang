@@ -4,7 +4,7 @@
 // character. Mode selects what is recognized (GoTokens by default) and
 // Whitespace the characters (< 64) that are skipped. Errors are collected
 // in Errors as "line:col: message".
-namespace std.text.scanner
+namespace text.scanner
 
 struct Position {
     Filename string
@@ -22,7 +22,7 @@ struct Position {
             if s != "" {
                 s += ":"
             }
-            s += std.fmt.Format("{0}:{1}", this.Line, this.Column)
+            s += fmt.Format("{0}:{1}", this.Line, this.Column)
         }
         if s == "" {
             s = "-"
@@ -76,7 +76,7 @@ struct Scanner {
         if c < 128 {
             return (c, 1)
         }
-        var (r, n) = std.unicode.utf8.DecodeRuneAt(this.src, i)
+        var (r, n) = unicode.utf8.DecodeRuneAt(this.src, i)
         return (int(r), n)
     }
 
@@ -124,7 +124,7 @@ struct Scanner {
 
     func error(msg string) {
         this.ErrorCount += 1
-        this.Errors = append(this.Errors, std.fmt.Format("{0}:{1}: {2}", this.line, this.col, msg))
+        this.Errors = append(this.Errors, fmt.Format("{0}:{1}: {2}", this.line, this.col, msg))
     }
 
     func isIdentRune(c int, first bool) bool {
@@ -135,10 +135,10 @@ struct Scanner {
             return !first
         }
         if c >= 128 {
-            if std.unicode.IsLetter(char(c)) {
+            if unicode.IsLetter(char(c)) {
                 return true
             }
-            return !first && std.unicode.IsDigit(char(c))
+            return !first && unicode.IsDigit(char(c))
         }
         return false
     }
@@ -497,7 +497,7 @@ func TokenString(tok int) string {
     if tok == Comment {
         return "Comment"
     }
-    return std.encoding.json.Quote(std.strings.FromBytes(std.unicode.utf8.EncodeRune(char(tok))))
+    return encoding.json.Quote(strings.FromBytes(unicode.utf8.EncodeRune(char(tok))))
 }
 
 func digitVal(c int) int {
@@ -535,7 +535,7 @@ func litName(prefix int) string {
 }
 
 func quoteChar(c int) string {
-    return "'" + std.strings.FromBytes(std.unicode.utf8.EncodeRune(char(c))) + "'"
+    return "'" + strings.FromBytes(unicode.utf8.EncodeRune(char(c))) + "'"
 }
 
 // the index of a misplaced '_' in a number literal, or -1 (Go's invalidSep)

@@ -1,9 +1,9 @@
 // JSON Web Tokens (RFC 7519) with JWS compact serialization (RFC 7515):
 // HS256 (HMAC-SHA256), RS256 (RSASSA-PKCS1-v1_5 with SHA-256) and ES256
-// (ECDSA P-256 with SHA-256, raw r||s signatures) on std.crypto. Verify
+// (ECDSA P-256 with SHA-256, raw r||s signatures) on crypto. Verify
 // checks the algorithm against the key (no "none", no alg confusion), the
 // signature, exp/nbf (with leeway), and iss/aud when asked to.
-namespace std.web.auth.jwt
+namespace web.auth.jwt
 
 // A signing or verification key (HS256, RS256, ES256, RS256Public,
 // ES256Public).
@@ -32,13 +32,13 @@ struct Key {
 
 // An HMAC-SHA256 key (the shared secret signs and verifies).
 func HS256(secret string) Key {
-    return Key{Alg: "HS256", secret: std.strings.Bytes(secret)}
+    return Key{Alg: "HS256", secret: strings.Bytes(secret)}
 }
 
-// An RSA key from its PKCS#1 private key DER (std.crypto.rsa.GenerateKey,
+// An RSA key from its PKCS#1 private key DER (crypto.rsa.GenerateKey,
 // x509.PrivateKey.Bytes): signs and verifies.
 func RS256(privateKeyDER []byte) Key! {
-    var pub = std.crypto.rsa.PublicKeyOf(privateKeyDER)?
+    var pub = crypto.rsa.PublicKeyOf(privateKeyDER)?
     return Key{Alg: "RS256", rsaKey: privateKeyDER, rsaN: pub.N, rsaE: pub.E}
 }
 
@@ -47,10 +47,10 @@ func RS256Public(n []byte, e []byte) Key {
     return Key{Alg: "RS256", rsaN: n, rsaE: e}
 }
 
-// A P-256 key from its 32-byte private scalar (std.crypto.ecdsa.GenerateKey):
+// A P-256 key from its 32-byte private scalar (crypto.ecdsa.GenerateKey):
 // signs and verifies.
 func ES256(privateKey []byte) Key! {
-    var pub = std.crypto.ecdsa.PublicKey(privateKey)?
+    var pub = crypto.ecdsa.PublicKey(privateKey)?
     return Key{Alg: "ES256", ecPriv: privateKey, ecPub: pub}
 }
 
@@ -73,12 +73,12 @@ struct Claims {
     Name string
     Email string
     Roles []string
-    Extra map[string]std.encoding.json.Value
+    Extra map[string]encoding.json.Value
 
     // A custom claim (null if absent).
-    func Get(name string) std.encoding.json.Value {
+    func Get(name string) encoding.json.Value {
         if this.Extra == nil {
-            return std.encoding.json.Value{}
+            return encoding.json.Value{}
         }
         return this.Extra[name]
     }
@@ -105,9 +105,9 @@ struct Claims {
     }
 
     // Sets a custom claim.
-    func Set(name string, v std.encoding.json.Value) {
+    func Set(name string, v encoding.json.Value) {
         if this.Extra == nil {
-            this.Extra = map[string]std.encoding.json.Value{}
+            this.Extra = map[string]encoding.json.Value{}
         }
         this.Extra[name] = v
     }
@@ -123,7 +123,7 @@ struct Claims {
 
     // The payload JSON (registered claims first, then Extra by name).
     func Json() string {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         b.Write("{")
         var n = 0
         n = member(&b, n, "sub", this.Subject)
@@ -144,7 +144,7 @@ struct Claims {
                 if i > 0 {
                     b.Write(",")
                 }
-                b.Write(std.encoding.json.Quote(r))
+                b.Write(encoding.json.Quote(r))
             }
             b.Write("]")
             n += 1
@@ -154,12 +154,12 @@ struct Claims {
             for k in this.Extra {
                 keys = append(keys, k)
             }
-            std.slices.Sort(keys)
+            slices.Sort(keys)
             for k in keys {
                 if n > 0 {
                     b.Write(",")
                 }
-                b.Write(std.encoding.json.Quote(k))
+                b.Write(encoding.json.Quote(k))
                 b.Write(":")
                 b.Write(this.Extra[k].Format())
                 n += 1
@@ -170,29 +170,29 @@ struct Claims {
     }
 }
 
-func member(b *std.strings.Builder, n int, name string, v string) int {
+func member(b *strings.Builder, n int, name string, v string) int {
     if v == "" {
         return n
     }
     if n > 0 {
         b.Write(",")
     }
-    b.Write(std.encoding.json.Quote(name))
+    b.Write(encoding.json.Quote(name))
     b.Write(":")
-    b.Write(std.encoding.json.Quote(v))
+    b.Write(encoding.json.Quote(v))
     return n + 1
 }
 
-func numMember(b *std.strings.Builder, n int, name string, v int) int {
+func numMember(b *strings.Builder, n int, name string, v int) int {
     if v == 0 {
         return n
     }
     if n > 0 {
         b.Write(",")
     }
-    b.Write(std.encoding.json.Quote(name))
+    b.Write(encoding.json.Quote(name))
     b.Write(":")
-    b.Write(std.fmt.Format("{0}", v))
+    b.Write(fmt.Format("{0}", v))
     return n + 1
 }
 
@@ -208,7 +208,7 @@ struct VerifyOptions {
 }
 
 func b64(s string) string {
-    return std.encoding.base64.EncodeURL(std.strings.Bytes(s))
+    return encoding.base64.EncodeURL(strings.Bytes(s))
 }
 
 // Signs claims with k: header.payload.signature.
@@ -216,47 +216,47 @@ func Sign(claims Claims, k Key) string! {
     if !k.CanSign() {
         return error("jwt: the " + k.Alg + " key cannot sign (a public key)")
     }
-    var header = "{\"alg\":" + std.encoding.json.Quote(k.Alg) + ",\"typ\":\"JWT\""
+    var header = "{\"alg\":" + encoding.json.Quote(k.Alg) + ",\"typ\":\"JWT\""
     if k.Kid != "" {
-        header += ",\"kid\":" + std.encoding.json.Quote(k.Kid)
+        header += ",\"kid\":" + encoding.json.Quote(k.Kid)
     }
     header += "}"
     var input = b64(header) + "." + b64(claims.Json())
     var sig = signature(input, k)?
-    return input + "." + std.encoding.base64.EncodeURL(sig)
+    return input + "." + encoding.base64.EncodeURL(sig)
 }
 
 func signature(input string, k Key) []byte! {
     if k.Alg == "HS256" {
-        return std.crypto.hmac.Sha256(std.strings.FromBytes(k.secret), input)
+        return crypto.hmac.Sha256(strings.FromBytes(k.secret), input)
     }
-    var digest = std.crypto.hash.Sha256(input)
+    var digest = crypto.hash.Sha256(input)
     if k.Alg == "RS256" {
-        return std.crypto.rsa.SignPKCS1v15(k.rsaKey, "sha256", digest)?
+        return crypto.rsa.SignPKCS1v15(k.rsaKey, "sha256", digest)?
     }
     if k.Alg == "ES256" {
-        var der = std.crypto.ecdsa.Sign(k.ecPriv, digest)?
+        var der = crypto.ecdsa.Sign(k.ecPriv, digest)?
         return derToRaw(der)?
     }
     return error("jwt: unsupported algorithm " + k.Alg)
 }
 
 // The parts of a token without verifying it (header JSON and claims).
-func Decode(token string) (std.encoding.json.Value, Claims)! {
-    var parts = std.strings.Split(token, ".")
+func Decode(token string) (encoding.json.Value, Claims)! {
+    var parts = strings.Split(token, ".")
     if len(parts) != 3 {
         return error("jwt: malformed token (expected header.payload.signature)")
     }
-    var hb = try std.encoding.base64.DecodeURL(parts[0]) catch err {
+    var hb = try encoding.base64.DecodeURL(parts[0]) catch err {
         return error("jwt: malformed header")
     }
-    var header = try std.encoding.json.ParseValue(std.strings.FromBytes(hb)) catch err {
+    var header = try encoding.json.ParseValue(strings.FromBytes(hb)) catch err {
         return error("jwt: malformed header")
     }
-    var pb = try std.encoding.base64.DecodeURL(parts[1]) catch err {
+    var pb = try encoding.base64.DecodeURL(parts[1]) catch err {
         return error("jwt: malformed payload")
     }
-    var payload = try std.encoding.json.ParseValue(std.strings.FromBytes(pb)) catch err {
+    var payload = try encoding.json.ParseValue(strings.FromBytes(pb)) catch err {
         return error("jwt: malformed payload")
     }
     if !payload.IsObject() {
@@ -265,7 +265,7 @@ func Decode(token string) (std.encoding.json.Value, Claims)! {
     return (header, claimsOf(payload))
 }
 
-func claimsOf(v std.encoding.json.Value) Claims {
+func claimsOf(v encoding.json.Value) Claims {
     var c = Claims{}
     for k in v.Keys() {
         var x = v.Get(k)
@@ -313,11 +313,11 @@ func Verify(token string, k Key, o VerifyOptions) Claims! {
     var (header, claims) = Decode(token)?
     var alg = try header.Get("alg").String() else ""
     if alg != k.Alg {
-        return error("jwt: the token is signed with " + std.encoding.json.Quote(alg) + ", the key is " + k.Alg)
+        return error("jwt: the token is signed with " + encoding.json.Quote(alg) + ", the key is " + k.Alg)
     }
-    var dot = std.strings.LastIndex(token, ".")
+    var dot = strings.LastIndex(token, ".")
     var input = token[..dot]
-    var sig = try std.encoding.base64.DecodeURL(token[dot + 1..]) catch err {
+    var sig = try encoding.base64.DecodeURL(token[dot + 1..]) catch err {
         return error("jwt: malformed signature")
     }
     if !verifySignature(input, sig, k) {
@@ -327,7 +327,7 @@ func Verify(token string, k Key, o VerifyOptions) Claims! {
     if o.Clock != nil {
         now = o.Clock()
     } else {
-        now = std.time.Now() / 1000
+        now = time.Now() / 1000
     }
     if claims.ExpiresAt != 0 && now > claims.ExpiresAt + o.Leeway {
         return error("jwt: the token has expired")
@@ -336,10 +336,10 @@ func Verify(token string, k Key, o VerifyOptions) Claims! {
         return error("jwt: the token is not valid yet")
     }
     if o.Issuer != "" && claims.Issuer != o.Issuer {
-        return error("jwt: unexpected issuer " + std.encoding.json.Quote(claims.Issuer))
+        return error("jwt: unexpected issuer " + encoding.json.Quote(claims.Issuer))
     }
     if o.Audience != "" && claims.Audience != o.Audience {
-        return error("jwt: unexpected audience " + std.encoding.json.Quote(claims.Audience))
+        return error("jwt: unexpected audience " + encoding.json.Quote(claims.Audience))
     }
     return claims
 }
@@ -349,17 +349,17 @@ func verifySignature(input string, sig []byte, k Key) bool {
         if len(k.secret) == 0 {
             return false
         }
-        return std.crypto.hmac.Equal(std.crypto.hmac.Sha256(std.strings.FromBytes(k.secret), input), sig)
+        return crypto.hmac.Equal(crypto.hmac.Sha256(strings.FromBytes(k.secret), input), sig)
     }
-    var digest = std.crypto.hash.Sha256(input)
+    var digest = crypto.hash.Sha256(input)
     if k.Alg == "RS256" {
-        return len(k.rsaN) > 0 && std.crypto.rsa.VerifyPKCS1v15(k.rsaN, k.rsaE, "sha256", digest, sig)
+        return len(k.rsaN) > 0 && crypto.rsa.VerifyPKCS1v15(k.rsaN, k.rsaE, "sha256", digest, sig)
     }
     if k.Alg == "ES256" {
         if len(sig) != 64 || len(k.ecPub) == 0 {
             return false
         }
-        return std.crypto.ecdsa.Verify(k.ecPub, digest, rawToDer(sig))
+        return crypto.ecdsa.Verify(k.ecPub, digest, rawToDer(sig))
     }
     return false
 }

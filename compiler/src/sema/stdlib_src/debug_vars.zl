@@ -1,15 +1,15 @@
-// std.debug, part 2: the program's tables, frames and values seen through
-// std.unsafe (runtime/ABI.md section 23), the value formatter (like
+// debug, part 2: the program's tables, frames and values seen through
+// unsafe (runtime/ABI.md section 23), the value formatter (like
 // tools/lldb/zell_formatters.py) and the v1 expression evaluator
 // (variable paths and comparisons).
-namespace std.debug
+namespace debug
 
 func rd(addr int) int {
-    return std.unsafe.ReadInt(addr, 8)
+    return unsafe.ReadInt(addr, 8)
 }
 
 func rd32(addr int) int {
-    return std.unsafe.ReadInt(addr, 4)
+    return unsafe.ReadInt(addr, 4)
 }
 
 // The static tables emitted by `--debug-agent` (ABI.md 23.1).
@@ -165,7 +165,7 @@ func frameLocals(t tables, f int) []local {
     return out
 }
 
-// std.reflect.Kind values (the order of the enum in reflect.zl).
+// reflect.Kind values (the order of the enum in reflect.zl).
 
 func kVoid() int { return 1 }
 func kBool() int { return 2 }
@@ -196,7 +196,7 @@ func kFunc() int { return 26 }
 func kFallible() int { return 27 }
 func kTask() int { return 28 }
 
-// A std.reflect.TypeInfo read through memory (ABI.md 23.4 gives the
+// A reflect.TypeInfo read through memory (ABI.md 23.4 gives the
 // offsets); ti is its address.
 func tiKind(ti int) int {
     if ti == 0 {
@@ -462,7 +462,7 @@ func children(addr int, ti int, start int, count int) []child {
         var i = start
         for i < end {
             out = append(out, child{
-                name: "[" + std.strconv.Itoa(i) + "]",
+                name: "[" + strconv.Itoa(i) + "]",
                 addr: data + i * sz,
                 ti: e,
             })
@@ -496,9 +496,9 @@ func children(addr int, ti int, start int, count int) []child {
 
 func quoteLimited(s string) string {
     if len(s) > 512 {
-        return std.strconv.Quote(s[..512]) + "..."
+        return strconv.Quote(s[..512]) + "..."
     }
-    return std.strconv.Quote(s)
+    return strconv.Quote(s)
 }
 
 func errorText(e int) string {
@@ -521,43 +521,43 @@ func format(addr int, ti int, depth int) string {
         return ""
     }
     if k == kBool() {
-        if std.unsafe.ReadUint(addr, 1) != 0 {
+        if unsafe.ReadUint(addr, 1) != 0 {
             return "true"
         }
         return "false"
     }
     if k == kInt() {
-        return std.strconv.Itoa(rd(addr))
+        return strconv.Itoa(rd(addr))
     }
     if k == kInt8() {
-        return std.strconv.Itoa(std.unsafe.ReadInt(addr, 1))
+        return strconv.Itoa(unsafe.ReadInt(addr, 1))
     }
     if k == kInt16() {
-        return std.strconv.Itoa(std.unsafe.ReadInt(addr, 2))
+        return strconv.Itoa(unsafe.ReadInt(addr, 2))
     }
     if k == kInt32() {
-        return std.strconv.Itoa(std.unsafe.ReadInt(addr, 4))
+        return strconv.Itoa(unsafe.ReadInt(addr, 4))
     }
     if k == kUint() {
-        return std.strconv.FormatUint(uint(rd(addr)), 10)
+        return strconv.FormatUint(uint(rd(addr)), 10)
     }
     if k == kUint8() {
-        return std.strconv.Itoa(std.unsafe.ReadUint(addr, 1))
+        return strconv.Itoa(unsafe.ReadUint(addr, 1))
     }
     if k == kUint16() {
-        return std.strconv.Itoa(std.unsafe.ReadUint(addr, 2))
+        return strconv.Itoa(unsafe.ReadUint(addr, 2))
     }
     if k == kUint32() {
-        return std.strconv.Itoa(std.unsafe.ReadUint(addr, 4))
+        return strconv.Itoa(unsafe.ReadUint(addr, 4))
     }
     if k == kFloat() {
-        return std.strconv.FormatFloat(std.unsafe.ReadFloat(addr, 8), 'g', -1)
+        return strconv.FormatFloat(unsafe.ReadFloat(addr, 8), 'g', -1)
     }
     if k == kFloat32() {
-        return std.strconv.FormatFloat(std.unsafe.ReadFloat(addr, 4), 'g', -1)
+        return strconv.FormatFloat(unsafe.ReadFloat(addr, 4), 'g', -1)
     }
     if k == kChar() {
-        return std.strconv.QuoteRune(char(std.unsafe.ReadInt(addr, 4)))
+        return strconv.QuoteRune(char(unsafe.ReadInt(addr, 4)))
     }
     if k == kString() {
         return quoteLimited(rtString(addr))
@@ -623,7 +623,7 @@ func format(addr int, ti int, depth int) string {
                 fieldName(f) + ": " + format(addr + fieldOffset(f), fieldType(f), depth - 1),
             )
         }
-        return tiName(ti) + "{" + std.strings.Join(parts, ", ") + "}"
+        return tiName(ti) + "{" + strings.Join(parts, ", ") + "}"
     }
     if k == kTuple() {
         if depth <= 0 {
@@ -634,12 +634,12 @@ func format(addr int, ti int, depth int) string {
             var f = tiField(ti, i)
             parts = append(parts, format(addr + fieldOffset(f), fieldType(f), depth - 1))
         }
-        return "(" + std.strings.Join(parts, ", ") + ")"
+        return "(" + strings.Join(parts, ", ") + ")"
     }
     if k == kEnum() {
         var tag = rd32(addr)
         if tag < 0 || tag >= tiNVariants(ti) {
-            return tiName(ti) + "(" + std.strconv.Itoa(tag) + ")"
+            return tiName(ti) + "(" + strconv.Itoa(tag) + ")"
         }
         var v = tiVariant(ti, tag)
         var name = rtString(v)
@@ -658,7 +658,7 @@ func format(addr int, ti int, depth int) string {
                 fieldName(f) + ": " + format(addr + fieldOffset(f), fieldType(f), depth - 1),
             )
         }
-        return name + "(" + std.strings.Join(parts, ", ") + ")"
+        return name + "(" + strings.Join(parts, ", ") + ")"
     }
     if k == kSlice() || k == kArray() {
         var n = tiLen(ti)
@@ -666,9 +666,9 @@ func format(addr int, ti int, depth int) string {
         if k == kSlice() {
             n = rd(addr + 8)
             prefix = "len " +
-                std.strconv.Itoa(n) +
+                strconv.Itoa(n) +
                 ", cap " +
-                std.strconv.Itoa(rd(addr + 16)) +
+                strconv.Itoa(rd(addr + 16)) +
                 ": "
         }
         if depth <= 0 {
@@ -681,7 +681,7 @@ func format(addr int, ti int, depth int) string {
         if n > 8 {
             parts = append(parts, "...")
         }
-        return prefix + "[" + std.strings.Join(parts, " ") + "]"
+        return prefix + "[" + strings.Join(parts, " ") + "]"
     }
     if k == kMap() {
         var m = rd(addr)
@@ -690,7 +690,7 @@ func format(addr int, ti int, depth int) string {
             return "map[] (nil)"
         }
         if depth <= 0 {
-            return "map[...] len " + std.strconv.Itoa(n)
+            return "map[...] len " + strconv.Itoa(n)
         }
         var parts []string = []
         var ents = rtMapEntries(m, 0, 8)
@@ -705,7 +705,7 @@ func format(addr int, ti int, depth int) string {
         if n > 8 {
             parts = append(parts, "...")
         }
-        return "map[" + std.strings.Join(parts, " ") + "]"
+        return "map[" + strings.Join(parts, " ") + "]"
     }
     if k == kTask() {
         var t = rd(addr)
@@ -750,7 +750,7 @@ func isIdentByte(c byte) bool {
 
 func tokenize(s string) []token! {
     var out []token = []
-    var b = std.strings.Bytes(s)
+    var b = strings.Bytes(s)
     var i = 0
     for i < len(b) {
         var c = b[i]
@@ -792,7 +792,7 @@ func tokenize(s string) []token! {
             if j >= len(b) {
                 return error("unterminated string")
             }
-            var lit = std.strconv.Unquote(s[i..j + 1])?
+            var lit = strconv.Unquote(s[i..j + 1])?
             out = append(out, token{kind: 3, text: lit})
             i = j + 1
             continue
@@ -898,16 +898,16 @@ struct evaluator {
         var t = this.toks[this.pos]
         this.pos += 1
         if t.kind == 2 {
-            if std.strings.Contains(t.text, ".") {
-                return evalue{lit: 2, f: std.strconv.ParseFloat(t.text)?}
+            if strings.Contains(t.text, ".") {
+                return evalue{lit: 2, f: strconv.ParseFloat(t.text)?}
             }
-            return evalue{lit: 1, i: std.strconv.ParseInt(t.text, 0)?}
+            return evalue{lit: 1, i: strconv.ParseInt(t.text, 0)?}
         }
         if t.kind == 3 {
             return evalue{lit: 3, s: t.text}
         }
         if t.kind != 1 {
-            return error("unexpected " + std.strconv.Quote(t.text))
+            return error("unexpected " + strconv.Quote(t.text))
         }
         if t.text == "true" || t.text == "false" {
             return evalue{lit: 4, b: t.text == "true"}
@@ -1031,7 +1031,7 @@ func index(v evalue, idx evalue) evalue! {
         var n = indexedCount(d.addr, d.ti)
         if i < 0 || i >= n {
             return error(
-                "index " + std.strconv.Itoa(i) + " out of range [0:" + std.strconv.Itoa(n) + "]",
+                "index " + strconv.Itoa(i) + " out of range [0:" + strconv.Itoa(n) + "]",
             )
         }
         var cs = children(d.addr, d.ti, i, 1)
@@ -1078,22 +1078,22 @@ func scalar(v evalue) evalue {
     }
     var k = tiKind(v.ti)
     if k >= kInt() && k <= kInt32() {
-        return evalue{lit: 1, i: std.unsafe.ReadInt(v.addr, tiSize(v.ti))}
+        return evalue{lit: 1, i: unsafe.ReadInt(v.addr, tiSize(v.ti))}
     }
     if k >= kUint() && k <= kUint32() {
-        return evalue{lit: 1, i: std.unsafe.ReadUint(v.addr, tiSize(v.ti))}
+        return evalue{lit: 1, i: unsafe.ReadUint(v.addr, tiSize(v.ti))}
     }
     if k == kChar() {
         return evalue{lit: 1, i: rd32(v.addr)}
     }
     if k == kFloat() || k == kFloat32() {
-        return evalue{lit: 2, f: std.unsafe.ReadFloat(v.addr, tiSize(v.ti))}
+        return evalue{lit: 2, f: unsafe.ReadFloat(v.addr, tiSize(v.ti))}
     }
     if k == kString() {
         return evalue{lit: 3, s: rtString(v.addr)}
     }
     if k == kBool() {
-        return evalue{lit: 4, b: std.unsafe.ReadUint(v.addr, 1) != 0}
+        return evalue{lit: 4, b: unsafe.ReadUint(v.addr, 1) != 0}
     }
     if k == kPointer() ||
         k == kError() ||
@@ -1197,7 +1197,7 @@ func compare(a evalue, op string, b evalue) bool! {
             c = 1
         }
     } else if x.lit == 3 && y.lit == 3 {
-        c = std.strings.Compare(x.s, y.s)
+        c = strings.Compare(x.s, y.s)
     } else if x.lit == 4 && y.lit == 4 {
         if x.b != y.b {
             c = 1
@@ -1232,7 +1232,7 @@ func evaluate(text string, ls []local) evalue! {
     var e = evaluator{toks: toks, locals: ls}
     var v = e.expr()?
     if e.pos < len(toks) {
-        return error("unexpected " + std.strconv.Quote(toks[e.pos].text))
+        return error("unexpected " + strconv.Quote(toks[e.pos].text))
     }
     if v.lit == 8 {
         return error("unknown variable " + v.name)
@@ -1246,13 +1246,13 @@ func show(v evalue) string {
         return format(v.addr, v.ti, 2)
     }
     if v.lit == 1 {
-        return std.strconv.Itoa(v.i)
+        return strconv.Itoa(v.i)
     }
     if v.lit == 2 {
-        return std.strconv.FormatFloat(v.f, 'g', -1)
+        return strconv.FormatFloat(v.f, 'g', -1)
     }
     if v.lit == 3 {
-        return std.strconv.Quote(v.s)
+        return strconv.Quote(v.s)
     }
     if v.lit == 4 {
         if v.b {

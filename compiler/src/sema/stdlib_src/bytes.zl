@@ -1,12 +1,12 @@
-// std.bytes: the std.strings functions over []byte, and Buffer.
+// bytes: the strings functions over []byte, and Buffer.
 // Functions returning []byte return a new slice unless they say they
 // share storage (sub-slices of the argument). Case mapping and white
-// space follow std.strings (they round-trip through it).
-namespace std.bytes
+// space follow strings (they round-trip through it).
+namespace bytes
 
 // A growable byte buffer: write at the end, read from the front. The
-// zero value is an empty buffer ready to use. Implements std.io.Reader
-// and std.io.Writer.
+// zero value is an empty buffer ready to use. Implements io.Reader
+// and io.Writer.
 struct Buffer {
     buf []byte
     off int
@@ -34,7 +34,7 @@ struct Buffer {
 
     // Appends the UTF-8 encoding of r.
     func WriteRune(r char) {
-        var s = std.strings.FromRunes([r])
+        var s = strings.FromRunes([r])
         for i in 0..len(s) {
             this.buf = append(this.buf, s[i])
         }
@@ -47,7 +47,7 @@ struct Buffer {
 
     // The unread bytes as a string.
     func String() string {
-        return std.strings.FromBytes(this.buf[this.off..])
+        return strings.FromBytes(this.buf[this.off..])
     }
 
     // Number of unread bytes.
@@ -113,13 +113,13 @@ struct Buffer {
             var c = this.buf[this.off]
             this.off += 1
             if c == delim {
-                return std.strings.FromBytes(this.buf[start..this.off])
+                return strings.FromBytes(this.buf[start..this.off])
             }
         }
         if start == this.off {
             return error("EOF")
         }
-        return std.strings.FromBytes(this.buf[start..this.off])
+        return strings.FromBytes(this.buf[start..this.off])
     }
 }
 
@@ -130,7 +130,7 @@ func NewBuffer(b []byte) Buffer {
 
 // A new Buffer holding the bytes of s.
 func NewBufferString(s string) Buffer {
-    return Buffer{buf: std.strings.Bytes(s)}
+    return Buffer{buf: strings.Bytes(s)}
 }
 
 // A copy of b.
@@ -233,7 +233,7 @@ func Contains(s []byte, sep []byte) bool {
 // Number of non-overlapping occurrences of sep (rune count + 1 for empty sep).
 func Count(s []byte, sep []byte) int {
     if len(sep) == 0 {
-        return std.strings.Count(std.strings.FromBytes(s), "")
+        return strings.Count(strings.FromBytes(s), "")
     }
     var n = 0
     var i = 0
@@ -263,8 +263,8 @@ func HasSuffix(s []byte, suffix []byte) bool {
 func Split(s []byte, sep []byte) [][]byte {
     var out [][]byte = []
     if len(sep) == 0 {
-        for p in std.strings.Split(std.strings.FromBytes(s), "") {
-            out = append(out, std.strings.Bytes(p))
+        for p in strings.Split(strings.FromBytes(s), "") {
+            out = append(out, strings.Bytes(p))
         }
         return out
     }
@@ -286,8 +286,8 @@ func Split(s []byte, sep []byte) [][]byte {
 // Pieces separated by runs of white space.
 func Fields(s []byte) [][]byte {
     var out [][]byte = []
-    for p in std.strings.Fields(std.strings.FromBytes(s)) {
-        out = append(out, std.strings.Bytes(p))
+    for p in strings.Fields(strings.FromBytes(s)) {
+        out = append(out, strings.Bytes(p))
     }
     return out
 }
@@ -325,8 +325,8 @@ func Repeat(s []byte, n int) []byte {
 // s with every non-overlapping old replaced by new.
 func Replace(s []byte, old []byte, repl []byte) []byte {
     if len(old) == 0 {
-        return std.strings.Bytes(
-            std.strings.Replace(std.strings.FromBytes(s), "", std.strings.FromBytes(repl)),
+        return strings.Bytes(
+            strings.Replace(strings.FromBytes(s), "", strings.FromBytes(repl)),
         )
     }
     var out []byte = []
@@ -347,17 +347,17 @@ func Replace(s []byte, old []byte, repl []byte) []byte {
 
 // s with leading and trailing Unicode white space removed.
 func Trim(s []byte) []byte {
-    return std.strings.Bytes(std.strings.Trim(std.strings.FromBytes(s)))
+    return strings.Bytes(strings.Trim(strings.FromBytes(s)))
 }
 
 // s with leading bytes in cutset removed (ASCII cutset; see strings.TrimLeft).
 func TrimLeft(s []byte, cutset string) []byte {
-    return std.strings.Bytes(std.strings.TrimLeft(std.strings.FromBytes(s), cutset))
+    return strings.Bytes(strings.TrimLeft(strings.FromBytes(s), cutset))
 }
 
 // s with trailing characters in cutset removed.
 func TrimRight(s []byte, cutset string) []byte {
-    return std.strings.Bytes(std.strings.TrimRight(std.strings.FromBytes(s), cutset))
+    return strings.Bytes(strings.TrimRight(strings.FromBytes(s), cutset))
 }
 
 // s without prefix (if present); a copy.
@@ -376,22 +376,22 @@ func TrimSuffix(s []byte, suffix []byte) []byte {
     return Clone(s)
 }
 
-// Upper-case copy (std.strings.ToUpper rules).
+// Upper-case copy (strings.ToUpper rules).
 func ToUpper(s []byte) []byte {
-    return std.strings.Bytes(std.strings.ToUpper(std.strings.FromBytes(s)))
+    return strings.Bytes(strings.ToUpper(strings.FromBytes(s)))
 }
 
-// Lower-case copy (std.strings.ToLower rules).
+// Lower-case copy (strings.ToLower rules).
 func ToLower(s []byte) []byte {
-    return std.strings.Bytes(std.strings.ToLower(std.strings.FromBytes(s)))
+    return strings.Bytes(strings.ToLower(strings.FromBytes(s)))
 }
 
 // True if s and t are equal under simple Unicode case folding.
 func EqualFold(s []byte, t []byte) bool {
-    return std.strings.EqualFold(std.strings.FromBytes(s), std.strings.FromBytes(t))
+    return strings.EqualFold(strings.FromBytes(s), strings.FromBytes(t))
 }
 
 // The UTF-8 decoded code points of s.
 func Runes(s []byte) []char {
-    return std.strings.Runes(std.strings.FromBytes(s))
+    return strings.Runes(strings.FromBytes(s))
 }

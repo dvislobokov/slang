@@ -1,7 +1,7 @@
 // Text protocols (SMTP, HTTP/1, MIME): MIME headers with canonical keys
 // and continuation lines, dot-encoding of message bodies, and numeric
 // response lines ("250-..."/"250 ...").
-namespace std.net.textproto
+namespace net.textproto
 
 // A MIME header: keys in canonical form, several values per key, keys
 // kept in first-seen order.
@@ -93,12 +93,12 @@ struct Header {
     func String() string {
         var ks = this.Keys()
         sortStrings(ks)
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         for k in ks {
             for v in this.vals[this.index(k)] {
                 b.Write(k)
                 b.Write(": ")
-                b.Write(std.strings.Replace(std.strings.Replace(v, "\r", " "), "\n", " "))
+                b.Write(strings.Replace(strings.Replace(v, "\r", " "), "\n", " "))
                 b.Write("\r\n")
             }
         }
@@ -138,7 +138,7 @@ func CanonicalKey(s string) string {
         b = append(b, byte(c))
         upper = c == 45
     }
-    return std.strings.FromBytes(b)
+    return strings.FromBytes(b)
 }
 
 func tokenByte(c int) bool {
@@ -181,7 +181,7 @@ func ReadHeader(text string, from int) HeaderResult! {
     var i = from
     var n = len(text)
     for i < n {
-        var j = std.regex.rtIndex(text, "\n", i)
+        var j = regex.rtIndex(text, "\n", i)
         var end = j
         var next = j + 1
         if j < 0 {
@@ -189,7 +189,7 @@ func ReadHeader(text string, from int) HeaderResult! {
             next = n
         }
         var line = text[i..end]
-        if std.strings.HasSuffix(line, "\r") {
+        if strings.HasSuffix(line, "\r") {
             line = line[..len(line) - 1]
         }
         if line == "" {
@@ -199,38 +199,38 @@ func ReadHeader(text string, from int) HeaderResult! {
         if c0 == 32 || c0 == 9 {
             if len(h.keys) == 0 {
                 return error(
-                    std.fmt.Format(
+                    fmt.Format(
                         "textproto: malformed MIME header initial line: {0}",
-                        std.encoding.json.Quote(line),
+                        encoding.json.Quote(line),
                     ),
                 )
             }
             // continuation of the last value
             var k = len(h.keys) - 1
             var vs = h.vals[k]
-            vs[len(vs) - 1] = vs[len(vs) - 1] + " " + std.strings.Trim(line)
+            vs[len(vs) - 1] = vs[len(vs) - 1] + " " + strings.Trim(line)
             i = next
             continue
         }
-        var colon = std.strings.Index(line, ":")
+        var colon = strings.Index(line, ":")
         if colon <= 0 {
             return error(
-                std.fmt.Format(
+                fmt.Format(
                     "textproto: malformed MIME header line: {0}",
-                    std.encoding.json.Quote(line),
+                    encoding.json.Quote(line),
                 ),
             )
         }
         var key = line[..colon]
-        if std.strings.HasSuffix(key, " ") || std.strings.HasSuffix(key, "\t") {
+        if strings.HasSuffix(key, " ") || strings.HasSuffix(key, "\t") {
             return error(
-                std.fmt.Format(
+                fmt.Format(
                     "textproto: malformed MIME header line: {0}",
-                    std.encoding.json.Quote(line),
+                    encoding.json.Quote(line),
                 ),
             )
         }
-        h.Add(key, std.strings.Trim(line[colon + 1..]))
+        h.Add(key, strings.Trim(line[colon + 1..]))
         i = next
     }
     return HeaderResult{Header: h, End: n}
@@ -239,15 +239,15 @@ func ReadHeader(text string, from int) HeaderResult! {
 // Dot-encodes a message body (SMTP DATA): lines starting with '.' get a
 // second '.', line ends become \r\n, and the ".\r\n" terminator is added.
 func DotEncode(body string) string {
-    var b = std.strings.Builder{}
-    var lines = std.strings.Split(std.strings.Replace(body, "\r\n", "\n"), "\n")
+    var b = strings.Builder{}
+    var lines = strings.Split(strings.Replace(body, "\r\n", "\n"), "\n")
     var last = len(lines) - 1
     if last >= 0 && lines[last] == "" {
         last -= 1
     }
     for k in 0..(last + 1) {
         var l = lines[k]
-        if std.strings.HasPrefix(l, ".") {
+        if strings.HasPrefix(l, ".") {
             b.Write(".")
         }
         b.Write(l)
@@ -265,22 +265,22 @@ struct DotResult {
 }
 
 func DotDecode(text string) DotResult! {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var i = 0
     var n = len(text)
     for i < n {
-        var j = std.regex.rtIndex(text, "\n", i)
+        var j = regex.rtIndex(text, "\n", i)
         if j < 0 {
             break
         }
         var line = text[i..j]
-        if std.strings.HasSuffix(line, "\r") {
+        if strings.HasSuffix(line, "\r") {
             line = line[..len(line) - 1]
         }
         if line == "." {
             return DotResult{Body: b.String(), End: j + 1}
         }
-        if std.strings.HasPrefix(line, ".") {
+        if strings.HasPrefix(line, ".") {
             line = line[1..]
         }
         b.Write(line)
@@ -305,20 +305,20 @@ func ReadResponse(text string, from int, expect int) Response! {
     var code = -1
     var msg []string = []
     for {
-        var j = std.regex.rtIndex(text, "\n", i)
+        var j = regex.rtIndex(text, "\n", i)
         if j < 0 {
             return error("textproto: unexpected end of response")
         }
         var line = text[i..j]
-        if std.strings.HasSuffix(line, "\r") {
+        if strings.HasSuffix(line, "\r") {
             line = line[..len(line) - 1]
         }
         i = j + 1
         if len(line) < 3 {
-            return error("textproto: short response: " + std.encoding.json.Quote(line))
+            return error("textproto: short response: " + encoding.json.Quote(line))
         }
-        var c = try std.strings.ToInt(line[..3]) catch err {
-            return error("textproto: invalid response code: " + std.encoding.json.Quote(line))
+        var c = try strings.ToInt(line[..3]) catch err {
+            return error("textproto: invalid response code: " + encoding.json.Quote(line))
         }
         if code >= 0 && c != code {
             return error("textproto: inconsistent codes in a multi-line response")
@@ -326,7 +326,7 @@ func ReadResponse(text string, from int, expect int) Response! {
         code = c
         var cont = len(line) > 3 && int(line[3]) == 45
         if len(line) > 3 && !cont && int(line[3]) != 32 {
-            return error("textproto: invalid response line: " + std.encoding.json.Quote(line))
+            return error("textproto: invalid response line: " + encoding.json.Quote(line))
         }
         if len(line) > 4 {
             msg = append(msg, line[4..])
@@ -337,11 +337,11 @@ func ReadResponse(text string, from int, expect int) Response! {
             break
         }
     }
-    var r = Response{Code: code, Message: std.strings.Join(msg, "\n"), End: i}
+    var r = Response{Code: code, Message: strings.Join(msg, "\n"), End: i}
     if expect > 0 {
-        var digits = std.fmt.Format("{0}", expect)
-        if !std.strings.HasPrefix(std.fmt.Format("{0}", code), digits) {
-            return error(std.fmt.Format("{0} {1}", code, r.Message))
+        var digits = fmt.Format("{0}", expect)
+        if !strings.HasPrefix(fmt.Format("{0}", code), digits) {
+            return error(fmt.Format("{0} {1}", code, r.Message))
         }
     }
     return r

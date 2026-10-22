@@ -1,7 +1,7 @@
-//! Reflection tables and the `std.reflect` intrinsics (DESIGN.md
+//! Reflection tables and the `reflect` intrinsics (DESIGN.md
 //! "Рефлексия", runtime/ABI.md §17).
 //!
-//! When the program uses `std.reflect` ([`hir::Program::reflect`]), every
+//! When the program uses `reflect` ([`hir::Program::reflect`]), every
 //! run-time type id is a full table: [`CodeGen::type_info`] returns the
 //! payload address of an immortal object `{i64 -1, ptr null, TypeInfo}`
 //! whose first three words are the runtime's `zell_type_info` header

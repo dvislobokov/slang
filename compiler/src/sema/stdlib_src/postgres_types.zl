@@ -1,6 +1,6 @@
 // Connection strings, errors and the value codecs of the PostgreSQL
 // driver (see postgres.zl).
-namespace std.database.postgres
+namespace database.postgres
 
 // ---- errors -------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ struct Error {
 
     // 23xxx: integrity constraint violation.
     func IsConstraint() bool {
-        return std.strings.HasPrefix(this.Code, "23")
+        return strings.HasPrefix(this.Code, "23")
     }
 }
 
@@ -68,7 +68,7 @@ func parseError(p []byte) Error {
         } else if t == 72 {
             e.Hint = v
         } else if t == 80 {
-            e.Position = try std.strconv.Atoi(v) else 0
+            e.Position = try strconv.Atoi(v) else 0
         } else if t == 87 {
             e.Where = v
         } else if t == 115 {
@@ -84,7 +84,7 @@ func parseError(p []byte) Error {
         } else if t == 70 {
             e.File = v
         } else if t == 76 {
-            e.Line = try std.strconv.Atoi(v) else 0
+            e.Line = try strconv.Atoi(v) else 0
         } else if t == 82 {
             e.Routine = v
         }
@@ -116,10 +116,10 @@ struct Config {
 }
 
 func unescapeURL(s string) string! {
-    if !std.strings.Contains(s, "%") && !std.strings.Contains(s, "+") {
+    if !strings.Contains(s, "%") && !strings.Contains(s, "+") {
         return s
     }
-    return std.net.url.QueryUnescape(s)?
+    return net.url.QueryUnescape(s)?
 }
 
 // Parses "postgres://user:pass@host:port/db?sslmode=require&..." (also
@@ -129,33 +129,33 @@ func unescapeURL(s string) string! {
 // the user defaults to $USER and the database to the user.
 func ParseDSN(dsn string) Config! {
     var c = Config{Params: map[string]string{}}
-    var env = std.os.Getenv("PGHOST")
+    var env = os.Getenv("PGHOST")
     if env != "" {
         c.Host = env
     }
-    env = std.os.Getenv("PGPORT")
+    env = os.Getenv("PGPORT")
     if env != "" {
-        c.Port = std.strconv.Atoi(env)?("postgres: PGPORT")
+        c.Port = strconv.Atoi(env)?("postgres: PGPORT")
     }
-    c.User = std.os.Getenv("PGUSER")
-    c.Password = std.os.Getenv("PGPASSWORD")
-    c.Database = std.os.Getenv("PGDATABASE")
-    env = std.os.Getenv("PGSSLMODE")
+    c.User = os.Getenv("PGUSER")
+    c.Password = os.Getenv("PGPASSWORD")
+    c.Database = os.Getenv("PGDATABASE")
+    env = os.Getenv("PGSSLMODE")
     if env != "" {
         c.SSLMode = env
     }
     var opts []string = []
     var vals []string = []
-    var s = std.strings.Trim(dsn)
-    if std.strings.HasPrefix(s, "postgres://") || std.strings.HasPrefix(s, "postgresql://") {
-        var rest = s[std.strings.Index(s, "://") + 3..]
-        var q = std.strings.Index(rest, "?")
+    var s = strings.Trim(dsn)
+    if strings.HasPrefix(s, "postgres://") || strings.HasPrefix(s, "postgresql://") {
+        var rest = s[strings.Index(s, "://") + 3..]
+        var q = strings.Index(rest, "?")
         var query = ""
         if q >= 0 {
             query = rest[q + 1..]
             rest = rest[..q]
         }
-        var slash = std.strings.Index(rest, "/")
+        var slash = strings.Index(rest, "/")
         var authority = rest
         if slash >= 0 {
             authority = rest[..slash]
@@ -164,11 +164,11 @@ func ParseDSN(dsn string) Config! {
                 c.Database = db
             }
         }
-        var at = std.strings.LastIndex(authority, "@")
+        var at = strings.LastIndex(authority, "@")
         if at >= 0 {
             var ui = authority[..at]
             authority = authority[at + 1..]
-            var colon = std.strings.Index(ui, ":")
+            var colon = strings.Index(ui, ":")
             if colon >= 0 {
                 c.User = unescapeURL(ui[..colon])?
                 c.Password = unescapeURL(ui[colon + 1..])?
@@ -177,33 +177,33 @@ func ParseDSN(dsn string) Config! {
             }
         }
         if authority != "" {
-            if std.strings.HasPrefix(authority, "[") {
-                var close = std.strings.Index(authority, "]")
+            if strings.HasPrefix(authority, "[") {
+                var close = strings.Index(authority, "]")
                 if close < 0 {
                     return error("postgres: bad host in DSN")
                 }
                 c.Host = authority[1..close]
                 if close + 1 < len(authority) && authority[close + 1..close + 2] == ":" {
-                    c.Port = std.strconv.Atoi(authority[close + 2..])?("postgres: port")
+                    c.Port = strconv.Atoi(authority[close + 2..])?("postgres: port")
                 }
             } else {
-                var colon = std.strings.LastIndex(authority, ":")
+                var colon = strings.LastIndex(authority, ":")
                 if colon >= 0 {
                     if colon > 0 {
                         c.Host = unescapeURL(authority[..colon])?
                     }
-                    c.Port = std.strconv.Atoi(authority[colon + 1..])?("postgres: port")
+                    c.Port = strconv.Atoi(authority[colon + 1..])?("postgres: port")
                 } else {
                     c.Host = unescapeURL(authority)?
                 }
             }
         }
         if query != "" {
-            for kv in std.strings.Split(query, "&") {
+            for kv in strings.Split(query, "&") {
                 if kv == "" {
                     continue
                 }
-                var eq = std.strings.Index(kv, "=")
+                var eq = strings.Index(kv, "=")
                 if eq < 0 {
                     return error("postgres: bad DSN parameter " + kv)
                 }
@@ -221,16 +221,16 @@ func ParseDSN(dsn string) Config! {
             if i >= n {
                 break
             }
-            var eq = std.strings.Index(s[i..], "=")
+            var eq = strings.Index(s[i..], "=")
             if eq < 0 {
                 return error("postgres: missing \"=\" after \"" + s[i..] + "\" in DSN")
             }
-            var key = std.strings.Trim(s[i..i + eq])
+            var key = strings.Trim(s[i..i + eq])
             i = i + eq + 1
             for i < n && s[i..i + 1] == " " {
                 i += 1
             }
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             if i < n && s[i..i + 1] == "'" {
                 i += 1
                 var closed = false
@@ -273,7 +273,7 @@ func ParseDSN(dsn string) Config! {
         if key == "host" {
             c.Host = v
         } else if key == "port" {
-            c.Port = std.strconv.Atoi(v)?("postgres: port")
+            c.Port = strconv.Atoi(v)?("postgres: port")
         } else if key == "user" {
             c.User = v
         } else if key == "password" {
@@ -285,7 +285,7 @@ func ParseDSN(dsn string) Config! {
         } else if key == "sslrootcert" {
             c.SSLRootCert = v
         } else if key == "connect_timeout" {
-            c.ConnectTimeout = 1000 * std.strconv.Atoi(v)?("postgres: connect_timeout")
+            c.ConnectTimeout = 1000 * strconv.Atoi(v)?("postgres: connect_timeout")
         } else if key == "sslcert" ||
             key == "sslkey" ||
             key == "sslpassword" ||
@@ -304,7 +304,7 @@ func ParseDSN(dsn string) Config! {
         return error("postgres: invalid sslmode \"" + c.SSLMode + "\"")
     }
     if c.User == "" {
-        c.User = std.os.Getenv("USER")
+        c.User = os.Getenv("USER")
     }
     if c.Database == "" {
         c.Database = c.User
@@ -356,7 +356,7 @@ func typeName(oid int) string {
         case 199: return "_json"
         case 3807: return "_jsonb"
     }
-    return std.fmt.Format("{0}", oid)
+    return fmt.Format("{0}", oid)
 }
 
 // Element type of an array type (0 if oid is no known array type).
@@ -436,10 +436,10 @@ func floorDiv(a int, b int) int {
     return q
 }
 
-func microsToTime(us int) std.time.Time {
+func microsToTime(us int) time.Time {
     var sec = floorDiv(us, 1000000)
     var rem = us - sec * 1000000
-    return std.time.Unix(pgEpoch() + sec, rem * 1000).UTC()
+    return time.Unix(pgEpoch() + sec, rem * 1000).UTC()
 }
 
 func hexDigit(c int) int {
@@ -456,7 +456,7 @@ func hexDigit(c int) int {
 }
 
 func formatUUID(b []byte) string {
-    var h = std.encoding.hex.Encode(b)
+    var h = encoding.hex.Encode(b)
     return h[0..8] + "-" + h[8..12] + "-" + h[12..16] + "-" + h[16..20] + "-" + h[20..32]
 }
 
@@ -475,9 +475,9 @@ func decodeBinary(oid int, b []byte) any! {
         case 26:
             return be(b, 0, 4)
         case 700:
-            return float(std.math.Float32frombits(uint32(be(b, 0, 4))))
+            return float(math.Float32frombits(uint32(be(b, 0, 4))))
         case 701:
-            return std.math.Float64frombits(uint(be(b, 0, 8)))
+            return math.Float64frombits(uint(be(b, 0, 8)))
         case 2950:
             return formatUUID(b)
         case 1114:
@@ -486,14 +486,14 @@ func decodeBinary(oid int, b []byte) any! {
             return microsToTime(bes(b, 0, 8))
         case 1082:
             var days = bes(b, 0, 4)
-            return std.time.Unix(pgEpoch() + days * 86400, 0).UTC()
+            return time.Unix(pgEpoch() + days * 86400, 0).UTC()
         case 3802:
             if len(b) > 0 && b[0] == 1 {
-                return std.strings.FromBytes(b[1..])
+                return strings.FromBytes(b[1..])
             }
-            return std.strings.FromBytes(b)
+            return strings.FromBytes(b)
     }
-    return std.strings.FromBytes(b)
+    return strings.FromBytes(b)
 }
 
 func decodeText(oid int, s string) any! {
@@ -501,18 +501,18 @@ func decodeText(oid int, s string) any! {
         case 16:
             return s == "t"
         case 20, 21, 23, 26:
-            return std.strconv.Atoi(s)?
+            return strconv.Atoi(s)?
         case 700, 701:
             if s == "NaN" {
-                return std.math.NaN()
+                return math.NaN()
             }
             if s == "Infinity" {
-                return std.math.Inf(1)
+                return math.Inf(1)
             }
             if s == "-Infinity" {
-                return std.math.Inf(-1)
+                return math.Inf(-1)
             }
-            return std.strconv.ParseFloat(s)?
+            return strconv.ParseFloat(s)?
         case 17:
             return decodeBytea(s)?
         case 1114, 1184, 1082:
@@ -529,7 +529,7 @@ func decodeText(oid int, s string) any! {
 }
 
 func decodeBytea(s string) []byte! {
-    if std.strings.HasPrefix(s, "\\x") {
+    if strings.HasPrefix(s, "\\x") {
         var out []byte = []
         var i = 2
         for i + 1 < len(s) {
@@ -565,7 +565,7 @@ func decodeBytea(s string) []byte! {
 
 // "2024-01-02 03:04:05.123456", with "+03", "+05:30", "-08" offsets for
 // timestamptz; dates "2024-01-02"; " BC" years are not supported.
-func parseTimestamp(s string) std.time.Time! {
+func parseTimestamp(s string) time.Time! {
     var t = s
     var off = 0
     var hasZone = false
@@ -581,45 +581,45 @@ func parseTimestamp(s string) std.time.Time! {
             if t[i..i + 1] == "-" {
                 sign = -1
             }
-            var parts = std.strings.Split(z, ":")
-            var hh = std.strconv.Atoi(parts[0])?
+            var parts = strings.Split(z, ":")
+            var hh = strconv.Atoi(parts[0])?
             var mm = 0
             var ss = 0
             if len(parts) > 1 {
-                mm = std.strconv.Atoi(parts[1])?
+                mm = strconv.Atoi(parts[1])?
             }
             if len(parts) > 2 {
-                ss = std.strconv.Atoi(parts[2])?
+                ss = strconv.Atoi(parts[2])?
             }
             off = sign * (hh * 3600 + mm * 60 + ss)
             hasZone = true
             t = t[..i]
         }
     }
-    var year = std.strconv.Atoi(t[0..4])?
-    var month = std.strconv.Atoi(t[5..7])?
-    var day = std.strconv.Atoi(t[8..10])?
+    var year = strconv.Atoi(t[0..4])?
+    var month = strconv.Atoi(t[5..7])?
+    var day = strconv.Atoi(t[8..10])?
     var hour = 0
     var min = 0
     var sec = 0
     var nsec = 0
     if len(t) >= 19 {
-        hour = std.strconv.Atoi(t[11..13])?
-        min = std.strconv.Atoi(t[14..16])?
-        sec = std.strconv.Atoi(t[17..19])?
+        hour = strconv.Atoi(t[11..13])?
+        min = strconv.Atoi(t[14..16])?
+        sec = strconv.Atoi(t[17..19])?
         if len(t) > 20 && t[19..20] == "." {
             var frac = t[20..]
             var digits = len(frac)
-            nsec = std.strconv.Atoi(frac)?
+            nsec = strconv.Atoi(frac)?
             for d in digits..9 {
                 _ = d
                 nsec = nsec * 10
             }
         }
     }
-    var u = std.time.Date(year, month, day, hour, min, sec, nsec, std.time.UTC())
+    var u = time.Date(year, month, day, hour, min, sec, nsec, time.UTC())
     if hasZone {
-        u = std.time.Unix(u.Unix() - off, nsec).UTC()
+        u = time.Unix(u.Unix() - off, nsec).UTC()
     }
     return u
 }
@@ -641,7 +641,7 @@ func parseArray(s string, elem int) []any! {
         delim = ";"
     }
     for i <= n {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var quoted = false
         if i < n && body[i..i + 1] == "\"" {
             quoted = true
@@ -663,7 +663,7 @@ func parseArray(s string, elem int) []any! {
         var item = b.String()
         if !quoted && item == "NULL" {
             out = append(out, nil)
-        } else if std.strings.HasPrefix(item, "{") && !quoted {
+        } else if strings.HasPrefix(item, "{") && !quoted {
             return error("postgres: multi-dimensional arrays are not supported")
         } else {
             out = append(out, decodeText(elem, item)?)
@@ -676,7 +676,7 @@ func parseArray(s string, elem int) []any! {
 // ---- encoding ------------------------------------------------------------------
 
 func quoteArrayElem(s string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("\"")
     for i in 0..len(s) {
         var c = s[i..i + 1]
@@ -689,7 +689,7 @@ func quoteArrayElem(s string) string {
     return b.String()
 }
 
-func formatTime(t std.time.Time) string {
+func formatTime(t time.Time) string {
     return t.Format("2006-01-02 15:04:05.999999999Z07:00")
 }
 
@@ -698,18 +698,18 @@ func formatTime(t std.time.Time) string {
 func encodeText(v any) string! {
     switch v {
         case int n:
-            return std.fmt.Format("{0}", n)
+            return fmt.Format("{0}", n)
         case float f:
-            if std.math.IsNaN(f) {
+            if math.IsNaN(f) {
                 return "NaN"
             }
-            if std.math.IsInf(f, 1) {
+            if math.IsInf(f, 1) {
                 return "Infinity"
             }
-            if std.math.IsInf(f, -1) {
+            if math.IsInf(f, -1) {
                 return "-Infinity"
             }
-            return std.strconv.FormatFloat(f, 'g', -1)
+            return strconv.FormatFloat(f, 'g', -1)
         case bool b:
             if b {
                 return "t"
@@ -717,10 +717,10 @@ func encodeText(v any) string! {
             return "f"
         case string s:
             return s
-        case std.time.Time t:
+        case time.Time t:
             return formatTime(t)
         case []any items:
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             b.Write("{")
             for i, x in items {
                 if i > 0 {
@@ -731,7 +731,7 @@ func encodeText(v any) string! {
                 } else {
                     switch x {
                         case []byte bs:
-                            b.Write(quoteArrayElem("\\x" + std.encoding.hex.Encode(bs)))
+                            b.Write(quoteArrayElem("\\x" + encoding.hex.Encode(bs)))
                         default:
                             b.Write(quoteArrayElem(encodeText(x)?))
                     }

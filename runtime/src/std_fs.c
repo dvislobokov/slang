@@ -1,4 +1,4 @@
-/* std_fs.c - std.fs (zell_fs_*): files, directories and slash-separated
+/* std_fs.c - fs (zell_fs_*): files, directories and slash-separated
  * paths. Path helpers follow Go's path/filepath (Join/Dir/Abs clean their
  * result; on Windows both separators and drive letters, see below).
  * Failing calls give "<op> <path>: <strerror>" errors. System calls go

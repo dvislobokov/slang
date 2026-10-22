@@ -1,8 +1,8 @@
-// std.math.complex (Go's complex128 + math/cmplx): Complex{Re, Im} with
+// math.complex (Go's complex128 + math/cmplx): Complex{Re, Im} with
 // arithmetic methods (Add, Sub, Mul, Div, Neg: the operator-interface
 // names, so `+ - * /` can map onto them once operator overloading lands)
 // and the cmplx functions.
-namespace std.math.complex
+namespace math.complex
 
 // Complex is a complex number with float parts.
 struct Complex {
@@ -30,7 +30,7 @@ struct Complex {
         var b = this.Im
         var c = o.Re
         var d = o.Im
-        if std.math.Abs(c) >= std.math.Abs(d) {
+        if math.Abs(c) >= math.Abs(d) {
             if c == 0 && d == 0 {
                 return Complex{Re: a / c, Im: b / c}
             }
@@ -60,12 +60,12 @@ struct Complex {
 
     // |c|.
     func Abs() float {
-        return std.math.Hypot(this.Re, this.Im)
+        return math.Hypot(this.Re, this.Im)
     }
 
     // The argument in (-Pi, Pi].
     func Phase() float {
-        return std.math.Atan2(this.Im, this.Re)
+        return math.Atan2(this.Im, this.Re)
     }
 
     // Equals reports whether both parts are equal.
@@ -79,7 +79,7 @@ struct Complex {
         if this.Im < 0 {
             sign = ""
         }
-        return "(" + std.fmt.Format("{0}", this.Re) + sign + std.fmt.Format("{0}", this.Im) + "i)"
+        return "(" + fmt.Format("{0}", this.Re) + sign + fmt.Format("{0}", this.Im) + "i)"
     }
 }
 
@@ -90,7 +90,7 @@ func New(re float, im float) Complex {
 
 // The complex number with modulus r and argument theta.
 func Rect(r float, theta float) Complex {
-    return Complex{Re: r * std.math.Cos(theta), Im: r * std.math.Sin(theta)}
+    return Complex{Re: r * math.Cos(theta), Im: r * math.Sin(theta)}
 }
 
 // (|c|, Phase(c)).
@@ -117,13 +117,13 @@ func Conj(c Complex) Complex {
 
 // e^c.
 func Exp(c Complex) Complex {
-    var r = std.math.Exp(c.Re)
-    return Complex{Re: r * std.math.Cos(c.Im), Im: r * std.math.Sin(c.Im)}
+    var r = math.Exp(c.Re)
+    return Complex{Re: r * math.Cos(c.Im), Im: r * math.Sin(c.Im)}
 }
 
 // The principal natural logarithm.
 func Log(c Complex) Complex {
-    return Complex{Re: std.math.Log(c.Abs()), Im: c.Phase()}
+    return Complex{Re: math.Log(c.Abs()), Im: c.Phase()}
 }
 
 // The principal square root (Re >= 0; branch cut on the negative axis).
@@ -133,20 +133,20 @@ func Sqrt(c Complex) Complex {
             return Complex{Re: 0, Im: c.Im}
         }
         if c.Re < 0 {
-            var t = std.math.Sqrt(-c.Re)
+            var t = math.Sqrt(-c.Re)
             if signbit(c.Im) {
                 t = -t
             }
             return Complex{Re: 0, Im: t}
         }
-        return Complex{Re: std.math.Sqrt(c.Re), Im: c.Im}
+        return Complex{Re: math.Sqrt(c.Re), Im: c.Im}
     }
     var r = c.Abs()
     if c.Re >= 0 {
-        var t = std.math.Sqrt(0.5 * (r + c.Re))
+        var t = math.Sqrt(0.5 * (r + c.Re))
         return Complex{Re: t, Im: c.Im / (2 * t)}
     }
-    var t = std.math.Sqrt(0.5 * (r - c.Re))
+    var t = math.Sqrt(0.5 * (r - c.Re))
     if c.Im < 0 {
         t = -t
     }
@@ -166,25 +166,25 @@ func Pow(x Complex, y Complex) Complex {
 
 // Sin returns the complex sine of c.
 func Sin(c Complex) Complex {
-    return Complex{Re: std.math.Sin(c.Re) * cosh(c.Im), Im: std.math.Cos(c.Re) * sinh(c.Im)}
+    return Complex{Re: math.Sin(c.Re) * cosh(c.Im), Im: math.Cos(c.Re) * sinh(c.Im)}
 }
 
 // Cos returns the complex cosine of c.
 func Cos(c Complex) Complex {
-    return Complex{Re: std.math.Cos(c.Re) * cosh(c.Im), Im: -std.math.Sin(c.Re) * sinh(c.Im)}
+    return Complex{Re: math.Cos(c.Re) * cosh(c.Im), Im: -math.Sin(c.Re) * sinh(c.Im)}
 }
 
 // True if either part is NaN and neither is infinite.
 func IsNaN(c Complex) bool {
-    if std.math.IsInf(c.Re, 0) || std.math.IsInf(c.Im, 0) {
+    if math.IsInf(c.Re, 0) || math.IsInf(c.Im, 0) {
         return false
     }
-    return std.math.IsNaN(c.Re) || std.math.IsNaN(c.Im)
+    return math.IsNaN(c.Re) || math.IsNaN(c.Im)
 }
 
 // True if either part is infinite.
 func IsInf(c Complex) bool {
-    return std.math.IsInf(c.Re, 0) || std.math.IsInf(c.Im, 0)
+    return math.IsInf(c.Re, 0) || math.IsInf(c.Im, 0)
 }
 
 func signbit(x float) bool {
@@ -192,9 +192,9 @@ func signbit(x float) bool {
 }
 
 func cosh(x float) float {
-    return (std.math.Exp(x) + std.math.Exp(-x)) / 2
+    return (math.Exp(x) + math.Exp(-x)) / 2
 }
 
 func sinh(x float) float {
-    return (std.math.Exp(x) - std.math.Exp(-x)) / 2
+    return (math.Exp(x) - math.Exp(-x)) / 2
 }

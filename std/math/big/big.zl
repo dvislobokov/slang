@@ -1,4 +1,4 @@
-// std.math.big: arbitrary-precision Int, Rat and Decimal.
+// math.big: arbitrary-precision Int, Rat and Decimal.
 //
 // Values are immutable: every operation returns a new value (unlike Go's
 // z.Add(x, y)), so copies may share storage safely. The method names are
@@ -7,7 +7,7 @@
 // work on Int, Rat and Decimal (DESIGN.md "Перегрузка операторов"). Magnitudes are []uint32 limbs; the limb arithmetic (Karatsuba
 // multiplication, Knuth division, base conversion) is C
 // (runtime/src/std_math_big.c).
-namespace std.math.big
+namespace math.big
 
 // An arbitrary-precision integer. The zero value is 0.
 struct Int {
@@ -479,21 +479,21 @@ func ParseInt(s string, base int) Int! {
     var b = base
     if b == 0 {
         b = 10
-        var lower = std.strings.ToLower(body)
-        if std.strings.HasPrefix(lower, "0x") {
+        var lower = strings.ToLower(body)
+        if strings.HasPrefix(lower, "0x") {
             b = 16
             body = body[2..]
-        } else if std.strings.HasPrefix(lower, "0o") {
+        } else if strings.HasPrefix(lower, "0o") {
             b = 8
             body = body[2..]
-        } else if std.strings.HasPrefix(lower, "0b") {
+        } else if strings.HasPrefix(lower, "0b") {
             b = 2
             body = body[2..]
         }
-        body = std.strings.Replace(body, "_", "")
+        body = strings.Replace(body, "_", "")
     }
     var mag = try rtParse(body, b) catch err {
-        return std.errors.Wrap(err, "big: parsing " + std.encoding.json.Quote(s))
+        return errors.Wrap(err, "big: parsing " + encoding.json.Quote(s))
     }
     return mk(neg, mag)
 }
@@ -644,12 +644,12 @@ func NewRat(a int, b int) Rat {
 
 // Parses "a/b", an integer, or a decimal "1.25" / "-1.5e3".
 func ParseRat(s string) Rat! {
-    var slash = std.strings.Index(s, "/")
+    var slash = strings.Index(s, "/")
     if slash >= 0 {
         var n = ParseInt(s[..slash], 10)?
         var d = ParseInt(s[slash + 1..], 10)?
         if d.IsZero() {
-            return error("big: zero denominator in " + std.encoding.json.Quote(s))
+            return error("big: zero denominator in " + encoding.json.Quote(s))
         }
         return RatFromInts(n, d)
     }
@@ -907,7 +907,7 @@ struct Decimal {
 
     // Nearest float.
     func Float64() float {
-        return try std.strconv.ParseFloat(this.String()) else 0
+        return try strconv.ParseFloat(this.String()) else 0
     }
 
     func up(s int) Int {
@@ -948,10 +948,10 @@ func DecimalFromRat(r Rat, scale int, mode RoundingMode) Decimal {
 func ParseDecimal(s string) Decimal! {
     var body = s
     var exp = 0
-    var e = std.strings.Index(std.strings.ToLower(body), "e")
+    var e = strings.Index(strings.ToLower(body), "e")
     if e >= 0 {
-        exp = std.strconv.ParseInt(body[e + 1..], 10)?("big: parsing decimal " +
-            std.encoding.json.Quote(s))
+        exp = strconv.ParseInt(body[e + 1..], 10)?("big: parsing decimal " +
+            encoding.json.Quote(s))
         body = body[..e]
     }
     var neg = false
@@ -959,18 +959,18 @@ func ParseDecimal(s string) Decimal! {
         neg = body[0] == 45
         body = body[1..]
     }
-    var dot = std.strings.Index(body, ".")
+    var dot = strings.Index(body, ".")
     var scale = 0
     var digits = body
     if dot >= 0 {
         digits = body[..dot] + body[dot + 1..]
         scale = len(body) - dot - 1
     }
-    if digits == "" || std.strings.Contains(digits, ".") {
-        return error("big: invalid decimal " + std.encoding.json.Quote(s))
+    if digits == "" || strings.Contains(digits, ".") {
+        return error("big: invalid decimal " + encoding.json.Quote(s))
     }
     var u = try rtParse(digits, 10) catch err {
-        return std.errors.Wrap(err, "big: parsing decimal " + std.encoding.json.Quote(s))
+        return errors.Wrap(err, "big: parsing decimal " + encoding.json.Quote(s))
     }
     var d = Decimal{unscaled: mk(neg, u), scale: scale - exp}
     if d.scale < 0 {

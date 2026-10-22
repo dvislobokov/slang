@@ -1,4 +1,4 @@
-//! Compile-time translation of `std.data` query lambdas to SQL
+//! Compile-time translation of `data` query lambdas to SQL
 //! (docs/FRAMEWORK.md section 3; DESIGN.md "Перевод лямбд в SQL").
 //!
 //! A lambda passed to `Where`, `OrderBy`, `Select`, `Sum`, ... is never
@@ -382,7 +382,7 @@ impl<'a> Sema<'a> {
     fn orm_arg(&mut self, v: hir::Expr, cx: &mut Cx) -> Tr<S> {
         let span = v.span;
         let ty = v.ty;
-        let Some(a) = self.orm_std_call("std.database.sql", "argOf", vec![ty], vec![v], span) else { return Err(None) };
+        let Some(a) = self.orm_std_call("database.sql", "argOf", vec![ty], vec![v], span) else { return Err(None) };
         cx.args.push(a);
         Ok(S::Arg(cx.args.len() - 1))
     }
@@ -417,7 +417,7 @@ impl<'a> Sema<'a> {
         if let Type::Slice(el) = *self.tt.get(ty) {
             if self.orm_scalar(ty).is_none() {
                 let span = v.span;
-                let Some(a) = self.orm_std_call("std.data", "listArg", vec![el], vec![v], span) else { return Err(None) };
+                let Some(a) = self.orm_std_call("data", "listArg", vec![el], vec![v], span) else { return Err(None) };
                 cx.args.push(a);
                 return Ok(V { s: S::List(cx.args.len() - 1), ty: Some(ty), lit: Lit::No, kind: VK::Scalar });
             }
@@ -725,7 +725,6 @@ impl<'a> Sema<'a> {
                         let head_local = self.lookup_local(&segs[0].name, false).is_some();
                         if !head_local {
                             let ns = segs.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
-                            let ns = ns.strip_prefix("std.").unwrap_or(&ns).to_string();
                             return self.orm_ns_call(&ns, &name.name, args, span, cx);
                         }
                     }

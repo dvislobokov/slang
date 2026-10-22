@@ -199,7 +199,7 @@ ZELL_PLAT_HIDDEN size_t zell__plat_strftime(char *buf, size_t cap, const char *f
 /* strptime; *gmtoff gets the offset parsed by %z (seconds east), else 0.
  * Returns the end of the parsed input or NULL. */
 ZELL_PLAT_HIDDEN const char *zell__plat_strptime(const char *s, const char *fmt, struct tm *tm, long *gmtoff);
-/* The C library's strftime/strptime have every conversion std.time uses
+/* The C library's strftime/strptime have every conversion time uses
  * (%k %l %z ...) on glibc, macOS and the BSDs; elsewhere (Windows, musl)
  * zell__plat_strftime/strptime are the portable ones below. */
 #if !defined(_WIN32) && (defined(__GLIBC__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
@@ -229,7 +229,7 @@ ZELL_PLAT_HIDDEN bool zell__plat_random_bytes(void *buf, size_t n);
  * innermost `skip` frames. */
 ZELL_PLAT_HIDDEN void zell__plat_backtrace(int fd, int skip);
 
-/* ---- CPU profiling (posix.c; std.diag, runtime/src/profile.c) ---------
+/* ---- CPU profiling (posix.c; diag, runtime/src/profile.c) ---------
  * A process-wide CPU-time timer (SIGPROF on POSIX) calls `fn` from the
  * signal handler of whichever thread was running, with the interrupted PC
  * first and then the return addresses found by walking frame pointers
@@ -265,7 +265,7 @@ ZELL_PLAT_HIDDEN bool zell__plat_exe_range(uintptr_t *lo, uintptr_t *hi, char *p
 /* Drops the symbol table cache. */
 ZELL_PLAT_HIDDEN void zell__plat_symbolize_done(void);
 
-/* ---- dynamic loading (std.plugin, posix.c) ---------------------------- */
+/* ---- dynamic loading (plugin, posix.c) ---------------------------- */
 
 /* Opens a shared object (symbols bound now, kept local); NULL on failure. */
 ZELL_PLAT_HIDDEN void *zell__plat_dl_open(const char *path);
@@ -359,7 +359,7 @@ ZELL_PLAT_HIDDEN char zell__plat_path_sep(void);
  * errno (POSIX errno values on every platform, so strerror and
  * zell_error_errno work unchanged). EINTR is retried internally. */
 
-/* Open flags: the portable bits of std.os (os.zl). */
+/* Open flags: the portable bits of os (os.zl). */
 enum {
     ZELL_PLAT_O_RDONLY = 0, ZELL_PLAT_O_WRONLY = 1, ZELL_PLAT_O_RDWR = 2, ZELL_PLAT_O_APPEND = 8,
     ZELL_PLAT_O_CREATE = 64, ZELL_PLAT_O_EXCL = 128, ZELL_PLAT_O_SYNC = 256, ZELL_PLAT_O_TRUNC = 512,
@@ -479,7 +479,7 @@ ZELL_PLAT_HIDDEN void zell__plat_process_init(void);
  * -errno; ZELL_PLAT_EAGAIN is the (negated) "would block" code (also
  * "connect in progress"). All sockets are non-blocking and close-on-exec,
  * and never raise SIGPIPE. Errno-style codes are the host's; the
- * ZELL_PLAT_E* classes below name the ones std.net maps to sentinels. */
+ * ZELL_PLAT_E* classes below name the ones net maps to sentinels. */
 
 #define ZELL_PLAT_EAGAIN 100000  /* returned as -ZELL_PLAT_EAGAIN (not an errno value) */
 
@@ -595,7 +595,7 @@ ZELL_PLAT_HIDDEN int64_t zell__plat_lookup_port(const char *network, const char 
  * p (point-to-point); returns 0 or an errno. */
 ZELL_PLAT_HIDDEN int zell__plat_interfaces(char ***out, int *n);
 
-/* ---- trust store (certroots.c; std.crypto.x509) ------------------------ */
+/* ---- trust store (certroots.c; crypto.x509) ------------------------ */
 
 /* Path of the system's PEM bundle of trusted root certificates
  * ($SSL_CERT_FILE first, then the distribution locations), or NULL if

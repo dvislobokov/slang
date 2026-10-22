@@ -1,7 +1,7 @@
 /* api.c - the Zell-facing wrappers of the crypto primitives:
- * std.crypto.{aes, chacha, x25519, ecdh, ecdsa, ed25519, rsa, hkdf}, the
- * additions to std.crypto.{hash, hmac}, and the internal rt* helpers of
- * std.crypto.x509 and std.net.tls (runtime/ABI.md section 19). Calling
+ * crypto.{aes, chacha, x25519, ecdh, ecdsa, ed25519, rsa, hkdf}, the
+ * additions to crypto.{hash, hmac}, and the internal rt* helpers of
+ * crypto.x509 and net.tls (runtime/ABI.md section 19). Calling
  * convention of ABI.md 14.1: []byte arguments are borrowed slices (NULL =
  * empty), []byte results go to a trailing out-slice, T! adds a trailing
  * zell_error **. */
@@ -44,7 +44,7 @@ static int hash_alg(const zell_string *name, zell_error **err) {
     return alg;
 }
 
-/* ---- std.crypto.hash / hmac additions ---- */
+/* ---- crypto.hash / hmac additions ---- */
 
 void zell_crypto_hash_sha384(const zell_string *data, zell_slice *out) {
     uint8_t d[48];
@@ -114,7 +114,7 @@ void zell_crypto_hmac_sum(const zell_string *alg, const zell_slice *key, const z
     bytes_out(out, d, (int64_t)zell__hash_size(a));
 }
 
-/* ---- std.crypto.hkdf ---- */
+/* ---- crypto.hkdf ---- */
 
 void zell_crypto_hkdf_extract(const zell_string *alg, const zell_slice *salt, const zell_slice *ikm,
                                zell_slice *out, zell_error **err) {
@@ -257,7 +257,7 @@ static void random_out(zell_slice *out, int64_t n, zell_error **err) {
     }
 }
 
-/* ---- std.crypto.x25519 ---- */
+/* ---- crypto.x25519 ---- */
 
 void zell_crypto_x25519_generate_key(zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
@@ -286,7 +286,7 @@ void zell_crypto_x25519_shared_secret(const zell_slice *priv, const zell_slice *
     }
 }
 
-/* ---- std.crypto.ecdh (P-256) ---- */
+/* ---- crypto.ecdh (P-256) ---- */
 
 void zell_crypto_ecdh_generate_key(zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
@@ -318,7 +318,7 @@ void zell_crypto_ecdh_shared_secret(const zell_slice *priv, const zell_slice *pe
     }
 }
 
-/* ---- std.crypto.ecdsa (P-256, ASN.1 DER signatures) ---- */
+/* ---- crypto.ecdsa (P-256, ASN.1 DER signatures) ---- */
 
 void zell_crypto_ecdsa_generate_key(zell_slice *out, zell_error **err) { zell_crypto_ecdh_generate_key(out, err); }
 
@@ -388,7 +388,7 @@ bool zell_crypto_ecdsa_verify(const zell_slice *pub, const zell_slice *digest, c
     return zell__p256_verify(rs, bdata(pub), bdata(digest), (size_t)blen(digest));
 }
 
-/* ---- std.crypto.ed25519 ---- */
+/* ---- crypto.ed25519 ---- */
 
 void zell_crypto_ed25519_generate_key(zell_slice *out, zell_error **err) {
     memset(out, 0, sizeof *out);
@@ -418,7 +418,7 @@ bool zell_crypto_ed25519_verify(const zell_slice *pub, const zell_slice *msg, co
     return zell__ed25519_verify(bdata(sig), bdata(pub), bdata(msg), (size_t)blen(msg));
 }
 
-/* ---- std.crypto.rsa ---- */
+/* ---- crypto.rsa ---- */
 
 bool zell_crypto_rsa_verify_pkcs1v15(const zell_slice *n, const zell_slice *e, const zell_string *hash,
                                       const zell_slice *digest, const zell_slice *sig) {
@@ -464,14 +464,14 @@ void zell_crypto_rsa_sign_pss(const zell_slice *key, const zell_string *hash, co
     rsa_sign(true, key, hash, digest, out, err);
 }
 
-/* ---- std.crypto.x509 internals ---- */
+/* ---- crypto.x509 internals ---- */
 
 zell_string *zell_crypto_x509_rt_system_roots_path(void) {
     const char *p = zell__plat_cert_bundle_path();
     return zell_string_new(p ? p : "", p ? (int64_t)strlen(p) : 0);
 }
 
-/* ---- std.net.tls internals ---- */
+/* ---- net.tls internals ---- */
 
 void zell_net_tls_rt_concat(const zell_slice *a, const zell_slice *b, zell_slice *out) {
     int64_t na = blen(a), nb = blen(b);

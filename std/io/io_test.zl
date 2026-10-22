@@ -1,8 +1,7 @@
-// Examples for std.io.
+// Examples for io.
 namespace io_test
 
-import std
-import std.io
+import io
 
 func ExampleReadAllString() void! {
     var r = io.NewStringReader("hello, reader")

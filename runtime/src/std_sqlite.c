@@ -1,4 +1,4 @@
-/* std_sqlite.c - the C side of std.database.sqlite (compiler/src/sema/
+/* std_sqlite.c - the C side of database.sqlite (compiler/src/sema/
  * stdlib_src/sqlite.zl; runtime/ABI.md section 23): a thin wrapper over the
  * system SQLite library (libsqlite3). Connections and statements are raw
  * `sqlite3 *` / `sqlite3_stmt *` pointers passed to Zell as int handles;

@@ -3,7 +3,7 @@
 //! `src/sema/stdfs.rs`):
 //!
 //! * every `src/sema/stdlib_src/*.zl` and `src/sema/reflect_src/*.zl`, and
-//!   the `std.collections` source of `src/sema/collections.rs`, copied to
+//!   the `collections` source of `src/sema/collections.rs`, copied to
 //!   `std/<namespace path>/<file>.zl`;
 //! * for every namespace with rows in the `FUNCS` table of
 //!   `src/sema/stdlib.rs`, `std/<namespace path>/<last segment>_extern.zl`
@@ -53,7 +53,7 @@ fn namespace_of(src: &str) -> Option<String> {
 }
 
 fn rel_dir(ns: &str) -> PathBuf {
-    ns.split('.').skip(1).collect()
+    ns.split('.').collect()
 }
 
 /// Zell spelling of a type of the table's mini syntax (`func(a;b) r`).
@@ -95,7 +95,7 @@ fn main() {
     // Documentation table: path -> (parameter names, doc).
     let mut docs: BTreeMap<String, (String, String)> = BTreeMap::new();
     if let Ok(d) = std::fs::read_to_string(sema.join("stdlib_docs.rs")) {
-        for line in d.lines().filter(|l| l.trim_start().starts_with("(\"std")) {
+        for line in d.lines().filter(|l| l.trim_start().starts_with("(\"")) {
             let l = literals(line);
             if l.len() == 3 {
                 docs.insert(l[0].clone(), (l[1].clone(), l[2].clone()));

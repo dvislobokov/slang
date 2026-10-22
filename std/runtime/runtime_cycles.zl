@@ -3,7 +3,7 @@
 // warning W0001 names). ZELL_CYCLES=auto (default) runs it when enough
 // possible roots were recorded, manual only through CollectCycles, off
 // disables it (no flags, no recording: plain reference counting).
-namespace std.runtime
+namespace runtime
 
 // Figures of the cycle collector (CycleStats()).
 struct CycleInfo {

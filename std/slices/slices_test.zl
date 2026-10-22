@@ -1,8 +1,7 @@
-// Examples for std.slices.
+// Examples for slices.
 namespace slices_test
 
-import std
-import std.io
+import io
 
 func ExampleSort() {
     var xs = [5, 2, 8, 1]

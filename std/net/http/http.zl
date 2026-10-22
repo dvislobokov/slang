@@ -1,15 +1,15 @@
-// The Zell-source std.net.http (see sema/stdsrc.rs for the rules), split
+// The Zell-source net.http (see sema/stdsrc.rs for the rules), split
 // over several files of this namespace:
 //   http.zl          shared helpers, Request/Response, URLs, connections
 //   http_server.zl   Server (HTTP/1.1 keep-alive loop), Router, middleware chain
 //   http_client.zl   Client, Transport (connection pool, proxies), cookies
-//   http2.zl         HTTP/2 (RFC 9113) frames, streams, flow control (std.net.http.hpack)
+//   http2.zl         HTTP/2 (RFC 9113) frames, streams, flow control (net.http.hpack)
 //   http_extra.zl    middleware, ServeFile/ServeDir, Server-Sent Events
 // The hot loops (head scanning/parsing, header canonicalisation, response
 // heads, WebSocket masking, HPACK Huffman) are C in runtime/src/std_http.c
 // (the rt* externs, runtime/ABI.md 16.5). Bodies are strings (byte strings:
-// any bytes are allowed); https and Server.TLS use std.net.tls.
-namespace std.net.http
+// any bytes are allowed); https and Server.TLS use net.tls.
+namespace net.http
 
 // ---- shared helpers ---------------------------------------------------
 
@@ -43,7 +43,7 @@ func minInt(a int, b int) int {
 }
 
 func parseHex(s string) int! {
-    var t = std.strings.Trim(s)
+    var t = strings.Trim(s)
     if len(t) == 0 {
         return error("invalid chunk size \"" + s + "\"")
     }
@@ -82,7 +82,7 @@ func hexString(n int) string {
 
 // Percent-decoding of a query component ('+' is a space).
 func unescape(s string) string {
-    if !std.strings.Contains(s, "%") && !std.strings.Contains(s, "+") {
+    if !strings.Contains(s, "%") && !strings.Contains(s, "+") {
         return s
     }
     var out []byte = []
@@ -106,7 +106,7 @@ func unescape(s string) string {
             i += 1
         }
     }
-    return std.strings.FromBytes(out)
+    return strings.FromBytes(out)
 }
 
 // Percent-encoding of a query component (space as '+').
@@ -132,7 +132,7 @@ func QueryEscape(s string) string {
             out = append(out, hex[c % 16])
         }
     }
-    return std.strings.FromBytes(out)
+    return strings.FromBytes(out)
 }
 
 // Parses "a=1&b=x%20y" into a map (the last value of a repeated key wins).
@@ -141,11 +141,11 @@ func ParseQuery(q string) map[string]string {
     if q == "" {
         return m
     }
-    for kv in std.strings.Split(q, "&") {
+    for kv in strings.Split(q, "&") {
         if kv == "" {
             continue
         }
-        var i = std.strings.Index(kv, "=")
+        var i = strings.Index(kv, "=")
         if i < 0 {
             m[unescape(kv)] = ""
         } else {
@@ -205,12 +205,12 @@ func ParseTime(s string) int! {
 
 // ---- connections --------------------------------------------------------
 
-// The byte stream under an HTTP connection: plain TCP (std.net.Conn) or
-// TLS (std.net.tls.Conn). Plain TCP reads go straight into the caller's
+// The byte stream under an HTTP connection: plain TCP (net.Conn) or
+// TLS (net.tls.Conn). Plain TCP reads go straight into the caller's
 // buffer (ReadInto); TLS copies a decrypted record.
 struct conn {
-    nc    std.net.Conn
-    tc    std.net.tls.Conn
+    nc    net.Conn
+    tc    net.tls.Conn
     isTLS bool
     // TLS bytes decrypted but not yet consumed by readInto
     tpend []byte
@@ -308,11 +308,11 @@ struct conn {
     }
 }
 
-func plainConn(c std.net.Conn) *conn {
+func plainConn(c net.Conn) *conn {
     return new conn{nc: c}
 }
 
-func tlsConn(c std.net.tls.Conn) *conn {
+func tlsConn(c net.tls.Conn) *conn {
     return new conn{tc: c, isTLS: true}
 }
 
@@ -323,14 +323,14 @@ async func tlsReadInto(c *conn, buf []byte, off int) int! {
             return 0
         }
     }
-    var k = std.net.rtCopyBytes(buf, off, c.tpend, 0, len(c.tpend))
+    var k = net.rtCopyBytes(buf, off, c.tpend, 0, len(c.tpend))
     c.tpend = c.tpend[k..]
     return k
 }
 
 // SendFile over TLS: read the file in 64 KB pieces and write them.
 async func copyFile(c *conn, path string, off int, n int) int! {
-    var f = std.os.Open(path)?
+    var f = os.Open(path)?
     var info = f.Stat()?
     var size = info.Size
     var end = size
@@ -338,7 +338,7 @@ async func copyFile(c *conn, path string, off int, n int) int! {
         end = off + n
     }
     var pos = off
-    var buf = std.net.MakeBuffer(65536)
+    var buf = net.MakeBuffer(65536)
     for pos < end {
         var want = minInt(65536, end - pos)
         var k = try f.ReadAt(buf[..want], pos) catch err {
@@ -391,7 +391,7 @@ struct rbuf {
         }
         if this.r > 0 {
             var n = this.w - this.r
-            _ = std.net.rtCopyBytes(this.buf, 0, this.buf, this.r, n)
+            _ = net.rtCopyBytes(this.buf, 0, this.buf, this.r, n)
             this.scan -= this.r
             if this.scan < 0 {
                 this.scan = 0
@@ -403,21 +403,21 @@ struct rbuf {
             }
         }
         var size = maxInt(len(this.buf) * 2, this.w + need)
-        var nb = std.net.MakeBuffer(size)
-        _ = std.net.rtCopyBytes(nb, 0, this.buf, 0, this.w)
+        var nb = net.MakeBuffer(size)
+        _ = net.rtCopyBytes(nb, 0, this.buf, 0, this.w)
         this.buf = nb
     }
 
     // Takes n buffered bytes as a string.
     func take(n int) string {
-        var s = std.strings.FromBytes(this.buf[this.r..this.r + n])
+        var s = strings.FromBytes(this.buf[this.r..this.r + n])
         this.skip(n)
         return s
     }
 
     // The buffered bytes (a copy), emptying the buffer.
     func drain() []byte {
-        var out = std.bytes.Clone(this.buf[this.r..this.w])
+        var out = bytes.Clone(this.buf[this.r..this.w])
         this.r = 0
         this.w = 0
         this.scan = 0
@@ -426,7 +426,7 @@ struct rbuf {
 }
 
 func newRbuf(size int) *rbuf {
-    return new rbuf{buf: std.net.MakeBuffer(size)}
+    return new rbuf{buf: net.MakeBuffer(size)}
 }
 
 // Reads more bytes into b (at least one, or sets eof); false at the end
@@ -458,13 +458,13 @@ async func fillTo(c *conn, b *rbuf, n int) void! {
 async func readLine(c *conn, b *rbuf, limit int) string! {
     var from = b.r
     for {
-        var i = std.net.rtIndexByte(b.buf[..b.w], from, 10)
+        var i = net.rtIndexByte(b.buf[..b.w], from, 10)
         if i >= 0 {
             var end = i
             if end > b.r && b.buf[end - 1] == 13 {
                 end -= 1
             }
-            var line = std.strings.FromBytes(b.buf[b.r..end])
+            var line = strings.FromBytes(b.buf[b.r..end])
             b.skip(i + 1 - b.r)
             return line
         }
@@ -486,7 +486,7 @@ async func readChunked(c *conn, b *rbuf, limit int) string! {
     var body = ""
     for {
         var line = await readLine(c, b, 4096)?
-        var semi = std.strings.Index(line, ";")
+        var semi = strings.Index(line, ";")
         if semi >= 0 {
             line = line[..semi]
         }
@@ -594,7 +594,7 @@ struct Request {
 
     // The body parsed as JSON.
     func JSON<T>() T! {
-        return std.encoding.json.Parse<T>(this.Body)?
+        return encoding.json.Parse<T>(this.Body)?
     }
 
     // Whether the request asks for a WebSocket upgrade.
@@ -682,12 +682,12 @@ struct Response {
 
     // Encodes v as the JSON body (status, Content-Type application/json).
     func SendJSON<T>(status int, v T) {
-        this.Json(status, std.encoding.json.Format<T>(v))
+        this.Json(status, encoding.json.Format<T>(v))
     }
 
     // Client side: the body parsed as JSON.
     func JSON<T>() T! {
-        return std.encoding.json.Parse<T>(this.Body)?
+        return encoding.json.Parse<T>(this.Body)?
     }
 
     // Redirects to location with status (301, 302, 303, 307 or 308).
@@ -717,7 +717,7 @@ struct Response {
     // (n < 0: to the end), sent with sendfile(2) on plain TCP after the
     // handler returns. Sets Content-Length; Body is ignored.
     func SendFile(path string, off int, n int) void! {
-        var info = std.os.Stat(path)?
+        var info = os.Stat(path)?
         var end = info.Size
         if n >= 0 && off + n < end {
             end = off + n
@@ -803,9 +803,9 @@ func ParseCookies(h string) []Cookie {
     if h == "" {
         return out
     }
-    for part in std.strings.Split(h, ";") {
-        var p = std.strings.Trim(part)
-        var eq = std.strings.Index(p, "=")
+    for part in strings.Split(h, ";") {
+        var p = strings.Trim(part)
+        var eq = strings.Index(p, "=")
         if eq <= 0 {
             continue
         }
@@ -821,34 +821,34 @@ func ParseCookies(h string) []Cookie {
 // Parses one Set-Cookie header value; now is the current Unix time (for
 // Max-Age).
 func ParseSetCookie(v string, now int) Cookie! {
-    var parts = std.strings.Split(v, ";")
-    var first = std.strings.Trim(parts[0])
-    var eq = std.strings.Index(first, "=")
+    var parts = strings.Split(v, ";")
+    var first = strings.Trim(parts[0])
+    var eq = strings.Index(first, "=")
     if eq <= 0 {
         return error("malformed Set-Cookie \"" + v + "\"")
     }
-    var c = Cookie{Name: std.strings.Trim(first[..eq]), Value: std.strings.Trim(first[eq + 1..])}
+    var c = Cookie{Name: strings.Trim(first[..eq]), Value: strings.Trim(first[eq + 1..])}
     if len(c.Value) >= 2 && c.Value[0] == 34 && c.Value[len(c.Value) - 1] == 34 {
         c.Value = c.Value[1..len(c.Value) - 1]
     }
     for i in 1..len(parts) {
-        var a = std.strings.Trim(parts[i])
+        var a = strings.Trim(parts[i])
         var k = a
         var val = ""
-        var e = std.strings.Index(a, "=")
+        var e = strings.Index(a, "=")
         if e >= 0 {
-            k = std.strings.Trim(a[..e])
-            val = std.strings.Trim(a[e + 1..])
+            k = strings.Trim(a[..e])
+            val = strings.Trim(a[e + 1..])
         }
-        var lk = std.strings.ToLower(k)
+        var lk = strings.ToLower(k)
         if lk == "path" {
             c.Path = val
         } else if lk == "domain" {
-            c.Domain = std.strings.TrimPrefix(std.strings.ToLower(val), ".")
+            c.Domain = strings.TrimPrefix(strings.ToLower(val), ".")
         } else if lk == "expires" {
             c.Expires = try ParseTime(val) else 0
         } else if lk == "max-age" {
-            var n = try std.strings.ToInt(val) else 0
+            var n = try strings.ToInt(val) else 0
             if n <= 0 {
                 c.MaxAge = -1
             } else {
@@ -895,25 +895,25 @@ struct URL {
 
     // host:port with the default port filled in ("[::1]:443").
     func Addr() string {
-        return std.net.JoinHostPort(this.Hostname, this.Port)
+        return net.JoinHostPort(this.Hostname, this.Port)
     }
 }
 
 // ParseURL parses "scheme://[user@]host[:port][/path][?query]" (a fragment
 // is dropped).
 func ParseURL(raw string) URL! {
-    var i = std.strings.Index(raw, "://")
+    var i = strings.Index(raw, "://")
     if i <= 0 {
         return error("invalid URL \"" + raw + "\": missing scheme")
     }
-    var u = URL{Scheme: std.strings.ToLower(raw[..i])}
+    var u = URL{Scheme: strings.ToLower(raw[..i])}
     var rest = raw[i + 3..]
-    var h = std.strings.Index(rest, "#")
+    var h = strings.Index(rest, "#")
     if h >= 0 {
         rest = rest[..h]
     }
-    var slash = std.strings.Index(rest, "/")
-    var q = std.strings.Index(rest, "?")
+    var slash = strings.Index(rest, "/")
+    var q = strings.Index(rest, "?")
     var end = len(rest)
     if slash >= 0 {
         end = slash
@@ -923,12 +923,12 @@ func ParseURL(raw string) URL! {
     }
     u.Host = rest[..end]
     rest = rest[end..]
-    var at = std.strings.LastIndex(u.Host, "@")
+    var at = strings.LastIndex(u.Host, "@")
     if at >= 0 {
         u.User = u.Host[..at]
         u.Host = u.Host[at + 1..]
     }
-    q = std.strings.Index(rest, "?")
+    q = strings.Index(rest, "?")
     if q >= 0 {
         u.RawQuery = rest[q + 1..]
         rest = rest[..q]
@@ -944,11 +944,11 @@ func ParseURL(raw string) URL! {
     if u.Scheme == "https" || u.Scheme == "wss" {
         defPort = 443
     }
-    var c = std.strings.LastIndex(u.Host, ":")
-    var b = std.strings.LastIndex(u.Host, "]")
+    var c = strings.LastIndex(u.Host, ":")
+    var b = strings.LastIndex(u.Host, "]")
     if c > b {
         u.Hostname = u.Host[..c]
-        u.Port = try std.strings.ToInt(u.Host[c + 1..]) else -1
+        u.Port = try strings.ToInt(u.Host[c + 1..]) else -1
         if u.Port < 0 || u.Port > 65535 {
             return error("invalid URL \"" + raw + "\": bad port")
         }
@@ -956,7 +956,7 @@ func ParseURL(raw string) URL! {
         u.Hostname = u.Host
         u.Port = defPort
     }
-    if std.strings.HasPrefix(u.Hostname, "[") && std.strings.HasSuffix(u.Hostname, "]") {
+    if strings.HasPrefix(u.Hostname, "[") && strings.HasSuffix(u.Hostname, "]") {
         u.Hostname = u.Hostname[1..len(u.Hostname) - 1]
     }
     return u
@@ -964,18 +964,18 @@ func ParseURL(raw string) URL! {
 
 // The target of a redirect from u to location.
 func resolveRef(u URL, location string) string {
-    if std.strings.Contains(location, "://") {
+    if strings.Contains(location, "://") {
         return location
     }
     var base = u.Scheme + "://" + u.Host
-    if std.strings.HasPrefix(location, "//") {
+    if strings.HasPrefix(location, "//") {
         return u.Scheme + ":" + location
     }
-    if std.strings.HasPrefix(location, "/") {
+    if strings.HasPrefix(location, "/") {
         return base + location
     }
     var dir = u.Path
-    var k = std.strings.LastIndex(dir, "/")
+    var k = strings.LastIndex(dir, "/")
     if k >= 0 {
         dir = dir[..k + 1]
     }
@@ -989,7 +989,7 @@ func resolveRef(u URL, location string) string {
 // e.g. `func Serve(req, res) Task<void!> { return this.serve(req, res) }`.
 interface Handler {
     // Serve handles one request.
-    func Serve(req *std.net.http.Request, res *std.net.http.Response) Task<void!>
+    func Serve(req *net.http.Request, res *net.http.Response) Task<void!>
 }
 
 // HandlerFunc adapts a function to Handler.

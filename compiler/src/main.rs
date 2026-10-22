@@ -20,7 +20,7 @@ commands:
                                  type-check without generating code
   test [path] [--filter re] [--json] [--bench] [-v] [--parallel n] [options]
                                  run the @test functions (and @test benchmarks
-                                 taking *testing.B with --bench), see std.testing
+                                 taking *testing.B with --bench), see testing
   doc [path|namespace|symbol] [--html dir] [--json] [--check [--min N]] [--private]
                                  documentation from doc comments: `zell doc strings.Split`,
                                  `zell doc std --html out/` (the stdlib reference), --check: coverage
@@ -48,13 +48,13 @@ commands:
   manifest convert <toml|json|yaml> [dir]
                                  rewrite the manifest in another format
   data migration add <Name> | update [target] | script | list
-                                 std.data migrations: diff the model against
+                                 data migrations: diff the model against
                                  migrations/snapshot.json, apply, print SQL (zell data help)
   parse <file.zl>                print the AST
   fmt [paths] [--check] [--diff] [--stdin]
                                  format .zl files in place (canonical style)
   lsp                            run the language server on stdio (execs zell-lsp)
-  tool pprof [args] <profile>    inspect a std.diag profile (runs `go tool pprof`)
+  tool pprof [args] <profile>    inspect a diag profile (runs `go tool pprof`)
   target list                    known targets and where their runtime is
   target add <target>... [--url template]
                                  download prebuilt runtimes into ~/.zell/targets

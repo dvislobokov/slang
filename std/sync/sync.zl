@@ -1,10 +1,10 @@
-// std.sync: synchronization beyond std.task's Mutex, WaitGroup and
+// sync: synchronization beyond task's Mutex, WaitGroup and
 // Channel: RwMutex (async), Semaphore (async), Barrier (async), Once,
 // AtomicInt / AtomicBool (lock-free, runtime/src/std_sync.c), Atomic<T>
 // (any comparable value) and Pool<T>. The async primitives are built like
 // task.Mutex: a per-object spin lock held for a few statements and waker
 // tasks fired in FIFO order; nothing blocks a worker thread.
-namespace std.sync
+namespace sync
 
 // A reader/writer lock: many readers or one writer. Writers are
 // preferred: once a writer waits, new readers queue behind it.
@@ -18,34 +18,34 @@ struct RwMutex {
 
     // Waits for shared (read) access.
     func RLock() Task<void> {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if !this.writer && this.waitingWriters == 0 {
             this.readers += 1
-            std.task.rtUnlock(&this.guard)
-            return std.task.Delay(0)
+            task.rtUnlock(&this.guard)
+            return task.Delay(0)
         }
-        var s = std.task.rtWaker()
+        var s = task.rtWaker()
         this.rq = append(this.rq, s)
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return s
     }
 
     // TryRLock takes read access without waiting; false if a writer holds or waits for the lock.
     func TryRLock() bool {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var ok = !this.writer && this.waitingWriters == 0
         if ok {
             this.readers += 1
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return ok
     }
 
     // RUnlock releases read access; it panics without a matching RLock.
     func RUnlock() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if this.readers <= 0 {
-            std.task.rtUnlock(&this.guard)
+            task.rtUnlock(&this.guard)
             panic("sync: RUnlock of unlocked RwMutex")
         }
         this.readers -= 1
@@ -54,35 +54,35 @@ struct RwMutex {
 
     // Waits for exclusive (write) access.
     func Lock() Task<void> {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if !this.writer && this.readers == 0 {
             this.writer = true
-            std.task.rtUnlock(&this.guard)
-            return std.task.Delay(0)
+            task.rtUnlock(&this.guard)
+            return task.Delay(0)
         }
-        var s = std.task.rtWaker()
+        var s = task.rtWaker()
         this.wq = append(this.wq, s)
         this.waitingWriters += 1
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return s
     }
 
     // TryLock takes write access without waiting; false if the lock is held.
     func TryLock() bool {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var ok = !this.writer && this.readers == 0
         if ok {
             this.writer = true
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return ok
     }
 
     // Unlock releases write access, waking the next writer or the waiting readers; it panics if not locked.
     func Unlock() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if !this.writer {
-            std.task.rtUnlock(&this.guard)
+            task.rtUnlock(&this.guard)
             panic("sync: Unlock of unlocked RwMutex")
         }
         this.writer = false
@@ -93,7 +93,7 @@ struct RwMutex {
     // writer, or else to every waiting reader.
     func handoff() {
         if this.writer || this.readers > 0 {
-            std.task.rtUnlock(&this.guard)
+            task.rtUnlock(&this.guard)
             return
         }
         if len(this.wq) > 0 {
@@ -103,16 +103,16 @@ struct RwMutex {
             this.wq = this.wq[1..]
             this.waitingWriters -= 1
             this.writer = true
-            std.task.rtUnlock(&this.guard)
-            std.task.rtFire(w)
+            task.rtUnlock(&this.guard)
+            task.rtFire(w)
             return
         }
         var rs = this.rq
         this.rq = nil
         this.readers += len(rs)
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         for r in rs {
-            std.task.rtFire(r)
+            task.rtFire(r)
         }
     }
 }
@@ -133,50 +133,50 @@ struct Semaphore {
 
     // Waits for a permit.
     func Acquire() Task<void> {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if this.avail > 0 {
             this.avail -= 1
-            std.task.rtUnlock(&this.guard)
-            return std.task.Delay(0)
+            task.rtUnlock(&this.guard)
+            return task.Delay(0)
         }
-        var s = std.task.rtWaker()
+        var s = task.rtWaker()
         this.waiters = append(this.waiters, s)
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return s
     }
 
     // TryAcquire takes a unit without waiting; false if none is free.
     func TryAcquire() bool {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var ok = this.avail > 0
         if ok {
             this.avail -= 1
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return ok
     }
 
     // Returns a permit (to the oldest waiter, if any).
     func Release() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if len(this.waiters) > 0 {
             var w = this.waiters[0]
             var none Task<void>
             this.waiters[0] = none
             this.waiters = this.waiters[1..]
-            std.task.rtUnlock(&this.guard)
-            std.task.rtFire(w)
+            task.rtUnlock(&this.guard)
+            task.rtFire(w)
             return
         }
         this.avail += 1
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     // Permits currently free.
     func Available() int {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var n = this.avail
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return n
     }
 }
@@ -310,36 +310,36 @@ struct Atomic<T: Comparable> {
 
     // Load returns the value.
     func Load() T {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var x = this.v
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return x
     }
 
     // Store sets the value.
     func Store(x T) {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         this.v = x
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     // Swap sets the value and returns the old one.
     func Swap(x T) T {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var old = this.v
         this.v = x
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return old
     }
 
     // CompareAndSwap sets the value to next if it equals old; reports whether it did.
     func CompareAndSwap(old T, next T) bool {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var ok = this.v == old
         if ok {
             this.v = next
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return ok
     }
 }
@@ -359,17 +359,17 @@ struct Pool<T> {
 
     // Get returns a pooled value, or a new one from newFn (the zero value without one).
     func Get() T {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var n = len(this.items)
         if n > 0 {
             var x = this.items[n - 1]
             var zero T
             this.items[n - 1] = zero
             this.items = this.items[..n - 1]
-            std.task.rtUnlock(&this.guard)
+            task.rtUnlock(&this.guard)
             return x
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         if this.newFn == nil {
             var zero T
             return zero
@@ -379,40 +379,40 @@ struct Pool<T> {
 
     // Put returns x to the pool (dropped when 64 are already idle).
     func Put(x T) {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if this.max == 0 || len(this.items) < this.max {
             this.items = append(this.items, x)
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     // Idle values held.
     func Len() int {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var n = len(this.items)
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return n
     }
 }
 
 async func barrierWait(self Barrier) bool {
     var s = self.st
-    std.task.rtLock(&s.guard)
+    task.rtLock(&s.guard)
     s.count += 1
     if s.count == s.n {
         var ws = s.waiters
         s.waiters = nil
         s.count = 0
         s.round += 1
-        std.task.rtUnlock(&s.guard)
+        task.rtUnlock(&s.guard)
         for w in ws {
-            std.task.rtFire(w)
+            task.rtFire(w)
         }
         return true
     }
-    var w = std.task.rtWaker()
+    var w = task.rtWaker()
     s.waiters = append(s.waiters, w)
-    std.task.rtUnlock(&s.guard)
+    task.rtUnlock(&s.guard)
     await w
     return false
 }

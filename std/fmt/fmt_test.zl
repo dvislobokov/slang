@@ -1,8 +1,7 @@
-// Examples for std.fmt.
+// Examples for fmt.
 namespace fmt_test
 
-import std
-import std.io
+import io
 
 func ExampleFormat() {
     // {N} is argument N, formatted as println would; arguments can repeat.

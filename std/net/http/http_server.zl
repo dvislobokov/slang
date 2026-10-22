@@ -4,7 +4,7 @@
 // (Response.Flush), SendFile and connection hijacking (WebSockets).
 // HTTP/2 connections (TLS ALPN "h2", or H2C prior knowledge) are handed to
 // serveH2 in http2.zl.
-namespace std.net.http
+namespace net.http
 
 // ---- routing ---------------------------------------------------------------
 
@@ -53,7 +53,7 @@ struct Router {
         var parts = splitPath(pattern)
         var isStatic = true
         for p in parts {
-            if p == "*" || std.strings.HasPrefix(p, "{") {
+            if p == "*" || strings.HasPrefix(p, "{") {
                 isStatic = false
             }
         }
@@ -62,7 +62,7 @@ struct Router {
             method: method,
             parts: parts,
             isStatic: isStatic,
-            path: "/" + std.strings.Join(parts, "/"),
+            path: "/" + strings.Join(parts, "/"),
             handler: h,
         })
     }
@@ -143,7 +143,7 @@ func cleanPath(p string) bool {
     if len(p) > 1 && p[len(p) - 1] == 47 {
         return false
     }
-    return !std.strings.Contains(p, "//")
+    return !strings.Contains(p, "//")
 }
 
 func dispatch(t *routeTable, req *Request, res *Response) Task<void!> {
@@ -196,7 +196,7 @@ async func plainStatus(res *Response, status int) void! {
 
 func splitPath(p string) []string {
     var out []string = []
-    for s in std.strings.Split(p, "/") {
+    for s in strings.Split(p, "/") {
         if s != "" {
             out = append(out, s)
         }
@@ -222,7 +222,7 @@ func matchRoute(pattern []string, path []string) map[string]string {
         if i >= len(path) {
             return nil
         }
-        if std.strings.HasPrefix(p, "{") && std.strings.HasSuffix(p, "}") {
+        if strings.HasPrefix(p, "{") && strings.HasSuffix(p, "}") {
             params[p[1..len(p) - 1]] = unescape(path[i])
         } else if p != path[i] {
             return nil
@@ -248,7 +248,7 @@ struct Server {
     IdleTimeout int
     // Serves HTTPS with this configuration when set (ALPN defaults to
     // h2 and http/1.1, or http/1.1 alone with DisableHTTP2).
-    TLS *std.net.tls.ServerConfig
+    TLS *net.tls.ServerConfig
     // Milliseconds for each read of a request body (0: no limit).
     ReadTimeout int
     // Milliseconds for each write of a response (0: no limit).
@@ -277,11 +277,11 @@ struct Server {
         if this.st != nil {
             return
         }
-        var l std.net.Listener
-        if std.strings.HasPrefix(this.Addr, "unix:") {
-            l = std.net.ListenUnix(this.Addr[5..])?
+        var l net.Listener
+        if strings.HasPrefix(this.Addr, "unix:") {
+            l = net.ListenUnix(this.Addr[5..])?
         } else {
-            l = std.net.Listen(this.Addr)?
+            l = net.Listen(this.Addr)?
         }
         var idle = this.IdleTimeout
         if idle == 0 {
@@ -317,7 +317,7 @@ struct Server {
                     cfg.ALPN = ["h2", "http/1.1"]
                 }
             }
-            st.tlsL = try std.net.tls.Server(l, cfg) catch err {
+            st.tlsL = try net.tls.Server(l, cfg) catch err {
                 l.Close()
                 return err
             }
@@ -344,7 +344,7 @@ struct Server {
             scheme = "https"
         }
         var a = this.st.l.Addr()
-        if std.strings.HasPrefix(a, "0.0.0.0:") || std.strings.HasPrefix(a, "[::]:") {
+        if strings.HasPrefix(a, "0.0.0.0:") || strings.HasPrefix(a, "[::]:") {
             a = "127.0.0.1:" + itoa(this.st.l.Port())
         }
         return scheme + "://" + a
@@ -363,7 +363,7 @@ struct Server {
     // in flight has been answered.
     func Shutdown() Task<void> {
         if this.st == nil {
-            return std.task.Delay(0)
+            return task.Delay(0)
         }
         return shutdown(this.st)
     }
@@ -388,9 +388,9 @@ struct connEntry {
 }
 
 struct serverState {
-    l            std.net.Listener
+    l            net.Listener
     useTLS       bool
-    tlsL         std.net.tls.Listener
+    tlsL         net.tls.Listener
     handler      Handler
     idle         int
     readTimeout  int
@@ -404,7 +404,7 @@ struct serverState {
     guard        int
     closing      bool
     conns        []*connEntry
-    wg           std.task.WaitGroup
+    wg           task.WaitGroup
 }
 
 // The next connection, wrapped in TLS for an HTTPS server (its handshake
@@ -424,32 +424,32 @@ async func acceptLoop(st *serverState) void! {
             if st.closing {
                 return
             }
-            if std.errors.Is(err, std.net.ErrClosed) {
+            if errors.Is(err, net.ErrClosed) {
                 return
             }
             // EMFILE and friends: back off a little and go on
-            await std.task.Delay(5)
+            await task.Delay(5)
             continue
         }
         var e = new connEntry{c: c, idle: true}
-        std.task.rtLock(&st.guard)
+        task.rtLock(&st.guard)
         if st.closing {
-            std.task.rtUnlock(&st.guard)
+            task.rtUnlock(&st.guard)
             c.close()
             return
         }
         st.conns = append(st.conns, e)
         st.wg.Add(1)
-        std.task.rtUnlock(&st.guard)
+        task.rtUnlock(&st.guard)
         _ = serveConn(st, e)
     }
 }
 
 async func shutdown(st *serverState) {
-    std.task.rtLock(&st.guard)
+    task.rtLock(&st.guard)
     st.closing = true
     var conns = st.conns
-    std.task.rtUnlock(&st.guard)
+    task.rtUnlock(&st.guard)
     st.l.Close()
     for e in conns {
         if e.h2 != nil {
@@ -462,7 +462,7 @@ async func shutdown(st *serverState) {
 }
 
 func dropConn(st *serverState, e *connEntry) {
-    std.task.rtLock(&st.guard)
+    task.rtLock(&st.guard)
     var keep []*connEntry = []
     for x in st.conns {
         if x != e {
@@ -470,7 +470,7 @@ func dropConn(st *serverState, e *connEntry) {
         }
     }
     st.conns = keep
-    std.task.rtUnlock(&st.guard)
+    task.rtUnlock(&st.guard)
     if !e.hijacked {
         e.c.close()
     }
@@ -671,7 +671,7 @@ async func reqBodyRead(rb *RequestBody, n int) []byte! {
     try {
         if rb.mode == 1 && rb.left == 0 {
             var line = await readLine(c, b, 4096)?
-            var semi = std.strings.Index(line, ";")
+            var semi = strings.Index(line, ";")
             if semi >= 0 {
                 line = line[..semi]
             }
@@ -697,7 +697,7 @@ async func reqBodyRead(rb *RequestBody, n int) []byte! {
             }
         }
         var k = minInt(minInt(n, rb.left), b.buffered())
-        var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+        var out = bytes.Clone(b.buf[b.r..b.r + k])
         b.skip(k)
         rb.left -= k
         rb.total += k
@@ -725,9 +725,9 @@ async func reqBodyReadAll(rb *RequestBody) string! {
     for {
         var p = await reqBodyRead(rb, 65536)?
         if len(p) == 0 {
-            return std.strings.FromBytes(parts)
+            return strings.FromBytes(parts)
         }
-        parts = std.net.rtJoin(parts, p, len(p))
+        parts = net.rtJoin(parts, p, len(p))
     }
     return ""
 }
@@ -900,7 +900,7 @@ async func serveConn(st *serverState, e *connEntry) {
             try {
                 req.Body = await readChunked(c, b, limit)?
             } catch err {
-                if std.errors.Is(err, ErrBodyTooLarge) {
+                if errors.Is(err, ErrBodyTooLarge) {
                     await writeError(c, 413, err.Message())
                 } else {
                     await writeError(c, 400, err.Message())
@@ -950,21 +950,21 @@ async func serveConn(st *serverState, e *connEntry) {
         if (info & 64) != 0 {
             trace = h["Traceparent"]
         }
-        var remoteSpan = std.diag.enterRemote(trace)
+        var remoteSpan = diag.enterRemote(trace)
         var failure = ""
         var abort = false
         var tooLarge = false
         try await st.handler.Serve(req, res) catch err {
-            if std.errors.Is(err, ErrAbortHandler) {
+            if errors.Is(err, ErrAbortHandler) {
                 abort = true
             }
-            tooLarge = std.errors.Is(err, ErrBodyTooLarge)
+            tooLarge = errors.Is(err, ErrBodyTooLarge)
             failure = err.Message()
             if failure == "" {
                 failure = "handler failed"
             }
         }
-        std.diag.leaveRemote(remoteSpan)
+        diag.leaveRemote(remoteSpan)
         if rw.hijacked {
             e.hijacked = true
             break
@@ -1103,14 +1103,14 @@ async func rawRead(c *conn, b *rbuf, n int) []byte! {
         }
     }
     var k = minInt(n, b.buffered())
-    var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+    var out = bytes.Clone(b.buf[b.r..b.r + k])
     b.skip(k)
     return out
 }
 
 async func rawReadExact(c *conn, b *rbuf, n int) []byte! {
     await fillTo(c, b, n)?
-    var out = std.bytes.Clone(b.buf[b.r..b.r + n])
+    var out = bytes.Clone(b.buf[b.r..b.r + n])
     b.skip(n)
     return out
 }

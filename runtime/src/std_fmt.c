@@ -1,4 +1,4 @@
-/* std_fmt.c - std.fmt.Format (zell_fmt_format). The compiler converts every
+/* std_fmt.c - fmt.Format (zell_fmt_format). The compiler converts every
  * argument to a string (as println would print it) and passes them as a
  * []string; this function only substitutes the placeholders. */
 #include "rt_internal.h"

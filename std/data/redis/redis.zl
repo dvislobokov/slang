@@ -1,5 +1,5 @@
-// std.data.redis: a Redis client written in Zell over std.net and
-// std.net.tls (docs/STDLIB.md level 3b). Four files share the namespace:
+// data.redis: a Redis client written in Zell over net and
+// net.tls (docs/STDLIB.md level 3b). Four files share the namespace:
 //
 //   redis.zl          RESP2/RESP3 codec (Reply), Options and URLs,
 //                     connections (handshake: HELLO / AUTH / SELECT) and
@@ -14,10 +14,10 @@
 //
 // Errors: a server error reply is an Error{Code, Text} ("WRONGTYPE ...");
 // a missing value is the sentinel Nil (errors.Is(err, redis.Nil)); network
-// errors are those of std.net. The sentinels Nil, ErrClosed, ErrTxFailed,
+// errors are those of net. The sentinels Nil, ErrClosed, ErrTxFailed,
 // ErrPoolTimeout and ErrCrossSlot are compiler constants (sema/stdlib.rs,
 // runtime/src/std_infra.c).
-namespace std.data.redis
+namespace data.redis
 
 // ---- replies ------------------------------------------------------------------
 
@@ -106,7 +106,7 @@ struct Reply {
             case Kind.Status, Kind.Bulk, Kind.Verbatim, Kind.BigNumber:
                 return this.Str
             case Kind.Int:
-                return std.strconv.Itoa(this.Int)
+                return strconv.Itoa(this.Int)
             case Kind.Double:
                 return formatFloat(this.Float)
             case Kind.Bool:
@@ -128,7 +128,7 @@ struct Reply {
             case Kind.Int, Kind.Bool:
                 return this.Int
             case Kind.Status, Kind.Bulk, Kind.BigNumber:
-                return std.strconv.Atoi(this.Str)?("redis: integer reply")
+                return strconv.Atoi(this.Str)?("redis: integer reply")
             case Kind.Double:
                 return int(this.Float)
             case Kind.Nil:
@@ -237,7 +237,7 @@ struct Reply {
             case Kind.Error:
                 return "(error) " + this.Str
             case Kind.Int:
-                return "(integer) " + std.strconv.Itoa(this.Int)
+                return "(integer) " + strconv.Itoa(this.Int)
             case Kind.Double:
                 return "(double) " + formatFloat(this.Float)
             case Kind.Bool:
@@ -246,7 +246,7 @@ struct Reply {
                 }
                 return "(false)"
             case Kind.Bulk, Kind.Verbatim, Kind.BigNumber:
-                return std.strconv.Quote(this.Str)
+                return strconv.Quote(this.Str)
         }
         var parts []string = []
         if this.Kind == Kind.Map {
@@ -255,18 +255,18 @@ struct Reply {
                 parts = append(parts, this.Elems[i].String() + " => " + this.Elems[i + 1].String())
                 i += 2
             }
-            return "{" + std.strings.Join(parts, ", ") + "}"
+            return "{" + strings.Join(parts, ", ") + "}"
         }
         for e in this.Elems {
             parts = append(parts, e.String())
         }
         if this.Kind == Kind.Set {
-            return "~[" + std.strings.Join(parts, ", ") + "]"
+            return "~[" + strings.Join(parts, ", ") + "]"
         }
         if this.Kind == Kind.Push {
-            return ">[" + std.strings.Join(parts, ", ") + "]"
+            return ">[" + strings.Join(parts, ", ") + "]"
         }
-        return "[" + std.strings.Join(parts, ", ") + "]"
+        return "[" + strings.Join(parts, ", ") + "]"
     }
 }
 
@@ -283,7 +283,7 @@ struct Error {
 
 func errorOf(text string) error {
     var code = text
-    var sp = std.strings.Index(text, " ")
+    var sp = strings.Index(text, " ")
     if sp >= 0 {
         code = text[..sp]
     }
@@ -293,31 +293,31 @@ func errorOf(text string) error {
 // The code of a server error in err's chain ("" if err is no Error).
 func ErrorCode(err error) string {
     var e Error
-    if std.errors.As(err, &e) {
+    if errors.As(err, &e) {
         return e.Code
     }
     return ""
 }
 
 func formatFloat(f float) string {
-    if std.math.IsInf(f, 1) {
+    if math.IsInf(f, 1) {
         return "inf"
     }
-    if std.math.IsInf(f, -1) {
+    if math.IsInf(f, -1) {
         return "-inf"
     }
-    return std.strconv.FormatFloat(f, 'g', -1)
+    return strconv.FormatFloat(f, 'g', -1)
 }
 
 func parseFloat(s string) float! {
-    var l = std.strings.ToLower(s)
+    var l = strings.ToLower(s)
     if l == "inf" || l == "+inf" {
-        return std.math.Inf(1)
+        return math.Inf(1)
     }
     if l == "-inf" {
-        return std.math.Inf(-1)
+        return math.Inf(-1)
     }
-    return std.strconv.ParseFloat(s)?("redis: float reply")
+    return strconv.ParseFloat(s)?("redis: float reply")
 }
 
 // ---- RESP codec -----------------------------------------------------------------
@@ -357,7 +357,7 @@ func atoiBytes(b []byte, from int, to int) (int, bool) {
 }
 
 func textOf(b []byte, from int, to int) string {
-    return std.strings.FromBytes(b[from..to])
+    return strings.FromBytes(b[from..to])
 }
 
 // Parses one reply at ps.b[p..]: (reply, offset after it). The offset is
@@ -370,7 +370,7 @@ func parse(ps *parser, p int) (Reply, int) {
     if p >= len(b) {
         return (none, -1)
     }
-    var lf = std.net.rtIndexByte(b, p, 10)
+    var lf = net.rtIndexByte(b, p, 10)
     if lf < 0 {
         return (none, -1)
     }
@@ -388,7 +388,7 @@ func parse(ps *parser, p int) (Reply, int) {
         case 58:
             var (n, ok) = atoiBytes(b, p + 1, end)
             if !ok {
-                ps.err = "bad integer " + std.strconv.Quote(textOf(b, p + 1, end))
+                ps.err = "bad integer " + strconv.Quote(textOf(b, p + 1, end))
                 return (none, -2)
             }
             return (Reply{Kind: Kind.Int, Int: n}, next)
@@ -396,11 +396,11 @@ func parse(ps *parser, p int) (Reply, int) {
             return (Reply{Kind: Kind.Nil}, next)
         case 44:
             var s = textOf(b, p + 1, end)
-            if std.strings.ToLower(s) == "nan" {
-                return (Reply{Kind: Kind.Double, Float: std.math.NaN()}, next)
+            if strings.ToLower(s) == "nan" {
+                return (Reply{Kind: Kind.Double, Float: math.NaN()}, next)
             }
             var f = try parseFloat(s) catch _ {
-                ps.err = "bad double " + std.strconv.Quote(s)
+                ps.err = "bad double " + strconv.Quote(s)
                 return (none, -2)
             }
             return (Reply{Kind: Kind.Double, Float: f}, next)
@@ -480,7 +480,7 @@ func parse(ps *parser, p int) (Reply, int) {
             }
             return (Reply{Kind: k, Elems: elems}, q)
     }
-    ps.err = "unexpected reply type byte " + std.strconv.Itoa(t)
+    ps.err = "unexpected reply type byte " + strconv.Itoa(t)
     return (none, -2)
 }
 
@@ -510,35 +510,35 @@ func ParseReplies(data []byte) []Reply! {
 func argBytes(a any) []byte {
     switch a {
         case string s:
-            return std.strings.Bytes(s)
+            return strings.Bytes(s)
         case []byte b:
             return b
         case int n:
-            return std.strings.Bytes(std.strconv.Itoa(n))
+            return strings.Bytes(strconv.Itoa(n))
         case float f:
-            return std.strings.Bytes(formatFloat(f))
+            return strings.Bytes(formatFloat(f))
         case bool v:
             if v {
-                return std.strings.Bytes("1")
+                return strings.Bytes("1")
             }
-            return std.strings.Bytes("0")
-        case std.time.Duration d:
-            return std.strings.Bytes(std.strconv.Itoa(d.Milliseconds()))
+            return strings.Bytes("0")
+        case time.Duration d:
+            return strings.Bytes(strconv.Itoa(d.Milliseconds()))
     }
     if a == nil {
         return []
     }
-    return std.strings.Bytes(std.fmt.Format("{0}", a))
+    return strings.Bytes(fmt.Format("{0}", a))
 }
 
 // Appends one command in RESP form (an array of bulk strings) to b.
 func appendCommand(b []byte, args []any) []byte {
-    var out = std.data.rtAppendStr(b, "*" + std.strconv.Itoa(len(args)) + "\r\n")
+    var out = data.rtAppendStr(b, "*" + strconv.Itoa(len(args)) + "\r\n")
     for a in args {
         var x = argBytes(a)
-        out = std.data.rtAppendStr(out, "$" + std.strconv.Itoa(len(x)) + "\r\n")
-        out = std.data.rtAppend(out, x)
-        out = std.data.rtAppendStr(out, "\r\n")
+        out = data.rtAppendStr(out, "$" + strconv.Itoa(len(x)) + "\r\n")
+        out = data.rtAppend(out, x)
+        out = data.rtAppendStr(out, "\r\n")
     }
     return out
 }
@@ -563,7 +563,7 @@ struct Options {
     Protocol int
     ClientName string
     // TLS for rediss:// (nil: plain TCP)
-    TLS *std.net.tls.Config
+    TLS *net.tls.Config
     DialTimeout int
     // limit for every network wait of a command (0: none; the task
     // context's deadline and cancellation apply as well)
@@ -622,8 +622,8 @@ func withDefaults(o Options) Options {
 
 // "500ms", "5s", "1m" or a number of seconds, in milliseconds.
 func parseMs(v string) int! {
-    var n = try std.strconv.ParseFloat(v) catch _ {
-        var d = std.time.ParseDuration(v)?("redis: bad duration " + std.strconv.Quote(v))
+    var n = try strconv.ParseFloat(v) catch _ {
+        var d = time.ParseDuration(v)?("redis: bad duration " + strconv.Quote(v))
         return d.Milliseconds()
     }
     return int(n * 1000)
@@ -635,9 +635,9 @@ func parseMs(v string) int! {
 // pool_timeout, idle_check, max_conn_age, max_retries (durations as
 // "500ms", "5s" or seconds), and for rediss skip_verify=true.
 func ParseURL(raw string) Options! {
-    var u = std.net.url.Parse(raw)?("redis: invalid URL")
+    var u = net.url.Parse(raw)?("redis: invalid URL")
     var o = Options{}
-    var scheme = std.strings.ToLower(u.Scheme)
+    var scheme = strings.ToLower(u.Scheme)
     if scheme == "unix" {
         o.Network = "unix"
         o.Addr = u.Path
@@ -650,19 +650,19 @@ func ParseURL(raw string) Options! {
         if port == "" {
             port = "6379"
         }
-        o.Addr = std.net.JoinHostPort(host, std.strconv.Atoi(port)?("redis: invalid port"))
-        var path = std.strings.Trim(u.Path)
-        if std.strings.HasPrefix(path, "/") {
+        o.Addr = net.JoinHostPort(host, strconv.Atoi(port)?("redis: invalid port"))
+        var path = strings.Trim(u.Path)
+        if strings.HasPrefix(path, "/") {
             path = path[1..]
         }
         if path != "" {
-            o.DB = std.strconv.Atoi(path)?("redis: invalid database number " + std.strconv.Quote(path))
+            o.DB = strconv.Atoi(path)?("redis: invalid database number " + strconv.Quote(path))
         }
         if scheme == "rediss" {
-            o.TLS = &std.net.tls.Config{ServerName: host}
+            o.TLS = &net.tls.Config{ServerName: host}
         }
     } else {
-        return error("redis: invalid URL scheme " + std.strconv.Quote(u.Scheme) + " (want redis, rediss or unix)")
+        return error("redis: invalid URL scheme " + strconv.Quote(u.Scheme) + " (want redis, rediss or unix)")
     }
     if u.User != nil {
         o.Username = u.User.Username
@@ -674,14 +674,14 @@ func ParseURL(raw string) Options! {
             o.Username = ""
         }
     }
-    var q = std.net.url.ParseQuery(u.RawQuery)?("redis: invalid URL query")
+    var q = net.url.ParseQuery(u.RawQuery)?("redis: invalid URL query")
     var db = q.Get("db")
     if db != "" {
-        o.DB = std.strconv.Atoi(db)?("redis: invalid db")
+        o.DB = strconv.Atoi(db)?("redis: invalid db")
     }
     var proto = q.Get("protocol")
     if proto != "" {
-        o.Protocol = std.strconv.Atoi(proto)?("redis: invalid protocol")
+        o.Protocol = strconv.Atoi(proto)?("redis: invalid protocol")
         if o.Protocol != 2 && o.Protocol != 3 {
             return error("redis: protocol must be 2 or 3")
         }
@@ -703,10 +703,10 @@ func ParseURL(raw string) Options! {
         o.MaxConnAge = parseMs(q.Get("max_conn_age"))?
     }
     if q.Get("pool_size") != "" {
-        o.PoolSize = std.strconv.Atoi(q.Get("pool_size"))?("redis: invalid pool_size")
+        o.PoolSize = strconv.Atoi(q.Get("pool_size"))?("redis: invalid pool_size")
     }
     if q.Get("max_retries") != "" {
-        o.MaxRetries = std.strconv.Atoi(q.Get("max_retries"))?("redis: invalid max_retries")
+        o.MaxRetries = strconv.Atoi(q.Get("max_retries"))?("redis: invalid max_retries")
     }
     if o.TLS != nil && (q.Get("skip_verify") == "true" || q.Get("insecure") == "true") {
         o.TLS.InsecureSkipVerify = true
@@ -716,7 +716,7 @@ func ParseURL(raw string) Options! {
 
 // ---- connections -----------------------------------------------------------------
 
-// A std.net.Conn or a std.net.tls.Conn.
+// A net.Conn or a net.tls.Conn.
 interface stream {
     func Read(n int) Task<[]byte!>
     func Write(data []byte) Task<int!>
@@ -725,7 +725,7 @@ interface stream {
 }
 
 func nowMs() int {
-    return std.diag.rtMonoNanos() / 1000000
+    return diag.rtMonoNanos() / 1000000
 }
 
 // One server connection. Not safe for concurrent use: the pool hands it
@@ -764,14 +764,14 @@ struct conn {
         }
         if len(chunk) == 0 {
             this.bad = true
-            return std.errors.Wrap(std.net.ErrEOF, "redis: connection closed by the server")
+            return errors.Wrap(net.ErrEOF, "redis: connection closed by the server")
         }
         if this.pos >= len(this.buf) {
             this.buf = chunk
         } else if this.pos > 0 {
-            this.buf = std.net.rtJoin(this.buf[this.pos..], chunk, len(chunk))
+            this.buf = net.rtJoin(this.buf[this.pos..], chunk, len(chunk))
         } else {
-            this.buf = std.data.rtAppend(this.buf, chunk)
+            this.buf = data.rtAppend(this.buf, chunk)
         }
         this.pos = 0
     }
@@ -880,25 +880,25 @@ struct conn {
 
 // Opens and initializes a connection to addr.
 async func dial(o Options, addr string) *conn! {
-    var raw std.net.Conn
+    var raw net.Conn
     if o.Network == "unix" {
-        raw = await std.net.DialUnix(addr)?
+        raw = await net.DialUnix(addr)?
     } else if o.DialTimeout > 0 {
-        raw = await std.net.DialTimeout(addr, o.DialTimeout)?
+        raw = await net.DialTimeout(addr, o.DialTimeout)?
     } else {
-        raw = await std.net.Dial(addr)?
+        raw = await net.Dial(addr)?
     }
     var s stream = raw
     if o.TLS != nil {
         var cfg = *o.TLS
         if cfg.ServerName == "" {
-            var hp = try std.net.SplitHostPort(addr) catch _ {
+            var hp = try net.SplitHostPort(addr) catch _ {
                 raw.Close()
                 return error("redis: bad address " + addr)
             }
             cfg.ServerName = hp.Host
         }
-        var tc = try await std.net.tls.Client(raw, cfg) catch err {
+        var tc = try await net.tls.Client(raw, cfg) catch err {
             raw.Close()
             return err
         }
@@ -937,7 +937,7 @@ struct PoolStats {
 
 struct poolWaiter {
     id int
-    ch std.task.Channel<int>
+    ch task.Channel<int>
 }
 
 // The connections to one server.
@@ -954,11 +954,11 @@ struct pool {
     stats PoolStats
 
     func lock() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
     }
 
     func unlock() {
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     // Counts a hit (0), a timeout (1) or a stale connection (2).
@@ -990,7 +990,7 @@ struct pool {
     async func get() *conn! {
         var deadline = nowMs() + this.opts.PoolTimeout
         for {
-            std.task.CheckCancelled()?
+            task.CheckCancelled()?
             var now = nowMs()
             this.lock()
             if this.closed {
@@ -1041,13 +1041,13 @@ struct pool {
                 return c
             }
             this.nextWaiter += 1
-            var w = poolWaiter{id: this.nextWaiter, ch: std.task.Channel<int>(1)}
+            var w = poolWaiter{id: this.nextWaiter, ch: task.Channel<int>(1)}
             this.waiters = append(this.waiters, w)
             this.unlock()
             var left = deadline - nowMs()
             var woken = false
             if left > 0 {
-                woken = await std.task.Timeout(w.ch.Recv(), left)
+                woken = await task.Timeout(w.ch.Recv(), left)
             }
             if !woken {
                 this.lock()
@@ -1068,7 +1068,7 @@ struct pool {
                 this.stats.Timeouts += 1
                 this.unlock()
                 w.ch.Close()
-                std.task.CheckCancelled()?
+                task.CheckCancelled()?
                 return ErrPoolTimeout
             }
         }

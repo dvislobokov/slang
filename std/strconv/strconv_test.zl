@@ -1,8 +1,7 @@
-// Examples for std.strconv.
+// Examples for strconv.
 namespace strconv_test
 
-import std
-import std.io
+import io
 
 func ExampleAtoi() {
     var n = try strconv.Atoi("123") else 0

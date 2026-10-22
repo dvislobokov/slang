@@ -27,11 +27,11 @@ fn builtin_params(name: &str) -> &'static [(&'static str, PKind)] {
         "attribute" => &[("targets", PKind::Targets), ("repeatable", PKind::Bool)],
         "deprecated" => &[("message", PKind::Str)],
         "json" => &[("name", PKind::Str), ("omitEmpty", PKind::Bool), ("skip", PKind::Bool)],
-        // std.log destructuring (`{@X}`): `@log(skip: true)` hides a field.
+        // log destructuring (`{@X}`): `@log(skip: true)` hides a field.
         "log" => &[("skip", PKind::Bool)],
         // `@embed("path")` on a global: the file's contents (see embed_global).
         "embed" => &[("path", PKind::Str)],
-        // std.encoding.* field mappings (tier 2): csv, xml, yaml, toml and
+        // encoding.* field mappings (tier 2): csv, xml, yaml, toml and
         // the format-independent serde.
         "csv" => &[("name", PKind::Str), ("index", PKind::Int), ("skip", PKind::Bool), ("omitEmpty", PKind::Bool)],
         "xml" => &[("name", PKind::Str), ("attr", PKind::Bool), ("text", PKind::Bool), ("omitEmpty", PKind::Bool), ("ns", PKind::Str), ("skip", PKind::Bool)],
@@ -149,7 +149,7 @@ impl<'a> Sema<'a> {
                     self.resolve_segments(&segs, true);
                     return Some(AttrKind::User(s));
                 }
-                // `@json` with `import std.reflect` (or `@reflect.json`):
+                // `@json` with `import reflect` (or `@reflect.json`):
                 // the value struct of a builtin attribute names the builtin.
                 if let Some(n) = self.attr_value_struct_name(s) {
                     return Some(AttrKind::Builtin(n.to_string()));
@@ -383,8 +383,8 @@ impl<'a> Sema<'a> {
     }
 
     /// A struct declared with `@attribute` in a Zell-source stdlib module
-    /// (`@binary(endian: "big")` of `std.encoding.binary`, `@flag` of
-    /// `std.cli`): such structs are plain templates, instantiated here on
+    /// (`@binary(endian: "big")` of `encoding.binary`, `@flag` of
+    /// `cli`): such structs are plain templates, instantiated here on
     /// first use as an attribute, marked as attribute structs and given
     /// their own attribute values (field defaults, `targets`).
     fn std_attribute_struct(&mut self, t: u32, span: Span) -> Option<u32> {
@@ -463,7 +463,7 @@ impl<'a> Sema<'a> {
             } else {
                 self.byte_slice_lit(&data, span)
             }
-        } else if let Some(sid) = self.struct_of(ty).filter(|&s| self.structs[s as usize].full_name == "std.embed.FS") {
+        } else if let Some(sid) = self.struct_of(ty).filter(|&s| self.structs[s as usize].full_name == "embed.FS") {
             if is_const {
                 self.err("@embed of an embed.FS must be a var", span);
                 return;

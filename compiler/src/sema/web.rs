@@ -1,4 +1,4 @@
-//! Compile-time expansion for `std.web` (docs/FRAMEWORK.md section 2):
+//! Compile-time expansion for `web` (docs/FRAMEWORK.md section 2):
 //! the route table of controllers and minimal-API handlers and the
 //! factories of the DI container are generated here, when every type is
 //! known, instead of being discovered by reflection at start-up.
@@ -23,7 +23,7 @@
 //!   zero `T` with its `@inject` fields resolved.
 //!
 //! The generated code is Zell source text of a stdlib template in
-//! namespace `std.web` whose type parameters are bound to the concrete
+//! namespace `web` whose type parameters are bound to the concrete
 //! types (so no type is ever spelled), parsed once per distinct text with
 //! every token placed at the call site, and instantiated like any other
 //! stdlib generic. Invalid routes (bad templates, duplicates, a `{param}`
@@ -200,7 +200,7 @@ fn parsed_template(src: &str, span: Span) -> &'static ast::File {
         Some(f) if !d.has_errors() => f,
         _ => {
             let errs: Vec<String> = d.items.iter().map(|x| x.message.clone()).collect();
-            panic!("internal error: generated std.web code does not parse: {errs:?}\n{src}")
+            panic!("internal error: generated web code does not parse: {errs:?}\n{src}")
         }
     };
     let file: &'static ast::File = Box::leak(Box::new(file));
@@ -220,20 +220,20 @@ impl<'a> Sema<'a> {
         let full = self.structs[sid as usize].full_name.clone();
         let n = name.name.as_str();
         match (full.as_str(), n) {
-            ("std.web.App", "MapController" | "MapControllers") => {
+            ("web.App", "MapController" | "MapControllers") => {
                 let recv = self.web_recv(base);
                 Ok(self.web_map_controllers(recv, targs, args, span))
             }
-            ("std.web.App", "MapGet" | "MapPost" | "MapPut" | "MapDelete" | "MapPatch") => {
+            ("web.App", "MapGet" | "MapPost" | "MapPut" | "MapDelete" | "MapPatch") => {
                 let recv = self.web_recv(base);
                 let verb = n[3..].to_uppercase();
                 Ok(self.web_map_minimal(recv, &verb, args, span))
             }
-            ("std.web.Services", "AddSingleton" | "AddScoped" | "AddTransient") => {
+            ("web.Services", "AddSingleton" | "AddScoped" | "AddTransient") => {
                 let recv = self.web_recv(base);
                 Ok(self.web_add_service(recv, &n[3..], targs, args, span))
             }
-            ("std.web.Services", "AddInstance" | "AddSingletonFactory" | "AddScopedFactory" | "AddTransientFactory") => {
+            ("web.Services", "AddInstance" | "AddSingletonFactory" | "AddScopedFactory" | "AddTransientFactory") => {
                 // An ordinary generic method; its type argument is recorded
                 // as registered.
                 let Some(&t) = self.gen.methods.get(&(sid, name.name.clone())) else { return Err(base) };
@@ -261,7 +261,7 @@ impl<'a> Sema<'a> {
     // -- generated templates ---------------------------------------------------------
 
     /// The template of generated source `src` (one function in namespace
-    /// std.web), every token at `span`.
+    /// web), every token at `span`.
     fn web_template(&mut self, src: String, span: Span) -> u32 {
         if let Some(&t) = self.web.tmpls.get(&src) {
             return t;
@@ -270,9 +270,9 @@ impl<'a> Sema<'a> {
             eprintln!("{src}");
         }
         let file = parsed_template(&src, span);
-        let ast::Decl::Func(f) = &file.decls[0] else { panic!("internal error: generated std.web code is not a function") };
+        let ast::Decl::Func(f) = &file.decls[0] else { panic!("internal error: generated web code is not a function") };
         let saved = self.cur_ns;
-        self.cur_ns = self.ensure_ns("std.web", Span::DUMMY);
+        self.cur_ns = self.ensure_ns("web", Span::DUMMY);
         let t = self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false);
         self.gen.templates[t as usize].generated = true;
         self.cur_ns = saved;
@@ -301,10 +301,10 @@ impl<'a> Sema<'a> {
 
     // -- type helpers --------------------------------------------------------------------
 
-    /// Full name of the std.web attribute struct of `a`, if it is one.
+    /// Full name of the web attribute struct of `a`, if it is one.
     fn web_attr_name(&self, a: &hir::Attr) -> Option<String> {
         match a.kind {
-            AttrKind::User(s) => self.structs[s as usize].full_name.strip_prefix("std.web.").map(|x| x.to_string()),
+            AttrKind::User(s) => self.structs[s as usize].full_name.strip_prefix("web.").map(|x| x.to_string()),
             _ => None,
         }
     }
@@ -354,7 +354,7 @@ impl<'a> Sema<'a> {
     }
 
     fn is_web_struct(&self, t: TypeId, name: &str) -> bool {
-        self.struct_of(t).is_some_and(|s| self.structs[s as usize].full_name == format!("std.web.{name}")) && matches!(self.tt.get(t), Type::Pointer(_))
+        self.struct_of(t).is_some_and(|s| self.structs[s as usize].full_name == format!("web.{name}")) && matches!(self.tt.get(t), Type::Pointer(_))
     }
 
     /// `web.Result<X>` -> X.
@@ -362,7 +362,7 @@ impl<'a> Sema<'a> {
         let Type::Struct(d) = *self.tt.get(t) else { return None };
         let (tm, args) = self.gen.inst_structs.get(&d.0)?;
         let tm = &self.gen.templates[*tm as usize];
-        (tm.is_std && tm.name == "Result" && self.nss[tm.ns].path == "std.web").then(|| args[0])
+        (tm.is_std && tm.name == "Result" && self.nss[tm.ns].path == "web").then(|| args[0])
     }
 
     /// Splits a handler result into (shape, fallible).
@@ -389,8 +389,8 @@ impl<'a> Sema<'a> {
             _ => t,
         };
         match self.tt.get(t) {
-            Type::Struct(d) => self.structs[d.0 as usize].full_name.starts_with("std."),
-            Type::Interface(d) => self.interfaces[d.0 as usize].full_name.starts_with("std."),
+            Type::Struct(d) => crate::sema::stdlib::is_std_namespace(&self.structs[d.0 as usize].full_name),
+            Type::Interface(d) => crate::sema::stdlib::is_std_namespace(&self.interfaces[d.0 as usize].full_name),
             _ => true,
         }
     }
@@ -455,7 +455,7 @@ impl<'a> Sema<'a> {
             return self.web_check_struct_rules(t, seen);
         }
         let Type::Struct(d) = *self.tt.get(t) else { return };
-        if seen.contains(&d.0) || self.structs[d.0 as usize].full_name.starts_with("std.") {
+        if seen.contains(&d.0) || crate::sema::stdlib::is_std_namespace(&self.structs[d.0 as usize].full_name) {
             return;
         }
         seen.push(d.0);
@@ -562,7 +562,7 @@ impl<'a> Sema<'a> {
                 Src::Header(n) => (format!("bindHeader<{t}>(__c, {}, false)", lit(n)), format!("__c.Request.Header({}) != \"\"", lit(n)), Some(("header", n.clone()))),
                 Src::Form(n) => (format!("bindForm<{t}>(__c, {}, false)", lit(n)), format!("hasQueryKey(__c.Request.Body, {})", lit(n)), Some(("form", n.clone()))),
                 Src::Body => {
-                    docs.push_str(&format!("    __e.request(\"application/json\", std.encoding.json.Schema<{t}>())\n"));
+                    docs.push_str(&format!("    __e.request(\"application/json\", encoding.json.Schema<{t}>())\n"));
                     (format!("bindBody<{t}>(__c)"), "true".into(), None)
                 }
                 Src::Service => (format!("resolve<{t}>({scope})?"), "true".into(), None),
@@ -576,9 +576,9 @@ impl<'a> Sema<'a> {
             }
             if let Some((loc, n)) = doc_in {
                 if loc == "form" {
-                    docs.push_str(&format!("    __e.param({}, \"form\", {}, std.encoding.json.Schema<{t}>())\n", lit(&n), p.required));
+                    docs.push_str(&format!("    __e.param({}, \"form\", {}, encoding.json.Schema<{t}>())\n", lit(&n), p.required));
                 } else {
-                    docs.push_str(&format!("    __e.param({}, {}, {}, std.encoding.json.Schema<{t}>())\n", lit(&n), lit(loc), loc == "path" || p.required));
+                    docs.push_str(&format!("    __e.param({}, {}, {}, encoding.json.Schema<{t}>())\n", lit(&n), lit(loc), loc == "path" || p.required));
                 }
             }
         }
@@ -596,13 +596,13 @@ impl<'a> Sema<'a> {
                 let t = tys.p(*x);
                 let status = if verb == "POST" { 201 } else { 200 };
                 let ct = if matches!(self.tt.get(*x), Type::String) { "text/plain" } else { "application/json" };
-                docs.push_str(&format!("    __e.response({status}, {}, std.encoding.json.Schema<{t}>())\n", lit(ct)));
+                docs.push_str(&format!("    __e.response({status}, {}, encoding.json.Schema<{t}>())\n", lit(ct)));
                 "        __r.writeTo(__c)\n".into()
             }
             Ret::Value(x) => {
                 let t = tys.p(*x);
                 let ct = if matches!(self.tt.get(*x), Type::String) { "text/plain" } else { "application/json" };
-                docs.push_str(&format!("    __e.response(200, {}, std.encoding.json.Schema<{t}>())\n", lit(ct)));
+                docs.push_str(&format!("    __e.response(200, {}, encoding.json.Schema<{t}>())\n", lit(ct)));
                 format!("        writeValue<{t}>(__c, 200, __r)\n")
             }
         }
@@ -739,7 +739,7 @@ impl<'a> Sema<'a> {
             return self.invalid(span);
         }
         let n = self.web_counter();
-        let src = format!("namespace std.web\n\nfunc webController{n}<{}>(__a *App) {{\n    var __e *Endpoint\n{body}    _ = __e\n}}\n", tys.generics());
+        let src = format!("namespace web\n\nfunc webController{n}<{}>(__a *App) {{\n    var __e *Endpoint\n{body}    _ = __e\n}}\n", tys.generics());
         self.web_call(src, tys.0, vec![recv], span)
     }
 
@@ -989,7 +989,7 @@ impl<'a> Sema<'a> {
         }
         let n = self.web_counter();
         let src = format!(
-            "namespace std.web\n\nfunc webMinimal{n}<{}>(__a *App, __m string, __path string, __f {f}) *Endpoint {{\n{reqs}    var __e = __a.addEndpoint(__m, __path, \"\", \"\", async func(__c *Context) void! {{\n{binds}        if __c.failed() {{\n            return\n        }}\n{call}{result}    }})\n{docs}    return __e\n}}\n",
+            "namespace web\n\nfunc webMinimal{n}<{}>(__a *App, __m string, __path string, __f {f}) *Endpoint {{\n{reqs}    var __e = __a.addEndpoint(__m, __path, \"\", \"\", async func(__c *Context) void! {{\n{binds}        if __c.failed() {{\n            return\n        }}\n{call}{result}    }})\n{docs}    return __e\n}}\n",
             tys.generics()
         );
         let m = mk(ExprKind::Const(ConstValue::Str(verb.to_string())), string, span);
@@ -1052,7 +1052,7 @@ impl<'a> Sema<'a> {
         let deplist: Vec<String> = deps.iter().map(|d| format!("keyOf<{}>()", tys.p(*d))).collect();
         let n = self.web_counter();
         let src = format!(
-            "namespace std.web\n\nfunc webService{n}<{}>(__s *Services) *Services {{\n    return __s.register(keyOf<{kt}>(), Lifetime.{lifetime}, func(__sc *Scope) any! {{\n{ctor}{conv}    }}, [{}])\n}}\n",
+            "namespace web\n\nfunc webService{n}<{}>(__s *Services) *Services {{\n    return __s.register(keyOf<{kt}>(), Lifetime.{lifetime}, func(__sc *Scope) any! {{\n{ctor}{conv}    }}, [{}])\n}}\n",
             tys.generics(),
             deplist.join(", ")
         );

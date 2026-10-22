@@ -238,7 +238,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let Type::Interface(d) = self.ty(iface) else { return false };
         let it = &self.prog.interfaces[d.0 as usize];
         let en = &self.prog.enums[eid as usize];
-        if it.sealed && (it.namespace != en.namespace || en.full_name.starts_with("std.") != it.full_name.starts_with("std.")) {
+        if it.sealed && (it.namespace != en.namespace || crate::sema::stdlib::is_std_namespace(&en.full_name) != crate::sema::stdlib::is_std_namespace(&it.full_name)) {
             return false;
         }
         it.methods.iter().all(|m| match self.enum_method(eid, &m.name) {
@@ -255,7 +255,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let Type::Interface(d) = self.ty(iface) else { return false };
         let it = &self.prog.interfaces[d.0 as usize];
         let st = &self.prog.structs[sid as usize];
-        if it.sealed && (it.namespace != st.namespace || st.full_name.starts_with("std.") != it.full_name.starts_with("std.")) {
+        if it.sealed && (it.namespace != st.namespace || crate::sema::stdlib::is_std_namespace(&st.full_name) != crate::sema::stdlib::is_std_namespace(&it.full_name)) {
             return false;
         }
         it.methods.iter().all(|m| match self.resolve_method(sid, &m.name) {

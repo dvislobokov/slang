@@ -1,4 +1,4 @@
-//! `std.arena` intrinsics: `rtArenaNew<T>(h)` and `rtArenaAlloc<T>(h, n)`,
+//! `arena` intrinsics: `rtArenaNew<T>(h)` and `rtArenaAlloc<T>(h, n)`,
 //! used by `Arena.New<T>` / `Arena.Alloc<T>` in `stdlib_src/arena.zl`
 //! (DESIGN.md "Арены", runtime/ABI.md 3.6).
 

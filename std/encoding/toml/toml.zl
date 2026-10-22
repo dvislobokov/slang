@@ -6,7 +6,7 @@
 // with @toml(name:, omitEmpty:, skip:, inline:) and @serde; and Document,
 // a parsed file that keeps comments, order and layout for in-place edits
 // (Set / Delete change only the affected lines).
-namespace std.encoding.toml
+namespace encoding.toml
 
 // A TOML value. Datetimes keep their text (DateKind tells which form).
 struct Value {
@@ -192,7 +192,7 @@ struct Value {
     // TOML text of a table (a document), or the inline form of another value.
     func Format() string {
         if this.kind == 7 && !this.inline {
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             emitTable(&b, [], *this)
             return b.String()
         }
@@ -247,7 +247,7 @@ func NewTable(keys []string, values []Value, inline bool) Value! {
 func NewDateTime(text string) Value! {
     var dt = dateKind(text)
     if dt == 0 {
-        return error("toml: invalid datetime " + std.encoding.json.Quote(text))
+        return error("toml: invalid datetime " + encoding.json.Quote(text))
     }
     return Value{kind: 5, s: normalizeDate(text), dt: dt}
 }
@@ -324,7 +324,7 @@ struct parser {
     hdrs    []hdrPos
 
     func fail(msg string) error {
-        return error(std.fmt.Format("toml: line {0}: {1}", this.line, msg))
+        return error(fmt.Format("toml: line {0}: {1}", this.line, msg))
     }
 
     func more() bool {
@@ -405,13 +405,13 @@ struct parser {
         }
         return this.fail(
             "expected the end of the line, found " +
-                std.encoding.json.Quote(this.s[this.i..std.math.IMin(this.i + 10, len(this.s))]),
+                encoding.json.Quote(this.s[this.i..math.IMin(this.i + 10, len(this.s))]),
         )
     }
 
     func run() void! {
         // a UTF-8 BOM is skipped
-        if std.strings.HasPrefix(this.s, "\u{FEFF}") {
+        if strings.HasPrefix(this.s, "\u{FEFF}") {
             this.i = 3
         }
         for {
@@ -459,10 +459,10 @@ struct parser {
                 this.defs[j] = 2
                 this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
             } else if d == 4 {
-                path = append(path, "\u{1e}" + std.fmt.Format("{0}", this.aot[j] - 1))
+                path = append(path, "\u{1e}" + fmt.Format("{0}", this.aot[j] - 1))
             } else if d == 5 || d == 6 {
                 return this.fail(
-                    "key " + std.encoding.json.Quote(dotted(key, k + 1)) + " is not a table",
+                    "key " + encoding.json.Quote(dotted(key, k + 1)) + " is not a table",
                 )
             }
         }
@@ -478,11 +478,11 @@ struct parser {
             } else {
                 return this.fail(
                     "cannot define " +
-                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        encoding.json.Quote(dotted(key, len(key))) +
                         " as an array of tables (already defined)",
                 )
             }
-            path = append(path, "\u{1e}" + std.fmt.Format("{0}", this.aot[full] - 1))
+            path = append(path, "\u{1e}" + fmt.Format("{0}", this.aot[full] - 1))
             this.entries = append(this.entries, entry{path: copyPath(path), v: Value{kind: 7}})
         } else {
             if d == 2 {
@@ -493,7 +493,7 @@ struct parser {
             } else {
                 return this.fail(
                     "table " +
-                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        encoding.json.Quote(dotted(key, len(key))) +
                         " defined more than once",
                 )
             }
@@ -532,7 +532,7 @@ struct parser {
             } else if d != 3 {
                 return this.fail(
                     "cannot add to " +
-                        std.encoding.json.Quote(dotted(key, k + 1)) +
+                        encoding.json.Quote(dotted(key, k + 1)) +
                         " with a dotted key",
                 )
             }
@@ -540,7 +540,7 @@ struct parser {
         path = append(path, key[len(key) - 1])
         var full = join(path)
         if this.defs[full] != 0 {
-            return this.fail("duplicate key " + std.encoding.json.Quote(dotted(key, len(key))))
+            return this.fail("duplicate key " + encoding.json.Quote(dotted(key, len(key))))
         }
         if v.kind == 6 || v.kind == 7 {
             this.defs[full] = 6
@@ -662,17 +662,17 @@ struct parser {
 
     func number(tok string) Value! {
         if tok == "inf" || tok == "+inf" {
-            return Value{kind: 3, f: std.math.Inf(1)}
+            return Value{kind: 3, f: math.Inf(1)}
         }
         if tok == "-inf" {
-            return Value{kind: 3, f: std.math.Inf(-1)}
+            return Value{kind: 3, f: math.Inf(-1)}
         }
         if tok == "nan" || tok == "+nan" || tok == "-nan" {
-            return Value{kind: 3, f: std.math.NaN()}
+            return Value{kind: 3, f: math.NaN()}
         }
-        if std.strings.HasPrefix(tok, "0x") ||
-            std.strings.HasPrefix(tok, "0o") ||
-            std.strings.HasPrefix(tok, "0b") {
+        if strings.HasPrefix(tok, "0x") ||
+            strings.HasPrefix(tok, "0o") ||
+            strings.HasPrefix(tok, "0b") {
             var base = 16
             if tok[1..2] == "o" {
                 base = 8
@@ -681,7 +681,7 @@ struct parser {
             }
             var digits = tok[2..]
             if !underscoresOK(digits) {
-                return this.fail("invalid number " + std.encoding.json.Quote(tok))
+                return this.fail("invalid number " + encoding.json.Quote(tok))
             }
             var v = 0
             for k in 0..len(digits) {
@@ -691,10 +691,10 @@ struct parser {
                 }
                 var h = hexVal(c)
                 if h < 0 || h >= base {
-                    return this.fail("invalid number " + std.encoding.json.Quote(tok))
+                    return this.fail("invalid number " + encoding.json.Quote(tok))
                 }
-                if v > (std.math.MaxInt - h) / base {
-                    return this.fail("integer out of range " + std.encoding.json.Quote(tok))
+                if v > (math.MaxInt - h) / base {
+                    return this.fail("integer out of range " + encoding.json.Quote(tok))
                 }
                 v = v * base + h
             }
@@ -702,61 +702,61 @@ struct parser {
         }
         // decimal integer or float
         var body = tok
-        if std.strings.HasPrefix(body, "+") || std.strings.HasPrefix(body, "-") {
+        if strings.HasPrefix(body, "+") || strings.HasPrefix(body, "-") {
             body = body[1..]
         }
-        var isF = std.strings.Contains(body, ".") ||
-            std.strings.Contains(body, "e") ||
-            std.strings.Contains(body, "E")
+        var isF = strings.Contains(body, ".") ||
+            strings.Contains(body, "e") ||
+            strings.Contains(body, "E")
         if !isF {
             if !underscoresOK(body) || !allDigits(body) {
-                return this.fail("invalid value " + std.encoding.json.Quote(tok))
+                return this.fail("invalid value " + encoding.json.Quote(tok))
             }
             if len(body) > 1 && int(body[0]) == 48 {
-                return this.fail("leading zeros are not allowed: " + std.encoding.json.Quote(tok))
+                return this.fail("leading zeros are not allowed: " + encoding.json.Quote(tok))
             }
-            var clean = std.strings.Replace(tok, "_", "")
-            var v = try std.strings.ToInt(clean) catch err {
-                return this.fail("integer out of range " + std.encoding.json.Quote(tok))
+            var clean = strings.Replace(tok, "_", "")
+            var v = try strings.ToInt(clean) catch err {
+                return this.fail("integer out of range " + encoding.json.Quote(tok))
             }
             return Value{kind: 2, i: v}
         }
         // float: int part, then .frac and/or exponent
-        var ePos = std.strings.Index(std.strings.ToLower(body), "e")
+        var ePos = strings.Index(strings.ToLower(body), "e")
         var mant = body
         var exp = ""
         if ePos >= 0 {
             mant = body[..ePos]
             exp = body[ePos + 1..]
-            if std.strings.HasPrefix(exp, "+") || std.strings.HasPrefix(exp, "-") {
+            if strings.HasPrefix(exp, "+") || strings.HasPrefix(exp, "-") {
                 exp = exp[1..]
             }
             if exp == "" || !underscoresOK(exp) || !allDigits(exp) {
-                return this.fail("invalid float " + std.encoding.json.Quote(tok))
+                return this.fail("invalid float " + encoding.json.Quote(tok))
             }
         }
-        var dot = std.strings.Index(mant, ".")
+        var dot = strings.Index(mant, ".")
         var ip = mant
         var fp = ""
         if dot >= 0 {
             ip = mant[..dot]
             fp = mant[dot + 1..]
             if fp == "" || !underscoresOK(fp) || !allDigits(fp) {
-                return this.fail("invalid float " + std.encoding.json.Quote(tok))
+                return this.fail("invalid float " + encoding.json.Quote(tok))
             }
         }
         if ip == "" || !underscoresOK(ip) || !allDigits(ip) || (len(ip) > 1 && int(ip[0]) == 48) {
-            return this.fail("invalid float " + std.encoding.json.Quote(tok))
+            return this.fail("invalid float " + encoding.json.Quote(tok))
         }
-        var f = try std.strings.ToFloat(std.strings.Replace(tok, "_", "")) catch err {
-            return this.fail("invalid float " + std.encoding.json.Quote(tok))
+        var f = try strings.ToFloat(strings.Replace(tok, "_", "")) catch err {
+            return this.fail("invalid float " + encoding.json.Quote(tok))
         }
         return Value{kind: 3, f: f}
     }
 
     func basic() Value! {
         this.i += 1
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var start = this.i
         for {
             if !this.more() || this.c() == 10 {
@@ -781,7 +781,7 @@ struct parser {
         }
     }
 
-    func escape(b *std.strings.Builder) void! {
+    func escape(b *strings.Builder) void! {
         var e = this.at(1)
         this.i += 2
         if e == 98 {
@@ -833,7 +833,7 @@ struct parser {
             this.i += 2
             this.line += 1
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var start = this.i
         for {
             if !this.more() {
@@ -918,7 +918,7 @@ struct parser {
             this.i += 2
             this.line += 1
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var start = this.i
         for {
             if !this.more() {
@@ -1005,7 +1005,7 @@ struct parser {
                 } else if d != 3 {
                     return this.fail(
                         "cannot add to " +
-                            std.encoding.json.Quote(dotted(key, k + 1)) +
+                            encoding.json.Quote(dotted(key, k + 1)) +
                             " in an inline table",
                     )
                 }
@@ -1014,7 +1014,7 @@ struct parser {
             if sub.defs[join(path)] != 0 {
                 return this.fail(
                     "duplicate key " +
-                        std.encoding.json.Quote(dotted(key, len(key))) +
+                        encoding.json.Quote(dotted(key, len(key))) +
                         " in an inline table",
                 )
             }
@@ -1082,14 +1082,14 @@ func allDigits(s string) bool {
 
 // Underscores only between digits.
 func underscoresOK(s string) bool {
-    if s == "" || std.strings.HasPrefix(s, "_") || std.strings.HasSuffix(s, "_") {
+    if s == "" || strings.HasPrefix(s, "_") || strings.HasSuffix(s, "_") {
         return false
     }
-    return !std.strings.Contains(s, "__")
+    return !strings.Contains(s, "__")
 }
 
 func join(path []string) string {
-    return std.strings.Join(path, "\u{1f}")
+    return strings.Join(path, "\u{1f}")
 }
 
 func copyPath(p []string) []string {
@@ -1105,7 +1105,7 @@ func dotted(key []string, n int) string {
     for k in 0..n {
         parts = append(parts, keyText(key[k]))
     }
-    return std.strings.Join(parts, ".")
+    return strings.Join(parts, ".")
 }
 
 // The 0 if s is no TOML datetime, else 1 offset datetime, 2 local
@@ -1236,7 +1236,7 @@ func normalizeDate(s string) string {
         }
         b = append(b, c)
     }
-    return std.strings.FromBytes(b)
+    return strings.FromBytes(b)
 }
 
 // Builds the tree of entries (tables get their keys in definition order).
@@ -1250,9 +1250,9 @@ func assemble(es []entry) Value! {
 
 func insert(t *Value, path []string, k int, v Value) {
     var seg = path[k]
-    if std.strings.HasPrefix(seg, "\u{1e}") {
+    if strings.HasPrefix(seg, "\u{1e}") {
         // element of an array of tables
-        var n = try std.strings.ToInt(seg[1..]) else 0
+        var n = try strings.ToInt(seg[1..]) else 0
         for len(t.items) <= n {
             t.items = append(t.items, Value{kind: 7})
         }
@@ -1272,7 +1272,7 @@ func insert(t *Value, path []string, k int, v Value) {
     }
     if i < 0 {
         var kind = 7
-        if std.strings.HasPrefix(path[k + 1], "\u{1e}") {
+        if strings.HasPrefix(path[k + 1], "\u{1e}") {
             kind = 6
         }
         t.keys = append(t.keys, seg)
@@ -1287,7 +1287,7 @@ func parseKeyText(text string) []string! {
     var p = newParser(text)
     var k = p.key()?
     if p.more() {
-        return error("toml: invalid key " + std.encoding.json.Quote(text))
+        return error("toml: invalid key " + encoding.json.Quote(text))
     }
     return k
 }
@@ -1308,7 +1308,7 @@ func keyText(k string) string {
 }
 
 func quote(s string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("\"")
     var start = 0
     for i in 0..len(s) {
@@ -1348,19 +1348,19 @@ func hex2(c int) string {
 }
 
 func floatText(f float) string {
-    if std.math.IsNaN(f) {
+    if math.IsNaN(f) {
         return "nan"
     }
-    if std.math.IsInf(f, 1) {
+    if math.IsInf(f, 1) {
         return "inf"
     }
-    if std.math.IsInf(f, -1) {
+    if math.IsInf(f, -1) {
         return "-inf"
     }
-    var s = std.fmt.Format("{0}", f)
-    if !std.strings.Contains(s, ".") &&
-        !std.strings.Contains(s, "e") &&
-        !std.strings.Contains(s, "E") {
+    var s = fmt.Format("{0}", f)
+    if !strings.Contains(s, ".") &&
+        !strings.Contains(s, "e") &&
+        !strings.Contains(s, "E") {
         s += ".0"
     }
     return s
@@ -1372,7 +1372,7 @@ func inlineText(v Value) string {
         return quote(v.s)
     }
     if v.kind == 2 {
-        return std.fmt.Format("{0}", v.i)
+        return fmt.Format("{0}", v.i)
     }
     if v.kind == 3 {
         return floatText(v.f)
@@ -1391,7 +1391,7 @@ func inlineText(v Value) string {
         for x in v.items {
             parts = append(parts, inlineText(x))
         }
-        return "[" + std.strings.Join(parts, ", ") + "]"
+        return "[" + strings.Join(parts, ", ") + "]"
     }
     if v.kind == 7 {
         if len(v.keys) == 0 {
@@ -1401,7 +1401,7 @@ func inlineText(v Value) string {
         for i, k in v.keys {
             parts = append(parts, keyText(k) + " = " + inlineText(v.items[i]))
         }
-        return "{ " + std.strings.Join(parts, ", ") + " }"
+        return "{ " + strings.Join(parts, ", ") + " }"
     }
     return "\"\""
 }
@@ -1423,11 +1423,11 @@ func headerText(path []string) string {
     for p in path {
         parts = append(parts, keyText(p))
     }
-    return std.strings.Join(parts, ".")
+    return strings.Join(parts, ".")
 }
 
 // Writes a table: its plain keys, then sub-tables and arrays of tables.
-func emitTable(b *std.strings.Builder, path []string, t Value) {
+func emitTable(b *strings.Builder, path []string, t Value) {
     for i, k in t.keys {
         var x = t.items[i]
         if (x.kind == 7 && !x.inline) || isAot(x) {
@@ -1508,15 +1508,15 @@ func mismatch(path string, want string, v Value) error {
 }
 
 func decode<T>(v Value, path string, out *T) void! {
-    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+    if reflect.TypeOf<T>() == reflect.TypeOf<Value>() {
         *out = v
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
         if v.kind != 7 {
             return mismatch(path, "table", v)
         }
-        for f in std.reflect.Fields<T>() {
-            var tag = f.Attribute<std.reflect.tomlAttr>()
-            var sd = f.Attribute<std.reflect.serde>()
+        for f in reflect.Fields<T>() {
+            var tag = f.Attribute<reflect.tomlAttr>()
+            var sd = f.Attribute<reflect.serde>()
             if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
                 continue
             }
@@ -1532,59 +1532,59 @@ func decode<T>(v Value, path string, out *T) void! {
                 decode(v.items[i], joinPath(path, name), &f.Get(*out))?
             }
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.String {
         if v.kind == 1 || v.kind == 5 {
             *out = v.s
         } else {
             return mismatch(path, "string", v)
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Bool {
         if v.kind != 4 {
             return mismatch(path, "bool", v)
         }
         *out = v.b
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 {
         if v.kind != 2 {
             return mismatch(path, "integer", v)
         }
-        *out = try std.encoding.intAs<T>(v.i) catch err {
+        *out = try encoding.intAs<T>(v.i) catch err {
             return error(prefix(path) + err.Message())
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
         if v.kind == 2 {
-            *out = std.encoding.floatAs<T>(float(v.i))
+            *out = encoding.floatAs<T>(float(v.i))
         } else if v.kind == 3 {
-            *out = std.encoding.floatAs<T>(v.f)
+            *out = encoding.floatAs<T>(v.f)
         } else {
             return mismatch(path, "float", v)
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Enum {
         if v.kind != 1 {
             return mismatch(path, "string", v)
         }
-        var t = std.reflect.TypeOf<T>()
+        var t = reflect.TypeOf<T>()
         var variant = t.Variant(v.s)
         if variant == nil || len(variant.Fields) > 0 {
             return error(
-                prefix(path) + "unknown " + t.Name + " value " + std.encoding.json.Quote(v.s),
+                prefix(path) + "unknown " + t.Name + " value " + encoding.json.Quote(v.s),
             )
         }
-        std.reflect.storeTag(out, variant.Index)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice {
+        reflect.storeTag(out, variant.Index)
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Slice {
         if v.kind != 6 {
             return mismatch(path, "array", v)
         }
         decodeSlice(v.items, path, out)?
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
-        if std.reflect.TypeOf<T>().Key.Kind == std.reflect.Kind.String {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Map {
+        if reflect.TypeOf<T>().Key.Kind == reflect.Kind.String {
             if v.kind != 7 {
                 return mismatch(path, "table", v)
             }
@@ -1593,14 +1593,14 @@ func decode<T>(v Value, path string, out *T) void! {
             return error(
                 prefix(path) +
                     "cannot decode into " +
-                    std.reflect.TypeOf<T>().Name +
+                    reflect.TypeOf<T>().Name +
                     " (map keys must be strings)",
             )
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Pointer {
         decodePtr(v, path, out)?
     } else {
-        return error(prefix(path) + "cannot decode into " + std.reflect.TypeOf<T>().Name)
+        return error(prefix(path) + "cannot decode into " + reflect.TypeOf<T>().Name)
     }
 }
 
@@ -1608,7 +1608,7 @@ func decodeSlice<E>(items []Value, path string, out *[]E) void! {
     var res []E = []
     for i, x in items {
         var e E
-        decode(x, path + "[" + std.fmt.Format("{0}", i) + "]", &e)?
+        decode(x, path + "[" + fmt.Format("{0}", i) + "]", &e)?
         res = append(res, e)
     }
     *out = res
@@ -1634,7 +1634,7 @@ func decodePtr<E>(v Value, path string, out **E) void! {
 // arrays of tables; map keys sorted). Nil pointers and slices are left
 // out (TOML has no null).
 func Format<T>(v T) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var t = ToValue(v)
     emitTable(&b, [], t)
     return b.String()
@@ -1642,19 +1642,19 @@ func Format<T>(v T) string {
 
 // The dynamic Value of v (kind 0 for nil pointers, which tables skip).
 func ToValue<T>(v T) Value {
-    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+    if reflect.TypeOf<T>() == reflect.TypeOf<Value>() {
         return v
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
         var keys []string = []
         var vals []Value = []
-        for f in std.reflect.Fields<T>() {
-            var tag = f.Attribute<std.reflect.tomlAttr>()
-            var sd = f.Attribute<std.reflect.serde>()
+        for f in reflect.Fields<T>() {
+            var tag = f.Attribute<reflect.tomlAttr>()
+            var sd = f.Attribute<reflect.serde>()
             if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
                 continue
             }
             var omit = (tag != nil && tag.omitEmpty) || (sd != nil && sd.omitEmpty)
-            if omit && std.encoding.isEmpty(f.Get(v)) {
+            if omit && encoding.isEmpty(f.Get(v)) {
                 continue
             }
             var name = f.Name
@@ -1675,27 +1675,27 @@ func ToValue<T>(v T) Value {
             vals = append(vals, x)
         }
         return Value{kind: 7, keys: keys, items: vals}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.String {
         return Value{kind: 1, s: v}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Bool {
         return Value{kind: 4, b: v}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 {
         return Value{kind: 2, i: int(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
         return Value{kind: 3, f: float(v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Enum {
-        return Value{kind: 1, s: std.fmt.Format("{0}", v)}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
-        if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice && v == nil {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Enum {
+        return Value{kind: 1, s: fmt.Format("{0}", v)}
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Slice ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Array {
+        if reflect.TypeOf<T>().Kind == reflect.Kind.Slice && v == nil {
             return Value{}
         }
         var items []Value = []
@@ -1706,10 +1706,10 @@ func ToValue<T>(v T) Value {
             }
         }
         return Value{kind: 6, items: items}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Map {
         var keys []string = []
         for k, _ in v {
-            keys = append(keys, std.fmt.Format("{0}", k))
+            keys = append(keys, fmt.Format("{0}", k))
         }
         sortStrings(keys)
         var vals []Value = []
@@ -1717,7 +1717,7 @@ func ToValue<T>(v T) Value {
             vals = append(vals, mapValue(v, k))
         }
         return Value{kind: 7, keys: keys, items: vals}
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Pointer {
         if v == nil {
             return Value{}
         }
@@ -1729,7 +1729,7 @@ func ToValue<T>(v T) Value {
 
 func mapValue<K, V>(m map[K]V, key string) Value {
     for k, x in m {
-        if std.fmt.Format("{0}", k) == key {
+        if fmt.Format("{0}", k) == key {
             return ToValue(x)
         }
     }
@@ -1832,7 +1832,7 @@ struct Document {
         }
         if at < 0 {
             var sep = ""
-            if this.text != "" && !std.strings.HasSuffix(this.text, "\n") {
+            if this.text != "" && !strings.HasSuffix(this.text, "\n") {
                 sep = "\n"
             }
             if this.text != "" {

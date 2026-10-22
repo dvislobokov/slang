@@ -597,7 +597,7 @@ fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path,
 }
 
 /// Every defined function keeps its frame pointer (`"frame-pointer"="all"`,
-/// like the runtime's `-fno-omit-frame-pointer`): the std.diag CPU profiler
+/// like the runtime's `-fno-omit-frame-pointer`): the diag CPU profiler
 /// walks stacks through them (docs/FRAMEWORK.md section 5).
 fn keep_frame_pointers(ctx: &Context, module: &Module) {
     let fp = ctx.create_string_attribute("frame-pointer", "all");

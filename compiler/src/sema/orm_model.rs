@@ -1,4 +1,4 @@
-//! The `std.data` model (docs/FRAMEWORK.md section 3): entities, columns,
+//! The `data` model (docs/FRAMEWORK.md section 3): entities, columns,
 //! keys, relations and indexes computed at compile time from attributes
 //! (`@table`, `@key`, `@column`, `@index`, `@hasMany`, ...), conventions
 //! (`Id` keys, snake_case names, `<Entity>Id` foreign keys, plural table
@@ -191,23 +191,23 @@ pub(crate) fn plural(s: &str) -> String {
 
 impl<'a> Sema<'a> {
     /// `(template name, type arguments)` if struct `sid` is an instance of
-    /// a std.data template.
+    /// a data template.
     pub(crate) fn orm_inst(&self, sid: u32) -> Option<(String, Vec<TypeId>)> {
         if let Some((t, args)) = self.gen.inst_structs.get(&sid) {
             let tm = &self.gen.templates[*t as usize];
-            if tm.is_std && self.nss[tm.ns].path == "std.data" {
+            if tm.is_std && self.nss[tm.ns].path == "data" {
                 return Some((tm.name.clone(), args.clone()));
             }
             return None;
         }
         let full = &self.structs[sid as usize].full_name;
-        full.strip_prefix("std.data.").filter(|n| !n.contains('.') && !n.contains('<')).map(|n| (n.to_string(), Vec::new()))
+        full.strip_prefix("data.").filter(|n| !n.contains('.') && !n.contains('<')).map(|n| (n.to_string(), Vec::new()))
     }
 
-    /// Name of the std.data attribute of `a`.
+    /// Name of the data attribute of `a`.
     pub(crate) fn orm_attr(&self, a: &hir::Attr) -> Option<String> {
         match a.kind {
-            AttrKind::User(s) => self.structs[s as usize].full_name.strip_prefix("std.data.").map(|x| x.to_string()),
+            AttrKind::User(s) => self.structs[s as usize].full_name.strip_prefix("data.").map(|x| x.to_string()),
             _ => None,
         }
     }
@@ -227,9 +227,9 @@ impl<'a> Sema<'a> {
         matches!(Self::attr_arg(a, key), Some(ConstValue::Bool(true)))
     }
 
-    /// Whether struct `sid` embeds `std.data.Context` (a context).
+    /// Whether struct `sid` embeds `data.Context` (a context).
     pub(crate) fn orm_is_context(&self, sid: u32) -> bool {
-        self.structs[sid as usize].fields.iter().any(|f| f.embedded && self.struct_of(f.ty).is_some_and(|s| self.structs[s as usize].full_name == "std.data.Context"))
+        self.structs[sid as usize].fields.iter().any(|f| f.embedded && self.struct_of(f.ty).is_some_and(|s| self.structs[s as usize].full_name == "data.Context"))
     }
 
     /// The entity type of a `Set<T>` field type.
@@ -263,7 +263,7 @@ impl<'a> Sema<'a> {
         self.orm.universe = true;
         let mut contexts = Vec::new();
         for sid in 0..self.structs.len() as u32 {
-            if self.structs[sid as usize].full_name.starts_with("std.") || self.gen.inst_structs.contains_key(&sid) || !self.orm_is_context(sid) {
+            if crate::sema::stdlib::is_std_namespace(&self.structs[sid as usize].full_name) || self.gen.inst_structs.contains_key(&sid) || !self.orm_is_context(sid) {
                 continue;
             }
             let sets: Vec<(String, TypeId)> = self.structs[sid as usize].fields.iter().filter_map(|f| self.orm_set_arg(f.ty).map(|t| (f.name.clone(), t))).collect();
@@ -335,9 +335,9 @@ impl<'a> Sema<'a> {
                 Type::Slice(e) if matches!(s.tt.get(*e), Type::Int(k) if format!("{k:?}") == "U8") => "bytes",
                 Type::Enum(d) if s.enums[d.0 as usize].is_plain => "enum",
                 Type::Struct(d) => match s.structs[d.0 as usize].full_name.as_str() {
-                    "std.time.Time" => "time",
-                    "std.math.big.Decimal" => "decimal",
-                    "std.encoding.json.Value" => "json",
+                    "time.Time" => "time",
+                    "math.big.Decimal" => "decimal",
+                    "encoding.json.Value" => "json",
                     _ => return None,
                 },
                 _ => return None,
@@ -355,7 +355,7 @@ impl<'a> Sema<'a> {
             Type::Struct(d) => {
                 let (tm, args) = self.gen.inst_structs.get(&d.0)?;
                 let tm = &self.gen.templates[*tm as usize];
-                if tm.is_std && tm.name == "Null" && self.nss[tm.ns].path == "std.database.sql" {
+                if tm.is_std && tm.name == "Null" && self.nss[tm.ns].path == "database.sql" {
                     let k = base(self, args[0])?;
                     return (k != "enum").then_some((k, args[0], true));
                 }
@@ -371,7 +371,7 @@ impl<'a> Sema<'a> {
         match self.tt.get(t) {
             Type::Struct(d) => {
                 let st = &self.structs[d.0 as usize];
-                !st.full_name.starts_with("std.")
+                !crate::sema::stdlib::is_std_namespace(&st.full_name)
                     && self.orm_scalar(t).is_none()
                     && st.fields.iter().any(|f| f.name == "Id" || f.name == format!("{}Id", st.name) || f.attrs.iter().any(|a| self.orm_attr(a).as_deref() == Some("key")))
             }

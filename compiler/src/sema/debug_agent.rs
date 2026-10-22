@@ -1,8 +1,8 @@
 //! Front-end side of the in-process debug agent (docs/DEBUGGER.md stage 2):
-//! a build with `--debug-agent` instantiates `std.debug.AgentMain` (the
+//! a build with `--debug-agent` instantiates `debug.AgentMain` (the
 //! agent, written in Zell in `stdlib_src/debug*.zl`) so code generation
 //! can start it from the C `main`; and the capability gate of the
-//! low-level modules the agent is built on (`std.unsafe`, `std.plugin`).
+//! low-level modules the agent is built on (`unsafe`, `plugin`).
 
 use super::*;
 use std::cell::Cell;
@@ -20,7 +20,7 @@ pub fn with<R>(on: bool, f: impl FnOnce() -> R) -> R {
 }
 
 /// Modules that need a capability: (namespace, capability name).
-pub const GATED: &[(&str, &str)] = &[("std.unsafe", "unsafe"), ("std.plugin", "plugin")];
+pub const GATED: &[(&str, &str)] = &[("unsafe", "unsafe"), ("plugin", "plugin")];
 
 /// The capability needed to import `path`, if any.
 pub fn gate_of(path: &str) -> Option<&'static str> {
@@ -34,7 +34,7 @@ impl<'a> Sema<'a> {
         if !AGENT.with(|a| a.get()) || self.files.is_empty() || self.find_entry().is_none() {
             return;
         }
-        let Some(&ns) = self.ns_index.get("std.debug") else { return };
+        let Some(&ns) = self.ns_index.get("debug") else { return };
         if let Some((Member::Generic(t), _, _)) = self.nss[ns].members.get("AgentMain").cloned() {
             let saved = (self.cur_file, self.cur_ns);
             self.cur_file = 0;

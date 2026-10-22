@@ -1,4 +1,4 @@
-/* std_unicode.c - std.unicode character classes and case mapping over
+/* std_unicode.c - unicode character classes and case mapping over
  * the generated range tables in std_unicode_tables.c (Unicode 15, from
  * Go's unicode package; regenerate with scripts/gen-unicode-tables.py).
  * Semantics follow Go's unicode package exactly. */

@@ -2,11 +2,11 @@
 // mime/multipart: a Writer that builds a body part by part, a Reader
 // that walks the parts of a body, and ReadForm for form submissions.
 // Parts with Content-Transfer-Encoding: quoted-printable are decoded.
-namespace std.mime.multipart
+namespace mime.multipart
 
 // One part: its header and body.
 struct Part {
-    Header std.net.textproto.Header
+    Header net.textproto.Header
     Body   string
 
     // The name parameter of a form-data Content-Disposition ("" if none).
@@ -24,8 +24,8 @@ struct Part {
         if f == "" {
             return ""
         }
-        var s = std.strings.Replace(f, "\\", "/")
-        var slash = std.strings.LastIndex(s, "/")
+        var s = strings.Replace(f, "\\", "/")
+        var slash = strings.LastIndex(s, "/")
         if slash >= 0 {
             return s[slash + 1..]
         }
@@ -33,12 +33,12 @@ struct Part {
     }
 
     func Bytes() []byte {
-        return std.strings.Bytes(this.Body)
+        return strings.Bytes(this.Body)
     }
 
-    func disposition() std.mime.MediaType {
+    func disposition() mime.MediaType {
         var v = this.Header.Get("Content-Disposition")
-        var m = try std.mime.ParseMediaType(v) else std.mime.MediaType{Params: map[string]string{}}
+        var m = try mime.ParseMediaType(v) else mime.MediaType{Params: map[string]string{}}
         return m
     }
 }
@@ -60,10 +60,10 @@ struct Reader {
         if !this.started {
             // the first delimiter may be at the very start or after a preamble
             var at = -1
-            if std.strings.HasPrefix(this.body, dash) {
+            if strings.HasPrefix(this.body, dash) {
                 at = 0
             } else {
-                at = std.regex.rtIndex(this.body, "\n" + dash, 0)
+                at = regex.rtIndex(this.body, "\n" + dash, 0)
                 if at >= 0 {
                     at += 1
                 }
@@ -71,7 +71,7 @@ struct Reader {
             if at < 0 {
                 return error(
                     "multipart: NextPart: no boundary " +
-                        std.encoding.json.Quote(this.boundary) +
+                        encoding.json.Quote(this.boundary) +
                         " found",
                 )
             }
@@ -80,22 +80,22 @@ struct Reader {
         }
         // at a delimiter line
         var p = this.pos + len(dash)
-        if std.strings.HasPrefix(this.body[p..], "--") {
+        if strings.HasPrefix(this.body[p..], "--") {
             this.done = true
             return nil
         }
         // the rest of the delimiter line (transport padding) up to the line end
-        var eol = std.regex.rtIndex(this.body, "\n", p)
+        var eol = regex.rtIndex(this.body, "\n", p)
         if eol < 0 {
             return error("multipart: unexpected end of body after a boundary")
         }
-        if std.strings.Trim(this.body[p..eol]) != "" {
+        if strings.Trim(this.body[p..eol]) != "" {
             return error("multipart: invalid boundary line")
         }
-        var hr = std.net.textproto.ReadHeader(this.body, eol + 1)?
+        var hr = net.textproto.ReadHeader(this.body, eol + 1)?
         var start = hr.End
         // the body ends at CRLF--boundary (or LF--boundary)
-        var next = std.regex.rtIndex(this.body, "\n" + dash, start)
+        var next = regex.rtIndex(this.body, "\n" + dash, start)
         if next < 0 {
             return error("multipart: unexpected end of body (no closing boundary)")
         }
@@ -106,11 +106,11 @@ struct Reader {
         if next < start {
             end = start
         }
-        var content = this.body[start..std.math.IMax(start, end)]
+        var content = this.body[start..math.IMax(start, end)]
         this.pos = next + 1
         var h = hr.Header
-        if std.strings.ToLower(h.Get("Content-Transfer-Encoding")) == "quoted-printable" {
-            content = std.mime.quotedprintable.Decode(content)?
+        if strings.ToLower(h.Get("Content-Transfer-Encoding")) == "quoted-printable" {
+            content = mime.quotedprintable.Decode(content)?
             h.Del("Content-Transfer-Encoding")
         }
         return &Part{Header: h, Body: content}
@@ -124,7 +124,7 @@ func NewReader(body string, boundary string) *Reader {
 // An uploaded file of a form.
 struct FileHeader {
     Filename string
-    Header   std.net.textproto.Header
+    Header   net.textproto.Header
     Content  []byte
 
     func Size() int {
@@ -178,7 +178,7 @@ func ReadForm(body string, boundary string) Form! {
 // Builds a multipart body; call Close before taking the bytes.
 struct Writer {
     boundary string
-    b        std.strings.Builder
+    b        strings.Builder
     parts    int
     closed   bool
 
@@ -252,7 +252,7 @@ struct Writer {
     }
 
     // Adds a part with the given header and body.
-    func CreatePart(h std.net.textproto.Header, body []byte) void! {
+    func CreatePart(h net.textproto.Header, body []byte) void! {
         if this.closed {
             return error("multipart: write after Close")
         }
@@ -262,20 +262,20 @@ struct Writer {
         this.b.Write("--" + this.boundary + "\r\n")
         this.b.Write(h.String())
         this.b.Write("\r\n")
-        this.b.Write(std.strings.FromBytes(body))
+        this.b.Write(strings.FromBytes(body))
         this.parts += 1
     }
 
     // A form field.
     func WriteField(name string, value string) void! {
-        var h = std.net.textproto.NewHeader()
+        var h = net.textproto.NewHeader()
         h.Set("Content-Disposition", "form-data; name=\"" + escapeQuotes(name) + "\"")
-        this.CreatePart(h, std.strings.Bytes(value))?
+        this.CreatePart(h, strings.Bytes(value))?
     }
 
     // A file field (Content-Type application/octet-stream).
     func CreateFormFile(field string, filename string, content []byte) void! {
-        var h = std.net.textproto.NewHeader()
+        var h = net.textproto.NewHeader()
         h.Set(
             "Content-Disposition",
             "form-data; name=\"" +
@@ -305,18 +305,18 @@ struct Writer {
     }
 
     func Bytes() []byte {
-        return std.strings.Bytes(this.b.String())
+        return strings.Bytes(this.b.String())
     }
 }
 
 // A writer with a random 60-hex-digit boundary.
 func NewWriter() *Writer {
-    var raw = try std.crypto.rand.Hex(
+    var raw = try crypto.rand.Hex(
         30,
     ) else "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
     return &Writer{boundary: raw}
 }
 
 func escapeQuotes(s string) string {
-    return std.strings.Replace(std.strings.Replace(s, "\\", "\\\\"), "\"", "\\\"")
+    return strings.Replace(strings.Replace(s, "\\", "\\\\"), "\"", "\\\"")
 }

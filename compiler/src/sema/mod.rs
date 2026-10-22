@@ -13,10 +13,10 @@
 //!
 //! Generic declarations ([`generics`]) are checked once against their
 //! constraints and monomorphised: every distinct instantiation becomes an
-//! ordinary HIR function, struct or enum. `std.collections` is a set of
+//! ordinary HIR function, struct or enum. `collections` is a set of
 //! generic structs written in Zell ([`collections`]).
 //!
-//! Reflection ([`reflect`]): `std.reflect`, `std.encoding.json` and
+//! Reflection ([`reflect`]): `reflect`, `encoding.json` and
 //! `strings.Builder` are Zell sources loaded on first use; `typeof`,
 //! compile-time `reflect.Fields<T>()` loops and static `if`s on type kinds
 //! are handled there, and [`hir::Program::reflect`] tells code generation
@@ -53,14 +53,14 @@ mod stdsrc;
 mod suggest;
 pub mod stdlib;
 pub mod units;
-// >>> std.web (docs/FRAMEWORK.md section 2)
+// >>> web (docs/FRAMEWORK.md section 2)
 mod web;
-// <<< std.web
-// >>> std.data (docs/FRAMEWORK.md section 3)
+// <<< web
+// >>> data (docs/FRAMEWORK.md section 3)
 mod orm;
 mod orm_model;
 mod orm_sql;
-// <<< std.data
+// <<< data
 pub mod stdlib_docs;
 
 use crate::ast;
@@ -80,7 +80,7 @@ pub fn analyze(files: &[ast::File], diags: &mut Diagnostics) -> Option<hir::Prog
     analyze_with_policy(files, diags, None)
 }
 
-/// Analyses `files` like [`analyze`] and returns the `std.data` model of
+/// Analyses `files` like [`analyze`] and returns the `data` model of
 /// every context as JSON (the migrations snapshot, see `crate::datacli`),
 /// or `None` if any error was reported.
 pub fn analyze_data_model(files: &[ast::File], diags: &mut Diagnostics) -> Option<String> {
@@ -294,7 +294,7 @@ pub(crate) struct Sema<'a> {
     pub tt: TypeTable,
     pub nss: Vec<Ns>,
     pub ns_index: HashMap<String, NsIdx>,
-    /// Root namespaces (`std`, `app`, ...).
+    /// Root namespaces (the stdlib roots `io`, `net`, ..., and `app`, ...).
     pub roots: HashMap<String, NsIdx>,
     pub file_scopes: Vec<FileScope>,
     pub structs: Vec<hir::Struct>,
@@ -350,9 +350,9 @@ pub(crate) struct Sema<'a> {
     pub(crate) gen: generics::GenState<'a>,
     /// Reflection state (lazily loaded library sources, compile-time fields).
     pub(crate) refl: reflect::ReflState,
-    /// std.web compile-time expansion (route tables, DI factories).
+    /// web compile-time expansion (route tables, DI factories).
     pub(crate) web: web::WebState,
-    /// std.data compile-time expansion (models, query translation).
+    /// data compile-time expansion (models, query translation).
     pub(crate) orm: orm_model::OrmState,
     /// Unit mode for incremental IDE analysis (see [`units`]); `None` =
     /// an ordinary analysis.
@@ -558,7 +558,7 @@ impl<'a> Sema<'a> {
         self.push_diag(d);
     }
 
-    /// "unknown identifier X", with "import std.ns" fixes when `X` is a
+    /// "unknown identifier X", with "import ns" fixes when `X` is a
     /// stdlib member (or a std namespace) that is not imported.
     pub fn unknown_ident(&mut self, id: &ast::Ident) {
         let mut paths: Vec<String> = Vec::new();
@@ -566,9 +566,6 @@ impl<'a> Sema<'a> {
             if ns.members.get(&id.name).is_some_and(|m| !matches!(m.0, Member::Ns(_))) {
                 paths.push(ns.path.clone());
             }
-        }
-        if paths.is_empty() && self.ns_index.contains_key(&format!("std.{}", id.name)) {
-            paths.push("std".into());
         }
         paths.sort();
         let mut fixes = Vec::new();
@@ -647,7 +644,7 @@ impl<'a> Sema<'a> {
     /// Short or full name of a declared type of HIR namespace `ns`.
     fn decl_display(&self, ns: hir::NamespaceId, name: &str, full: &str) -> String {
         let here = self.nss.get(self.cur_ns).and_then(|n| n.hir_id);
-        if here == Some(ns) && !full.starts_with("std.") {
+        if here == Some(ns) && !crate::sema::stdlib::is_std_namespace(&full) {
             name.to_string()
         } else {
             full.to_string()
@@ -827,9 +824,7 @@ impl<'a> Sema<'a> {
     }
 
     /// Reports imports no name was looked up through (like Go). Not when
-    /// other errors were found (a failed lookup may hide the use). Imports
-    /// of a root namespace (`import std`) are exempt: they only make child
-    /// namespaces reachable by short name and are customary boilerplate.
+    /// other errors were found (a failed lookup may hide the use).
     fn check_unused_imports(&mut self) {
         // Unit mode: candidates of the full files, whatever the errors.
         let unit = self.unit.is_some();
@@ -843,8 +838,7 @@ impl<'a> Sema<'a> {
             }
             for (span, used) in self.file_scopes[fi].import_uses.clone() {
                 let imp = self.files[fi].imports.iter().find(|i| i.path.span == span);
-                let root = imp.is_some_and(|i| i.path.segments.len() == 1 && i.alias.is_none());
-                if !used && !root {
+                if !used {
                     self.cur_file = fi;
                     let path = imp.map(|i| i.path.to_string()).unwrap_or_default();
                     let full = imp.map_or(span, |i| i.span);

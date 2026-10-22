@@ -1,13 +1,13 @@
 // Raw DEFLATE (RFC 1951) streams. The coder is C (runtime/src/std_compress.c,
-// reached through the std.compress rt* externs); this file is the API:
+// reached through the compress rt* externs); this file is the API:
 // one-shot Compress/Decompress and the streaming Writer/Reader, which work
 // on []byte chunks of any size.
-namespace std.compress.deflate
+namespace compress.deflate
 
 // Compresses data at level 0 (store) .. 9 (best); -1 is the default (6).
 func Compress(data []byte, level int) []byte {
     var none []byte = []
-    return std.compress.rtDeflate(none, data, std.compress.level(level), true)
+    return compress.rtDeflate(none, data, compress.level(level), true)
 }
 
 // Decompresses a complete raw DEFLATE stream. Bytes after its end are an error.
@@ -37,14 +37,14 @@ struct Writer {
         if this.closed {
             panic("deflate: Write after Close")
         }
-        this.pending = std.compress.rtConcat(this.pending, p)
+        this.pending = compress.rtConcat(this.pending, p)
         if len(this.pending) >= 131072 {
             this.compress(false)
         }
     }
 
     func WriteString(s string) {
-        this.Write(std.strings.Bytes(s))
+        this.Write(strings.Bytes(s))
     }
 
     // Compresses the buffered input; the output is byte-aligned afterwards.
@@ -70,12 +70,12 @@ struct Writer {
     }
 
     func compress(final bool) {
-        var c = std.compress.rtDeflate(this.hist, this.pending, this.level, final)
-        this.out = std.compress.rtConcat(this.out, c)
+        var c = compress.rtDeflate(this.hist, this.pending, this.level, final)
+        this.out = compress.rtConcat(this.out, c)
         // keep the last 32 KB as history for the next chunk
-        var h = std.compress.rtConcat(this.hist, this.pending)
+        var h = compress.rtConcat(this.hist, this.pending)
         if len(h) > 32768 {
-            h = std.compress.rtCopy(h, len(h) - 32768, len(h))
+            h = compress.rtCopy(h, len(h) - 32768, len(h))
         }
         this.hist = h
         this.pending = []
@@ -83,7 +83,7 @@ struct Writer {
 }
 
 func NewWriter(level int) *Writer {
-    return &Writer{level: std.compress.level(level)}
+    return &Writer{level: compress.level(level)}
 }
 
 // A streaming decompressor: Feed compressed chunks as they arrive, take
@@ -98,18 +98,18 @@ struct Reader {
     // Decompresses a chunk of input; fails on corrupt data.
     func Feed(chunk []byte) void! {
         if this.done {
-            this.rest = std.compress.rtConcat(this.rest, chunk)
+            this.rest = compress.rtConcat(this.rest, chunk)
             return
         }
-        var b = std.compress.rtInflate(this.st, chunk)?
-        this.out = std.compress.rtConcat(this.out, b)
-        if std.compress.rtInflateDone(this.st) {
+        var b = compress.rtInflate(this.st, chunk)?
+        this.out = compress.rtConcat(this.out, b)
+        if compress.rtInflateDone(this.st) {
             this.done = true
-            var unused = std.compress.rtInflateUnused(this.st)
-            var tail = std.compress.rtInflateTail(this.st)
-            this.rest = std.compress.rtConcat(
+            var unused = compress.rtInflateUnused(this.st)
+            var tail = compress.rtInflateTail(this.st)
+            this.rest = compress.rtConcat(
                 tail,
-                std.compress.rtCopy(chunk, len(chunk) - unused, len(chunk)),
+                compress.rtCopy(chunk, len(chunk) - unused, len(chunk)),
             )
         }
     }
@@ -139,5 +139,5 @@ struct Reader {
 }
 
 func NewReader() *Reader {
-    return &Reader{st: std.compress.rtInflateNew()}
+    return &Reader{st: compress.rtInflateNew()}
 }

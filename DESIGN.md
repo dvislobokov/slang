@@ -37,7 +37,7 @@ Zell — компилируемый язык с простой структур�
 ```zell
 namespace app.services.users
 
-import std.io
+import io
 import app.models
 
 struct UserService {
@@ -48,26 +48,42 @@ struct UserService {
 ### Правила импорта
 
 `import X` делает содержимое пространства имён `X` доступным по коротким
-именам. Чем глубже импорт, тем короче обращение:
+именам (как `using` в C#). Пространства имён стандартной библиотеки —
+корневые (`io`, `fmt`, `strings`, `net`, `net.http`, `log`,
+`encoding.json`, `crypto.hash`, `web`, `data`, `task`, `reflect`,
+`debug`, `os`, `collections`, …), как и корни пакетов (`app`):
 
 | Импорт | Обращение |
 |--------|-----------|
-| нет импорта | `std.io.println("hi")` |
-| `import std` | `io.println("hi")` |
-| `import std.io` | `println("hi")` |
-| `import std.io as out` | `out.println("hi")` |
+| нет импорта | `io.println("hi")`, `net.http.Get(url)`, `app.models.User` |
+| `import io` | `println("hi")` |
+| `import net.http` | `Get(url)` |
+| `import io as out` | `out.println("hi")` |
+| `import app.models` | `User` |
+| `import app.models.User` | только `User` |
 
 - Полный путь работает всегда, импорт только сокращает его.
-- Конфликт коротких имён из двух импортов — ошибка компиляции; её решают
-  псевдонимом (`as`) или полным путём.
-- Импортировать можно и отдельный тип: `import app.models.User`.
+- Конфликт коротких имён из двух импортов — ошибка компиляции в месте
+  использования (`ambiguous name`); её решают псевдонимом (`as`) или
+  полным путём. Имя из импорта скрывает одноимённое корневое пространство
+  (`import crypto` даёт `hash` = `crypto.hash`; корень `hash` тогда
+  доступен через `import hash.fnv` или псевдоним). Код самой стандартной
+  библиотеки такие имена не скрывают.
+- Импортировать можно и отдельный член: `import app.models.User` — в
+  область видимости попадает только `User`.
+- Импорт родительского пространства делает дочерние доступными по
+  последнему сегменту: `import net` → `http.Get(url)`.
+- Корни стандартной библиотеки зарезервированы: `namespace io` или
+  `namespace net.x` (первый сегмент — корень stdlib) — ошибка компиляции
+  «namespace `io` belongs to the standard library»; пакет с таким корнем
+  (`namespace` в манифесте или имя пакета) отвергается при загрузке
+  манифеста. Корня `std` больше нет: `import std.io` — ошибка с
+  исправлением `import io`, `namespace std...` зарезервирован.
 - Имя встроенной функции (`delete`, `len`, `append`, `panic`, `typeof`,
   `error`) не перекрывается одноимённым членом пространства stdlib,
-  импортированного целиком (атрибут `@delete` из `std.web`): вне атрибутов
+  импортированного целиком (атрибут `@delete` из `web`): вне атрибутов
   оно остаётся встроенной функцией.
 - Неиспользуемый импорт — ошибка компиляции (`unused import`), как в Go.
-  Исключение — импорт корневого пространства имён (`import std`): он лишь
-  делает дочерние пространства доступными по последнему сегменту.
 - Точка входа — функция `main`, указанная при сборке (по умолчанию ищется в
   корневом пространстве имён проекта). `main` не принимает параметров и
   возвращает ничего или `void!` (также `async func main() void!`): если она
@@ -220,13 +236,13 @@ struct User {
   `embed.FS` даёт `ReadFile`/`ReadString`/`Has`/`Names`/`List` по путям
   `dir/имя`. У `var` с `@embed` нет инициализатора.
 - Атрибут-структуры могут объявляться и в stdlib на Zell
-  (`@binary(endian: "big")` из `std.encoding.binary`, `@cli.flag(...)` из
-  `std.cli`): они пишутся через пространство имён, как обычные. Ключевое
+  (`@binary(endian: "big")` из `encoding.binary`, `@cli.flag(...)` из
+  `cli`): они пишутся через пространство имён, как обычные. Ключевое
   слово `default` допустимо как имя поля и аргумента
   (`@cli.flag(default: "8080")`).
 - Каждый применённый атрибут — константное значение своей структуры
   (аргументы и значения полей по умолчанию), вшитое в таблицы рефлексии;
-  у встроенных это структуры `std.reflect` (`json`, `deprecated`, ...).
+  у встроенных это структуры `reflect` (`json`, `deprecated`, ...).
   Читается через `Attribute<A>()` / `Attributes<A>()` (раздел «Рефлексия»).
 - Библиотечные: `@json`, `@log(skip: true)` (поле не попадает в `{@X}` логгера), `@xml`, `@db(column: "...")`, `@validate(...)`.
 - Неизвестный атрибут — ошибка компиляции (в отличие от строковых тегов Go).
@@ -239,7 +255,7 @@ struct User {
 ```zell
 namespace app.validation
 
-import std.reflect
+import reflect
 
 @attribute(targets: [reflect.Target.Field])
 struct range {
@@ -435,10 +451,10 @@ v += a                          // v = v.Add(a)
   поэтому `Sum<T: Add>`, `Max<T: Ordered>` и обобщённые структуры с
   операторными методами (`struct Vec2<T: Add> { ... func Add(o Vec2<T>)
   Vec2<T> }`) работают и с числами, и с типами-значениями.
-- Используется в `std.math.big` (`Int`, `Rat`, `Decimal`; `Int./` — деление
+- Используется в `math.big` (`Int`, `Rat`, `Decimal`; `Int./` — деление
   с усечением, как у `int`, евклидово — `DivEuclid`; `Decimal./` и `%`
-  возвращают `Decimal!`), `std.time` (`Duration` с `* /` на `int`, `Time +
-  Duration`, `Time - Time`), `std.math.complex`, `std.collections.BitSet`
+  возвращают `Decimal!`), `time` (`Duration` с `* /` на `int`, `Time +
+  Duration`, `Time - Time`), `math.complex`, `collections.BitSet`
   (`b[i]`, `b[i] = true`).
 
 ## Перечисления
@@ -569,7 +585,7 @@ Go): `a + b` для `T` без `Ordered` — ошибка в самой декл
 Значения экземпляров освобождаются как обычные значения своих типов
 (`Drop` экземпляра работает).
 
-**`std.collections`** написана на Zell (обобщённые структуры поверх срезов и
+**`collections`** написана на Zell (обобщённые структуры поверх срезов и
 `map`, встроены в компилятор):
 
 | Тип | Методы |
@@ -887,7 +903,7 @@ for { ... }                     // бесконечный
 ```
 
 **Протокол итерации.** `for x in v` обходит срезы, массивы, строки (по
-code point), `map`, коллекции `std.collections` и любой тип, который
+code point), `map`, коллекции `collections` и любой тип, который
 следует протоколу (реализация — `compiler/src/sema/iterate.rs`):
 
 1. у `v` есть `func Iter() It` — цикл вызывает его один раз и обходит
@@ -1047,7 +1063,7 @@ async func main() {
 - Значения `any`, интерфейсов и ошибок несут указатель на `TypeInfo`: это
   тот же указатель, что тип бокса и `vtable[0]`, поэтому `typeof(x)` —
   одно чтение, а `switch x { case User u: }` — одно сравнение указателей.
-- **Урезание**: если программа не использует `std.reflect` (ни прямо, ни
+- **Урезание**: если программа не использует `reflect` (ни прямо, ни
   через `typeof`, `json` или тип атрибута), таблиц нет вовсе — у типов
   остаётся минимальный заголовок `{name, size, drop}`. Иначе таблица
   создаётся только для типов, на которые ссылается код или другая таблица;
@@ -1061,7 +1077,7 @@ async func main() {
   методы, варианты и значения атрибутов — тоже неуничтожимые объекты,
   срезы таблиц без `backing` (подсчёт ссылок на них ничего не делает).
 
-### API (`std.reflect`)
+### API (`reflect`)
 
 ```zell
 var t = reflect.TypeOf<User>()         // статически, без значения
@@ -1123,7 +1139,7 @@ for variant in reflect.TypeOf<Color>().Variants { println(variant.Name) }
 - `any` — пустой интерфейс (`interface {}`); значения в нём несут
   `TypeInfo`, поэтому `switch x { case User u: }` работает за одно сравнение
   указателей.
-- Встроенные атрибуты со значениями — структуры `std.reflect`: `json`
+- Встроенные атрибуты со значениями — структуры `reflect`: `json`
   (`name string`, `omitEmpty bool`, `skip bool`), `deprecated`
   (`message string`), `inline`, `test`, `log` (`skip bool`); имя атрибута можно писать как тип
   (`f.Attribute<json>()`), а поля этих структур читаются из любого
@@ -1174,11 +1190,11 @@ func ToJson<T>(value T) string {
 
 ### Реализовано
 
-- `std.reflect` целиком в описанном объёме (кроме списка реализуемых
+- `reflect` целиком в описанном объёме (кроме списка реализуемых
   интерфейсов и методов у таблиц интерфейсов); исходник на Zell —
   `compiler/src/sema/reflect_src/reflect.zl`, тела нескольких внутренних
   функций генерирует компилятор (`codegen/reflect.rs`).
-- `std.encoding.json`: `Parse<T>(text) T!` и `Format<T>(v T) string`
+- `encoding.json`: `Parse<T>(text) T!` и `Format<T>(v T) string`
   через compile-time рефлексию (структуры с `@json(name:, omitEmpty:,
   skip:)`, вложенные структуры, срезы, массивы, `map` со строковыми
   ключами — при выводе отсортированы, указатели, `nil` → `null`, строки,
@@ -1190,14 +1206,14 @@ func ToJson<T>(value T) string {
   `NewString`/`NewArray`/`NewObject`, `Decode<T>(v)`, `Quote(s)`.
   Токенизатор — C (`runtime/src/std_json.c`). Нет `Reader`/`Writer`,
   `Options{Indent}`, `Schema<T>`, конвертеров.
-- `std.strings.Builder` (`Write`, `String`, `Len`, `Reset`).
+- `strings.Builder` (`Write`, `String`, `Len`, `Reset`).
 - Те же `Fields<T>()`-обходы дают `Parse<T>`/`Format<T>` для
-  `std.encoding.csv` (`@csv(name:, index:, skip:, omitEmpty:)`),
+  `encoding.csv` (`@csv(name:, index:, skip:, omitEmpty:)`),
   `xml` (`@xml(name:, attr:, text:, ns:, omitEmpty:, skip:)`), `yaml`
   (`@yaml(name:, omitEmpty:, skip:, flow:)`) и `toml` (`@toml(name:,
   omitEmpty:, skip:, inline:)`); `@serde(name:, omitEmpty:, skip:)` —
   общий атрибут, который читают все форматы. Типизированные шаблоны
-  `std.text.template.Parse<T>` проверяют поля `T` через `reflect.TypeInfo`
+  `text.template.Parse<T>` проверяют поля `T` через `reflect.TypeInfo`
   во время выполнения, а для строкового литерала — ещё и при компиляции
   (`sema/litcheck.rs`, вместе с `regex.Pattern("...")`).
 - Библиотеки на Zell загружаются при первом обращении к их именам,
@@ -1447,8 +1463,8 @@ var span = task.Get(CurrentSpan)              // *SpanInfo или nil, в люб
 страничных отказов), и фоновый поток-уборщик отдаёт системе
 (`MADV_DONTNEED` / `MADV_FREE` / `DiscardVirtualMemory`) всё, что
 пролежало без дела 0,3 с, сверх 16 МБ: после освобождения 500 МБ RSS
-падает меньше чем за секунду. `std.runtime.FreeOSMemory()` отдаёт всё
-сразу; `std.diag.Runtime()` показывает `HeapInUse`, `HeapRetained`,
+падает меньше чем за секунду. `runtime.FreeOSMemory()` отдаёт всё
+сразу; `diag.Runtime()` показывает `HeapInUse`, `HeapRetained`,
 `HeapReleased`.
 
 ### Циклы
@@ -1514,11 +1530,11 @@ them in unreachable reference cycles the cycle collector can free` —
 сколько из утёкших объектов лежат в недостижимых циклах, а остальное —
 настоящие утечки (объект удерживает что-то вне кучи: глобальная
 переменная, зависшая задача). Без `--leak-check`: `ZELL_DIAG_HEAP=1`
-включает дешёвые счётчики живых объектов по типам (`std.diag.HeapByType`,
+включает дешёвые счётчики живых объектов по типам (`diag.HeapByType`,
 обработчик `/debug/heap` с приростом с прошлого запроса,
 docs/FRAMEWORK.md §5), а метрики `zell_cycles_collected_total`,
 `zell_cycle_collections_total`, `zell_cycle_candidates` попадают в
-`diag.PrometheusText`; `std.runtime.CycleStats()` даёт то же из кода.
+`diag.PrometheusText`; `runtime.CycleStats()` даёт то же из кода.
 
 **(в) Ограниченный сборщик циклов.** Синхронное пробное удаление (trial
 deletion) Бэкона–Раджана поверх счётчиков ссылок, **только для объектов
@@ -1559,7 +1575,7 @@ deletion) Бэкона–Раджана поверх счётчиков ссыл
   (N адаптивно: 4096 вначале, от 1024 до 4M — удваивается, если сборки
   находят мало мусора; `ZELL_CYCLES_THRESHOLD=N` фиксирует), при
   ближайшем создании объекта циклического типа в потоке, который это
-  заметил; `manual` — только `std.runtime.CollectCycles()` (возвращает
+  заметил; `manual` — только `runtime.CollectCycles()` (возвращает
   число освобождённых объектов); `off` — сборщика нет: флаги не ставятся,
   кандидаты не пишутся, поведение как у чистого ARC. В режиме auto после
   `main` с `--leak-check` выполняется последняя сборка.
@@ -1577,7 +1593,7 @@ deletion) Бэкона–Раджана поверх счётчиков ссыл
 ### Арены
 
 Для серверов, парсеров и других задач с чётким жизненным циклом есть
-библиотечные арены (`std.arena`) — дополнение к ARC, а не замена:
+библиотечные арены (`arena`) — дополнение к ARC, а не замена:
 
 ```zell
 func Handle(words []string) int {
@@ -1631,7 +1647,9 @@ func Handle(words []string) int {
 
 ## Стандартная библиотека
 
-Всё лежит под `std`. Первая версия реализует разделы, отмеченные «ядро»;
+Пространства имён стандартной библиотеки корневые (`io`, `net.http`, …;
+список корней зарезервирован, см. «Правила импорта»), их исходники лежат в
+каталоге `std/`. Первая версия реализует разделы, отмеченные «ядро»;
 остальное добавляется поэтапно поверх рантайма.
 
 ### Ядро
@@ -1650,27 +1668,27 @@ func Handle(words []string) int {
 
 | Пространство | Содержимое | Реализовано |
 |--------------|------------|-------------|
-| `std.io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; интерфейсы `Reader`/`Writer`/`Closer`/`Seeker`/`ReadWriter`/… (`Read(buf) int!`, 0 — конец), `AsyncReader`/`AsyncWriter` (их реализует `net.Conn`), `Copy`/`CopyN`/`ReadFull`/`ReadN`/`ReadAllFrom`, `StringReader`/`BytesReader`/`BytesWriter`, `LimitReader`/`MultiReader`/`MultiWriter`/`TeeReader`/`Pipe`/`BoundedPipe(max)` (ограниченный буфер: `Writer.Send` ждёт места, `Write` — ошибка «pipe full»)/`Discard`, `BufferedReader`/`BufferedWriter`, `Scanner`, `Lines`/`Words`, `io.EOF` |
-| `std.fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`, `Sprintf` (глаголы Go: `%v %d %s %f %.2f %5d %-4d %03d %x %q %c %t %e %%`); даты — `time.Format` |
-| `std.strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё (`Builder{}` с `Write`, `String`, `Len`, `Reset`), плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
-| `std.math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
-| `std.collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓, плюс `LinkedList<T>`, `Deque<T>`, `Ring<T>(cap)`, `Heap<T: Ordered>`, `PriorityQueue<T>(less)` (FIFO при равенстве), `OrderedMap<K: Ordered, V>` (`Min/Max/Floor/Ceiling/Range`), `LRU<K, V>(cap)`, `BitSet` (`stdlib_src/collections2.zl`; `for` по ним — через `Items()`/`Keys()`) |
-| `std.task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, `Go(f func() Task<void>)`; значения контекста `Key<T>()`, `Get(key) *T`, `With(key, value, f)`, `CurrentContext() Context`, `RunWith(ctx, f)`, `SpawnWith(ctx, f)`; отмена `NewCancel() CancelHandle` (`Context`, `Cancel()`, `IsCancelled()`), `WithTimeout(ms, f)`, `CheckCancelled() void!`, `IsCancelled()`, `ErrCancelled`; `Any` отменяет проигравших. Нет: `Scope`, `WithDeadline`, `OnCancel`, отмены остальных в `All` |
-| `std.os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; файлы `Open`/`Create`/`OpenFile(path, O_* флаги, perm)` → `File` (`Read`/`ReadAt`/`Write`/`Seek`/`Close`/`Sync`/`Truncate`/`Stat`, реализует интерфейсы `std.io`), `Stat`/`Lstat` → `FileInfo`, `ReadDir` → `[]DirEntry`, `Chmod`, `Stdin/Stdout/Stderr()`; `std.os.signal` (`Wait`, `WaitAny`, `Notify`, `Catch`, `Ignore`, `Reset`, `Raise`); `std.os.user`; процессы — `std.process` |
-| `std.fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir`; `fs.ErrNotFound` — ошибка-константа, которую оборачивают все ошибки «файл не найден» (`errors.Is(err, fs.ErrNotFound)`) |
-| `std.time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; типы (`stdlib_src/time.zl`): `Duration` (нс; `Seconds()`, `String()` как в Go `1h2m3.5s`, `ParseDuration`, конструкторы `time.Seconds(n)`… вместо констант), `Time` (`Time.Now()`/`Current()`, `Unix`, `Date`, `Add`/`Sub`/`AddDate`, `Before`/`After`/`Equal`, `Format` по эталону Go и `Strftime`, `ParseTime`/`ParseInLocation`, `Truncate`/`Round`, `In`/`UTC`/`Local`, `Zone`, `ISOWeek`), `Location` (`UTC()`, `Local()`, `LoadLocation` из `/usr/share/zoneinfo` с POSIX-правилами после последнего перехода, `FixedZone`), раскладки `RFC3339`…, `Instant` (монотонные часы), async `NewTicker`/`NewTimer`/`After`. Имена Go, занятые int-функциями: `Since` → `Elapsed`, `Sleep` → `SleepFor`, `Parse` → `ParseTime`, `t.Month()` — `int` |
-| `std.errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New` | ✓ всё |
+| `io` | `println`, `print`, `ReadFile`, `WriteFile`, потоки stdin/stdout/stderr, `Reader`/`Writer` | ✓ `println`, `print`, `ReadFile`, `WriteFile`, `ReadLine`, `ReadAll`, `ReadLines`, `WriteLines`, `Eprint`, `Eprintln`; интерфейсы `Reader`/`Writer`/`Closer`/`Seeker`/`ReadWriter`/… (`Read(buf) int!`, 0 — конец), `AsyncReader`/`AsyncWriter` (их реализует `net.Conn`), `Copy`/`CopyN`/`ReadFull`/`ReadN`/`ReadAllFrom`, `StringReader`/`BytesReader`/`BytesWriter`, `LimitReader`/`MultiReader`/`MultiWriter`/`TeeReader`/`Pipe`/`BoundedPipe(max)` (ограниченный буфер: `Writer.Send` ждёт места, `Write` — ошибка «pipe full»)/`Discard`, `BufferedReader`/`BufferedWriter`, `Scanner`, `Lines`/`Words`, `io.EOF` |
+| `fmt` | `Format("{0} {1}", a, b)`, `Sprintf`, форматирование чисел и дат | ✓ `Format`, `Sprintf` (глаголы Go: `%v %d %s %f %.2f %5d %-4d %03d %x %q %c %t %e %%`); даты — `time.Format` |
+| `strings` | `Split`, `Join`, `Trim`, `Contains`, `Replace`, `ToUpper`, `ToInt`, `Builder` | ✓ всё (`Builder{}` с `Write`, `String`, `Len`, `Reset`), плюс `ToLower`, `HasPrefix`/`HasSuffix`, `Index`/`LastIndex`, `Repeat`, `ToFloat`, `Fields`, `Count`, `TrimPrefix`/`TrimSuffix`/`TrimLeft`/`TrimRight`, `SplitN`, `EqualFold`, `Reverse`, `PadLeft`/`PadRight`, `Runes`/`FromRunes`, `Bytes`/`FromBytes`, `Compare`, `Title` |
+| `math` | `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, тригонометрия, константы | ✓ `Sqrt`, `Abs`, `Min`, `Max`, `Pow`, `Floor`, `Ceil`, `Round`, `Trunc`, `Mod`, `Hypot`, `Sin`/`Cos`/`Tan`/`Atan2`, `Log`/`Log2`/`Log10`/`Exp`, `IsNaN`, `IsInf`, `Inf`, `NaN`, `Pi`, `E`; для `int` (перегрузки нет) — `IMin`, `IMax`, `IAbs`; целые константы `MaxInt`, `MinInt`, `MaxInt32`, `MinInt32`, `MaxUint32`, `MaxUint` |
+| `collections` | `List<T>`, `Map<K,V>`, `Set<T>`, `Queue<T>`, `Stack<T>` (см. «Generics») | ✓, плюс `LinkedList<T>`, `Deque<T>`, `Ring<T>(cap)`, `Heap<T: Ordered>`, `PriorityQueue<T>(less)` (FIFO при равенстве), `OrderedMap<K: Ordered, V>` (`Min/Max/Floor/Ceiling/Range`), `LRU<K, V>(cap)`, `BitSet` (`stdlib_src/collections2.zl`; `for` по ним — через `Items()`/`Keys()`) |
+| `task` | `All`, `Any`, `Delay`, `Spawn`, `Channel<T>`, `Mutex`, `WaitGroup`, `Scope`, `WithTimeout`, `WithDeadline`, `NewCancel`, `CheckCancelled`, `OnCancel`, `ErrCancelled`, `Context` | ✓ всё: `All`, `Any`, `Delay(ms)`, `Yield()`, `Spawn(f func() Task<T>) Task<T>`, `Channel<T>(cap)` (`Send(v) Task<void>`, `Recv() Task<T!>`, `Close`, `Len`, `Cap`, `IsClosed`), `Mutex` (`Lock() Task<void>`, `TryLock`, `Unlock`), `WaitGroup` (`Add`, `Done`, `Count`, `Wait() Task<void>`), `Timeout(t, ms) Task<bool>`, `Go(f func() Task<void>)`; значения контекста `Key<T>()`, `Get(key) *T`, `With(key, value, f)`, `CurrentContext() Context`, `RunWith(ctx, f)`, `SpawnWith(ctx, f)`; отмена `NewCancel() CancelHandle` (`Context`, `Cancel()`, `IsCancelled()`), `WithTimeout(ms, f)`, `CheckCancelled() void!`, `IsCancelled()`, `ErrCancelled`; `Any` отменяет проигравших. Нет: `Scope`, `WithDeadline`, `OnCancel`, отмены остальных в `All` |
+| `os` | аргументы, переменные окружения, `Exit`, запуск процессов, сигналы | ✓ `Args`, `Getenv`, `Setenv`, `Exit`, `Hostname`, `Pid`, `Cwd`, `Chdir`; файлы `Open`/`Create`/`OpenFile(path, O_* флаги, perm)` → `File` (`Read`/`ReadAt`/`Write`/`Seek`/`Close`/`Sync`/`Truncate`/`Stat`, реализует интерфейсы `io`), `Stat`/`Lstat` → `FileInfo`, `ReadDir` → `[]DirEntry`, `Chmod`, `Stdin/Stdout/Stderr()`; `os.signal` (`Wait`, `WaitAny`, `Notify`, `Catch`, `Ignore`, `Reset`, `Raise`); `os.user`; процессы — `process` |
+| `fs` | файлы и каталоги: `Exists`, `ReadDir`, `Mkdir`, `Remove`, `Stat`, пути | ✓ `Exists`, `IsDir`, `ReadDir`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Copy`, `AppendFile`, `Size`, `ModTime` (вместо `Stat`), пути `Join`, `Base`, `Dir`, `Ext`, `Abs`, `TempDir`; `fs.ErrNotFound` — ошибка-константа, которую оборачивают все ошибки «файл не найден» (`errors.Is(err, fs.ErrNotFound)`) |
+| `time` | `Now`, `Duration`, `Sleep`, `Timer`, форматирование и парсинг дат | ✓ функциями над `int` (Unix-миллисекунды, UTC): `Now`, `NowNanos`, `Sleep`, `Since`, `Format`/`Parse` (strftime-раскладка), `Year`…`Second`, `Weekday`; типы (`stdlib_src/time.zl`): `Duration` (нс; `Seconds()`, `String()` как в Go `1h2m3.5s`, `ParseDuration`, конструкторы `time.Seconds(n)`… вместо констант), `Time` (`Time.Now()`/`Current()`, `Unix`, `Date`, `Add`/`Sub`/`AddDate`, `Before`/`After`/`Equal`, `Format` по эталону Go и `Strftime`, `ParseTime`/`ParseInLocation`, `Truncate`/`Round`, `In`/`UTC`/`Local`, `Zone`, `ISOWeek`), `Location` (`UTC()`, `Local()`, `LoadLocation` из `/usr/share/zoneinfo` с POSIX-правилами после последнего перехода, `FixedZone`), раскладки `RFC3339`…, `Instant` (монотонные часы), async `NewTicker`/`NewTimer`/`After`. Имена Go, занятые int-функциями: `Since` → `Elapsed`, `Sleep` → `SleepFor`, `Parse` → `ParseTime`, `t.Month()` — `int` |
+| `errors` | `Wrap`, `Unwrap`, `Is`, `As`, `New` | ✓ всё |
 
 Уровень 2 (`docs/STDLIB.md`; Zell в `compiler/src/sema/stdlib_src/`, C —
-`runtime/ABI.md` §21): `std.regex` (синтаксис RE2, ленивый DFA + Pike VM,
+`runtime/ABI.md` §21): `regex` (синтаксис RE2, ленивый DFA + Pike VM,
 линейное время; `regex.Pattern("литерал")` проверяется при компиляции),
-`std.compress.{deflate,zlib,gzip}` (кодер и декодер, потоковые `Writer`/
-`Reader`, адаптеры `std.io` для gzip) и `std.compress.zstd` (декодер),
-`std.archive.{zip,tar}`, `std.encoding.{csv,xml,yaml,toml}` (toml
+`compress.{deflate,zlib,gzip}` (кодер и декодер, потоковые `Writer`/
+`Reader`, адаптеры `io` для gzip) и `compress.zstd` (декодер),
+`archive.{zip,tar}`, `encoding.{csv,xml,yaml,toml}` (toml
 `Document` правит текст с сохранением комментариев),
-`std.text.template`/`std.html.template` (контекстное экранирование),
-`std.html`, `std.mime` (+ `multipart`, `quotedprintable`), `std.net.url`,
-`std.net.textproto`, `std.text.scanner`, `std.text.table`. Тесты —
+`text.template`/`html.template` (контекстное экранирование),
+`html`, `mime` (+ `multipart`, `quotedprintable`), `net.url`,
+`net.textproto`, `text.scanner`, `text.table`. Тесты —
 `tests/spec/stdlib3/` (сверка с Go, PyYAML и tomllib). Нет: кодера zstd,
 brotli, bzip2, lzw.
 
@@ -1678,13 +1696,13 @@ brotli, bzip2, lzw.
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.net` | TCP/UDP/Unix-сокеты, `Dial`/`Dialer` (Happy Eyeballs; TCP self-connect — ядро выбрало набираемый порт loopback исходным — считается `ErrRefused`, как в Go), `Listen`/`ListenConfig` (dual-stack), DNS через пул резолверов, `IP`/`Addr`, опции сокетов, half-close, дедлайны, `SendFile`, буферизованный ввод-вывод, типизированные ошибки; всё асинхронное |
-| `std.net.http` | клиент: `Get`, `Post`, `Request`, `Client` с таймаутами и заголовками; сервер: `Server`, `Router`, `Handler`, middleware; HTTP/1.1 и HTTP/2 |
+| `net` | TCP/UDP/Unix-сокеты, `Dial`/`Dialer` (Happy Eyeballs; TCP self-connect — ядро выбрало набираемый порт loopback исходным — считается `ErrRefused`, как в Go), `Listen`/`ListenConfig` (dual-stack), DNS через пул резолверов, `IP`/`Addr`, опции сокетов, half-close, дедлайны, `SendFile`, буферизованный ввод-вывод, типизированные ошибки; всё асинхронное |
+| `net.http` | клиент: `Get`, `Post`, `Request`, `Client` с таймаутами и заголовками; сервер: `Server`, `Router`, `Handler`, middleware; HTTP/1.1 и HTTP/2 |
 
 Реализовано (Zell-код в `compiler/src/sema/stdlib_src/`, рантайм —
 `runtime/ABI.md` §10.9, §16):
 
-- `std.net` (рантайм — `runtime/ABI.md` §10.9, §16):
+- `net` (рантайм — `runtime/ABI.md` §10.9, §16):
   - **Адреса**: `IP` (4 или 16 байт; `ParseIP`, `IPv4(a, b, c, d)`,
     `IPv4Zero`, `IPv6Zero`, `IPv6Loopback`; `String`, `Is4`/`Is6`, `To4`,
     `Bytes`, `Equal`, `IsLoopback`, `IsPrivate` (RFC 1918, fc00::/7),
@@ -1761,8 +1779,8 @@ brotli, bzip2, lzw.
     блокируется. `Conn`/`Listener`/`UDPConn` — копируемые ручки на объект
     сокета; его `Drop` закрывает дескриптор, закрытие без гонок с
     переиспользованием номера дескриптора. SIGPIPE игнорируется.
-- `std.net.http` (HTTP/1.1 и HTTP/2; `https://` и `Server{TLS}` — через
-  `std.net.tls`; горячие циклы — C, `runtime/ABI.md` §16.5):
+- `net.http` (HTTP/1.1 и HTTP/2; `https://` и `Server{TLS}` — через
+  `net.tls`; горячие циклы — C, `runtime/ABI.md` §16.5):
   - **Сообщения**: `Request{Method, Path, Query, Proto, Headers, Body,
     Params, RemoteAddr, Host, Scheme}` с `Header`, `Param`, `QueryValue`,
     `RequestURI`, `Cookie(name)`, `Cookies()`, `Set/Value` (значения для
@@ -1799,7 +1817,7 @@ brotli, bzip2, lzw.
     переиспользованное оказалось закрыто сервером, возобновление TLS-сессий,
     прокси (абсолютная форма для http, туннель CONNECT для https,
     `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`), `Accept-Encoding: gzip` с
-    прозрачной распаковкой (`std.compress.gzip`), `Stats()`,
+    прозрачной распаковкой (`compress.gzip`), `Stats()`,
     `CloseIdleConnections()` (закрывает и HTTP/2-соединение без потоков, с
     GOAWAY); `DefaultTransport()` — общий для процесса. У каждого
     HTTP/2-соединения клиента своя задача-читатель: кадры читаются по мере
@@ -1832,7 +1850,7 @@ brotli, bzip2, lzw.
     HTTP/2 получает GOAWAY, ждёт текущие запросы); `ListenAndServe(addr, h)`.
     Задача на соединение; HTTP/1.1 keep-alive с разбором заголовков прямо в
     буфере чтения соединения, `Date` в каждом ответе, `Expect:
-    100-continue`; HTTP/2 (RFC 9113): кадры, HPACK (`std.net.http.hpack`:
+    100-continue`; HTTP/2 (RFC 9113): кадры, HPACK (`net.http.hpack`:
     статическая и динамическая таблицы, Хаффман), потоки с управлением
     потоком на обеих сторонах, SETTINGS, PING, GOAWAY, RST_STREAM;
     приоритеты игнорируются, server push не реализован; задача на поток,
@@ -1848,29 +1866,29 @@ brotli, bzip2, lzw.
   - **Middleware и файлы**: `Recover()` (ошибка обработчика → залогированный
     500 без текста; паники в Zell не перехватываются), `Logging(logger)`
     (событие `HTTP {RequestMethod} {RequestPath} responded {StatusCode} in
-    {Elapsed} ms` в `std.log`), `CORS(CORSOptions{...})` (preflight → 204),
+    {Elapsed} ms` в `log`), `CORS(CORSOptions{...})` (preflight → 204),
     `Gzip(level)`, `BodyLimit(n)`, `TimeoutHandler(h, ms, msg)` (503, отмена
     через контекст задачи). `ServeFile(req, res, path)` и
     `ServeDir(root)`/`FileServer{Root, Listing}`: `Content-Type` по
-    расширению (`std.mime`), `ETag` и `Last-Modified` с 304/412, диапазоны
+    расширению (`mime`), `ETag` и `Last-Modified` с 304/412, диапазоны
     (206, `multipart/byteranges`, 416, `If-Range`), HEAD, `index.html`,
     редирект каталога на `/`, листинг, корень не покидается через `..`.
   - **Server-Sent Events**: `ServerSentEvents(res) *EventWriter` с
     `Send(data)`, `SendEvent(SSEEvent{ID, Event, Data, Retry})`,
     `Comment`; клиент `NewEventSource(url)` — `for ev in es` / `Recv()`,
     переподключение с `Last-Event-ID` (`MaxRetries`), `Close()`.
-  - **`std.net.http.test`** (как Go `httptest`): `NewServer(h)`,
+  - **`net.http.test`** (как Go `httptest`): `NewServer(h)`,
     `NewTLSServer(h)` (самоподписанный сертификат), `NewH2CServer(h)`,
     `NewServerWith(h, Options{...})` — сервер на свободном порту
     `127.0.0.1` с полями `URL`, `Client`, `Transport` и `Close()`;
     `NewRecorder()`, `NewRequest(method, target, body)`, `Serve(h, req)`.
-| `std.net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Zell; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `zell.web`. ✓ реализовано (см. ниже), кроме OCSP, ACME и горячей перезагрузки сертификатов |
-| `std.net.ws` | WebSocket (RFC 6455) клиент и сервер: `Upgrade(req, res) Task<Conn!>` / `UpgradeWith(req, res, UpgradeOptions{Subprotocols, Origins, Headers})` внутри `http.Handler`, `Dial(url)` / `DialWith(url, DialOptions{...})` (`ws://`, `wss://`); `Conn`: `Send(Message)`, `SendText`, `SendBinary`, `SendFragments`, `Ping`, `Recv() Task<Message!>`, `for msg in conn`, `Close()`, `CloseWith(code, reason)`, `Pongs()`, `SetMaxMessageSize`; фрагментация, ping/pong (pong — автоматически), коды закрытия (`CloseError`, `IsCloseError`), маскирование, проверка UTF-8; `Send` из нескольких задач сериализуется мьютексом. permessage-deflate не реализован. ✓ реализовано |
-| `std.net.url` | разбор и сборка URL, query-параметры |
-| `std.net.mail` | адреса RFC 5322, сборка MIME-писем и отправка по SMTP — ✓ (см. ниже) |
+| `net.tls` | Собственная реализация **TLS 1.3 и TLS 1.2** (1.2 только ECDHE + AEAD): протокол, record layer, X.509 и проверка цепочек, SNI, ALPN, session tickets, HKDF — на Zell; примитивы с константным временем (AES-GCM, ChaCha20-Poly1305, X25519, P-256, Ed25519, RSA-PSS) — на C в рантайме. API: `tls.Dial(addr, Config{ServerName, ALPN, RootCAs, ClientCert})`, `tls.ServerConfig{Certificates, ClientAuth, MinVersion}`; системные корни через слой платформы. Тесты: трассы RFC 8448, векторы Wycheproof, interop с OpenSSL и curl, fuzzing. Без внешних C-библиотек; ACME в `zell.web`. ✓ реализовано (см. ниже), кроме OCSP, ACME и горячей перезагрузки сертификатов |
+| `net.ws` | WebSocket (RFC 6455) клиент и сервер: `Upgrade(req, res) Task<Conn!>` / `UpgradeWith(req, res, UpgradeOptions{Subprotocols, Origins, Headers})` внутри `http.Handler`, `Dial(url)` / `DialWith(url, DialOptions{...})` (`ws://`, `wss://`); `Conn`: `Send(Message)`, `SendText`, `SendBinary`, `SendFragments`, `Ping`, `Recv() Task<Message!>`, `for msg in conn`, `Close()`, `CloseWith(code, reason)`, `Pongs()`, `SetMaxMessageSize`; фрагментация, ping/pong (pong — автоматически), коды закрытия (`CloseError`, `IsCloseError`), маскирование, проверка UTF-8; `Send` из нескольких задач сериализуется мьютексом. permessage-deflate не реализован. ✓ реализовано |
+| `net.url` | разбор и сборка URL, query-параметры |
+| `net.mail` | адреса RFC 5322, сборка MIME-писем и отправка по SMTP — ✓ (см. ниже) |
 
-Реализовано (`std.net.tls`, Zell-код `compiler/src/sema/stdlib_src/tls*.zl`
-поверх `std.net` и примитивов `std.crypto.*`; рантайм — `runtime/ABI.md` §19):
+Реализовано (`net.tls`, Zell-код `compiler/src/sema/stdlib_src/tls*.zl`
+поверх `net` и примитивов `crypto.*`; рантайм — `runtime/ABI.md` §19):
 
 - Версии: TLS 1.3 (RFC 8446) и TLS 1.2 только с ECDHE + AEAD (RFC 5246,
   5288, 7905): наборы `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384`,
@@ -1922,7 +1940,7 @@ brotli, bzip2, lzw.
   post-handshake auth, 0-RTT, P-521, RSA-PSS-ключи (`rsassa-pss` OID),
   горячей перезагрузки сертификатов.
 
-Реализовано (`std.net.mail`, Zell, `sema/stdlib_src/mail.zl`):
+Реализовано (`net.mail`, Zell, `sema/stdlib_src/mail.zl`):
 
 - `Address{Name, Address}` с `String()` (имя в кавычках или RFC 2047),
   `ParseAddress(s)`, `ParseAddressList(s)` (кавычки, `<...>`, старая форма
@@ -1947,25 +1965,25 @@ brotli, bzip2, lzw.
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.crypto.hash` | `Sha256`, `Sha512`, `Sha3`, `Blake2`, `Md5` (только для совместимости), потоковый интерфейс `Hasher` |
-| `std.crypto.hmac` | HMAC поверх любого хэша |
-| `std.crypto.aes` | AES-GCM, AES-CBC; `ChaCha20-Poly1305` — ✓ AES-GCM (`std.crypto.aes`), AES-CBC с PKCS#7 (для старых форматов), ChaCha20-Poly1305 (`std.crypto.chacha`) |
-| `std.crypto.rsa` | генерация ключей, подпись, шифрование, PKCS#1/OAEP — ✓ подпись и проверка PKCS#1 v1.5 и PSS, шифрование OAEP, генерация ключей (Miller-Rabin) |
-| `std.crypto.ecdsa`, `std.crypto.ed25519` | ключи на эллиптических кривых, подпись и проверка — ✓ P-256, P-384 и Ed25519 |
-| `std.crypto.ecdh`, `std.crypto.x25519` | обмен ключами — ✓ P-256, P-384 и X25519 |
-| `std.crypto.kdf` | `Pbkdf2`, `Argon2`, `Scrypt`, `Hkdf` — ✓ все (см. ниже) |
-| `std.crypto.rand` | криптографически стойкие случайные числа и байты |
-| `std.crypto.x509` | разбор и проверка сертификатов, PEM/DER — ✓ |
-| `std.crypto.password` | `Hash`/`Verify` на базе Argon2 для паролей — ✓ |
+| `crypto.hash` | `Sha256`, `Sha512`, `Sha3`, `Blake2`, `Md5` (только для совместимости), потоковый интерфейс `Hasher` |
+| `crypto.hmac` | HMAC поверх любого хэша |
+| `crypto.aes` | AES-GCM, AES-CBC; `ChaCha20-Poly1305` — ✓ AES-GCM (`crypto.aes`), AES-CBC с PKCS#7 (для старых форматов), ChaCha20-Poly1305 (`crypto.chacha`) |
+| `crypto.rsa` | генерация ключей, подпись, шифрование, PKCS#1/OAEP — ✓ подпись и проверка PKCS#1 v1.5 и PSS, шифрование OAEP, генерация ключей (Miller-Rabin) |
+| `crypto.ecdsa`, `crypto.ed25519` | ключи на эллиптических кривых, подпись и проверка — ✓ P-256, P-384 и Ed25519 |
+| `crypto.ecdh`, `crypto.x25519` | обмен ключами — ✓ P-256, P-384 и X25519 |
+| `crypto.kdf` | `Pbkdf2`, `Argon2`, `Scrypt`, `Hkdf` — ✓ все (см. ниже) |
+| `crypto.rand` | криптографически стойкие случайные числа и байты |
+| `crypto.x509` | разбор и проверка сертификатов, PEM/DER — ✓ |
+| `crypto.password` | `Hash`/`Verify` на базе Argon2 для паролей — ✓ |
 
 Реализация: примитивы — на C в рантайме, по проверенным реализациям с
 константным временем (без ветвлений и обращений к памяти по секретам),
 с векторами Wycheproof и RFC в тестах; протоколы (TLS, x509, JWT) — на Zell.
 Внешних криптобиблиотек нет; до внешнего аудита это отмечено в документации.
 
-Реализовано: `std.crypto.hash` — `Sha256`, `Sha512`, `Sha1`, `Md5` (`[]byte`)
-и их `...Hex` (строка), `Crc32`; `std.crypto.hmac` — `Sha256`, `Sha256Hex`,
-`Equal`; `std.crypto.rand` — `Bytes`, `Int`, `Hex` (`getrandom(2)`). Хэши и
+Реализовано: `crypto.hash` — `Sha256`, `Sha512`, `Sha1`, `Md5` (`[]byte`)
+и их `...Hex` (строка), `Crc32`; `crypto.hmac` — `Sha256`, `Sha256Hex`,
+`Equal`; `crypto.rand` — `Bytes`, `Int`, `Hex` (`getrandom(2)`). Хэши и
 HMAC — собственная реализация на C по FIPS 180-4 / RFC 1321 / RFC 2104
 (проверена тестовыми векторами), без внешних библиотек; `Sha3`, `Blake2`,
 `Hasher` — пока нет.
@@ -1973,45 +1991,45 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 Реализовано (примитивы — `runtime/src/crypto/`, C, `runtime/ABI.md` §19;
 ключи и подписи — `[]byte`; ошибки — `T!`):
 
-- `std.crypto.hash` дополнительно: `Sha384`, `Sha384Hex`, `Sum(alg, data
+- `crypto.hash` дополнительно: `Sha384`, `Sha384Hex`, `Sum(alg, data
   []byte) []byte!` (`alg` — `"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`);
-  `std.crypto.hmac.Sum(alg, key, data)`.
-- `std.crypto.aes`: `GcmSeal(key, nonce, plaintext, aad) []byte!`
+  `crypto.hmac.Sum(alg, key, data)`.
+- `crypto.aes`: `GcmSeal(key, nonce, plaintext, aad) []byte!`
   (шифртекст + 16-байтовый тег), `GcmOpen(key, nonce, ciphertext, aad)
   []byte!` (`aes-gcm: message authentication failed`), `EncryptBlock`,
   `HasHardware()`. Ключи 16/24/32 байта, nonce 12 байт. Без AES-NI —
   bitsliced AES (64-битный, 4 блока за проход) и GHASH на умножениях «с
   дырками», без таблиц по секретам; с AES-NI+PCLMULQDQ — intrinsics
   (выбор по cpuid, `ZELL_NO_AESNI=1` отключает).
-- `std.crypto.chacha`: `Seal`, `Open` — ChaCha20-Poly1305 (RFC 8439).
-- `std.crypto.x25519`: `GenerateKey()`, `PublicKey(priv)`,
+- `crypto.chacha`: `Seal`, `Open` — ChaCha20-Poly1305 (RFC 8439).
+- `crypto.x25519`: `GenerateKey()`, `PublicKey(priv)`,
   `SharedSecret(priv, peer)` (нулевой секрет малого порядка — ошибка).
-- `std.crypto.ecdh` (P-256): `GenerateKey()`, `PublicKey(priv)` (65 байт,
+- `crypto.ecdh` (P-256): `GenerateKey()`, `PublicKey(priv)` (65 байт,
   несжатая точка), `SharedSecret(priv, peer)` (точка вне кривой — ошибка).
-- `std.crypto.ecdsa` (P-256): `GenerateKey`, `PublicKey`, `Sign(priv,
+- `crypto.ecdsa` (P-256): `GenerateKey`, `PublicKey`, `Sign(priv,
   digest) []byte!` (DER; nonce по RFC 6979 с добавкой случайности),
   `Verify(pub, digest, sig) bool` (строгий DER). Арифметика — Монтгомери
   на 4×64 битах, полные формулы сложения Renes–Costello–Batina, окно 4 бита
   с выбором из таблицы без ветвлений.
-- `std.crypto.ed25519`: `GenerateKey()` (32-байтовый seed), `PublicKey(seed)`,
+- `crypto.ed25519`: `GenerateKey()` (32-байтовый seed), `PublicKey(seed)`,
   `Sign(seed, msg)`, `Verify(pub, msg, sig) bool` (RFC 8032; `S < L` и
   каноничные точки обязательны).
-- `std.crypto.rsa`: `VerifyPKCS1v15(n, e, hash, digest, sig) bool`,
+- `crypto.rsa`: `VerifyPKCS1v15(n, e, hash, digest, sig) bool`,
   `VerifyPSS(...)`, `SignPKCS1v15(keyDER, hash, digest) []byte!`,
   `SignPSS(...)` (ключ — PKCS#1 `RSAPrivateKey` DER, как в
   `x509.PrivateKey.Bytes`; CRT с ослеплением экспоненты, постоянное время
   возведения в степень, проверка результата открытым ключом).
-- `std.crypto.hkdf`: `Extract(hash, salt, ikm)`, `Expand(hash, prk, info, n)`
+- `crypto.hkdf`: `Extract(hash, salt, ikm)`, `Expand(hash, prk, info, n)`
   (RFC 5869).
-- `std.crypto.kdf`: `Pbkdf2(password, salt, iter, keyLen, hash)` (RFC 8018),
+- `crypto.kdf`: `Pbkdf2(password, salt, iter, keyLen, hash)` (RFC 8018),
   `Scrypt(password, salt, N, r, p, keyLen)` (RFC 7914), `Argon2id/Argon2i/
   Argon2d(password, salt, time, memoryKiB, threads, keyLen)` и
   `Argon2(password, salt, Argon2Params{Variant, Time, Memory, Threads,
   KeyLen, Secret, AssociatedData})` (RFC 9106, версия 0x13; полосы
   заполняются последовательно), `Hkdf(hash, secret, salt, info, keyLen)`;
-  `std.crypto.hash.Blake2b(data, size, key)` (RFC 7693). Пароли и соли —
+  `crypto.hash.Blake2b(data, size, key)` (RFC 7693). Пароли и соли —
   `[]byte`.
-- `std.crypto.password`: `Hash(pw) string!` — строка PHC
+- `crypto.password`: `Hash(pw) string!` — строка PHC
   `$argon2id$v=19$m=65536,t=3,p=4$<соль>$<хэш>` (base64 без `=`, соль
   16 байт, параметры по умолчанию RFC 9106 §4), `HashWith(pw, Params)`,
   `Verify(pw, hash) bool` (параметры из строки, сравнение за постоянное
@@ -2023,17 +2041,17 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
   RFC 6979 с HMAC-SHA384); в TLS — группа secp384r1 и схема
   `ecdsa_secp384r1_sha384`, в x509 — проверка подписей ключами P-384 и
   `ParsePrivateKey` для P-384.
-- `std.crypto.aes`: `CbcEncrypt/CbcDecrypt` (PKCS#7; ошибка заполнения —
+- `crypto.aes`: `CbcEncrypt/CbcDecrypt` (PKCS#7; ошибка заполнения —
   `aes-cbc: invalid padding`, проверка за постоянное время), `CbcEncryptRaw/
   CbcDecryptRaw`, `Pkcs7Pad/Pkcs7Unpad`, `DecryptBlock` (AES-NI или
   обратный шифр без таблиц). CBC без MAC — только для старых форматов.
-- `std.crypto.rsa`: `GenerateKey(bits) []byte!` (PKCS#1 DER, e = 65537;
+- `crypto.rsa`: `GenerateKey(bits) []byte!` (PKCS#1 DER, e = 65537;
   простые — случайные кандидаты, пробное деление и Miller-Rabin на C,
-  остальное — `std.math.big`), `PublicKeyOf(der) PublicKey!`,
+  остальное — `math.big`), `PublicKeyOf(der) PublicKey!`,
   `EncryptOAEP(n, e, hash, msg, label)` / `DecryptOAEP(keyDER, hash, ct,
   label)` (RFC 8017 §7.1, декодирование за постоянное время),
   `IsProbablePrime(p, rounds)`.
-- `std.crypto.x509` (Zell, `sema/stdlib_src/x509.zl`): `ParseDER(der)
+- `crypto.x509` (Zell, `sema/stdlib_src/x509.zl`): `ParseDER(der)
   *Certificate!`, `ParsePEM(text) []*Certificate!`, `DecodePEM`/`EncodePEM`,
   `Certificate{Raw, RawTBSCertificate, Version, SerialNumber, Subject,
   Issuer, NotBefore, NotAfter (Unix ms), PublicKeyAlgorithm, PublicKey,
@@ -2060,22 +2078,22 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.encoding.json` | `Parse<T>`/`Format` через compile-time рефлексию, `Value` для динамики, `Reader`/`Writer`, `Schema<T>`, атрибуты `@json`/`@serde` |
-| `std.encoding.xml`, `std.encoding.yaml`, `std.encoding.toml` | та же модель; XML pull-reader и атрибуты `@xml(attr)`, YAML якоря и многодокументные потоки, TOML с сохранением комментариев |
-| `std.encoding.base64`, `std.encoding.hex` | кодировки |
-| `std.encoding.csv` | чтение и запись CSV |
-| `std.compress` | gzip, zlib, zstd (декодер и кодер), brotli (декодер) |
-| `std.regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Zell |
-| `std.unicode` | классификация символов, нормализация (✓ классы и регистр по таблицам Unicode 15, `utf8`, `utf16`; нет нормализации) |
-| `std.database.sql` | единый асинхронный интерфейс к SQL с пулом и `Query<T>`; драйверы `std.database.postgres` (на Zell) и `std.database.sqlite` (системная libsqlite3) — ✓ (см. `docs/FRAMEWORK.md` §3); MySQL позже |
-| `std.data` | ORM уровня EF Core (`zell.data`) — ✓: модель из атрибутов и соглашений, `data.Context` с `data.Set<T>`, запросы с лямбдами, переведёнными в SQL при компиляции, change tracking, миграции (`zell data ...`); PostgreSQL и SQLite (см. `docs/FRAMEWORK.md` §3) |
-| `std.data.redis` | клиент Redis на Zell (уровень 3б `docs/STDLIB.md`) — ✓: RESP2/RESP3 (`HELLO 3` с откатом на RESP2), `redis.Connect(url)` (`redis://`, `rediss://`, `unix://`, AUTH, SELECT, параметры пула в URL), типизированные команды методами (`Get/Set/SetEx/SetNX/Del/Exists/Incr/Expire/TTL/MGet/MSet/H*/L*/S*/Z*/PF*/XAdd/XRange/Keys/Scan/Publish/Eval/EvalSha/Script*`; несколько значений — срезом, вариадиков нет) и `Do(args []any) Reply!`; отсутствующее значение — `redis.Nil`, ошибка сервера — `redis.Error{Code, Text}`; пул с проверкой простаивающих (PING), сроком жизни, ожиданием с таймаутом (`ErrPoolTimeout`), повторами с backoff; `Pipeline()` — задачи команд завершаются после `Exec` (одна запись в сокет); `TxPipeline` (MULTI/EXEC), `Watch(keys, fn)` (`ErrTxFailed`); `NewScript` + `Run` (EVALSHA → EVAL при NOSCRIPT); `Subscribe/PSubscribe` с `for msg in sub` и переподключением; таймауты через контекст задачи; **Sentinel** (`ConnectSentinel`: поиск мастера, подписка на `+switch-master`, повторный опрос при READONLY/сетевой ошибке, чтение с реплик); **Cluster** (`ConnectCluster`: карта слотов из `CLUSTER SLOTS`, CRC16 и hash tags, MOVED/ASK, многоключевые команды в одном слоте — иначе `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE); `GetJSON<T>/SetJSON<T>` и `redis.Get<T>/Set<T>`. Проверено на redis-server 7.0 (TLS, Sentinel с отказом мастера, Cluster из 3 узлов с миграцией слота) |
-| `std.data.kafka` | клиент Kafka на Zell без C — ✓: протокол (ApiVersions 0, Metadata 1, Produce 7/3, Fetch 10/4, ListOffsets 1, FindCoordinator 1, JoinGroup 2, SyncGroup 1, Heartbeat 1, LeaveGroup 1, OffsetCommit 2, OffsetFetch 1, SaslHandshake 1, SaslAuthenticate 0, CreateTopics 2, DeleteTopics 1, InitProducerId 0), record batch v2 (CRC-32C, gzip, zstd; snappy/lz4 нет), `NewProducer(brokers, opts)` с батчами по размеру и `LingerMs`, acks, идемпотентностью (producer id + последовательности), разбиением по murmur2 как в Java-клиенте и round-robin, `Send(topic, key, value) Task<RecordMetadata!>`; `NewConsumer(brokers, group, topics)` — группы (range/round-robin, ребаланс, heartbeat в фоновой задаче, авто- и ручной commit), `for rec in consumer`, `Poll`, `Seek`; `NewAdmin` (create/delete/list/describe); TLS, SASL PLAIN/SCRAM-SHA-256/512, обновление метаданных при смене лидера, повторы с backoff. Проверено на Kafka 3.7 (KRaft) |
-| `std.cloud.s3`, `std.cloud.blob` | клиент S3 на Zell — ✓: AWS Signature V4 (заголовки и presigned URL; векторы AWS и botocore), `s3.NewClient(Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle})` для AWS, MinIO, R2, GCS; `PutObject` (тип, метаданные, ACL, `If-None-Match`), `GetObject` потоком и диапазоном, `GetObjectBytes`, `HeadObject`, `DeleteObject(s)`, `ListObjectsV2` и итератор `List` с префиксами и разделителем, `CopyObject`, бакеты (`Create/Delete/List/Exists`), multipart `Upload(bucket, key, reader, partSize, concurrency)` с параллельными частями и отменой при ошибке, `Presign`, типизированные ошибки (`s3.Error`, `ErrNoSuchKey`…), повторы при 5xx/SlowDown, учётные данные из env, `~/.aws/credentials` и IMDSv2; `std.cloud.blob.Bucket` поверх S3 (`OpenS3`) и каталога (`OpenDir`). Проверено на MinIO |
+| `encoding.json` | `Parse<T>`/`Format` через compile-time рефлексию, `Value` для динамики, `Reader`/`Writer`, `Schema<T>`, атрибуты `@json`/`@serde` |
+| `encoding.xml`, `encoding.yaml`, `encoding.toml` | та же модель; XML pull-reader и атрибуты `@xml(attr)`, YAML якоря и многодокументные потоки, TOML с сохранением комментариев |
+| `encoding.base64`, `encoding.hex` | кодировки |
+| `encoding.csv` | чтение и запись CSV |
+| `compress` | gzip, zlib, zstd (декодер и кодер), brotli (декодер) |
+| `regex` | синтаксис RE2 (классы, `\p{L}`, именованные группы, флаги `(?i)(?m)(?s)`), гарантированно линейное время (Pike VM + ленивый DFA + литеральный префильтр), без backreferences и lookbehind. Литеральные паттерны проверяются при компиляции, `const` паттерны компилируются заранее. API: `Compile(p) Regex!`, `Pattern(lit)`, `Match`, `Find`, `FindAll`, `Groups` (по имени и индексу), `Replace` с `${name}`, `ReplaceFunc`, `Split`, `Iter`, `Escape`. Движок на Zell |
+| `unicode` | классификация символов, нормализация (✓ классы и регистр по таблицам Unicode 15, `utf8`, `utf16`; нет нормализации) |
+| `database.sql` | единый асинхронный интерфейс к SQL с пулом и `Query<T>`; драйверы `database.postgres` (на Zell) и `database.sqlite` (системная libsqlite3) — ✓ (см. `docs/FRAMEWORK.md` §3); MySQL позже |
+| `data` | ORM уровня EF Core (`zell.data`) — ✓: модель из атрибутов и соглашений, `data.Context` с `data.Set<T>`, запросы с лямбдами, переведёнными в SQL при компиляции, change tracking, миграции (`zell data ...`); PostgreSQL и SQLite (см. `docs/FRAMEWORK.md` §3) |
+| `data.redis` | клиент Redis на Zell (уровень 3б `docs/STDLIB.md`) — ✓: RESP2/RESP3 (`HELLO 3` с откатом на RESP2), `redis.Connect(url)` (`redis://`, `rediss://`, `unix://`, AUTH, SELECT, параметры пула в URL), типизированные команды методами (`Get/Set/SetEx/SetNX/Del/Exists/Incr/Expire/TTL/MGet/MSet/H*/L*/S*/Z*/PF*/XAdd/XRange/Keys/Scan/Publish/Eval/EvalSha/Script*`; несколько значений — срезом, вариадиков нет) и `Do(args []any) Reply!`; отсутствующее значение — `redis.Nil`, ошибка сервера — `redis.Error{Code, Text}`; пул с проверкой простаивающих (PING), сроком жизни, ожиданием с таймаутом (`ErrPoolTimeout`), повторами с backoff; `Pipeline()` — задачи команд завершаются после `Exec` (одна запись в сокет); `TxPipeline` (MULTI/EXEC), `Watch(keys, fn)` (`ErrTxFailed`); `NewScript` + `Run` (EVALSHA → EVAL при NOSCRIPT); `Subscribe/PSubscribe` с `for msg in sub` и переподключением; таймауты через контекст задачи; **Sentinel** (`ConnectSentinel`: поиск мастера, подписка на `+switch-master`, повторный опрос при READONLY/сетевой ошибке, чтение с реплик); **Cluster** (`ConnectCluster`: карта слотов из `CLUSTER SLOTS`, CRC16 и hash tags, MOVED/ASK, многоключевые команды в одном слоте — иначе `ErrCrossSlot`, широковещательные FLUSHALL/KEYS/DBSIZE); `GetJSON<T>/SetJSON<T>` и `redis.Get<T>/Set<T>`. Проверено на redis-server 7.0 (TLS, Sentinel с отказом мастера, Cluster из 3 узлов с миграцией слота) |
+| `data.kafka` | клиент Kafka на Zell без C — ✓: протокол (ApiVersions 0, Metadata 1, Produce 7/3, Fetch 10/4, ListOffsets 1, FindCoordinator 1, JoinGroup 2, SyncGroup 1, Heartbeat 1, LeaveGroup 1, OffsetCommit 2, OffsetFetch 1, SaslHandshake 1, SaslAuthenticate 0, CreateTopics 2, DeleteTopics 1, InitProducerId 0), record batch v2 (CRC-32C, gzip, zstd; snappy/lz4 нет), `NewProducer(brokers, opts)` с батчами по размеру и `LingerMs`, acks, идемпотентностью (producer id + последовательности), разбиением по murmur2 как в Java-клиенте и round-robin, `Send(topic, key, value) Task<RecordMetadata!>`; `NewConsumer(brokers, group, topics)` — группы (range/round-robin, ребаланс, heartbeat в фоновой задаче, авто- и ручной commit), `for rec in consumer`, `Poll`, `Seek`; `NewAdmin` (create/delete/list/describe); TLS, SASL PLAIN/SCRAM-SHA-256/512, обновление метаданных при смене лидера, повторы с backoff. Проверено на Kafka 3.7 (KRaft) |
+| `cloud.s3`, `cloud.blob` | клиент S3 на Zell — ✓: AWS Signature V4 (заголовки и presigned URL; векторы AWS и botocore), `s3.NewClient(Config{Endpoint, Region, AccessKey, SecretKey, SessionToken, PathStyle})` для AWS, MinIO, R2, GCS; `PutObject` (тип, метаданные, ACL, `If-None-Match`), `GetObject` потоком и диапазоном, `GetObjectBytes`, `HeadObject`, `DeleteObject(s)`, `ListObjectsV2` и итератор `List` с префиксами и разделителем, `CopyObject`, бакеты (`Create/Delete/List/Exists`), multipart `Upload(bucket, key, reader, partSize, concurrency)` с параллельными частями и отменой при ошибке, `Presign`, типизированные ошибки (`s3.Error`, `ErrNoSuchKey`…), повторы при 5xx/SlowDown, учётные данные из env, `~/.aws/credentials` и IMDSv2; `cloud.blob.Bucket` поверх S3 (`OpenS3`) и каталога (`OpenDir`). Проверено на MinIO |
 
-Реализовано: `std.encoding.base64` — `Encode`, `EncodeString`, `Decode`,
-`DecodeString`, URL-safe `EncodeURL`/`DecodeURL`; `std.encoding.hex` —
-`Encode`, `EncodeString`, `Decode`, `DecodeString`; `std.encoding.json` —
+Реализовано: `encoding.base64` — `Encode`, `EncodeString`, `Decode`,
+`DecodeString`, URL-safe `EncodeURL`/`DecodeURL`; `encoding.hex` —
+`Encode`, `EncodeString`, `Decode`, `DecodeString`; `encoding.json` —
 `Parse<T>`, `Format`, `Decode<T>`, `ParseValue`/`Value`, `Quote` (см.
 «Рефлексия», «Реализовано»). Остальное — пока нет.
 
@@ -2084,12 +2102,12 @@ HMAC — собственная реализация на C по FIPS 180-4 / RF
 Поверх стандартной библиотеки строится фреймворк уровня ASP.NET Core:
 `zell.web` (маршруты через атрибуты, DI, middleware, OpenAPI),
 `zell.data` (ORM уровня EF Core с переводом лямбд в SQL при компиляции и
-миграциями; реализован как `std.data`, см. ниже), `zell.log` (структурированный логгер уровня Serilog с sinks и
+миграциями; реализован как `data`, см. ниже), `zell.log` (структурированный логгер уровня Serilog с sinks и
 enrichers), `zell.diag` (профилировщик CPU/памяти/задач в формате pprof,
 метрики, OpenTelemetry, `zell tool pprof`). Подробно: `docs/FRAMEWORK.md`.
 
-Пока нет реестра пакетов, `zell.web` живёт в stdlib как `std.web`
-(`std.web.auth.jwt`, `std.web.config`). Вызовы `app.MapController<C>()`,
+Пока нет реестра пакетов, `zell.web` живёт в stdlib как `web`
+(`web.auth.jwt`, `web.config`). Вызовы `app.MapController<C>()`,
 `app.MapGet(path, handler)` и `app.Services.AddSingleton<T>()` (и их
 родственники) компилятор раскрывает при компиляции (`sema/web.rs`): по
 атрибутам и сигнатурам он порождает исходник обобщённой функции stdlib,
@@ -2099,8 +2117,8 @@ enrichers), `zell.diag` (профилировщик CPU/памяти/задач 
 Внутри таких экземпляров `T.New(...)` с параметром типа, связанным со
 структурой, вызывает её статический метод.
 
-**Перевод лямбд в SQL при компиляции (`std.data`).** `zell.data` тоже
-живёт в stdlib как `std.data` (docs/FRAMEWORK.md §3). Лямбда, переданная
+**Перевод лямбд в SQL при компиляции (`data`).** `zell.data` тоже
+живёт в stdlib как `data` (docs/FRAMEWORK.md §3). Лямбда, переданная
 литералом в `Where`, `OrderBy`, `Select`, `GroupBy`, `Join`, `Sum`,
 `ExecuteUpdate`, ... у получателя `data.Set<T>`/`data.Query<T>`, не
 становится замыканием: компилятор (`sema/orm_sql.rs`) обходит её тело, где
@@ -2133,30 +2151,30 @@ accessibility из коробки, hot reload, `ui.TestHost` для CI. Подр
 
 | Пространство | Содержимое |
 |--------------|------------|
-| `std.log` | логгер уровня Serilog (docs/FRAMEWORK.md, раздел 4); пока нет реестра пакетов, живёт в `std.log` вместо `zell.log` |
-| `std.diag` | метрики (Prometheus), трассировка (OpenTelemetry, W3C traceparent), профили CPU/heap в формате pprof (docs/FRAMEWORK.md, раздел 5); вместо `zell.diag` |
-| `std.testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты (✓ `@test` + `zell test`, каждый тест в отдельном процессе; см. «Компилятор и инструменты») |
-| `std.random` | ГПСЧ для не-криптографических задач |
-| `std.sync` | атомики, `Once`, `RwMutex` (✓ `RwMutex`, `Semaphore`, `Barrier` — async; `Once`, `AtomicInt`/`AtomicBool`, `Atomic<T: Comparable>`, `Pool<T>`) |
-| `std.reflect` | `TypeOf<T>`, `ValueOf`, `TypeInfo`/`FieldInfo`/`MethodInfo`, атрибуты, compile-time `Fields<T>()` (см. раздел «Рефлексия») |
-| `std.process` | запуск внешних процессов, пайпы (✓ async `Run`/`Output`, `Start` с пайпами `AsyncReader`/`AsyncWriter`, `Timeout`, `Kill`, `LookPath`) |
-| `std.uuid` | генерация и разбор UUID |
+| `log` | логгер уровня Serilog (docs/FRAMEWORK.md, раздел 4); пока нет реестра пакетов, живёт в `log` вместо `zell.log` |
+| `diag` | метрики (Prometheus), трассировка (OpenTelemetry, W3C traceparent), профили CPU/heap в формате pprof (docs/FRAMEWORK.md, раздел 5); вместо `zell.diag` |
+| `testing` | `Test*` функции, `assert`, бенчмарки, табличные тесты (✓ `@test` + `zell test`, каждый тест в отдельном процессе; см. «Компилятор и инструменты») |
+| `random` | ГПСЧ для не-криптографических задач |
+| `sync` | атомики, `Once`, `RwMutex` (✓ `RwMutex`, `Semaphore`, `Barrier` — async; `Once`, `AtomicInt`/`AtomicBool`, `Atomic<T: Comparable>`, `Pool<T>`) |
+| `reflect` | `TypeOf<T>`, `ValueOf`, `TypeInfo`/`FieldInfo`/`MethodInfo`, атрибуты, compile-time `Fields<T>()` (см. раздел «Рефлексия») |
+| `process` | запуск внешних процессов, пайпы (✓ async `Run`/`Output`, `Start` с пайпами `AsyncReader`/`AsyncWriter`, `Timeout`, `Kill`, `LookPath`) |
+| `uuid` | генерация и разбор UUID |
 
-Реализовано: `std.random` — `Seed`, `Int`, `IntN`, `Float`, `Bytes`,
+Реализовано: `random` — `Seed`, `Int`, `IntN`, `Float`, `Bytes`,
 `Shuffle` (только `[]int` до generics; xoshiro256**, общий для процесса
-генератор под мьютексом); `std.uuid` — `New` (v4), `IsValid`;
-`std.log` — `New()…CreateLogger()` (`MinimumLevel`, `MinimumLevelOverride`,
+генератор под мьютексом); `uuid` — `New` (v4), `IsValid`;
+`log` — `New()…CreateLogger()` (`MinimumLevel`, `MinimumLevelOverride`,
 `MinimumLevelControlledBy`, `Clock`, `Enrich.*`, `WriteTo.Console/File/Json/
 Sink/Async`, `Filter.*`), интерфейсы `Logger`/`Sink`/`Enricher`, `Event`,
 `Global`/`SetGlobal`, `For<T>`, `Context.Push`, шаблоны сообщений,
 разбираемые при компиляции (`sema/logtmpl.rs`), атрибут `@log(skip:)`;
-`std.diag` — `NewCounter`/`NewGauge`/`NewHistogram` с метками,
+`diag` — `NewCounter`/`NewGauge`/`NewHistogram` с метками,
 `PrometheusText`, `ServeMetrics`/`MetricsHandler`, `Runtime()`, `Span`
 (`StartSpan`, `End`, атрибуты, статус), `ConsoleExporter`, `OtlpExporter`
 (OTLP/HTTP JSON), `traceparent` в `http.Client`/`http.Server`,
 `StartCPUProfile`/`StopCPUProfile`, `WriteHeapProfile`/`HeapProfile`
 (подробности и пробелы — docs/FRAMEWORK.md, «Статус»). Уровни 0–1 по
-docs/STDLIB.md (`std.slices`, `maps`, `cmp`, `bytes`, `strconv`, `math.bits/
+docs/STDLIB.md (`slices`, `maps`, `cmp`, `bytes`, `strconv`, `math.bits/
 big/complex`, `unicode`, `hash`, `encoding.binary/base32/pem/asn1`, `io`,
 `os`, `process`, `cli`, `sync`, `testing`, `embed`) — исходники
 `compiler/src/sema/stdlib_src/*.zl`, C-части `runtime/src/std_*.c`;
@@ -2218,7 +2236,7 @@ zell test ./src              # тесты (@test func TestX(t *testing.T)): --fi
 
 - `zell test [path]` находит функции `@test` (`func TestX(t *testing.T)`,
   `func X()` без параметров, бенчмарки `func BenchX(b *testing.B)` — с
-  `--bench`), генерирует драйвер, вызывающий `std.testing.Main`, и
+  `--bench`), генерирует драйвер, вызывающий `testing.Main`, и
   запускает его; собственные `main` переименовываются в памяти. Каждый
   тест выполняется в отдельном процессе (тестовый бинарник перезапускает
   себя с `--run-one`), поэтому `t.Fatal`, `t.Skip` и паника завершают только
@@ -2228,7 +2246,7 @@ zell test ./src              # тесты (@test func TestX(t *testing.T)): --fi
   `--parallel N`; код выхода 1 при падении.
 - Расширение файлов: `.zl`.
 - В сообщениях об ошибках типы текущего пространства имён пишутся коротко
-  (`Point`), остальные — полным путём (`app.models.User`, `std.task.Mutex`).
+  (`Point`), остальные — полным путём (`app.models.User`, `task.Mutex`).
 - Компилятор — библиотека; LSP-сервер, форматтер, отладчик и IDE-плагины
   строятся на ней. Подробно: `docs/TOOLING.md`. Каноническая грамматика
   для IDE: `grammar/zell.bnf`; подсветка VS Code: `editors/vscode/`.
@@ -2240,8 +2258,7 @@ zell test ./src              # тесты (@test func TestX(t *testing.T)): --fi
 ```zell
 namespace app
 
-import std
-import std.io
+import io
 
 struct Counter {
     count int
@@ -2345,16 +2362,16 @@ lambda      = [ "async" ] "func" "(" [ params ] ")" [ type ] block
 3. **Кодогенерация** — LLVM IR для структур, функций, указателей, срезов,
    строк, `switch`, ошибок; линковка с рантаймом на C.
 4. **Рантайм** — аллокатор с подсчётом ссылок, строки, срезы, map, паника.
-5. **Async** — LLVM coroutines, планировщик, `std.task`.
-6. **Стандартная библиотека (ядро) и инструменты** — `std.io`, `std.strings`,
-   `std.fmt`, `std.fs`, `std.os`, `std.time`, `zell fmt`, `zell test`.
+5. **Async** — LLVM coroutines, планировщик, `task`.
+6. **Стандартная библиотека (ядро) и инструменты** — `io`, `strings`,
+   `fmt`, `fs`, `os`, `time`, `zell fmt`, `zell test`.
 7. **Generics** — `List<T>`, ограничения через интерфейсы (мономорфизация). ✓
    (без обобщённых интерфейсов; см. «Generics»).
-8. **Сеть и криптография** — `std.net`, `std.net.http`, `std.crypto.*` через
-   BoringSSL/libsodium, `std.encoding.json`.
+8. **Сеть и криптография** — `net`, `net.http`, `crypto.*` через
+   BoringSSL/libsodium, `encoding.json`.
 9. **Остальная стандартная библиотека** — форматы, сжатие, regex, SQL, log.
-10. **Рефлексия** — атрибуты, таблицы `TypeInfo`, `std.reflect`, compile-time
-    `Fields<T>()`; `std.encoding.json` поверх неё. ✓ (см. «Рефлексия»,
+10. **Рефлексия** — атрибуты, таблицы `TypeInfo`, `reflect`, compile-time
+    `Fields<T>()`; `encoding.json` поверх неё. ✓ (см. «Рефлексия»,
     «Реализовано»).
 11. **Инструменты** — `zell lsp`, `zell fmt`, DWARF и DAP, плагины для
     VS Code и IDEA (`docs/TOOLING.md`).

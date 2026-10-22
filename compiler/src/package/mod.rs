@@ -13,7 +13,7 @@
 //!
 //! - every package owns one namespace root, unique in the graph, and all
 //!   its files declare namespaces under it ([`check_namespaces`]);
-//! - strict isolation: a file may use only `std`, its own root and the
+//! - strict isolation: a file may use only the standard library, its own root and the
 //!   roots of its package's declared dependencies (enforced inside sema by
 //!   [`crate::sema::ImportPolicy`]).
 

@@ -1,4 +1,4 @@
-namespace std.data
+namespace data
 
 // Queries: the SQL fragments are produced by the compiler from the lambdas
 // (sema/orm.rs) for both dialects; a fragment's text references its
@@ -26,7 +26,7 @@ func addFrag(xs []Frag, f Frag) []Frag {
 // A statement being written: text and arguments with numbered placeholders.
 struct sqlw {
     pg     bool
-    b      std.strings.Builder
+    b      strings.Builder
     args   []any
     // GROUP BY keys, referenced as {#i} by the projection of a group
     groups []Frag
@@ -38,7 +38,7 @@ struct sqlw {
     func ph(v any) {
         this.args = append(this.args, v)
         if this.pg {
-            this.b.Write("$" + std.fmt.Format("{0}", len(this.args)))
+            this.b.Write("$" + fmt.Format("{0}", len(this.args)))
         } else {
             this.b.Write("?")
         }
@@ -123,7 +123,7 @@ struct core {
     distinct bool
 
     func writer() sqlw {
-        return sqlw{pg: this.st.pg(), b: std.strings.Builder{}, args: [], groups: this.groups}
+        return sqlw{pg: this.st.pg(), b: strings.Builder{}, args: [], groups: this.groups}
     }
 
     func paged() bool {
@@ -197,12 +197,12 @@ struct core {
 
     func paging(w *sqlw) {
         if this.take >= 0 {
-            w.raw(" LIMIT " + std.fmt.Format("{0}", this.take))
+            w.raw(" LIMIT " + fmt.Format("{0}", this.take))
         } else if this.skip > 0 && !this.st.pg() {
             w.raw(" LIMIT -1")
         }
         if this.skip > 0 {
-            w.raw(" OFFSET " + std.fmt.Format("{0}", this.skip))
+            w.raw(" OFFSET " + fmt.Format("{0}", this.skip))
         }
     }
 
@@ -268,7 +268,7 @@ async func core_count(q core, sel Frag) int! {
     var rows = await q.st.all(w.text(), w.args)?
     var n = 0
     if len(rows) > 0 && len(rows[0]) > 0 {
-        std.database.sql.convertInto(&n, rows[0][0], "count")?
+        database.sql.convertInto(&n, rows[0][0], "count")?
     }
     return n
 }
@@ -279,7 +279,7 @@ async func core_exists(q core, sel Frag) bool! {
     var rows = await q.st.all(w.text(), w.args)?
     var b = false
     if len(rows) > 0 && len(rows[0]) > 0 {
-        std.database.sql.convertInto(&b, rows[0][0], "exists")?
+        database.sql.convertInto(&b, rows[0][0], "exists")?
     }
     return b
 }
@@ -557,7 +557,7 @@ async func query_scalar<T, R>(q Query<T>, pg string, lite string, args []any, em
         }
         return r
     }
-    std.database.sql.convertInto(&r, rows[0][0], what)?
+    database.sql.convertInto(&r, rows[0][0], what)?
     return r
 }
 
@@ -608,7 +608,7 @@ async func query_ToList<T>(q Query<T>) []*T! {
             for ii, inc in q.includes {
                 var ck = vals[off + inc.childKey]
                 if ck != nil {
-                    var sk = pk + "/" + std.fmt.Format("{0}", ii) + "/" + keyText(ck)
+                    var sk = pk + "/" + fmt.Format("{0}", ii) + "/" + keyText(ck)
                     if !seen[sk] {
                         seen[sk] = true
                         inc.attach(st, p, vals, off, q.tracking)?
@@ -891,7 +891,7 @@ async func loadIn<T>(st *ctxState, ent *Entity<T>, col string, keys []any, track
     if len(uniq) == 0 {
         return out
     }
-    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    var w = sqlw{pg: st.pg(), b: strings.Builder{}, args: [], groups: []}
     w.raw("SELECT " + columnList(ent.Meta, "t0") + " FROM " + quoteIdent(ent.Meta.Table) + " AS t0 WHERE t0." + quoteIdent(col) + " IN (")
     w.list(uniq)
     w.raw(")")
@@ -924,7 +924,7 @@ async func loadThrough<T>(st *ctxState, ent *Entity<T>, through string, ownerCol
     if len(uniq) == 0 || ent.Meta.Key < 0 {
         return out
     }
-    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    var w = sqlw{pg: st.pg(), b: strings.Builder{}, args: [], groups: []}
     var k = quoteIdent(ent.Meta.Columns[ent.Meta.Key].Name)
     w.raw("SELECT " + columnList(ent.Meta, "t0") + ", j." + quoteIdent(ownerCol) + " FROM " + quoteIdent(ent.Meta.Table) + " AS t0 JOIN " + quoteIdent(through) + " AS j ON j." + quoteIdent(targetCol) + " = t0." + k + " WHERE j." + quoteIdent(ownerCol) + " IN (")
     w.list(uniq)

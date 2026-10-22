@@ -1,5 +1,5 @@
 //! A Debug Adapter Protocol client for the in-process debug agent
-//! (`std.debug`, docs/DEBUGGER.md stage 2): the `zell debug run` /
+//! (`debug`, docs/DEBUGGER.md stage 2): the `zell debug run` /
 //! `zell debug attach` command-line debugger and the tests drive programs
 //! through it.
 //!

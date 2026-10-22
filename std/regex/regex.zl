@@ -1,4 +1,4 @@
-// std.regex: regular expressions with RE2 syntax and a linear-time
+// regex: regular expressions with RE2 syntax and a linear-time
 // guarantee (no backtracking, no backreferences, no lookaround).
 //
 // Engine (all Zell; the C half in runtime/src/std_regex.c only provides
@@ -19,7 +19,7 @@
 //   state; a pattern that is one literal is searched with memmem only;
 // * the DFA cache is shared by copies of a Regex; a search that finds it
 //   in use by another thread runs the Pike VM instead.
-namespace std.regex
+namespace regex
 
 // A compiled regular expression. Copies share the program and its cache;
 // a Regex is safe to use from several tasks.
@@ -65,7 +65,7 @@ struct Regex {
 
     // Match on bytes.
     func MatchBytes(b []byte) bool {
-        return this.p.matches(std.strings.FromBytes(b))
+        return this.p.matches(strings.FromBytes(b))
     }
 
     // The leftmost match, or nil.
@@ -154,8 +154,8 @@ struct Regex {
     // ${name} stand for the groups and $$ for a dollar sign (as Go's
     // Expand: $name takes the longest name; an unknown group is empty).
     func Replace(s string, repl string) string {
-        var needGroups = std.strings.Contains(repl, "$")
-        var b = std.strings.Builder{}
+        var needGroups = strings.Contains(repl, "$")
+        var b = strings.Builder{}
         var last = 0
         var any = false
         var it = this.Iter(s)
@@ -183,7 +183,7 @@ struct Regex {
 
     // Replaces every match with repl taken literally (no $ expansion).
     func ReplaceLiteral(s string, repl string) string {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var last = 0
         var any = false
         var it = this.Iter(s)
@@ -206,7 +206,7 @@ struct Regex {
 
     // Replaces every match with f(match text).
     func ReplaceFunc(s string, f func(string) string) string {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var last = 0
         var any = false
         var it = this.Iter(s)
@@ -229,7 +229,7 @@ struct Regex {
 
     // Replaces every match with f(groups of the match).
     func ReplaceGroupsFunc(s string, f func(*Groups) string) string {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var last = 0
         var any = false
         var it = this.Iter(s)
@@ -437,7 +437,7 @@ func MatchString(pattern string, s string) bool! {
 
 // Escape quotes the metacharacters of s: the result matches s literally.
 func Escape(s string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var start = 0
     var changed = false
     for i in 0..len(s) {
@@ -611,7 +611,7 @@ struct litInfo {
 func literalInfo(nodes []node, root int) litInfo {
     var b []byte = []
     var complete = litWalk(nodes, root, &b)
-    return litInfo{prefix: std.strings.FromBytes(b), complete: complete}
+    return litInfo{prefix: strings.FromBytes(b), complete: complete}
 }
 
 // Appends the literal prefix of node n; true if n is entirely literal.
@@ -700,7 +700,7 @@ func runeWidth(s string, i int) int {
 }
 
 // Writes the expansion of template for one match (see Regex.Replace).
-func expand(b *std.strings.Builder, template string, s string, caps []int, names []string) {
+func expand(b *strings.Builder, template string, s string, caps []int, names []string) {
     var i = 0
     var start = 0
     var n = len(template)
@@ -749,7 +749,7 @@ func expand(b *std.strings.Builder, template string, s string, caps []int, names
             continue
         }
         var g = -1
-        var num = try std.strings.ToInt(name) else -1
+        var num = try strings.ToInt(name) else -1
         if num >= 0 && validNumber(name) {
             g = num
         } else {

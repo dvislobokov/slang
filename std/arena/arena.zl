@@ -4,7 +4,7 @@
 // retain/release are no-ops; pointers into a freed arena are invalid (not
 // checked). Strings and slices made by ordinary code are never arena
 // allocated; a.String(s) copies a string into the arena.
-namespace std.arena
+namespace arena
 
 // The runtime arena; destroyed with its last reference.
 struct region {

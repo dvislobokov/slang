@@ -1,12 +1,12 @@
-// The Zell-source std.crypto.x509 (see sema/stdsrc.rs for the rules):
+// The Zell-source crypto.x509 (see sema/stdsrc.rs for the rules):
 // X.509 v3 certificates (RFC 5280) in DER and PEM, private keys (PKCS#8,
 // PKCS#1, SEC 1), chain building and verification against a pool of
 // roots, hostname matching (SAN dNSName with left-most wildcards, IP
 // addresses), validity periods, basic constraints, key usage, extended
 // key usage and the dNSName part of name constraints. Signature checks use
-// the C primitives of std.crypto.{rsa,ecdsa,ed25519}. Times are Unix
-// milliseconds (std.time).
-namespace std.crypto.x509
+// the C primitives of crypto.{rsa,ecdsa,ed25519}. Times are Unix
+// milliseconds (time).
+namespace crypto.x509
 
 // ---- DER --------------------------------------------------------------------
 
@@ -73,7 +73,7 @@ struct reader {
     func expect(tag int, what string) elem! {
         var e = this.next()?
         if e.tag != tag {
-            return error(std.fmt.Sprintf("x509: %s: want tag 0x%x, found 0x%x", what, tag, e.tag))
+            return error(fmt.Sprintf("x509: %s: want tag 0x%x, found 0x%x", what, tag, e.tag))
         }
         return e
     }
@@ -108,10 +108,10 @@ func oidString(b []byte) string! {
                 } else if v < 80 {
                     a = 1
                 }
-                out = std.fmt.Format("{0}.{1}", a, v - a * 40)
+                out = fmt.Format("{0}.{1}", a, v - a * 40)
                 first = false
             } else {
-                out += "." + std.fmt.Format("{0}", v)
+                out += "." + fmt.Format("{0}", v)
             }
             v = 0
         }
@@ -171,7 +171,7 @@ func bytesEqual(a []byte, b []byte) bool {
 }
 
 func hexBytes(b []byte) string {
-    return std.encoding.hex.Encode(b)
+    return encoding.hex.Encode(b)
 }
 
 // ---- PEM ----------------------------------------------------------------------
@@ -188,33 +188,33 @@ func DecodePEM(text string) []PEMBlock! {
     var out []PEMBlock = []
     var rest = text
     for {
-        var i = std.strings.Index(rest, "-----BEGIN ")
+        var i = strings.Index(rest, "-----BEGIN ")
         if i < 0 {
             return out
         }
         rest = rest[i + 11..]
-        var j = std.strings.Index(rest, "-----")
+        var j = strings.Index(rest, "-----")
         if j < 0 {
             return error("x509: malformed PEM header")
         }
         var typ = rest[..j]
         rest = rest[j + 5..]
         var endMark = "-----END " + typ + "-----"
-        var k = std.strings.Index(rest, endMark)
+        var k = strings.Index(rest, endMark)
         if k < 0 {
             return error("x509: missing \"" + endMark + "\"")
         }
         var body = rest[..k]
         rest = rest[k + len(endMark)..]
         // drop RFC 1421 headers ("Proc-Type: ...") if any
-        if std.strings.Contains(body, ":") {
-            var blank = std.strings.Index(body, "\n\n")
+        if strings.Contains(body, ":") {
+            var blank = strings.Index(body, "\n\n")
             if blank >= 0 {
                 body = body[blank + 2..]
             }
         }
-        var b64 = std.strings.Join(std.strings.Fields(body), "")
-        var der = try std.encoding.base64.Decode(b64) catch err {
+        var b64 = strings.Join(strings.Fields(body), "")
+        var der = try encoding.base64.Decode(b64) catch err {
             return error("x509: invalid base64 in PEM block " + typ)
         }
         out = append(out, PEMBlock{Type: typ, Bytes: der})
@@ -223,7 +223,7 @@ func DecodePEM(text string) []PEMBlock! {
 
 // EncodePEM formats der as one PEM block of the given type.
 func EncodePEM(typ string, der []byte) string {
-    var b64 = std.encoding.base64.Encode(der)
+    var b64 = encoding.base64.Encode(der)
     var out = "-----BEGIN " + typ + "-----\n"
     var i = 0
     for i < len(b64) {
@@ -269,7 +269,7 @@ struct Name {
             parts = append(parts, attrShort(a.Type) + "=" + a.Value)
             i -= 1
         }
-        return std.strings.Join(parts, ",")
+        return strings.Join(parts, ",")
     }
 }
 
@@ -293,7 +293,7 @@ func attrShort(oid string) string {
 func dirString(e elem) string! {
     switch e.tag {
         case 12, 19, 22, 20, 26, 21:
-            return std.strings.FromBytes(e.body)
+            return strings.FromBytes(e.body)
         case 30:
             if len(e.body) % 2 != 0 {
                 return error("x509: invalid BMPString")
@@ -304,11 +304,11 @@ func dirString(e elem) string! {
                 rs = append(rs, char(int(e.body[i]) * 256 + int(e.body[i + 1])))
                 i += 2
             }
-            return std.strings.FromRunes(rs)
+            return strings.FromRunes(rs)
         case 28:
             return error("x509: UniversalString not supported")
     }
-    return error(std.fmt.Sprintf("x509: unexpected string type 0x%x in name", e.tag))
+    return error(fmt.Sprintf("x509: unexpected string type 0x%x in name", e.tag))
 }
 
 func parseName(e elem) Name! {
@@ -466,7 +466,7 @@ struct Certificate {
 
     // Hex of the SHA-256 of Raw.
     func Fingerprint() string {
-        var d = try std.crypto.hash.Sum("sha256", this.Raw) else []
+        var d = try crypto.hash.Sum("sha256", this.Raw) else []
         return hexBytes(d)
     }
 
@@ -478,10 +478,10 @@ struct Certificate {
     // name, or an IP address matched against the IP SANs).
     func VerifyHostname(host string) void! {
         var h = host
-        if std.strings.HasPrefix(h, "[") && std.strings.HasSuffix(h, "]") {
+        if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
             h = h[1..len(h) - 1]
         }
-        if std.net.rtIsIP(h) {
+        if net.rtIsIP(h) {
             var want = canonicalIP(h)
             for ip in this.IPAddresses {
                 if ip == want {
@@ -490,9 +490,9 @@ struct Certificate {
             }
             return error("x509: certificate is not valid for IP address " + h)
         }
-        var name = std.strings.ToLower(std.strings.TrimSuffix(h, "."))
+        var name = strings.ToLower(strings.TrimSuffix(h, "."))
         for pattern in this.DNSNames {
-            if matchHostname(std.strings.ToLower(pattern), name) {
+            if matchHostname(strings.ToLower(pattern), name) {
                 return
             }
         }
@@ -505,7 +505,7 @@ struct Certificate {
         }
         return error(
             "x509: certificate is valid for " +
-                std.strings.Join(this.DNSNames, ", ") +
+                strings.Join(this.DNSNames, ", ") +
                 ", not " +
                 host,
         )
@@ -537,8 +537,8 @@ struct Certificate {
     // "SHA256-RSAPSS", "Ed25519").
     func CheckSignature(algorithm string, signed []byte, sig []byte) void! {
         var ph = ""
-        if std.strings.HasSuffix(algorithm, "-RSAPSS") {
-            ph = std.strings.ToLower(std.strings.TrimSuffix(algorithm, "-RSAPSS"))
+        if strings.HasSuffix(algorithm, "-RSAPSS") {
+            ph = strings.ToLower(strings.TrimSuffix(algorithm, "-RSAPSS"))
         }
         checkSignature(algorithm, ph, this, signed, sig)?
     }
@@ -549,16 +549,16 @@ func sigHash(alg string, pssHash string) string {
     if pssHash != "" {
         return pssHash
     }
-    if std.strings.Contains(alg, "SHA256") {
+    if strings.Contains(alg, "SHA256") {
         return "sha256"
     }
-    if std.strings.Contains(alg, "SHA384") {
+    if strings.Contains(alg, "SHA384") {
         return "sha384"
     }
-    if std.strings.Contains(alg, "SHA512") {
+    if strings.Contains(alg, "SHA512") {
         return "sha512"
     }
-    if std.strings.Contains(alg, "SHA1") {
+    if strings.Contains(alg, "SHA1") {
         return "sha1"
     }
     return ""
@@ -573,7 +573,7 @@ func checkSignature(alg string, pssHash string, key *Certificate, signed []byte,
                     " key",
             )
         }
-        if !std.crypto.ed25519.Verify(key.PublicKey, signed, sig) {
+        if !crypto.ed25519.Verify(key.PublicKey, signed, sig) {
             return error("x509: Ed25519 signature verification failed")
         }
         return
@@ -585,8 +585,8 @@ func checkSignature(alg string, pssHash string, key *Certificate, signed []byte,
     if h == "sha1" {
         return error("x509: SHA-1 signatures are not accepted (" + alg + ")")
     }
-    var digest = std.crypto.hash.Sum(h, signed)?
-    if std.strings.HasSuffix(alg, "-RSA") || std.strings.HasSuffix(alg, "-RSAPSS") {
+    var digest = crypto.hash.Sum(h, signed)?
+    if strings.HasSuffix(alg, "-RSA") || strings.HasSuffix(alg, "-RSAPSS") {
         if key.PublicKeyAlgorithm != "RSA" {
             return error(
                 "x509: signature algorithm " +
@@ -597,17 +597,17 @@ func checkSignature(alg string, pssHash string, key *Certificate, signed []byte,
             )
         }
         var ok = false
-        if std.strings.HasSuffix(alg, "-RSAPSS") {
-            ok = std.crypto.rsa.VerifyPSS(key.PublicKey, key.RSAExponent, h, digest, sig)
+        if strings.HasSuffix(alg, "-RSAPSS") {
+            ok = crypto.rsa.VerifyPSS(key.PublicKey, key.RSAExponent, h, digest, sig)
         } else {
-            ok = std.crypto.rsa.VerifyPKCS1v15(key.PublicKey, key.RSAExponent, h, digest, sig)
+            ok = crypto.rsa.VerifyPKCS1v15(key.PublicKey, key.RSAExponent, h, digest, sig)
         }
         if !ok {
             return error("x509: RSA signature verification failed")
         }
         return
     }
-    if std.strings.HasPrefix(alg, "ECDSA-") {
+    if strings.HasPrefix(alg, "ECDSA-") {
         if key.PublicKeyAlgorithm != "ECDSA" {
             return error(
                 "x509: signature algorithm " +
@@ -618,7 +618,7 @@ func checkSignature(alg string, pssHash string, key *Certificate, signed []byte,
             )
         }
         if key.Curve == "P-384" {
-            if !std.crypto.ecdsa.VerifyP384(key.PublicKey, digest, sig) {
+            if !crypto.ecdsa.VerifyP384(key.PublicKey, digest, sig) {
                 return error("x509: ECDSA signature verification failed")
             }
             return
@@ -628,7 +628,7 @@ func checkSignature(alg string, pssHash string, key *Certificate, signed []byte,
                 "x509: ECDSA curve " + key.Curve + " is not supported (only P-256 and P-384)",
             )
         }
-        if !std.crypto.ecdsa.Verify(key.PublicKey, digest, sig) {
+        if !crypto.ecdsa.Verify(key.PublicKey, digest, sig) {
             return error("x509: ECDSA signature verification failed")
         }
         return
@@ -687,7 +687,7 @@ func parseSigAlg(e elem) algID! {
             if h == "" || h == "sha1" {
                 return error("x509: unsupported RSASSA-PSS hash")
             }
-            return algID{name: std.strings.ToUpper(h) + "-RSAPSS", pssHash: h}
+            return algID{name: strings.ToUpper(h) + "-RSAPSS", pssHash: h}
     }
     return algID{name: oid}
 }
@@ -746,35 +746,35 @@ func ekuName(oid string) string {
 // Text of an iPAddress general name (4 or 16 bytes).
 func ipText(b []byte) string! {
     if len(b) == 4 {
-        return std.fmt.Format("{0}.{1}.{2}.{3}", int(b[0]), int(b[1]), int(b[2]), int(b[3]))
+        return fmt.Format("{0}.{1}.{2}.{3}", int(b[0]), int(b[1]), int(b[2]), int(b[3]))
     }
     if len(b) == 16 {
         var parts []string = []
         var i = 0
         for i < 16 {
-            parts = append(parts, std.fmt.Sprintf("%x", int(b[i]) * 256 + int(b[i + 1])))
+            parts = append(parts, fmt.Sprintf("%x", int(b[i]) * 256 + int(b[i + 1])))
             i += 2
         }
-        return std.strings.Join(parts, ":")
+        return strings.Join(parts, ":")
     }
     return error("x509: invalid IP address in certificate")
 }
 
 // Normalizes an IP literal the way ipText prints certificate addresses.
 func canonicalIP(s string) string {
-    if !std.strings.Contains(s, ":") {
+    if !strings.Contains(s, ":") {
         return s
     }
     // expand "::" and drop leading zeros of each group
     var groups []string = []
-    var halves = std.strings.SplitN(s, "::", 2)
+    var halves = strings.SplitN(s, "::", 2)
     var head []string = []
     var tail []string = []
     if halves[0] != "" {
-        head = std.strings.Split(halves[0], ":")
+        head = strings.Split(halves[0], ":")
     }
     if len(halves) == 2 && halves[1] != "" {
-        tail = std.strings.Split(halves[1], ":")
+        tail = strings.Split(halves[1], ":")
     }
     for g in head {
         groups = append(groups, g)
@@ -791,13 +791,13 @@ func canonicalIP(s string) string {
     }
     var out []string = []
     for g in groups {
-        var t = std.strings.TrimLeft(std.strings.ToLower(g), "0")
+        var t = strings.TrimLeft(strings.ToLower(g), "0")
         if t == "" {
             t = "0"
         }
         out = append(out, t)
     }
-    return std.strings.Join(out, ":")
+    return strings.Join(out, ":")
 }
 
 func parseSAN(c *Certificate, value []byte) void! {
@@ -807,8 +807,8 @@ func parseSAN(c *Certificate, value []byte) void! {
     for r.more() {
         var gn = r.next()?
         switch gn.tag {
-            case 130: c.DNSNames = append(c.DNSNames, std.strings.FromBytes(gn.body))
-            case 129: c.EmailAddresses = append(c.EmailAddresses, std.strings.FromBytes(gn.body))
+            case 130: c.DNSNames = append(c.DNSNames, strings.FromBytes(gn.body))
+            case 129: c.EmailAddresses = append(c.EmailAddresses, strings.FromBytes(gn.body))
             case 135: c.IPAddresses = append(c.IPAddresses, ipText(gn.body)?)
         }
     }
@@ -823,7 +823,7 @@ func subtreeDNS(body []byte) []string! {
         var sr = newReader(st.body)
         var base = sr.next()?
         if base.tag == 130 {
-            out = append(out, std.strings.FromBytes(base.body))
+            out = append(out, strings.FromBytes(base.body))
         }
     }
     return out
@@ -981,18 +981,18 @@ func ParsePEM(text string) []*Certificate! {
 // matchHostname matches a lower-case SAN pattern against a lower-case
 // host: exact, or "*.rest" matching exactly one left-most label.
 func matchHostname(pattern string, host string) bool {
-    var p = std.strings.TrimSuffix(pattern, ".")
+    var p = strings.TrimSuffix(pattern, ".")
     if p == "" || host == "" {
         return false
     }
-    if !std.strings.HasPrefix(p, "*.") {
+    if !strings.HasPrefix(p, "*.") {
         return p == host
     }
     var suffix = p[1..]
-    if std.strings.Contains(suffix, "*") || std.strings.Count(suffix, ".") < 2 {
+    if strings.Contains(suffix, "*") || strings.Count(suffix, ".") < 2 {
         return false
     }
-    var dot = std.strings.Index(host, ".")
+    var dot = strings.Index(host, ".")
     if dot <= 0 {
         return false
     }
@@ -1001,15 +1001,15 @@ func matchHostname(pattern string, host string) bool {
 
 // True if name is within the dNSName constraint base (RFC 5280 4.2.1.10).
 func dnsWithin(name string, base string) bool {
-    var b = std.strings.ToLower(base)
-    var n = std.strings.ToLower(std.strings.TrimPrefix(name, "*."))
+    var b = strings.ToLower(base)
+    var n = strings.ToLower(strings.TrimPrefix(name, "*."))
     if b == "" {
         return true
     }
-    if std.strings.HasPrefix(b, ".") {
-        return std.strings.HasSuffix(n, b)
+    if strings.HasPrefix(b, ".") {
+        return strings.HasSuffix(n, b)
     }
-    return n == b || std.strings.HasSuffix(n, "." + b)
+    return n == b || strings.HasSuffix(n, "." + b)
 }
 
 // ---- pools and verification -----------------------------------------------------------
@@ -1088,7 +1088,7 @@ func SystemRootsPath() string {
     return rtSystemRootsPath()
 }
 
-// The parsed system roots, cached per process (in the std.diag slots).
+// The parsed system roots, cached per process (in the diag slots).
 struct systemRootsCache {
     path  string
     size  int
@@ -1106,29 +1106,29 @@ func SystemRoots() *CertPool! {
     if path == "" {
         return error("x509: no system root certificates found (set SSL_CERT_FILE)")
     }
-    var info = std.os.Stat(path)?
-    std.diag.rtLock()
-    var m = std.diag.rtSlots()
+    var info = os.Stat(path)?
+    diag.rtLock()
+    var m = diag.rtSlots()
     if m != nil {
         switch m["x509.systemRoots"] {
             case systemRootsCache c:
                 if c.path == path && c.size == info.Size && c.mtime == info.ModTimeNanos {
-                    std.diag.rtUnlock()
+                    diag.rtUnlock()
                     return copyPool(c.pool)
                 }
         }
     }
-    std.diag.rtUnlock()
-    var text = std.io.ReadFile(path)?
+    diag.rtUnlock()
+    var text = io.ReadFile(path)?
     var pool = NewCertPool()
     if pool.AppendPEM(text) == 0 {
         return error("x509: no certificates in " + path)
     }
-    std.diag.rtLock()
-    m = std.diag.rtSlots()
+    diag.rtLock()
+    m = diag.rtSlots()
     if m == nil {
         m = map[string]any{}
-        std.diag.rtSetSlots(m)
+        diag.rtSetSlots(m)
     }
     m["x509.systemRoots"] = systemRootsCache{
         path: path,
@@ -1136,7 +1136,7 @@ func SystemRoots() *CertPool! {
         mtime: info.ModTimeNanos,
         pool: pool,
     }
-    std.diag.rtUnlock()
+    diag.rtUnlock()
     return copyPool(pool)
 }
 
@@ -1177,7 +1177,7 @@ func Verify(cert *Certificate, opts VerifyOptions) []*Certificate! {
     }
     var now = opts.CurrentTime
     if now == 0 {
-        now = std.time.Now()
+        now = time.Now()
     }
     var eku = opts.KeyUsage
     if eku == "" {
@@ -1202,7 +1202,7 @@ func checkTime(c *Certificate, now int) void! {
             "x509: certificate \"" +
                 c.Subject.String() +
                 "\" is not valid yet (valid from " +
-                std.time.Format(c.NotBefore, "%Y-%m-%dT%H:%M:%SZ") +
+                time.Format(c.NotBefore, "%Y-%m-%dT%H:%M:%SZ") +
                 ")",
         )
     }
@@ -1211,7 +1211,7 @@ func checkTime(c *Certificate, now int) void! {
             "x509: certificate \"" +
                 c.Subject.String() +
                 "\" has expired (valid until " +
-                std.time.Format(c.NotAfter, "%Y-%m-%dT%H:%M:%SZ") +
+                time.Format(c.NotAfter, "%Y-%m-%dT%H:%M:%SZ") +
                 ")",
         )
     }
@@ -1234,7 +1234,7 @@ func checkLeaf(c *Certificate, now int, eku string) void! {
                 "x509: certificate is not valid for " +
                     eku +
                     " (extended key usage: " +
-                    std.strings.Join(c.ExtKeyUsage, ", ") +
+                    strings.Join(c.ExtKeyUsage, ", ") +
                     ")",
             )
         }
@@ -1421,7 +1421,7 @@ func ecKey(der []byte, outerCurve string) PrivateKey! {
         if len(k) < 48 {
             s384 = concatBytes(zeroBytes(48 - len(k)), k)
         }
-        var pub384 = std.crypto.ecdsa.PublicKeyP384(s384)?
+        var pub384 = crypto.ecdsa.PublicKeyP384(s384)?
         return PrivateKey{Algorithm: "ECDSA", Bytes: s384, Public: pub384}
     }
     if curve != "1.2.840.10045.3.1.7" {
@@ -1431,7 +1431,7 @@ func ecKey(der []byte, outerCurve string) PrivateKey! {
     if len(k) < 32 {
         scalar = concatBytes(zeroBytes(32 - len(k)), k)
     }
-    var pub = std.crypto.ecdsa.PublicKey(scalar)?
+    var pub = crypto.ecdsa.PublicKey(scalar)?
     return PrivateKey{Algorithm: "ECDSA", Bytes: scalar, Public: pub}
 }
 
@@ -1480,7 +1480,7 @@ func ParsePrivateKey(der []byte) PrivateKey! {
                 return PrivateKey{
                     Algorithm: "Ed25519",
                     Bytes: seed,
-                    Public: std.crypto.ed25519.PublicKey(seed)?,
+                    Public: crypto.ed25519.PublicKey(seed)?,
                 }
         }
         return error("x509: unsupported private key algorithm " + oid)

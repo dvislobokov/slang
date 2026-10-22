@@ -1,9 +1,8 @@
-// Examples for std.database.sql (with the in-memory SQLite driver).
+// Examples for database.sql (with the in-memory SQLite driver).
 namespace sql_test
 
-import std
-import std.database
-import std.io
+import database
+import io
 
 struct User {
     Id   int

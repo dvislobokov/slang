@@ -1,4 +1,4 @@
-/* std_hash.c - SipHash-1-3 for std.hash.maphash (one compression round,
+/* std_hash.c - SipHash-1-3 for hash.maphash (one compression round,
  * three finalization rounds; the variant Rust's HashMap uses). Input is
  * read little-endian, as in the reference implementation. */
 #include "rt_internal.h"

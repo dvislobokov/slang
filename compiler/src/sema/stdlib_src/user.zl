@@ -1,7 +1,7 @@
-// std.os.user (Go's os/user): accounts from the system databases
+// os.user (Go's os/user): accounts from the system databases
 // (passwd/group through NSS; runtime/src/std_os_user.c). Ids are strings,
 // as in Go, so the API also fits non-numeric platforms.
-namespace std.os.user
+namespace os.user
 
 struct User {
     Uid      string
@@ -33,7 +33,7 @@ func Lookup(username string) User! {
 
 // The user with numeric id uid ("0").
 func LookupId(uid string) User! {
-    var n = std.strconv.Atoi(uid)?("user: invalid userid " + std.strconv.Quote(uid))
+    var n = strconv.Atoi(uid)?("user: invalid userid " + strconv.Quote(uid))
     return mk(rtLookup("", n, true)?)
 }
 
@@ -43,7 +43,7 @@ func LookupGroup(name string) Group! {
 }
 
 func LookupGroupId(gid string) Group! {
-    var n = std.strconv.Atoi(gid)?("user: invalid groupid " + std.strconv.Quote(gid))
+    var n = strconv.Atoi(gid)?("user: invalid groupid " + strconv.Quote(gid))
     var v = rtGroup("", n, true)?
     return Group{Gid: v[0], Name: v[1]}
 }

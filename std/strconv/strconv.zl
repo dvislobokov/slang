@@ -1,12 +1,12 @@
-// std.strconv: conversions between strings and numbers/bools, Go's
+// strconv: conversions between strings and numbers/bools, Go's
 // strconv with T! results. Errors wrap the sentinels ErrSyntax / ErrRange
 // (errors.Is works) and name the function and input, as in Go:
 // `strconv.ParseInt: parsing "12a": invalid syntax`. Float formatting and
 // parsing are C (runtime/src/std_strconv.c); the rest is here.
-namespace std.strconv
+namespace strconv
 
 func fail(fn string, s string, e error) error {
-    return std.errors.Wrap(e, "strconv." + fn + ": parsing " + Quote(s))
+    return errors.Wrap(e, "strconv." + fn + ": parsing " + Quote(s))
 }
 
 func digitVal(c byte) int {
@@ -57,7 +57,7 @@ func parseUint(fn string, s0 string, base0 int) uint! {
             }
         }
     } else if base < 2 || base > 36 {
-        return std.errors.Wrap(
+        return errors.Wrap(
             error("invalid base " + Itoa(base0)),
             "strconv." + fn + ": parsing " + Quote(s0),
         )
@@ -116,10 +116,10 @@ func parseInt(fn string, s string, base int) int! {
         body = s[1..]
     }
     var u = try parseUint(fn, body, base) catch err {
-        if std.errors.Is(err, ErrRange) {
+        if errors.Is(err, ErrRange) {
             return fail(fn, s, ErrRange)
         }
-        if std.errors.Is(err, ErrSyntax) {
+        if errors.Is(err, ErrSyntax) {
             return fail(fn, s, ErrSyntax)
         }
         return err
@@ -130,7 +130,7 @@ func parseInt(fn string, s string, base int) int! {
             return fail(fn, s, ErrRange)
         }
         if u == limit {
-            return std.math.MinInt
+            return math.MinInt
         }
         return -int(u)
     }
@@ -214,8 +214,8 @@ func FormatUint(n uint, base int) string {
         buf = append(buf, digits[int(x % ubase)])
         x = x / ubase
     }
-    std.slices.Reverse(buf)
-    return std.strings.FromBytes(buf)
+    slices.Reverse(buf)
+    return strings.FromBytes(buf)
 }
 
 // n in base 2..36 with a leading - when negative.
@@ -286,7 +286,7 @@ func quoteWith(s string, quote char, ascii bool) string {
     var out = string(quote)
     var i = 0
     for i < len(s) {
-        var (r, size) = std.unicode.utf8.DecodeRuneAt(s, i)
+        var (r, size) = unicode.utf8.DecodeRuneAt(s, i)
         if r == '\u{FFFD}' && size == 1 {
             var b = int(s[i])
             out += "\\x" + hexDigit(b / 16) + hexDigit(b % 16)
@@ -339,10 +339,10 @@ func Unquote(s string) string! {
     var q = s[0]
     var body = s[1..n - 1]
     if q == 96 {
-        if std.strings.Contains(body, "`") {
+        if strings.Contains(body, "`") {
             return fail("Unquote", s, ErrSyntax)
         }
-        return std.strings.Replace(body, "\r", "")
+        return strings.Replace(body, "\r", "")
     }
     if q != 34 && q != 39 {
         return fail("Unquote", s, ErrSyntax)
@@ -357,7 +357,7 @@ func Unquote(s string) string! {
             return fail("Unquote", s, ErrSyntax)
         }
         if c != 92 {
-            var (_, size) = std.unicode.utf8.DecodeRuneAt(body, i)
+            var (_, size) = unicode.utf8.DecodeRuneAt(body, i)
             out += body[i..i + size]
             i += size
             continue
@@ -386,11 +386,11 @@ func Unquote(s string) string! {
                 if v < 0 {
                     return fail("Unquote", s, ErrSyntax)
                 }
-                out += std.strings.FromBytes([byte(v)])
+                out += strings.FromBytes([byte(v)])
                 i += 2
             case 117, 85:
                 if e == 117 && i < len(body) && body[i] == 123 {
-                    var close = std.strings.Index(body[i..], "}")
+                    var close = strings.Index(body[i..], "}")
                     if close < 2 || close > 7 {
                         return fail("Unquote", s, ErrSyntax)
                     }
@@ -428,7 +428,7 @@ func Unquote(s string) string! {
                     if v > 255 {
                         return fail("Unquote", s, ErrSyntax)
                     }
-                    out += std.strings.FromBytes([byte(v)])
+                    out += strings.FromBytes([byte(v)])
                     i += 2
                 } else {
                     return fail("Unquote", s, ErrSyntax)
@@ -445,38 +445,38 @@ func Unquote(s string) string! {
 // float32, bool or string (returned as is).
 func Parse<T>(s string) T! {
     var out T
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.String {
         out = s
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Bool {
         out = ParseBool(s)?
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int {
         out = ParseInt(s, 10)?
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int8 {
         out = int8(ParseIntBits(s, 10, 8)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int16 {
         out = int16(ParseIntBits(s, 10, 16)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int32 {
         out = int32(ParseIntBits(s, 10, 32)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint {
         out = ParseUint(s, 10)?
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 {
         out = byte(ParseUintBits(s, 10, 8)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 {
         out = uint16(ParseUintBits(s, 10, 16)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 {
         out = uint32(ParseUintBits(s, 10, 32)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float {
         out = ParseFloat(s)?
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
         out = float32(ParseFloat(s)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
-        var rs = std.strings.Runes(s)
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Char {
+        var rs = strings.Runes(s)
         if len(rs) != 1 {
             return fail("Parse", s, ErrSyntax)
         }
         out = rs[0]
     } else {
-        panic("strconv.Parse: unsupported type " + std.reflect.TypeOf<T>().Name)
+        panic("strconv.Parse: unsupported type " + reflect.TypeOf<T>().Name)
     }
     return out
 }
@@ -484,25 +484,25 @@ func Parse<T>(s string) T! {
 // Formats v: integers in base 10, floats shortest ('g', -1), bool,
 // string as is, char as its UTF-8 text.
 func Format<T>(v T) string {
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.String {
         return v
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Bool {
         return FormatBool(v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int32 {
         return FormatInt(int(v), 10)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 {
         return FormatUint(uint(v), 10)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
         return FormatFloat(float(v), 'g', -1)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Char {
         return string(v)
     }
-    panic("strconv.Format: unsupported type " + std.reflect.TypeOf<T>().Name)
+    panic("strconv.Format: unsupported type " + reflect.TypeOf<T>().Name)
 }

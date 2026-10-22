@@ -1,10 +1,10 @@
-// std.diag: metrics (Prometheus text), tracing (OpenTelemetry-compatible
+// diag: metrics (Prometheus text), tracing (OpenTelemetry-compatible
 // spans propagated through the task context, W3C traceparent), CPU and
 // heap profiles in pprof format (docs/FRAMEWORK.md section 5). See
 // sema/stdsrc.rs for the rules of these sources. Global state (registry,
 // tracer) lives in the runtime's slot map (rtSlots, guarded by rtLock);
 // the current span is a task-context frame with the reserved key -102.
-namespace std.diag
+namespace diag
 
 // ---- process-wide slots ---------------------------------------------------
 
@@ -41,7 +41,7 @@ struct family {
     series  []*series
 
     func get(values []string) *series {
-        var key = std.strings.Join(values, "\u{1}")
+        var key = strings.Join(values, "\u{1}")
         for i, k in this.keys {
             if k == key {
                 return this.series[i]
@@ -60,21 +60,21 @@ struct family {
     }
 
     func add(values []string, d float) {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var s = this.get(values)
         s.value += d
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     func set(values []string, v float) {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var s = this.get(values)
         s.value = v
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     func observe(values []string, v float) {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var s = this.get(values)
         for i, b in this.buckets {
             if v <= b {
@@ -83,22 +83,22 @@ struct family {
         }
         s.sum += v
         s.count += 1
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     func read(values []string) float {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var s = this.get(values)
         var v = s.value
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return v
     }
 
     func text() string {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         b.Write("# HELP " + this.name + " " + escapeHelp(this.help) + "\n")
         b.Write("# TYPE " + this.name + " " + this.kind + "\n")
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         for s in this.series {
             if this.kind == "histogram" {
                 for i, bound in this.buckets {
@@ -107,7 +107,7 @@ struct family {
                             "_bucket" +
                             labelText(this.labels, s.values, "le", num(bound)) +
                             " " +
-                            std.fmt.Format("{0}", s.counts[i]) +
+                            fmt.Format("{0}", s.counts[i]) +
                             "\n",
                     )
                 }
@@ -116,7 +116,7 @@ struct family {
                         "_bucket" +
                         labelText(this.labels, s.values, "le", "+Inf") +
                         " " +
-                        std.fmt.Format("{0}", s.count) +
+                        fmt.Format("{0}", s.count) +
                         "\n",
                 )
                 b.Write(
@@ -132,7 +132,7 @@ struct family {
                         "_count" +
                         labelText(this.labels, s.values, "", "") +
                         " " +
-                        std.fmt.Format("{0}", s.count) +
+                        fmt.Format("{0}", s.count) +
                         "\n",
                 )
             } else {
@@ -145,18 +145,18 @@ struct family {
                 )
             }
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return b.String()
     }
 }
 
 func escapeHelp(s string) string {
-    return std.strings.Replace(std.strings.Replace(s, "\\", "\\\\"), "\n", "\\n")
+    return strings.Replace(strings.Replace(s, "\\", "\\\\"), "\n", "\\n")
 }
 
 func escapeLabel(s string) string {
-    return std.strings.Replace(
-        std.strings.Replace(std.strings.Replace(s, "\\", "\\\\"), "\"", "\\\""),
+    return strings.Replace(
+        strings.Replace(strings.Replace(s, "\\", "\\\\"), "\"", "\\\""),
         "\n",
         "\\n",
     )
@@ -166,7 +166,7 @@ func labelText(names []string, values []string, extra string, extraValue string)
     if len(names) == 0 && extra == "" {
         return ""
     }
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("{")
     var first = true
     for i, n in names {
@@ -192,16 +192,16 @@ func labelText(names []string, values []string, extra string, extraValue string)
 
 // Prometheus number text.
 func num(x float) string {
-    if std.math.IsInf(x, 1) {
+    if math.IsInf(x, 1) {
         return "+Inf"
     }
-    if std.math.IsInf(x, -1) {
+    if math.IsInf(x, -1) {
         return "-Inf"
     }
-    if std.math.IsNaN(x) {
+    if math.IsNaN(x) {
         return "NaN"
     }
-    return std.fmt.Format("{0}", x)
+    return fmt.Format("{0}", x)
 }
 
 struct registry {
@@ -355,7 +355,7 @@ func NewHistogram(name string, help string, labels []string, buckets []float) Hi
     return Histogram{f: register(name, help, "histogram", labels, bs)}
 }
 
-// Runtime figures (std.diag.Runtime()).
+// Runtime figures (diag.Runtime()).
 struct RuntimeStats {
     // Live heap objects (strings, slices' arrays, boxes, closures, tasks...).
     LiveObjects int
@@ -415,45 +415,45 @@ func runtimeText() string {
         return ""
     }
     var r = Runtime()
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write(
         "# HELP zell_live_objects Live heap objects.\n# TYPE zell_live_objects gauge\nzell_live_objects " +
-            std.fmt.Format("{0}", r.LiveObjects) +
+            fmt.Format("{0}", r.LiveObjects) +
             "\n",
     )
     b.Write(
         "# HELP zell_allocations_total Heap objects allocated.\n# TYPE zell_allocations_total counter\nzell_allocations_total " +
-            std.fmt.Format("{0}", r.Allocations) +
+            fmt.Format("{0}", r.Allocations) +
             "\n",
     )
     b.Write(
         "# HELP zell_tasks Live tasks.\n# TYPE zell_tasks gauge\nzell_tasks " +
-            std.fmt.Format("{0}", r.Tasks) +
+            fmt.Format("{0}", r.Tasks) +
             "\n",
     )
     b.Write(
         "# HELP zell_scheduler_queue_length Jobs waiting for a worker.\n# TYPE zell_scheduler_queue_length gauge\nzell_scheduler_queue_length " +
-            std.fmt.Format("{0}", r.QueueLength) +
+            fmt.Format("{0}", r.QueueLength) +
             "\n",
     )
     b.Write(
         "# HELP zell_scheduler_workers Scheduler worker threads.\n# TYPE zell_scheduler_workers gauge\nzell_scheduler_workers " +
-            std.fmt.Format("{0}", r.Workers) +
+            fmt.Format("{0}", r.Workers) +
             "\n",
     )
     b.Write(
         "# HELP zell_heap_inuse_bytes Object heap bytes in use.\n# TYPE zell_heap_inuse_bytes gauge\nzell_heap_inuse_bytes " +
-            std.fmt.Format("{0}", r.HeapInUse) +
+            fmt.Format("{0}", r.HeapInUse) +
             "\n",
     )
     b.Write(
         "# HELP zell_heap_retained_bytes Free object heap bytes kept for reuse.\n# TYPE zell_heap_retained_bytes gauge\nzell_heap_retained_bytes " +
-            std.fmt.Format("{0}", r.HeapRetained) +
+            fmt.Format("{0}", r.HeapRetained) +
             "\n",
     )
     b.Write(
         "# HELP zell_heap_released_bytes Free object heap bytes returned to the OS.\n# TYPE zell_heap_released_bytes gauge\nzell_heap_released_bytes " +
-            std.fmt.Format("{0}", r.HeapReleased) +
+            fmt.Format("{0}", r.HeapReleased) +
             "\n",
     )
     b.Write(cycleMetricsText())   // diag_heap.zl
@@ -470,7 +470,7 @@ func PrometheusText() string {
         fams = append(fams, f)
     }
     rtUnlock()
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     for f in fams {
         b.Write(f.text())
     }
@@ -480,19 +480,19 @@ func PrometheusText() string {
 
 // An http handler function serving PrometheusText():
 // `router.Get("/metrics", diag.ServeMetrics)`.
-async func ServeMetrics(req *std.net.http.Request, res *std.net.http.Response) void! {
+async func ServeMetrics(req *net.http.Request, res *net.http.Response) void! {
     res.SetHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
     res.Write(PrometheusText())
 }
 
 struct metricsHandler {
-    func Serve(req *std.net.http.Request, res *std.net.http.Response) Task<void!> {
+    func Serve(req *net.http.Request, res *net.http.Response) Task<void!> {
         return ServeMetrics(req, res)
     }
 }
 
 // An http.Handler serving PrometheusText() (for http.Server{Handler: ...}).
-func MetricsHandler() std.net.http.Handler {
+func MetricsHandler() net.http.Handler {
     return new metricsHandler{}
 }
 
@@ -572,7 +572,7 @@ struct Span {
             this.EndNanos = this.StartNanos + (rtMonoNanos() - this.startMono)
         }
         if this.pushed {
-            std.task.rtSetCtx(this.prev)
+            task.rtSetCtx(this.prev)
             this.prev = nil
             this.pushed = false
         }
@@ -598,7 +598,7 @@ struct Span {
 // Receives finished spans.
 interface Exporter {
     // Export receives one finished span.
-    func Export(s *std.diag.Span)
+    func Export(s *diag.Span)
     // Shutdown flushes pending spans.
     func Shutdown() Task<void>
 }
@@ -660,10 +660,10 @@ async func Shutdown() {
 func hexBytes(n int) string {
     var t = tracerOf()
     if !t.seeded {
-        return try std.crypto.rand.Hex(n) else std.encoding.hex.Encode(std.random.Bytes(n))
+        return try crypto.rand.Hex(n) else encoding.hex.Encode(random.Bytes(n))
     }
     rtLock()
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var left = n
     for left > 0 {
         // xorshift64 (13, 7, 17) on the int as 64 bits
@@ -672,7 +672,7 @@ func hexBytes(n int) string {
         x = x ^ ((x >> 7) & 144115188075855871)
         x = x ^ (x << 17)
         t.state = x
-        var h = std.fmt.Sprintf("%016x", uint(x))
+        var h = fmt.Sprintf("%016x", uint(x))
         if left < 8 {
             h = h[..left * 2]
         }
@@ -685,7 +685,7 @@ func hexBytes(n int) string {
 
 // The current span of the task (nil if none).
 func CurrentSpan() *Span {
-    var c = std.task.CurrentContext()
+    var c = task.CurrentContext()
     var f = c.top()
     for f != nil {
         if f.key == -102 {
@@ -723,7 +723,7 @@ func StartSpanKind(name string, kind SpanKind) *Span {
     if t.clock != nil {
         s.StartNanos = t.clock()
     } else {
-        s.StartNanos = std.time.NowNanos()
+        s.StartNanos = time.NowNanos()
     }
     s.prev = push(s)
     s.pushed = true
@@ -732,12 +732,12 @@ func StartSpanKind(name string, kind SpanKind) *Span {
 
 // Makes s current; returns the previous context.
 func push(s *Span) map[string]any {
-    var old = std.task.rtGetCtx()
-    var c = std.task.CurrentContext()
-    var fr = new std.task.ctxFrame{key: -102, val: s, next: c.top()}
+    var old = task.rtGetCtx()
+    var c = task.CurrentContext()
+    var fr = new task.ctxFrame{key: -102, val: s, next: c.top()}
     var m = map[string]any{}
     m[""] = fr
-    std.task.rtSetCtx(m)
+    task.rtSetCtx(m)
     return old
 }
 
@@ -753,7 +753,7 @@ func Traceparent() string {
 // Parses a W3C traceparent value (version 00) into a remote span; nil if
 // malformed.
 func ParseTraceparent(h string) *Span {
-    var p = std.strings.Split(std.strings.Trim(h), "-")
+    var p = strings.Split(strings.Trim(h), "-")
     if len(p) != 4 || p[0] != "00" || len(p[1]) != 32 || len(p[2]) != 16 || len(p[3]) != 2 {
         return nil
     }
@@ -770,7 +770,7 @@ func ParseTraceparent(h string) *Span {
 func isHex(s string) bool {
     for i in 0..len(s) {
         var c = s[i..i + 1]
-        if !std.strings.Contains("0123456789abcdef", c) {
+        if !strings.Contains("0123456789abcdef", c) {
             return false
         }
     }
@@ -797,7 +797,7 @@ func enterRemote(h string) remoteScope {
 
 func leaveRemote(r remoteScope) {
     if r.pushed {
-        std.task.rtSetCtx(r.old)
+        task.rtSetCtx(r.old)
     }
 }
 
@@ -824,14 +824,14 @@ struct ConsoleExporter {
             " parent=" +
             parent +
             " kind=" +
-            std.fmt.Format("{0}", s.Kind) +
+            fmt.Format("{0}", s.Kind) +
             " status=" +
-            std.fmt.Format("{0}", s.Status)
+            fmt.Format("{0}", s.Status)
         if s.StatusMessage != "" {
             line += " (" + s.StatusMessage + ")"
         }
         if this.ShowDuration {
-            line += " duration=" + std.fmt.Format("{0}", s.Duration() / 1000) + "us"
+            line += " duration=" + fmt.Format("{0}", s.Duration() / 1000) + "us"
         }
         if len(s.Attributes) > 0 {
             line += " {"
@@ -848,7 +848,7 @@ struct ConsoleExporter {
 
     // Shutdown does nothing.
     func Shutdown() Task<void> {
-        return std.task.Delay(0)
+        return task.Delay(0)
     }
 }
 
@@ -857,11 +857,11 @@ func attrText(v any) string {
         case string s:
             return "\"" + s + "\""
     }
-    return std.fmt.Format("{0}", v)
+    return fmt.Format("{0}", v)
 }
 
 func jsonString(s string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("\"")
     var start = 0
     for i in 0..len(s) {
@@ -872,7 +872,7 @@ func jsonString(s string) string {
         } else if c == "\\" {
             esc = "\\\\"
         } else if s[i] < 32 {
-            esc = std.fmt.Sprintf("\\u%04x", int(s[i]))
+            esc = fmt.Sprintf("\\u%04x", int(s[i]))
         }
         if esc != "" {
             b.Write(s[start..i])
@@ -891,29 +891,29 @@ func otlpValue(v any) string {
         case string s:
             return "{\"stringValue\":" + jsonString(s) + "}"
         case int n:
-            return "{\"intValue\":\"" + std.fmt.Format("{0}", n) + "\"}"
+            return "{\"intValue\":\"" + fmt.Format("{0}", n) + "\"}"
         case float x:
-            return "{\"doubleValue\":" + std.fmt.Format("{0}", x) + "}"
+            return "{\"doubleValue\":" + fmt.Format("{0}", x) + "}"
         case bool t:
             if t {
                 return "{\"boolValue\":true}"
             }
             return "{\"boolValue\":false}"
     }
-    return "{\"stringValue\":" + jsonString(std.fmt.Format("{0}", v)) + "}"
+    return "{\"stringValue\":" + jsonString(fmt.Format("{0}", v)) + "}"
 }
 
 // One span in OTLP/JSON (opentelemetry-proto, JSON mapping).
 func OtlpSpanJson(s *Span) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("{\"traceId\":\"" + s.TraceId + "\",\"spanId\":\"" + s.SpanId + "\"")
     if s.ParentSpanId != "" {
         b.Write(",\"parentSpanId\":\"" + s.ParentSpanId + "\"")
     }
     b.Write(",\"name\":" + jsonString(s.Name))
-    b.Write(",\"kind\":" + std.fmt.Format("{0}", int(s.Kind) + 1))
-    b.Write(",\"startTimeUnixNano\":\"" + std.fmt.Format("{0}", s.StartNanos) + "\"")
-    b.Write(",\"endTimeUnixNano\":\"" + std.fmt.Format("{0}", s.EndNanos) + "\"")
+    b.Write(",\"kind\":" + fmt.Format("{0}", int(s.Kind) + 1))
+    b.Write(",\"startTimeUnixNano\":\"" + fmt.Format("{0}", s.StartNanos) + "\"")
+    b.Write(",\"endTimeUnixNano\":\"" + fmt.Format("{0}", s.EndNanos) + "\"")
     b.Write(",\"attributes\":[")
     for i, a in s.Attributes {
         if i > 0 {
@@ -923,7 +923,7 @@ func OtlpSpanJson(s *Span) string {
     }
     b.Write("],\"status\":{")
     if s.Status != StatusCode.Unset {
-        b.Write("\"code\":" + std.fmt.Format("{0}", int(s.Status)))
+        b.Write("\"code\":" + fmt.Format("{0}", int(s.Status)))
         if s.StatusMessage != "" {
             b.Write(",\"message\":" + jsonString(s.StatusMessage))
         }
@@ -937,7 +937,7 @@ func OtlpTraceJson(service string, spans []string) string {
     return "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":" +
         jsonString(service) +
         "}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"zell.diag\"},\"spans\":[" +
-        std.strings.Join(spans, ",") +
+        strings.Join(spans, ",") +
         "]}]}]}"
 }
 
@@ -956,19 +956,19 @@ struct OtlpExporter {
     // Export queues the span, sending a batch when BatchSize spans are queued.
     func Export(s *Span) {
         var j = OtlpSpanJson(s)
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         this.batch = append(this.batch, j)
         var full = this.BatchSize > 0 && len(this.batch) >= this.BatchSize
         var spans = this.batch
         if full {
             this.batch = []
         }
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         if full {
             var t = post(this, OtlpTraceJson(tracerOf().service, spans))
-            std.task.rtLock(&this.guard)
+            task.rtLock(&this.guard)
             this.pending = append(this.pending, t)
-            std.task.rtUnlock(&this.guard)
+            task.rtUnlock(&this.guard)
         }
     }
 
@@ -979,12 +979,12 @@ struct OtlpExporter {
 }
 
 async func otlpShutdown(e *OtlpExporter) {
-    std.task.rtLock(&e.guard)
+    task.rtLock(&e.guard)
     var spans = e.batch
     e.batch = []
     var pending = e.pending
     e.pending = []
-    std.task.rtUnlock(&e.guard)
+    task.rtUnlock(&e.guard)
     for t in pending {
         await t
     }
@@ -994,8 +994,8 @@ async func otlpShutdown(e *OtlpExporter) {
 }
 
 async func post(e *OtlpExporter, body string) {
-    var url = std.strings.TrimSuffix(e.Endpoint, "/") + "/v1/traces"
-    var res = try await std.net.http.Post(url, body, "application/json") catch err {
+    var url = strings.TrimSuffix(e.Endpoint, "/") + "/v1/traces"
+    var res = try await net.http.Post(url, body, "application/json") catch err {
         e.LastStatus = -1
         e.LastError = err.Message()
         return

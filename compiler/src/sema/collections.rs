@@ -1,4 +1,4 @@
-//! `std.collections`: `List<T>`, `Map<K, V>`, `Set<T>`, `Queue<T>` and
+//! `collections`: `List<T>`, `Map<K, V>`, `Set<T>`, `Queue<T>` and
 //! `Stack<T>`, written in Zell (below) as generic structs over the builtin
 //! slices and maps, parsed once and registered as stdlib templates. Their
 //! instances are ordinary monomorphised structs, so codegen and the runtime
@@ -20,8 +20,8 @@ use super::*;
 use crate::hir::{ExprKind, Stmt, StmtKind};
 use std::sync::OnceLock;
 
-/// The Zell source of `std.collections`.
-const SOURCE: &str = r#"namespace std.collections
+/// The Zell source of `collections`.
+const SOURCE: &str = r#"namespace collections
 
 // List is a growable list of T backed by a slice.
 struct List<T> {
@@ -358,25 +358,25 @@ fn collections_ast() -> &'static ast::File {
     static AST: OnceLock<ast::File> = OnceLock::new();
     AST.get_or_init(|| {
         let mut diags = crate::diagnostics::Diagnostics::new();
-        let text = super::stdfs::load("std.collections", "collections.zl", SOURCE);
+        let text = super::stdfs::load("collections", "collections.zl", SOURCE);
         let tokens = crate::lexer::lex(&text, &mut diags);
         let file = crate::parser::parse(tokens, &mut diags);
         match file {
             Some(f) if !diags.has_errors() => f,
-            _ => panic!("internal error: std.collections source does not parse: {:?}", diags.items),
+            _ => panic!("internal error: collections source does not parse: {:?}", diags.items),
         }
     })
 }
 
 impl<'a> Sema<'a> {
-    /// Registers the `std.collections` templates.
+    /// Registers the `collections` templates.
     pub(crate) fn register_collections(&mut self) {
         if self.files.is_empty() {
             return;
         }
         let file: &'static ast::File = collections_ast();
         let saved = (self.cur_file, self.cur_ns);
-        let ns = self.ensure_ns("std.collections", Span::DUMMY);
+        let ns = self.ensure_ns("collections", Span::DUMMY);
         self.cur_ns = ns;
         self.cur_file = 0;
         for d in &file.decls {
@@ -388,11 +388,11 @@ impl<'a> Sema<'a> {
         (self.cur_file, self.cur_ns) = saved;
     }
 
-    /// Name and type arguments of a `std.collections` instance.
+    /// Name and type arguments of a `collections` instance.
     fn std_collection(&self, sid: u32) -> Option<(&str, &[TypeId])> {
         let (t, args) = self.gen.inst_structs.get(&sid)?;
         let tm = &self.gen.templates[*t as usize];
-        (tm.is_std && self.nss[tm.ns].path == "std.collections").then_some((tm.name.as_str(), args.as_slice()))
+        (tm.is_std && self.nss[tm.ns].path == "collections").then_some((tm.name.as_str(), args.as_slice()))
     }
 
     /// Called at the end of a struct instantiation: stdlib methods whose

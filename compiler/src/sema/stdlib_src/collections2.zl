@@ -1,4 +1,4 @@
-// More std.collections types (the core List/Map/Set/Queue/Stack are in
+// More collections types (the core List/Map/Set/Queue/Stack are in
 // sema/collections.rs): LinkedList, Deque, Ring, Heap, PriorityQueue,
 // OrderedMap, LRU and BitSet. `for x in c` works on each through the
 // iteration protocol (DESIGN.md "Управление потоком"): LinkedList,
@@ -7,7 +7,7 @@
 // `b[i]` / `b[i] = true` (Index/IndexSet). The zero value of each is ready
 // to use except where a constructor takes a parameter (Ring,
 // PriorityQueue, LRU).
-namespace std.collections
+namespace collections
 
 struct listNode<T> {
     value T
@@ -516,7 +516,7 @@ struct Heap<T: Ordered> {
 
     // The elements in heap order (not sorted; a copy).
     func Items() []T {
-        return std.slices.Clone(this.items)
+        return slices.Clone(this.items)
     }
 }
 
@@ -753,7 +753,7 @@ struct OrderedMap<K: Ordered, V> {
 
     // Keys returns the keys in ascending order, as a new slice.
     func Keys() []K {
-        return std.slices.Clone(this.keys)
+        return slices.Clone(this.keys)
     }
 
     // Iterator over (key, value) in ascending key order (`for k, v in m`).
@@ -763,7 +763,7 @@ struct OrderedMap<K: Ordered, V> {
 
     // Values returns the values in ascending key order, as a new slice.
     func Values() []V {
-        return std.slices.Clone(this.vals)
+        return slices.Clone(this.vals)
     }
 
     // Clear removes every entry.
@@ -1027,7 +1027,7 @@ struct BitSet {
     func Count() int {
         var n = 0
         for w in this.words {
-            n += std.math.bits.OnesCount(w)
+            n += math.bits.OnesCount(w)
         }
         return n
     }
@@ -1037,7 +1037,7 @@ struct BitSet {
         var i = len(this.words) - 1
         for i >= 0 {
             if this.words[i] != 0 {
-                return i * 64 + std.math.bits.Len(this.words[i])
+                return i * 64 + math.bits.Len(this.words[i])
             }
             i -= 1
         }
@@ -1119,7 +1119,7 @@ struct BitSet {
         for wi, w in this.words {
             var x = w
             for x != 0 {
-                var t = std.math.bits.TrailingZeros(x)
+                var t = math.bits.TrailingZeros(x)
                 out = append(out, wi * 64 + t)
                 x = x & (x - 1)
             }

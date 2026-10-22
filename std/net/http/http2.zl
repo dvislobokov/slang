@@ -1,6 +1,6 @@
 // HTTP/2 (RFC 9113) over a `conn`: frames, streams, flow control, SETTINGS,
 // PING, GOAWAY (priority signals are ignored, server push is not
-// implemented and disabled), header compression by std.net.http.hpack.
+// implemented and disabled), header compression by net.http.hpack.
 //
 // Server: serveH2 is the connection task (it reads and dispatches frames);
 // every request stream runs its handler in a task of its own with the
@@ -9,7 +9,7 @@
 // in hostPool.h2); there is no background reader task: a request that
 // waits for its response reads and dispatches frames itself while it holds
 // the connection's reader token, and hands the token over when it is done.
-namespace std.net.http
+namespace net.http
 
 // ---- frames -----------------------------------------------------------------
 
@@ -99,7 +99,7 @@ func appendFrame(out []byte, typ int, flags int, sid int, payload []byte, n int)
     o = append(o, byte(typ))
     o = append(o, byte(flags))
     o = put32(o, sid & 2147483647)
-    return std.net.rtJoin(o, payload, n)
+    return net.rtJoin(o, payload, n)
 }
 
 func frameBytes(typ int, flags int, sid int, payload []byte) []byte {
@@ -119,7 +119,7 @@ async func readFrame(c *conn, b *rbuf, maxSize int) h2frame! {
     b.skip(9)
     if n > 0 {
         await fillTo(c, b, n)?
-        f.payload = std.bytes.Clone(b.buf[b.r..b.r + n])
+        f.payload = bytes.Clone(b.buf[b.r..b.r + n])
         b.skip(n)
     }
     return f
@@ -162,31 +162,31 @@ struct h2event {
     w     Task<void>
 
     func wait() Task<void> {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if this.set {
             this.set = false
-            std.task.rtUnlock(&this.guard)
-            return std.task.Delay(0)
+            task.rtUnlock(&this.guard)
+            return task.Delay(0)
         }
-        this.w = std.task.rtSignal()
+        this.w = task.rtSignal()
         this.has = true
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return this.w
     }
 
     func notify() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         if this.has {
             this.has = false
             var w = this.w
             var none Task<void>
             this.w = none
-            std.task.rtUnlock(&this.guard)
-            std.task.rtFire(w)
+            task.rtUnlock(&this.guard)
+            task.rtFire(w)
             return
         }
         this.set = true
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 }
 
@@ -197,11 +197,11 @@ struct h2conn {
     b        *rbuf
     isClient bool
     // serializes frame writes (and the HPACK encoder)
-    wmu std.task.Mutex
+    wmu task.Mutex
     // guards the fields below (never held across an await)
     guard      int
-    enc        *std.net.http.hpack.Encoder
-    dec        *std.net.http.hpack.Decoder
+    enc        *net.http.hpack.Encoder
+    dec        *net.http.hpack.Decoder
     streams    map[int]*h2stream
     nextID     int
     lastPeerID int
@@ -227,9 +227,9 @@ struct h2conn {
     scheme       string
     remote       string
     active       int
-    wg           std.task.WaitGroup
+    wg           task.WaitGroup
     settingsSeen bool
-    // client: when the last stream ended (std.time.Now() ms)
+    // client: when the last stream ended (time.Now() ms)
     idleSince int
 }
 
@@ -238,7 +238,7 @@ struct h2stream {
     h          *h2conn
     sendWindow int
     // received
-    fields     []std.net.http.hpack.HeaderField
+    fields     []net.http.hpack.HeaderField
     gotHeaders bool
     body       []byte
     chunks     [][]byte
@@ -273,12 +273,12 @@ func newH2(c *conn, b *rbuf, client bool) *h2conn {
         peerMaxStreams: 100,
         ourWindow: 1 << 20,
     }
-    h.enc = std.net.http.hpack.NewEncoder(4096)
-    h.dec = std.net.http.hpack.NewDecoder(4096)
+    h.enc = net.http.hpack.NewEncoder(4096)
+    h.dec = net.http.hpack.NewDecoder(4096)
     h.dec.MaxStringLength = 1 << 20
     if client {
         h.nextID = 1
-        h.idleSince = std.time.Now()
+        h.idleSince = time.Now()
     }
     return h
 }
@@ -305,7 +305,7 @@ func ourSettings(h *h2conn, maxStreams int, maxHeader int) []byte {
     }
     var out = frameBytes(4, 0, 0, p)
     var inc = put32([], (1 << 24) - 65535)
-    return std.net.rtJoin(out, frameBytes(8, 0, 0, inc), 13)
+    return net.rtJoin(out, frameBytes(8, 0, 0, inc), 13)
 }
 
 // Writes frames (already encoded) in one write, serialized with other writers.
@@ -336,9 +336,9 @@ func applySettings(h *h2conn, p []byte) void! {
         switch id {
             case 1:
                 // the peer's decoder table size: our encoder may use at most this
-                std.task.rtLock(&h.guard)
+                task.rtLock(&h.guard)
                 h.enc.SetMaxTableSize(minInt(v, 4096))
-                std.task.rtUnlock(&h.guard)
+                task.rtUnlock(&h.guard)
             case 2:
                 if v > 1 {
                     return h2err(1, "ENABLE_PUSH " + itoa(v))
@@ -349,13 +349,13 @@ func applySettings(h *h2conn, p []byte) void! {
                 if v > 2147483647 {
                     return h2err(3, "INITIAL_WINDOW_SIZE too large")
                 }
-                std.task.rtLock(&h.guard)
+                task.rtLock(&h.guard)
                 var delta = v - h.peerInitialWindow
                 h.peerInitialWindow = v
                 for _, s in h.streams {
                     s.sendWindow += delta
                 }
-                std.task.rtUnlock(&h.guard)
+                task.rtUnlock(&h.guard)
                 h.windowEv.notify()
             case 5:
                 if v < 16384 || v > 16777215 {
@@ -368,9 +368,9 @@ func applySettings(h *h2conn, p []byte) void! {
 
 // Marks the connection dead and wakes everyone waiting on it.
 func h2closeAll(h *h2conn, reason string) {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     if h.closed {
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         return
     }
     h.closed = true
@@ -382,7 +382,7 @@ func h2closeAll(h *h2conn, reason string) {
     // the streams keep their own references; dropping them here breaks
     // the conn -> stream -> conn cycle
     h.streams = map[int]*h2stream{}
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     for s in all {
         s.ev.notify()
     }
@@ -391,7 +391,7 @@ func h2closeAll(h *h2conn, reason string) {
 
 // HEADERS fields to a header map (canonical names; repeated fields joined;
 // cookies with "; ").
-func fieldsToHeaders(fs []std.net.http.hpack.HeaderField) map[string]string {
+func fieldsToHeaders(fs []net.http.hpack.HeaderField) map[string]string {
     var m = map[string]string{}
     for f in fs {
         if len(f.Name) > 0 && f.Name[0] == 58 {
@@ -412,7 +412,7 @@ func fieldsToHeaders(fs []std.net.http.hpack.HeaderField) map[string]string {
     return m
 }
 
-func pseudo(fs []std.net.http.hpack.HeaderField, name string) string {
+func pseudo(fs []net.http.hpack.HeaderField, name string) string {
     for f in fs {
         if f.Name == name {
             return f.Value
@@ -433,25 +433,25 @@ func connectionSpecific(k string) bool {
 
 // Appends the regular fields of a header map (lower-case names).
 func appendFields(
-    out []std.net.http.hpack.HeaderField,
+    out []net.http.hpack.HeaderField,
     h map[string]string,
-) []std.net.http.hpack.HeaderField {
+) []net.http.hpack.HeaderField {
     var fs = out
     for k, v in h {
         var ck = rtCanonical(k)
         if connectionSpecific(ck) || ck == "Content-Length" {
             continue
         }
-        var lk = std.strings.ToLower(ck)
+        var lk = strings.ToLower(ck)
         var sensitive = lk == "authorization" ||
             lk == "proxy-authorization" ||
             (lk == "cookie" && len(v) < 20)
         if lk == "set-cookie" {
-            for part in std.strings.Split(v, "\n") {
-                fs = append(fs, std.net.http.hpack.HeaderField{Name: lk, Value: part})
+            for part in strings.Split(v, "\n") {
+                fs = append(fs, net.http.hpack.HeaderField{Name: lk, Value: part})
             }
         } else {
-            fs = append(fs, std.net.http.hpack.HeaderField{
+            fs = append(fs, net.http.hpack.HeaderField{
                 Name: lk,
                 Value: v,
                 Sensitive: sensitive,
@@ -466,7 +466,7 @@ func appendFields(
 async func h2writeHeaders(
     h *h2conn,
     sid int,
-    fs []std.net.http.hpack.HeaderField,
+    fs []net.http.hpack.HeaderField,
     endStream bool,
     tail []byte,
 ) void! {
@@ -489,20 +489,20 @@ async func h2writeHeaders(
 async func h2openStream(
     h *h2conn,
     s *h2stream,
-    fs []std.net.http.hpack.HeaderField,
+    fs []net.http.hpack.HeaderField,
     endStream bool,
 ) void! {
     await h.wmu.Lock()
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     if h.closed || h.goaway {
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         h.wmu.Unlock()
         return H2Error{Code: 0, Reason: "connection closed"}
     }
     s.id = h.nextID
     h.nextID += 2
     h.streams[s.id] = s
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     var failed = ""
     try {
         await h2headersLocked(h, s.id, fs, endStream, [])?
@@ -519,7 +519,7 @@ async func h2openStream(
 async func h2headersLocked(
     h *h2conn,
     sid int,
-    fs []std.net.http.hpack.HeaderField,
+    fs []net.http.hpack.HeaderField,
     endStream bool,
     tail []byte,
 ) void! {
@@ -546,7 +546,7 @@ async func h2headersLocked(
         first = false
     }
     if len(tail) > 0 {
-        out = std.net.rtJoin(out, tail, len(tail))
+        out = net.rtJoin(out, tail, len(tail))
     }
     _ = await h.c.write(out)?
 }
@@ -562,29 +562,29 @@ async func h2sendData(h *h2conn, s *h2stream, data []byte, end bool) void! {
         return
     }
     for off < len(data) {
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         if h.closed {
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             return h2err(8, "connection closed")
         }
         if s.reset {
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             return h2err(s.resetCode, "stream reset by the peer")
         }
         var avail = minInt(minInt(h.sendWindow, s.sendWindow), h.peerMaxFrame)
         if avail <= 0 {
             var w = h.windowEv.wait()
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             await w
-            if std.task.IsCancelled() {
-                return std.task.ErrCancelled
+            if task.IsCancelled() {
+                return task.ErrCancelled
             }
             continue
         }
         var k = minInt(avail, len(data) - off)
         h.sendWindow -= k
         s.sendWindow -= k
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         var flags = 0
         if end && off + k == len(data) {
             flags = 1
@@ -601,7 +601,7 @@ func h2rst(sid int, code int) []byte {
 func h2goaway(last int, code int, reason string) []byte {
     var p = put32([], last)
     p = put32(p, code)
-    return frameBytes(7, 0, 0, std.net.rtJoin(p, std.strings.Bytes(reason), len(reason)))
+    return frameBytes(7, 0, 0, net.rtJoin(p, strings.Bytes(reason), len(reason)))
 }
 
 // Sends WINDOW_UPDATEs for n consumed bytes of stream sid (and the connection).
@@ -611,7 +611,7 @@ async func h2ack(h *h2conn, sid int, n int) void! {
     }
     var out = frameBytes(8, 0, 0, put32([], n))
     if sid > 0 {
-        out = std.net.rtJoin(out, frameBytes(8, 0, sid, put32([], n)), 13)
+        out = net.rtJoin(out, frameBytes(8, 0, sid, put32([], n)), 13)
     }
     await h2write(h, out)?
 }
@@ -654,11 +654,11 @@ async func h2control(h *h2conn, f h2frame) bool! {
                 await h2write(h, h2rst(f.sid, 1))?
                 return true
             }
-            std.task.rtLock(&h.guard)
+            task.rtLock(&h.guard)
             if f.sid == 0 {
                 h.sendWindow += inc
                 if h.sendWindow > 2147483647 {
-                    std.task.rtUnlock(&h.guard)
+                    task.rtUnlock(&h.guard)
                     return h2err(3, "connection window overflow")
                 }
             } else {
@@ -671,7 +671,7 @@ async func h2control(h *h2conn, f h2frame) bool! {
                     }
                 }
             }
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             h.windowEv.notify()
             return true
         case 3:
@@ -681,13 +681,13 @@ async func h2control(h *h2conn, f h2frame) bool! {
             if f.sid == 0 {
                 return h2err(1, "RST_STREAM on stream 0")
             }
-            std.task.rtLock(&h.guard)
+            task.rtLock(&h.guard)
             var s = h.streams[f.sid]
             if s != nil {
                 s.reset = true
                 s.resetCode = get32(f.payload, 0)
             }
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             if s != nil {
                 s.ev.notify()
                 h.windowEv.notify()
@@ -698,7 +698,7 @@ async func h2control(h *h2conn, f h2frame) bool! {
                 return h2err(6, "GOAWAY length")
             }
             var last = get32(f.payload, 0) & 2147483647
-            std.task.rtLock(&h.guard)
+            task.rtLock(&h.guard)
             h.goaway = true
             var refused []*h2stream = []
             if h.isClient {
@@ -710,7 +710,7 @@ async func h2control(h *h2conn, f h2frame) bool! {
                     }
                 }
             }
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             for s in refused {
                 s.ev.notify()
             }
@@ -735,17 +735,17 @@ func h2headerBlock(h *h2conn, f h2frame) []byte! {
         }
         var frag = unpad(f)?
         if (f.flags & 4) != 0 {
-            return std.bytes.Clone(frag)
+            return bytes.Clone(frag)
         }
         h.hdrSid = f.sid
         h.hdrFlags = f.flags
-        h.hdrBlock = std.bytes.Clone(frag)
+        h.hdrBlock = bytes.Clone(frag)
         return nil
     }
     if h.hdrSid == 0 || f.sid != h.hdrSid {
         return h2err(1, "unexpected CONTINUATION")
     }
-    h.hdrBlock = std.net.rtJoin(h.hdrBlock, f.payload, len(f.payload))
+    h.hdrBlock = net.rtJoin(h.hdrBlock, f.payload, len(f.payload))
     if len(h.hdrBlock) > (1 << 20) {
         return h2err(11, "header block too large")
     }
@@ -780,7 +780,7 @@ async func serveH2(st *serverState, e *connEntry, b *rbuf) {
     var idleWait = false
     try {
         await fillTo(c, b, 24)?
-        var pre = std.strings.FromBytes(b.buf[b.r..b.r + 24])
+        var pre = strings.FromBytes(b.buf[b.r..b.r + 24])
         if pre != "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" {
             return
         }
@@ -788,10 +788,10 @@ async func serveH2(st *serverState, e *connEntry, b *rbuf) {
         await h2write(h, ourSettings(h, st.maxStreams, st.maxHead))?
         var first = true
         for {
-            std.task.rtLock(&h.guard)
+            task.rtLock(&h.guard)
             var idle = h.active == 0
             var done = h.goaway && h.active == 0
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             if done {
                 break
             }
@@ -836,7 +836,7 @@ async func serveH2(st *serverState, e *connEntry, b *rbuf) {
             default:
                 reason = err.Message()
         }
-        if idleWait && std.net.IsTimeout(err) {
+        if idleWait && net.IsTimeout(err) {
             // idle past the timeout: say goodbye (NO_ERROR) before closing
             try await h2write(h, h2goaway(h.lastPeerID, 0, "idle timeout")) catch err2 {}
         }
@@ -847,18 +847,18 @@ async func serveH2(st *serverState, e *connEntry, b *rbuf) {
     h2closeAll(h, reason)
     // wait for the handlers still running (their writes fail fast now)
     await h.wg.Wait()
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     h.streams = map[int]*h2stream{}
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
 }
 
 async func h2serverHeaders(h *h2conn, sid int, flags int, blk []byte) void! {
     var fs = try h.dec.Decode(blk) catch err {
         return h2err(9, err.Message())
     }
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var s = h.streams[sid]
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     if s != nil {
         // trailers: must end the stream
         if (flags & 1) == 0 {
@@ -872,9 +872,9 @@ async func h2serverHeaders(h *h2conn, sid int, flags int, blk []byte) void! {
         return h2err(1, "invalid stream id " + itoa(sid))
     }
     h.lastPeerID = sid
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var refuse = h.active >= h.st.maxStreams || h.goaway
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     if refuse {
         await h2write(h, h2rst(sid, 7))?
         return
@@ -896,18 +896,18 @@ async func h2serverHeaders(h *h2conn, sid int, flags int, blk []byte) void! {
     if req.Host == "" {
         req.Host = req.Headers["Host"]
     }
-    var q = std.strings.Index(path, "?")
+    var q = strings.Index(path, "?")
     if q >= 0 {
         req.Query = path[q + 1..]
         path = path[..q]
     }
     req.Path = path
     s = new h2stream{id: sid, h: h, req: req}
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     s.sendWindow = h.peerInitialWindow
     h.streams[sid] = s
     h.active += 1
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     h.wg.Add(1)
     if (flags & 1) != 0 {
         s.ended = true
@@ -920,9 +920,9 @@ async func h2serverHeaders(h *h2conn, sid int, flags int, blk []byte) void! {
 }
 
 async func h2serverData(h *h2conn, f h2frame) void! {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var s = h.streams[f.sid]
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     var data = unpad(f)?
     // flow control counts the whole frame, padding included
     h.recvUnacked += len(f.payload)
@@ -948,7 +948,7 @@ async func h2serverData(h *h2conn, f h2frame) void! {
         h2startStream(h, s)
         return
     }
-    s.body = std.net.rtJoin(s.body, data, len(data))
+    s.body = net.rtJoin(s.body, data, len(data))
     s.unacked += len(f.payload)
     var ended = (f.flags & 1) != 0
     // the body is buffered as it comes: give the windows back in 32 KB steps
@@ -959,7 +959,7 @@ async func h2serverData(h *h2conn, f h2frame) void! {
         h.recvUnacked = 0
     }
     if !ended && s.unacked >= (1 << 15) {
-        out = std.net.rtJoin(out, frameBytes(8, 0, f.sid, put32([], s.unacked)), 13)
+        out = net.rtJoin(out, frameBytes(8, 0, f.sid, put32([], s.unacked)), 13)
         s.unacked = 0
     }
     if len(out) > 0 {
@@ -976,19 +976,19 @@ async func h2serverData(h *h2conn, f h2frame) void! {
 // the connection window is returned at once (in 32 KB steps).
 async func h2streamData(h *h2conn, s *h2stream, f h2frame, data []byte) void! {
     var ended = (f.flags & 1) != 0
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     if !s.tooLarge {
         s.recvd += len(data)
         if h.st.maxBody > 0 && s.recvd > h.st.maxBody {
             s.tooLarge = true
         } else if len(data) > 0 {
-            s.chunks = append(s.chunks, std.bytes.Clone(data))
+            s.chunks = append(s.chunks, bytes.Clone(data))
         }
     }
     if ended {
         s.ended = true
     }
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     s.ev.notify()
     if h.recvUnacked >= (1 << 15) {
         var k = h.recvUnacked
@@ -1002,24 +1002,24 @@ async func h2ReadReqBody(s *h2stream, n int) []byte! {
     var h = s.h
     for {
         var w = s.ev.wait()
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         if s.tooLarge {
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             return ErrBodyTooLarge
         }
         if len(s.chunks) > 0 {
             var c = s.chunks[0]
             var out = c
             if len(c) > n {
-                out = std.bytes.Clone(c[..n])
-                s.chunks[0] = std.bytes.Clone(c[n..])
+                out = bytes.Clone(c[..n])
+                s.chunks[0] = bytes.Clone(c[n..])
             } else {
                 var none []byte
                 s.chunks[0] = none
                 s.chunks = s.chunks[1..]
             }
             var ended = s.ended
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             s.unacked += len(out)
             if s.unacked >= (1 << 15) && !ended {
                 var k = s.unacked
@@ -1029,21 +1029,21 @@ async func h2ReadReqBody(s *h2stream, n int) []byte! {
             return out
         }
         if s.reset {
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             return h2err(s.resetCode, "stream reset by the peer")
         }
         if s.ended {
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             return []
         }
         if h.closed {
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             return error("connection closed")
         }
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         await w
-        if std.task.IsCancelled() {
-            return std.task.ErrCancelled
+        if task.IsCancelled() {
+            return task.ErrCancelled
         }
     }
     return []
@@ -1059,7 +1059,7 @@ func h2startStream(h *h2conn, s *h2stream) {
 }
 
 async func h2runStream(h *h2conn, s *h2stream) {
-    await std.task.Yield()
+    await task.Yield()
     var st = h.st
     var req = s.req
     if s.streaming {
@@ -1069,7 +1069,7 @@ async func h2runStream(h *h2conn, s *h2stream) {
         }
         req.Reader = new RequestBody{h2: s, mode: 3, limit: limit}
     } else {
-        req.Body = std.strings.FromBytes(s.body)
+        req.Body = strings.FromBytes(s.body)
         s.body = []
     }
     var w = new respWriter{
@@ -1086,7 +1086,7 @@ async func h2runStream(h *h2conn, s *h2stream) {
         res.w = w
     } else {
         var trace = req.Headers["Traceparent"]
-        var remoteSpan = std.diag.enterRemote(trace)
+        var remoteSpan = diag.enterRemote(trace)
         var failure = ""
         var aborted = false
         var tooLarge = false
@@ -1095,12 +1095,12 @@ async func h2runStream(h *h2conn, s *h2stream) {
             if failure == "" {
                 failure = "handler failed"
             }
-            if std.errors.Is(err, ErrAbortHandler) {
+            if errors.Is(err, ErrAbortHandler) {
                 aborted = true
             }
-            tooLarge = std.errors.Is(err, ErrBodyTooLarge)
+            tooLarge = errors.Is(err, ErrBodyTooLarge)
         }
-        std.diag.leaveRemote(remoteSpan)
+        diag.leaveRemote(remoteSpan)
         if failure != "" {
             if aborted || w.started {
                 try await h2write(h, h2rst(s.id, 2)) catch err {}
@@ -1118,9 +1118,9 @@ async func h2runStream(h *h2conn, s *h2stream) {
     try await h2Flush(s, res, true) catch err {}
     // A streamed request answered before its body ended: the client may
     // stop sending (RFC 9113 8.1, RST_STREAM with NO_ERROR).
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var unfinished = s.streaming && !s.ended && !s.reset
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     if unfinished {
         try await h2write(h, h2rst(s.id, 0)) catch err {}
     }
@@ -1128,12 +1128,12 @@ async func h2runStream(h *h2conn, s *h2stream) {
 }
 
 func h2endStream(h *h2conn, s *h2stream) {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     s.finished = true
     delete(h.streams, s.id)
     h.active -= 1
     var last = h.active == 0 && h.goaway
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     s.req = nil
     h.wg.Done()
     if last {
@@ -1148,23 +1148,23 @@ func h2responseFields(
     res *Response,
     status int,
     length int,
-) []std.net.http.hpack.HeaderField {
-    var fs []std.net.http.hpack.HeaderField = [
-        std.net.http.hpack.HeaderField{Name: ":status", Value: itoa(status)},
+) []net.http.hpack.HeaderField {
+    var fs []net.http.hpack.HeaderField = [
+        net.http.hpack.HeaderField{Name: ":status", Value: itoa(status)},
     ]
     fs = appendFields(fs, res.Headers)
     var hasType = res.Headers != nil && res.Headers["Content-Type"] != ""
     if !hasType && !bodyless(status) && (length != 0) {
-        fs = append(fs, std.net.http.hpack.HeaderField{
+        fs = append(fs, net.http.hpack.HeaderField{
             Name: "content-type",
             Value: "text/plain; charset=utf-8",
         })
     }
     if !w.noDate && (res.Headers == nil || res.Headers["Date"] == "") {
-        fs = append(fs, std.net.http.hpack.HeaderField{Name: "date", Value: rtDate()})
+        fs = append(fs, net.http.hpack.HeaderField{Name: "date", Value: rtDate()})
     }
     if length >= 0 && !bodyless(status) {
-        fs = append(fs, std.net.http.hpack.HeaderField{Name: "content-length", Value: itoa(length)})
+        fs = append(fs, net.http.hpack.HeaderField{Name: "content-length", Value: itoa(length)})
     }
     return fs
 }
@@ -1186,14 +1186,14 @@ async func h2Flush(s *h2stream, res *Response, end bool) void! {
     }
     if res.file != "" && end {
         // (a file after a flushed body: appended as one piece)
-        var f = std.os.Open(res.file)?
-        var buf = std.net.MakeBuffer(res.fileLen)
+        var f = os.Open(res.file)?
+        var buf = net.MakeBuffer(res.fileLen)
         var k = try f.ReadAt(buf, res.fileOff) catch err {
             _ = f.Close()
             return err
         }
         _ = f.Close()
-        body = body + std.strings.FromBytes(buf[..k])
+        body = body + strings.FromBytes(buf[..k])
         res.file = ""
     }
     var length = -1
@@ -1213,14 +1213,14 @@ async func h2Flush(s *h2stream, res *Response, end bool) void! {
             await h2writeHeaders(h, s.id, fs, end, [])?
             return
         }
-        var data = std.strings.Bytes(body)
-        std.task.rtLock(&h.guard)
+        var data = strings.Bytes(body)
+        task.rtLock(&h.guard)
         var fits = len(data) <= minInt(minInt(h.sendWindow, s.sendWindow), h.peerMaxFrame)
         if fits {
             h.sendWindow -= len(data)
             s.sendWindow -= len(data)
         }
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         if fits {
             // HEADERS and the whole body in one write
             var flags = 0
@@ -1234,7 +1234,7 @@ async func h2Flush(s *h2stream, res *Response, end bool) void! {
         await h2sendData(h, s, data, end)?
         return
     }
-    await h2sendData(h, s, std.strings.Bytes(body), end)?
+    await h2sendData(h, s, strings.Bytes(body), end)?
 }
 
 // A SendFile response on HTTP/2: HEADERS with the length, then the file
@@ -1252,8 +1252,8 @@ async func h2SendFile(s *h2stream, res *Response, status int) void! {
         await h2writeHeaders(h, s.id, fs, true, [])?
         return
     }
-    var f = std.os.Open(path)?
-    var buf = std.net.MakeBuffer(minInt(length, 1 << 16))
+    var f = os.Open(path)?
+    var buf = net.MakeBuffer(minInt(length, 1 << 16))
     var off = 0
     var failed error
     try {
@@ -1285,11 +1285,11 @@ func h2Shutdown(h *h2conn) {
 }
 
 async func h2sendShutdown(h *h2conn) {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var already = h.goaway
     h.goaway = true
     var idle = h.active == 0
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     if !already {
         try await h2write(h, h2goaway(h.lastPeerID, 0, "")) catch err {}
     }
@@ -1305,8 +1305,8 @@ async func h2sendShutdown(h *h2conn) {
 // which the reader closes the connection (with GOAWAY), 0 = never.
 async func startH2Client(c *conn, b *rbuf, idle int) *h2conn! {
     var h = newH2(c, b, true)
-    var pre = std.strings.Bytes("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-    await h2write(h, std.net.rtJoin(pre, ourSettings(h, 0, 0), 1 << 30))?
+    var pre = strings.Bytes("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+    await h2write(h, net.rtJoin(pre, ourSettings(h, 0, 0), 1 << 30))?
     _ = h2clientReader(h, idle)
     return h
 }
@@ -1322,11 +1322,11 @@ async func h2clientReader(h *h2conn, idle int) {
     var idleClose = false
     try {
         for {
-            std.task.rtLock(&h.guard)
+            task.rtLock(&h.guard)
             var none = len(h.streams) == 0
             var done = h.closed || (h.goaway && none)
             var since = h.idleSince
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             if done {
                 break
             }
@@ -1336,7 +1336,7 @@ async func h2clientReader(h *h2conn, idle int) {
             if idle > 0 {
                 var left = idle
                 if none {
-                    left = idle - (std.time.Now() - since)
+                    left = idle - (time.Now() - since)
                     if left <= 0 {
                         idleClose = true
                         break
@@ -1347,7 +1347,7 @@ async func h2clientReader(h *h2conn, idle int) {
             var timedOut = false
             var readErr error
             try await fillTo(h.c, h.b, 9) catch err {
-                if std.net.IsTimeout(err) {
+                if net.IsTimeout(err) {
                     timedOut = true
                 } else {
                     readErr = err
@@ -1374,9 +1374,9 @@ async func h2clientReader(h *h2conn, idle int) {
         }
     }
     if idleClose {
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         h.goaway = true
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         try await h2write(h, h2goaway(0, 0, "idle timeout")) catch err {}
         failed = "idle timeout"
     }
@@ -1388,27 +1388,27 @@ async func h2clientReader(h *h2conn, idle int) {
 }
 
 func h2Usable(h *h2conn) bool {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var ok = !h.closed && !h.goaway && len(h.streams) < h.peerMaxStreams && h.nextID < 2147483000
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     return ok
 }
 
 // No stream open on h.
 func h2Idle(h *h2conn) bool {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var idle = len(h.streams) == 0
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     return idle
 }
 
 // The pool let go of h: close it now if no stream is open, else once the
 // last one ends (h2forget).
 func h2CloseWhenIdle(h *h2conn) {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     var idle = len(h.streams) == 0
     h.goaway = true
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     if idle {
         h2closeAll(h, "transport closed")
         h.c.close()
@@ -1422,9 +1422,9 @@ func h2CloseIdle(h *h2conn) {
 }
 
 async func h2goawayClose(h *h2conn) {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     h.goaway = true
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     try await h2write(h, h2goaway(0, 0, "idle")) catch err {}
     h2closeAll(h, "idle")
     h.c.close()
@@ -1448,10 +1448,10 @@ async func h2await(h *h2conn, s *h2stream, ready func() bool) void! {
         if ready() {
             return
         }
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         if h.closed {
             var why = h.closeErr
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             if ready() {
                 return
             }
@@ -1460,10 +1460,10 @@ async func h2await(h *h2conn, s *h2stream, ready func() bool) void! {
             }
             return H2Error{Code: 0, Reason: why}
         }
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         await w
-        if std.task.IsCancelled() {
-            return std.task.ErrCancelled
+        if task.IsCancelled() {
+            return task.ErrCancelled
         }
     }
 }
@@ -1474,9 +1474,9 @@ async func h2clientFrame(h *h2conn, f h2frame) void! {
     }
     if await h2control(h, f)? {
         if f.typ == 7 {
-            std.task.rtLock(&h.guard)
+            task.rtLock(&h.guard)
             var none = len(h.streams) == 0
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             if none {
                 h2closeAll(h, "GOAWAY")
             }
@@ -1495,9 +1495,9 @@ async func h2clientFrame(h *h2conn, f h2frame) void! {
         var fs = try h.dec.Decode(blk) catch err {
             return h2err(9, err.Message())
         }
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         var s = h.streams[f.sid]
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         if s == nil {
             return
         }
@@ -1505,7 +1505,7 @@ async func h2clientFrame(h *h2conn, f h2frame) void! {
         if !s.gotHeaders && status >= 100 && status < 200 {
             return
         }
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         if !s.gotHeaders {
             s.fields = fs
             s.gotHeaders = true
@@ -1513,29 +1513,29 @@ async func h2clientFrame(h *h2conn, f h2frame) void! {
         if (flags & 1) != 0 {
             s.ended = true
         }
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         s.ev.notify()
         return
     }
     if f.typ == 0 {
         var data = unpad(f)?
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         var s = h.streams[f.sid]
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         if s == nil {
             // a stream we gave up: keep the connection window open
             await h2ack(h, 0, len(f.payload))?
             return
         }
-        var piece = std.bytes.Clone(data)
-        std.task.rtLock(&h.guard)
+        var piece = bytes.Clone(data)
+        task.rtLock(&h.guard)
         if len(piece) > 0 {
             s.chunks = append(s.chunks, piece)
         }
         if (f.flags & 1) != 0 {
             s.ended = true
         }
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         var pad = len(f.payload) - len(data)
         if pad > 0 {
             await h2ack(h, 0, pad)?
@@ -1555,36 +1555,36 @@ async func h2RoundTrip(
     hasBody bool,
     gz bool,
 ) Response! {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     if h.closed || h.goaway {
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         return H2Error{Code: 0, Reason: "connection closed"}
     }
     // (the id is taken when the HEADERS are written: h2openStream)
     var s = new h2stream{h: h, sendWindow: h.peerInitialWindow, local: true}
-    std.task.rtUnlock(&h.guard)
-    var fs []std.net.http.hpack.HeaderField = []
-    fs = append(fs, std.net.http.hpack.HeaderField{Name: ":method", Value: method})
-    fs = append(fs, std.net.http.hpack.HeaderField{Name: ":scheme", Value: u.Scheme})
-    fs = append(fs, std.net.http.hpack.HeaderField{Name: ":authority", Value: u.Host})
-    fs = append(fs, std.net.http.hpack.HeaderField{Name: ":path", Value: u.RequestURI()})
+    task.rtUnlock(&h.guard)
+    var fs []net.http.hpack.HeaderField = []
+    fs = append(fs, net.http.hpack.HeaderField{Name: ":method", Value: method})
+    fs = append(fs, net.http.hpack.HeaderField{Name: ":scheme", Value: u.Scheme})
+    fs = append(fs, net.http.hpack.HeaderField{Name: ":authority", Value: u.Host})
+    fs = append(fs, net.http.hpack.HeaderField{Name: ":path", Value: u.RequestURI()})
     fs = appendFields(fs, hd)
     if hd["User-Agent"] == "" {
-        fs = append(fs, std.net.http.hpack.HeaderField{Name: "user-agent", Value: "zell-http/0.1"})
+        fs = append(fs, net.http.hpack.HeaderField{Name: "user-agent", Value: "zell-http/0.1"})
     }
     if hd["Accept"] == "" {
-        fs = append(fs, std.net.http.hpack.HeaderField{Name: "accept", Value: "*/*"})
+        fs = append(fs, net.http.hpack.HeaderField{Name: "accept", Value: "*/*"})
     }
     if gz {
-        fs = append(fs, std.net.http.hpack.HeaderField{Name: "accept-encoding", Value: "gzip"})
+        fs = append(fs, net.http.hpack.HeaderField{Name: "accept-encoding", Value: "gzip"})
     }
-    var traceparent = std.diag.Traceparent()
+    var traceparent = diag.Traceparent()
     if traceparent != "" && hd["Traceparent"] == "" {
-        fs = append(fs, std.net.http.hpack.HeaderField{Name: "traceparent", Value: traceparent})
+        fs = append(fs, net.http.hpack.HeaderField{Name: "traceparent", Value: traceparent})
     }
     var withBody = hasBody || body != "" || method == "POST" || method == "PUT" || method == "PATCH"
     if withBody {
-        fs = append(fs, std.net.http.hpack.HeaderField{
+        fs = append(fs, net.http.hpack.HeaderField{
             Name: "content-length",
             Value: itoa(len(body)),
         })
@@ -1592,22 +1592,22 @@ async func h2RoundTrip(
     try {
         await h2openStream(h, s, fs, !withBody)?
         if withBody {
-            try await h2sendData(h, s, std.strings.Bytes(body), true) catch err {
+            try await h2sendData(h, s, strings.Bytes(body), true) catch err {
                 // RST_STREAM(NO_ERROR): the server answered before the
                 // whole body was sent and needs no more of it (RFC 9113
                 // 8.1); the response is still to be read.
-                std.task.rtLock(&h.guard)
+                task.rtLock(&h.guard)
                 var early = s.reset && s.resetCode == 0
-                std.task.rtUnlock(&h.guard)
+                task.rtUnlock(&h.guard)
                 if !early {
                     raise(err)?
                 }
             }
         }
         await h2await(h, s, func() bool {
-            std.task.rtLock(&h.guard)
+            task.rtLock(&h.guard)
             var ok = s.gotHeaders || s.reset
-            std.task.rtUnlock(&h.guard)
+            task.rtUnlock(&h.guard)
             return ok
         })?
     } catch err {
@@ -1626,7 +1626,7 @@ async func h2RoundTrip(
     s.fields = []
     var br = new BodyReader{h2: s, mode: 0}
     if gz && res.Headers["Content-Encoding"] == "gzip" {
-        br.gz = std.compress.gzip.NewReader()
+        br.gz = compress.gzip.NewReader()
         delete(res.Headers, "Content-Encoding")
         delete(res.Headers, "Content-Length")
     }
@@ -1641,15 +1641,15 @@ async func h2ReadBody(s *h2stream, n int) []byte! {
         return []
     }
     await h2await(h, s, func() bool {
-        std.task.rtLock(&h.guard)
+        task.rtLock(&h.guard)
         var ok = len(s.chunks) > 0 || s.ended || s.reset
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         return ok
     })?
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     if len(s.chunks) == 0 {
         var wasReset = s.reset && !s.ended
-        std.task.rtUnlock(&h.guard)
+        task.rtUnlock(&h.guard)
         h2forget(h, s)
         if wasReset {
             return H2Error{Code: s.resetCode, Stream: s.id, Reason: "stream reset"}
@@ -1659,15 +1659,15 @@ async func h2ReadBody(s *h2stream, n int) []byte! {
     var c = s.chunks[0]
     var out = c
     if len(c) > n {
-        out = std.bytes.Clone(c[..n])
-        s.chunks[0] = std.bytes.Clone(c[n..])
+        out = bytes.Clone(c[..n])
+        s.chunks[0] = bytes.Clone(c[n..])
     } else {
         var none []byte
         s.chunks[0] = none
         s.chunks = s.chunks[1..]
     }
     var drained = s.ended && len(s.chunks) == 0
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     s.unacked += len(out)
     if s.unacked >= 16384 || drained {
         var k = s.unacked
@@ -1683,13 +1683,13 @@ async func h2ReadBody(s *h2stream, n int) []byte! {
 
 // Drops a client stream from the connection.
 func h2forget(h *h2conn, s *h2stream) {
-    std.task.rtLock(&h.guard)
+    task.rtLock(&h.guard)
     delete(h.streams, s.id)
     if len(h.streams) == 0 {
-        h.idleSince = std.time.Now()
+        h.idleSince = time.Now()
     }
     var gone = h.goaway && len(h.streams) == 0
-    std.task.rtUnlock(&h.guard)
+    task.rtUnlock(&h.guard)
     s.h = nil
     if gone {
         h2closeAll(h, "GOAWAY")

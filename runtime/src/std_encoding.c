@@ -1,4 +1,4 @@
-/* std_encoding.c - std.encoding.base64 and std.encoding.hex
+/* std_encoding.c - encoding.base64 and encoding.hex
  * (zell_encoding_base64_*, zell_encoding_hex_*), RFC 4648.
  * Standard base64 is padded (Go base64.StdEncoding); the URL variant uses the
  * URL-safe alphabet without padding (Go base64.RawURLEncoding), and DecodeURL

@@ -1,9 +1,8 @@
-// Examples for std.net.http: a server and its client in one program.
+// Examples for net.http: a server and its client in one program.
 namespace http_test
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 async func ExampleRouter() void! {
     var r = http.NewRouter()

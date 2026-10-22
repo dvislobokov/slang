@@ -1,4 +1,4 @@
-/* std_time_zone.c - the local time zone for std.time (time.zl): the TZif
+/* std_time_zone.c - the local time zone for time (time.zl): the TZif
  * bytes of $TZ (":Name", "Name" or an absolute path; empty = UTC) or else
  * /etc/localtime, read once per process and cached (like Go, later
  * changes of TZ are not seen). An unreadable zone gives "" (UTC). Where

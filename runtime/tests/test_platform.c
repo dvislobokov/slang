@@ -1,6 +1,6 @@
 /* Tests for the platform layer (src/platform/), the I/O readiness waits
- * (task_io.c), the std.net wrappers (std_net.c) and the task primitives
- * added for std.task (context slot, signals, spin locks, yield). */
+ * (task_io.c), the net wrappers (std_net.c) and the task primitives
+ * added for task (context slot, signals, spin locks, yield). */
 #include "test.h"
 #include "../src/platform/platform.h"
 #include <errno.h>

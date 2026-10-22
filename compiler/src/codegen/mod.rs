@@ -36,8 +36,8 @@
 //! a stored `*S` is `ti.<*S>`.
 //!
 //! **Reflection** ([`reflect`], ABI.md §17). When the program uses
-//! `std.reflect` (`Program::reflect`), every type id is instead the payload
-//! of an immortal `std.reflect.TypeInfo` object whose first three words are
+//! `reflect` (`Program::reflect`), every type id is instead the payload
+//! of an immortal `reflect.TypeInfo` object whose first three words are
 //! the `zell_type_info` (`name`, `size`, `drop`), so the same pointer is
 //! the box type, `vtable[0]`, the `any` type word and a Zell
 //! `*reflect.TypeInfo`. Tables reference fields, methods (packed `invoke`

@@ -1,4 +1,4 @@
-/* tz_win32.c - time zones on Windows for std.time (platform.h
+/* tz_win32.c - time zones on Windows for time (platform.h
  * zell__plat_tz_tzif): Windows has no tzdata files, so the zone rules come
  * from the registry (HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\
  * Time Zones\<key>: TZI = bias + the yearly DST rule, "Dynamic DST" = one

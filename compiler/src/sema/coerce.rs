@@ -103,7 +103,7 @@ impl<'a> Sema<'a> {
     pub(crate) fn sealed_problem(&self, ns: hir::NamespaceId, full_name: &str, iface: TypeId) -> Option<String> {
         let Type::Interface(d) = self.tt.get(iface) else { return None };
         let it = &self.interfaces[d.0 as usize];
-        if !it.sealed || (it.namespace == ns && full_name.starts_with("std.") == it.full_name.starts_with("std.")) {
+        if !it.sealed || (it.namespace == ns && crate::sema::stdlib::is_std_namespace(&full_name) == crate::sema::stdlib::is_std_namespace(&it.full_name)) {
             return None;
         }
         let path = self.nss[self.ns_of_hir(it.namespace)].path.clone();

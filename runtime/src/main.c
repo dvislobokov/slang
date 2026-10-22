@@ -26,7 +26,7 @@ void zell_runtime_drain(void) {
 }
 
 void zell_runtime_shutdown(void) {
-    /* Orderly shutdown: process-wide singletons first (std.diag's slot
+    /* Orderly shutdown: process-wide singletons first (diag's slot
      * map, diag.c), while the scheduler still runs the tasks their
      * destructors wake; then the scheduler, I/O and resolver threads;
      * then what was registered again meanwhile. */

@@ -1,8 +1,7 @@
-// Examples for std.regex.
+// Examples for regex.
 namespace regex_test
 
-import std
-import std.io
+import io
 
 func ExamplePattern() {
     // Pattern literals are checked by the compiler.

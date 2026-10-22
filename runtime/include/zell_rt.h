@@ -44,7 +44,7 @@ extern "C" {
 /* Refcount value marking a static/immortal object (literals, sentinels).
  * retain/release are no-ops on such objects. */
 #define ZELL_RC_IMMORTAL ((int64_t)-1)
-/* Refcount value of an object allocated in an arena (std.arena, ABI.md
+/* Refcount value of an object allocated in an arena (arena, ABI.md
  * 3.6): retain/release are no-ops, the arena frees it. */
 #define ZELL_RC_ARENA ((int64_t)-2)
 /* Bit 62 of a (non-immortal) refcount word: the object has a weak box.
@@ -194,14 +194,14 @@ void zell_cycles_stats(zell_cycle_stats *out);
 int32_t zell_cycles_mode(void);
 /* ZELL_CYCLES_MANUAL <-> ZELL_CYCLES_AUTO (tests); OFF only before the first flagged object. */
 void zell_cycles_set_mode(int32_t mode);
-/* std.runtime.CollectCycles / CycleStats (stdlib_src/runtime_cycles.zl):
+/* runtime.CollectCycles / CycleStats (stdlib_src/runtime_cycles.zl):
  * stat 0 runs, 1 collected, 2 candidates, 3 examined, 4 pending,
  * 5 threshold, 6 aborted, 7 mode. */
 int64_t zell_runtime_rt_collect_cycles(void);
 /* The collection epoch and the release paired with a pin (ABI.md 3.8). */
 extern int64_t zell_cycles_epoch;
 void zell_ptr_release_noroot(void *payload, int64_t epoch);
-/* std.diag.HeapByType (diag_heap.c): "live\ttotal\tbytes\ttype" lines. */
+/* diag.HeapByType (diag_heap.c): "live\ttotal\tbytes\ttype" lines. */
 struct zell_string *zell_diag_rt_heap_types(void);
 bool zell_diag_rt_heap_counting(void);
 int64_t zell_runtime_rt_cycle_stat(int64_t which);
@@ -217,7 +217,7 @@ typedef struct zell_leak_field {
 void zell_leak_acyclic(const zell_type_info *type, const char *name);
 void zell_leak_fields(const zell_type_info *type, const zell_leak_field *fields);
 
-/* Arenas (std.arena, ABI.md 3.6). Handles are raw pointers passed as int64. */
+/* Arenas (arena, ABI.md 3.6). Handles are raw pointers passed as int64. */
 int64_t zell_arena_create(void);
 void zell_arena_destroy(int64_t arena);       /* frees everything and the arena */
 void zell_arena_free(int64_t arena);          /* frees everything; the arena stays usable */
@@ -454,10 +454,10 @@ extern const zell_value_ops zell_ops_error_frame;  /* ops of a 32-byte errors.Fr
  * `f`; printing it with the float64 rules gives Go's float32 output. */
 double zell_float32_shortest(float f);
 /* "<op> <path>: <strerror(e)>"; for ENOENT the error wraps the immortal
- * sentinel std.fs.ErrNotFound (zell_fs_err_not_found), so errors.Is works. */
+ * sentinel fs.ErrNotFound (zell_fs_err_not_found), so errors.Is works. */
 zell_error *zell_error_errno(const char *op, const char *path, int e);
-zell_error *zell_fs_err_not_found(void);           /* std.fs.ErrNotFound, immortal */
-/* std.fmt.Sprintf: Go verbs over the compiler's per-argument lowering
+zell_error *zell_fs_err_not_found(void);           /* fs.ErrNotFound, immortal */
+/* fmt.Sprintf: Go verbs over the compiler's per-argument lowering
  * (kind letters, int values, float values, println texts; std_fmt_sprintf.c). */
 zell_string *zell_fmt_sprintf(const zell_string *format, const zell_string *kinds, const zell_slice *ints,
                                 const zell_slice *floats, const zell_slice *texts);
@@ -568,10 +568,10 @@ zell_task *zell_task_current(void);                   /* +1 or NULL */
 zell_task *zell_task_new_scope(void);                 /* cancellation node under the current task, +1 */
 zell_task *zell_task_enter_scope(zell_task *scope);  /* returns the previous current (+1) */
 void zell_task_leave_scope(zell_task *prev);          /* borrowed */
-zell_error *zell_task_err_cancelled(void);            /* std.task.ErrCancelled, immortal */
+zell_error *zell_task_err_cancelled(void);            /* task.ErrCancelled, immortal */
 int64_t zell_task_next_key(void);
 
-/* std.task primitives used by the Zell-source parts of std.task. */
+/* task primitives used by the Zell-source parts of task. */
 zell_task *zell_task_rt_signal(void);          /* pending Task<void>, +1; fired when the current task is cancelled */
 zell_task *zell_task_rt_waker(void);           /* the same, never fired by cancellation */
 void zell_task_rt_fire(zell_task *signal);     /* complete (idempotent), cancels a delay */
@@ -610,7 +610,7 @@ ZELL_NORETURN void zell_exit(int32_t code);
  * returned objects are owned (+1). See ABI.md section 14.
  * ====================================================================== */
 
-/* std.strings ([]string: elem_size 8, ops &zell_ops_ref) */
+/* strings ([]string: elem_size 8, ops &zell_ops_ref) */
 void          zell_strings_split(const zell_string *s, const zell_string *sep, zell_slice *out);
 zell_string *zell_strings_join(const zell_slice *parts, const zell_string *sep);
 zell_string *zell_strings_trim(const zell_string *s);   /* Go strings.TrimSpace */
@@ -626,7 +626,7 @@ zell_string *zell_strings_repeat(const zell_string *s, int64_t count); /* count 
 int64_t       zell_strings_to_int(const zell_string *s, zell_error **err);
 double        zell_strings_to_float(const zell_string *s, zell_error **err);
 
-/* std.math */
+/* math */
 double zell_math_sqrt(double x);
 double zell_math_abs(double x);
 double zell_math_pow(double x, double y);
@@ -640,25 +640,25 @@ double zell_math_tan(double x);
 double zell_math_log(double x);
 double zell_math_exp(double x);
 
-/* std.fmt: args are the already-formatted []string */
+/* fmt: args are the already-formatted []string */
 zell_string *zell_fmt_format(const zell_string *tmpl, const zell_slice *args);
 
-/* std.io */
+/* io */
 zell_string *zell_io_read_file(const zell_string *path, zell_error **err);
 void          zell_io_write_file(const zell_string *path, const zell_string *data,
                                   zell_error **err);
 zell_string *zell_io_read_line(zell_error **err);  /* EOF: NULL + zell_err_eof */
 
-/* std.errors (New -> zell_error_new, As -> zell_error_as) */
+/* errors (New -> zell_error_new, As -> zell_error_as) */
 zell_error *zell_errors_wrap(const zell_error *err, const zell_string *msg); /* NULL err -> NULL */
 zell_error *zell_errors_unwrap(const zell_error *err);  /* owned cause or NULL */
 bool         zell_errors_is(const zell_error *err, const zell_error *target);
 zell_string *zell_errors_trace(const zell_error *err);             /* errors.Trace */
 void         zell_errors_frames(const zell_error *err, zell_slice *out); /* errors.Frames */
 
-/* std.task.Delay is zell_task_delay (declared above). */
+/* task.Delay is zell_task_delay (declared above). */
 
-/* std.strings (more; std_strings_ext.c). []char: elem_size 4 (int32_t code
+/* strings (more; std_strings_ext.c). []char: elem_size 4 (int32_t code
  * points), []byte: elem_size 1, both with NULL ops. */
 void          zell_strings_fields(const zell_string *s, zell_slice *out);
 int64_t       zell_strings_count(const zell_string *s, const zell_string *substr);
@@ -680,7 +680,7 @@ zell_string *zell_strings_from_bytes(const zell_slice *bytes);
 int64_t       zell_strings_compare(const zell_string *a, const zell_string *b);
 zell_string *zell_strings_title(const zell_string *s);
 
-/* std.math (more; std_math_ext.c) */
+/* math (more; std_math_ext.c) */
 double  zell_math_round(double x);
 double  zell_math_trunc(double x);
 double  zell_math_mod(double x, double y);
@@ -696,7 +696,7 @@ int64_t zell_math_imin(int64_t a, int64_t b);
 int64_t zell_math_imax(int64_t a, int64_t b);
 int64_t zell_math_iabs(int64_t a);
 
-/* std.io (more; std_io_ext.c) */
+/* io (more; std_io_ext.c) */
 zell_string *zell_io_read_all(zell_error **err);    /* stdin to EOF */
 void          zell_io_read_lines(const zell_string *path, zell_slice *out, zell_error **err);
 void          zell_io_write_lines(const zell_string *path, const zell_slice *lines,
@@ -704,7 +704,7 @@ void          zell_io_write_lines(const zell_string *path, const zell_slice *lin
 void          zell_io_eprint(const zell_string *s);
 void          zell_io_eprintln(const zell_string *s);
 
-/* std.time (std_time.c): times are int64 Unix milliseconds, calendar in UTC */
+/* time (std_time.c): times are int64 Unix milliseconds, calendar in UTC */
 int64_t       zell_time_now(void);
 int64_t       zell_time_now_nanos(void);
 void          zell_time_sleep(int64_t ms);
@@ -720,7 +720,7 @@ int64_t       zell_time_minute(int64_t ms);
 int64_t       zell_time_second(int64_t ms);
 int64_t       zell_time_weekday(int64_t ms);  /* 0 = Sunday */
 
-/* std.os (std_os.c; Args is zell_os_args above) */
+/* os (std_os.c; Args is zell_os_args above) */
 zell_string *zell_os_getenv(const zell_string *name);   /* "" if unset */
 void          zell_os_setenv(const zell_string *name, const zell_string *value,
                               zell_error **err);
@@ -730,7 +730,7 @@ int64_t       zell_os_pid(void);
 zell_string *zell_os_cwd(zell_error **err);
 void          zell_os_chdir(const zell_string *path, zell_error **err);
 
-/* std.fs (std_fs.c) */
+/* fs (std_fs.c) */
 bool          zell_fs_exists(const zell_string *path);
 bool          zell_fs_is_dir(const zell_string *path);
 void          zell_fs_read_dir(const zell_string *path, zell_slice *out, zell_error **err);
@@ -751,7 +751,7 @@ zell_string *zell_fs_temp_dir(void);
 void          zell_fs_append_file(const zell_string *path, const zell_string *data,
                                    zell_error **err);
 
-/* std.random (std_random.c): xoshiro256**, process-wide state with a mutex */
+/* random (std_random.c): xoshiro256**, process-wide state with a mutex */
 void    zell_random_seed(int64_t seed);
 int64_t zell_random_int(void);              /* [0, 2^63) */
 int64_t zell_random_int_n(int64_t n);       /* [0, n); n <= 0 panics */
@@ -759,7 +759,7 @@ double  zell_random_float(void);            /* [0, 1) */
 void    zell_random_bytes(int64_t n, zell_slice *out);  /* n < 0 panics */
 void    zell_random_shuffle(const zell_slice *s);       /* []int, in place */
 
-/* std.crypto.hash / std.crypto.hmac / std.crypto.rand (std_crypto.c).
+/* crypto.hash / crypto.hmac / crypto.rand (std_crypto.c).
  * []byte results: elem_size 1, NULL ops. Hex output is lowercase. */
 void          zell_crypto_hash_sha256(const zell_string *data, zell_slice *out);
 zell_string *zell_crypto_hash_sha256_hex(const zell_string *data);
@@ -778,7 +778,7 @@ void          zell_crypto_rand_bytes(int64_t n, zell_slice *out, zell_error **er
 int64_t       zell_crypto_rand_int(zell_error **err);             /* [0, 2^63) */
 zell_string *zell_crypto_rand_hex(int64_t n, zell_error **err);  /* n bytes -> 2n chars */
 
-/* std.encoding.base64 / std.encoding.hex (std_encoding.c) */
+/* encoding.base64 / encoding.hex (std_encoding.c) */
 zell_string *zell_encoding_base64_encode(const zell_slice *data);       /* padded */
 zell_string *zell_encoding_base64_encode_string(const zell_string *s);
 void          zell_encoding_base64_decode(const zell_string *s, zell_slice *out,
@@ -792,15 +792,15 @@ zell_string *zell_encoding_hex_encode_string(const zell_string *s);
 void          zell_encoding_hex_decode(const zell_string *s, zell_slice *out, zell_error **err);
 zell_string *zell_encoding_hex_decode_string(const zell_string *s, zell_error **err);
 
-/* std.uuid (std_uuid.c) */
+/* uuid (std_uuid.c) */
 zell_string *zell_uuid_new(void);                  /* random v4, lowercase */
 bool          zell_uuid_is_valid(const zell_string *s);
 
-/* std.net internals (std_net.c, ABI.md 16): used by the Zell-source std.net.
+/* net internals (std_net.c, ABI.md 16): used by the Zell-source net.
  * Sockets are handles (int64_t, never 0 or -1) that own the descriptor;
  * -1 / empty + zell_net_rt_again() mean "would block". Errors are the
- * causes (std.net sentinels or the system text); net.zl adds the context. */
-zell_error *zell_net_err_closed(void);       /* std.net.ErrClosed etc.: immortal sentinels */
+ * causes (net sentinels or the system text); net.zl adds the context. */
+zell_error *zell_net_err_closed(void);       /* net.ErrClosed etc.: immortal sentinels */
 zell_error *zell_net_err_timeout(void);
 zell_error *zell_net_err_refused(void);
 zell_error *zell_net_err_reset(void);
@@ -866,11 +866,11 @@ int64_t zell_net_rt_index_byte(const zell_slice *b, int64_t from, int64_t c);
 void    zell_net_rt_join(const zell_slice *a, const zell_slice *b, int64_t bn, zell_slice *out);
 
 /* ---- reflection tables (ABI.md section 17, std_reflect.c) ----------------
- * Only programs that use std.reflect have them; then every zell_type_info
+ * Only programs that use reflect have them; then every zell_type_info
  * a compiled program emits is the first part of a zell_reflect_type, and
  * every table object is an immortal heap object (header refcount -1), so
  * the payload pointers below are valid Zell pointers. Slices of tables
- * have a NULL backing. Layouts are std.reflect.TypeInfo etc. in field
+ * have a NULL backing. Layouts are reflect.TypeInfo etc. in field
  * order with natural alignment (checked by _Static_assert in std_reflect.c). */
 typedef struct zell_reflect_type zell_reflect_type;
 
@@ -889,7 +889,7 @@ typedef struct zell_reflect_any {      /* a Zell `any`: 16 bytes */
     const zell_reflect_type *type;     /* +8  dynamic type, NULL = nil */
 } zell_reflect_any;
 
-typedef struct zell_reflect_field {    /* std.reflect.FieldInfo, 72 bytes */
+typedef struct zell_reflect_field {    /* reflect.FieldInfo, 72 bytes */
     zell_string *name;                 /* +0 */
     const zell_reflect_type *type;     /* +8 */
     int64_t offset;                     /* +16 byte offset in the struct (enum value for variants) */
@@ -899,7 +899,7 @@ typedef struct zell_reflect_field {    /* std.reflect.FieldInfo, 72 bytes */
     zell_slice attrs;                  /* +40 []any, each holding a *A */
 } zell_reflect_field;
 
-typedef struct zell_reflect_method {   /* std.reflect.MethodInfo, 72 bytes */
+typedef struct zell_reflect_method {   /* reflect.MethodInfo, 72 bytes */
     zell_string *name;                 /* +0 */
     const zell_reflect_type *type;     /* +8  func(*S, params) ret (no receiver if static) */
     bool is_static;                     /* +16 */
@@ -908,14 +908,14 @@ typedef struct zell_reflect_method {   /* std.reflect.MethodInfo, 72 bytes */
     zell_slice attrs;                  /* +40 */
 } zell_reflect_method;
 
-typedef struct zell_reflect_variant {  /* std.reflect.VariantInfo, 80 bytes */
+typedef struct zell_reflect_variant {  /* reflect.VariantInfo, 80 bytes */
     zell_string *name;                 /* +0 */
     int64_t index;                      /* +8 */
     zell_slice fields;                 /* +16 []*FieldInfo */
     zell_slice attrs;                  /* +48 */
 } zell_reflect_variant;
 
-struct zell_reflect_type {             /* std.reflect.TypeInfo, 232 bytes */
+struct zell_reflect_type {             /* reflect.TypeInfo, 232 bytes */
     zell_type_info rt;                 /* +0  name, size (16 + sizeof T), drop */
     int32_t kind;                       /* +24 zell_reflect_kind */
     zell_string *name;                 /* +32 short name: User, *User, []int */
@@ -935,7 +935,7 @@ struct zell_reflect_type {             /* std.reflect.TypeInfo, 232 bytes */
 
 /* The table of a box (a heap object made by compiled code), or NULL. */
 const zell_reflect_type *zell_reflect_type_of(const void *obj);
-/* "Struct", "Int", ... (the std.reflect.Kind variant name). */
+/* "Struct", "Int", ... (the reflect.Kind variant name). */
 const char *zell_reflect_kind_name(int32_t kind);
 /* Field / method by name ([borrowed] table entries), NULL if absent. */
 const zell_reflect_field *zell_reflect_field_by_name(const zell_reflect_type *t, const char *name);
@@ -943,12 +943,12 @@ const zell_reflect_method *zell_reflect_method_by_name(const zell_reflect_type *
 /* The canonical table (follows `canon`); NULL for NULL. */
 const zell_reflect_type *zell_reflect_canon(const zell_reflect_type *t);
 
-/* std.encoding.json (std_json.c): tokens of a JSON text (see there) and
+/* encoding.json (std_json.c): tokens of a JSON text (see there) and
  * a quoted JSON string literal. */
 void          zell_encoding_json_scan(const zell_string *text, zell_slice *out, zell_error **err);
 zell_string *zell_encoding_json_quote(const zell_string *s);
 
-/* std.diag / std.log runtime halves (diag.c, profile.c; ABI.md section 18). */
+/* diag / log runtime halves (diag.c, profile.c; ABI.md section 18). */
 zell_object *zell_diag_rt_slots(void);                  /* map[string]any, +1 or NULL */
 void          zell_diag_rt_set_slots(zell_object *m);
 void          zell_diag_rt_lock(void);
@@ -962,8 +962,8 @@ int64_t       zell_diag_rt_mono_nanos(void);
 int64_t       zell_diag_rt_heap_in_use(void);              /* object heap bytes (heap.c, ABI.md 3.2) */
 int64_t       zell_diag_rt_heap_retained(void);
 int64_t       zell_diag_rt_heap_released(void);
-void          zell_runtime_free_os_memory(void);           /* std.runtime.FreeOSMemory */
-/* std.testing.Panics: runs the closure on a thread in a panic capture
+void          zell_runtime_free_os_memory(void);           /* runtime.FreeOSMemory */
+/* testing.Panics: runs the closure on a thread in a panic capture
  * scope; 1 panicked, 0 returned, -1 unsupported (std_testing.c); the
  * message of the last caught panic of the calling thread (+1). */
 int64_t       zell_testing_rt_capture(void *fn, void *env);
@@ -997,7 +997,7 @@ void zell_dbg_resume(struct zell_dbg_frame *f);
 void zell_dbg_boot(const void *tables, void (*entry)(void));
 void zell_dbg_exit(int32_t code);
 
-/* std.debug internals (rt*). Closures are passed as their two words. */
+/* debug internals (rt*). Closures are passed as their two words. */
 int64_t       zell_debug_rt_tables(void);
 void          zell_debug_rt_set_hook(void *fn, void *env);
 void          zell_debug_rt_set_exit_hook(void *fn, void *env);
@@ -1039,7 +1039,7 @@ bool          zell_debug_rt_send(int64_t fd, const zell_string *s);
 void          zell_debug_rt_close(int64_t fd);
 void          zell_debug_rt_eprint(const zell_string *s);
 
-/* std.unsafe (capability `unsafe`). */
+/* unsafe (capability `unsafe`). */
 int64_t       zell_unsafe_read_int(int64_t addr, int64_t size);
 int64_t       zell_unsafe_read_uint(int64_t addr, int64_t size);
 double        zell_unsafe_read_float(int64_t addr, int64_t size);
@@ -1051,12 +1051,12 @@ int64_t       zell_unsafe_addr_of(void *data, void *type);
 int64_t       zell_unsafe_type_of(void *data, void *type);
 int64_t       zell_unsafe_call_func(int64_t addr, const zell_slice *args);
 
-/* std.thread. */
+/* thread. */
 int64_t       zell_thread_spawn(void *fn, void *env);
 void          zell_thread_join(int64_t h);
 void          zell_thread_sleep(int64_t ms);
 
-/* std.plugin (capability `plugin`). */
+/* plugin (capability `plugin`). */
 int64_t       zell_plugin_rt_open(const zell_string *path, zell_error **err);
 int64_t       zell_plugin_rt_sym(int64_t h, const zell_string *name, zell_error **err);
 void          zell_plugin_rt_close(int64_t h);

@@ -1,8 +1,8 @@
 // RSA key generation (the signature and OAEP primitives are runtime
 // functions, crypto/rsa.c). Primes come from the runtime (random
 // candidates with the top two bits set, trial division, Miller-Rabin);
-// the key arithmetic uses std.math.big.
-namespace std.crypto.rsa
+// the key arithmetic uses math.big.
+namespace crypto.rsa
 
 // An RSA public key: modulus and exponent as big-endian bytes.
 struct PublicKey {
@@ -21,11 +21,11 @@ func GenerateKey(bits int) []byte! {
     if bits < 1024 || bits > 8192 || bits % 16 != 0 {
         return error("rsa: key size must be a multiple of 16 in 1024..8192 bits")
     }
-    var e = std.math.big.NewInt(65537)
-    var one = std.math.big.NewInt(1)
+    var e = math.big.NewInt(65537)
+    var one = math.big.NewInt(1)
     for attempt in 0..32 {
-        var p = std.math.big.FromBytes(rtGenPrime(bits / 2, 65537)?)
-        var q = std.math.big.FromBytes(rtGenPrime(bits / 2, 65537)?)
+        var p = math.big.FromBytes(rtGenPrime(bits / 2, 65537)?)
+        var q = math.big.FromBytes(rtGenPrime(bits / 2, 65537)?)
         if p.Equals(q) {
             continue
         }
@@ -50,7 +50,7 @@ func GenerateKey(bits int) []byte! {
         _ = attempt
         var body []byte = derInt([0])
         for x in [n, e, d, p, q, dp, dq, qinv] {
-            body = std.compress.rtConcat(body, derInt(x.Bytes()))
+            body = compress.rtConcat(body, derInt(x.Bytes()))
         }
         return derTLV(48, body)
     }
@@ -76,7 +76,7 @@ func derTLV(tag int, content []byte) []byte {
             i -= 1
         }
     }
-    return std.compress.rtConcat(out, content)
+    return compress.rtConcat(out, content)
 }
 
 // DER INTEGER of a non-negative big-endian magnitude.
@@ -91,7 +91,7 @@ func derInt(mag []byte) []byte {
     } else {
         v = mag[i..]
         if v[0] >= 128 {
-            v = std.compress.rtConcat([0], v)
+            v = compress.rtConcat([0], v)
         }
     }
     return derTLV(2, v)

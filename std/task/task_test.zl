@@ -1,8 +1,7 @@
-// Examples for std.task.
+// Examples for task.
 namespace task_test
 
-import std
-import std.io
+import io
 
 async func square(x int) int {
     await task.Delay(1)

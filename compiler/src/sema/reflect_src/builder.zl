@@ -1,4 +1,4 @@
-namespace std.strings
+namespace strings
 
 // strings.Builder: accumulates text; String() joins the pieces once.
 struct Builder {

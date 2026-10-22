@@ -1,7 +1,7 @@
 //! Combining the fragments of all units into one [`Analysis`]: symbols get
 //! their ids, stable keys are resolved, namespace declarations are recorded
 //! over the whole file list, and the checks over the whole program (unused
-//! imports, the entry point, `std.web` services and routes) are made.
+//! imports, the entry point, `web` services and routes) are made.
 
 use super::fragment::{FImport, FKey, Fragment, SKey, SymRef};
 use super::stdblock::StdBlock;
@@ -75,7 +75,7 @@ pub(crate) fn assemble(files: &[FileView], units: &[UnitView], merged: &Program,
         let segs = &f.ast.namespace.segments;
         // A user file declaring a std namespace records nothing for it
         // (the std namespaces keep their std symbols).
-        let in_std = segs.first().is_some_and(|s| s.name == "std");
+        let in_std = segs.first().is_some_and(|s| crate::sema::stdlib::is_std_namespace(&s.name));
         for i in 0..segs.len() {
             let path = segs[..=i].iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
             let o = ns_order.len();

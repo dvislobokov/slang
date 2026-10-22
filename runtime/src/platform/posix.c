@@ -664,7 +664,7 @@ void zell__plat_symbolize_done(void) {
     g_exe_lo = g_exe_hi = 0;
 }
 
-/* ---- dynamic loading (std.plugin) ---- */
+/* ---- dynamic loading (plugin) ---- */
 
 void *zell__plat_dl_open(const char *path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
 

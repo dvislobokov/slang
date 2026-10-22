@@ -1,5 +1,5 @@
-/* std_uuid.c - std.uuid (zell_uuid_*): RFC 4122 / 9562 version-4 UUIDs from
- * std.crypto.rand, canonical lowercase 8-4-4-4-12 form. */
+/* std_uuid.c - uuid (zell_uuid_*): RFC 4122 / 9562 version-4 UUIDs from
+ * crypto.rand, canonical lowercase 8-4-4-4-12 form. */
 #include "rt_internal.h"
 
 #include <string.h>

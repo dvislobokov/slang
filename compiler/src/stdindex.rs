@@ -1,6 +1,6 @@
 //! A declaration index of the standard library sources on disk (`std/`,
-//! see [`crate::sema::stdfs`]) for tools: where `std.strings.Split` or
-//! `std.net.http.Get` is declared, its source signature and doc comment.
+//! see [`crate::sema::stdfs`]) for tools: where `strings.Split` or
+//! `net.http.Get` is declared, its source signature and doc comment.
 //! The files are parsed, not analysed (they are the same modules the
 //! compiler registers itself), so the index covers the extern declaration
 //! files too.
@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// One declaration of a std file.
 #[derive(Clone, Debug)]
 pub struct StdDecl {
-    /// `std.strings.Split`, `std.net.http.Client.Do`.
+    /// `strings.Split`, `net.http.Client.Do`.
     pub full_name: String,
     pub name: String,
     pub kind: SymbolKind,
@@ -132,8 +132,8 @@ impl StdIndex {
         self.files.push(Arc::new(SourceFile::new(path, text)));
     }
 
-    /// The declaration of `full_name` (`std.strings.Split`); generic
-    /// instance names (`std.task.Channel<int>.Send`) are looked up without
+    /// The declaration of `full_name` (`strings.Split`); generic
+    /// instance names (`task.Channel<int>.Send`) are looked up without
     /// their type arguments.
     pub fn lookup(&self, full_name: &str) -> Option<&StdDecl> {
         if let Some(&i) = self.by_name.get(full_name) {

@@ -1,6 +1,6 @@
 /* std_argon2.c - BLAKE2b (RFC 7693) and Argon2d/Argon2i/Argon2id
  * (RFC 9106, version 0x13), the memory-hard function behind
- * std.crypto.kdf.Argon2id and std.crypto.password (runtime/ABI.md 23).
+ * crypto.kdf.Argon2id and crypto.password (runtime/ABI.md 23).
  *
  * Lanes are filled one after another on the calling thread (the result
  * does not depend on the degree of parallelism actually used, only on the
@@ -314,7 +314,7 @@ int zell__argon2(int type, const uint8_t *pw, size_t pwlen, const uint8_t *salt,
     return 0;
 }
 
-/* ---- Zell wrappers: std.crypto.kdf (ABI.md 23) ---- */
+/* ---- Zell wrappers: crypto.kdf (ABI.md 23) ---- */
 
 static inline int64_t blen(const zell_slice *s) { return s ? s->len : 0; }
 static inline const uint8_t *bdata(const zell_slice *s) {

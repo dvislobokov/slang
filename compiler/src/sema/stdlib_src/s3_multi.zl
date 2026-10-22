@@ -1,22 +1,22 @@
 // Multipart uploads and presigned URLs (see s3.zl for the file layout).
-namespace std.cloud.s3
+namespace cloud.s3
 
-// Where Upload reads its data from: a std.io.Reader or an AsyncReader.
+// Where Upload reads its data from: a io.Reader or an AsyncReader.
 interface partSource {
     func next(n int) Task<[]byte!>
 }
 
 struct syncSource {
-    r std.io.Reader
+    r io.Reader
 
     func next(n int) Task<[]byte!> {
         return readSync(this.r, n)
     }
 }
 
-async func readSync(r std.io.Reader, n int) []byte! {
+async func readSync(r io.Reader, n int) []byte! {
     var out []byte = []
-    var buf = std.net.rtBytes(65536)
+    var buf = net.rtBytes(65536)
     for len(out) < n {
         var want = n - len(out)
         var chunk = buf
@@ -27,27 +27,27 @@ async func readSync(r std.io.Reader, n int) []byte! {
         if k == 0 {
             break
         }
-        out = std.data.rtAppend(out, chunk[..k])
+        out = data.rtAppend(out, chunk[..k])
     }
     return out
 }
 
 struct asyncSource {
-    r std.io.AsyncReader
+    r io.AsyncReader
 
     func next(n int) Task<[]byte!> {
         return readAsync(this.r, n)
     }
 }
 
-async func readAsync(r std.io.AsyncReader, n int) []byte! {
+async func readAsync(r io.AsyncReader, n int) []byte! {
     var out []byte = []
     for len(out) < n {
         var b = await r.Read(n - len(out))?
         if len(b) == 0 {
             break
         }
-        out = std.data.rtAppend(out, b)
+        out = data.rtAppend(out, b)
     }
     return out
 }
@@ -64,9 +64,9 @@ async func createMultipart(c *Client, bucket string, key string, opts PutOptions
 }
 
 async func uploadPart(c *Client, bucket string, key string, uploadID string, part int, data []byte) string! {
-    var q = [Param{Key: "partNumber", Value: std.strconv.Itoa(part)}, Param{Key: "uploadId", Value: uploadID}]
-    var body = std.strings.FromBytes(data)
-    var h = map[string]string{"Content-Md5": std.encoding.base64.Encode(std.crypto.hash.Md5(body))}
+    var q = [Param{Key: "partNumber", Value: strconv.Itoa(part)}, Param{Key: "uploadId", Value: uploadID}]
+    var body = strings.FromBytes(data)
+    var h = map[string]string{"Content-Md5": encoding.base64.Encode(crypto.hash.Md5(body))}
     var res = await send(c, "PUT", bucket, key, q, h, body, false)?
     await check(res, 200, bucket, key)?
     var etag = res.Header("ETag")
@@ -77,10 +77,10 @@ async func uploadPart(c *Client, bucket string, key string, uploadID string, par
 }
 
 async func completeMultipart(c *Client, bucket string, key string, uploadID string, etags []string) PutResult! {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("<CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">")
     for i, e in etags {
-        b.Write("<Part><PartNumber>" + std.strconv.Itoa(i + 1) + "</PartNumber><ETag>" + xmlEscape(e) + "</ETag></Part>")
+        b.Write("<Part><PartNumber>" + strconv.Itoa(i + 1) + "</PartNumber><ETag>" + xmlEscape(e) + "</ETag></Part>")
     }
     b.Write("</CompleteMultipartUpload>")
     var h = map[string]string{"Content-Type": "application/xml"}
@@ -125,7 +125,7 @@ async func upload(c *Client, bucket string, key string, src partSource, partSize
     }
     var first = await src.next(size)?
     if len(first) < size {
-        return await putObject(c, bucket, key, std.strings.FromBytes(first), opts)?
+        return await putObject(c, bucket, key, strings.FromBytes(first), opts)?
     }
     var id = await createMultipart(c, bucket, key, opts)?
     var st = new uploadState{}
@@ -186,7 +186,7 @@ func presign(c *Client, method string, bucket string, key string, expires int, e
     var (host, path) = target(c, bucket, key)
     var amz = AmzDate(nowMs(c))
     var scope = amz[..8] + "/" + c.cfg.Region + "/s3/aws4_request"
-    var q = [Param{Key: "X-Amz-Algorithm", Value: "AWS4-HMAC-SHA256"}, Param{Key: "X-Amz-Credential", Value: c.cfg.AccessKey + "/" + scope}, Param{Key: "X-Amz-Date", Value: amz}, Param{Key: "X-Amz-Expires", Value: std.strconv.Itoa(expires)}, Param{Key: "X-Amz-SignedHeaders", Value: "host"}]
+    var q = [Param{Key: "X-Amz-Algorithm", Value: "AWS4-HMAC-SHA256"}, Param{Key: "X-Amz-Credential", Value: c.cfg.AccessKey + "/" + scope}, Param{Key: "X-Amz-Date", Value: amz}, Param{Key: "X-Amz-Expires", Value: strconv.Itoa(expires)}, Param{Key: "X-Amz-SignedHeaders", Value: "host"}]
     if c.cfg.SessionToken != "" {
         q = append(q, Param{Key: "X-Amz-Security-Token", Value: c.cfg.SessionToken})
     }
@@ -194,6 +194,6 @@ func presign(c *Client, method string, bucket string, key string, expires int, e
         q = append(q, p)
     }
     var query = CanonicalQuery(q)
-    var signed = SignV4(std.strings.ToUpper(method), path, query, map[string]string{"host": host}, "UNSIGNED-PAYLOAD", c.cfg.AccessKey, c.cfg.SecretKey, c.cfg.Region, "s3", amz)
+    var signed = SignV4(strings.ToUpper(method), path, query, map[string]string{"host": host}, "UNSIGNED-PAYLOAD", c.cfg.AccessKey, c.cfg.SecretKey, c.cfg.Region, "s3", amz)
     return c.scheme + "://" + host + path + "?" + query + "&X-Amz-Signature=" + signed.Signature
 }

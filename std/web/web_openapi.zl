@@ -2,16 +2,16 @@
 // that the compiler generates with the route table (parameters, body and
 // response schemas from json.Schema<T>(), tags, summaries, security), and
 // the /swagger page (swagger-ui from a CDN).
-namespace std.web
+namespace web
 
 // The OpenAPI 3.1 document (JSON) of the mapped endpoints, paths in
 // registration order.
 func OpenApiDocument(a *App) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("{\"openapi\":\"3.1.0\",\"info\":{\"title\":")
-    b.Write(std.encoding.json.Quote(a.Title))
+    b.Write(encoding.json.Quote(a.Title))
     b.Write(",\"version\":")
-    b.Write(std.encoding.json.Quote(a.Version))
+    b.Write(encoding.json.Quote(a.Version))
     b.Write("},\"paths\":{")
     var patterns []string = []
     for e in a.endpoints {
@@ -33,7 +33,7 @@ func OpenApiDocument(a *App) string {
         if i > 0 {
             b.Write(",")
         }
-        b.Write(std.encoding.json.Quote(p))
+        b.Write(encoding.json.Quote(p))
         b.Write(":{")
         var n = 0
         for e in a.endpoints {
@@ -44,7 +44,7 @@ func OpenApiDocument(a *App) string {
                 b.Write(",")
             }
             n += 1
-            b.Write(std.encoding.json.Quote(std.strings.ToLower(e.Method)))
+            b.Write(encoding.json.Quote(strings.ToLower(e.Method)))
             b.Write(":")
             writeOperation(&b, e)
             if e.RequireAuth && !e.Anonymous {
@@ -63,11 +63,11 @@ func OpenApiDocument(a *App) string {
 
 func operationId(e *Endpoint) string {
     if e.Name != "" {
-        return std.strings.Replace(e.Name, ".", "_")
+        return strings.Replace(e.Name, ".", "_")
     }
-    var id = std.strings.ToLower(e.Method)
+    var id = strings.ToLower(e.Method)
     for p in e.parts {
-        var s = std.strings.TrimSuffix(std.strings.TrimPrefix(p, "{"), "}")
+        var s = strings.TrimSuffix(strings.TrimPrefix(p, "{"), "}")
         if s == "*" {
             s = "rest"
         }
@@ -76,17 +76,17 @@ func operationId(e *Endpoint) string {
     return id
 }
 
-func writeOperation(b *std.strings.Builder, e *Endpoint) {
+func writeOperation(b *strings.Builder, e *Endpoint) {
     b.Write("{\"operationId\":")
-    b.Write(std.encoding.json.Quote(operationId(e)))
+    b.Write(encoding.json.Quote(operationId(e)))
     if e.Tag != "" {
         b.Write(",\"tags\":[")
-        b.Write(std.encoding.json.Quote(e.Tag))
+        b.Write(encoding.json.Quote(e.Tag))
         b.Write("]")
     }
     if e.Summary != "" {
         b.Write(",\"summary\":")
-        b.Write(std.encoding.json.Quote(e.Summary))
+        b.Write(encoding.json.Quote(e.Summary))
     }
     var params = 0
     var forms []ParamDoc = []
@@ -102,9 +102,9 @@ func writeOperation(b *std.strings.Builder, e *Endpoint) {
         }
         params += 1
         b.Write("{\"name\":")
-        b.Write(std.encoding.json.Quote(p.Name))
+        b.Write(encoding.json.Quote(p.Name))
         b.Write(",\"in\":")
-        b.Write(std.encoding.json.Quote(p.In))
+        b.Write(encoding.json.Quote(p.In))
         if p.Required {
             b.Write(",\"required\":true")
         }
@@ -117,7 +117,7 @@ func writeOperation(b *std.strings.Builder, e *Endpoint) {
     }
     if e.RequestSchema != "" {
         b.Write(",\"requestBody\":{\"required\":true,\"content\":{")
-        b.Write(std.encoding.json.Quote(e.RequestContentType))
+        b.Write(encoding.json.Quote(e.RequestContentType))
         b.Write(":{\"schema\":")
         b.Write(e.RequestSchema)
         b.Write("}}}")
@@ -127,7 +127,7 @@ func writeOperation(b *std.strings.Builder, e *Endpoint) {
             if i > 0 {
                 b.Write(",")
             }
-            b.Write(std.encoding.json.Quote(f.Name))
+            b.Write(encoding.json.Quote(f.Name))
             b.Write(":")
             b.Write(schemaText(f.Schema))
         }
@@ -141,14 +141,14 @@ func writeOperation(b *std.strings.Builder, e *Endpoint) {
         if i > 0 {
             b.Write(",")
         }
-        b.Write(std.encoding.json.Quote(std.fmt.Format("{0}", r.Status)))
+        b.Write(encoding.json.Quote(fmt.Format("{0}", r.Status)))
         b.Write(":{\"description\":")
-        b.Write(std.encoding.json.Quote(std.net.http.StatusText(r.Status)))
+        b.Write(encoding.json.Quote(net.http.StatusText(r.Status)))
         if r.ContentType == "application/problem+json" {
             b.Write(",\"content\":{\"application/problem+json\":{\"schema\":{\"$ref\":\"#/components/schemas/ProblemDetails\"}}}")
         } else if r.ContentType != "" {
             b.Write(",\"content\":{")
-            b.Write(std.encoding.json.Quote(r.ContentType))
+            b.Write(encoding.json.Quote(r.ContentType))
             b.Write(":{\"schema\":")
             b.Write(schemaText(r.Schema))
             b.Write("}}")
@@ -178,12 +178,12 @@ func schemaText(s string) string {
 // The swagger-ui page for the document at specUrl (scripts and styles
 // from unpkg; nothing is bundled).
 func SwaggerPage(title string, specUrl string) string {
-    return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>" + escapeHtml(title) + " - Swagger UI</title>\n<link rel=\"stylesheet\" href=\"https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css\">\n</head>\n<body>\n<div id=\"swagger-ui\"></div>\n<script src=\"https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js\" crossorigin></script>\n<script>\nwindow.onload = () => { window.ui = SwaggerUIBundle({ url: " + std.encoding.json.Quote(specUrl) + ", dom_id: \"#swagger-ui\" }); };\n</script>\n</body>\n</html>\n"
+    return "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>" + escapeHtml(title) + " - Swagger UI</title>\n<link rel=\"stylesheet\" href=\"https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css\">\n</head>\n<body>\n<div id=\"swagger-ui\"></div>\n<script src=\"https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js\" crossorigin></script>\n<script>\nwindow.onload = () => { window.ui = SwaggerUIBundle({ url: " + encoding.json.Quote(specUrl) + ", dom_id: \"#swagger-ui\" }); };\n</script>\n</body>\n</html>\n"
 }
 
 func escapeHtml(s string) string {
-    var r = std.strings.Replace(s, "&", "&amp;")
-    r = std.strings.Replace(r, "<", "&lt;")
-    r = std.strings.Replace(r, ">", "&gt;")
-    return std.strings.Replace(r, "\"", "&quot;")
+    var r = strings.Replace(s, "&", "&amp;")
+    r = strings.Replace(r, "<", "&lt;")
+    r = strings.Replace(r, ">", "&gt;")
+    return strings.Replace(r, "\"", "&quot;")
 }

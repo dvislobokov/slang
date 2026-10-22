@@ -167,7 +167,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             return;
         }
         for (i, g) in self.prog.globals.iter().enumerate() {
-            if g.full_name.starts_with("std.") || g.file >= self.prog.sources.len() {
+            if crate::sema::stdlib::is_std_namespace(&g.full_name) || g.file >= self.prog.sources.len() {
                 continue;
             }
             let ty = self.di_type(g.ty);
@@ -206,7 +206,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// Whether HIR function `f` gets a subprogram.
     fn has_source(&self, f: &hir::Function) -> bool {
-        !f.full_name.starts_with("std.") && f.file < self.prog.sources.len() && f.span != Span::DUMMY
+        !crate::sema::stdlib::is_std_namespace(&f.full_name) && f.file < self.prog.sources.len() && f.span != Span::DUMMY
     }
 
     /// Hook of [`CodeGen::begin_fn`]: starts the subprogram of `func`.

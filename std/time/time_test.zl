@@ -1,8 +1,7 @@
-// Examples for std.time.
+// Examples for time.
 namespace time_test
 
-import std
-import std.io
+import io
 
 func ExampleDate() {
     var t = time.Date(2024, 3, 9, 14, 5, 0, 0, time.UTC())

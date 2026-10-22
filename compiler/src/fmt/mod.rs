@@ -2,7 +2,7 @@
 //!
 //! One style, no options, like `gofmt`: 4-space indentation, braces on the
 //! same line, one space around binary operators, none inside parentheses,
-//! struct fields aligned in columns, imports sorted (`std` first, then the
+//! struct fields aligned in columns, imports sorted (standard library first, then the
 //! rest, one blank line between the groups), at most one blank line kept
 //! between statements and members, comments kept in place, lines of at
 //! most [`WIDTH`] columns with Wadler/Prettier-style breaking of long

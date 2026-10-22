@@ -1,5 +1,5 @@
-//! Reflection (DESIGN.md "Рефлексия"): the Zell sources of `std.reflect`,
-//! `std.encoding.json` and `std.strings.Builder`, their lazy loading, the
+//! Reflection (DESIGN.md "Рефлексия"): the Zell sources of `reflect`,
+//! `encoding.json` and `strings.Builder`, their lazy loading, the
 //! `typeof` builtin, compile-time reflection in generic bodies and the
 //! summary handed to code generation ([`hir::Reflect`]).
 //!
@@ -19,7 +19,7 @@
 //!
 //! # Intrinsics
 //!
-//! A few `std.reflect` functions have placeholder bodies; code generation
+//! A few `reflect` functions have placeholder bodies; code generation
 //! emits their real bodies ([`hir::Intrinsic`], `codegen/reflect.rs`).
 //!
 //! # Compile-time reflection
@@ -49,27 +49,27 @@ use std::sync::OnceLock;
 
 /// Library modules written in Zell: (namespace, file name, source, names
 /// that trigger loading; empty = any member of the namespace).
-const MODULES: &[(&str, &str, &str, &[&str])] = &[
-    ("std.reflect", "reflect.zl", include_str!("reflect_src/reflect.zl"), &[]),
-    ("std.encoding.json", "json.zl", include_str!("reflect_src/json.zl"), &[]),
-    ("std.strings", "builder.zl", include_str!("reflect_src/builder.zl"), &["Builder"]),
+pub(crate) const MODULES: &[(&str, &str, &str, &[&str])] = &[
+    ("reflect", "reflect.zl", include_str!("reflect_src/reflect.zl"), &[]),
+    ("encoding.json", "json.zl", include_str!("reflect_src/json.zl"), &[]),
+    ("strings", "builder.zl", include_str!("reflect_src/builder.zl"), &["Builder"]),
 ];
 
 const REFLECT: usize = 0;
 const JSON: usize = 1;
 
-/// Builtin attributes whose values are structs of `std.reflect`.
+/// Builtin attributes whose values are structs of `reflect`.
 pub(crate) const ATTR_STRUCTS: &[&str] = &["json", "deprecated", "inline", "test", "log", "csv", "xml", "yaml", "toml", "serde"];
 
 /// Builtin attributes whose value struct has another name in
-/// `reflect.zl`: `@log`'s is `logAttr`, so that `import std` (namespace
-/// `log`) and `import std.reflect` can be used together.
+/// `reflect.zl`: `@log`'s is `logAttr`, so that the root namespace
+/// `log` and `import reflect` can be used together.
 const ATTR_STRUCT_NAMES: &[(&str, &str)] = &[("log", "logAttr"), ("csv", "csvAttr"), ("xml", "xmlAttr"), ("yaml", "yamlAttr"), ("toml", "tomlAttr")];
 
 /// Builtin type names whose canonical spelling differs (`int64` is `int`).
 const ALIAS_SPELLINGS: &[&str] = &["int64", "uint", "uint8", "float64"];
 
-/// Intrinsic functions of `std.reflect` (non-generic and generic).
+/// Intrinsic functions of `reflect` (non-generic and generic).
 const INTRINSIC_FUNCS: &[&str] = &["anyType", "anyAddr", "anyBox", "errType", "loadAddr", "newOf", "invokeMethod"];
 const INTRINSIC_TEMPLATES: &[&str] = &["TypeOf", "ifaceType", "load", "store", "asFunc", "storeTag"];
 
@@ -159,7 +159,7 @@ impl<'a> Sema<'a> {
     }
 
     /// [`std_lookup_hook`](Self::std_lookup_hook) for the glob imports of
-    /// the current file (names found through `import std.reflect`).
+    /// the current file (names found through `import reflect`).
     pub(crate) fn std_glob_hook(&mut self, name: &str) {
         if self.refl.loaded.len() == MODULES.len() && self.refl.loaded.iter().all(|l| *l) {
             return;
@@ -172,7 +172,7 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// Loads `std.reflect` (needed by `typeof` and attribute types).
+    /// Loads `reflect` (needed by `typeof` and attribute types).
     pub(crate) fn load_reflect(&mut self) {
         if !self.files.is_empty() {
             self.load_module(REFLECT);
@@ -269,7 +269,7 @@ impl<'a> Sema<'a> {
                     });
                     self.struct_src.push(s);
                     self.nss[ns].members.insert(s.name.name.clone(), (Member::Struct(id), Span::DUMMY, fi));
-                    if path == "std.reflect" {
+                    if path == "reflect" {
                         self.refl.structs.insert(s.name.name.clone(), id);
                         if let Some((attr, _)) = ATTR_STRUCT_NAMES.iter().find(|(_, n)| *n == s.name.name) {
                             self.refl.structs.insert(attr.to_string(), id);
@@ -304,7 +304,7 @@ impl<'a> Sema<'a> {
                     });
                     self.enum_src.push(e);
                     self.nss[ns].members.insert(e.name.name.clone(), (Member::Enum(id), Span::DUMMY, fi));
-                    if path == "std.reflect" {
+                    if path == "reflect" {
                         self.refl.enums.insert(e.name.name.clone(), id);
                     }
                     enums.push(id as usize);
@@ -312,14 +312,14 @@ impl<'a> Sema<'a> {
                 ast::Decl::Func(f) if !f.generics.is_empty() => {
                     let t = self.new_template(&f.name.name, TmplDecl::Func(f), &f.generics, Vec::new(), false);
                     self.nss[ns].members.insert(f.name.name.clone(), (Member::Generic(t), Span::DUMMY, fi));
-                    if path == "std.reflect" {
+                    if path == "reflect" {
                         self.refl.templates.insert(f.name.name.clone(), t);
                     }
                 }
                 ast::Decl::Func(f) => {
                     let fid = self.new_func(f, hir::FuncKind::Free, FuncSrc::Free(f), &f.name.name);
                     self.nss[ns].members.insert(f.name.name.clone(), (Member::Func(fid), Span::DUMMY, fi));
-                    if path == "std.reflect" {
+                    if path == "reflect" {
                         self.refl.funcs.insert(f.name.name.clone(), fid);
                     }
                     funcs.push(fid.0 as usize);
@@ -362,7 +362,7 @@ impl<'a> Sema<'a> {
     }
 
     /// A builtin attribute used as a type (`f.Attribute<json>()`): its
-    /// value struct in `std.reflect`.
+    /// value struct in `reflect`.
     pub(crate) fn builtin_attr_type(&mut self, name: &str) -> Option<u32> {
         if self.refl.in_attr || !ATTR_STRUCTS.contains(&name) {
             return None;
@@ -660,7 +660,7 @@ impl<'a> Sema<'a> {
     /// call.
     pub(crate) fn fields_for(&mut self, vars: &[ast::Ident], iter: &ast::Expr, body: &ast::Block, span: Span) -> Option<StmtKind> {
         if self.refl.loaded.first() != Some(&true) {
-            // `reflect.Fields` resolves (and loads std.reflect) below.
+            // `reflect.Fields` resolves (and loads reflect) below.
             let ast::ExprKind::Call { callee, .. } = &expr::strip_parens(iter).kind else { return None };
             if !matches!(expr::strip_parens(callee).kind, ast::ExprKind::TypeArgs { .. }) {
                 return None;
@@ -762,7 +762,7 @@ impl<'a> Sema<'a> {
 
     // -- result ------------------------------------------------------------------
 
-    /// The reflection summary for code generation (`None` if `std.reflect`
+    /// The reflection summary for code generation (`None` if `reflect`
     /// was never loaded). Also maps the file indices of library sources to
     /// file 0 (they are not user files).
     pub(crate) fn reflect_finish(&mut self) -> Option<hir::Reflect> {

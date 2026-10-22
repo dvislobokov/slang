@@ -45,7 +45,7 @@ pub fn init(dir: &Path, name: Option<&str>, format: Format, lib: bool) -> Result
     let body = if lib {
         format!("namespace {ns}\n\n// Exported (capitalised) names are visible to packages that depend on `{name}`.\nfunc Greeting(who string) string {{\n    return \"Hello, \" + who + \"!\"\n}}\n")
     } else {
-        format!("namespace {ns}\n\nimport std.io\n\nfunc main() {{\n    println(\"Hello, world!\")\n}}\n")
+        format!("namespace {ns}\n\nimport io\n\nfunc main() {{\n    println(\"Hello, world!\")\n}}\n")
     };
     std::fs::write(&src, body).map_err(|e| format!("cannot write {}: {e}", src.display()))?;
     Ok(vec![mpath, src])

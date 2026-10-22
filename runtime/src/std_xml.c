@@ -1,4 +1,4 @@
-/* std_xml.c - the C half of std.encoding.xml (runtime/ABI.md 19.4): a
+/* std_xml.c - the C half of encoding.xml (runtime/ABI.md 19.4): a
  * tokenizer. The pull Reader, namespaces, tag matching, the Writer and the
  * typed (de)coders are Zell (compiler/src/sema/stdlib_src/xml.zl).
  *

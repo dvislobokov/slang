@@ -31,7 +31,7 @@ enum Implementor {
     Enum(u32),
 }
 
-/// `std.task.Channel<int>` -> `std.task.Channel`.
+/// `task.Channel<int>` -> `task.Channel`.
 fn strip_type_args(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut depth = 0;
@@ -56,7 +56,7 @@ fn decl_target(a: &Analysis, key: Option<SymKey>, full_name: &str, file: usize, 
     }
     let plain = strip_type_args(full_name);
     let short = plain.rsplit('.').next().unwrap_or(&plain).to_string();
-    if !(plain == "std" || plain.starts_with("std.")) {
+    if !zell::sema::stdlib::is_std_namespace(&plain) {
         if let Some(name) = a.asts.get(file).and_then(|f| ast_name_at(f, span)) {
             if name.name == short {
                 return Some((file, name.span));
@@ -155,7 +155,7 @@ fn method_of(p: &Program, imp: Implementor, name: &str) -> Option<FuncId> {
 /// The structs and enums implementing interface `iid` of `p`.
 fn implementors(p: &Program, iid: u32) -> Vec<Implementor> {
     let Some(it) = p.interfaces.get(iid as usize) else { return Vec::new() };
-    let is_std = |n: &str| n.starts_with("std.");
+    let is_std = zell::sema::stdlib::is_std_namespace;
     // Sealed: only types of the interface's own namespace.
     let allowed = |ns: zell::hir::NamespaceId, full: &str| !it.sealed || (ns == it.namespace && is_std(full) == is_std(&it.full_name));
     let satisfies = |imp: Implementor| {
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn type_arguments_are_stripped() {
-        assert_eq!(strip_type_args("std.task.Channel<int>.Send"), "std.task.Channel.Send");
+        assert_eq!(strip_type_args("task.Channel<int>.Send"), "task.Channel.Send");
         assert_eq!(strip_type_args("app.Pair<map[string]int, Box<T>>"), "app.Pair");
     }
 

@@ -1,6 +1,6 @@
 /* std_infra.c - C helpers of the tier-3b infrastructure clients (docs/STDLIB.md
- * "Уровень 3б"; runtime/ABI.md section 24): std.data.redis, std.data.kafka,
- * std.cloud.s3 and std.cloud.blob are Zell (compiler/src/sema/stdlib_src/
+ * "Уровень 3б"; runtime/ABI.md section 24): data.redis, data.kafka,
+ * cloud.s3 and cloud.blob are Zell (compiler/src/sema/stdlib_src/
  * {redis*,kafka*,s3*,blob}.zl). Here: their immortal sentinel errors, an
  * amortized in-place byte append (Go's append(a, b...)), CRC16/XMODEM (Redis
  * Cluster key slots), CRC-32C (Kafka record batches) and murmur2 (the Kafka
@@ -13,21 +13,21 @@
                                     .message = (zell_string *)&fn##_msg };              \
     zell_error *fn(void) { return &fn##_err; }
 
-/* std.data.redis */
+/* data.redis */
 INFRA_SENTINEL(zell_data_redis_err_nil, "redis: nil")
 INFRA_SENTINEL(zell_data_redis_err_closed, "redis: client is closed")
 INFRA_SENTINEL(zell_data_redis_err_tx_failed, "redis: transaction failed (a watched key changed)")
 INFRA_SENTINEL(zell_data_redis_err_pool_timeout, "redis: connection pool timeout")
 INFRA_SENTINEL(zell_data_redis_err_cross_slot, "redis: keys of the command map to different cluster slots")
-/* std.data.kafka */
+/* data.kafka */
 INFRA_SENTINEL(zell_data_kafka_err_closed, "kafka: client is closed")
 INFRA_SENTINEL(zell_data_kafka_err_no_brokers, "kafka: no broker is reachable")
-/* std.cloud.s3 */
+/* cloud.s3 */
 INFRA_SENTINEL(zell_cloud_s3_err_no_such_key, "s3: NoSuchKey")
 INFRA_SENTINEL(zell_cloud_s3_err_no_such_bucket, "s3: NoSuchBucket")
 INFRA_SENTINEL(zell_cloud_s3_err_access_denied, "s3: AccessDenied")
 INFRA_SENTINEL(zell_cloud_s3_err_precondition, "s3: PreconditionFailed")
-/* std.cloud.blob */
+/* cloud.blob */
 INFRA_SENTINEL(zell_cloud_blob_err_not_found, "blob: not found")
 
 /* append(a, b...) with Go's growth: out shares a's backing when it has room. */

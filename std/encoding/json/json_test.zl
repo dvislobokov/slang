@@ -1,9 +1,8 @@
-// Examples for std.encoding.json.
+// Examples for encoding.json.
 namespace json_test
 
-import std
-import std.encoding
-import std.io
+import encoding
+import io
 
 struct Item {
     Name  string

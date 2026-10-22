@@ -12,10 +12,10 @@
 //! * every diagnostic is attributed to the files whose analysis produces it
 //!   ([`RunOutput::diag_origins`]): its own file, the file whose body was
 //!   being checked, or — for code shared through a cache (generic
-//!   instances, the `std.data` model) — every file that asked for it;
+//!   instances, the `data` model) — every file that asked for it;
 //! * checks over the whole program are left to the caller: unused imports
 //!   (reported only when the program has no other error), the `main`
-//!   signature, `std.web` services and duplicate routes;
+//!   signature, `web` services and duplicate routes;
 //! * bodies of stdlib functions that are not instances are not checked
 //!   (they cannot report anything about user code).
 
@@ -58,7 +58,7 @@ impl From<Inst> for InstKey {
     }
 }
 
-/// A `std.web` service dependency (see `Sema::web_finish`).
+/// A `web` service dependency (see `Sema::web_finish`).
 #[derive(Clone, Debug)]
 pub struct WebRequired {
     /// Full spelling of the service type (identity across runs).
@@ -68,7 +68,7 @@ pub struct WebRequired {
     pub diag: Diagnostic,
 }
 
-/// A route mapped by `std.web` (`MapGet`, controllers).
+/// A route mapped by `web` (`MapGet`, controllers).
 #[derive(Clone, Debug)]
 pub struct WebRoute {
     /// Normalized `GET /a/{}`.
@@ -254,9 +254,9 @@ impl<'a> Sema<'a> {
             Type::Map(k, v) => self.std_only_type(*k, d) && self.std_only_type(*v, d),
             Type::Tuple(ts) => ts.iter().all(|x| self.std_only_type(*x, d)),
             Type::Func(sig) => sig.params.iter().all(|x| self.std_only_type(*x, d)) && self.std_only_type(sig.ret, d),
-            Type::Struct(s) => self.structs[s.0 as usize].full_name.starts_with("std."),
-            Type::Interface(i) => self.interfaces[i.0 as usize].full_name.starts_with("std."),
-            Type::Enum(e) => self.enums[e.0 as usize].full_name.starts_with("std."),
+            Type::Struct(s) => crate::sema::stdlib::is_std_namespace(&self.structs[s.0 as usize].full_name),
+            Type::Interface(i) => crate::sema::stdlib::is_std_namespace(&self.interfaces[i.0 as usize].full_name),
+            Type::Enum(e) => crate::sema::stdlib::is_std_namespace(&self.enums[e.0 as usize].full_name),
             Type::Param(_) | Type::Infer(_) => false,
             _ => true,
         }
@@ -404,7 +404,7 @@ pub fn std_symbols() -> SymbolIndex {
     s.unit = Some(Box::new(UnitState { full: vec![true], ..Default::default() }));
     s.run();
     s.load_all_modules();
-    let (extra, names) = s.ide_collect_extras_for(&|p| p == "std" || p.starts_with("std."), true);
+    let (extra, names) = s.ide_collect_extras_for(&|p| crate::sema::stdlib::is_std_namespace(p), true);
     let rec = *s.ide.take().unwrap();
     let program = s.finish();
     index::build_with(rec, extra, &program, &[""], &names)

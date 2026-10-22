@@ -138,7 +138,7 @@ fn symbol_link(a: &Analysis, s: &Symbol, text: &str) -> Option<String> {
     }
     let ns = s.full_name.rsplit_once('.').map_or("", |x| x.0);
     let parent_ns = ns.rsplit_once('.').map_or("", |x| x.0);
-    let cands = [text.to_string(), format!("{ns}.{text}"), format!("{parent_ns}.{text}"), format!("std.{text}")];
+    let cands = [text.to_string(), format!("{ns}.{text}"), format!("{parent_ns}.{text}")];
     let sym = cands.iter().find_map(|c| a.index.symbols.iter().find(|x| x.full_name == *c && x.loc.is_some() && x.kind != SymbolKind::Local))?;
     let loc = sym.loc.as_ref()?;
     let f = a.files.get(loc.file)?;
@@ -590,7 +590,7 @@ fn global_name(a: &Analysis, file: usize, name: &str) -> Option<SymbolId> {
         match imp {
             zell::sema::index::ImportInfo::Named(alias, id) if alias == name => return Some(*id),
             zell::sema::index::ImportInfo::Glob(ns) => {
-                let is_std = ns == "std" || ns.starts_with("std.");
+                let is_std = zell::sema::stdlib::is_std_namespace(ns);
                 if let Some((_, id)) = a.index.ns_members.get(ns).and_then(|ms| ms.iter().find(|(n, id)| n == name && (is_std || exported(n) || a.index.symbol(*id).kind == SymbolKind::Namespace))) {
                     return Some(*id);
                 }
@@ -665,7 +665,7 @@ fn member_completions(a: &Analysis, file: usize, off: u32, segs: &[&str]) -> Vec
     let mut seen = HashSet::new();
     match target {
         Target::Ns(path) => {
-            let is_std = path == "std" || path.starts_with("std.");
+            let is_std = zell::sema::stdlib::is_std_namespace(&path);
             for (name, id) in a.index.ns_members.get(&path).into_iter().flatten() {
                 if is_std || path == own_ns || exported(name) || a.index.symbol(*id).kind == SymbolKind::Namespace {
                     out.push(item(a, name, *id));
@@ -745,7 +745,7 @@ fn scope_completions(a: &Analysis, file: usize, off: u32) -> Vec<CompletionItem>
                     }
                 }
                 zell::sema::index::ImportInfo::Glob(ns) => {
-                    let is_std = ns == "std" || ns.starts_with("std.");
+                    let is_std = zell::sema::stdlib::is_std_namespace(ns);
                     for (name, id) in a.index.ns_members.get(ns).into_iter().flatten() {
                         if (is_std || exported(name)) && seen.insert(name.clone()) {
                             out.push(item(a, name, *id));

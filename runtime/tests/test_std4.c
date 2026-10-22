@@ -3,7 +3,7 @@
  * and, when installed, the zstd CLI), Argon2 (RFC 9106 vectors), BLAKE2b,
  * PBKDF2 (RFC 6070 / RFC 7914), scrypt (RFC 7914), P-384 (RFC 6979 A.2.6),
  * AES-CBC (SP 800-38A F.2) with PKCS#7, RSA-OAEP and prime generation, and
- * the std.database.sql sentinels. Prototypes are declared here: the
+ * the database.sql sentinels. Prototypes are declared here: the
  * functions are private to their Zell namespaces. */
 #include "test.h"
 

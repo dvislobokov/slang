@@ -1,7 +1,7 @@
-/* std_net.c - runtime side of std.net (zell_net_*): platform-independent
+/* std_net.c - runtime side of net (zell_net_*): platform-independent
  * wrappers over the socket layer (platform/net_posix.c), the readiness
  * waits (task_io.c) and a resolver thread pool, called by the Zell-source
- * std.net (compiler/src/sema/stdlib_src/net.zl). See ABI.md 16.
+ * net (compiler/src/sema/stdlib_src/net.zl). See ABI.md 16.
  *
  * Sockets are handles: a net_sock owns the descriptor, counts the
  * operations in flight and closes the descriptor only when it is closed
@@ -21,7 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- sentinel errors (std.net.Err*) ---- */
+/* ---- sentinel errors (net.Err*) ---- */
 
 #define SENTINEL(cname, text)                                                                 \
     static ZELL_STRING_STORAGE(sizeof text) cname##_msg = ZELL_STRING_INIT(cname##_msg, text); \
@@ -40,7 +40,7 @@ SENTINEL(not_found, "no such host")
 zell_error *zell_net_err_eof(void) { return zell_err_eof; }
 
 /* The error for an errno-style code (negative or positive): a sentinel for
- * the classes std.net names, else a plain error with the system text. +1. */
+ * the classes net names, else a plain error with the system text. +1. */
 static zell_error *code_err(int64_t code) {
     int c = (int)(code < 0 ? -code : code);
     switch (zell__plat_err_class(c)) {
@@ -96,7 +96,7 @@ typedef struct net_sock {
 
 static net_sock *sock_of(int64_t h) {
     net_sock *s = (net_sock *)(intptr_t)h;
-    if (!s) zell_panic("std.net: invalid socket handle");
+    if (!s) zell_panic("net: invalid socket handle");
     return s;
 }
 
@@ -1025,7 +1025,7 @@ void zell__net_stop(void) {
  * caller then checks every attempt with rtConnectCheck. */
 zell_task *zell_net_rt_wait_any_writable(const zell_slice *hs, int64_t ms) {
     int64_t n = hs->len;
-    if (n <= 0) zell_panic("std.net: wait on no sockets");
+    if (n <= 0) zell_panic("net: wait on no sockets");
     zell_task **ws = malloc(sizeof *ws * (size_t)n);
     if (!ws) zell_panic("out of memory (dial)");
     const int64_t *h = hs->data;

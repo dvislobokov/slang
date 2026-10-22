@@ -1,4 +1,4 @@
-/* std_math_ext.c - more std.math (zell_math_*). Float functions are C libm
+/* std_math_ext.c - more math (zell_math_*). Float functions are C libm
  * with Go's math semantics; IMin/IMax/IAbs are the int counterparts of the
  * float Min/Max/Abs (Zell has no overloading). */
 #include "rt_internal.h"

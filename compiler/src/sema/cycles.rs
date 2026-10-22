@@ -325,7 +325,7 @@ pub fn check(p: &Program, diags: &mut Diagnostics) {
     }
     let mut seen = HashSet::new();
     for (sid, s) in p.structs.iter().enumerate() {
-        if s.full_name.starts_with("std.") || has_attr(&s.attrs, "allowCycle") {
+        if crate::sema::stdlib::is_std_namespace(&s.full_name) || has_attr(&s.attrs, "allowCycle") {
             continue;
         }
         let Some(t) = p.types.lookup(&Type::Struct(DeclId(sid as u32))) else { continue };
@@ -345,7 +345,7 @@ pub fn check(p: &Program, diags: &mut Diagnostics) {
         diags.push(Diagnostic::warning(msg, f.span).with_code(codes::REFERENCE_CYCLE).in_file(s.file).with_help("the cycle collector frees such cycles at run time; @allowCycle on the type silences this warning"));
     }
     for (eid, e) in p.enums.iter().enumerate() {
-        if e.full_name.starts_with("std.") || has_attr(&e.attrs, "allowCycle") {
+        if crate::sema::stdlib::is_std_namespace(&e.full_name) || has_attr(&e.attrs, "allowCycle") {
             continue;
         }
         let Some(t) = p.types.lookup(&Type::Enum(DeclId(eid as u32))) else { continue };

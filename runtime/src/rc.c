@@ -11,7 +11,7 @@
  * Owners. A thread that may own objects has a *slot* (1..4095) and the
  * owner tag zell_rc_owner = (BIASED >> 47) | slot: scheduler workers and
  * the thread that called zell_runtime_init (zell__rc_thread_enable).
- * Other threads (timers, pollers, std.thread, foreign threads) never own
+ * Other threads (timers, pollers, thread, foreign threads) never own
  * objects; their operations on biased objects are the atomic ones.
  *
  * Biasing. Objects are created unowned (count 1). The first retain of an

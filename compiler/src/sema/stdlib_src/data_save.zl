@@ -1,4 +1,4 @@
-namespace std.data
+namespace data
 
 // SaveChanges: the unit of work. Added entities are inserted (consecutive
 // ones of the same table and column set in one multi-row INSERT, with
@@ -60,7 +60,7 @@ func isIntType(t string) bool {
 // Inserts a batch of added entries of one table and column set.
 async func insertBatch(st *ctxState, batch []*entry, allVals [][]any, cols []int, ret []int) void! {
     var m = batch[0].meta
-    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    var w = sqlw{pg: st.pg(), b: strings.Builder{}, args: [], groups: []}
     w.raw("INSERT INTO " + quoteIdent(m.Table))
     if len(cols) == 0 {
         if len(batch) > 1 && !st.pg() {
@@ -107,7 +107,7 @@ async func insertBatch(st *ctxState, batch []*entry, allVals [][]any, cols []int
     }
     var rows = await st.all(w.text(), w.args)?
     if len(rows) != len(batch) {
-        return error("data: INSERT INTO " + m.Table + " returned " + std.fmt.Format("{0}", len(rows)) + " rows for " + std.fmt.Format("{0}", len(batch)) + " entities")
+        return error("data: INSERT INTO " + m.Table + " returned " + fmt.Format("{0}", len(rows)) + " rows for " + fmt.Format("{0}", len(batch)) + " entities")
     }
     for r, e in batch {
         for i, c in ret {
@@ -143,7 +143,7 @@ async func upsertEntry(st *ctxState, e *entry) void! {
             }
         }
     }
-    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    var w = sqlw{pg: st.pg(), b: strings.Builder{}, args: [], groups: []}
     w.raw("INSERT INTO " + quoteIdent(m.Table) + " (")
     for i, c in cols {
         if i > 0 {
@@ -176,7 +176,7 @@ async func upsertEntry(st *ctxState, e *entry) void! {
     if len(sets) == 0 {
         w.raw(" DO NOTHING")
     } else {
-        w.raw(" DO UPDATE SET " + std.strings.Join(sets, ", "))
+        w.raw(" DO UPDATE SET " + strings.Join(sets, ", "))
     }
     if m.Key < 0 {
         _ = await st.exec(w.text(), w.args)?
@@ -227,7 +227,7 @@ async func updateEntry(st *ctxState, e *entry) bool! {
     if len(changed) == 0 {
         return false
     }
-    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    var w = sqlw{pg: st.pg(), b: strings.Builder{}, args: [], groups: []}
     w.raw("UPDATE " + quoteIdent(m.Table) + " SET ")
     var next any = nil
     var bump = m.Token >= 0 && isIntType(m.Columns[m.Token].Type)
@@ -245,7 +245,7 @@ async func updateEntry(st *ctxState, e *entry) bool! {
     }
     if bump {
         var old = 0
-        std.database.sql.convertInto(&old, e.snap[m.Token], m.Columns[m.Token].Name)?
+        database.sql.convertInto(&old, e.snap[m.Token], m.Columns[m.Token].Name)?
         next = old + 1
         if n > 0 {
             w.raw(", ")
@@ -269,7 +269,7 @@ async func updateEntry(st *ctxState, e *entry) bool! {
 
 async func deleteEntry(st *ctxState, e *entry) void! {
     var m = e.meta
-    var w = sqlw{pg: st.pg(), b: std.strings.Builder{}, args: [], groups: []}
+    var w = sqlw{pg: st.pg(), b: strings.Builder{}, args: [], groups: []}
     w.raw("DELETE FROM " + quoteIdent(m.Table))
     keyWhere(&w, e)
     var r = await st.exec(w.text(), w.args)?

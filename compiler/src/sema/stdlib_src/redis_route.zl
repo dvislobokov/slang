@@ -17,7 +17,7 @@
 //
 // Retries (Options.MaxRetries, exponential backoff): network errors and
 // LOADING, TRYAGAIN, CLUSTERDOWN, MASTERDOWN, READONLY replies.
-namespace std.data.redis
+namespace data.redis
 
 // ---- commands and keys ----------------------------------------------------------
 
@@ -25,11 +25,11 @@ func cmdName(args []any) string {
     if len(args) == 0 {
         return ""
     }
-    return std.strings.ToUpper(std.strings.FromBytes(argBytes(args[0])))
+    return strings.ToUpper(strings.FromBytes(argBytes(args[0])))
 }
 
 func argText(a any) string {
-    return std.strings.FromBytes(argBytes(a))
+    return strings.FromBytes(argBytes(a))
 }
 
 func keyRange(args []any, from int, to int) []string {
@@ -63,7 +63,7 @@ func commandKeys(name string, args []any) []string {
             if n < 3 {
                 return []
             }
-            var k = try std.strconv.Atoi(argText(args[2])) else 0
+            var k = try strconv.Atoi(argText(args[2])) else 0
             return keyRange(args, 3, 3 + k)
         case "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX":
             return keyRange(args, 1, n - 1)
@@ -71,7 +71,7 @@ func commandKeys(name string, args []any) []string {
             if n < 3 {
                 return keyRange(args, 1, 2)
             }
-            var k = try std.strconv.Atoi(argText(args[2])) else 0
+            var k = try strconv.Atoi(argText(args[2])) else 0
             var out = keyRange(args, 1, 2)
             for x in keyRange(args, 3, 3 + k) {
                 out = append(out, x)
@@ -79,7 +79,7 @@ func commandKeys(name string, args []any) []string {
             return out
         case "XREAD", "XREADGROUP":
             for i in 1..n {
-                if std.strings.ToUpper(argText(args[i])) == "STREAMS" {
+                if strings.ToUpper(argText(args[i])) == "STREAMS" {
                     var rest = n - i - 1
                     return keyRange(args, i + 1, i + 1 + rest / 2)
                 }
@@ -103,15 +103,15 @@ func isReadOnly(name string) bool {
 // The cluster slot of a key: CRC16 of the key (or of the first non-empty
 // {hash tag}) mod 16384.
 func HashSlot(key string) int {
-    var s = std.strings.Index(key, "{")
+    var s = strings.Index(key, "{")
     if s >= 0 {
         var rest = key[s + 1..]
-        var e = std.strings.Index(rest, "}")
+        var e = strings.Index(rest, "}")
         if e > 0 {
-            return std.data.rtCrc16(rest[..e]) % 16384
+            return data.rtCrc16(rest[..e]) % 16384
         }
     }
-    return std.data.rtCrc16(key) % 16384
+    return data.rtCrc16(key) % 16384
 }
 
 // ---- the router -------------------------------------------------------------------
@@ -167,11 +167,11 @@ struct core {
     }
 
     func lock() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
     }
 
     func unlock() {
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     func isClosed() bool {
@@ -239,7 +239,7 @@ struct core {
         this.lock()
         var p *pool
         if len(this.replicas) > 0 {
-            p = this.replicas[std.random.IntN(len(this.replicas))]
+            p = this.replicas[random.IntN(len(this.replicas))]
         }
         this.unlock()
         return p
@@ -294,7 +294,7 @@ async func route(c *core, name string, args []any) *pool! {
             await reloadSlots(c)?
             ms = c.masterAddrs()
         }
-        return c.nodePool(ms[std.random.IntN(len(ms))])
+        return c.nodePool(ms[random.IntN(len(ms))])
     }
     var slot = HashSlot(keys[0])
     for k in keys[1..] {
@@ -307,7 +307,7 @@ async func route(c *core, name string, args []any) *pool! {
         await reloadSlots(c)?
         addr = c.slotAddr(slot)
         if addr == "" {
-            return error("redis: cluster slot " + std.strconv.Itoa(slot) + " is not served by any node")
+            return error("redis: cluster slot " + strconv.Itoa(slot) + " is not served by any node")
         }
     }
     return c.nodePool(addr)
@@ -315,10 +315,10 @@ async func route(c *core, name string, args []any) *pool! {
 
 // Whether a failed command may be sent again.
 func retryableErr(err error) bool {
-    if std.errors.Is(err, std.task.ErrCancelled) || std.errors.Is(err, ErrClosed) || std.errors.Is(err, ErrPoolTimeout) {
+    if errors.Is(err, task.ErrCancelled) || errors.Is(err, ErrClosed) || errors.Is(err, ErrPoolTimeout) {
         return false
     }
-    return std.errors.Is(err, std.net.ErrRefused) || std.errors.Is(err, std.net.ErrReset) || std.errors.Is(err, std.net.ErrEOF) || std.errors.Is(err, std.net.ErrClosed) || std.errors.Is(err, std.net.ErrUnreachable)
+    return errors.Is(err, net.ErrRefused) || errors.Is(err, net.ErrReset) || errors.Is(err, net.ErrEOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, net.ErrUnreachable)
 }
 
 func retryableCode(code string) bool {
@@ -341,7 +341,7 @@ async func backoff(o Options, attempt int) {
             break
         }
     }
-    await std.task.Delay(d)
+    await task.Delay(d)
 }
 
 // One attempt of a command on a pool (asking: ASKING first).
@@ -365,11 +365,11 @@ async func once(p *pool, args []any, asking bool) Reply! {
 
 // "MOVED 3999 127.0.0.1:6381" -> (3999, "127.0.0.1:6381")
 func redirect(text string) (int, string) {
-    var parts = std.strings.Fields(text)
+    var parts = strings.Fields(text)
     if len(parts) < 3 {
         return (-1, "")
     }
-    var slot = try std.strconv.Atoi(parts[1]) else -1
+    var slot = try strconv.Atoi(parts[1]) else -1
     return (slot, parts[2])
 }
 
@@ -656,7 +656,7 @@ async func reloadSlots(c *core) void! {
             continue
         }
         var host = addr
-        var hp = try std.net.SplitHostPort(addr) else std.net.HostPort{}
+        var hp = try net.SplitHostPort(addr) else net.HostPort{}
         if hp.Host != "" {
             host = hp.Host
         }
@@ -680,7 +680,7 @@ async func reloadSlots(c *core) void! {
             if ip == "" || ip == "?" {
                 ip = host
             }
-            var a = std.net.JoinHostPort(ip, node.Elems[1].Int)
+            var a = net.JoinHostPort(ip, node.Elems[1].Int)
             if !seen[a] {
                 seen[a] = true
                 masters = append(masters, a)
@@ -748,7 +748,7 @@ async func askSentinels(c *core, args []any) Reply! {
             continue
         }
         if r.Kind == Kind.Nil {
-            lastErr = error("redis: sentinel " + addr + " does not know master " + std.strconv.Quote(c.sopts.MasterName))
+            lastErr = error("redis: sentinel " + addr + " does not know master " + strconv.Quote(c.sopts.MasterName))
             continue
         }
         c.sentinelIdx = i
@@ -763,7 +763,7 @@ async func masterAddr(c *core) string! {
     if len(parts) != 2 {
         return error("redis: bad SENTINEL get-master-addr-by-name reply " + r.String())
     }
-    return std.net.JoinHostPort(parts[0], std.strconv.Atoi(parts[1])?("redis: sentinel master port"))
+    return net.JoinHostPort(parts[0], strconv.Atoi(parts[1])?("redis: sentinel master port"))
 }
 
 // Healthy replicas of the master (SENTINEL replicas).
@@ -773,15 +773,15 @@ async func replicaAddrs(c *core) []string! {
     for e in r.Elems {
         var m = e.StringMap()?
         var flags = m["flags"]
-        if std.strings.Contains(flags, "s_down") || std.strings.Contains(flags, "o_down") || std.strings.Contains(flags, "disconnected") {
+        if strings.Contains(flags, "s_down") || strings.Contains(flags, "o_down") || strings.Contains(flags, "disconnected") {
             continue
         }
         if m["master-link-status"] == "err" {
             continue
         }
-        var port = try std.strconv.Atoi(m["port"]) else 0
+        var port = try strconv.Atoi(m["port"]) else 0
         if m["ip"] != "" && port > 0 {
-            out = append(out, std.net.JoinHostPort(m["ip"], port))
+            out = append(out, net.JoinHostPort(m["ip"], port))
         }
     }
     return out
@@ -835,11 +835,11 @@ async func refreshReplicas(c *core) void! {
 // A message of +switch-master: "<name> <old ip> <old port> <new ip> <new port>".
 async func onSentinelMessage(c *core, m Message) {
     if m.Channel == "+switch-master" {
-        var f = std.strings.Fields(m.Payload)
+        var f = strings.Fields(m.Payload)
         if len(f) == 5 && f[0] == c.sopts.MasterName {
-            var port = try std.strconv.Atoi(f[4]) else 0
+            var port = try strconv.Atoi(f[4]) else 0
             if port > 0 {
-                var addr = std.net.JoinHostPort(f[3], port)
+                var addr = net.JoinHostPort(f[3], port)
                 if c.main.currentAddr() != addr {
                     c.lock()
                     c.failovers += 1

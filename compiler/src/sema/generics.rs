@@ -78,7 +78,7 @@ pub(crate) struct Template<'a> {
     pub outer: Vec<(String, TypeId)>,
     pub ns: NsIdx,
     pub file: usize,
-    /// Declared in the stdlib (`std.collections`): trusted, not checked
+    /// Declared in the stdlib (`collections`): trusted, not checked
     /// abstractly, instantiated in the scope of the user file.
     pub is_std: bool,
     /// Template whose abstract check covers this one.
@@ -88,7 +88,7 @@ pub(crate) struct Template<'a> {
     /// Created by the instantiation of a generic struct (checked as part of
     /// the struct's abstract check).
     pub nested: bool,
-    /// Generated from user code (`std.web`, `std.data` expansions), not a
+    /// Generated from user code (`web`, `data` expansions), not a
     /// library source.
     pub generated: bool,
     /// A stdlib template whose module is not parsed yet: (module, index of

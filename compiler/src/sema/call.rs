@@ -20,7 +20,7 @@ impl<'a> Sema<'a> {
                 return self.type_member_call(ty, name, args, span);
             }
             // `T.New(...)` with `T` a type parameter bound to a concrete
-            // struct (instances of stdlib templates, e.g. generated std.web
+            // struct (instances of stdlib templates, e.g. generated web
             // factories): a static method of that struct.
             if let ast::ExprKind::Ident(id) = &expr::strip_parens(base).kind {
                 if self.lookup_local(&id.name, false).is_none() {
@@ -187,17 +187,17 @@ impl<'a> Sema<'a> {
             Ok(e) => return e,
             Err(b) => b,
         };
-        // std.log level methods: compiled message templates (logtmpl.rs).
+        // log level methods: compiled message templates (logtmpl.rs).
         let base = match self.log_method_call(base, name, targs, args, span) {
             Ok(e) => return e,
             Err(b) => b,
         };
-        // std.web: route tables and DI factories generated at compile time (web.rs).
+        // web: route tables and DI factories generated at compile time (web.rs).
         let base = match self.web_method_call(base, name, targs, args, span) {
             Ok(e) => return e,
             Err(b) => b,
         };
-        // std.data: query lambdas translated to SQL at compile time (orm.rs).
+        // data: query lambdas translated to SQL at compile time (orm.rs).
         let base = match self.orm_method_call(base, name, targs, args, span) {
             Ok(e) => return e,
             Err(b) => b,
@@ -602,7 +602,7 @@ impl<'a> Sema<'a> {
                 }
                 let sl = self.tt.slice(self.tt.string);
                 let list = mk(ExprKind::SliceLit(parts), sl, span);
-                let x = self.extern_id("std.fmt.Format".into(), stdlib::FORMAT_SYMBOL, vec![self.tt.string, sl], self.tt.string);
+                let x = self.extern_id("fmt.Format".into(), stdlib::FORMAT_SYMBOL, vec![self.tt.string, sl], self.tt.string);
                 mk(ExprKind::Call { callee: Callee::Extern(x), args: vec![tmpl, list] }, self.tt.string, span)
             }
             Special::Sprintf => {
@@ -642,7 +642,7 @@ impl<'a> Sema<'a> {
                 let kinds = mk(ExprKind::Const(hir::ConstValue::Str(kinds)), string, span);
                 let (si, sf, ss) = (self.tt.slice(int), self.tt.slice(float), self.tt.slice(string));
                 let lists = vec![fmt, kinds, mk(ExprKind::SliceLit(ints), si, span), mk(ExprKind::SliceLit(floats), sf, span), mk(ExprKind::SliceLit(texts), ss, span)];
-                let x = self.extern_id("std.fmt.Sprintf".into(), stdlib::SPRINTF_SYMBOL, vec![string, string, si, sf, ss], string);
+                let x = self.extern_id("fmt.Sprintf".into(), stdlib::SPRINTF_SYMBOL, vec![string, string, si, sf, ss], string);
                 mk(ExprKind::Call { callee: Callee::Extern(x), args: lists }, string, span)
             }
             Special::TaskAll => {
@@ -713,10 +713,10 @@ impl<'a> Sema<'a> {
                     return self.invalid(span);
                 }
                 let err = self.expr_to(&args[0], self.tt.error, Ctx::Arg(0, "errors.Frames".into()));
-                let Some(sid) = self.std_struct("std.errors", "Frame") else { return self.invalid(span) };
+                let Some(sid) = self.std_struct("errors", "Frame") else { return self.invalid(span) };
                 let st = self.struct_ty(sid);
                 let ret = self.tt.slice(st);
-                let x = self.extern_id("std.errors.Frames".into(), "zell_errors_frames", vec![self.tt.error], ret);
+                let x = self.extern_id("errors.Frames".into(), "zell_errors_frames", vec![self.tt.error], ret);
                 mk(ExprKind::Call { callee: Callee::Extern(x), args: vec![err] }, ret, span)
             }
             Special::ErrorsAs => {

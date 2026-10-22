@@ -1,4 +1,4 @@
-// std.os.signal: POSIX signals as async events (Go's os/signal):
+// os.signal: POSIX signals as async events (Go's os/signal):
 //   await signal.Wait(signal.SIGTERM)          // one delivery
 //   var ch = signal.Notify([signal.SIGINT, signal.SIGTERM])
 //   var sig = await ch.Recv()?                  // each delivery, forever
@@ -7,7 +7,7 @@
 // terminating on SIGINT) is replaced until Reset. Deliveries that arrive
 // while nobody waits are remembered (counted) and satisfy the next Wait.
 // Runtime: runtime/src/std_os_signal.c (self-pipe + a dedicated thread).
-namespace std.os.signal
+namespace os.signal
 
 // Waits for the next delivery of sig.
 func Wait(sig int) Task<void> {
@@ -25,16 +25,16 @@ async func WaitAny(sigs []int) int {
             return s
         }
     }
-    var ch = std.task.Channel<int>(len(sigs))
+    var ch = task.Channel<int>(len(sigs))
     for s in sigs {
         rtCatch(s)
-        std.task.Go(forwardOnce(s, ch))
+        task.Go(forwardOnce(s, ch))
     }
     var got = try await ch.Recv() else sigs[0]
     return got
 }
 
-func forwardOnce(sig int, ch std.task.Channel<int>) func() Task<void> {
+func forwardOnce(sig int, ch task.Channel<int>) func() Task<void> {
     return async () => {
         await rtWait(sig)
         await ch.Send(sig)
@@ -48,16 +48,16 @@ async func waitOne(sig int) int {
 
 // A channel receiving every delivery of the given signals (buffer of
 // 16: deliveries beyond it wait in the channel's sender).
-func Notify(sigs []int) std.task.Channel<int> {
-    var ch = std.task.Channel<int>(16)
+func Notify(sigs []int) task.Channel<int> {
+    var ch = task.Channel<int>(16)
     for s in sigs {
         rtCatch(s)
-        std.task.Go(forward(s, ch))
+        task.Go(forward(s, ch))
     }
     return ch
 }
 
-func forward(sig int, ch std.task.Channel<int>) func() Task<void> {
+func forward(sig int, ch task.Channel<int>) func() Task<void> {
     return async () => {
         for !ch.IsClosed() {
             await rtWait(sig)
@@ -117,5 +117,5 @@ func Name(sig int) string {
         case 17: return "SIGCHLD"
         case 28: return "SIGWINCH"
     }
-    return "signal " + std.strconv.Itoa(sig)
+    return "signal " + strconv.Itoa(sig)
 }

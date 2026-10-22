@@ -1,7 +1,7 @@
 //! Compile-time checks of string-literal arguments of stdlib functions
 //! whose argument is a small language of its own: `regex.Pattern(lit)`
-//! (RE2 syntax, std.regex) and `template.Parse<T>(lit)` /
-//! `html.template.Parse<T>(lit)` (std.text.template; fields checked
+//! (RE2 syntax, regex) and `template.Parse<T>(lit)` /
+//! `html.template.Parse<T>(lit)` (text.template; fields checked
 //! against `T`, see [`super::tmplcheck`]).
 //!
 //! The checks only report diagnostics; the call is compiled as usual (the
@@ -485,7 +485,7 @@ fn decode_escape(t: &str) -> u32 {
     }
 }
 
-/// Checks a regex pattern (RE2 syntax as accepted by std.regex).
+/// Checks a regex pattern (RE2 syntax as accepted by regex).
 pub fn check_regex(pattern: &str) -> Result<(), RegexError> {
     let mut offs: Vec<usize> = pattern.char_indices().map(|(i, _)| i).collect();
     offs.push(pattern.len());
@@ -500,8 +500,8 @@ pub fn check_regex(pattern: &str) -> Result<(), RegexError> {
 impl<'a> Sema<'a> {
     /// Hook of [`generic_call`](Self::generic_call), after the callee
     /// template `t` was instantiated with `types`: literal checks of
-    /// `std.regex.Pattern` and `std.text.template.Parse<T>` /
-    /// `std.html.template.Parse<T>`.
+    /// `regex.Pattern` and `text.template.Parse<T>` /
+    /// `html.template.Parse<T>`.
     pub(crate) fn std_literal_check(&mut self, t: u32, types: &[TypeId], args: &[ast::Expr]) {
         let tm = &self.gen.templates[t as usize];
         if !tm.is_std {
@@ -514,12 +514,12 @@ impl<'a> Sema<'a> {
         let Some(arg) = args.get(idx) else { return };
         let ast::ExprKind::Str(lit) = &expr::strip_parens(arg).kind else { return };
         match (ns.as_str(), name.as_str()) {
-            ("std.regex", "Pattern") => {
+            ("regex", "Pattern") => {
                 if let Err(e) = check_regex(lit) {
                     self.err(format!("invalid regex pattern: {} at offset {}", e.msg, e.offset), arg.span);
                 }
             }
-            ("std.text.template" | "std.html.template", "Parse" | "ParseWith" | "ParseNamed") => {
+            ("text.template" | "html.template", "Parse" | "ParseWith" | "ParseNamed") => {
                 if let Some(&ty) = types.first() {
                     let lit = lit.clone();
                     self.check_template_literal(&lit, ty, name == "ParseWith", arg.span);
@@ -547,7 +547,7 @@ impl<'a> Sema<'a> {
     }
 }
 
-// -- templates (std.text.template) ----------------------------------------------
+// -- templates (text.template) ----------------------------------------------
 
 /// A template node, as far as the type check needs it.
 enum TNode {
@@ -1039,7 +1039,7 @@ impl<'s> TmplParser<'s> {
     }
 }
 
-/// A string as std.encoding.json.Quote writes it (for identical messages).
+/// A string as encoding.json.Quote writes it (for identical messages).
 fn json_quote(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -1164,7 +1164,7 @@ impl TmplChecker<'_, '_> {
     }
 
     fn is_template_value(&self, t: TypeId) -> bool {
-        matches!(self.sema.tt.get(t), Type::Struct(d) if self.sema.structs[d.0 as usize].full_name == "std.text.template.Value")
+        matches!(self.sema.tt.get(t), Type::Struct(d) if self.sema.structs[d.0 as usize].full_name == "text.template.Value")
     }
 
     fn field(&mut self, t: Option<TypeId>, name: &str, line: usize) -> TR<Option<TypeId>> {

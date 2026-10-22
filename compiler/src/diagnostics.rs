@@ -20,6 +20,9 @@ pub mod codes {
     pub const UNUSED_IMPORT: &str = "E0003";
     /// An identifier that does not resolve.
     pub const UNKNOWN_IDENTIFIER: &str = "E0004";
+    /// An import or namespace under the removed `std` root
+    /// (`import std.io`; the fix rewrites it to `import io`).
+    pub const REMOVED_STD_ROOT: &str = "E0005";
     /// A syntax error.
     pub const SYNTAX: &str = "E0100";
     /// A type that can form a strong reference cycle (DESIGN.md "Циклы").

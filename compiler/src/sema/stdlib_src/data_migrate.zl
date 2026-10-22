@@ -1,4 +1,4 @@
-namespace std.data
+namespace data
 
 // Migrations as code: `zell data migration add Name` writes a struct
 // with @migration("<timestamp>_Name") and Up/Down methods that call the
@@ -107,7 +107,7 @@ struct Migrator {
                 return "jsonb"
             }
             if t == "string" && c.MaxLength > 0 {
-                return "varchar(" + std.fmt.Format("{0}", c.MaxLength) + ")"
+                return "varchar(" + fmt.Format("{0}", c.MaxLength) + ")"
             }
             return "text"
         }
@@ -127,7 +127,7 @@ struct Migrator {
             return "TIMESTAMP"
         }
         if t == "string" && c.MaxLength > 0 {
-            return "VARCHAR(" + std.fmt.Format("{0}", c.MaxLength) + ")"
+            return "VARCHAR(" + fmt.Format("{0}", c.MaxLength) + ")"
         }
         return "TEXT"
     }
@@ -136,7 +136,7 @@ struct Migrator {
         if this.pg() {
             return d
         }
-        var l = std.strings.ToLower(d)
+        var l = strings.ToLower(d)
         if l == "now()" || l == "current_timestamp" || l == "localtimestamp" || l == "now() at time zone 'utc'" {
             return "(CURRENT_TIMESTAMP)"
         }
@@ -174,7 +174,7 @@ struct Migrator {
         if fk.Name != "" {
             return fk.Name
         }
-        return "fk_" + table + "_" + fk.RefTable + "_" + std.strings.Join(fk.Columns, "_")
+        return "fk_" + table + "_" + fk.RefTable + "_" + strings.Join(fk.Columns, "_")
     }
 
     func fkDef(table string, fk ForeignKey) string {
@@ -186,7 +186,7 @@ struct Migrator {
         for c in fk.RefColumns {
             refs = append(refs, quoteIdent(c))
         }
-        var s = "CONSTRAINT " + quoteIdent(this.fkName(table, fk)) + " FOREIGN KEY (" + std.strings.Join(cols, ", ") + ") REFERENCES " + quoteIdent(fk.RefTable) + " (" + std.strings.Join(refs, ", ") + ")"
+        var s = "CONSTRAINT " + quoteIdent(this.fkName(table, fk)) + " FOREIGN KEY (" + strings.Join(cols, ", ") + ") REFERENCES " + quoteIdent(fk.RefTable) + " (" + strings.Join(refs, ", ") + ")"
         if fk.OnDelete != "" {
             s = s + " ON DELETE " + fk.OnDelete
         }
@@ -206,12 +206,12 @@ struct Migrator {
             parts = append(parts, "    " + this.columnDef(c, c.Key && len(keys) == 1))
         }
         if len(keys) > 1 {
-            parts = append(parts, "    PRIMARY KEY (" + std.strings.Join(keys, ", ") + ")")
+            parts = append(parts, "    PRIMARY KEY (" + strings.Join(keys, ", ") + ")")
         }
         for fk in fks {
             parts = append(parts, "    " + this.fkDef(name, fk))
         }
-        this.Sql("CREATE TABLE " + quoteIdent(name) + " (\n" + std.strings.Join(parts, ",\n") + "\n)")
+        this.Sql("CREATE TABLE " + quoteIdent(name) + " (\n" + strings.Join(parts, ",\n") + "\n)")
     }
 
     func DropTable(name string) {
@@ -269,7 +269,7 @@ struct Migrator {
         if unique {
             u = "UNIQUE "
         }
-        this.Sql("CREATE " + u + "INDEX " + quoteIdent(name) + " ON " + quoteIdent(table) + " (" + std.strings.Join(qs, ", ") + ")")
+        this.Sql("CREATE " + u + "INDEX " + quoteIdent(name) + " ON " + quoteIdent(table) + " (" + strings.Join(qs, ", ") + ")")
     }
 
     func DropIndex(table string, name string) {
@@ -360,7 +360,7 @@ async func appliedIds(st *ctxState) []string! {
     var out []string = []
     for r in rows {
         var s = ""
-        std.database.sql.convertInto(&s, r[0], "id")?
+        database.sql.convertInto(&s, r[0], "id")?
         out = append(out, s)
     }
     return out
@@ -383,18 +383,18 @@ async func runStep(st *ctxState, id string, stmts []string, up bool) void! {
     st.tx = tx
     st.inTx = true
     for s in stmts {
-        if std.strings.HasPrefix(s, "--") {
+        if strings.HasPrefix(s, "--") {
             continue
         }
         _ = try await st.exec(s, []) catch err {
             st.inTx = false
-            return std.errors.Wrap(err, "migration " + id)
+            return errors.Wrap(err, "migration " + id)
         }
     }
     var p1 = placeholder(st, 1)
     var p2 = placeholder(st, 2)
     if up {
-        _ = try await st.exec("INSERT INTO " + quoteIdent(historyTable()) + " (" + quoteIdent("id") + ", " + quoteIdent("applied_at") + ") VALUES (" + p1 + ", " + p2 + ")", [id, std.time.UnixMilli(std.time.Now()).UTC().Format("2006-01-02T15:04:05Z07:00")]) catch err {
+        _ = try await st.exec("INSERT INTO " + quoteIdent(historyTable()) + " (" + quoteIdent("id") + ", " + quoteIdent("applied_at") + ") VALUES (" + p1 + ", " + p2 + ")", [id, time.UnixMilli(time.Now()).UTC().Format("2006-01-02T15:04:05Z07:00")]) catch err {
             st.inTx = false
             return err
         }
@@ -436,7 +436,7 @@ async func applyMigrations(st *ctxState, list []MigrationEntry, target string) [
     if target != "" && target != "0" {
         var known = false
         for e in sorted {
-            if e.Id == target || std.strings.HasSuffix(e.Id, "_" + target) {
+            if e.Id == target || strings.HasSuffix(e.Id, "_" + target) {
                 known = true
             }
         }
@@ -450,7 +450,7 @@ async func applyMigrations(st *ctxState, list []MigrationEntry, target string) [
         var passed = false
         for i in 0..n {
             var e = sorted[n - 1 - i]
-            if target != "0" && (e.Id == target || std.strings.HasSuffix(e.Id, "_" + target)) {
+            if target != "0" && (e.Id == target || strings.HasSuffix(e.Id, "_" + target)) {
                 passed = true
             }
             if !passed && contains(done, e.Id) {
@@ -471,7 +471,7 @@ async func applyMigrations(st *ctxState, list []MigrationEntry, target string) [
             await runStep(st, e.Id, m.Statements(), true)?
             out = append(out, e.Id)
         }
-        if target != "" && target != "0" && (e.Id == target || std.strings.HasSuffix(e.Id, "_" + target)) {
+        if target != "" && target != "0" && (e.Id == target || strings.HasSuffix(e.Id, "_" + target)) {
             break
         }
     }
@@ -480,13 +480,13 @@ async func applyMigrations(st *ctxState, list []MigrationEntry, target string) [
 
 // The SQL of the migrations (from an empty database) for provider p.
 func MigrationScript(p Provider, list []MigrationEntry) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     for e in sortEntries(list) {
         var m = NewMigrator(p)
         e.Up(&m)
         b.Write("-- " + e.Id + "\n")
         for s in m.Statements() {
-            if std.strings.HasPrefix(s, "--") {
+            if strings.HasPrefix(s, "--") {
                 b.Write(s + "\n")
             } else {
                 b.Write(s + ";\n")
@@ -503,7 +503,7 @@ func MigrationScript(p Provider, list []MigrationEntry) string {
 // their state.
 async func RunMigrations(p Provider, dsn string, list []MigrationEntry, command string, arg string) void! {
     if command == "script" {
-        std.io.print(MigrationScript(p, list))
+        io.print(MigrationScript(p, list))
         return
     }
     var db = openDB(p, dsn)?
@@ -516,19 +516,19 @@ async func RunMigrations(p Provider, dsn string, list []MigrationEntry, command 
             if contains(done, e.Id) {
                 s = "applied"
             }
-            std.io.println(e.Id, s)
+            io.println(e.Id, s)
         }
         return
     }
     var ids = await applyMigrations(st, list, arg)?
     if len(ids) == 0 {
-        std.io.println("database is up to date")
+        io.println("database is up to date")
     }
     for id in ids {
-        if std.strings.HasPrefix(id, "-") {
-            std.io.println("reverted", id[1..len(id)])
+        if strings.HasPrefix(id, "-") {
+            io.println("reverted", id[1..len(id)])
         } else {
-            std.io.println("applied", id)
+            io.println("applied", id)
         }
     }
 }

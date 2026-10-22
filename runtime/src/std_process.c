@@ -1,4 +1,4 @@
-/* std_process.c - child processes for std.process (stdlib_src/process.zl).
+/* std_process.c - child processes for process (stdlib_src/process.zl).
  *
  * rt_spawn forks and execs with optional pipes for stdin/stdout/stderr;
  * the parent's pipe ends are non-blocking and waited on through the

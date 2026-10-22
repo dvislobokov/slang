@@ -1,4 +1,4 @@
-// std.encoding.binary: fixed-size integers in big/little endian, varints,
+// encoding.binary: fixed-size integers in big/little endian, varints,
 // and Encode/Decode/Read/Write of whole structs through compile-time
 // reflection (each instance is straight-line code for its type).
 //
@@ -6,10 +6,10 @@
 // binary.LittleEndian.PutUint16(b, v). As a value (for Encode/Read):
 // binary.ByteOrder.BigEndian / LittleEndian. A struct or field can override the order
 // with the attribute @binary(endian: "big") / "little".
-namespace std.encoding.binary
+namespace encoding.binary
 
 // Per-struct or per-field byte order: @binary(endian: "big" | "little").
-@attribute(targets: [std.reflect.Target.Struct, std.reflect.Target.Field])
+@attribute(targets: [reflect.Target.Struct, reflect.Target.Field])
 struct binary {
     endian string = ""
 }
@@ -327,44 +327,44 @@ func Encode<T>(v T, order ByteOrder) []byte {
 
 func encodeTo<T>(b []byte, v T, order ByteOrder) []byte {
     var out = b
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
-        var o = orderOf(std.reflect.TypeOf<T>().Attribute<binary>(), order)
-        for f in std.reflect.Fields<T>() {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
+        var o = orderOf(reflect.TypeOf<T>().Attribute<binary>(), order)
+        for f in reflect.Fields<T>() {
             var fo = orderOf(f.Attribute<binary>(), o)
             out = encodeTo(out, f.Get(v), fo)
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Array {
         for x in v {
             out = encodeTo(out, x, order)
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Bool {
         if v {
             out = append(out, 1)
         } else {
             out = append(out, 0)
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 {
         out = append(out, v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int8 {
         out = append(out, byte(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int16 {
         out = app16(order, out, uint16(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Char {
         out = app32(order, out, uint32(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<T>().Kind == reflect.Kind.Int {
         out = app64(order, out, uint(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float {
-        out = app64(order, out, std.math.Float64bits(v))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
-        out = app32(order, out, std.math.Float32bits(v))
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float {
+        out = app64(order, out, math.Float64bits(v))
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
+        out = app32(order, out, math.Float32bits(v))
     } else {
         panic(
             "binary: cannot encode type " +
-                std.reflect.TypeOf<T>().Name +
+                reflect.TypeOf<T>().Name +
                 " (fixed-size types only)",
         )
     }
@@ -389,58 +389,58 @@ func take(b []byte, pos *int, n int) []byte! {
 }
 
 func decodeFrom<T>(b []byte, pos *int, order ByteOrder, out *T) void! {
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
-        var o = orderOf(std.reflect.TypeOf<T>().Attribute<binary>(), order)
-        for f in std.reflect.Fields<T>() {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
+        var o = orderOf(reflect.TypeOf<T>().Attribute<binary>(), order)
+        for f in reflect.Fields<T>() {
             var fo = orderOf(f.Attribute<binary>(), o)
             decodeFrom(b, pos, fo, &f.Get(*out))?
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Array {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Array {
         for i in 0..len(*out) {
             decodeFrom(b, pos, order, &(*out)[i])?
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Bool {
         *out = take(b, pos, 1)?[0] != 0
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint8 {
         *out = take(b, pos, 1)?[0]
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int8 {
         *out = int8(take(b, pos, 1)?[0])
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint16 {
         *out = get16(order, take(b, pos, 2)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int16 {
         *out = int16(get16(order, take(b, pos, 2)?))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint32 {
         *out = get32(order, take(b, pos, 4)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int32 {
         *out = int32(get32(order, take(b, pos, 4)?))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Char {
         *out = char(int32(get32(order, take(b, pos, 4)?)))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Uint {
         *out = get64(order, take(b, pos, 8)?)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Int {
         *out = int(get64(order, take(b, pos, 8)?))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float {
-        *out = std.math.Float64frombits(get64(order, take(b, pos, 8)?))
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
-        *out = std.math.Float32frombits(get32(order, take(b, pos, 4)?))
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float {
+        *out = math.Float64frombits(get64(order, take(b, pos, 8)?))
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Float32 {
+        *out = math.Float32frombits(get32(order, take(b, pos, 4)?))
     } else {
         panic(
             "binary: cannot decode type " +
-                std.reflect.TypeOf<T>().Name +
+                reflect.TypeOf<T>().Name +
                 " (fixed-size types only)",
         )
     }
 }
 
 // Reads Size<T>() bytes from r and decodes them (io.ReadFull semantics).
-func Read<T>(r std.io.Reader, order ByteOrder) T! {
+func Read<T>(r io.Reader, order ByteOrder) T! {
     var n = Size<T>()
-    var buf = std.io.ReadN(r, n)?
+    var buf = io.ReadN(r, n)?
     return Decode<T>(buf, order)?
 }
 
 // Writes the encoding of v to w.
-func Write<T>(w std.io.Writer, order ByteOrder, v T) void! {
+func Write<T>(w io.Writer, order ByteOrder, v T) void! {
     var b = Encode(v, order)
-    _ = std.io.WriteAll(w, b)?
+    _ = io.WriteAll(w, b)?
 }

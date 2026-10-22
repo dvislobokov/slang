@@ -11,7 +11,7 @@ pub struct Ident {
     pub span: Span,
 }
 
-/// Dotted path like `std.net.http` or `Point`.
+/// Dotted path like `net.http` or `Point`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Path {
     pub segments: Vec<Ident>,

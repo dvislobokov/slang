@@ -1,11 +1,11 @@
-// std.os files (Go's os.File): Open/Create/OpenFile return a File that
-// implements std.io.Reader, Writer, Closer, Seeker (and ReadWriteCloser);
+// os files (Go's os.File): Open/Create/OpenFile return a File that
+// implements io.Reader, Writer, Closer, Seeker (and ReadWriteCloser);
 // Stat/Lstat give FileInfo; ReadDir gives DirEntry values. The older
-// std.os functions (Args, Getenv, Exit, ...) are runtime externs.
+// os functions (Args, Getenv, Exit, ...) are runtime externs.
 //
 // Flag bits for OpenFile (combine with |): RDONLY, WRONLY, RDWR, APPEND,
-// CREATE, EXCL, SYNC, TRUNC (the constants std.os.O_RDONLY ...).
-namespace std.os
+// CREATE, EXCL, SYNC, TRUNC (the constants os.O_RDONLY ...).
+namespace os
 
 // The descriptor; closed when the last File copy is gone (or by Close).
 struct fileState {
@@ -67,7 +67,7 @@ struct File {
         return rtWriteStr(fd, s)?("write " + this.st.name)
     }
 
-    // whence: 0 start, 1 current, 2 end (std.io.SeekStart ...).
+    // whence: 0 start, 1 current, 2 end (io.SeekStart ...).
     func Seek(offset int, whence int) int! {
         var fd = this.fd()?
         return rtSeek(fd, offset, whence)?("seek " + this.st.name)
@@ -96,12 +96,12 @@ struct File {
     func Stat() FileInfo! {
         var fd = this.fd()?
         var v = rtFstat(fd)?("stat " + this.st.name)
-        return info(std.fs.Base(this.st.name), v)
+        return info(fs.Base(this.st.name), v)
     }
 
     // The whole remaining content.
     func ReadAll() []byte! {
-        return std.io.ReadAllFrom(*this)?
+        return io.ReadAllFrom(*this)?
     }
 }
 
@@ -124,8 +124,8 @@ struct FileInfo {
     }
 
     // ModTime returns the modification time.
-    func ModTime() std.time.Time {
-        return std.time.Unix(0, this.ModTimeNanos)
+    func ModTime() time.Time {
+        return time.Unix(0, this.ModTimeNanos)
     }
 }
 
@@ -175,13 +175,13 @@ func OpenFile(path string, flags int, perm int) File! {
 // Metadata of path (following symlinks).
 func Stat(path string) FileInfo! {
     var v = rtStat(path, true)?
-    return info(std.fs.Base(path), v)
+    return info(fs.Base(path), v)
 }
 
 // Metadata of path itself (a symlink is not followed).
 func Lstat(path string) FileInfo! {
     var v = rtStat(path, false)?
-    return info(std.fs.Base(path), v)
+    return info(fs.Base(path), v)
 }
 
 // The entries of dir, sorted by name (without "." and "..").
@@ -193,7 +193,7 @@ func ReadDir(dir string) []DirEntry! {
             Name: name,
             IsDir: e[0] == 100,
             IsSymlink: e[0] == 108,
-            Path: std.fs.Join(dir, name),
+            Path: fs.Join(dir, name),
         })
     }
     return out

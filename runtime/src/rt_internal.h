@@ -42,7 +42,7 @@ ZELL_HIDDEN void zell__cancel_hook_data(void (*fn)(zell_task *, uintptr_t), zell
 /* Stops the resolver pool (std_net.c); called by zell__io_stop. Queued
  * lookups are dropped without completing, like pending I/O waits. */
 ZELL_HIDDEN void zell__net_stop(void);
-/* task_io.c introspection (tests, std.diag): the shard owning fd (-1 if
+/* task_io.c introspection (tests, diag): the shard owning fd (-1 if
  * none) and the number of poller shards running (0 before the first wait). */
 ZELL_HIDDEN int64_t zell__io_shard_of(int64_t fd);
 ZELL_HIDDEN int64_t zell__io_shards(void);
@@ -165,9 +165,9 @@ ZELL_HIDDEN void zell__map_visit(void *obj, zell_cycle_cb cb, void *ctx);
  * less), and move one object out of / back into the live count (an object
  * whose Drop ran but whose memory is kept for a while). */
 ZELL_HIDDEN void zell__object_free(zell_object *o);
-/* Per-type live counters for std.diag (diag_heap.c): on with
+/* Per-type live counters for diag (diag_heap.c): on with
  * ZELL_DIAG_HEAP=1; mem.c counts every allocation (+1) and free (-1). */
-/* Weak: diag_heap.c is linked only by programs that use std.diag's heap
+/* Weak: diag_heap.c is linked only by programs that use diag's heap
  * report, so mem.c tests the flag's address first (ZELL_DIAG_HEAP_ON). */
 ZELL_HIDDEN ZELL_CYC_WEAK extern uint8_t zell__diag_heap_on;
 ZELL_HIDDEN ZELL_CYC_WEAK void zell__diag_heap_count(const zell_type_info *type, int64_t d);
@@ -179,16 +179,16 @@ ZELL_HIDDEN void zell__leak_report(void);
  * pointer fields that close reference cycles among them (leak.c). */
 ZELL_HIDDEN void zell__live_each(void (*cb)(zell_object *obj, void *arg), void *arg);
 ZELL_HIDDEN void zell__leak_cycles(void);
-/* std.diag (mem.c): objects allocated so far, and a walk over the live
+/* diag (mem.c): objects allocated so far, and a walk over the live
  * objects (type name, allocation size) while leak tracking with type names
  * is on (`--leak-check` mode 2; false otherwise). `cb` must not allocate
  * Zell objects. */
 ZELL_HIDDEN int64_t zell__total_objects(void);
 ZELL_HIDDEN bool zell__heap_each(void (*cb)(const char *type, int64_t bytes, void *arg), void *arg);
-/* std.diag (task.c): live task objects and jobs waiting in the run queue. */
+/* diag (task.c): live task objects and jobs waiting in the run queue. */
 ZELL_HIDDEN int64_t zell__live_tasks(void);
 ZELL_HIDDEN int64_t zell__sched_queue_len(void);
-/* std.diag (diag.c): releases the process-wide slots before the leak report. */
+/* diag (diag.c): releases the process-wide slots before the leak report. */
 ZELL_HIDDEN void zell__diag_shutdown(void);
 
 /* Panic capture scopes (std_testing.c): while a thread's scope is set, a

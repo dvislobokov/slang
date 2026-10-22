@@ -1,4 +1,4 @@
-// std.database.sqlite: the SQLite driver of std.database.sql over the
+// database.sqlite: the SQLite driver of database.sql over the
 // system libsqlite3 (runtime/src/std_sqlite.c; the compiler links
 // -lsqlite3 only into programs that use this namespace). SQLite calls are
 // synchronous: they run on the calling worker thread.
@@ -13,7 +13,7 @@
 // the declared column type contains DATE or TIME and the text parses),
 // BLOB -> []byte, NULL -> nil; a BOOLEAN column gives bool. Arguments:
 // bool binds 0/1, time.Time binds text "2006-01-02 15:04:05.999999999-07:00".
-namespace std.database.sqlite
+namespace database.sqlite
 
 // A SQLite error with its (extended) result code.
 struct Error {
@@ -43,7 +43,7 @@ func Version() string {
 
 // The driver (register it: sql.Register("sqlite", sqlite.Driver{})).
 struct Driver {
-    func Open(dsn string) Task<std.database.sql.DriverConn!> {
+    func Open(dsn string) Task<database.sql.DriverConn!> {
         return openConn(dsn)
     }
 }
@@ -51,10 +51,10 @@ struct Driver {
 // Opens a pool over the driver without registering it. An in-memory
 // database (":memory:") is private to its connection, so the pool is
 // limited to one connection then.
-func Open(dsn string) *std.database.sql.DB {
-    var db = std.database.sql.OpenDriver(Driver{}, dsn)
+func Open(dsn string) *database.sql.DB {
+    var db = database.sql.OpenDriver(Driver{}, dsn)
     if dsn == ":memory:" ||
-        std.strings.Contains(dsn, "mode=memory") && !std.strings.Contains(dsn, "cache=shared") {
+        strings.Contains(dsn, "mode=memory") && !strings.Contains(dsn, "cache=shared") {
         db.SetMaxOpenConns(1)
         db.SetMaxIdleConns(1)
         db.SetHealthCheck(-1)
@@ -71,28 +71,28 @@ struct options {
 
 func parseDSN(dsn string) options! {
     var o = options{path: dsn}
-    var q = std.strings.Index(dsn, "?")
+    var q = strings.Index(dsn, "?")
     if q < 0 {
         return o
     }
     var keep []string = []
-    for kv in std.strings.Split(dsn[q + 1..], "&") {
+    for kv in strings.Split(dsn[q + 1..], "&") {
         if kv == "" {
             continue
         }
-        var eq = std.strings.Index(kv, "=")
+        var eq = strings.Index(kv, "=")
         var k = kv
         var v = ""
         if eq >= 0 {
             k = kv[..eq]
             v = kv[eq + 1..]
         }
-        if !std.strings.HasPrefix(k, "_") {
+        if !strings.HasPrefix(k, "_") {
             keep = append(keep, kv)
             continue
         }
         if k == "_busy_timeout" {
-            o.busy = std.strconv.Atoi(v)?("sqlite: _busy_timeout")
+            o.busy = strconv.Atoi(v)?("sqlite: _busy_timeout")
         } else if k == "_foreign_keys" || k == "_fk" {
             o.pragmas = append(o.pragmas, "PRAGMA foreign_keys = " + v)
         } else if k == "_journal_mode" || k == "_journal" {
@@ -100,7 +100,7 @@ func parseDSN(dsn string) options! {
         } else if k == "_synchronous" || k == "_sync" {
             o.pragmas = append(o.pragmas, "PRAGMA synchronous = " + v)
         } else if k == "_txlock" {
-            var t = std.strings.ToUpper(v)
+            var t = strings.ToUpper(v)
             if t != "DEFERRED" && t != "IMMEDIATE" && t != "EXCLUSIVE" {
                 return error("sqlite: bad _txlock " + v)
             }
@@ -111,16 +111,16 @@ func parseDSN(dsn string) options! {
     }
     var base = dsn[..q]
     if len(keep) > 0 {
-        if !std.strings.HasPrefix(base, "file:") {
+        if !strings.HasPrefix(base, "file:") {
             base = "file:" + base
         }
-        base = base + "?" + std.strings.Join(keep, "&")
+        base = base + "?" + strings.Join(keep, "&")
     }
     o.path = base
     return o
 }
 
-async func openConn(dsn string) std.database.sql.DriverConn! {
+async func openConn(dsn string) database.sql.DriverConn! {
     var o = parseDSN(dsn)?
     var h = try rtOpen(o.path, 0) catch err {
         return Error{Code: 14, ExtendedCode: 14, Msg: err.Message()}
@@ -152,17 +152,17 @@ struct conn {
         return Error{Code: code % 256, ExtendedCode: code, Msg: err.Message()}
     }
 
-    func Prepare(query string) Task<std.database.sql.DriverStmt!> {
+    func Prepare(query string) Task<database.sql.DriverStmt!> {
         return this.prepare(query)
     }
 
-    async func prepare(query string) std.database.sql.DriverStmt! {
+    async func prepare(query string) database.sql.DriverStmt! {
         return this.newStmt(query)?
     }
 
     func newStmt(query string) *stmt! {
         if this.h == 0 {
-            return std.database.sql.ErrConnDone
+            return database.sql.ErrConnDone
         }
         var h = try rtPrepare(this.h, query) catch err {
             return this.fail(err)
@@ -170,19 +170,19 @@ struct conn {
         return new stmt{c: this, h: h, n: rtParamCount(h), q: query}
     }
 
-    func Exec(query string, args []any) Task<std.database.sql.Result!> {
+    func Exec(query string, args []any) Task<database.sql.Result!> {
         return this.exec(query, args)
     }
 
-    async func exec(query string, args []any) std.database.sql.Result! {
+    async func exec(query string, args []any) database.sql.Result! {
         if this.h == 0 {
-            return std.database.sql.ErrConnDone
+            return database.sql.ErrConnDone
         }
         if len(args) == 0 {
             try rtExec(this.h, query) catch err {
                 return this.fail(err)
             }
-            return std.database.sql.Result{
+            return database.sql.Result{
                 RowsAffected: rtChanges(this.h),
                 LastInsertId: rtLastInsertId(this.h),
             }
@@ -192,11 +192,11 @@ struct conn {
         return s.run(args)?
     }
 
-    func Query(query string, args []any) Task<std.database.sql.DriverRows!> {
+    func Query(query string, args []any) Task<database.sql.DriverRows!> {
         return this.query(query, args)
     }
 
-    async func query(query string, args []any) std.database.sql.DriverRows! {
+    async func query(query string, args []any) database.sql.DriverRows! {
         var s = this.newStmt(query)?
         var r = try s.open(args) catch err {
             _ = s.Close()
@@ -206,11 +206,11 @@ struct conn {
         return r
     }
 
-    func Begin() Task<std.database.sql.DriverTx!> {
+    func Begin() Task<database.sql.DriverTx!> {
         return this.begin()
     }
 
-    async func begin() std.database.sql.DriverTx! {
+    async func begin() database.sql.DriverTx! {
         try rtExec(this.h, "BEGIN " + this.txlock) catch err {
             return this.fail(err)
         }
@@ -223,7 +223,7 @@ struct conn {
 
     async func ping() void! {
         if this.h == 0 {
-            return std.database.sql.ErrConnDone
+            return database.sql.ErrConnDone
         }
     }
 
@@ -239,7 +239,7 @@ struct conn {
     }
 
     func Placeholder() int {
-        return std.database.sql.PlaceholderQuestion
+        return database.sql.PlaceholderQuestion
     }
 
     // Whether the connection is outside a transaction.
@@ -261,7 +261,7 @@ struct tx {
 
     async func end(sql string) void! {
         if this.c.h == 0 {
-            return std.database.sql.ErrConnDone
+            return database.sql.ErrConnDone
         }
         if rtAutocommit(this.c.h) {
             // SQLite already ended the transaction (e.g. after an error).
@@ -311,9 +311,9 @@ struct stmt {
         if len(args) != this.n {
             return error(
                 "sqlite: expected " +
-                    std.fmt.Format("{0}", this.n) +
+                    fmt.Format("{0}", this.n) +
                     " arguments, got " +
-                    std.fmt.Format("{0}", len(args)),
+                    fmt.Format("{0}", len(args)),
             )
         }
         rtReset(this.h)
@@ -336,12 +336,12 @@ struct stmt {
                     rtBindText(this.h, k, s)?
                 case []byte b:
                     rtBindBlob(this.h, k, b)?
-                case std.time.Time t:
+                case time.Time t:
                     rtBindText(this.h, k, t.Format("2006-01-02 15:04:05.999999999-07:00"))?
                 default:
                     return error(
                         "sqlite: unsupported argument " +
-                            std.fmt.Format("{0}", i + 1) +
+                            fmt.Format("{0}", i + 1) +
                             " of type " +
                             typeof(a).Name,
                     )
@@ -349,7 +349,7 @@ struct stmt {
         }
     }
 
-    func run(args []any) std.database.sql.Result! {
+    func run(args []any) database.sql.Result! {
         if this.busy {
             // The cached statement is still being read: use a fresh one.
             var s = this.c.newStmt(this.q)?
@@ -367,17 +367,17 @@ struct stmt {
             }
         }
         rtReset(this.h)
-        return std.database.sql.Result{
+        return database.sql.Result{
             RowsAffected: rtChanges(this.c.h),
             LastInsertId: rtLastInsertId(this.c.h),
         }
     }
 
-    func Exec(args []any) Task<std.database.sql.Result!> {
+    func Exec(args []any) Task<database.sql.Result!> {
         return this.exec(args)
     }
 
-    async func exec(args []any) std.database.sql.Result! {
+    async func exec(args []any) database.sql.Result! {
         return this.run(args)?
     }
 
@@ -389,16 +389,16 @@ struct stmt {
         var nc = rtColumnCount(this.h)
         for i in 0..nc {
             cols = append(cols, rtColumnName(this.h, i))
-            types = append(types, std.strings.ToUpper(rtColumnDecltype(this.h, i)))
+            types = append(types, strings.ToUpper(rtColumnDecltype(this.h, i)))
         }
         return new rows{s: this, cols: cols, types: types}
     }
 
-    func Query(args []any) Task<std.database.sql.DriverRows!> {
+    func Query(args []any) Task<database.sql.DriverRows!> {
         return this.query(args)
     }
 
-    async func query(args []any) std.database.sql.DriverRows! {
+    async func query(args []any) database.sql.DriverRows! {
         if this.busy {
             // Same statement already being iterated: prepare another one.
             var s = this.c.newStmt(this.q)?
@@ -450,7 +450,7 @@ struct rows {
             var decl = this.types[i]
             if t == 1 {
                 var n = rtColumnInt(h, i)
-                if std.strings.Contains(decl, "BOOL") {
+                if strings.Contains(decl, "BOOL") {
                     dest[i] = n != 0
                 } else {
                     dest[i] = n
@@ -459,8 +459,8 @@ struct rows {
                 dest[i] = rtColumnFloat(h, i)
             } else if t == 3 {
                 var s = rtColumnText(h, i)
-                if std.strings.Contains(decl, "DATE") || std.strings.Contains(decl, "TIME") {
-                    var tm = try std.database.sql.ParseTimeText(s) catch err {
+                if strings.Contains(decl, "DATE") || strings.Contains(decl, "TIME") {
+                    var tm = try database.sql.ParseTimeText(s) catch err {
                         dest[i] = s
                         continue
                     }

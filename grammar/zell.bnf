@@ -88,7 +88,7 @@ attribute_arg ::= ((IDENTIFIER | DEFAULT) COLON)? expr
 // Declarations
 // ---------------------------------------------------------------------------
 
-// `default` is allowed as a struct name (the `@default("now()")` attribute of std.data)
+// `default` is allowed as a struct name (the `@default("now()")` attribute of data)
 struct_decl ::= STRUCT (IDENTIFIER | DEFAULT) generic_params? implements_clause? LBRACE struct_member* RBRACE
 // `implements` is a contextual keyword (an IDENTIFIER spelled "implements").
 implements_clause ::= IDENTIFIER type (COMMA type)*

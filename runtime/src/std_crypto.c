@@ -1,5 +1,5 @@
-/* std_crypto.c - std.crypto.hash (SHA-1, SHA-256, SHA-512, MD5, CRC-32),
- * std.crypto.hmac (HMAC-SHA256) and std.crypto.rand (getrandom(2), with a
+/* std_crypto.c - crypto.hash (SHA-1, SHA-256, SHA-512, MD5, CRC-32),
+ * crypto.hmac (HMAC-SHA256) and crypto.rand (getrandom(2), with a
  * /dev/urandom fallback). Implemented from FIPS 180-4, RFC 1321, RFC 2104 and
  * the IEEE 802.3 CRC-32 polynomial; no external libraries. Inputs are the raw
  * bytes of the Zell string. */
@@ -299,7 +299,7 @@ bool zell_crypto_hmac_equal(const zell_slice *a, const zell_slice *b) {
     return acc == 0;
 }
 
-/* ---- std.crypto.rand ---- */
+/* ---- crypto.rand ---- */
 
 /* Fills buf with n random bytes; returns 0 or an errno value. */
 static int fill_random(uint8_t *buf, size_t n) {

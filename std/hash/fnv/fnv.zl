@@ -1,6 +1,6 @@
-// std.hash.fnv: FNV-1 and FNV-1a, 32 and 64 bit (Go's hash/fnv). Each
-// New* returns a value implementing std.hash.Hash32 / Hash64.
-namespace std.hash.fnv
+// hash.fnv: FNV-1 and FNV-1a, 32 and 64 bit (Go's hash/fnv). Each
+// New* returns a value implementing hash.Hash32 / Hash64.
+namespace hash.fnv
 
 // Hash32 is a 32-bit FNV-1 or FNV-1a hash (New32, New32a).
 struct Hash32 {
@@ -44,7 +44,7 @@ struct Hash32 {
 
     // Sum returns the hash as 4 big-endian bytes.
     func Sum() []byte {
-        return std.hash.Bytes32(this.h)
+        return hash.Bytes32(this.h)
     }
 
     // Reset restores the initial state.
@@ -105,7 +105,7 @@ struct Hash64 {
 
     // Sum returns the hash as 8 big-endian bytes.
     func Sum() []byte {
-        return std.hash.Bytes64(this.h)
+        return hash.Bytes64(this.h)
     }
 
     // Reset restores the initial state.

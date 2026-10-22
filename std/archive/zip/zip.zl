@@ -1,10 +1,10 @@
 // ZIP archives (PKWARE APPNOTE 6.3): reading and writing in memory,
-// methods Store (0) and Deflate (8, through std.compress), Zip64 records
+// methods Store (0) and Deflate (8, through compress), Zip64 records
 // for large entries/archives (read always; written when needed or with
 // Writer.Zip64), the extended timestamp extra field for exact UTC
 // modification times, UTF-8 names. Encryption and other methods are not
 // supported. ExtractTo / FromDir move archives to and from directories.
-namespace std.archive.zip
+namespace archive.zip
 
 // The compression methods are the constants zip.Store (0) and
 // zip.Deflate (8).
@@ -26,7 +26,7 @@ struct File {
     data           []byte
 
     func IsDir() bool {
-        return std.strings.HasSuffix(this.Name, "/")
+        return strings.HasSuffix(this.Name, "/")
     }
 
     // The uncompressed content (checked against CRC32).
@@ -35,7 +35,7 @@ struct File {
     }
 
     func Text() string! {
-        return std.strings.FromBytes(this.Bytes()?)
+        return strings.FromBytes(this.Bytes()?)
     }
 }
 
@@ -92,7 +92,7 @@ func Open(data []byte) Reader! {
     // end of central directory: the last signature within 64 KB + 22 bytes
     var eocd = -1
     var i = n - 22
-    var stop = std.math.IMax(0, n - 65557)
+    var stop = math.IMax(0, n - 65557)
     for i >= stop {
         if int(data[i]) == 80 &&
             int(data[i + 1]) == 75 &&
@@ -112,7 +112,7 @@ func Open(data []byte) Reader! {
     var clen = u16(data, eocd + 20)
     var comment = ""
     if eocd + 22 + clen <= n {
-        comment = std.strings.FromBytes(std.compress.rtCopy(data, eocd + 22, eocd + 22 + clen))
+        comment = strings.FromBytes(compress.rtCopy(data, eocd + 22, eocd + 22 + clen))
     }
     // zip64 end of central directory locator
     if eocd >= 20 && u32(data, eocd - 20) == 117853008 {
@@ -151,9 +151,9 @@ func Open(data []byte) Reader! {
         if p + 46 + nlen + elen + flen > n {
             return error("zip: invalid central directory entry")
         }
-        f.Name = std.strings.FromBytes(std.compress.rtCopy(data, p + 46, p + 46 + nlen))
-        f.Comment = std.strings.FromBytes(
-            std.compress.rtCopy(data, p + 46 + nlen + elen, p + 46 + nlen + elen + flen),
+        f.Name = strings.FromBytes(compress.rtCopy(data, p + 46, p + 46 + nlen))
+        f.Comment = strings.FromBytes(
+            compress.rtCopy(data, p + 46 + nlen + elen, p + 46 + nlen + elen + flen),
         )
         if made == 3 {
             f.Mode = (ext >> 16) & 4095
@@ -208,12 +208,12 @@ func readEntry(data []byte, f File) []byte! {
     if start + f.CompressedSize > len(data) || f.CompressedSize < 0 {
         return error("zip: " + f.Name + ": data out of range")
     }
-    var raw = std.compress.rtCopy(data, start, start + f.CompressedSize)
+    var raw = compress.rtCopy(data, start, start + f.CompressedSize)
     var out []byte = []
     if f.Method == 0 {
         out = raw
     } else if f.Method == 8 {
-        out = try std.compress.deflate.Decompress(raw) catch err {
+        out = try compress.deflate.Decompress(raw) catch err {
             return error("zip: " + f.Name + ": " + err.Message())
         }
     } else {
@@ -221,13 +221,13 @@ func readEntry(data []byte, f File) []byte! {
             "zip: " +
                 f.Name +
                 ": unsupported compression method " +
-                std.fmt.Format("{0}", f.Method),
+                fmt.Format("{0}", f.Method),
         )
     }
     if len(out) != f.Size {
         return error("zip: " + f.Name + ": size mismatch")
     }
-    if std.compress.Crc32(0, out) != f.CRC32 {
+    if compress.Crc32(0, out) != f.CRC32 {
         return error("zip: " + f.Name + ": checksum error")
     }
     return out
@@ -262,13 +262,13 @@ struct Writer {
     }
 
     func AddString(name string, text string) void! {
-        this.AddHeader(Header{Name: name}, std.strings.Bytes(text))?
+        this.AddHeader(Header{Name: name}, strings.Bytes(text))?
     }
 
     // Adds a directory entry ("name/").
     func AddDir(name string, modified int) void! {
         var n = name
-        if !std.strings.HasSuffix(n, "/") {
+        if !strings.HasSuffix(n, "/") {
             n = n + "/"
         }
         var none []byte = []
@@ -289,12 +289,12 @@ struct Writer {
             return error("zip: duplicate file name " + h.Name)
         }
         if h.Method != 0 && h.Method != 8 {
-            return error("zip: unsupported compression method " + std.fmt.Format("{0}", h.Method))
+            return error("zip: unsupported compression method " + fmt.Format("{0}", h.Method))
         }
         this.names[h.Name] = true
         var comp = data
         if h.Method == 8 {
-            comp = std.compress.deflate.Compress(data, this.Level)
+            comp = compress.deflate.Compress(data, this.Level)
         }
         var f = File{
             Name: h.Name,
@@ -302,7 +302,7 @@ struct Writer {
             Method: h.Method,
             Modified: h.Modified,
             Mode: h.Mode,
-            CRC32: std.compress.Crc32(0, data),
+            CRC32: compress.Crc32(0, data),
             CompressedSize: len(comp),
             Size: len(data),
             offset: len(this.buf),
@@ -332,7 +332,7 @@ struct Writer {
             b = put32(b, len(comp))
             b = put32(b, len(data))
         }
-        var nameBytes = std.strings.Bytes(h.Name)
+        var nameBytes = strings.Bytes(h.Name)
         b = put16(b, len(nameBytes))
         var extra = timeExtra(h.Modified)
         if big {
@@ -341,12 +341,12 @@ struct Writer {
             z = put16(z, 16)
             z = put64(z, len(data))
             z = put64(z, len(comp))
-            extra = std.compress.rtConcat(z, extra)
+            extra = compress.rtConcat(z, extra)
         }
         b = put16(b, len(extra))
-        b = std.compress.rtConcat(b, nameBytes)
-        b = std.compress.rtConcat(b, extra)
-        b = std.compress.rtConcat(b, comp)
+        b = compress.rtConcat(b, nameBytes)
+        b = compress.rtConcat(b, extra)
+        b = compress.rtConcat(b, comp)
         this.buf = b
         this.entries = append(this.entries, f)
     }
@@ -391,13 +391,13 @@ struct Writer {
                 z = put64(z, f.Size)
                 z = put64(z, f.CompressedSize)
                 z = put64(z, f.offset)
-                extra = std.compress.rtConcat(z, extra)
+                extra = compress.rtConcat(z, extra)
             } else {
                 b = put32(b, f.CompressedSize)
                 b = put32(b, f.Size)
             }
-            var nameBytes = std.strings.Bytes(f.Name)
-            var commentBytes = std.strings.Bytes(f.Comment)
+            var nameBytes = strings.Bytes(f.Name)
+            var commentBytes = strings.Bytes(f.Comment)
             b = put16(b, len(nameBytes))
             b = put16(b, len(extra))
             b = put16(b, len(commentBytes))
@@ -419,9 +419,9 @@ struct Writer {
             } else {
                 b = put32(b, f.offset)
             }
-            b = std.compress.rtConcat(b, nameBytes)
-            b = std.compress.rtConcat(b, extra)
-            b = std.compress.rtConcat(b, commentBytes)
+            b = compress.rtConcat(b, nameBytes)
+            b = compress.rtConcat(b, extra)
+            b = compress.rtConcat(b, commentBytes)
         }
         var cdSize = len(b) - cdOff
         if cdOff >= 4294967295 || cdSize >= 4294967295 {
@@ -447,7 +447,7 @@ struct Writer {
         b = put32(b, 101010256)
         b = put16(b, 0)
         b = put16(b, 0)
-        var n16 = std.math.IMin(len(this.entries), 65535)
+        var n16 = math.IMin(len(this.entries), 65535)
         if any64 {
             n16 = 65535
         }
@@ -460,9 +460,9 @@ struct Writer {
             b = put32(b, cdSize)
             b = put32(b, cdOff)
         }
-        var cb = std.strings.Bytes(this.Comment)
+        var cb = strings.Bytes(this.Comment)
         b = put16(b, len(cb))
-        b = std.compress.rtConcat(b, cb)
+        b = compress.rtConcat(b, cb)
         this.buf = b
         return b
     }
@@ -571,12 +571,12 @@ func toDos(t int) []int {
 // Reports whether an entry name is safe to extract (relative, no "..").
 func safeName(name string) bool {
     if name == "" ||
-        std.strings.HasPrefix(name, "/") ||
-        std.strings.HasPrefix(name, "\\") ||
-        std.strings.Contains(name, ":") {
+        strings.HasPrefix(name, "/") ||
+        strings.HasPrefix(name, "\\") ||
+        strings.Contains(name, ":") {
         return false
     }
-    for part in std.strings.Split(std.strings.Replace(name, "\\", "/"), "/") {
+    for part in strings.Split(strings.Replace(name, "\\", "/"), "/") {
         if part == ".." {
             return false
         }
@@ -588,19 +588,19 @@ func safeName(name string) bool {
 // Names that would escape dir are an error.
 func ExtractTo(data []byte, dir string) void! {
     var r = Open(data)?
-    std.fs.MkdirAll(dir)?
+    fs.MkdirAll(dir)?
     for f in r.Files {
         if !safeName(f.Name) {
             return error("zip: unsafe file name " + f.Name)
         }
-        var path = std.fs.Join(dir, f.Name)
+        var path = fs.Join(dir, f.Name)
         if f.IsDir() {
-            std.fs.MkdirAll(path)?
+            fs.MkdirAll(path)?
             continue
         }
-        std.fs.MkdirAll(std.fs.Dir(path))?
+        fs.MkdirAll(fs.Dir(path))?
         var content = f.Bytes()?
-        std.io.WriteFile(path, std.strings.FromBytes(content))?
+        io.WriteFile(path, strings.FromBytes(content))?
     }
 }
 
@@ -615,21 +615,21 @@ func FromDir(dir string) []byte! {
 func addDir(w *Writer, root string, rel string) void! {
     var path = root
     if rel != "" {
-        path = std.fs.Join(root, rel)
+        path = fs.Join(root, rel)
     }
-    for name in std.fs.ReadDir(path)? {
+    for name in fs.ReadDir(path)? {
         var r = name
         if rel != "" {
             r = rel + "/" + name
         }
-        var full = std.fs.Join(root, r)
-        var mt = std.fs.ModTime(full)? / 1000
-        if std.fs.IsDir(full) {
+        var full = fs.Join(root, r)
+        var mt = fs.ModTime(full)? / 1000
+        if fs.IsDir(full) {
             w.AddDir(r, mt)?
             addDir(w, root, r)?
         } else {
-            var text = std.io.ReadFile(full)?
-            w.AddHeader(Header{Name: r, Modified: mt}, std.strings.Bytes(text))?
+            var text = io.ReadFile(full)?
+            w.AddHeader(Header{Name: r, Modified: mt}, strings.Bytes(text))?
         }
     }
 }

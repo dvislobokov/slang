@@ -1,20 +1,20 @@
-//! Parts of the standard library written in Zell: `std.task` (`Channel<T>`,
-//! `Mutex`, `WaitGroup`, `Spawn`, `Timeout`, `Context`), `std.net` (TCP
-//! over non-blocking sockets), `std.net.http` (HTTP/1.1 client and
-//! server), `std.log` (structured logging, with compiled message templates
-//! in [`super::logtmpl`]), `std.diag` (metrics, tracing, profiles),
-//! `std.crypto.x509` (certificates) and `std.net.tls` (TLS 1.3/1.2 in three
+//! Parts of the standard library written in Zell: `task` (`Channel<T>`,
+//! `Mutex`, `WaitGroup`, `Spawn`, `Timeout`, `Context`), `net` (TCP
+//! over non-blocking sockets), `net.http` (HTTP/1.1 client and
+//! server), `log` (structured logging, with compiled message templates
+//! in [`super::logtmpl`]), `diag` (metrics, tracing, profiles),
+//! `crypto.x509` (certificates) and `net.tls` (TLS 1.3/1.2 in three
 //! files: `tls.zl`, `tls_client.zl`, `tls_server.zl` share the namespace), and
-//! the tier 0/1 library of docs/STDLIB.md (`std.slices`, `maps`, `cmp`,
+//! the tier 0/1 library of docs/STDLIB.md (`slices`, `maps`, `cmp`,
 //! `bytes`, `strconv`, `time` types, `math.bits/big/complex`,
 //! `unicode.utf8/utf16`, `hash.*`, `encoding.binary/base32/pem/asn1`, `io`,
 //! `os` files, `os.signal`, `os.user`, `process`, more `collections`, `sync`,
-//! `cli`, `testing`, `embed`), and the tier 3 modules (`std.database.sql`
-//! with the `postgres` and `sqlite` drivers, `std.net.mail`,
-//! `std.crypto.kdf/password`, RSA key generation), and the tier 3b
-//! infrastructure clients (`std.data.redis`, `std.data.kafka`, `std.cloud.s3`,
-//! `std.cloud.blob`; C helpers in `runtime/src/std_infra.c`). The sources live in `sema/stdlib_src/*.zl`; like
-//! `std.collections` ([`super::collections`]) they are parsed once per
+//! `cli`, `testing`, `embed`), and the tier 3 modules (`database.sql`
+//! with the `postgres` and `sqlite` drivers, `net.mail`,
+//! `crypto.kdf/password`, RSA key generation), and the tier 3b
+//! infrastructure clients (`data.redis`, `data.kafka`, `cloud.s3`,
+//! `cloud.blob`; C helpers in `runtime/src/std_infra.c`). The sources live in `sema/stdlib_src/*.zl`; like
+//! `collections` ([`super::collections`]) they are parsed once per
 //! process and registered as stdlib templates, so only what a program uses
 //! is instantiated, checked and compiled.
 //!
@@ -26,8 +26,8 @@
 //!   use: `task.Mutex`, `net.Dial`); interfaces are registered as ordinary
 //!   interfaces. Top-level `var`/`const` are not supported;
 //! * names of the module's own namespace are written short (`Conn`); every
-//!   other namespace is written with its full path (`std.strings.Index`,
-//!   `std.net.Conn`), because the importing file's imports are in effect;
+//!   other namespace is written with its full path (`strings.Index`,
+//!   `net.Conn`), because the importing file's imports are in effect;
 //!   interface method signatures always use full paths;
 //! * the runtime is reached through the stdlib externs of
 //!   [`super::stdlib::FUNCS`] whose names start with `rt` (internal).
@@ -37,132 +37,132 @@ use super::*;
 use std::sync::OnceLock;
 
 /// The Zell-source modules: (namespace, file name, source).
-const MODULES: &[(&str, &str, &str)] = &[
-    ("std.task", "task.zl", include_str!("stdlib_src/task.zl")),
-    ("std.net", "net.zl", include_str!("stdlib_src/net.zl")),
-    ("std.net", "net_udp.zl", include_str!("stdlib_src/net_udp.zl")),
-    ("std.net.http", "http.zl", include_str!("stdlib_src/http.zl")),
-    ("std.net.http", "http_server.zl", include_str!("stdlib_src/http_server.zl")),
-    ("std.net.http", "http_client.zl", include_str!("stdlib_src/http_client.zl")),
-    ("std.net.http", "http2.zl", include_str!("stdlib_src/http2.zl")),
-    ("std.net.http", "http_extra.zl", include_str!("stdlib_src/http_extra.zl")),
-    ("std.net.http.hpack", "hpack.zl", include_str!("stdlib_src/hpack.zl")),
-    ("std.net.http.test", "httptest.zl", include_str!("stdlib_src/httptest.zl")),
-    ("std.net.ws", "ws.zl", include_str!("stdlib_src/ws.zl")),
-    ("std.crypto.x509", "x509.zl", include_str!("stdlib_src/x509.zl")),
-    ("std.net.tls", "tls.zl", include_str!("stdlib_src/tls.zl")),
-    ("std.net.tls", "tls_client.zl", include_str!("stdlib_src/tls_client.zl")),
-    ("std.net.tls", "tls_server.zl", include_str!("stdlib_src/tls_server.zl")),
-    ("std.log", "log.zl", include_str!("stdlib_src/log.zl")),
-    ("std.diag", "diag.zl", include_str!("stdlib_src/diag.zl")),
-    ("std.diag", "diag_heap.zl", include_str!("stdlib_src/diag_heap.zl")),
-    ("std.arena", "arena.zl", include_str!("stdlib_src/arena.zl")),
-    ("std.runtime", "runtime_cycles.zl", include_str!("stdlib_src/runtime_cycles.zl")),
+pub(crate) const MODULES: &[(&str, &str, &str)] = &[
+    ("task", "task.zl", include_str!("stdlib_src/task.zl")),
+    ("net", "net.zl", include_str!("stdlib_src/net.zl")),
+    ("net", "net_udp.zl", include_str!("stdlib_src/net_udp.zl")),
+    ("net.http", "http.zl", include_str!("stdlib_src/http.zl")),
+    ("net.http", "http_server.zl", include_str!("stdlib_src/http_server.zl")),
+    ("net.http", "http_client.zl", include_str!("stdlib_src/http_client.zl")),
+    ("net.http", "http2.zl", include_str!("stdlib_src/http2.zl")),
+    ("net.http", "http_extra.zl", include_str!("stdlib_src/http_extra.zl")),
+    ("net.http.hpack", "hpack.zl", include_str!("stdlib_src/hpack.zl")),
+    ("net.http.test", "httptest.zl", include_str!("stdlib_src/httptest.zl")),
+    ("net.ws", "ws.zl", include_str!("stdlib_src/ws.zl")),
+    ("crypto.x509", "x509.zl", include_str!("stdlib_src/x509.zl")),
+    ("net.tls", "tls.zl", include_str!("stdlib_src/tls.zl")),
+    ("net.tls", "tls_client.zl", include_str!("stdlib_src/tls_client.zl")),
+    ("net.tls", "tls_server.zl", include_str!("stdlib_src/tls_server.zl")),
+    ("log", "log.zl", include_str!("stdlib_src/log.zl")),
+    ("diag", "diag.zl", include_str!("stdlib_src/diag.zl")),
+    ("diag", "diag_heap.zl", include_str!("stdlib_src/diag_heap.zl")),
+    ("arena", "arena.zl", include_str!("stdlib_src/arena.zl")),
+    ("runtime", "runtime_cycles.zl", include_str!("stdlib_src/runtime_cycles.zl")),
     // >>> debugger (docs/DEBUGGER.md stage 2)
-    ("std.debug", "debug.zl", include_str!("stdlib_src/debug.zl")),
-    ("std.debug", "debug_dap.zl", include_str!("stdlib_src/debug_dap.zl")),
-    ("std.debug", "debug_vars.zl", include_str!("stdlib_src/debug_vars.zl")),
+    ("debug", "debug.zl", include_str!("stdlib_src/debug.zl")),
+    ("debug", "debug_dap.zl", include_str!("stdlib_src/debug_dap.zl")),
+    ("debug", "debug_vars.zl", include_str!("stdlib_src/debug_vars.zl")),
     // <<< debugger
     // >>> tier 2 stdlib (docs/STDLIB.md level 2)
-    ("std.regex", "regex.zl", include_str!("stdlib_src/regex.zl")),
-    ("std.regex", "regex_syntax.zl", include_str!("stdlib_src/regex_syntax.zl")),
-    ("std.regex", "regex_vm.zl", include_str!("stdlib_src/regex_vm.zl")),
-    ("std.compress", "compress.zl", include_str!("stdlib_src/compress.zl")),
-    ("std.compress.deflate", "deflate.zl", include_str!("stdlib_src/deflate.zl")),
-    ("std.compress.zlib", "zlib.zl", include_str!("stdlib_src/zlib.zl")),
-    ("std.compress.gzip", "gzip.zl", include_str!("stdlib_src/gzip.zl")),
-    ("std.compress.zstd", "zstd.zl", include_str!("stdlib_src/zstd.zl")),
-    ("std.archive.zip", "zip.zl", include_str!("stdlib_src/zip.zl")),
-    ("std.archive.tar", "tar.zl", include_str!("stdlib_src/tar.zl")),
-    ("std.encoding.csv", "csv.zl", include_str!("stdlib_src/csv.zl")),
-    ("std.encoding", "codec.zl", include_str!("stdlib_src/codec.zl")),
-    ("std.encoding.xml", "xml.zl", include_str!("stdlib_src/xml.zl")),
-    ("std.encoding.yaml", "yaml.zl", include_str!("stdlib_src/yaml.zl")),
-    ("std.encoding.toml", "toml.zl", include_str!("stdlib_src/toml.zl")),
-    ("std.text.template", "template.zl", include_str!("stdlib_src/template.zl")),
-    ("std.text.template", "template_exec.zl", include_str!("stdlib_src/template_exec.zl")),
-    ("std.text.template", "template_check.zl", include_str!("stdlib_src/template_check.zl")),
-    ("std.text.template", "htmlctx.zl", include_str!("stdlib_src/htmlctx.zl")),
-    ("std.html.template", "htmltemplate.zl", include_str!("stdlib_src/htmltemplate.zl")),
-    ("std.net.textproto", "textproto.zl", include_str!("stdlib_src/textproto.zl")),
-    ("std.mime", "mime.zl", include_str!("stdlib_src/mime.zl")),
-    ("std.mime.quotedprintable", "quotedprintable.zl", include_str!("stdlib_src/quotedprintable.zl")),
-    ("std.mime.multipart", "multipart.zl", include_str!("stdlib_src/multipart.zl")),
-    ("std.net.url", "url.zl", include_str!("stdlib_src/url.zl")),
-    ("std.text.scanner", "scanner.zl", include_str!("stdlib_src/scanner.zl")),
-    ("std.text.table", "table.zl", include_str!("stdlib_src/table.zl")),
+    ("regex", "regex.zl", include_str!("stdlib_src/regex.zl")),
+    ("regex", "regex_syntax.zl", include_str!("stdlib_src/regex_syntax.zl")),
+    ("regex", "regex_vm.zl", include_str!("stdlib_src/regex_vm.zl")),
+    ("compress", "compress.zl", include_str!("stdlib_src/compress.zl")),
+    ("compress.deflate", "deflate.zl", include_str!("stdlib_src/deflate.zl")),
+    ("compress.zlib", "zlib.zl", include_str!("stdlib_src/zlib.zl")),
+    ("compress.gzip", "gzip.zl", include_str!("stdlib_src/gzip.zl")),
+    ("compress.zstd", "zstd.zl", include_str!("stdlib_src/zstd.zl")),
+    ("archive.zip", "zip.zl", include_str!("stdlib_src/zip.zl")),
+    ("archive.tar", "tar.zl", include_str!("stdlib_src/tar.zl")),
+    ("encoding.csv", "csv.zl", include_str!("stdlib_src/csv.zl")),
+    ("encoding", "codec.zl", include_str!("stdlib_src/codec.zl")),
+    ("encoding.xml", "xml.zl", include_str!("stdlib_src/xml.zl")),
+    ("encoding.yaml", "yaml.zl", include_str!("stdlib_src/yaml.zl")),
+    ("encoding.toml", "toml.zl", include_str!("stdlib_src/toml.zl")),
+    ("text.template", "template.zl", include_str!("stdlib_src/template.zl")),
+    ("text.template", "template_exec.zl", include_str!("stdlib_src/template_exec.zl")),
+    ("text.template", "template_check.zl", include_str!("stdlib_src/template_check.zl")),
+    ("text.template", "htmlctx.zl", include_str!("stdlib_src/htmlctx.zl")),
+    ("html.template", "htmltemplate.zl", include_str!("stdlib_src/htmltemplate.zl")),
+    ("net.textproto", "textproto.zl", include_str!("stdlib_src/textproto.zl")),
+    ("mime", "mime.zl", include_str!("stdlib_src/mime.zl")),
+    ("mime.quotedprintable", "quotedprintable.zl", include_str!("stdlib_src/quotedprintable.zl")),
+    ("mime.multipart", "multipart.zl", include_str!("stdlib_src/multipart.zl")),
+    ("net.url", "url.zl", include_str!("stdlib_src/url.zl")),
+    ("text.scanner", "scanner.zl", include_str!("stdlib_src/scanner.zl")),
+    ("text.table", "table.zl", include_str!("stdlib_src/table.zl")),
     // <<< tier 2 stdlib
     // >>> tier 3 stdlib (docs/STDLIB.md level 3)
-    ("std.database.sql", "sql.zl", include_str!("stdlib_src/sql.zl")),
-    ("std.database.sqlite", "sqlite.zl", include_str!("stdlib_src/sqlite.zl")),
-    ("std.crypto.kdf", "kdf.zl", include_str!("stdlib_src/kdf.zl")),
-    ("std.crypto.password", "password.zl", include_str!("stdlib_src/password.zl")),
-    ("std.crypto.rsa", "rsa.zl", include_str!("stdlib_src/rsa.zl")),
-    ("std.database.postgres", "postgres.zl", include_str!("stdlib_src/postgres.zl")),
-    ("std.database.postgres", "postgres_types.zl", include_str!("stdlib_src/postgres_types.zl")),
-    ("std.net.mail", "mail.zl", include_str!("stdlib_src/mail.zl")),
-    ("std.compress.brotli", "brotli.zl", include_str!("stdlib_src/brotli.zl")),
+    ("database.sql", "sql.zl", include_str!("stdlib_src/sql.zl")),
+    ("database.sqlite", "sqlite.zl", include_str!("stdlib_src/sqlite.zl")),
+    ("crypto.kdf", "kdf.zl", include_str!("stdlib_src/kdf.zl")),
+    ("crypto.password", "password.zl", include_str!("stdlib_src/password.zl")),
+    ("crypto.rsa", "rsa.zl", include_str!("stdlib_src/rsa.zl")),
+    ("database.postgres", "postgres.zl", include_str!("stdlib_src/postgres.zl")),
+    ("database.postgres", "postgres_types.zl", include_str!("stdlib_src/postgres_types.zl")),
+    ("net.mail", "mail.zl", include_str!("stdlib_src/mail.zl")),
+    ("compress.brotli", "brotli.zl", include_str!("stdlib_src/brotli.zl")),
     // <<< tier 3 stdlib
     // >>> tier 3b stdlib (docs/STDLIB.md level 3b: infrastructure clients)
-    ("std.data.redis", "redis.zl", include_str!("stdlib_src/redis.zl")),
-    ("std.data.redis", "redis_route.zl", include_str!("stdlib_src/redis_route.zl")),
-    ("std.data.redis", "redis_client.zl", include_str!("stdlib_src/redis_client.zl")),
-    ("std.data.kafka", "kafka.zl", include_str!("stdlib_src/kafka.zl")),
-    ("std.data.kafka", "kafka_producer.zl", include_str!("stdlib_src/kafka_producer.zl")),
-    ("std.data.kafka", "kafka_consumer.zl", include_str!("stdlib_src/kafka_consumer.zl")),
-    ("std.data.kafka", "kafka_admin.zl", include_str!("stdlib_src/kafka_admin.zl")),
-    ("std.cloud.s3", "s3.zl", include_str!("stdlib_src/s3.zl")),
-    ("std.cloud.s3", "s3_multi.zl", include_str!("stdlib_src/s3_multi.zl")),
-    ("std.cloud.blob", "blob.zl", include_str!("stdlib_src/blob.zl")),
+    ("data.redis", "redis.zl", include_str!("stdlib_src/redis.zl")),
+    ("data.redis", "redis_route.zl", include_str!("stdlib_src/redis_route.zl")),
+    ("data.redis", "redis_client.zl", include_str!("stdlib_src/redis_client.zl")),
+    ("data.kafka", "kafka.zl", include_str!("stdlib_src/kafka.zl")),
+    ("data.kafka", "kafka_producer.zl", include_str!("stdlib_src/kafka_producer.zl")),
+    ("data.kafka", "kafka_consumer.zl", include_str!("stdlib_src/kafka_consumer.zl")),
+    ("data.kafka", "kafka_admin.zl", include_str!("stdlib_src/kafka_admin.zl")),
+    ("cloud.s3", "s3.zl", include_str!("stdlib_src/s3.zl")),
+    ("cloud.s3", "s3_multi.zl", include_str!("stdlib_src/s3_multi.zl")),
+    ("cloud.blob", "blob.zl", include_str!("stdlib_src/blob.zl")),
     // <<< tier 3b stdlib
-    // >>> std.web (docs/FRAMEWORK.md section 2)
-    ("std.web", "web_app.zl", include_str!("stdlib_src/web_app.zl")),
-    ("std.web", "web_di.zl", include_str!("stdlib_src/web_di.zl")),
-    ("std.web", "web_bind.zl", include_str!("stdlib_src/web_bind.zl")),
-    ("std.web", "web_mw.zl", include_str!("stdlib_src/web_mw.zl")),
-    ("std.web", "web_openapi.zl", include_str!("stdlib_src/web_openapi.zl")),
-    ("std.web.config", "web_config.zl", include_str!("stdlib_src/web_config.zl")),
-    ("std.web.auth.jwt", "web_jwt.zl", include_str!("stdlib_src/web_jwt.zl")),
-    ("std.encoding.json", "web_schema.zl", include_str!("stdlib_src/web_schema.zl")),
-    // <<< std.web
-    // >>> std.data (docs/FRAMEWORK.md section 3)
-    ("std.data", "data.zl", include_str!("stdlib_src/data.zl")),
-    ("std.data", "data_query.zl", include_str!("stdlib_src/data_query.zl")),
-    ("std.data", "data_save.zl", include_str!("stdlib_src/data_save.zl")),
-    ("std.data", "data_migrate.zl", include_str!("stdlib_src/data_migrate.zl")),
-    // <<< std.data
+    // >>> web (docs/FRAMEWORK.md section 2)
+    ("web", "web_app.zl", include_str!("stdlib_src/web_app.zl")),
+    ("web", "web_di.zl", include_str!("stdlib_src/web_di.zl")),
+    ("web", "web_bind.zl", include_str!("stdlib_src/web_bind.zl")),
+    ("web", "web_mw.zl", include_str!("stdlib_src/web_mw.zl")),
+    ("web", "web_openapi.zl", include_str!("stdlib_src/web_openapi.zl")),
+    ("web.config", "web_config.zl", include_str!("stdlib_src/web_config.zl")),
+    ("web.auth.jwt", "web_jwt.zl", include_str!("stdlib_src/web_jwt.zl")),
+    ("encoding.json", "web_schema.zl", include_str!("stdlib_src/web_schema.zl")),
+    // <<< web
+    // >>> data (docs/FRAMEWORK.md section 3)
+    ("data", "data.zl", include_str!("stdlib_src/data.zl")),
+    ("data", "data_query.zl", include_str!("stdlib_src/data_query.zl")),
+    ("data", "data_save.zl", include_str!("stdlib_src/data_save.zl")),
+    ("data", "data_migrate.zl", include_str!("stdlib_src/data_migrate.zl")),
+    // <<< data
     // tier 0/1 stdlib (docs/STDLIB.md)
-    ("std.slices", "slices.zl", include_str!("stdlib_src/slices.zl")),
-    ("std.maps", "maps.zl", include_str!("stdlib_src/maps.zl")),
-    ("std.cmp", "cmp.zl", include_str!("stdlib_src/cmp.zl")),
-    ("std.bytes", "bytes.zl", include_str!("stdlib_src/bytes.zl")),
-    ("std.strconv", "strconv.zl", include_str!("stdlib_src/strconv.zl")),
-    ("std.unicode.utf8", "utf8.zl", include_str!("stdlib_src/utf8.zl")),
-    ("std.unicode.utf16", "utf16.zl", include_str!("stdlib_src/utf16.zl")),
-    ("std.math.bits", "bits.zl", include_str!("stdlib_src/bits.zl")),
-    ("std.math.complex", "complex.zl", include_str!("stdlib_src/complex.zl")),
-    ("std.math.big", "big.zl", include_str!("stdlib_src/big.zl")),
-    ("std.hash", "hash.zl", include_str!("stdlib_src/hash.zl")),
-    ("std.hash.fnv", "fnv.zl", include_str!("stdlib_src/fnv.zl")),
-    ("std.hash.crc32", "crc32.zl", include_str!("stdlib_src/crc32.zl")),
-    ("std.hash.crc64", "crc64.zl", include_str!("stdlib_src/crc64.zl")),
-    ("std.hash.adler32", "adler32.zl", include_str!("stdlib_src/adler32.zl")),
-    ("std.hash.maphash", "maphash.zl", include_str!("stdlib_src/maphash.zl")),
-    ("std.encoding.binary", "binary.zl", include_str!("stdlib_src/binary.zl")),
-    ("std.encoding.base32", "base32.zl", include_str!("stdlib_src/base32.zl")),
-    ("std.encoding.pem", "pem.zl", include_str!("stdlib_src/pem.zl")),
-    ("std.encoding.asn1", "asn1.zl", include_str!("stdlib_src/asn1.zl")),
-    ("std.collections", "collections2.zl", include_str!("stdlib_src/collections2.zl")),
-    ("std.sync", "sync.zl", include_str!("stdlib_src/sync.zl")),
-    ("std.os.signal", "signal.zl", include_str!("stdlib_src/signal.zl")),
-    ("std.process", "process.zl", include_str!("stdlib_src/process.zl")),
-    ("std.os.user", "user.zl", include_str!("stdlib_src/user.zl")),
-    ("std.cli", "cli.zl", include_str!("stdlib_src/cli.zl")),
-    ("std.testing", "testing.zl", include_str!("stdlib_src/testing.zl")),
-    ("std.embed", "embed.zl", include_str!("stdlib_src/embed.zl")),
-    ("std.time", "time.zl", include_str!("stdlib_src/time.zl")),
-    ("std.io", "io.zl", include_str!("stdlib_src/io.zl")),
-    ("std.os", "os.zl", include_str!("stdlib_src/os.zl")),
+    ("slices", "slices.zl", include_str!("stdlib_src/slices.zl")),
+    ("maps", "maps.zl", include_str!("stdlib_src/maps.zl")),
+    ("cmp", "cmp.zl", include_str!("stdlib_src/cmp.zl")),
+    ("bytes", "bytes.zl", include_str!("stdlib_src/bytes.zl")),
+    ("strconv", "strconv.zl", include_str!("stdlib_src/strconv.zl")),
+    ("unicode.utf8", "utf8.zl", include_str!("stdlib_src/utf8.zl")),
+    ("unicode.utf16", "utf16.zl", include_str!("stdlib_src/utf16.zl")),
+    ("math.bits", "bits.zl", include_str!("stdlib_src/bits.zl")),
+    ("math.complex", "complex.zl", include_str!("stdlib_src/complex.zl")),
+    ("math.big", "big.zl", include_str!("stdlib_src/big.zl")),
+    ("hash", "hash.zl", include_str!("stdlib_src/hash.zl")),
+    ("hash.fnv", "fnv.zl", include_str!("stdlib_src/fnv.zl")),
+    ("hash.crc32", "crc32.zl", include_str!("stdlib_src/crc32.zl")),
+    ("hash.crc64", "crc64.zl", include_str!("stdlib_src/crc64.zl")),
+    ("hash.adler32", "adler32.zl", include_str!("stdlib_src/adler32.zl")),
+    ("hash.maphash", "maphash.zl", include_str!("stdlib_src/maphash.zl")),
+    ("encoding.binary", "binary.zl", include_str!("stdlib_src/binary.zl")),
+    ("encoding.base32", "base32.zl", include_str!("stdlib_src/base32.zl")),
+    ("encoding.pem", "pem.zl", include_str!("stdlib_src/pem.zl")),
+    ("encoding.asn1", "asn1.zl", include_str!("stdlib_src/asn1.zl")),
+    ("collections", "collections2.zl", include_str!("stdlib_src/collections2.zl")),
+    ("sync", "sync.zl", include_str!("stdlib_src/sync.zl")),
+    ("os.signal", "signal.zl", include_str!("stdlib_src/signal.zl")),
+    ("process", "process.zl", include_str!("stdlib_src/process.zl")),
+    ("os.user", "user.zl", include_str!("stdlib_src/user.zl")),
+    ("cli", "cli.zl", include_str!("stdlib_src/cli.zl")),
+    ("testing", "testing.zl", include_str!("stdlib_src/testing.zl")),
+    ("embed", "embed.zl", include_str!("stdlib_src/embed.zl")),
+    ("time", "time.zl", include_str!("stdlib_src/time.zl")),
+    ("io", "io.zl", include_str!("stdlib_src/io.zl")),
+    ("os", "os.zl", include_str!("stdlib_src/os.zl")),
 ];
 
 /// What registering a module needs of it: the names, kinds and type
@@ -236,7 +236,7 @@ fn placeholders() -> &'static ast::File {
     static P: OnceLock<ast::File> = OnceLock::new();
     P.get_or_init(|| {
         let mut diags = crate::diagnostics::Diagnostics::new();
-        let tokens = crate::lexer::lex("namespace std.placeholder\n\nfunc F() {}\n\nstruct S {}\n\nenum E {\n    A\n}\n", &mut diags);
+        let tokens = crate::lexer::lex("namespace placeholder\n\nfunc F() {}\n\nstruct S {}\n\nenum E {\n    A\n}\n", &mut diags);
         crate::parser::parse(tokens, &mut diags).expect("placeholder declarations parse")
     })
 }

@@ -2,8 +2,8 @@
 // table in runtime/src/std_mime.c, extendable at run time), media type
 // parsing and formatting with RFC 2231 parameter continuations and
 // charsets, and RFC 2047 encoded words in headers. Multipart bodies are
-// std.mime.multipart, quoted-printable std.mime.quotedprintable.
-namespace std.mime
+// mime.multipart, quoted-printable mime.quotedprintable.
+namespace mime
 
 // The media type for a file extension (".html" -> "text/html;
 // charset=utf-8"); "" if unknown. The lookup is case-insensitive.
@@ -13,8 +13,8 @@ func TypeByExtension(ext string) string {
 
 // Associates ext (with its leading dot) with a media type.
 func AddExtensionType(ext string, typ string) void! {
-    if !std.strings.HasPrefix(ext, ".") {
-        return error("mime: extension " + std.encoding.json.Quote(ext) + " missing leading dot")
+    if !strings.HasPrefix(ext, ".") {
+        return error("mime: extension " + encoding.json.Quote(ext) + " missing leading dot")
     }
     var m = ParseMediaType(typ)?
     _ = m
@@ -33,7 +33,7 @@ struct MediaType {
     Params map[string]string
 
     func Param(name string) string {
-        return this.Params[std.strings.ToLower(name)]
+        return this.Params[strings.ToLower(name)]
     }
 }
 
@@ -70,12 +70,12 @@ func tokenLen(s string, from int) int {
 // Parses "type/subtype; key=value; ..." (also a Content-Disposition
 // value like "attachment; filename=a.txt").
 func ParseMediaType(v string) MediaType! {
-    var semi = std.strings.Index(v, ";")
+    var semi = strings.Index(v, ";")
     var base = v
     if semi >= 0 {
         base = v[..semi]
     }
-    var mt = std.strings.ToLower(std.strings.Trim(base))
+    var mt = strings.ToLower(strings.Trim(base))
     // token or token/token
     var t1 = tokenLen(mt, 0)
     if t1 == 0 {
@@ -126,7 +126,7 @@ func ParseMediaType(v string) MediaType! {
         if kl == 0 && !(i < len(rest) && int(rest[i]) == 42) {
             return error("mime: invalid media parameter")
         }
-        var key = std.strings.ToLower(rest[i..i + kl])
+        var key = strings.ToLower(rest[i..i + kl])
         i += kl
         // RFC 2231 allows '*' in keys (name*0*=)
         for i < len(rest) && (int(rest[i]) == 42 || (int(rest[i]) >= 48 && int(rest[i]) <= 57)) {
@@ -147,7 +147,7 @@ func ParseMediaType(v string) MediaType! {
         if i < len(rest) && int(rest[i]) == 34 {
             // quoted-string
             i += 1
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             var closed = false
             for i < len(rest) {
                 var c = int(rest[i])
@@ -176,7 +176,7 @@ func ParseMediaType(v string) MediaType! {
             value = rest[i..i + vl]
             i += vl
         }
-        var star = std.strings.Index(key, "*")
+        var star = strings.Index(key, "*")
         if star >= 0 {
             var name = key[..star]
             for c in contKeys {
@@ -215,12 +215,12 @@ func ParseMediaType(v string) MediaType! {
             }
             continue
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var charsetOK = true
         var first = true
         for n in 0..1000 {
-            var simple = lookup(contKeys, contVals, name + "*" + std.fmt.Format("{0}", n))
-            var enc = lookup(contKeys, contVals, name + "*" + std.fmt.Format("{0}", n) + "*")
+            var simple = lookup(contKeys, contVals, name + "*" + fmt.Format("{0}", n))
+            var enc = lookup(contKeys, contVals, name + "*" + fmt.Format("{0}", n) + "*")
             if !simple.found && !enc.found {
                 break
             }
@@ -275,11 +275,11 @@ func decode2231(s string, first bool) decoded {
     var text = s
     var charset = "utf-8"
     if first {
-        var parts = std.strings.SplitN(s, "'", 3)
+        var parts = strings.SplitN(s, "'", 3)
         if len(parts) != 3 {
             return decoded{}
         }
-        charset = std.strings.ToLower(parts[0])
+        charset = strings.ToLower(parts[0])
         text = parts[2]
     }
     var raw []byte = []
@@ -298,10 +298,10 @@ func decode2231(s string, first bool) decoded {
         i += 1
     }
     if charset == "utf-8" || charset == "us-ascii" || charset == "" {
-        return decoded{ok: true, value: std.strings.FromBytes(raw)}
+        return decoded{ok: true, value: strings.FromBytes(raw)}
     }
     if charset == "iso-8859-1" || charset == "latin1" {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         for x in raw {
             b.Write(string(char(int(x))))
         }
@@ -326,13 +326,13 @@ func hexv(c int) int {
 // "type/subtype; k=v" with keys sorted, values quoted when needed and
 // non-ASCII values in RFC 2231 form (k*=utf-8''...); "" if typ is invalid.
 func FormatMediaType(typ string, params map[string]string) string {
-    var b = std.strings.Builder{}
-    var slash = std.strings.Index(typ, "/")
+    var b = strings.Builder{}
+    var slash = strings.Index(typ, "/")
     if slash < 0 {
         if tokenLen(typ, 0) != len(typ) || typ == "" {
             return ""
         }
-        b.Write(std.strings.ToLower(typ))
+        b.Write(strings.ToLower(typ))
     } else {
         var major = typ[..slash]
         var sub = typ[slash + 1..]
@@ -342,9 +342,9 @@ func FormatMediaType(typ string, params map[string]string) string {
             tokenLen(sub, 0) != len(sub) {
             return ""
         }
-        b.Write(std.strings.ToLower(major))
+        b.Write(strings.ToLower(major))
         b.Write("/")
-        b.Write(std.strings.ToLower(sub))
+        b.Write(strings.ToLower(sub))
     }
     var keys []string = []
     for k, _ in params {
@@ -357,7 +357,7 @@ func FormatMediaType(typ string, params map[string]string) string {
             return ""
         }
         b.Write("; ")
-        b.Write(std.strings.ToLower(k))
+        b.Write(strings.ToLower(k))
         var ascii = true
         for i in 0..len(v) {
             if int(v[i]) >= 128 || int(v[i]) < 32 && int(v[i]) != 9 {
@@ -426,7 +426,7 @@ func EncodeWord(s string) string {
     if plain {
         return s
     }
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     b.Write("=?utf-8?q?")
     for i in 0..len(s) {
         var c = int(s[i])
@@ -453,12 +453,12 @@ func EncodeWord(s string) string {
 // charsets utf-8, us-ascii, iso-8859-1); white space between adjacent
 // encoded words is dropped. Unknown charsets are an error.
 func DecodeHeader(s string) string! {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var i = 0
     var pendingSpace = ""
     var lastWasWord = false
     for i < len(s) {
-        var start = std.regex.rtIndex(s, "=?", i)
+        var start = regex.rtIndex(s, "=?", i)
         if start < 0 {
             b.Write(pendingSpace)
             b.Write(s[i..])
@@ -466,14 +466,14 @@ func DecodeHeader(s string) string! {
         }
         var between = s[i..start]
         // an encoded word: =?charset?enc?text?=
-        var q1 = std.regex.rtIndex(s, "?", start + 2)
+        var q1 = regex.rtIndex(s, "?", start + 2)
         var q2 = -1
         var end = -1
         if q1 >= 0 {
-            q2 = std.regex.rtIndex(s, "?", q1 + 1)
+            q2 = regex.rtIndex(s, "?", q1 + 1)
         }
         if q2 >= 0 {
-            end = std.regex.rtIndex(s, "?=", q2 + 1)
+            end = regex.rtIndex(s, "?=", q2 + 1)
         }
         if q1 < 0 || q2 != q1 + 2 || end < 0 {
             b.Write(pendingSpace)
@@ -484,13 +484,13 @@ func DecodeHeader(s string) string! {
             i = start + 2
             continue
         }
-        if lastWasWord && std.strings.Trim(between) == "" {
+        if lastWasWord && strings.Trim(between) == "" {
             // white space between encoded words is dropped
         } else {
             b.Write(between)
         }
-        var charset = std.strings.ToLower(s[start + 2..q1])
-        var enc = std.strings.ToLower(s[q1 + 1..q2])
+        var charset = strings.ToLower(s[start + 2..q1])
+        var enc = strings.ToLower(s[q1 + 1..q2])
         var text = s[q2 + 1..end]
         var raw []byte = []
         if enc == "q" {
@@ -512,18 +512,18 @@ func DecodeHeader(s string) string! {
                 }
             }
         } else if enc == "b" {
-            raw = std.encoding.base64.Decode(text)?
+            raw = encoding.base64.Decode(text)?
         } else {
             return error("mime: invalid RFC 2047 encoded-word")
         }
         if charset == "utf-8" || charset == "us-ascii" {
-            b.Write(std.strings.FromBytes(raw))
+            b.Write(strings.FromBytes(raw))
         } else if charset == "iso-8859-1" || charset == "latin1" {
             for x in raw {
                 b.Write(string(char(int(x))))
             }
         } else {
-            return error("mime: unhandled charset " + std.encoding.json.Quote(charset))
+            return error("mime: unhandled charset " + encoding.json.Quote(charset))
         }
         lastWasWord = true
         pendingSpace = ""

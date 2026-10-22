@@ -1,4 +1,4 @@
-/* profile.c - std.diag CPU and heap profiles in pprof format.
+/* profile.c - diag CPU and heap profiles in pprof format.
  *
  * CPU: the platform layer's SIGPROF sampler (platform/posix.c) hands every
  * sample (PC + frame-pointer return addresses) to on_sample, which copies it

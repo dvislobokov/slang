@@ -1,4 +1,4 @@
-/* std_sql.c - sentinel errors of std.database.sql (compiler/src/sema/
+/* std_sql.c - sentinel errors of database.sql (compiler/src/sema/
  * stdlib_src/sql.zl; runtime/ABI.md section 23). The pool, the driver
  * interface and the typed mapping are Zell. */
 #include "rt_internal.h"

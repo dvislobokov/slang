@@ -1,15 +1,15 @@
-//! Compiled `std.log` message templates (docs/FRAMEWORK.md section 4).
+//! Compiled `log` message templates (docs/FRAMEWORK.md section 4).
 //!
 //! `logger.Info("user {UserId} bought {@Order} for {Amount:0.00}", id,
-//! order, total)` on a `std.log.Logger` (or `*std.log.Pipeline`), and the
+//! order, total)` on a `log.Logger` (or `*log.Pipeline`), and the
 //! package functions `log.Info(...)` (the default logger), are not ordinary
 //! calls. The template must be a string literal; it is parsed here, the
 //! number of holes must equal the number of arguments (a compile error
 //! otherwise), and the call is lowered to
 //!
 //! ```text
-//! std.log.enabled(l, Level.Information) &&
-//!     std.log.emit(l, Level.Information, err, text, parts, names, formats, values)
+//! log.enabled(l, Level.Information) &&
+//!     log.emit(l, Level.Information, err, text, parts, names, formats, values)
 //! ```
 //!
 //! so the arguments are only evaluated when the level is enabled (`l` is
@@ -19,9 +19,9 @@
 //! pieces around the holes (`len(names) + 1` of them, `{{`/`}}` unescaped),
 //! `names` the property names, `formats` the text after the name
 //! (`,10:0.00`); `values` are the arguments as `any`: `{@X}` through
-//! `std.log.destructure<T>` (compile-time reflection, `@log(skip: true)`),
+//! `log.destructure<T>` (compile-time reflection, `@log(skip: true)`),
 //! `{$X}` as their `println` text, others boxed directly (numbers, strings,
-//! bools, errors, `any`) or through `std.log.capture<T>`.
+//! bools, errors, `any`) or through `log.capture<T>`.
 //!
 //! Every level method (`Verbose`, `Debug`, `Information`/`Info`,
 //! `Warning`/`Warn`, `Error`, `Fatal`) also accepts an error first:
@@ -32,7 +32,7 @@ use super::generics::{Inst, TmplDecl};
 use super::*;
 use crate::hir::{BinOp, Callee, ConstValue, ExprKind};
 
-/// Level methods and the `std.log.Level` variant each one logs at.
+/// Level methods and the `log.Level` variant each one logs at.
 const LEVELS: &[(&str, &str)] = &[
     ("Verbose", "Verbose"),
     ("Debug", "Debug"),
@@ -114,12 +114,12 @@ pub fn parse_template(t: &str) -> Result<(Vec<String>, Vec<Hole>), String> {
 }
 
 impl<'a> Sema<'a> {
-    /// `std.log` namespace index, if registered.
+    /// `log` namespace index, if registered.
     fn log_ns(&self) -> Option<NsIdx> {
-        self.ns_index.get("std.log").copied()
+        self.ns_index.get("log").copied()
     }
 
-    /// Template id of a `std.log` declaration.
+    /// Template id of a `log` declaration.
     fn log_template(&self, name: &str) -> Option<u32> {
         match self.nss[self.log_ns()?].members.get(name)? {
             (Member::Generic(t), _, _) => Some(*t),
@@ -127,7 +127,7 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// The `std.log.Logger` interface type.
+    /// The `log.Logger` interface type.
     fn log_logger_ty(&mut self) -> Option<TypeId> {
         match self.nss[self.log_ns()?].members.get("Logger")? {
             (Member::Interface(i), _, _) => {
@@ -138,11 +138,11 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// Whether values of `ty` get compiled level methods: `std.log.Logger`
-    /// and `std.log.Pipeline` / `*std.log.Pipeline`.
+    /// Whether values of `ty` get compiled level methods: `log.Logger`
+    /// and `log.Pipeline` / `*log.Pipeline`.
     fn is_log_receiver(&mut self, ty: TypeId) -> bool {
         if let Some(sid) = self.struct_of(ty) {
-            return self.structs[sid as usize].full_name == "std.log.Pipeline";
+            return self.structs[sid as usize].full_name == "log.Pipeline";
         }
         Some(ty) == self.log_logger_ty()
     }
@@ -174,7 +174,7 @@ impl<'a> Sema<'a> {
         Some(self.log_lower(nil, true, level, &format!("log.{m}"), args, span))
     }
 
-    /// A plain `std.log` function by name, as a callee.
+    /// A plain `log` function by name, as a callee.
     fn log_func(&mut self, name: &str, span: Span) -> Option<FuncId> {
         let t = self.log_template(name)?;
         match self.plain_std_inst(t, span)? {
@@ -183,7 +183,7 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// A generic `std.log` function instantiated for `ty`.
+    /// A generic `log` function instantiated for `ty`.
     fn log_generic(&mut self, name: &str, ty: TypeId, span: Span) -> Option<FuncId> {
         let t = self.log_template(name)?;
         match self.instantiate(t, vec![ty], span)? {
@@ -192,7 +192,7 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// The `std.log.Level` value `variant`.
+    /// The `log.Level` value `variant`.
     fn log_level(&mut self, variant: &str, span: Span) -> Option<hir::Expr> {
         let t = self.log_template("Level")?;
         let ty = self.plain_std_type(t, span)?;

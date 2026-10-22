@@ -1,4 +1,4 @@
-/* std_io_ext.c - std.io additions (zell_io_*): stdin to EOF, line files and
+/* std_io_ext.c - io additions (zell_io_*): stdin to EOF, line files and
  * stderr output. Same `T!` / `void!` conventions as std_io.c. */
 #include "rt_internal.h"
 

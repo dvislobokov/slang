@@ -71,8 +71,8 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<Workspace>,
     /// `[capabilities]`: low-level standard modules the package may
-    /// import (`unsafe = true` for `std.unsafe`, `plugin = true` for
-    /// `std.plugin`; docs/DEBUGGER.md).
+    /// import (`unsafe = true` for `unsafe`, `plugin = true` for
+    /// `plugin`; docs/DEBUGGER.md).
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub capabilities: IndexMap<String, bool>,
 }
@@ -257,8 +257,8 @@ impl Manifest {
                     p.name
                 ));
             }
-            if ns == "std" {
-                return Err(format!("package `{}` cannot own the `std` namespace", p.name));
+            if ns == "std" || crate::sema::stdlib::is_std_namespace(&ns) {
+                return Err(format!("package `{}` cannot own the namespace `{ns}`: it belongs to the standard library; set another `namespace` in [package]", p.name));
             }
         } else if self.workspace.is_none() {
             return Err("manifest has neither [package] nor [workspace]".into());

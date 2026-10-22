@@ -2,7 +2,7 @@
 // encoder (std_zstd_enc.c) are C. Frames are decoded whole: the streaming
 // Reader emits a frame's content once all of it has arrived. Dictionaries
 // are not supported.
-namespace std.compress.zstd
+namespace compress.zstd
 
 // Compresses data into one zstd frame with a content checksum. Levels
 // 1 (fastest) .. 19 (more match search); 0 or negative means 3. The
@@ -13,7 +13,7 @@ func Compress(data []byte, level int) []byte! {
     if l <= 0 {
         l = 3
     }
-    return std.compress.rtZstdEncode(data, l, true)?
+    return compress.rtZstdEncode(data, l, true)?
 }
 
 // Compress without the content checksum.
@@ -22,12 +22,12 @@ func CompressNoChecksum(data []byte, level int) []byte! {
     if l <= 0 {
         l = 3
     }
-    return std.compress.rtZstdEncode(data, l, false)?
+    return compress.rtZstdEncode(data, l, false)?
 }
 
 // Decompresses all frames of data (skippable frames are skipped).
 func Decompress(data []byte) []byte! {
-    return std.compress.rtZstdDecode(data)?
+    return compress.rtZstdDecode(data)?
 }
 
 // Reports whether data starts with a zstd frame magic number.
@@ -47,18 +47,18 @@ struct Reader {
     frames int
 
     func Feed(chunk []byte) void! {
-        this.buf = std.compress.rtConcat(this.buf, chunk)
+        this.buf = compress.rtConcat(this.buf, chunk)
         for len(this.buf) > 0 {
-            var n = std.compress.rtZstdFrameLen(this.buf)
+            var n = compress.rtZstdFrameLen(this.buf)
             if n < 0 {
                 return error("zstd: invalid magic number")
             }
             if n == 0 {
                 return
             }
-            var b = std.compress.rtZstdDecode(std.compress.rtCopy(this.buf, 0, n))?
-            this.out = std.compress.rtConcat(this.out, b)
-            this.buf = std.compress.rtCopy(this.buf, n, len(this.buf))
+            var b = compress.rtZstdDecode(compress.rtCopy(this.buf, 0, n))?
+            this.out = compress.rtConcat(this.out, b)
+            this.buf = compress.rtCopy(this.buf, n, len(this.buf))
             this.frames += 1
         }
     }

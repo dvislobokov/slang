@@ -1,4 +1,4 @@
-// std.time types (Go's time package): Duration, Time, Location, Instant,
+// time types (Go's time package): Duration, Time, Location, Instant,
 // Ticker and Timer. The older int-millisecond functions (time.Now(),
 // time.Format(ms, strftime), time.Year(ms), ...) are runtime externs and
 // stay as they are; because of them a few Go names differ here:
@@ -16,7 +16,7 @@
 //
 // Time counts seconds since January 1, year 1 UTC (like Go internally), so
 // the zero value is Go's zero time and IsZero is true for it.
-namespace std.time
+namespace time
 
 // ---- Duration ---------------------------------------------------------------
 
@@ -145,7 +145,7 @@ struct Duration {
         if u < 1000000000 {
             // below one second: ns, µs or ms with a fraction
             if u < 1000 {
-                out = std.strconv.FormatUint(u, 10) + "ns"
+                out = strconv.FormatUint(u, 10) + "ns"
             } else if u < 1000000 {
                 out = fracText(u, 3) + "µs"
             } else {
@@ -159,13 +159,13 @@ struct Duration {
             var s = secs % 60
             var stext = fracText(s * 1000000000 + frac, 9) + "s"
             if h > 0 {
-                out = std.strconv.FormatUint(h, 10) +
+                out = strconv.FormatUint(h, 10) +
                     "h" +
-                    std.strconv.FormatUint(m, 10) +
+                    strconv.FormatUint(m, 10) +
                     "m" +
                     stext
             } else if m > 0 {
-                out = std.strconv.FormatUint(m, 10) + "m" + stext
+                out = strconv.FormatUint(m, 10) + "m" + stext
             } else {
                 out = stext
             }
@@ -183,16 +183,16 @@ func fracText(v uint, prec int) string {
     for _ in 0..prec {
         p = p * 10
     }
-    var whole = std.strconv.FormatUint(v / p, 10)
+    var whole = strconv.FormatUint(v / p, 10)
     var f = v % p
     if f == 0 {
         return whole
     }
-    var digits = std.strconv.FormatUint(f, 10)
+    var digits = strconv.FormatUint(f, 10)
     for len(digits) < prec {
         digits = "0" + digits
     }
-    for std.strings.HasSuffix(digits, "0") {
+    for strings.HasSuffix(digits, "0") {
         digits = digits[..len(digits) - 1]
     }
     return whole + "." + digits
@@ -230,7 +230,7 @@ func Hours(n int) Duration {
 
 // A fractional number of seconds (rounded to the nanosecond).
 func SecondsF(s float) Duration {
-    return Duration{ns: int(std.math.Round(s * 1000000000.0))}
+    return Duration{ns: int(math.Round(s * 1000000000.0))}
 }
 
 func unitNanos(u string) int {
@@ -259,7 +259,7 @@ func ParseDuration(s string) Duration! {
         return Duration{}
     }
     if rest == "" {
-        return error("time: invalid duration " + std.strconv.Quote(orig))
+        return error("time: invalid duration " + strconv.Quote(orig))
     }
     var total = 0.0
     var exact = 0
@@ -269,7 +269,7 @@ func ParseDuration(s string) Duration! {
             i += 1
         }
         if i == 0 {
-            return error("time: invalid duration " + std.strconv.Quote(orig))
+            return error("time: invalid duration " + strconv.Quote(orig))
         }
         var num = rest[..i]
         rest = rest[i..]
@@ -280,30 +280,30 @@ func ParseDuration(s string) Duration! {
         var unit = rest[..j]
         rest = rest[j..]
         if unit == "" {
-            return error("time: missing unit in duration " + std.strconv.Quote(orig))
+            return error("time: missing unit in duration " + strconv.Quote(orig))
         }
         var mult = unitNanos(unit)
         if mult == 0 {
             return error(
                 "time: unknown unit " +
-                    std.strconv.Quote(unit) +
+                    strconv.Quote(unit) +
                     " in duration " +
-                    std.strconv.Quote(orig),
+                    strconv.Quote(orig),
             )
         }
-        if std.strings.Contains(num, ".") {
-            var f = try std.strconv.ParseFloat(num) catch err {
-                return error("time: invalid duration " + std.strconv.Quote(orig))
+        if strings.Contains(num, ".") {
+            var f = try strconv.ParseFloat(num) catch err {
+                return error("time: invalid duration " + strconv.Quote(orig))
             }
             total += f * float(mult)
         } else {
-            var n = try std.strconv.ParseInt(num, 10) catch err {
-                return error("time: invalid duration " + std.strconv.Quote(orig))
+            var n = try strconv.ParseInt(num, 10) catch err {
+                return error("time: invalid duration " + strconv.Quote(orig))
             }
             exact += n * mult
         }
     }
-    var ns = exact + int(std.math.Round(total))
+    var ns = exact + int(math.Round(total))
     if neg {
         ns = -ns
     }
@@ -558,10 +558,10 @@ func LoadLocation(name string) *Location! {
     if name == "Local" {
         return Local()
     }
-    if std.strings.Contains(name, "..") || std.strings.HasPrefix(name, "/") {
-        return error("time: invalid location name " + std.strconv.Quote(name))
+    if strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
+        return error("time: invalid location name " + strconv.Quote(name))
     }
-    var dir = std.os.Getenv("ZONEINFO")
+    var dir = os.Getenv("ZONEINFO")
     if dir == "" {
         // Windows: zones come from the registry (platform/tz_win32.c)
         var sys = try rtZoneTZif(name) else ""
@@ -573,8 +573,8 @@ func LoadLocation(name string) *Location! {
         }
         dir = "/usr/share/zoneinfo"
     }
-    var data = try std.io.ReadFile(dir + "/" + name) catch err {
-        return std.errors.Wrap(err, "time: unknown time zone " + name)
+    var data = try io.ReadFile(dir + "/" + name) catch err {
+        return errors.Wrap(err, "time: unknown time zone " + name)
     }
     var loc = parseTZif(name, data)?
     var out = new Location{}
@@ -668,7 +668,7 @@ func parseTZif(name string, data string) Location! {
     var loc = Location{name: name, zones: zones, trans: trans, idx: idx}
     p = abbrStart + charcnt + leap * (size + 4) + isstd + isutc
     if size == 8 && p < len(data) && data[p] == 10 {
-        var nl = std.strings.Index(data[p + 1..], "\n")
+        var nl = strings.Index(data[p + 1..], "\n")
         if nl > 0 {
             parseTZRule(&loc, data[p + 1..p + 1 + nl])
         }
@@ -697,7 +697,7 @@ struct tzScan {
     func name() string {
         if this.peek() == 60 {
             var start = this.i + 1
-            var j = std.strings.Index(this.s[start..], ">")
+            var j = strings.Index(this.s[start..], ">")
             if j < 0 {
                 this.ok = false
                 return ""
@@ -1197,7 +1197,7 @@ struct Instant {
 
     // Elapsed returns the time since the instant.
     func Elapsed() Duration {
-        return Duration{ns: std.diag.rtMonoNanos() - this.ns}
+        return Duration{ns: diag.rtMonoNanos() - this.ns}
     }
 
     // Sub returns the duration between two instants.
@@ -1218,7 +1218,7 @@ struct Instant {
 
 // NowInstant returns a reading of the monotonic clock (for measuring intervals).
 func NowInstant() Instant {
-    return Instant{ns: std.diag.rtMonoNanos()}
+    return Instant{ns: diag.rtMonoNanos()}
 }
 
 // ---- Ticker / Timer (async) ---------------------------------------------------
@@ -1246,7 +1246,7 @@ struct Ticker {
             panic("time: non-positive interval for Ticker.Reset")
         }
         this.st.period = d.ns
-        this.st.next = std.diag.rtMonoNanos() + d.ns
+        this.st.next = diag.rtMonoNanos() + d.ns
         this.st.stopped = false
     }
 }
@@ -1262,7 +1262,7 @@ func NewTicker(d Duration) Ticker {
     if d.ns <= 0 {
         panic("time: non-positive interval for NewTicker")
     }
-    return Ticker{st: new tickState{period: d.ns, next: std.diag.rtMonoNanos() + d.ns}}
+    return Ticker{st: new tickState{period: d.ns, next: diag.rtMonoNanos() + d.ns}}
 }
 
 // Fires once after a duration: `await t.Wait()` is true when it fired,
@@ -1285,7 +1285,7 @@ struct Timer {
     // Re-arms the timer to fire d from now; true if it was pending.
     func Reset(d Duration) bool {
         var pending = !this.st.stopped
-        this.st.next = std.diag.rtMonoNanos() + d.ns
+        this.st.next = diag.rtMonoNanos() + d.ns
         this.st.stopped = false
         return pending
     }
@@ -1293,13 +1293,13 @@ struct Timer {
 
 // NewTimer returns a timer that fires once after d.
 func NewTimer(d Duration) Timer {
-    return Timer{st: new tickState{period: d.ns, next: std.diag.rtMonoNanos() + d.ns}}
+    return Timer{st: new tickState{period: d.ns, next: diag.rtMonoNanos() + d.ns}}
 }
 
 // Resolves after d with the time then (= task.Delay with a Duration).
 async func After(d Duration) Time {
     if d.ns > 0 {
-        await std.task.Delay((d.ns + 999999) / 1000000)
+        await task.Delay((d.ns + 999999) / 1000000)
     }
     return Time.Now()
 }
@@ -1328,7 +1328,7 @@ func dayNames() []string {
 }
 
 func pad(n int, width int) string {
-    var s = std.strconv.Itoa(n)
+    var s = strconv.Itoa(n)
     var neg = n < 0
     if neg {
         s = s[1..]
@@ -1343,7 +1343,7 @@ func pad(n int, width int) string {
 }
 
 func padSpace(n int, width int) string {
-    var s = std.strconv.Itoa(n)
+    var s = strconv.Itoa(n)
     for len(s) < width {
         s = " " + s
     }
@@ -1382,42 +1382,42 @@ func nextChunk(layout string, i int) (string, int) {
     var c = layout[i]
     switch c {
         case 74:
-            if std.strings.HasPrefix(rest, "January") {
+            if strings.HasPrefix(rest, "January") {
                 return ("January", 7)
             }
-            if std.strings.HasPrefix(rest, "Jan") {
+            if strings.HasPrefix(rest, "Jan") {
                 return ("Jan", 3)
             }
         case 77:
-            if std.strings.HasPrefix(rest, "Monday") {
+            if strings.HasPrefix(rest, "Monday") {
                 return ("Monday", 6)
             }
-            if std.strings.HasPrefix(rest, "Mon") {
+            if strings.HasPrefix(rest, "Mon") {
                 return ("Mon", 3)
             }
-            if std.strings.HasPrefix(rest, "MST") {
+            if strings.HasPrefix(rest, "MST") {
                 return ("MST", 3)
             }
         case 48:
             if len(rest) >= 2 && rest[1] >= 49 && rest[1] <= 54 {
                 return (rest[..2], 2)
             }
-            if std.strings.HasPrefix(rest, "002") {
+            if strings.HasPrefix(rest, "002") {
                 return ("002", 3)
             }
         case 49:
-            if std.strings.HasPrefix(rest, "15") {
+            if strings.HasPrefix(rest, "15") {
                 return ("15", 2)
             }
             return ("1", 1)
         case 50:
-            if std.strings.HasPrefix(rest, "2006") {
+            if strings.HasPrefix(rest, "2006") {
                 return ("2006", 4)
             }
             return ("2", 1)
         case 95:
-            if std.strings.HasPrefix(rest, "_2") {
-                if std.strings.HasPrefix(rest, "_2006") {
+            if strings.HasPrefix(rest, "_2") {
+                if strings.HasPrefix(rest, "_2006") {
                     return ("", 0)
                 }
                 return ("_2", 2)
@@ -1425,25 +1425,25 @@ func nextChunk(layout string, i int) (string, int) {
         case 51, 52, 53:
             return (rest[..1], 1)
         case 80:
-            if std.strings.HasPrefix(rest, "PM") {
+            if strings.HasPrefix(rest, "PM") {
                 return ("PM", 2)
             }
         case 112:
-            if std.strings.HasPrefix(rest, "pm") {
+            if strings.HasPrefix(rest, "pm") {
                 return ("pm", 2)
             }
         case 45:
             for tok in ["-07:00:00", "-0700", "-07:00", "-07"] {
-                if std.strings.HasPrefix(rest, tok) {
+                if strings.HasPrefix(rest, tok) {
                     return (tok, len(tok))
                 }
             }
-            if std.strings.HasPrefix(rest, "-070000") {
+            if strings.HasPrefix(rest, "-070000") {
                 return ("-070000", 7)
             }
         case 90:
             for tok in ["Z07:00:00", "Z070000", "Z0700", "Z07:00", "Z07"] {
-                if std.strings.HasPrefix(rest, tok) {
+                if strings.HasPrefix(rest, tok) {
                     return (tok, len(tok))
                 }
             }
@@ -1480,22 +1480,22 @@ func formatTime(t Time, layout string) string {
             case "2006": out += pad(year, 4)
             case "06": out += pad(floorMod(year, 100), 2)
             case "01": out += pad(month, 2)
-            case "1": out += std.strconv.Itoa(month)
+            case "1": out += strconv.Itoa(month)
             case "January": out += monthNames()[month - 1]
             case "Jan": out += monthNames()[month - 1][..3]
             case "02": out += pad(day, 2)
             case "_2": out += padSpace(day, 2)
-            case "2": out += std.strconv.Itoa(day)
+            case "2": out += strconv.Itoa(day)
             case "002": out += pad(t.YearDay(), 3)
             case "Monday": out += dayNames()[t.Weekday()]
             case "Mon": out += dayNames()[t.Weekday()][..3]
             case "15": out += pad(hour, 2)
             case "03": out += pad(hour12(hour), 2)
-            case "3": out += std.strconv.Itoa(hour12(hour))
+            case "3": out += strconv.Itoa(hour12(hour))
             case "04": out += pad(min, 2)
-            case "4": out += std.strconv.Itoa(min)
+            case "4": out += strconv.Itoa(min)
             case "05": out += pad(sec, 2)
-            case "5": out += std.strconv.Itoa(sec)
+            case "5": out += strconv.Itoa(sec)
             case "PM":
                 if hour >= 12 {
                     out += "PM"
@@ -1525,7 +1525,7 @@ func formatTime(t Time, layout string) string {
                 } else {
                     out += offsetText(
                         zoff,
-                        std.strings.Contains(tok, ":"),
+                        strings.Contains(tok, ":"),
                         tok == "Z07",
                         len(tok) > 6 && tok != "Z07:00",
                     )
@@ -1535,7 +1535,7 @@ func formatTime(t Time, layout string) string {
                 var digits = len(tok) - 1
                 var frac = pad(t.nsec, 9)[..digits]
                 if tok[1] == 57 {
-                    for std.strings.HasSuffix(frac, "0") {
+                    for strings.HasSuffix(frac, "0") {
                         frac = frac[..len(frac) - 1]
                     }
                     if frac != "" {
@@ -1601,11 +1601,11 @@ func strftime(t Time, layout string) string {
                 if wd == 0 {
                     wd = 7
                 }
-                out += std.strconv.Itoa(wd)
-            case 119: out += std.strconv.Itoa(t.Weekday())
+                out += strconv.Itoa(wd)
+            case 119: out += strconv.Itoa(t.Weekday())
             case 90: out += zname
             case 122: out += offsetText(zoff, false, false, false)
-            case 115: out += std.strconv.Itoa(t.Unix())
+            case 115: out += strconv.Itoa(t.Unix())
             case 70: out += pad(year, 4) + "-" + pad(month, 2) + "-" + pad(day, 2)
             case 84: out += pad(hour, 2) + ":" + pad(min, 2) + ":" + pad(sec, 2)
             case 68: out += pad(month, 2) + "/" + pad(day, 2) + "/" + pad(floorMod(year, 100), 2)
@@ -1645,9 +1645,9 @@ struct parser {
 func parseErr(layout string, value string, what string) error {
     return error(
         "time: parsing time " +
-            std.strconv.Quote(value) +
+            strconv.Quote(value) +
             " as " +
-            std.strconv.Quote(layout) +
+            strconv.Quote(layout) +
             ": " +
             what,
     )
@@ -1659,7 +1659,7 @@ func lookupName(names []string, v string, i int, short bool) int {
         if short {
             name = n[..3]
         }
-        if std.strings.HasPrefix(std.strings.ToLower(v[i..]), std.strings.ToLower(name)) {
+        if strings.HasPrefix(strings.ToLower(v[i..]), strings.ToLower(name)) {
             return k
         }
     }
@@ -1692,7 +1692,7 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
         var (tok, n) = nextChunk(layout, li)
         if n == 0 {
             if p.i >= len(value) || value[p.i] != layout[li] {
-                return parseErr(layout, value, "mismatch at " + std.strconv.Quote(layout[li..]))
+                return parseErr(layout, value, "mismatch at " + strconv.Quote(layout[li..]))
             }
             p.i += 1
             li += 1
@@ -1778,7 +1778,7 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
                 if p.i + 2 > len(value) {
                     return parseErr(layout, value, "bad AM/PM")
                 }
-                var ap = std.strings.ToUpper(value[p.i..p.i + 2])
+                var ap = strings.ToUpper(value[p.i..p.i + 2])
                 if ap == "PM" {
                     pm = 1
                 } else if ap == "AM" {
@@ -1839,12 +1839,12 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
                 var hh = try p.digits(2, 2) else return parseErr(layout, value, "bad zone offset")
                 var mm = 0
                 var ss = 0
-                if !std.strings.HasSuffix(tok, "07") {
+                if !strings.HasSuffix(tok, "07") {
                     if p.i < len(value) && value[p.i] == 58 {
                         p.i += 1
                     }
                     mm = try p.digits(2, 2) else return parseErr(layout, value, "bad zone offset")
-                    if std.strings.HasSuffix(tok, "00:00") || std.strings.HasSuffix(tok, "0000") {
+                    if strings.HasSuffix(tok, "00:00") || strings.HasSuffix(tok, "0000") {
                         if p.i < len(value) && value[p.i] == 58 {
                             p.i += 1
                         }
@@ -1860,7 +1860,7 @@ func ParseInLocation(layout string, value string, loc *Location) Time! {
         }
     }
     if p.i != len(value) {
-        return parseErr(layout, value, "extra text " + std.strconv.Quote(value[p.i..]))
+        return parseErr(layout, value, "extra text " + strconv.Quote(value[p.i..]))
     }
     if pm == 1 && hour < 12 {
         hour += 12
@@ -1917,14 +1917,14 @@ async func tickerTick(self Ticker) bool {
     if s.stopped {
         return false
     }
-    var now = std.diag.rtMonoNanos()
+    var now = diag.rtMonoNanos()
     if s.next <= now {
         // drop missed ticks
         var missed = (now - s.next) / s.period + 1
         s.next += missed * s.period
     }
     var waitMs = (s.next - now + 999999) / 1000000
-    await std.task.Delay(waitMs)
+    await task.Delay(waitMs)
     if s.stopped {
         return false
     }
@@ -1935,7 +1935,7 @@ async func tickerTick(self Ticker) bool {
 async func timerWait(self Timer) bool {
     var s = self.st
     for !s.stopped {
-        var now = std.diag.rtMonoNanos()
+        var now = diag.rtMonoNanos()
         if now >= s.next {
             s.stopped = true
             return true
@@ -1945,7 +1945,7 @@ async func timerWait(self Timer) bool {
         if waitMs > 50 {
             waitMs = 50
         }
-        await std.task.Delay(waitMs)
+        await task.Delay(waitMs)
     }
     return false
 }

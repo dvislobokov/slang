@@ -420,7 +420,7 @@ mod tests {
     use super::*;
 
     const MODELS: &str = "namespace app.models\n\n// A user.\nstruct User {\n    Name string\n\n    func Hello() string {\n        return \"hi \" + this.Name\n    }\n}\n";
-    const MAIN: &str = "namespace app\n\nimport std.io\nimport app.models\n\nfunc main() {\n    var u = User{Name: \"a\"}\n    println(u.Hello())\n}\n";
+    const MAIN: &str = "namespace app\n\nimport io\nimport app.models\n\nfunc main() {\n    var u = User{Name: \"a\"}\n    println(u.Hello())\n}\n";
 
     fn session() -> Session {
         let mut s = Session::new();
@@ -501,14 +501,14 @@ mod tests {
     #[test]
     fn diagnostics_carry_codes_and_fixes() {
         let mut s = Session::new();
-        let src = "namespace app\n\nimport std.strings\n\nfunc main() {\n    var x = 1\n}\n";
+        let src = "namespace app\n\nimport strings\n\nfunc main() {\n    var x = 1\n}\n";
         s.update_file("a.zl", src);
         let a = s.analyze();
         let d = a.diagnostics.iter().find(|d| d.code == Some(codes::UNUSED_VARIABLE)).expect("unused variable");
         let titles: Vec<&str> = d.fixes.iter().map(|f| f.title.as_str()).collect();
         assert_eq!(titles, ["Rename x to _", "Remove unused variable x"]);
         let removed = apply_edits(src, &d.fixes[1].edits);
-        assert_eq!(removed, "namespace app\n\nimport std.strings\n\nfunc main() {\n}\n");
+        assert_eq!(removed, "namespace app\n\nimport strings\n\nfunc main() {\n}\n");
         // Fixing the variable makes the unused import reportable.
         s.update_file("a.zl", apply_edits(src, &d.fixes[0].edits));
         let a = s.analyze();

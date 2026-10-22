@@ -1,4 +1,4 @@
-/* std_io.c - std.io file and stdin functions (zell_io_*), thin wrappers over
+/* std_io.c - io file and stdin functions (zell_io_*), thin wrappers over
  * io.c using the uniform `T!` convention: the value is returned and the error
  * goes to a `zell_error **err` out-parameter (NULL on success; err may be NULL). */
 #include "rt_internal.h"

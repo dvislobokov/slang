@@ -1,8 +1,7 @@
-// Examples for std.maps.
+// Examples for maps.
 namespace maps_test
 
-import std
-import std.io
+import io
 
 func ExampleSortedKeys() {
     var ages = map[string]int{"bob": 31, "ann": 27, "cid": 45}

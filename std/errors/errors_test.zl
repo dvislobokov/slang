@@ -1,8 +1,7 @@
-// Examples for std.errors.
+// Examples for errors.
 namespace errors_test
 
-import std
-import std.io
+import io
 
 const ErrNotFound = error("not found")
 

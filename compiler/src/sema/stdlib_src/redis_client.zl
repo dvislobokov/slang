@@ -8,12 +8,12 @@
 // (strings and []byte as they are, numbers in decimal, bools as 1/0);
 // several values are a slice (`c.Del(["a", "b"])`, `c.LPush("l", [1, 2])`),
 // there are no variadic parameters.
-namespace std.data.redis
+namespace data.redis
 
 // What the command methods send to: the router (Client), a pipeline queue
 // or a transaction connection.
 interface executor {
-    func process(args []any) Task<std.data.redis.Reply!>
+    func process(args []any) Task<data.redis.Reply!>
 }
 
 // A member of a sorted set with its score.
@@ -129,7 +129,7 @@ async func toScan(t Task<Reply!>) ScanResult! {
     if len(es) != 2 {
         return error("redis: bad SCAN reply " + r.String())
     }
-    return ScanResult{Cursor: std.strconv.Atoi(es[0].Text()?)?("redis: SCAN cursor"), Keys: es[1].Strings()?}
+    return ScanResult{Cursor: strconv.Atoi(es[0].Text()?)?("redis: SCAN cursor"), Keys: es[1].Strings()?}
 }
 
 // BLPOP/BRPOP: [key, value]; Nil after the timeout.
@@ -851,14 +851,14 @@ struct Client {
         return subscribeNew(this.c, patterns, true)
     }
 
-    // The value of key decoded from JSON (std.encoding.json).
+    // The value of key decoded from JSON (encoding.json).
     func GetJSON<T>(key string) Task<T!> {
         return getJSON<T>(this.c, key)
     }
 
     // Stores v as JSON; ttlMs > 0 sets an expiry.
     func SetJSON<T>(key string, v T, ttlMs int) Task<void!> {
-        var text = std.encoding.json.Format<T>(v)
+        var text = encoding.json.Format<T>(v)
         if ttlMs > 0 {
             return toOK(this.c.process(["SET", key, text, "PX", ttlMs]))
         }
@@ -1018,7 +1018,7 @@ async func ConnectClusterWith(co ClusterOptions) *Client! {
 
 async func getJSON<T>(c *core, key string) T! {
     var r = await c.process(["GET", key])?
-    return std.encoding.json.Parse<T>(r.Text()?)?
+    return encoding.json.Parse<T>(r.Text()?)?
 }
 
 // The typed value of key (JSON): redis.Get<User>(c, "user:1").
@@ -1028,7 +1028,7 @@ func Get<T>(c *Client, key string) Task<T!> {
 
 // Stores v as JSON (no expiry).
 func Set<T>(c *Client, key string, v T) Task<void!> {
-    return toOK(c.c.process(["SET", key, std.encoding.json.Format<T>(v)]))
+    return toOK(c.c.process(["SET", key, encoding.json.Format<T>(v)]))
 }
 
 // ---- scripts --------------------------------------------------------------------------
@@ -1051,7 +1051,7 @@ struct Script {
 
 // NewScript returns a Script for the Lua source src with its SHA1; Run uses EVALSHA and falls back to EVAL.
 func NewScript(src string) *Script {
-    return new Script{Src: src, Hash: std.crypto.hash.Sha1Hex(src)}
+    return new Script{Src: src, Hash: crypto.hash.Sha1Hex(src)}
 }
 
 async func runScript(c *core, s *Script, keys []string, args []any) Reply! {
@@ -1123,7 +1123,7 @@ struct Pipeline {
         if !this.q.ran {
             this.q.ran = true
             this.q.err = error("redis: pipeline was discarded")
-            std.task.rtFire(this.q.done)
+            task.rtFire(this.q.done)
         }
     }
 
@@ -1134,7 +1134,7 @@ struct Pipeline {
 }
 
 func newPipeline(c *core, tx *txState, multi bool) *Pipeline {
-    var q = new pipeQueue{c: c, tx: tx, multi: multi, done: std.task.rtWaker()}
+    var q = new pipeQueue{c: c, tx: tx, multi: multi, done: task.rtWaker()}
     return new Pipeline{Cmds: Cmds{x: q}, q: q}
 }
 
@@ -1145,11 +1145,11 @@ async func pipeExec(q *pipeQueue) []Reply! {
     q.ran = true
     var rs = try await runQueue(q) catch err {
         q.err = err
-        std.task.rtFire(q.done)
+        task.rtFire(q.done)
         return err
     }
     q.results = rs
-    std.task.rtFire(q.done)
+    task.rtFire(q.done)
     return rs
 }
 
@@ -1323,7 +1323,7 @@ struct ScanIterator {
         if len(es) != 2 {
             return error("redis: bad SCAN reply")
         }
-        this.cursor = std.strconv.Atoi(es[0].Text()?)?
+        this.cursor = strconv.Atoi(es[0].Text()?)?
         this.buf = es[1].Strings()?
         if this.cursor == 0 {
             if this.c.mode == 2 && this.node + 1 < len(this.nodes) {
@@ -1355,9 +1355,9 @@ struct subState {
     onReconnect func() Task<void>
     channels []string
     patterns []string
-    msgs std.task.Channel<Message>
-    acks std.task.Channel<int>
-    wmu std.task.Mutex
+    msgs task.Channel<Message>
+    acks task.Channel<int>
+    wmu task.Mutex
     closed bool
     // confirmations of a resubscription after a reconnect (not acks)
     swallow int
@@ -1367,16 +1367,16 @@ struct subState {
     loopDone Task<void>
 
     func lock() {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
     }
 
     func unlock() {
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 }
 
 func newSubState(dialFn func() Task<*conn!>) *subState {
-    return new subState{dialFn: dialFn, msgs: std.task.Channel<Message>(1024), acks: std.task.Channel<int>(1024), loopDone: std.task.rtWaker()}
+    return new subState{dialFn: dialFn, msgs: task.Channel<Message>(1024), acks: task.Channel<int>(1024), loopDone: task.rtWaker()}
 }
 
 func removeAll(xs []string, del []string) []string {
@@ -1440,7 +1440,7 @@ struct Subscription {
     }
 
     // The channel the messages are queued on.
-    func Channel() std.task.Channel<Message> {
+    func Channel() task.Channel<Message> {
         return this.st.msgs
     }
 
@@ -1497,7 +1497,7 @@ struct Subscription {
 
 async func subRecv(st *subState) Message! {
     var m = try await st.msgs.Recv() catch err {
-        if std.errors.Is(err, std.task.ErrCancelled) {
+        if errors.Is(err, task.ErrCancelled) {
             return err
         }
         return ErrClosed
@@ -1543,8 +1543,8 @@ async func subCmd(st *subState, cmd string, names []string, timeout int) void! {
     }
     for _ in names {
         var ack = st.acks.Recv()
-        if !await std.task.Timeout(ack, t) {
-            return error("redis: no confirmation of " + cmd + " within " + std.strconv.Itoa(t) + " ms")
+        if !await task.Timeout(ack, t) {
+            return error("redis: no confirmation of " + cmd + " within " + strconv.Itoa(t) + " ms")
         }
         _ = await ack?
     }
@@ -1558,7 +1558,7 @@ async func subHandle(st *subState, r Reply) {
     if len(r.Elems) < 2 {
         return
     }
-    var kind = std.strings.ToLower(try r.Elems[0].Text() else "")
+    var kind = strings.ToLower(try r.Elems[0].Text() else "")
     var m = Message{Kind: kind}
     if kind == "message" && len(r.Elems) >= 3 {
         m.Channel = try r.Elems[1].Text() else ""
@@ -1601,11 +1601,11 @@ async func subReconnect(st *subState) bool {
         st.lock()
         var closed = st.closed
         st.unlock()
-        if closed || std.task.IsCancelled() {
+        if closed || task.IsCancelled() {
             return false
         }
         var cn = try await st.dialFn() catch _ {
-            await std.task.Delay(delay)
+            await task.Delay(delay)
             if delay < 1000 {
                 delay = delay * 2
             }
@@ -1671,7 +1671,7 @@ async func subLoop(st *subState) {
     st.dialFn = nil
     st.onMessage = nil
     st.onReconnect = nil
-    std.task.rtFire(st.loopDone)
+    task.rtFire(st.loopDone)
 }
 
 async func startSubscription(st *subState) *Subscription! {
@@ -1690,7 +1690,7 @@ async func dialFor(c *core) *conn! {
             await reloadSlots(c)?
             ms = c.masterAddrs()
         }
-        return await dial(c.opts, ms[std.random.IntN(len(ms))])?
+        return await dial(c.opts, ms[random.IntN(len(ms))])?
     }
     return await dial(c.opts, p.currentAddr())?
 }

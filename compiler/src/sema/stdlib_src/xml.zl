@@ -6,7 +6,7 @@
 // safety a DOCTYPE is reported as a Directive token and never interpreted:
 // no DTD is read and no entity other than the five predefined ones (and
 // character references) is expanded, so entity bombs are impossible.
-namespace std.encoding.xml
+namespace encoding.xml
 
 // Token kinds.
 enum Kind {
@@ -107,8 +107,8 @@ struct Reader {
         this.pos += 1
         var k = int(tok[0])
         // every token but attribute parts starts with its line: "K<line> <rest>"
-        var sp = std.strings.Index(tok, " ")
-        this.line = try std.strings.ToInt(tok[1..sp]) else 0
+        var sp = strings.Index(tok, " ")
+        this.line = try strings.ToInt(tok[1..sp]) else 0
         var t = tok[sp + 1..]
         if k == 83 {
             var qname = t
@@ -128,7 +128,7 @@ struct Reader {
                     this.nsPrefix = append(this.nsPrefix, "")
                     this.nsURI = append(this.nsURI, raw[i * 2 + 1])
                     count += 1
-                } else if std.strings.HasPrefix(an, "xmlns:") {
+                } else if strings.HasPrefix(an, "xmlns:") {
                     this.nsPrefix = append(this.nsPrefix, an[6..])
                     this.nsURI = append(this.nsURI, raw[i * 2 + 1])
                     count += 1
@@ -141,7 +141,7 @@ struct Reader {
                 for a in attrs {
                     if a.Name.String() == an {
                         return error(
-                            std.fmt.Format(
+                            fmt.Format(
                                 "xml: duplicate attribute {0} on line {1}",
                                 an,
                                 this.line,
@@ -160,7 +160,7 @@ struct Reader {
             var qname = t
             if len(this.stack) == 0 {
                 return error(
-                    std.fmt.Format(
+                    fmt.Format(
                         "xml: unexpected end element </{0}> on line {1}",
                         qname,
                         this.line,
@@ -170,7 +170,7 @@ struct Reader {
             var top = this.stack[len(this.stack) - 1]
             if top.String() != qname {
                 return error(
-                    std.fmt.Format(
+                    fmt.Format(
                         "xml: element <{0}> closed by </{1}> on line {2}",
                         top.String(),
                         qname,
@@ -211,7 +211,7 @@ struct Reader {
 
     // prefix:local -> Name (elements use the default namespace).
     func resolve(qname string, element bool) Name {
-        var colon = std.strings.Index(qname, ":")
+        var colon = strings.Index(qname, ":")
         var prefix = ""
         var local = qname
         if colon > 0 {
@@ -319,12 +319,12 @@ struct Value {
         if this.Kind == Kind.CharData {
             return this.Text
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         this.collect(&b)
         return b.String()
     }
 
-    func collect(b *std.strings.Builder) {
+    func collect(b *strings.Builder) {
         for c in this.Children {
             if c.Kind == Kind.CharData {
                 b.Write(c.Text)
@@ -397,7 +397,7 @@ func parseTree(text string, keepSpace bool) Value! {
         if t.Kind == Kind.StartElement {
             if len(stack) == 0 && haveRoot {
                 return error(
-                    std.fmt.Format(
+                    fmt.Format(
                         "xml: a second root element <{0}> on line {1}",
                         t.Name.String(),
                         t.Line,
@@ -415,7 +415,7 @@ func parseTree(text string, keepSpace bool) Value! {
                 stack[len(stack) - 1].Children = append(stack[len(stack) - 1].Children, done)
             }
         } else if len(stack) > 0 {
-            if t.Kind == Kind.CharData && !keepSpace && std.strings.Trim(t.Text) == "" {
+            if t.Kind == Kind.CharData && !keepSpace && strings.Trim(t.Text) == "" {
                 continue
             }
             if t.Kind == Kind.Directive {
@@ -426,9 +426,9 @@ func parseTree(text string, keepSpace bool) Value! {
                 Name: t.Name,
                 Text: t.Text,
             })
-        } else if t.Kind == Kind.CharData && std.strings.Trim(t.Text) != "" {
+        } else if t.Kind == Kind.CharData && strings.Trim(t.Text) != "" {
             return error(
-                std.fmt.Format("xml: character data outside the root element on line {0}", t.Line),
+                fmt.Format("xml: character data outside the root element on line {0}", t.Line),
             )
         }
     }
@@ -446,7 +446,7 @@ func parseTree(text string, keepSpace bool) Value! {
 struct Writer {
     Indent string
     Prefix string
-    b      std.strings.Builder
+    b      strings.Builder
     stack  []string
     open   bool
     // per open element: 0 empty, 1 has text, 2 has child elements
@@ -522,7 +522,7 @@ struct Writer {
             this.content[len(this.content) - 1] = 1
         }
         this.b.Write("<![CDATA[")
-        this.b.Write(std.strings.Replace(s, "]]>", "]]]]><![CDATA[>"))
+        this.b.Write(strings.Replace(s, "]]>", "]]]]><![CDATA[>"))
         this.b.Write("]]>")
     }
 
@@ -532,7 +532,7 @@ struct Writer {
         this.mark()
         this.newline(len(this.stack))
         this.b.Write("<!--")
-        this.b.Write(std.strings.Replace(s, "--", "- -"))
+        this.b.Write(strings.Replace(s, "--", "- -"))
         this.b.Write("-->")
     }
 
@@ -605,12 +605,12 @@ func NewWriter() *Writer {
 
 // The element name of type T: @xml(name:) on the type, else its name.
 func rootName<T>() string {
-    var t = std.reflect.TypeOf<T>()
-    var tag = t.Attribute<std.reflect.xmlAttr>()
+    var t = reflect.TypeOf<T>()
+    var tag = t.Attribute<reflect.xmlAttr>()
     if tag != nil && tag.name != "" {
         return tag.name
     }
-    var sd = t.Attribute<std.reflect.serde>()
+    var sd = t.Attribute<reflect.serde>()
     if sd != nil && sd.name != "" {
         return sd.name
     }
@@ -640,12 +640,12 @@ func Decode<T>(v Value) T! {
 }
 
 func decodeElem<T>(v Value, path string, out *T) void! {
-    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+    if reflect.TypeOf<T>() == reflect.TypeOf<Value>() {
         *out = v
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
-        for f in std.reflect.Fields<T>() {
-            var tag = f.Attribute<std.reflect.xmlAttr>()
-            var sd = f.Attribute<std.reflect.serde>()
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
+        for f in reflect.Fields<T>() {
+            var tag = f.Attribute<reflect.xmlAttr>()
+            var sd = f.Attribute<reflect.serde>()
             if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
                 continue
             }
@@ -666,7 +666,7 @@ func decodeElem<T>(v Value, path string, out *T) void! {
                 decodeChildren(v.Elements(name), path + "." + name, &f.Get(*out))?
             }
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Pointer {
         decodePtr(v, path, out)?
     } else {
         decodeText(v.InnerText(), path, out)?
@@ -675,7 +675,7 @@ func decodeElem<T>(v Value, path string, out *T) void! {
 
 // A field from its matching child elements.
 func decodeChildren<F>(cs []Value, path string, out *F) void! {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.Slice {
         decodeSlice(cs, path, out)?
     } else {
         if len(cs) > 0 {
@@ -688,7 +688,7 @@ func decodeSlice<E>(cs []Value, path string, out *[]E) void! {
     var res []E = []
     for i, c in cs {
         var e E
-        decodeElem(c, path + "[" + std.fmt.Format("{0}", i) + "]", &e)?
+        decodeElem(c, path + "[" + fmt.Format("{0}", i) + "]", &e)?
         res = append(res, e)
     }
     *out = res
@@ -705,51 +705,51 @@ func textError(path string, msg string) error {
 }
 
 func decodeText<F>(s string, path string, out *F) void! {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.String {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.String {
         *out = s
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool {
-        var t = std.strings.Trim(s)
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Bool {
+        var t = strings.Trim(s)
         if t == "true" || t == "1" {
             *out = true
         } else if t == "false" || t == "0" {
             *out = false
         } else {
-            return textError(path, "invalid bool " + std.encoding.json.Quote(s))
+            return textError(path, "invalid bool " + encoding.json.Quote(s))
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
-        var v = try std.strings.ToInt(std.strings.Trim(s)) catch err {
-            return textError(path, "invalid integer " + std.encoding.json.Quote(s))
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint32 {
+        var v = try strings.ToInt(strings.Trim(s)) catch err {
+            return textError(path, "invalid integer " + encoding.json.Quote(s))
         }
-        *out = try std.encoding.intAs<F>(v) catch err {
+        *out = try encoding.intAs<F>(v) catch err {
             return textError(path, err.Message())
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
-        var v = try std.strings.ToFloat(std.strings.Trim(s)) catch err {
-            return textError(path, "invalid number " + std.encoding.json.Quote(s))
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Float32 {
+        var v = try strings.ToFloat(strings.Trim(s)) catch err {
+            return textError(path, "invalid number " + encoding.json.Quote(s))
         }
-        *out = std.encoding.floatAs<F>(v)
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Enum {
-        var ty = std.reflect.TypeOf<F>()
-        var variant = ty.Variant(std.strings.Trim(s))
+        *out = encoding.floatAs<F>(v)
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Enum {
+        var ty = reflect.TypeOf<F>()
+        var variant = ty.Variant(strings.Trim(s))
         if variant == nil || len(variant.Fields) > 0 {
-            return textError(path, "unknown " + ty.Name + " value " + std.encoding.json.Quote(s))
+            return textError(path, "unknown " + ty.Name + " value " + encoding.json.Quote(s))
         }
-        std.reflect.storeTag(out, variant.Index)
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {
+        reflect.storeTag(out, variant.Index)
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Pointer {
         decodeTextPtr(s, path, out)?
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Slice {
         // a list attribute or text: white-space separated items
         decodeTextList(s, path, out)?
     } else {
-        return textError(path, "cannot decode text into " + std.reflect.TypeOf<F>().Name)
+        return textError(path, "cannot decode text into " + reflect.TypeOf<F>().Name)
     }
 }
 
@@ -761,7 +761,7 @@ func decodeTextPtr<E>(s string, path string, out **E) void! {
 
 func decodeTextList<E>(s string, path string, out *[]E) void! {
     var res []E = []
-    for part in std.strings.Fields(s) {
+    for part in strings.Fields(s) {
         var e E
         decodeText(part, path, &e)?
         res = append(res, e)
@@ -788,7 +788,7 @@ func FormatIndent<T>(v T, indent string) string {
 }
 
 func typeNs<T>() string {
-    var tag = std.reflect.TypeOf<T>().Attribute<std.reflect.xmlAttr>()
+    var tag = reflect.TypeOf<T>().Attribute<reflect.xmlAttr>()
     if tag != nil {
         return tag.ns
     }
@@ -800,30 +800,30 @@ func encodeElem<T>(w *Writer, name string, ns string, v T) {
     if ns != "" {
         attrs = append(attrs, A("xmlns", ns))
     }
-    if std.reflect.TypeOf<T>() == std.reflect.TypeOf<Value>() {
+    if reflect.TypeOf<T>() == reflect.TypeOf<Value>() {
         writeValue(w, v)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
-        for f in std.reflect.Fields<T>() {
-            var tag = f.Attribute<std.reflect.xmlAttr>()
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
+        for f in reflect.Fields<T>() {
+            var tag = f.Attribute<reflect.xmlAttr>()
             if tag != nil && tag.attr && !tag.skip {
                 var an = f.Name
                 if tag.name != "" {
                     an = tag.name
                 }
-                if !(tag.omitEmpty && std.encoding.isEmpty(f.Get(v))) {
+                if !(tag.omitEmpty && encoding.isEmpty(f.Get(v))) {
                     attrs = append(attrs, A(an, textOf(f.Get(v))))
                 }
             }
         }
         w.Start(name, attrs)
-        for f in std.reflect.Fields<T>() {
-            var tag = f.Attribute<std.reflect.xmlAttr>()
-            var sd = f.Attribute<std.reflect.serde>()
+        for f in reflect.Fields<T>() {
+            var tag = f.Attribute<reflect.xmlAttr>()
+            var sd = f.Attribute<reflect.serde>()
             if (tag != nil && (tag.skip || tag.attr)) || (sd != nil && sd.skip) {
                 continue
             }
             var omit = (tag != nil && tag.omitEmpty) || (sd != nil && sd.omitEmpty)
-            if omit && std.encoding.isEmpty(f.Get(v)) {
+            if omit && encoding.isEmpty(f.Get(v)) {
                 continue
             }
             if tag != nil && tag.text {
@@ -852,12 +852,12 @@ func encodeElem<T>(w *Writer, name string, ns string, v T) {
 }
 
 func encodeField<F>(w *Writer, name string, ns string, x F) {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Array {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.Slice ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Array {
         for e in x {
             encodeField(w, name, ns, e)
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Pointer {
         if x != nil {
             encodeElem(w, name, ns, *x)
         }
@@ -867,33 +867,33 @@ func encodeField<F>(w *Writer, name string, ns string, x F) {
 }
 
 func textOf<F>(x F) string {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.String {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.String {
         return x
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Pointer {
         if x == nil {
             return ""
         }
         return textOf(*x)
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Slice {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Slice {
         var parts []string = []
         for e in x {
             parts = append(parts, textOf(e))
         }
-        return std.strings.Join(parts, " ")
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Enum ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Char ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
-        return std.fmt.Format("{0}", x)
+        return strings.Join(parts, " ")
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Bool ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Enum ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Char ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Float32 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint32 {
+        return fmt.Format("{0}", x)
     } else {
         return ""
     }

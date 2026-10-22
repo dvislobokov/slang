@@ -1,9 +1,9 @@
 // Execution of parsed templates over dynamic Values (see template.zl).
-namespace std.text.template
+namespace text.template
 
 struct executor {
     t     *tmpl
-    out   *std.strings.Builder
+    out   *strings.Builder
     names []string
     vals  []Value
     depth int
@@ -48,7 +48,7 @@ struct executor {
             } else if n.kind == 6 {
                 var target = this.t.defs[n.name]
                 if target == 0 {
-                    return this.fail(n.line, "no such template " + std.encoding.json.Quote(n.name))
+                    return this.fail(n.line, "no such template " + encoding.json.Quote(n.name))
                 }
                 if this.depth > 100 {
                     return this.fail(n.line, "exceeded maximum template depth (100)")
@@ -285,16 +285,16 @@ struct executor {
 
 func argText(a targ) string {
     if a.kind == 1 {
-        return "." + std.strings.Join(a.fields, ".")
+        return "." + strings.Join(a.fields, ".")
     }
     if a.kind == 2 {
         return a.name
     }
     if a.kind == 5 {
-        return std.encoding.json.Quote(a.s)
+        return encoding.json.Quote(a.s)
     }
     if a.kind == 6 {
-        return std.fmt.Format("{0}", a.i)
+        return fmt.Format("{0}", a.i)
     }
     return "."
 }
@@ -337,10 +337,10 @@ func show(v Value) string {
         return "false"
     }
     if v.kind == 2 {
-        return std.fmt.Format("{0}", v.i)
+        return fmt.Format("{0}", v.i)
     }
     if v.kind == 3 {
-        return std.fmt.Format("{0}", v.f)
+        return fmt.Format("{0}", v.f)
     }
     if v.kind == 4 || v.kind >= 8 {
         return v.s
@@ -350,18 +350,18 @@ func show(v Value) string {
         for x in v.items {
             parts = append(parts, show(x))
         }
-        return "[" + std.strings.Join(parts, " ") + "]"
+        return "[" + strings.Join(parts, " ") + "]"
     }
     if v.kind == 6 {
         for i, k in v.keys {
             parts = append(parts, k + ":" + show(v.items[i]))
         }
-        return "map[" + std.strings.Join(parts, " ") + "]"
+        return "map[" + strings.Join(parts, " ") + "]"
     }
     for x in v.items {
         parts = append(parts, show(x))
     }
-    return "{" + std.strings.Join(parts, " ") + "}"
+    return "{" + strings.Join(parts, " ") + "}"
 }
 
 func isNum(v Value) bool {
@@ -408,7 +408,7 @@ func compare(a Value, b Value) int! {
         return 0
     }
     if (a.kind == 4 || a.kind >= 8) && (b.kind == 4 || b.kind >= 8) {
-        return std.strings.Compare(a.s, b.s)
+        return strings.Compare(a.s, b.s)
     }
     if a.kind == 1 && b.kind == 1 {
         if a.b == b.b {
@@ -430,7 +430,7 @@ func compare(a Value, b Value) int! {
 func need(name string, args []Value, n int) void! {
     if len(args) != n {
         return error(
-            std.fmt.Format("wrong number of args for {0}: want {1} got {2}", name, n, len(args)),
+            fmt.Format("wrong number of args for {0}: want {1} got {2}", name, n, len(args)),
         )
     }
 }
@@ -467,7 +467,7 @@ func builtin(name string, args []Value) Value! {
                     n = len(v.s)
                 }
                 if ix.i < 0 || ix.i >= n {
-                    return error(std.fmt.Format("index out of range: {0}", ix.i))
+                    return error(fmt.Format("index out of range: {0}", ix.i))
                 }
                 if v.kind == 4 {
                     v = Value{kind: 2, i: int(v.s[ix.i])}
@@ -511,7 +511,7 @@ func builtin(name string, args []Value) Value! {
         }
         if lo < 0 || hi > n || lo > hi {
             return error(
-                std.fmt.Format("slice index out of range [{0}:{1}] with length {2}", lo, hi, n),
+                fmt.Format("slice index out of range [{0}:{1}] with length {2}", lo, hi, n),
             )
         }
         if v.kind == 4 {
@@ -527,7 +527,7 @@ func builtin(name string, args []Value) Value! {
         return error("can't slice item of type " + kindName(v.kind))
     }
     if name == "print" || name == "println" {
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         for k, a in args {
             if k > 0 {
                 var sep = name == "println" || !((args[k - 1].kind == 4) || (a.kind == 4))
@@ -584,7 +584,7 @@ func builtin(name string, args []Value) Value! {
         return Value{kind: 1, b: r}
     }
     if name == "html" {
-        return Value{kind: 4, s: std.html.Escape(joinArgs(args))}
+        return Value{kind: 4, s: html.Escape(joinArgs(args))}
     }
     if name == "js" {
         return Value{kind: 4, s: jsEscape(joinArgs(args))}
@@ -594,19 +594,19 @@ func builtin(name string, args []Value) Value! {
     }
     if name == "upper" {
         need(name, args, 1)?
-        return Value{kind: 4, s: std.strings.ToUpper(strOf(args[0]))}
+        return Value{kind: 4, s: strings.ToUpper(strOf(args[0]))}
     }
     if name == "lower" {
         need(name, args, 1)?
-        return Value{kind: 4, s: std.strings.ToLower(strOf(args[0]))}
+        return Value{kind: 4, s: strings.ToLower(strOf(args[0]))}
     }
     if name == "title" {
         need(name, args, 1)?
-        return Value{kind: 4, s: std.strings.Title(strOf(args[0]))}
+        return Value{kind: 4, s: strings.Title(strOf(args[0]))}
     }
     if name == "trim" {
         need(name, args, 1)?
-        return Value{kind: 4, s: std.strings.Trim(strOf(args[0]))}
+        return Value{kind: 4, s: strings.Trim(strOf(args[0]))}
     }
     if name == "join" {
         need(name, args, 2)?
@@ -617,33 +617,33 @@ func builtin(name string, args []Value) Value! {
         for x in args[0].items {
             parts = append(parts, strOf(x))
         }
-        return Value{kind: 4, s: std.strings.Join(parts, strOf(args[1]))}
+        return Value{kind: 4, s: strings.Join(parts, strOf(args[1]))}
     }
     if name == "split" {
         need(name, args, 2)?
         var items []Value = []
-        for p in std.strings.Split(strOf(args[0]), strOf(args[1])) {
+        for p in strings.Split(strOf(args[0]), strOf(args[1])) {
             items = append(items, Value{kind: 4, s: p})
         }
         return Value{kind: 5, items: items}
     }
     if name == "contains" {
         need(name, args, 2)?
-        return Value{kind: 1, b: std.strings.Contains(strOf(args[0]), strOf(args[1]))}
+        return Value{kind: 1, b: strings.Contains(strOf(args[0]), strOf(args[1]))}
     }
     if name == "hasPrefix" {
         need(name, args, 2)?
-        return Value{kind: 1, b: std.strings.HasPrefix(strOf(args[0]), strOf(args[1]))}
+        return Value{kind: 1, b: strings.HasPrefix(strOf(args[0]), strOf(args[1]))}
     }
     if name == "hasSuffix" {
         need(name, args, 2)?
-        return Value{kind: 1, b: std.strings.HasSuffix(strOf(args[0]), strOf(args[1]))}
+        return Value{kind: 1, b: strings.HasSuffix(strOf(args[0]), strOf(args[1]))}
     }
     if name == "replace" {
         need(name, args, 3)?
         return Value{
             kind: 4,
-            s: std.strings.Replace(strOf(args[0]), strOf(args[1]), strOf(args[2])),
+            s: strings.Replace(strOf(args[0]), strOf(args[1]), strOf(args[2])),
         }
     }
     if name == "repeat" {
@@ -651,7 +651,7 @@ func builtin(name string, args []Value) Value! {
         if args[1].kind != 2 || args[1].i < 0 || args[1].i > 10000 {
             return error("repeat count must be an int in 0..10000")
         }
-        return Value{kind: 4, s: std.strings.Repeat(strOf(args[0]), args[1].i)}
+        return Value{kind: 4, s: strings.Repeat(strOf(args[0]), args[1].i)}
     }
     if name == "default" {
         need(name, args, 2)?
@@ -660,11 +660,11 @@ func builtin(name string, args []Value) Value! {
         }
         return args[0]
     }
-    return error("function " + std.encoding.json.Quote(name) + " not defined")
+    return error("function " + encoding.json.Quote(name) + " not defined")
 }
 
 func joinArgs(args []Value) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     for k, a in args {
         if k > 0 && args[k - 1].kind != 4 && a.kind != 4 {
             b.Write(" ")
@@ -679,7 +679,7 @@ func joinArgs(args []Value) string {
 // Go-style formatting: %v %s %d %f %e %g %q %x %X %o %b %c %t %% with
 // flags - + 0 space, width and precision.
 func sprintf(format string, args []Value) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var ai = 0
     var i = 0
     var n = len(format)
@@ -758,22 +758,22 @@ func sprintf(format string, args []Value) string {
             }
         } else if verb == 100 {
             if a.kind == 2 {
-                s = std.fmt.Format("{0}", a.i)
-            } else if a.kind == 3 && a.f == std.math.Trunc(a.f) {
-                s = std.fmt.Format("{0}", int(a.f))
+                s = fmt.Format("{0}", a.i)
+            } else if a.kind == 3 && a.f == math.Trunc(a.f) {
+                s = fmt.Format("{0}", int(a.f))
             } else {
                 s = "%!d(" + goType(a) + "=" + show(a) + ")"
             }
-            if plus && !std.strings.HasPrefix(s, "-") {
+            if plus && !strings.HasPrefix(s, "-") {
                 s = "+" + s
-            } else if space && !std.strings.HasPrefix(s, "-") {
+            } else if space && !strings.HasPrefix(s, "-") {
                 s = " " + s
             }
         } else if verb == 102 || verb == 70 || verb == 101 || verb == 103 {
             if !isNum(a) {
                 s = "%!" + string(char(verb)) + "(" + goType(a) + "=" + show(a) + ")"
             } else if verb == 103 {
-                s = std.fmt.Format("{0}", num(a))
+                s = fmt.Format("{0}", num(a))
             } else if verb == 101 {
                 s = expText(num(a), prec)
             } else {
@@ -783,11 +783,11 @@ func sprintf(format string, args []Value) string {
                 }
                 s = fixed(num(a), p)
             }
-            if plus && !std.strings.HasPrefix(s, "-") {
+            if plus && !strings.HasPrefix(s, "-") {
                 s = "+" + s
             }
         } else if verb == 113 {
-            s = std.encoding.json.Quote(strOf(a))
+            s = encoding.json.Quote(strOf(a))
         } else if verb == 120 || verb == 88 || verb == 111 || verb == 98 {
             var base = 16
             if verb == 111 {
@@ -799,7 +799,7 @@ func sprintf(format string, args []Value) string {
                 s = intBase(a.i, base)
             } else {
                 // hex of the bytes of a string
-                var hb = std.strings.Builder{}
+                var hb = strings.Builder{}
                 for k in 0..len(strOf(a)) {
                     var c = int(strOf(a)[k])
                     hb.Write(intBase(c >> 4, 16) + intBase(c & 15, 16))
@@ -807,7 +807,7 @@ func sprintf(format string, args []Value) string {
                 s = hb.String()
             }
             if verb == 88 {
-                s = std.strings.ToUpper(s)
+                s = strings.ToUpper(s)
             }
         } else if verb == 99 {
             s = string(char(a.i))
@@ -819,15 +819,15 @@ func sprintf(format string, args []Value) string {
         if width > len(s) {
             var padn = width - len(s)
             if minus {
-                s = s + std.strings.Repeat(" ", padn)
+                s = s + strings.Repeat(" ", padn)
             } else if zero && (verb == 100 || verb == 102 || verb == 120 || verb == 88) {
-                if std.strings.HasPrefix(s, "-") || std.strings.HasPrefix(s, "+") {
-                    s = s[..1] + std.strings.Repeat("0", padn) + s[1..]
+                if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
+                    s = s[..1] + strings.Repeat("0", padn) + s[1..]
                 } else {
-                    s = std.strings.Repeat("0", padn) + s
+                    s = strings.Repeat("0", padn) + s
                 }
             } else {
-                s = std.strings.Repeat(" ", padn) + s
+                s = strings.Repeat(" ", padn) + s
             }
         }
         b.Write(s)
@@ -839,7 +839,7 @@ func sprintf(format string, args []Value) string {
         for k in ai..len(args) {
             extra = append(extra, show(args[k]))
         }
-        b.Write(std.strings.Join(extra, ", "))
+        b.Write(strings.Join(extra, ", "))
         b.Write(")")
     }
     return b.String()
@@ -891,32 +891,32 @@ func intBase(v0 int, base int) string {
 
 // f with p decimals (rounded half away from zero).
 func fixed(f float, p int) string {
-    if std.math.IsNaN(f) {
+    if math.IsNaN(f) {
         return "NaN"
     }
-    if std.math.IsInf(f, 1) {
+    if math.IsInf(f, 1) {
         return "+Inf"
     }
-    if std.math.IsInf(f, -1) {
+    if math.IsInf(f, -1) {
         return "-Inf"
     }
     var neg = f < 0
-    var x = std.math.Abs(f)
-    var scale = std.math.Pow(10.0, float(p))
+    var x = math.Abs(f)
+    var scale = math.Pow(10.0, float(p))
     var scaled = x * scale
-    var r = std.math.Round(scaled)
-    var fl = std.math.Floor(scaled)
+    var r = math.Round(scaled)
+    var fl = math.Floor(scaled)
     if scaled - fl == 0.5 {
         // an exact tie rounds to even (as strconv)
         r = fl
-        if std.math.Mod(fl, 2.0) != 0.0 {
+        if math.Mod(fl, 2.0) != 0.0 {
             r = fl + 1.0
         }
     }
     if r >= 9.0e18 {
-        return std.fmt.Format("{0}", f)
+        return fmt.Format("{0}", f)
     }
-    var digits = std.fmt.Format("{0}", int(r))
+    var digits = fmt.Format("{0}", int(r))
     for len(digits) <= p {
         digits = "0" + digits
     }
@@ -938,14 +938,14 @@ func expText(f float, prec int) string {
     if f == 0.0 {
         return fixed(0.0, p) + "e+00"
     }
-    var x = std.math.Abs(f)
-    var e = int(std.math.Floor(std.math.Log10(x)))
-    var m = x / std.math.Pow(10.0, float(e))
-    if std.math.Round(m * std.math.Pow(10.0, float(p))) >= 10.0 * std.math.Pow(10.0, float(p)) {
+    var x = math.Abs(f)
+    var e = int(math.Floor(math.Log10(x)))
+    var m = x / math.Pow(10.0, float(e))
+    if math.Round(m * math.Pow(10.0, float(p))) >= 10.0 * math.Pow(10.0, float(p)) {
         m = m / 10.0
         e += 1
     }
-    var es = std.fmt.Format("{0}", std.math.IAbs(e))
+    var es = fmt.Format("{0}", math.IAbs(e))
     if len(es) < 2 {
         es = "0" + es
     }
@@ -963,7 +963,7 @@ func expText(f float, prec int) string {
 // -- escaping helpers --------------------------------------------------------------
 
 func jsEscape(s string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var start = 0
     for i in 0..len(s) {
         var c = int(s[i])
@@ -1008,7 +1008,7 @@ func hex2(c int) string {
 
 // Percent-encoding for a query component (space as +).
 func queryEscape(s string) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     for i in 0..len(s) {
         var c = int(s[i])
         if (c >= 48 && c <= 57) ||

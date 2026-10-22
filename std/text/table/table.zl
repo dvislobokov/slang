@@ -3,7 +3,7 @@
 // per-column alignment, and several styles: Plain (space separated, like
 // Go's tabwriter), ASCII and Unicode boxes, and Markdown. Cells may hold
 // several lines.
-namespace std.text.table
+namespace text.table
 
 // Table renders rows of text as aligned columns (Plain, ASCII, Unicode or Markdown style).
 struct Table {
@@ -66,7 +66,7 @@ struct Table {
                 }
             }
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         var pad = this.Padding
         if pad <= 0 {
             pad = 1
@@ -83,7 +83,7 @@ struct Table {
             if st == Plain {
                 var dashes []string = []
                 for i in 0..ncol {
-                    dashes = append(dashes, std.strings.Repeat("-", widths[i]))
+                    dashes = append(dashes, strings.Repeat("-", widths[i]))
                 }
                 this.line(&b, widths, dashes, pad, true)
             } else if st == Markdown {
@@ -92,11 +92,11 @@ struct Table {
                     var a = this.align(i)
                     var w = widths[i] + 2 * pad
                     if a == Left {
-                        b.Write(":" + std.strings.Repeat("-", w - 1))
+                        b.Write(":" + strings.Repeat("-", w - 1))
                     } else if a == Right {
-                        b.Write(std.strings.Repeat("-", w - 1) + ":")
+                        b.Write(strings.Repeat("-", w - 1) + ":")
                     } else {
-                        b.Write(":" + std.strings.Repeat("-", w - 2) + ":")
+                        b.Write(":" + strings.Repeat("-", w - 2) + ":")
                     }
                     b.Write("|")
                 }
@@ -122,7 +122,7 @@ struct Table {
     }
 
     // a horizontal border: 0 top, 1 under the header, 2 bottom
-    func rule(b *std.strings.Builder, widths []int, pad int, kind int) {
+    func rule(b *strings.Builder, widths []int, pad int, kind int) {
         var h = "-"
         var l = "+"
         var m = "+"
@@ -148,14 +148,14 @@ struct Table {
             if i > 0 {
                 b.Write(m)
             }
-            b.Write(std.strings.Repeat(h, w + 2 * pad))
+            b.Write(strings.Repeat(h, w + 2 * pad))
         }
         b.Write(r)
         b.Write("\n")
     }
 
     // one row (several text lines when a cell has \n)
-    func line(b *std.strings.Builder, widths []int, cells []string, pad int, header bool) {
+    func line(b *strings.Builder, widths []int, cells []string, pad int, header bool) {
         var split [][]string = []
         var height = 1
         for i in 0..len(widths) {
@@ -163,7 +163,7 @@ struct Table {
             if i < len(cells) {
                 c = cells[i]
             }
-            var ls = std.strings.Split(c, "\n")
+            var ls = strings.Split(c, "\n")
             if len(ls) > height {
                 height = len(ls)
             }
@@ -175,7 +175,7 @@ struct Table {
         }
         var boxed = this.Style != Plain
         for k in 0..height {
-            var lb = std.strings.Builder{}
+            var lb = strings.Builder{}
             if boxed {
                 lb.Write(sep)
             }
@@ -189,19 +189,19 @@ struct Table {
                     a = Left
                 }
                 if boxed {
-                    lb.Write(std.strings.Repeat(" ", pad))
+                    lb.Write(strings.Repeat(" ", pad))
                 } else if i > 0 {
-                    lb.Write(std.strings.Repeat(" ", pad))
+                    lb.Write(strings.Repeat(" ", pad))
                 }
                 lb.Write(fit(text, w, a))
                 if boxed {
-                    lb.Write(std.strings.Repeat(" ", pad))
+                    lb.Write(strings.Repeat(" ", pad))
                     lb.Write(sep)
                 }
             }
             var s = lb.String()
             if !boxed {
-                s = std.strings.TrimRight(s, " ")
+                s = strings.TrimRight(s, " ")
             }
             b.Write(s)
             b.Write("\n")
@@ -233,7 +233,7 @@ func Format(rows [][]string, style int) string {
 
 func measure(widths []int, cells []string) {
     for i, c in cells {
-        for l in std.strings.Split(c, "\n") {
+        for l in strings.Split(c, "\n") {
             var w = Width(l)
             if w > widths[i] {
                 widths[i] = w
@@ -249,13 +249,13 @@ func fit(text string, w int, a int) string {
         return text
     }
     if a == Right {
-        return std.strings.Repeat(" ", gap) + text
+        return strings.Repeat(" ", gap) + text
     }
     if a == Center {
         var l = gap / 2
-        return std.strings.Repeat(" ", l) + text + std.strings.Repeat(" ", gap - l)
+        return strings.Repeat(" ", l) + text + strings.Repeat(" ", gap - l)
     }
-    return text + std.strings.Repeat(" ", gap)
+    return text + strings.Repeat(" ", gap)
 }
 
 // The display width of s in a terminal: 2 for wide East Asian characters
@@ -272,7 +272,7 @@ func Width(s string) int {
             }
             continue
         }
-        var (r, n) = std.unicode.utf8.DecodeRuneAt(s, i)
+        var (r, n) = unicode.utf8.DecodeRuneAt(s, i)
         i += n
         w += RuneWidth(int(r))
     }

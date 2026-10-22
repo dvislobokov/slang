@@ -1,4 +1,4 @@
-/* std_strings.c - std.strings (zell_strings_*). Semantics follow Go's strings
+/* std_strings.c - strings (zell_strings_*). Semantics follow Go's strings
  * package unless noted in ABI.md section 14. All string arguments are borrowed
  * and may be NULL (== ""); every returned string is owned (+1) and non-NULL.
  * A result that equals the argument may be the argument itself, retained. */

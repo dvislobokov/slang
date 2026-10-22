@@ -1,7 +1,7 @@
-/* std_unsafe.c - std.unsafe: raw memory access and calls by address
+/* std_unsafe.c - unsafe: raw memory access and calls by address
  * (runtime/ABI.md section 22.5). Only packages whose manifest grants the
- * `unsafe` capability (and the standard library itself, for std.debug)
- * may import std.unsafe; nothing here checks addresses. */
+ * `unsafe` capability (and the standard library itself, for debug)
+ * may import unsafe; nothing here checks addresses. */
 #include "rt_internal.h"
 
 #include <string.h>

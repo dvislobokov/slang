@@ -4,7 +4,7 @@
 //! files of std namespaces form one unit). A unit depends on the units it
 //! can reach: descendants of its namespace, what its files import, and the
 //! namespaces under a root named by one of its identifiers (roots are
-//! visible without an import), transitively. The units using `std.data`
+//! visible without an import), transitively. The units using `data`
 //! also depend on each other (its model covers every context).
 //!
 //! The result of a unit (a [`Fragment`]) is cached under a key made of the
@@ -87,7 +87,7 @@ impl Default for Cache {
 
 /// The unit a namespace belongs to.
 fn unit_name(ns: &str) -> &str {
-    if ns == "std" || ns.starts_with("std.") {
+    if crate::sema::stdlib::is_std_namespace(ns) {
         "std"
     } else {
         ns
@@ -190,11 +190,11 @@ fn units_of(files: &[(&str, &FileState)]) -> (Vec<Unit>, Vec<usize>) {
             out.push(*u);
         }
     };
-    // The `std.data` model is built over the whole program (one model of
+    // The `data` model is built over the whole program (one model of
     // every context): the units using it see each other.
     let uses_orm = |u: &Unit| u.files.iter().any(|&fi| {
         let f = &files[fi].1.facts;
-        f.has_ident("data") || f.imports.iter().any(|i| i == "std.data" || i.starts_with("std.data."))
+        f.has_ident("data") || f.imports.iter().any(|i| i == "data" || i.starts_with("data."))
     });
     let orm_units: Vec<usize> = (0..units.len()).filter(|&u| uses_orm(&units[u])).collect();
     let mut direct: Vec<Vec<usize>> = vec![Vec::new(); units.len()];

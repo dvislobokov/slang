@@ -2,7 +2,7 @@
 // static files (ServeFile, ServeDir: ranges, ETag / Last-Modified,
 // sendfile) and Server-Sent Events (ServerSentEvents writer, EventSource
 // client). See http.zl for the file layout.
-namespace std.net.http
+namespace net.http
 
 // ---- middleware --------------------------------------------------------------
 
@@ -26,10 +26,10 @@ struct recoverHandler {
 
 async func recoverServe(next Handler, req *Request, res *Response) void! {
     try await next.Serve(req, res) catch err {
-        if std.errors.Is(err, ErrAbortHandler) {
+        if errors.Is(err, ErrAbortHandler) {
             return err
         }
-        std.log.Error(
+        log.Error(
             err,
             "HTTP {RequestMethod} {RequestPath} failed: {ErrorMessage}",
             req.Method,
@@ -44,10 +44,10 @@ async func recoverServe(next Handler, req *Request, res *Response) void! {
     }
 }
 
-// Logging writes one event per request to logger (nil: std.log.Global()):
+// Logging writes one event per request to logger (nil: log.Global()):
 // "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed} ms"
 // at Information (Warning for 5xx), like Serilog's request logging.
-func Logging(logger std.log.Logger) func(Handler) Handler {
+func Logging(logger log.Logger) func(Handler) Handler {
     return func(next Handler) Handler {
         return logHandler{next: next, l: logger}
     }
@@ -55,15 +55,15 @@ func Logging(logger std.log.Logger) func(Handler) Handler {
 
 struct logHandler {
     next Handler
-    l    std.log.Logger
+    l    log.Logger
 
     func Serve(req *Request, res *Response) Task<void!> {
         return logServe(this.next, this.l, req, res)
     }
 }
 
-async func logServe(next Handler, l std.log.Logger, req *Request, res *Response) void! {
-    var t0 = std.time.NowNanos()
+async func logServe(next Handler, l log.Logger, req *Request, res *Response) void! {
+    var t0 = time.NowNanos()
     var failure error
     try await next.Serve(req, res) catch err {
         failure = err
@@ -75,10 +75,10 @@ async func logServe(next Handler, l std.log.Logger, req *Request, res *Response)
     if failure != nil {
         status = 500
     }
-    var ms = float((std.time.NowNanos() - t0) / 1000) / 1000.0
+    var ms = float((time.NowNanos() - t0) / 1000) / 1000.0
     var lg = l
     if lg == nil {
-        lg = std.log.Global()
+        lg = log.Global()
     }
     if failure != nil {
         lg.Error(
@@ -174,11 +174,11 @@ async func corsServe(next Handler, o CORSOptions, req *Request, res *Response) v
             if len(methods) == 0 {
                 methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
             }
-            res.SetHeader("Access-Control-Allow-Methods", std.strings.Join(methods, ", "))
+            res.SetHeader("Access-Control-Allow-Methods", strings.Join(methods, ", "))
             if len(o.AllowedHeaders) > 0 {
                 res.SetHeader(
                     "Access-Control-Allow-Headers",
-                    std.strings.Join(o.AllowedHeaders, ", "),
+                    strings.Join(o.AllowedHeaders, ", "),
                 )
             } else if req.Headers["Access-Control-Request-Headers"] != "" {
                 res.SetHeader(
@@ -202,7 +202,7 @@ async func corsServe(next Handler, o CORSOptions, req *Request, res *Response) v
             res.SetHeader("Access-Control-Allow-Credentials", "true")
         }
         if len(o.ExposedHeaders) > 0 {
-            res.SetHeader("Access-Control-Expose-Headers", std.strings.Join(o.ExposedHeaders, ", "))
+            res.SetHeader("Access-Control-Expose-Headers", strings.Join(o.ExposedHeaders, ", "))
         }
         if value != "*" {
             res.AddHeader("Vary", "Origin")
@@ -235,12 +235,12 @@ struct gzipHandler {
 }
 
 func compressible(ct string) bool {
-    var t = std.strings.ToLower(ct)
-    return std.strings.HasPrefix(t, "text/") ||
-        std.strings.Contains(t, "json") ||
-        std.strings.Contains(t, "javascript") ||
-        std.strings.Contains(t, "xml") ||
-        std.strings.Contains(t, "svg")
+    var t = strings.ToLower(ct)
+    return strings.HasPrefix(t, "text/") ||
+        strings.Contains(t, "json") ||
+        strings.Contains(t, "javascript") ||
+        strings.Contains(t, "xml") ||
+        strings.Contains(t, "svg")
 }
 
 async func gzipServe(next Handler, level int, req *Request, res *Response) void! {
@@ -262,13 +262,13 @@ async func gzipServe(next Handler, level int, req *Request, res *Response) void!
     if !compressible(ct) {
         return
     }
-    var z = std.compress.gzip.Compress(std.strings.Bytes(res.Body), level)
-    res.Body = std.strings.FromBytes(z)
+    var z = compress.gzip.Compress(strings.Bytes(res.Body), level)
+    res.Body = strings.FromBytes(z)
     res.SetHeader("Content-Encoding", "gzip")
     if res.Header("Etag") != "" {
         // a different representation: weaken the validator
         var e = res.Header("Etag")
-        if !std.strings.HasPrefix(e, "W/") {
+        if !strings.HasPrefix(e, "W/") {
             res.SetHeader("Etag", "W/" + e)
         }
     }
@@ -315,17 +315,17 @@ struct timeoutHandler {
 
 async func timeoutServe(next Handler, ms int, msg string, req *Request, res *Response) void! {
     var inner = new Response{Status: 200}
-    var t0 = std.time.Now()
-    var t = std.task.WithTimeout(ms, func() Task<void!> {
+    var t0 = time.Now()
+    var t = task.WithTimeout(ms, func() Task<void!> {
         return next.Serve(req, inner)
     })
     // a handler woken by the cancellation finishes at the deadline too
-    if !await std.task.Timeout(t, ms) || std.time.Now() - t0 >= ms {
+    if !await task.Timeout(t, ms) || time.Now() - t0 >= ms {
         res.Text(503, msg)
         return
     }
     try await t catch err {
-        if std.errors.Is(err, std.task.ErrCancelled) {
+        if errors.Is(err, task.ErrCancelled) {
             res.Text(503, msg)
             return
         }
@@ -345,7 +345,7 @@ async func timeoutServe(next Handler, ms int, msg string, req *Request, res *Res
 // rooted).
 func cleanURLPath(p string) string {
     var out []string = []
-    for seg in std.strings.Split(p, "/") {
+    for seg in strings.Split(p, "/") {
         if seg == "" || seg == "." {
             continue
         }
@@ -357,7 +357,7 @@ func cleanURLPath(p string) string {
         }
         out = append(out, seg)
     }
-    return "/" + std.strings.Join(out, "/")
+    return "/" + strings.Join(out, "/")
 }
 
 func etagOf(size int, mtimeNanos int) string {
@@ -365,17 +365,17 @@ func etagOf(size int, mtimeNanos int) string {
 }
 
 func etagMatch(list string, etag string, weak bool) bool {
-    var t = std.strings.Trim(list)
+    var t = strings.Trim(list)
     if t == "*" {
         return true
     }
-    var plain = std.strings.TrimPrefix(etag, "W/")
-    for part in std.strings.Split(t, ",") {
-        var p = std.strings.Trim(part)
+    var plain = strings.TrimPrefix(etag, "W/")
+    for part in strings.Split(t, ",") {
+        var p = strings.Trim(part)
         if p == etag {
             return true
         }
-        if weak && std.strings.TrimPrefix(p, "W/") == plain {
+        if weak && strings.TrimPrefix(p, "W/") == plain {
             return true
         }
     }
@@ -390,21 +390,21 @@ struct byteRange {
 // Parses a Range header against size: the ranges (nil for none/ignored),
 // or an error for an unsatisfiable range.
 func parseRanges(h string, size int) []byteRange! {
-    if !std.strings.HasPrefix(h, "bytes=") {
+    if !strings.HasPrefix(h, "bytes=") {
         return nil
     }
     var out []byteRange = []
-    for part in std.strings.Split(h[6..], ",") {
-        var p = std.strings.Trim(part)
+    for part in strings.Split(h[6..], ",") {
+        var p = strings.Trim(part)
         if p == "" {
             continue
         }
-        var dash = std.strings.Index(p, "-")
+        var dash = strings.Index(p, "-")
         if dash < 0 {
             return nil
         }
-        var a = std.strings.Trim(p[..dash])
-        var b = std.strings.Trim(p[dash + 1..])
+        var a = strings.Trim(p[..dash])
+        var b = strings.Trim(p[dash + 1..])
         if a == "" {
             // the last b bytes
             var n = rtAtoi(b)
@@ -446,19 +446,19 @@ func parseRanges(h string, size int) []byteRange! {
 }
 
 // ServeFile answers req with the file at path: Content-Type from the
-// extension (std.mime), ETag and Last-Modified with conditional requests
+// extension (mime), ETag and Last-Modified with conditional requests
 // (If-None-Match, If-Modified-Since -> 304; If-Match,
 // If-Unmodified-Since -> 412), byte ranges (206, multipart/byteranges for
 // several, 416 when unsatisfiable, If-Range), HEAD, and the body sent with
 // sendfile(2). A directory serves its index.html. Missing files get 404.
 async func ServeFile(req *Request, res *Response, path string) void! {
-    var info = try std.os.Stat(path) catch err {
+    var info = try os.Stat(path) catch err {
         await plainStatus(res, 404)?
         return
     }
     if info.IsDir {
-        var index = std.fs.Join(path, "index.html")
-        info = try std.os.Stat(index) catch err {
+        var index = fs.Join(path, "index.html")
+        info = try os.Stat(index) catch err {
             await plainStatus(res, 403)?
             return
         }
@@ -472,7 +472,7 @@ async func ServeFile(req *Request, res *Response, path string) void! {
     await serveRegular(req, res, path, info)?
 }
 
-async func serveRegular(req *Request, res *Response, path string, info std.os.FileInfo) void! {
+async func serveRegular(req *Request, res *Response, path string, info os.FileInfo) void! {
     var size = info.Size
     var mtime = info.ModTimeNanos / 1000000000
     var etag = etagOf(size, info.ModTimeNanos)
@@ -512,7 +512,7 @@ async func serveRegular(req *Request, res *Response, path string, info std.os.Fi
     }
     var ctype = res.Header("Content-Type")
     if ctype == "" {
-        ctype = std.mime.TypeByExtension(std.fs.Ext(path))
+        ctype = mime.TypeByExtension(fs.Ext(path))
         if ctype == "" {
             ctype = "application/octet-stream"
         }
@@ -523,7 +523,7 @@ async func serveRegular(req *Request, res *Response, path string, info std.os.Fi
     if rh != "" && ir != "" {
         // the range applies only if the representation is unchanged
         var same = ir == etag
-        if !same && !std.strings.HasPrefix(ir, "\"") && !std.strings.HasPrefix(ir, "W/") {
+        if !same && !strings.HasPrefix(ir, "\"") && !strings.HasPrefix(ir, "W/") {
             var t = rtParseHttpTime(ir)
             same = t >= 0 && t == mtime
         }
@@ -557,11 +557,11 @@ async func serveRegular(req *Request, res *Response, path string, info std.os.Fi
         return
     }
     // several ranges: multipart/byteranges, built in memory
-    var f = std.os.Open(path)?
-    var boundary = "zell" + hexString(std.random.IntN(1 << 30)) + hexString(size)
-    var body = std.strings.Builder{}
+    var f = os.Open(path)?
+    var boundary = "zell" + hexString(random.IntN(1 << 30)) + hexString(size)
+    var body = strings.Builder{}
     for r in ranges {
-        var buf = std.net.MakeBuffer(r.length)
+        var buf = net.MakeBuffer(r.length)
         var k = try f.ReadAt(buf, r.start) catch err {
             _ = f.Close()
             return err
@@ -579,7 +579,7 @@ async func serveRegular(req *Request, res *Response, path string, info std.os.Fi
                 itoa(size) +
                 "\r\n\r\n",
         )
-        body.Write(std.strings.FromBytes(buf[..k]))
+        body.Write(strings.FromBytes(buf[..k]))
     }
     _ = f.Close()
     body.Write("\r\n--" + boundary + "--\r\n")
@@ -616,18 +616,18 @@ async func serveDir(root string, listing bool, req *Request, res *Response) void
     var rel = req.Path
     if req.Params != nil {
         var p = req.Params["*"]
-        if p != "" || std.strings.HasSuffix(req.Path, "/") {
+        if p != "" || strings.HasSuffix(req.Path, "/") {
             rel = "/" + p
         }
     }
-    var clean = cleanURLPath(unescape(std.strings.Replace(rel, "+", "%2B")))
+    var clean = cleanURLPath(unescape(strings.Replace(rel, "+", "%2B")))
     var full = root + clean
-    var info = try std.os.Stat(full) catch err {
+    var info = try os.Stat(full) catch err {
         await plainStatus(res, 404)?
         return
     }
     if info.IsDir {
-        if !std.strings.HasSuffix(req.Path, "/") {
+        if !strings.HasSuffix(req.Path, "/") {
             var loc = req.Path + "/"
             if req.Query != "" {
                 loc += "?" + req.Query
@@ -635,8 +635,8 @@ async func serveDir(root string, listing bool, req *Request, res *Response) void
             res.Redirect(301, loc)
             return
         }
-        var index = std.fs.Join(full, "index.html")
-        var ii = try std.os.Stat(index) else std.os.FileInfo{IsDir: true}
+        var index = fs.Join(full, "index.html")
+        var ii = try os.Stat(index) else os.FileInfo{IsDir: true}
         if !ii.IsDir {
             await serveRegular(req, res, index, ii)?
             return
@@ -646,21 +646,21 @@ async func serveDir(root string, listing bool, req *Request, res *Response) void
             return
         }
         var names []string = []
-        for e in std.os.ReadDir(full)? {
+        for e in os.ReadDir(full)? {
             if e.IsDir {
                 names = append(names, e.Name + "/")
             } else {
                 names = append(names, e.Name)
             }
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         b.Write(
             "<!doctype html>\n<meta name=\"viewport\" content=\"width=device-width\">\n<title>" +
-                std.html.Escape(clean) +
+                html.Escape(clean) +
                 "</title>\n<pre>\n",
         )
         for n in names {
-            b.Write("<a href=\"" + std.html.Escape(n) + "\">" + std.html.Escape(n) + "</a>\n")
+            b.Write("<a href=\"" + html.Escape(n) + "\">" + html.Escape(n) + "</a>\n")
         }
         b.Write("</pre>\n")
         res.Html(200, b.String())
@@ -713,7 +713,7 @@ func formatEvent(ev SSEEvent) string {
     if ev.Retry > 0 {
         out += "retry: " + itoa(ev.Retry) + "\n"
     }
-    for line in std.strings.Split(std.strings.Replace(ev.Data, "\r\n", "\n"), "\n") {
+    for line in strings.Split(strings.Replace(ev.Data, "\r\n", "\n"), "\n") {
         out += "data: " + line + "\n"
     }
     return out + "\n"
@@ -797,7 +797,7 @@ async func esConnect(es *EventSource) void! {
         es.MaxRetries = -1
         return error("EventSource " + es.URL + ": status " + itoa(res.Status))
     }
-    if !std.strings.HasPrefix(res.Headers["Content-Type"], "text/event-stream") {
+    if !strings.HasPrefix(res.Headers["Content-Type"], "text/event-stream") {
         if res.Reader != nil {
             res.Reader.Close()
         }
@@ -814,7 +814,7 @@ async func esNext(es *EventSource) SSEEvent! {
     var have = false
     for {
         if es.closed {
-            return std.net.ErrClosed
+            return net.ErrClosed
         }
         if es.body == nil {
             if es.failures > 0 {
@@ -822,7 +822,7 @@ async func esNext(es *EventSource) SSEEvent! {
                     es.closed = true
                     return error("EventSource " + es.URL + ": stream ended")
                 }
-                await std.task.Delay(es.retry)
+                await task.Delay(es.retry)
             }
             try await esConnect(es) catch err {
                 es.failures += 1
@@ -833,7 +833,7 @@ async func esNext(es *EventSource) SSEEvent! {
                 continue
             }
         }
-        var nl = std.strings.Index(es.buf, "\n")
+        var nl = strings.Index(es.buf, "\n")
         if nl < 0 {
             var chunk = try await es.body.Read(16384) catch err {
                 es.body = nil
@@ -845,17 +845,17 @@ async func esNext(es *EventSource) SSEEvent! {
                 es.failures += 1
                 continue
             }
-            es.buf += std.strings.FromBytes(chunk)
+            es.buf += strings.FromBytes(chunk)
             continue
         }
         var line = es.buf[..nl]
         es.buf = es.buf[nl + 1..]
-        if std.strings.HasSuffix(line, "\r") {
+        if strings.HasSuffix(line, "\r") {
             line = line[..len(line) - 1]
         }
         if line == "" {
             if have {
-                ev.Data = std.strings.Join(data, "\n")
+                ev.Data = strings.Join(data, "\n")
                 if ev.ID != "" {
                     es.LastEventID = ev.ID
                 }
@@ -869,11 +869,11 @@ async func esNext(es *EventSource) SSEEvent! {
         }
         var field = line
         var value = ""
-        var c = std.strings.Index(line, ":")
+        var c = strings.Index(line, ":")
         if c >= 0 {
             field = line[..c]
             value = line[c + 1..]
-            if std.strings.HasPrefix(value, " ") {
+            if strings.HasPrefix(value, " ") {
                 value = value[1..]
             }
         }

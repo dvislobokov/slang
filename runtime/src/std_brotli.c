@@ -1,4 +1,4 @@
-/* std_brotli.c - Brotli decoder (RFC 7932) for std.compress.brotli
+/* std_brotli.c - Brotli decoder (RFC 7932) for compress.brotli
  * (runtime/ABI.md 23.5). The whole stream is decoded into memory:
  * uncompressed, metadata and compressed meta-blocks with block switching
  * for literals, commands and distances, context modeling (the four

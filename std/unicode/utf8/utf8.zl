@@ -1,8 +1,8 @@
-// std.unicode.utf8: UTF-8 encoding and decoding (Go's unicode/utf8).
+// unicode.utf8: UTF-8 encoding and decoding (Go's unicode/utf8).
 // Invalid input decodes as (RuneError, 1); surrogates and overlong forms
 // are invalid. Decoders return (rune, size) tuples:
 // `var (r, n) = utf8.DecodeRune(b)`.
-namespace std.unicode.utf8
+namespace unicode.utf8
 
 // Bytes needed to encode r, or -1 if r is not a valid code point.
 func RuneLen(r char) int {

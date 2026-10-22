@@ -1,7 +1,7 @@
-/* zell_crypto.h - C declarations of the std.crypto.{aes, chacha, x25519,
- * ecdh, ecdsa, ed25519, rsa, hkdf} externs, the std.crypto.hash/hmac
- * additions and the internal rt* helpers of std.crypto.x509 and
- * std.net.tls. Calling convention: runtime/ABI.md 14.1; semantics: ABI.md
+/* zell_crypto.h - C declarations of the crypto.{aes, chacha, x25519,
+ * ecdh, ecdsa, ed25519, rsa, hkdf} externs, the crypto.hash/hmac
+ * additions and the internal rt* helpers of crypto.x509 and
+ * net.tls. Calling convention: runtime/ABI.md 14.1; semantics: ABI.md
  * section 19. Implemented in src/crypto/api.c. */
 #ifndef ZELL_CRYPTO_API_H
 #define ZELL_CRYPTO_API_H

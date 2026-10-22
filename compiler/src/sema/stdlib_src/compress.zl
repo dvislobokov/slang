@@ -1,9 +1,9 @@
-// std.compress: shared helpers of the format namespaces (deflate, zlib,
+// compress: shared helpers of the format namespaces (deflate, zlib,
 // gzip, zstd). The level constants NoCompression, BestSpeed,
 // BestCompression and DefaultCompression are compiler constants
 // (sema/stdlib.rs); the rt* externs are runtime/src/std_compress.c and
 // std_zstd.c.
-namespace std.compress
+namespace compress
 
 // A level argument: -1 (default) becomes 6; out of range panics.
 func level(l int) int {
@@ -11,7 +11,7 @@ func level(l int) int {
         return 6
     }
     if l < 0 || l > 9 {
-        panic(std.fmt.Format("compress: invalid level {0} (want -1 or 0..9)", l))
+        panic(fmt.Format("compress: invalid level {0} (want -1 or 0..9)", l))
     }
     return l
 }

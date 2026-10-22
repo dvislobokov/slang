@@ -1,8 +1,7 @@
-// Examples for std.collections.
+// Examples for collections.
 namespace collections_test
 
-import std
-import std.io
+import io
 
 func ExampleList() {
     var l = collections.List<string>.New()

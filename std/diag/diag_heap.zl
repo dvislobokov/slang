@@ -2,7 +2,7 @@
 // per-type counters of ZELL_DIAG_HEAP=1 (runtime/src/diag_heap.c), or the
 // exact list of live objects under `zell run --leak-check`. And the cycle
 // collector's metrics for PrometheusText.
-namespace std.diag
+namespace diag
 
 // Live objects of one type (HeapByType).
 struct HeapType {
@@ -27,14 +27,14 @@ func HeapCounting() bool {
 // or --leak-check).
 func HeapByType() []HeapType {
     var out []HeapType = []
-    for line in std.strings.Split(rtHeapTypes(), "\n") {
-        var f = std.strings.Split(line, "\t")
+    for line in strings.Split(rtHeapTypes(), "\n") {
+        var f = strings.Split(line, "\t")
         if len(f) != 4 {
             continue
         }
-        var live = try std.strings.ToInt(f[0]) else 0
-        var total = try std.strings.ToInt(f[1]) else 0
-        var bytes = try std.strings.ToInt(f[2]) else 0
+        var live = try strings.ToInt(f[0]) else 0
+        var total = try strings.ToInt(f[1]) else 0
+        var bytes = try strings.ToInt(f[2]) else 0
         out = append(out, HeapType{Type: f[3], Live: live, Allocated: total, Bytes: bytes})
     }
     return out
@@ -60,8 +60,8 @@ func HeapReport(limit int) string {
     }
     m["diag.heap.last"] = now
     rtUnlock()
-    var b = std.strings.Builder{}
-    b.Write(std.fmt.Sprintf("%12s %10s %14s %12s  %s\n", "live", "growth", "allocated", "bytes", "type"))
+    var b = strings.Builder{}
+    b.Write(fmt.Sprintf("%12s %10s %14s %12s  %s\n", "live", "growth", "allocated", "bytes", "type"))
     var total = 0
     for i, t in types {
         total += t.Live
@@ -70,44 +70,44 @@ func HeapReport(limit int) string {
         }
         // A type missing from the previous report counts from 0; the first
         // report has no previous one.
-        var g = std.fmt.Sprintf("%+d", t.Live - prev[t.Type])
+        var g = fmt.Sprintf("%+d", t.Live - prev[t.Type])
         if len(prev) == 0 {
             g = "-"
         }
-        b.Write(std.fmt.Sprintf("%12d %10s %14d %12d  %s\n", t.Live, g, t.Allocated, t.Bytes, t.Type))
+        b.Write(fmt.Sprintf("%12d %10s %14d %12d  %s\n", t.Live, g, t.Allocated, t.Bytes, t.Type))
     }
-    b.Write(std.fmt.Sprintf("%12d live objects in %d types\n", total, len(types)))
+    b.Write(fmt.Sprintf("%12d live objects in %d types\n", total, len(types)))
     return b.String()
 }
 
 // A Router handler serving HeapReport(50) as text: `r.Get("/debug/heap",
 // diag.ServeHeap)`.
-async func ServeHeap(req *std.net.http.Request, res *std.net.http.Response) void! {
+async func ServeHeap(req *net.http.Request, res *net.http.Response) void! {
     res.SetHeader("Content-Type", "text/plain; charset=utf-8")
     res.Write(HeapReport(50))
 }
 
 struct heapHandler {
-    func Serve(req *std.net.http.Request, res *std.net.http.Response) Task<void!> {
+    func Serve(req *net.http.Request, res *net.http.Response) Task<void!> {
         return ServeHeap(req, res)
     }
 }
 
 // An http.Handler serving HeapReport(50) (for http.Server{Handler: ...}).
-func HeapHandler() std.net.http.Handler {
+func HeapHandler() net.http.Handler {
     return new heapHandler{}
 }
 
 // The cycle collector's metrics, part of the runtime metrics.
 func cycleMetricsText() string {
-    var c = std.runtime.CycleStats()
+    var c = runtime.CycleStats()
     return "# HELP zell_cycles_collected_total Objects freed by the cycle collector.\n# TYPE zell_cycles_collected_total counter\nzell_cycles_collected_total " +
-        std.fmt.Format("{0}", c.Collected) +
+        fmt.Format("{0}", c.Collected) +
         "\n# HELP zell_cycle_collections_total Cycle collections run.\n# TYPE zell_cycle_collections_total counter\nzell_cycle_collections_total " +
-        std.fmt.Format("{0}", c.Runs) +
+        fmt.Format("{0}", c.Runs) +
         "\n# HELP zell_cycle_candidates Possible cycle roots waiting for a collection.\n# TYPE zell_cycle_candidates gauge\nzell_cycle_candidates " +
-        std.fmt.Format("{0}", c.Pending) +
+        fmt.Format("{0}", c.Pending) +
         "\n# HELP zell_cycle_candidates_total Possible cycle roots recorded.\n# TYPE zell_cycle_candidates_total counter\nzell_cycle_candidates_total " +
-        std.fmt.Format("{0}", c.Candidates) +
+        fmt.Format("{0}", c.Candidates) +
         "\n"
 }

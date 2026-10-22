@@ -1,4 +1,4 @@
-/* diag.c - runtime helpers of the Zell-source std.diag and std.log
+/* diag.c - runtime helpers of the Zell-source diag and log
  * (compiler/src/sema/stdlib_src/{diag,log}.zl): a process-wide slot map
  * for their global state (the default logger, the metrics registry, the
  * tracer), a spin lock guarding it, runtime metrics, and plain file
@@ -85,7 +85,7 @@ int64_t zell_diag_rt_heap_released(void) {
     return v;
 }
 
-/* std.runtime.FreeOSMemory */
+/* runtime.FreeOSMemory */
 void zell_runtime_free_os_memory(void) { zell__heap_collect(1); }
 
 /* ---- log file sink ---------------------------------------------------- */

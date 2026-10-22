@@ -1,4 +1,4 @@
-/* std_os.c - std.os (zell_os_*). Args is zell_os_args (main.c). Failing
+/* std_os.c - os (zell_os_*). Args is zell_os_args (main.c). Failing
  * calls report "<op> <arg>: <strerror>" errors through the `T!` out-param. */
 #include "rt_internal.h"
 #include "platform/platform.h"

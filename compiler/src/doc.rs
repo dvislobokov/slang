@@ -524,7 +524,7 @@ impl Docs {
                 name: target.clone(),
                 doc: String::new(),
                 summary: String::new(),
-                std: target.starts_with("std."),
+                std: crate::sema::stdlib::is_std_namespace(&target),
                 files: Vec::new(),
                 items: Vec::new(),
                 examples: Vec::new(),
@@ -557,8 +557,8 @@ impl Docs {
         self.namespaces.iter().find(|n| n.name == name)
     }
 
-    /// Resolves `text` (`Split`, `strings.Split`, `std.strings.Builder.Len`,
-    /// `std.net.http`) seen in namespace `from` to (namespace index, item
+    /// Resolves `text` (`Split`, `strings.Split`, `strings.Builder.Len`,
+    /// `net.http`) seen in namespace `from` to (namespace index, item
     /// path or `""` for the namespace itself).
     pub fn resolve(&self, from: Option<&str>, text: &str) -> Option<(usize, String)> {
         let text = text.trim().trim_end_matches("()");
@@ -574,18 +574,16 @@ impl Docs {
         for cut in (1..=segs.len()).rev() {
             let ns = segs[..cut].join(".");
             let rest = segs[cut..].join(".");
-            for cand in [ns.clone(), format!("std.{ns}")] {
-                if let Some(i) = self.ns_index(&cand) {
-                    if rest.is_empty() {
-                        return Some((i, String::new()));
-                    }
-                    if self.namespaces[i].find(&rest).is_some() {
-                        return Some((i, rest));
-                    }
+            if let Some(i) = self.ns_index(&ns) {
+                if rest.is_empty() {
+                    return Some((i, String::new()));
+                }
+                if self.namespaces[i].find(&rest).is_some() {
+                    return Some((i, rest));
                 }
             }
         }
-        // last-segment match: `http.Get` -> std.net.http
+        // last-segment match: `http.Get` -> net.http
         if segs.len() > 1 {
             let rest = rest_of(&segs);
             let suffix = format!(".{}", segs[0]);
@@ -657,10 +655,10 @@ fn display_of(sources: &[Source], dir: &Path) -> String {
 }
 
 /// The namespace of a test file's directory without other sources:
-/// `std/fmt` -> `std.fmt`, else the test namespace without `_test`.
+/// `std/fmt` -> `fmt`, else the test namespace without `_test`.
 fn fallback_ns(dir_display: &str, test_ns: &str) -> String {
     match dir_display.strip_prefix("std/") {
-        Some(rest) if !rest.is_empty() => format!("std.{}", rest.replace('/', ".")),
+        Some(rest) if !rest.is_empty() => rest.replace('/', "."),
         _ => test_ns.strip_suffix("_test").unwrap_or(test_ns).to_string(),
     }
 }
@@ -769,7 +767,7 @@ pub fn load_std() -> Vec<Source> {
 }
 
 /// Examples of the std test files by the full name of their symbol
-/// (`std.strings.Split`, `std.strings.Builder.Len`), for hover.
+/// (`strings.Split`, `strings.Builder.Len`), for hover.
 pub fn std_examples() -> &'static HashMap<String, Vec<Example>> {
     static EX: std::sync::OnceLock<HashMap<String, Vec<Example>>> = std::sync::OnceLock::new();
     EX.get_or_init(|| {
@@ -924,7 +922,7 @@ fn resolve_target(arg: Option<&str>, opts: Options) -> Result<Target, String> {
     // the current project only when there is one (a manifest)
     let is_project = ["zell.toml", "zell.json", "zell.yaml"].iter().any(|m| cwd.join(m).is_file());
     let mut srcs = if is_project { project_sources(&cwd, opts) } else { Vec::new() };
-    srcs.retain(|s| !s.text.lines().any(|l| l.trim_start().starts_with("namespace std.") || l.trim() == "namespace std"));
+    srcs.retain(|s| !s.text.lines().any(|l| l.trim_start().strip_prefix("namespace ").is_some_and(|n| crate::sema::stdlib::is_std_namespace(n.trim()))));
     srcs.extend(dep_sources(&cwd));
     srcs.extend(load_std());
     let docs = Docs::build(&srcs, opts);
@@ -1140,7 +1138,7 @@ fn examples_text(exs: &[Example]) -> String {
     o
 }
 
-/// `zell doc std.strings`: the namespace doc and one line per declaration.
+/// `zell doc strings`: the namespace doc and one line per declaration.
 pub fn namespace_text(n: &Namespace) -> String {
     let mut o = format!("namespace {}", n.name);
     if let Some(f) = n.files.first() {

@@ -1,5 +1,5 @@
 /* cbc.c - AES decryption (FIPS 197 5.3), AES-CBC (SP 800-38A 6.2) and
- * PKCS#7 padding (RFC 5652 6.3), for legacy formats (std.crypto.aes
+ * PKCS#7 padding (RFC 5652 6.3), for legacy formats (crypto.aes
  * CbcEncrypt/CbcDecrypt).
  *
  * Decryption uses AES-NI (aesdec with InvMixColumns'd round keys) when the

@@ -1,4 +1,4 @@
-/* std_zstd_enc.c - Zstandard encoder (RFC 8878) for std.compress.zstd
+/* std_zstd_enc.c - Zstandard encoder (RFC 8878) for compress.zstd
  * Compress (runtime/ABI.md 23). Whole inputs are compressed into one
  * frame: single-segment up to 8 MiB (window = content), otherwise an
  * 8 MiB window. Blocks of up to 128 KiB are emitted as Raw, RLE or

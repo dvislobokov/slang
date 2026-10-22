@@ -22,7 +22,7 @@ fn plain() -> &'static StdBlock {
         let idx = crate::sema::units::std_symbols();
         let is_std = |s: &Symbol| match &s.key {
             SymKey::Std(_) => true,
-            SymKey::Ns(p) => p == "std" || p.starts_with("std."),
+            SymKey::Ns(p) => crate::sema::stdlib::is_std_namespace(p),
             _ => false,
         };
         let mut map: HashMap<SymbolId, SymbolId> = HashMap::new();
@@ -41,7 +41,7 @@ fn plain() -> &'static StdBlock {
         let ns_members = idx
             .ns_members
             .iter()
-            .filter(|(p, _)| *p == "std" || p.starts_with("std."))
+            .filter(|(p, _)| crate::sema::stdlib::is_std_namespace(p))
             .map(|(p, ms)| (p.clone(), ms.iter().filter_map(|(n, id)| map.get(id).map(|i| (n.clone(), *i))).collect()))
             .collect();
         StdBlock { symbols, by_key, ns_members }

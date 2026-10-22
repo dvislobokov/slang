@@ -1,4 +1,4 @@
-/* std_fmt_sprintf.c - std.fmt.Sprintf (zell_fmt_sprintf): Go's fmt verbs.
+/* std_fmt_sprintf.c - fmt.Sprintf (zell_fmt_sprintf): Go's fmt verbs.
  *
  * The compiler lowers every argument i (evaluated once) to its kind
  * kinds[i] ('i' signed integer, 'u' unsigned integer, 'f' float, 'g'

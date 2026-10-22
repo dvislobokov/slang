@@ -1,4 +1,4 @@
-// Configuration for std.web applications (FRAMEWORK.md "Конфигурация"):
+// Configuration for web applications (FRAMEWORK.md "Конфигурация"):
 // layered key/value sources with ASP.NET Core precedence, lowest first:
 //
 //   appsettings.json, appsettings.yaml (.yml), appsettings.toml
@@ -12,7 +12,7 @@
 // scalars converted like route parameters) and checks @web.validate;
 // Options<T> keeps the bound value and reloads it when a file changes
 // (polling sizes and mtimes: CheckForChanges, Watch).
-namespace std.web.config
+namespace web.config
 
 struct LoadOptions {
     // Directory of the appsettings files (default ".").
@@ -24,7 +24,7 @@ struct LoadOptions {
     Environment string
     // Prefix of environment variables (default "APP"; "-" disables them).
     EnvPrefix string
-    // Command-line arguments (nil: the program's own, std.os.Args()[1..]).
+    // Command-line arguments (nil: the program's own, os.Args()[1..]).
     Args []string
     // Ignore the command line.
     NoArgs bool
@@ -62,14 +62,14 @@ struct Configuration {
     }
 
     func lookup(key string) (string, bool) {
-        var k = std.strings.ToLower(key)
+        var k = strings.ToLower(key)
         if this.args != nil {
             if this.args[k] != "" || hasKey(this.args, k) {
                 return (this.args[k], true)
             }
         }
         if this.prefix != "-" {
-            var env = std.os.Getenv(this.prefix + "__" + std.strings.Replace(key, ":", "__"))
+            var env = os.Getenv(this.prefix + "__" + strings.Replace(key, ":", "__"))
             if env != "" {
                 return (env, true)
             }
@@ -92,15 +92,15 @@ struct Configuration {
 
     // Names of the direct children of section (lower case, in order).
     func children(section string) []string {
-        var p = std.strings.ToLower(section)
+        var p = strings.ToLower(section)
         if p != "" {
             p += ":"
         }
         var out []string = []
         for k in this.order {
-            if std.strings.HasPrefix(k, p) {
+            if strings.HasPrefix(k, p) {
                 var rest = k[len(p)..]
-                var c = std.strings.Index(rest, ":")
+                var c = strings.Index(rest, ":")
                 if c >= 0 {
                     rest = rest[..c]
                 }
@@ -131,15 +131,15 @@ struct Configuration {
         var errs []string = []
         bindInto(this, section, &out, &errs)
         if len(errs) > 0 {
-            return error("config: " + std.strings.Join(errs, "; "))
+            return error("config: " + strings.Join(errs, "; "))
         }
-        var verrs = std.web.Validate<T>(out)
+        var verrs = web.Validate<T>(out)
         if len(verrs) > 0 {
             var msgs []string = []
             for e in verrs {
                 msgs = append(msgs, e.Message)
             }
-            return error("config: invalid configuration: " + std.strings.Join(msgs, "; "))
+            return error("config: invalid configuration: " + strings.Join(msgs, "; "))
         }
         return out
     }
@@ -164,7 +164,7 @@ struct Configuration {
         var now = candidates(this.o, this.Environment)
         var present []string = []
         for f in now {
-            var st = try std.os.Stat(f) catch err {
+            var st = try os.Stat(f) catch err {
                 continue
             }
             _ = st
@@ -177,7 +177,7 @@ struct Configuration {
             if present[i] != f {
                 return true
             }
-            var st = try std.os.Stat(f) catch err {
+            var st = try os.Stat(f) catch err {
                 return true
             }
             if st.ModTimeNanos != this.mtimes[i] || st.Size != this.sizes[i] {
@@ -231,7 +231,7 @@ func candidates(o LoadOptions, env string) []string {
 func Load(o LoadOptions) *Configuration! {
     var env = o.Environment
     if env == "" {
-        env = std.os.Getenv("ZELL_ENV")
+        env = os.Getenv("ZELL_ENV")
     }
     if env == "" {
         env = "production"
@@ -242,7 +242,7 @@ func Load(o LoadOptions) *Configuration! {
     }
     var c = new Configuration{Environment: env, values: map[string]string{}, args: map[string]string{}, o: o, prefix: prefix}
     if o.Defaults != "" {
-        var dv = std.encoding.json.ParseValue(o.Defaults)?("config defaults")
+        var dv = encoding.json.ParseValue(o.Defaults)?("config defaults")
         flattenJson(c, "", dv)
     }
     var files []string = []
@@ -250,18 +250,18 @@ func Load(o LoadOptions) *Configuration! {
         files = candidates(o, env)
     }
     for f in files {
-        var st = try std.os.Stat(f) catch err {
+        var st = try os.Stat(f) catch err {
             continue
         }
-        var text = std.io.ReadFile(f)?(f)
-        if std.strings.HasSuffix(f, ".json") {
-            var v = std.encoding.json.ParseValue(text)?(f)
+        var text = io.ReadFile(f)?(f)
+        if strings.HasSuffix(f, ".json") {
+            var v = encoding.json.ParseValue(text)?(f)
             flattenJson(c, "", v)
-        } else if std.strings.HasSuffix(f, ".toml") {
-            var v = std.encoding.toml.ParseValue(text)?(f)
+        } else if strings.HasSuffix(f, ".toml") {
+            var v = encoding.toml.ParseValue(text)?(f)
             flattenToml(c, "", v)
         } else {
-            var v = std.encoding.yaml.ParseValue(text)?(f)
+            var v = encoding.yaml.ParseValue(text)?(f)
             flattenYaml(c, "", v)
         }
         c.files = append(c.files, f)
@@ -271,7 +271,7 @@ func Load(o LoadOptions) *Configuration! {
     if !o.NoArgs {
         var args = o.Args
         if args == nil {
-            var all = std.os.Args()
+            var all = os.Args()
             if len(all) > 1 {
                 args = all[1..]
             }
@@ -289,7 +289,7 @@ func Bind<T>() T! {
 }
 
 func set(c *Configuration, key string, value string) {
-    var k = std.strings.ToLower(key)
+    var k = strings.ToLower(key)
     if !hasKey(c.values, k) {
         c.order = append(c.order, k)
     }
@@ -301,21 +301,21 @@ func parseArgs(c *Configuration, args []string) {
     for i < len(args) {
         var a = args[i]
         i += 1
-        if !std.strings.HasPrefix(a, "--") && !std.strings.HasPrefix(a, "/") {
+        if !strings.HasPrefix(a, "--") && !strings.HasPrefix(a, "/") {
             continue
         }
-        var body = std.strings.TrimPrefix(std.strings.TrimPrefix(a, "--"), "/")
+        var body = strings.TrimPrefix(strings.TrimPrefix(a, "--"), "/")
         var key = body
         var value = ""
-        var eq = std.strings.Index(body, "=")
+        var eq = strings.Index(body, "=")
         if eq >= 0 {
             key = body[..eq]
             value = body[eq + 1..]
-        } else if i < len(args) && !std.strings.HasPrefix(args[i], "--") {
+        } else if i < len(args) && !strings.HasPrefix(args[i], "--") {
             value = args[i]
             i += 1
         }
-        key = std.strings.ToLower(std.strings.Replace(key, "__", ":"))
+        key = strings.ToLower(strings.Replace(key, "__", ":"))
         c.args[key] = value
         if !hasKey(c.values, key) {
             c.order = append(c.order, key)
@@ -324,20 +324,20 @@ func parseArgs(c *Configuration, args []string) {
 }
 
 func numText(f float) string {
-    if f == std.math.Trunc(f) && std.math.Abs(f) < 1.0e15 {
-        return std.fmt.Format("{0}", int(f))
+    if f == math.Trunc(f) && math.Abs(f) < 1.0e15 {
+        return fmt.Format("{0}", int(f))
     }
-    return std.fmt.Format("{0}", f)
+    return fmt.Format("{0}", f)
 }
 
-func flattenJson(c *Configuration, path string, v std.encoding.json.Value) {
+func flattenJson(c *Configuration, path string, v encoding.json.Value) {
     if v.IsObject() {
         for k in v.Keys() {
             flattenJson(c, keyJoin(path, k), v.Get(k))
         }
     } else if v.IsArray() {
         for i, x in v.Items() {
-            flattenJson(c, keyJoin(path, std.fmt.Format("{0}", i)), x)
+            flattenJson(c, keyJoin(path, fmt.Format("{0}", i)), x)
         }
     } else if v.IsString() {
         set(c, path, try v.String() else "")
@@ -354,35 +354,35 @@ func flattenJson(c *Configuration, path string, v std.encoding.json.Value) {
     }
 }
 
-func flattenYaml(c *Configuration, path string, v std.encoding.yaml.Value) {
+func flattenYaml(c *Configuration, path string, v encoding.yaml.Value) {
     if v.IsMap() {
         for k in v.Keys() {
             flattenYaml(c, keyJoin(path, k), v.Get(k))
         }
     } else if v.IsSeq() {
         for i, x in v.Items() {
-            flattenYaml(c, keyJoin(path, std.fmt.Format("{0}", i)), x)
+            flattenYaml(c, keyJoin(path, fmt.Format("{0}", i)), x)
         }
     } else if path != "" {
         set(c, path, v.Text())
     }
 }
 
-func flattenToml(c *Configuration, path string, v std.encoding.toml.Value) {
+func flattenToml(c *Configuration, path string, v encoding.toml.Value) {
     if v.IsTable() {
         for k in v.Keys() {
             flattenToml(c, keyJoin(path, k), v.Get(k))
         }
     } else if v.IsArray() {
         for i, x in v.Items() {
-            flattenToml(c, keyJoin(path, std.fmt.Format("{0}", i)), x)
+            flattenToml(c, keyJoin(path, fmt.Format("{0}", i)), x)
         }
     } else if v.IsString() {
         set(c, path, try v.String() else "")
     } else if v.IsInt() {
-        set(c, path, std.fmt.Format("{0}", try v.Int() else 0))
+        set(c, path, fmt.Format("{0}", try v.Int() else 0))
     } else if v.IsFloat() {
-        set(c, path, std.fmt.Format("{0}", try v.Float() else 0.0))
+        set(c, path, fmt.Format("{0}", try v.Float() else 0.0))
     } else if v.IsBool() {
         if try v.Bool() else false {
             set(c, path, "true")
@@ -397,10 +397,10 @@ func flattenToml(c *Configuration, path string, v std.encoding.toml.Value) {
 // ---- binding ---------------------------------------------------------------------
 
 func bindInto<T>(c *Configuration, key string, out *T, errs *[]string) {
-    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Struct {
-        for f in std.reflect.Fields<T>() {
+    if reflect.TypeOf<T>().Kind == reflect.Kind.Struct {
+        for f in reflect.Fields<T>() {
             var name = f.Name
-            var tag = f.Attribute<std.reflect.json>()
+            var tag = f.Attribute<reflect.json>()
             if tag != nil && tag.skip {
                 continue
             }
@@ -409,21 +409,21 @@ func bindInto<T>(c *Configuration, key string, out *T, errs *[]string) {
             }
             bindInto(c, keyJoin(key, name), &f.Get(*out), errs)
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Slice {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Slice {
         bindSlice(c, key, out, errs)
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Map {
-        if std.reflect.TypeOf<T>().Key.Kind == std.reflect.Kind.String {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Map {
+        if reflect.TypeOf<T>().Key.Kind == reflect.Kind.String {
             bindMap(c, key, out, errs)
         }
-    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<T>().Kind == reflect.Kind.Pointer {
         if c.hasSection(key) {
             bindPtr(c, key, out, errs)
         }
     } else {
         var (v, ok) = c.lookup(key)
         if ok {
-            if !std.web.convert(v, out) {
-                *errs = append(*errs, key + ": cannot convert '" + v + "' to " + std.reflect.TypeOf<T>().Name)
+            if !web.convert(v, out) {
+                *errs = append(*errs, key + ": cannot convert '" + v + "' to " + reflect.TypeOf<T>().Name)
             }
         }
     }
@@ -432,13 +432,13 @@ func bindInto<T>(c *Configuration, key string, out *T, errs *[]string) {
 func bindSlice<E>(c *Configuration, key string, out *[]E, errs *[]string) {
     var n = 0
     for k in c.children(key) {
-        var i = try std.strings.ToInt(k) else -1
+        var i = try strings.ToInt(k) else -1
         if i + 1 > n {
             n = i + 1
         }
     }
     if c.prefix != "-" {
-        for n < 1000 && std.os.Getenv(c.prefix + "__" + std.strings.Replace(keyJoin(key, std.fmt.Format("{0}", n)), ":", "__")) != "" {
+        for n < 1000 && os.Getenv(c.prefix + "__" + strings.Replace(keyJoin(key, fmt.Format("{0}", n)), ":", "__")) != "" {
             n += 1
         }
     }
@@ -447,9 +447,9 @@ func bindSlice<E>(c *Configuration, key string, out *[]E, errs *[]string) {
         var (v, ok) = c.lookup(key)
         if ok && v != "" {
             var res []E = []
-            for p in std.strings.Split(v, ",") {
+            for p in strings.Split(v, ",") {
                 var e E
-                if !std.web.convert(std.strings.Trim(p), &e) {
+                if !web.convert(strings.Trim(p), &e) {
                     *errs = append(*errs, key + ": cannot convert '" + p + "'")
                 }
                 res = append(res, e)
@@ -461,7 +461,7 @@ func bindSlice<E>(c *Configuration, key string, out *[]E, errs *[]string) {
     var res []E = []
     for i in 0..n {
         var e E
-        bindInto(c, keyJoin(key, std.fmt.Format("{0}", i)), &e, errs)
+        bindInto(c, keyJoin(key, fmt.Format("{0}", i)), &e, errs)
         res = append(res, e)
     }
     *out = res
@@ -550,7 +550,7 @@ struct Options<T> {
     func Watch(ms int) *Watcher {
         var w = new Watcher{}
         var o = this
-        std.task.Go(func() Task<void> {
+        task.Go(func() Task<void> {
             return watchLoop<T>(o, w, ms)
         })
         return w
@@ -568,7 +568,7 @@ struct Watcher {
 
 async func watchLoop<T>(o *Options<T>, w *Watcher, ms int) {
     for !w.stopped {
-        await std.task.Delay(ms)
+        await task.Delay(ms)
         if w.stopped {
             break
         }

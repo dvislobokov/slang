@@ -1,5 +1,5 @@
-/* std_os_file.c - file descriptors for std.os.File and std.os.ReadDir
- * (compiler/src/sema/stdlib_src/os.zl), plus the std.io.EOF sentinel.
+/* std_os_file.c - file descriptors for os.File and os.ReadDir
+ * (compiler/src/sema/stdlib_src/os.zl), plus the io.EOF sentinel.
  * System calls through platform/platform.h, like std_fs.c. Errors are "<op> <path>: <strerror>"
  * (zell_error_errno; ENOENT wraps fs.ErrNotFound). Reads and writes
  * retry on EINTR; writes loop until everything is written. */

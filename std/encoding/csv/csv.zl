@@ -5,7 +5,7 @@
 // with compile-time reflection: a column per field, named by @csv(name:)
 // or the field name, or placed by @csv(index:); @csv(skip: true) and
 // @serde(name:, skip:) also apply.
-namespace std.encoding.csv
+namespace encoding.csv
 
 // A CSV reader over a text: Read() returns one record at a time. Lines
 // end with \n or \r\n (a quoted \r\n becomes \n).
@@ -35,7 +35,7 @@ struct Reader {
         if this.FieldsPerRecord > 0 {
             if len(rec) != this.FieldsPerRecord {
                 return error(
-                    std.fmt.Format("record on line {0}: wrong number of fields", this.recordLine),
+                    fmt.Format("record on line {0}: wrong number of fields", this.recordLine),
                 )
             }
         } else if this.FieldsPerRecord == 0 {
@@ -69,18 +69,18 @@ struct Reader {
             this.eof = true
             return ""
         }
-        var j = std.regex.rtIndex(t, "\n", this.pos)
+        var j = regex.rtIndex(t, "\n", this.pos)
         var line = ""
         if j < 0 {
             line = t[this.pos..]
             this.pos = len(t)
-            if std.strings.HasSuffix(line, "\r") {
+            if strings.HasSuffix(line, "\r") {
                 line = line[..len(line) - 1]
             }
         } else {
             line = t[this.pos..j + 1]
             this.pos = j + 1
-            if std.strings.HasSuffix(line, "\r\n") {
+            if strings.HasSuffix(line, "\r\n") {
                 line = line[..len(line) - 2] + "\n"
             }
         }
@@ -96,7 +96,7 @@ struct Reader {
             if line == "" {
                 return nil
             }
-            if this.Comment != char(0) && std.strings.HasPrefix(line, string(this.Comment)) {
+            if this.Comment != char(0) && strings.HasPrefix(line, string(this.Comment)) {
                 continue
             }
             if line == "\n" {
@@ -115,7 +115,7 @@ struct Reader {
                 for i < len(line) && isSpace(int(line[i])) {
                     i += 1
                 }
-                if i == len(line) && std.strings.HasSuffix(line, "\n") {
+                if i == len(line) && strings.HasSuffix(line, "\n") {
                     col -= 1
                 }
                 line = line[i..]
@@ -123,15 +123,15 @@ struct Reader {
             }
             if len(line) == 0 || int(line[0]) != 34 {
                 // unquoted field
-                var i = std.strings.Index(line, comma)
+                var i = strings.Index(line, comma)
                 var field = line
                 if i >= 0 {
                     field = field[..i]
-                } else if std.strings.HasSuffix(field, "\n") {
+                } else if strings.HasSuffix(field, "\n") {
                     field = field[..len(field) - 1]
                 }
                 if !this.LazyQuotes {
-                    var q = std.strings.Index(field, "\"")
+                    var q = strings.Index(field, "\"")
                     if q >= 0 {
                         return error(
                             parseError(
@@ -152,21 +152,21 @@ struct Reader {
                 break
             }
             // quoted field
-            var b = std.strings.Builder{}
+            var b = strings.Builder{}
             line = line[1..]
             col += 1
             var ended = false
             for !ended {
-                var i = std.strings.Index(line, "\"")
+                var i = strings.Index(line, "\"")
                 if i >= 0 {
                     b.Write(line[..i])
                     line = line[i + 1..]
                     col += i + 1
-                    if std.strings.HasPrefix(line, "\"") {
+                    if strings.HasPrefix(line, "\"") {
                         b.Write("\"")
                         line = line[1..]
                         col += 1
-                    } else if std.strings.HasPrefix(line, comma) {
+                    } else if strings.HasPrefix(line, comma) {
                         line = line[len(comma)..]
                         col += len(comma)
                         fields = append(fields, b.String())
@@ -220,7 +220,7 @@ func isSpace(c int) bool {
 
 func parseError(start int, line int, col int, msg string) string {
     if start != line {
-        return std.fmt.Format(
+        return fmt.Format(
             "record on line {0}; parse error on line {1}, column {2}: {3}",
             start,
             line,
@@ -228,7 +228,7 @@ func parseError(start int, line int, col int, msg string) string {
             msg,
         )
     }
-    return std.fmt.Format("parse error on line {0}, column {1}: {2}", line, col, msg)
+    return fmt.Format("parse error on line {0}, column {1}: {2}", line, col, msg)
 }
 
 func NewReader(text string) *Reader {
@@ -245,7 +245,7 @@ struct Writer {
     Comma char = ','
     // End lines with \r\n instead of \n.
     UseCRLF bool
-    b       std.strings.Builder
+    b       strings.Builder
 
     func Write(record []string) {
         var comma = string(this.Comma)
@@ -315,10 +315,10 @@ func needsQuotes(f string, comma string) bool {
     if f == "\\." {
         return true
     }
-    if std.strings.Contains(f, comma) ||
-        std.strings.Contains(f, "\"") ||
-        std.strings.Contains(f, "\n") ||
-        std.strings.Contains(f, "\r") {
+    if strings.Contains(f, comma) ||
+        strings.Contains(f, "\"") ||
+        strings.Contains(f, "\n") ||
+        strings.Contains(f, "\r") {
         return true
     }
     var c = int(f[0])
@@ -372,9 +372,9 @@ func ReadNoHeader<T>(text string) []T! {
 
 func fillRow<T>(row *T, rec []string, cols map[string]int, byName bool, line int) void! {
     var i = -1
-    for f in std.reflect.Fields<T>() {
-        var tag = f.Attribute<std.reflect.csvAttr>()
-        var sd = f.Attribute<std.reflect.serde>()
+    for f in reflect.Fields<T>() {
+        var tag = f.Attribute<reflect.csvAttr>()
+        var sd = f.Attribute<reflect.serde>()
         if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
             continue
         }
@@ -393,17 +393,17 @@ func fillRow<T>(row *T, rec []string, cols map[string]int, byName bool, line int
             col = cols[name] - 1
             if col < 0 {
                 return error(
-                    std.fmt.Format(
+                    fmt.Format(
                         "csv: line {0}: no column {1}",
                         line,
-                        std.encoding.json.Quote(name),
+                        encoding.json.Quote(name),
                     ),
                 )
             }
         }
         if col >= len(rec) {
             return error(
-                std.fmt.Format(
+                fmt.Format(
                     "csv: line {0}: no column {1} (the record has {2} fields)",
                     line,
                     col,
@@ -417,67 +417,67 @@ func fillRow<T>(row *T, rec []string, cols map[string]int, byName bool, line int
 
 func cellError(line int, name string, msg string) error {
     return error(
-        std.fmt.Format("csv: line {0}, column {1}: {2}", line, std.encoding.json.Quote(name), msg),
+        fmt.Format("csv: line {0}, column {1}: {2}", line, encoding.json.Quote(name), msg),
     )
 }
 
 func setCell<F>(p *F, s string, line int, name string) void! {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.String {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.String {
         *p = s
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Bool {
-        var t = std.strings.ToLower(std.strings.Trim(s))
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Bool {
+        var t = strings.ToLower(strings.Trim(s))
         if t == "true" || t == "1" || t == "yes" {
             *p = true
         } else if t == "false" || t == "0" || t == "no" || t == "" {
             *p = false
         } else {
-            return cellError(line, name, "invalid bool " + std.encoding.json.Quote(s))
+            return cellError(line, name, "invalid bool " + encoding.json.Quote(s))
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int8 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int16 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Int32 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint8 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint16 ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Uint32 {
-        var t = std.strings.Trim(s)
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Int ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int8 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int16 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Int32 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint8 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint16 ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Uint32 {
+        var t = strings.Trim(s)
         if t == "" {
             *p = 0
             return
         }
-        var v = try std.strings.ToInt(t) catch err {
-            return cellError(line, name, "invalid integer " + std.encoding.json.Quote(s))
+        var v = try strings.ToInt(t) catch err {
+            return cellError(line, name, "invalid integer " + encoding.json.Quote(s))
         }
-        *p = try std.encoding.intAs<F>(v) catch err {
+        *p = try encoding.intAs<F>(v) catch err {
             return cellError(line, name, err.Message())
         }
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float ||
-        std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Float32 {
-        var t = std.strings.Trim(s)
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Float ||
+        reflect.TypeOf<F>().Kind == reflect.Kind.Float32 {
+        var t = strings.Trim(s)
         if t == "" {
             *p = 0
             return
         }
-        var v = try std.strings.ToFloat(t) catch err {
-            return cellError(line, name, "invalid number " + std.encoding.json.Quote(s))
+        var v = try strings.ToFloat(t) catch err {
+            return cellError(line, name, "invalid number " + encoding.json.Quote(s))
         }
-        *p = std.encoding.floatAs<F>(v)
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Enum {
-        var ty = std.reflect.TypeOf<F>()
-        var variant = ty.Variant(std.strings.Trim(s))
+        *p = encoding.floatAs<F>(v)
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Enum {
+        var ty = reflect.TypeOf<F>()
+        var variant = ty.Variant(strings.Trim(s))
         if variant == nil || len(variant.Fields) > 0 {
             return cellError(
                 line,
                 name,
-                "unknown " + ty.Name + " value " + std.encoding.json.Quote(s),
+                "unknown " + ty.Name + " value " + encoding.json.Quote(s),
             )
         }
-        std.reflect.storeTag(p, variant.Index)
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {
+        reflect.storeTag(p, variant.Index)
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Pointer {
         setPtr(p, s, line, name)?
     } else {
-        return cellError(line, name, "cannot store a cell in a " + std.reflect.TypeOf<F>().Name)
+        return cellError(line, name, "cannot store a cell in a " + reflect.TypeOf<F>().Name)
     }
 }
 
@@ -544,9 +544,9 @@ func arrange(vals []string, idx []int) []string {
 }
 
 func headerOf<T>(probe T, out *[]string, idx *[]int) {
-    for f in std.reflect.Fields<T>() {
-        var tag = f.Attribute<std.reflect.csvAttr>()
-        var sd = f.Attribute<std.reflect.serde>()
+    for f in reflect.Fields<T>() {
+        var tag = f.Attribute<reflect.csvAttr>()
+        var sd = f.Attribute<reflect.serde>()
         if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
             continue
         }
@@ -568,9 +568,9 @@ func headerOf<T>(probe T, out *[]string, idx *[]int) {
 }
 
 func rowOf<T>(row T, out *[]string) {
-    for f in std.reflect.Fields<T>() {
-        var tag = f.Attribute<std.reflect.csvAttr>()
-        var sd = f.Attribute<std.reflect.serde>()
+    for f in reflect.Fields<T>() {
+        var tag = f.Attribute<reflect.csvAttr>()
+        var sd = f.Attribute<reflect.serde>()
         if (tag != nil && tag.skip) || (sd != nil && sd.skip) {
             continue
         }
@@ -579,14 +579,14 @@ func rowOf<T>(row T, out *[]string) {
 }
 
 func cell<F>(x F) string {
-    if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.String {
+    if reflect.TypeOf<F>().Kind == reflect.Kind.String {
         return x
-    } else if std.reflect.TypeOf<F>().Kind == std.reflect.Kind.Pointer {
+    } else if reflect.TypeOf<F>().Kind == reflect.Kind.Pointer {
         if x == nil {
             return ""
         }
         return cell(*x)
     } else {
-        return std.fmt.Format("{0}", x)
+        return fmt.Format("{0}", x)
     }
 }

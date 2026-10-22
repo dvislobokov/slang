@@ -25,8 +25,8 @@ Contents
 13. [Known limits in v0.1](#13-known-limits-in-v01)
 14. [Standard library](#14-standard-library)
 15. [Platform layer](#15-platform-layer)
-16. [Networking: std.net and std.net.http](#16-networking-stdnet-and-stdnethttp)
-17. [Reflection tables and std.encoding.json](#17-reflection-tables-and-stdencodingjson)
+16. [Networking: net and net.http](#16-networking-stdnet-and-stdnethttp)
+17. [Reflection tables and encoding.json](#17-reflection-tables-and-stdencodingjson)
 19. [Cryptography and TLS](#19-cryptography-and-tls)
 
 ---
@@ -53,7 +53,7 @@ clang prog.o runtime/libzell_rt.a -lpthread -lm -rdynamic -o prog
 ```
 
 `-rdynamic` is optional. It only makes function names appear in panic backtraces.
-`-lm` is required since the `std.math` functions (section 14) call libm.
+`-lm` is required since the `math` functions (section 14) call libm.
 
 Target: x86-64 / AArch64 Linux, LP64, glibc (the panic backtrace uses
 `<execinfo.h>`). The library is built with `-fPIC`, so you can also link it into
@@ -282,7 +282,7 @@ its own objects); compiled code only does the inline fast paths below.
 | `void zell_leak_check_enable(int32_t mode)` | leak check (3.5); call it before anything else, even before `zell_runtime_init` |
 | `uint8_t zell_threaded` (global) | 0 while the process has a single thread, 1 for good once a second thread was started (`zell__plat_thread_start*` sets it before creating the thread; C code that starts threads of its own that touch Zell objects must set it first; the heap's scavenger thread, which never touches objects, leaves it alone). While it is 0 refcount updates of unowned words may be plain loads and stores, and nothing is biased |
 | `_Thread_local int64_t zell_rc_owner` | the calling thread's owner tag for biased counts (3.1), `ZELL_RC_NO_OWNER` without a slot. Read by the inline fast paths |
-| `void zell_runtime_free_os_memory(void)` | `std.runtime.FreeOSMemory`: the calling thread's empty heap pages, the free-page reserve and the cached large mappings go back to the OS (below), and `malloc_trim` |
+| `void zell_runtime_free_os_memory(void)` | `runtime.FreeOSMemory`: the calling thread's empty heap pages, the free-page reserve and the cached large mappings go back to the OS (below), and `malloc_trim` |
 
 **The `drop` contract.** `drop(obj)` must release every reference the object holds:
 strings, pointers, slices (`zell_slice_release`) and so on. It must **not** free
@@ -316,7 +316,7 @@ unused for 0.3 s beyond the minimum: free pages with
 `zell__plat_mem_release` (Linux `MADV_DONTNEED`, macOS `MADV_FREE`,
 Windows `DiscardVirtualMemory` / `MEM_RESET`; the address range stays
 reserved) and cached mappings with `munmap`. `zell_runtime_free_os_memory`
-releases everything at once. `std.diag.Runtime()` reports `HeapInUse`
+releases everything at once. `diag.Runtime()` reports `HeapInUse`
 (owned pages, medium and large objects), `HeapRetained` (the reserve) and
 `HeapReleased` (pages given back whose address range is kept). The heap is
 off (plain `malloc`) under AddressSanitizer, with leak check mode 2 and
@@ -434,7 +434,7 @@ char *name)` (after `zell_leak_fields` of the type) marks it `@acyclic`
 <name> is @acyclic but was found in a cycle`. Only the first 100000 leaked objects
 are examined.
 
-### 3.6 Arenas (`std.arena`)
+### 3.6 Arenas (`arena`)
 
 An arena allocates objects whose refcount word is `ZELL_RC_ARENA` (`-2`):
 like immortal objects, `zell_retain`/`zell_release` ignore them (every
@@ -455,7 +455,7 @@ Handles are raw pointers passed as `int64_t`; arenas are not thread-safe.
 
 Memory: 64 KB chunks (an object larger than 16 KB gets a chunk of its own);
 each object is preceded by a 16-byte record prefix. After `free` every
-pointer into the arena is dangling (not checked). `std.arena.Arena` (a
+pointer into the arena is dangling (not checked). `arena.Arena` (a
 Zell source, `compiler/src/sema/stdlib_src/arena.zl`) holds the handle in
 a refcounted object whose `Drop` destroys the arena.
 
@@ -470,8 +470,8 @@ keeps the value in the data word itself** (zero-extended, floats as their
 bit pattern, little-endian, so the value can be read at the address of the
 word), with no box: boxing a scalar into `any` allocates nothing. Code that
 releases an `any` asks `any.inline(typeid)` (a per-module function) whether
-the data word is a box; `std.reflect.ValueOf` copies an inline scalar into
-a box (`anyBox`) so that a `Value` has an address; `std.unsafe.AddrOf(x)`
+the data word is a box; `reflect.ValueOf` copies an inline scalar into
+a box (`anyBox`) so that a `Value` has an address; `unsafe.AddrOf(x)`
 returns the word as is (the value bits for a scalar). The debug agent and
 the lldb/gdb formatters read an inline scalar at the address of the data
 word.
@@ -493,7 +493,7 @@ by `zell_cycles_new_entry` (compiled code uses it instead of
 closure environments that capture a cell of one), `zell_cycles_new` (C
 callers with registered types), `zell_cycles_new_dyn` (a
 dynamic type: flagged when the type info is registered with a visitor;
-`std.reflect` allocation) and by `slice.c`/`map.c` for containers whose ops
+`reflect` allocation) and by `slice.c`/`map.c` for containers whose ops
 have a `visit` (3.3). A flagged object never takes the biased refcount
 paths or the inline release fast path (its count word is >= 2^57): its
 release goes to `zell__cycles_release`, and in a multi-threaded process
@@ -545,7 +545,7 @@ collection (one at a time; a thread that finds one running skips).
 `threshold` starts at 4096 and doubles (max 2^22) after a collection that
 freed fewer than 1/8 of its roots, halves (min 1024) after one that freed
 more than half; `ZELL_CYCLES_THRESHOLD=N` fixes it. `manual`: only
-`zell_cycles_collect` (`std.runtime.CollectCycles`) and the leak report.
+`zell_cycles_collect` (`runtime.CollectCycles`) and the leak report.
 `off`: nothing is flagged, recorded or collected.
 
 **A collection.** (0) `g_collecting = 1` with a seq_cst RMW and fence; from
@@ -964,7 +964,7 @@ typedef struct zell_error_frame {  // 16 bytes
 | `zell_error *zell_error_returned(zell_error *err, const zell_error_site *site, const zell_string *ctx)` | **consumes** `err`, returns the error to propagate (owned). With `ctx` it first wraps (`zell_error_wrap`) and moves the trace into the wrapper; then it appends the frame `{site, ctx}`. Used by `e?` / `e?("ctx")` (also inside a block `try`) and by `try e catch err` before `err` is bound |
 | `zell_string *zell_error_trace(const zell_error *err)` | owned trace text, `""` for NULL or no trace. Format below |
 | `void zell_error_frames(const zell_error *err, zell_slice *out)` | owned `[]errors.Frame`: one 32-byte record `{string File @0, int64 Line @8, string Func @16, string Context @24}` per trace line (`Context` is the `?("...")` text or NULL), elements owned via `zell_ops_error_frame` |
-| `zell_errors_trace` / `zell_errors_frames` | the `std.errors.Trace` / `Frames` externs (same functions) |
+| `zell_errors_trace` / `zell_errors_frames` | the `errors.Trace` / `Frames` externs (same functions) |
 | `void zell_error_report(const zell_error *err)` | writes `error: <message>`, then the trace (if any), to stderr. The C `main` calls it when `func main() void!` (or `async func main() void!`) returned an error, before `zell_runtime_shutdown` (then releases the error), and then exits with code 1 |
 
 - **Storage**: the first 8 frames live inline in the error object; more go to
@@ -1013,11 +1013,11 @@ A panic in any thread kills the whole process. If two threads panic at the same
 time, only the first message is printed. Out-of-memory in any runtime allocation
 panics with `out of memory (...)`.
 
-**Panic capture** (`src/std_testing.c`, for `std.testing.Panics`; not on
+**Panic capture** (`src/std_testing.c`, for `testing.Panics`; not on
 Windows). `int64_t zell_testing_rt_capture(void *fn, void *env)` runs the
 closure `func()` (its two words) on a new OS thread inside a *capture
 scope* and returns 1 if it panicked, 0 if it returned, -1 where capture is
-not available (`ZELL_PLAT_HAS_PANIC_CAPTURE` is 0; then std.testing
+not available (`ZELL_PLAT_HAS_PANIC_CAPTURE` is 0; then testing
 re-runs the test in a child process). A panic on that thread while the
 scope is active prints nothing and does not exit: the message is saved and
 `longjmp` returns to the scope's start, ending the thread. None of
@@ -1195,7 +1195,7 @@ with `clang -O2` and runs it. It contains two async functions (one awaiting
 
 ### 10.4 Other ways to create tasks
 
-- `std.task.Spawn(fn)`: `zell_task_spawn[_ex]`. It runs `fn` on a worker.
+- `task.Spawn(fn)`: `zell_task_spawn[_ex]`. It runs `fn` on a worker.
 - Wrapping a callback-style operation: `t = zell_task_new(...)`, retain `t` for
   the producer, and the producer later calls `zell_task_complete(t, &res)` and
   then `zell_release(t)`.
@@ -1245,7 +1245,7 @@ given by `elem_size` and `ops`. Elements are copied and retained on send.
 
 Buffered values are released when the channel is freed.
 
-(The Zell `std.task.Channel<T>` and `std.task.Mutex` are written in Zell on
+(The Zell `task.Channel<T>` and `task.Mutex` are written in Zell on
 top of the primitives of 10.10, not on `zell_chan`/`zell_mutex`, because their
 zero values must work without a constructor and the element type is only known
 to the compiler. `zell_chan`/`zell_mutex` remain for C code and tests.)
@@ -1253,7 +1253,7 @@ to the compiler. `zell_chan`/`zell_mutex` remain for C code and tests.)
 ### 10.8 Task context
 
 Every thread has a **current context**: one owned `zell_object *` (NULL =
-empty). The runtime never looks inside it. `std.task` stores a one-entry
+empty). The runtime never looks inside it. `task` stores a one-entry
 `map[string]any` there whose value is the head of an immutable linked list of
 frames `ctxFrame{key int, val any, next *ctxFrame}`: `task.With(key, value, fn)`
 pushes one frame for the duration of `fn`, `task.Get(key)` walks the list,
@@ -1281,9 +1281,9 @@ Propagation, with no help from compiled code:
   context in the new task, and when that task first suspends
   (`zell_task_add_continuation` returning true) or completes while current,
   the recorded context is made current again (like the current task in
-  10.11): whatever the coroutine set (`task.With` inside it, a `std.diag`
+  10.11): whatever the coroutine set (`task.With` inside it, a `diag`
   span, `log.Context.Push`) stays with the coroutine and never leaks into the
-  caller. `std.task.RunWith(ctx, f)` sets `ctx`, calls `f`, and
+  caller. `task.RunWith(ctx, f)` sets `ctx`, calls `f`, and
   restores the previous context before returning `f`'s task.
 
 ### 10.9 I/O readiness waits (`src/task_io.c`)
@@ -1304,8 +1304,8 @@ continuations to the scheduler exactly like a timer.
 |---|---|
 | `zell_task *zell_io_wait_readable(int64_t fd, int64_t timeout_ms)` | +1 task whose `int64_t` result is **0** when `fd` is readable (or at end of stream / error), **1** when `timeout_ms` (>= 0) elapsed first, **2** when `zell_io_forget(fd)` was called (or the descriptor is closed), **3** when the waiting task was cancelled (10.11). `timeout_ms < 0`: no timeout |
 | `zell_task *zell_io_wait_writable(int64_t fd, int64_t timeout_ms)` | the same for writability |
-| `void zell_io_register(int64_t fd)` | optional: assigns `fd` to a shard now (std.net does it when a socket is created, so connections spread over the shards at accept/connect time) |
-| `void zell_io_forget(int64_t fd)` | completes pending waits on `fd` with 2, removes it from its poller and unassigns it. **Call it before `close(fd)`** (a reused descriptor number must not inherit waits). std.net never calls `close` itself: its socket handles do both (section 16) |
+| `void zell_io_register(int64_t fd)` | optional: assigns `fd` to a shard now (net does it when a socket is created, so connections spread over the shards at accept/connect time) |
+| `void zell_io_forget(int64_t fd)` | completes pending waits on `fd` with 2, removes it from its poller and unassigns it. **Call it before `close(fd)`** (a reused descriptor number must not inherit waits). net never calls `close` itself: its socket handles do both (section 16) |
 
 Rules and guarantees:
 
@@ -1350,7 +1350,7 @@ Rules and guarantees:
   `zell__plat_poller_backend` reports `io_uring` or `epoll`. A poll that
   has just completed may still hold its file reference for a moment (the
   submitting task frees it right after posting the CQE), so close(2) does
-  not always release the socket at once: std.net shuts a listener down
+  not always release the socket at once: net shuts a listener down
   (`shutdown(SHUT_RD)`, which stops listening whatever holds the file)
   before closing it, so a closed listener never accepts again (connected
   sockets only see their FIN or RST postponed by microseconds);
@@ -1362,7 +1362,7 @@ Rules and guarantees:
   waits still pending are released without completing (the scheduler has
   stopped, nobody would run their continuations), like pending timers.
 
-### 10.10 Primitives for the Zell-source `std.task`
+### 10.10 Primitives for the Zell-source `task`
 
 | Function | Semantics |
 |---|---|
@@ -1374,7 +1374,7 @@ Rules and guarantees:
 | `zell_task *zell_task_yield(void)` | `task.Yield()`: +1 `Task<void>` completed by a fresh job, so awaiting it reschedules the coroutine (on any worker) |
 
 `task.Delay`, `task.All`, `task.Any` and `task.Yield` are runtime functions; the
-rest of `std.task` is Zell (`compiler/src/sema/stdlib_src/task.zl`):
+rest of `task` is Zell (`compiler/src/sema/stdlib_src/task.zl`):
 
 - `Mutex`: `{ guard int; locked bool; waiters []Task<void> }`. `Lock()` returns a
   completed task if the mutex was free, else a signal queued in `waiters`;
@@ -1417,7 +1417,7 @@ carried by jobs and continuations exactly like the context of 10.8.
 
 **Cancel hooks** wake the waits of a cancelled task: `zell_task_delay`
 (completes at once), `zell_task_rt_signal` (fired, so `Channel.Send/Recv`
-re-check and give up), `zell_io_wait_*` (complete with **3**, so `std.net`
+re-check and give up), `zell_io_wait_*` (complete with **3**, so `net`
 operations fail with `task.ErrCancelled`). A wait started by an already
 cancelled task completes immediately. `task.Any` cancels its losing inputs.
 
@@ -1458,7 +1458,7 @@ counts it nor what it holds as leaked), and `main` returns 1.
 | Function | Semantics |
 |---|---|
 | `void zell_runtime_init(int argc, char **argv)` | stores the arguments and starts the worker pool and the timer thread. Idempotent. Call it first, on the main thread |
-| `void zell_runtime_shutdown(void)` | releases the process-wide singletons (std.diag's slot map: `http.DefaultTransport()`, the default logger, metrics; 18) while the scheduler still runs the tasks their destructors wake, then waits until the job queue is empty and no job is running, stops the workers and the timer thread (pending timers are dropped without firing), flushes stdio, frees the argument slice, releases singletons registered again meanwhile and merges the refcount queues (3.1) before the leak report. Call it from the main thread only (calling it from a worker deadlocks). After shutdown the scheduler restarts lazily if used again |
+| `void zell_runtime_shutdown(void)` | releases the process-wide singletons (diag's slot map: `http.DefaultTransport()`, the default logger, metrics; 18) while the scheduler still runs the tasks their destructors wake, then waits until the job queue is empty and no job is running, stops the workers and the timer thread (pending timers are dropped without firing), flushes stdio, frees the argument slice, releases singletons registered again meanwhile and merges the refcount queues (3.1) before the leak report. Call it from the main thread only (calling it from a worker deadlocks). After shutdown the scheduler restarts lazily if used again |
 | `void zell_runtime_drain(void)` | the first step of `zell_runtime_shutdown` alone: waits until no job is queued or running and stops the workers and the timer thread. The compiler calls it after `main` returns, then releases the program's globals (their destructors may print or even start tasks again), then calls `zell_runtime_shutdown` |
 | `void zell_os_args(zell_slice *out)` | `os.Args`: an owned `[]string` (`elem_size` 8, ops `zell_ops_ref`) that **shares** the runtime's backing array. Treat it as read-only |
 | `void zell_exit(int32_t code)` | flushes stdout and stderr, then calls `_Exit(code)` immediately (no defers, no shutdown wait). `noreturn` |
@@ -1474,8 +1474,8 @@ output still sitting in buffers may be lost if workers are still printing.
 |---|---|
 | `ZELL_WORKERS=n` | number of worker threads (default: online CPUs, max 256) |
 | `ZELL_NO_BACKTRACE=1` | panic prints only the `panic: ...` line (useful for golden-output tests) |
-| `ZELL_CYCLES=auto\|manual\|off` | the cycle collector (3.8): automatic collections (default), only `std.runtime.CollectCycles()`, or none (plain reference counting). `ZELL_CYCLES_THRESHOLD=N` fixes the number of recorded roots that triggers an automatic collection; `ZELL_CYCLES_MAX_SCAN=N` bounds the objects one collection examines (default 2^22) |
-| `ZELL_DIAG_HEAP=1` | per-type live object counters for `std.diag.HeapByType` / `/debug/heap` in any build (18) |
+| `ZELL_CYCLES=auto\|manual\|off` | the cycle collector (3.8): automatic collections (default), only `runtime.CollectCycles()`, or none (plain reference counting). `ZELL_CYCLES_THRESHOLD=N` fixes the number of recorded roots that triggers an automatic collection; `ZELL_CYCLES_MAX_SCAN=N` bounds the objects one collection examines (default 2^22) |
+| `ZELL_DIAG_HEAP=1` | per-type live object counters for `diag.HeapByType` / `/debug/heap` in any build (18) |
 | `ZELL_NO_SLAB=1` | objects come straight from `malloc` instead of the object heap (3.2), e.g. so Valgrind memcheck sees each object |
 | `ZELL_HEAP_RESERVE=n[K\|M\|G]` | free heap memory the scavenger leaves to the process (3.2; default 16M) |
 | `ZELL_NO_BIAS=1` | no thread owns objects: every refcount stays unowned (3.1), e.g. to compare |
@@ -1496,7 +1496,7 @@ output still sitting in buffers may be lost if workers are still printing.
 - Map iteration order is deterministic but unspecified. Mutating a map during
   iteration is only partly supported (6.3).
 - `errors.Is` compares identity only (7.2).
-- File I/O and `std.io` are blocking. Network I/O is asynchronous (10.9, 16),
+- File I/O and `io` are blocking. Network I/O is asynchronous (10.9, 16),
   but there is no `select` over channels and no task cancellation.
 - The I/O poller exists for Linux (epoll) only; the kqueue (macOS/BSD) and IOCP
   (Windows) backends are not written yet (15).
@@ -1511,7 +1511,7 @@ output still sitting in buffers may be lost if workers are still printing.
 
 ## 14. Standard library
 
-The `std.*` functions that `compiler/src/sema/stdlib.rs` lowers to externs.
+The stdlib functions that `compiler/src/sema/stdlib.rs` lowers to externs.
 Every symbol is `zell_<ns>_<snake_name>`. Implemented in `src/std_*.c`,
 declared in the "Standard library" section of `zell_rt.h`.
 
@@ -1573,7 +1573,7 @@ message `"<op> <path>: <strerror(errno)>"` (e.g. `mkdir data: File exists`).
 Paths and other strings with an embedded NUL byte are rejected with `EINVAL`
 (or treated as non-existent by `Exists`/`IsDir`).
 
-**std.strings** (`src/std_strings_ext.c`; byte offsets, invalid UTF-8 bytes count as one rune = U+FFFD)
+**strings** (`src/std_strings_ext.c`; byte offsets, invalid UTF-8 bytes count as one rune = U+FFFD)
 
 | Zell | C signature | Semantics / notes |
 |---|---|---|
@@ -1592,7 +1592,7 @@ Paths and other strings with an embedded NUL byte are rejected with `EINVAL`
 | `Compare(a, b) int` | `int64_t zell_strings_compare(const zell_string *a, const zell_string *b)` | -1 / 0 / 1, byte-wise |
 | `Title(s)` | `zell_string *zell_strings_title(const zell_string *s)` | upper-cases the first rune of each white-space separated word (Go's deprecated `strings.Title`, white space as the only separator) |
 
-**std.math** (`src/std_math_ext.c`). Zell has no overloading, so the int
+**math** (`src/std_math_ext.c`). Zell has no overloading, so the int
 versions of `Min`/`Max`/`Abs` (which stay `float`) are `IMin`/`IMax`/`IAbs`.
 `MaxInt`/`MinInt` constants are not provided yet: the stdlib constant table
 only holds untyped floats (`Pi`, `E`), and `2^63-1` is not representable.
@@ -1606,7 +1606,7 @@ only holds untyped floats (`Pi`, `E`), and `2^63-1` is not representable.
 | `Inf(sign int) float` / `NaN() float` | `double zell_math_inf(int64_t sign)` / `double zell_math_nan(void)` | `Inf(sign >= 0)` = +Inf |
 | `IMin(a, b)` / `IMax(a, b)` / `IAbs(a)` (int) | `int64_t zell_math_imin(int64_t a, int64_t b)` / `_imax` / `int64_t zell_math_iabs(int64_t a)` | `IAbs(MinInt)` wraps to `MinInt` |
 
-**std.io** (`src/std_io_ext.c`)
+**io** (`src/std_io_ext.c`)
 
 | Zell | C signature | Semantics / notes |
 |---|---|---|
@@ -1615,7 +1615,7 @@ only holds untyped floats (`Pi`, `E`), and `2^63-1` is not representable.
 | `WriteLines(path, lines []string) void!` | `void zell_io_write_lines(const zell_string *path, const zell_slice *lines, zell_error **err)` | each line followed by `\n`; truncates/creates like `WriteFile` |
 | `Eprint(s)` / `Eprintln(s)` | `void zell_io_eprint(const zell_string *s)` / `zell_io_eprintln` | to stderr (stdout is flushed first); one `string` argument, not variadic |
 
-**std.time** (`src/std_time.c`): instants are `int` Unix **milliseconds**; calendar accessors are UTC.
+**time** (`src/std_time.c`): instants are `int` Unix **milliseconds**; calendar accessors are UTC.
 
 | Zell | C signature | Semantics / notes |
 |---|---|---|
@@ -1627,7 +1627,7 @@ only holds untyped floats (`Pi`, `E`), and `2^63-1` is not representable.
 | `Year/Month/Day/Hour/Minute/Second(ms) int` | `int64_t zell_time_year(int64_t ms)` (and `_month` 1..12, `_day` 1..31, `_hour`, `_minute`, `_second`) | UTC |
 | `Weekday(ms) int` | `int64_t zell_time_weekday(int64_t ms)` | 0 = Sunday ... 6 = Saturday |
 
-**std.os** (`src/std_os.c`)
+**os** (`src/std_os.c`)
 
 | Zell | C signature | Semantics / notes |
 |---|---|---|
@@ -1639,7 +1639,7 @@ only holds untyped floats (`Pi`, `E`), and `2^63-1` is not representable.
 | `Pid() int` | `int64_t zell_os_pid(void)` | |
 | `Chdir(path) void!` | `void zell_os_chdir(const zell_string *path, zell_error **err)` | process-wide |
 
-**std.fs** (`src/std_fs.c`). Path functions are pure string operations on `/`-separated paths with Go `path/filepath` (Unix) semantics.
+**fs** (`src/std_fs.c`). Path functions are pure string operations on `/`-separated paths with Go `path/filepath` (Unix) semantics.
 
 | Zell | C signature | Semantics / notes |
 |---|---|---|
@@ -1657,7 +1657,7 @@ only holds untyped floats (`Pi`, `E`), and `2^63-1` is not representable.
 | `Abs(p) string!` | `zell_string *zell_fs_abs(const zell_string *path, zell_error **err)` | cleaned; relative paths are joined to the cwd |
 | `TempDir() string` | `zell_string *zell_fs_temp_dir(void)` | `$TMPDIR` or `/tmp` |
 
-**std.random** (`src/std_random.c`): xoshiro256** seeded through splitmix64,
+**random** (`src/std_random.c`): xoshiro256** seeded through splitmix64,
 one process-wide state behind a mutex; seeded from `getrandom(2)` on first use
 unless `Seed` is called, after which the sequence is fixed. Not for secrets.
 
@@ -1670,7 +1670,7 @@ unless `Seed` is called, after which the sequence is fixed. Not for secrets.
 | `Bytes(n int) []byte` | `void zell_random_bytes(int64_t n, zell_slice *out)` | panics if `n < 0` |
 | `Shuffle(s []int)` | `void zell_random_shuffle(const zell_slice *s)` | in-place Fisher-Yates through the shared buffer; only `[]int` (no generics yet) |
 
-**std.crypto.hash / std.crypto.hmac / std.crypto.rand** (`src/std_crypto.c`):
+**crypto.hash / crypto.hmac / crypto.rand** (`src/std_crypto.c`):
 self-contained implementations of FIPS 180-4 (SHA-1/256/512), RFC 1321 (MD5),
 RFC 2104 (HMAC) and IEEE CRC-32. Inputs are the bytes of the string; hex is lowercase.
 
@@ -1686,7 +1686,7 @@ RFC 2104 (HMAC) and IEEE CRC-32. Inputs are the bytes of the string; hex is lowe
 | `rand.Int() int!` | `int64_t zell_crypto_rand_int(zell_error **err)` | uniform in `[0, 2^63)` |
 | `rand.Hex(n) string!` | `zell_string *zell_crypto_rand_hex(int64_t n, zell_error **err)` | `n` random bytes as `2n` hex chars |
 
-**std.encoding.base64 / std.encoding.hex** (`src/std_encoding.c`, RFC 4648)
+**encoding.base64 / encoding.hex** (`src/std_encoding.c`, RFC 4648)
 
 | Zell | C signature | Semantics / notes |
 |---|---|---|
@@ -1696,7 +1696,7 @@ RFC 2104 (HMAC) and IEEE CRC-32. Inputs are the bytes of the string; hex is lowe
 | `hex.Encode(b)` / `EncodeString(s)` | `zell_string *zell_encoding_hex_encode(const zell_slice *data)` / `_encode_string` | lowercase |
 | `hex.Decode(s) []byte!` / `DecodeString(s) string!` | `void zell_encoding_hex_decode(const zell_string *s, zell_slice *out, zell_error **err)` / `zell_string *zell_encoding_hex_decode_string(...)` | either case; errors `encoding/hex: invalid byte at offset N`, `encoding/hex: odd length hex string` |
 
-**std.uuid** (`src/std_uuid.c`)
+**uuid** (`src/std_uuid.c`)
 
 | Zell | C signature | Semantics / notes |
 |---|---|---|
@@ -1740,17 +1740,17 @@ see `docs/PLATFORMS.md`.
 | `platform/posix.c` | threads (`zell__plat_thread_start[_detached]`, `_join`; `_start_background` for runtime threads that never touch objects and so leave `zell_threaded` alone: the heap scavenger), `cpu_count`, `yield`, monotonic clock `mono_ns`, entropy `random_bytes` (`getrandom`/`getentropy`, then `/dev/urandom`), `backtrace` (execinfo, or a frame-pointer walk without it, as on musl; frames named from the executable's ELF `.symtab` / Mach-O `LC_SYMTAB`), the `SIGPROF` CPU sampler and the symbolizer, `tz_tzif` (always false: tzdata files) |
 | `platform/poll_epoll.c` | the readiness poller on Linux: level-triggered one-shot epoll (`EPOLLONESHOT`, re-armed per wait) plus an eventfd for wake-ups (`poller_new/free/arm/remove/wait/wake`; events carry a 64-bit token) |
 | `platform/poll_kqueue.c` | the same poller on macOS and the BSDs: `EVFILT_READ`/`EVFILT_WRITE` with `EV_ONESHOT` (no `EV_CLEAR`), `EVFILT_USER` wake-ups (a self-pipe where it does not exist). Compiles only there; compile-checked on Linux against `runtime/stub-sdk/macos` (`make CROSS=aarch64-apple-darwin`, docs/PLATFORMS.md) |
-| `platform/net_posix.c` | `process_init` (SIGPIPE ignored, open-files soft limit raised to the hard one), socket addresses (`addr_ip/unix/family/parts/format`, `parse_ip`, `format_ip`, interface name/index), non-blocking sockets (`sock_open/connect/error/bind/listen/accept/recv/send/sendv/recvfrom/sendto/shutdown/close/name`), options (`sock_setopt/getopt`: TCP_NODELAY, keep-alive idle/interval/count, SO_RCVBUF/SNDBUF, SO_LINGER, SO_REUSEADDR/PORT, SO_BROADCAST, TCP_CORK/TCP_NOPUSH, IPV6_V6ONLY, TCP_FASTOPEN, multicast loop/TTL/interface; `sock_mcast` join/leave), `sendfile` (sendfile(2) on Linux/FreeBSD/macOS, pread+send elsewhere), `file_open/size/close`, `unlink`, blocking `resolve` (getaddrinfo, RFC 6724 order or IPv4 first), `reverse` (getnameinfo), `lookup_port`, `interfaces` (getifaddrs), `err_class` (errno to the std.net sentinel classes), `strerror` (lower case). Results are `>= 0` or `-errno`; "would block" is `-ZELL_PLAT_EAGAIN` |
-| `platform/certroots.c` | `cert_bundle_path`: the PEM bundle of trusted roots (`$SSL_CERT_FILE`, then the Linux/BSD/macOS bundle paths; Windows: the `ROOT` system store exported once per process to `%LOCALAPPDATA%\zell\roots.pem`), used by `std.crypto.x509.SystemRoots` (section 19) |
+| `platform/net_posix.c` | `process_init` (SIGPIPE ignored, open-files soft limit raised to the hard one), socket addresses (`addr_ip/unix/family/parts/format`, `parse_ip`, `format_ip`, interface name/index), non-blocking sockets (`sock_open/connect/error/bind/listen/accept/recv/send/sendv/recvfrom/sendto/shutdown/close/name`), options (`sock_setopt/getopt`: TCP_NODELAY, keep-alive idle/interval/count, SO_RCVBUF/SNDBUF, SO_LINGER, SO_REUSEADDR/PORT, SO_BROADCAST, TCP_CORK/TCP_NOPUSH, IPV6_V6ONLY, TCP_FASTOPEN, multicast loop/TTL/interface; `sock_mcast` join/leave), `sendfile` (sendfile(2) on Linux/FreeBSD/macOS, pread+send elsewhere), `file_open/size/close`, `unlink`, blocking `resolve` (getaddrinfo, RFC 6724 order or IPv4 first), `reverse` (getnameinfo), `lookup_port`, `interfaces` (getifaddrs), `err_class` (errno to the net sentinel classes), `strerror` (lower case). Results are `>= 0` or `-errno`; "would block" is `-ZELL_PLAT_EAGAIN` |
+| `platform/certroots.c` | `cert_bundle_path`: the PEM bundle of trusted roots (`$SSL_CERT_FILE`, then the Linux/BSD/macOS bundle paths; Windows: the `ROOT` system store exported once per process to `%LOCALAPPDATA%\zell\roots.pem`), used by `crypto.x509.SystemRoots` (section 19) |
 | `platform/platform.h` (inline, POSIX) / `platform/win32.c` | `zell__plat_mutex`/`_cond`/`_once`/`_tls_key` with `ZELL_PLAT_*_INIT` static initialisers (pthreads; SRWLOCK, CONDITION_VARIABLE, INIT_ONCE, FLS); `cond_wait_ns` (relative timeout, CLOCK_MONOTONIC for conds made by `cond_init` where the system allows); `flockfile` wrappers |
 | `platform/posix.c` (more) / `win32.c` | `wall_ns`, `sleep_ns`, `strftime`/`strptime`, `localtime_path`/`zoneinfo_dir`, `aligned_alloc`/`aligned_free`/`alloc_size`, virtual memory for the object heap (`page_size`; `mem_map` an aligned anonymous mapping, `mem_unmap`; `mem_release` gives a range's memory back but keeps it mapped: `MADV_DONTNEED` on Linux, `MADV_FREE` on macOS, `DiscardVirtualMemory` or `MEM_RESET` on Windows; `mem_remap` = `mremap` on Linux, unsupported elsewhere; `malloc_trim`), `ZELL_PLAT_HAS_PANIC_CAPTURE` (testing.Panics' in-process capture, 8; 0 on Windows), `runtime_init` (Windows: UTF-8 argv from `CommandLineToArgvW`), `stream_write` (Windows console: `WriteConsoleW`), `pid`, `getenv`/`setenv`/`environ` (UTF-8; UTF-16 on Windows), `hostname`, `temp_dir`, `path_sep`, signals (`sig_start/catch/ignore/default/raise`: self-pipe thread / `SetConsoleCtrlHandler`), users (`user_lookup`, `group_lookup`, `uid`) |
-| `platform/fs_posix.c` / `fs_win32.c` | files on descriptors (`open` with the std.os flag bits, `read`, `pread`, `write`, `write_all`, `seek`, `close`, `fsync`, `ftruncate`, `fstat`, `stat_path` into `zell__plat_stat`), `isatty`, `mkdir`, `rmdir`, `unlink_file`, `remove`, `rename`, `chmod`, `getcwd`, `chdir`, `is_executable`, directory iteration (`dir_open/next/close`). POSIX errno values on every platform (Win32 errors are mapped). On Windows: `CreateFileW` + `_open_osfhandle`, UTF-16 paths, `/` and `\` |
+| `platform/fs_posix.c` / `fs_win32.c` | files on descriptors (`open` with the os flag bits, `read`, `pread`, `write`, `write_all`, `seek`, `close`, `fsync`, `ftruncate`, `fstat`, `stat_path` into `zell__plat_stat`), `isatty`, `mkdir`, `rmdir`, `unlink_file`, `remove`, `rename`, `chmod`, `getcwd`, `chdir`, `is_executable`, directory iteration (`dir_open/next/close`). POSIX errno values on every platform (Win32 errors are mapped). On Windows: `CreateFileW` + `_open_osfhandle`, UTF-16 paths, `/` and `\` |
 | `platform/fs_posix.c` / `proc_win32.c` | child processes: `spawn` (fork/exec, pidfd; `CreateProcessW` with a quoted command line; Windows pipes: overlapped named pipes waited on by the IOCP poller, descriptors `0x400000 + slot`, or with the WSAPoll fallback relayed to pollable loopback sockets), `pipe_read/write/close`, `wait_pid`, `kill` |
 | `platform/poll_iocp.c` | the readiness poller on Windows: a completion port per poller with readiness from one `IOCTL_AFD_POLL` per armed socket (zero-byte overlapped `ReadFile` / write completion for child pipes), `PostQueuedCompletionStatus` wake-ups, `GetQueuedCompletionStatusEx` waits; falls back to `poll_wsapoll.c` (or `ZELL_POLLER=wsapoll`); `poller_backend` names the backend |
 | `platform/poll_wsapoll.c` | the fallback poller on Windows: `WSAPoll` over the armed sockets plus a loopback UDP wake-up socket, one-shot by disarming on report |
 | `platform/prof_win32.c` | Windows `backtrace` (CaptureStackBackTrace, names from the COFF symbol table, then DbgHelp `SymFromAddr`), the CPU sampler (sampler thread, `GetThreadTimes`, `SuspendThread` + `GetThreadContext` + `RtlVirtualUnwind`), `symbolize`, `exe_range`, `thread_stack_init` |
 | `platform/tz_win32.c` | `tz_tzif` on Windows: TZif v2 synthesized from the registry's Time Zones (TZI, Dynamic DST), local zone from `GetDynamicTimeZoneInformation`, IANA names by a CLDR table |
-| `platform/sqlite_dyn.h`, `sqlite_win32.c` | std.database.sqlite on Windows without `<sqlite3.h>`: the used SQLite API as function pointers bound from `sqlite3.dll` or `winsqlite3.dll` at run time |
+| `platform/sqlite_dyn.h`, `sqlite_win32.c` | database.sqlite on Windows without `<sqlite3.h>`: the used SQLite API as function pointers bound from `sqlite3.dll` or `winsqlite3.dll` at run time |
 | `platform/net_win32.c` | the `net_posix.c` functions on Winsock2 (`WSASocketW` overlapped + non-inheritable, `FIONBIO`), WSA error codes with POSIX-style messages, `GetAdaptersAddresses`, `sendfile` = overlapped `TransmitFile` (pread+send fallback); `process_init` = `WSAStartup` |
 | `platform/timefmt.c` | calendar arithmetic for all platforms (`utc_tm`, `timegm`) and the "C"-locale `strftime`/`strptime` used on Windows and musl (`*_portable`, tested against glibc on Linux; `ZELL_PLAT_LIBC_TIMEFMT` marks the C libraries whose own are used) |
 
@@ -1763,9 +1763,9 @@ signal functions; `std_time*.c` the clocks and time formatting;
 `std_net.c` sockets and the resolver pool. No file outside `platform/`
 has an OS conditional.
 
-## 16. Networking: std.net and std.net.http
+## 16. Networking: net and net.http
 
-`std.net` and `std.net.http` are Zell (`compiler/src/sema/stdlib_src/net.zl`
+`net` and `net.http` are Zell (`compiler/src/sema/stdlib_src/net.zl`
 and `net_udp.zl` (UDP, buffered I/O, interfaces), `http.zl`, see
 `compiler/src/sema/stdsrc.rs`) over the internal externs below
 (`src/std_net.c`, platform-independent; Zell names start with `rt`). Every
@@ -1809,7 +1809,7 @@ blocks on the network.
   `ZELL_RESOLVERS` (default 4) detached threads that start on demand and
   retire after 30 s idle; a lookup is a task completed by the pool, so a
   slow DNS server never blocks a worker. Address literals (with `%zone`)
-  complete at once. Results keep the system's RFC 6724 order (std.net then
+  complete at once. Results keep the system's RFC 6724 order (net then
   interleaves families for Happy Eyeballs) or IPv4 first (`ResolveIP`). At
   shutdown queued lookups are dropped and running ones discard their
   result. Timeouts and retries are the system resolver's (`resolv.conf`
@@ -1817,7 +1817,7 @@ blocks on the network.
   (UDP, `/etc/hosts`, TXT/MX) is not implemented, so there is no
   `LookupTXT/LookupMX`.
 - **Errors**: the C side reports the *cause* — one of the immortal
-  sentinels below for the errno classes std.net names, else an error with
+  sentinels below for the errno classes net names, else an error with
   the lower-case system text — and net.zl wraps it in a `net.OpError`
   (`"dial tcp 10.0.0.1:80: connection refused"`). `rtOpError` builds that
   wrapper as an ordinary `zell_error` whose own text is the prefix and
@@ -1829,7 +1829,7 @@ blocks on the network.
   a peer that went away fails with `net.ErrReset`. The open-files soft
   limit is raised to the hard one at the same time (like Go).
 
-### 16.2 Sentinels (`std.net` constants, `StdConst::Error`)
+### 16.2 Sentinels (`net` constants, `StdConst::Error`)
 
 | Zell | C | Message | errno classes |
 |---|---|---|---|
@@ -1893,8 +1893,8 @@ follow Go now (`dial tcp 127.0.0.1:1: connection refused` instead of
 `connect: Connection refused`).
 
 **HTTP** (`http.zl`, `http_server.zl`, `http_client.zl`, `http2.zl`,
-`http_extra.zl`, namespace `std.net.http`; `hpack.zl` = `std.net.http.hpack`,
-`httptest.zl` = `std.net.http.test`, `ws.zl` = `std.net.ws`): the protocol
+`http_extra.zl`, namespace `net.http`; `hpack.zl` = `net.http.hpack`,
+`httptest.zl` = `net.http.test`, `ws.zl` = `net.ws`): the protocol
 logic is Zell; the hot loops are the C helpers of 16.5. The authoritative
 API list is DESIGN.md, "Сеть и протоколы". In short:
 
@@ -1924,16 +1924,16 @@ API list is DESIGN.md, "Сеть и протоколы". In short:
   once when a reused connection turns out stale, speaks to proxies (absolute
   form for http, CONNECT for https; `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`),
   asks for and decodes gzip. The process-wide `DefaultTransport()` lives in
-  the std.diag slot map, which `zell_runtime_shutdown` releases first,
+  the diag slot map, which `zell_runtime_shutdown` releases first,
   while the scheduler still runs: its pool closes the connections, and the
   HTTP/2 reader tasks that wakes finish before the leak report (11).
 
-### 16.5 std.net.http C helpers (`src/std_http.c`)
+### 16.5 net.http C helpers (`src/std_http.c`)
 
 Pure functions over their arguments (plus a per-thread Date cache, a
 per-thread scratch buffer for heads and the per-thread result of
 `rtHeadInfo`, valid until the next `rtParseHead` on the thread, like
-`rtAgain`). Zell names are in `std.net.http` unless noted.
+`rtAgain`). Zell names are in `net.http` unless noted.
 
 | Zell (internal) | C | Semantics |
 |---|---|---|
@@ -1946,7 +1946,7 @@ per-thread scratch buffer for heads and the per-thread result of
 | `rtStatusText(code)`, `rtDate()`, `rtHttpTime(sec)`, `rtParseHttpTime(s) int` | `zell_net_http_rt_status_text`, `_date`, `_http_time`, `_parse_http_time` | reason phrases; the cached IMF-fixdate; Unix seconds to/from HTTP dates (IMF-fixdate, RFC 850, asctime; -1 if invalid) |
 | `rtItoa(n)`, `rtAtoi(s) int` | `zell_net_http_rt_itoa`, `_atoi` | decimal; a non-negative decimal of at most 18 digits or -1 |
 | `rtMask(b, off, n, key, phase)` | `zell_net_http_rt_mask` | WebSocket masking in place with a big-endian 32-bit key starting at key byte `phase` (8 bytes per step) |
-| `std.net.http.hpack.rtHuffLen(s) int`, `rtHuffEncode(s) []byte`, `rtHuffDecode(b, off, n) string!` | `zell_net_http_hpack_rt_huff_len`, `_encode`, `_decode` | the HPACK Huffman code of RFC 7541 appendix B (padding with EOS bits; decoding rejects EOS, padding over 7 bits or not all ones) |
+| `net.http.hpack.rtHuffLen(s) int`, `rtHuffEncode(s) []byte`, `rtHuffDecode(b, off, n) string!` | `zell_net_http_hpack_rt_huff_len`, `_encode`, `_decode` | the HPACK Huffman code of RFC 7541 appendix B (padding with EOS bits; decoding rejects EOS, padding over 7 bits or not all ones) |
 
 Sentinels (`StdConst::Error`, immortal): `http.ErrBodyTooLarge`
 (`zell_net_http_err_body_too_large`), `ErrHijacked`, `ErrAbortHandler`,
@@ -1957,10 +1957,10 @@ Sentinels (`StdConst::Error`, immortal): `http.ErrBodyTooLarge`
 
 ---
 
-## 17. Reflection tables and std.encoding.json
+## 17. Reflection tables and encoding.json
 
 Emitted by the compiler (`compiler/src/codegen/reflect.rs`) only for programs
-that use `std.reflect` (directly, through `typeof`, `json`, or a builtin
+that use `reflect` (directly, through `typeof`, `json`, or a builtin
 attribute named as a type). C declarations and layout checks
 (`_Static_assert`) are in the reflection section of `zell_rt.h` and in
 `src/std_reflect.c`.
@@ -1978,9 +1978,9 @@ deduplicated by type in the compiler). Only types that some code or table
 refers to get a table; unreferenced ones are removed by `globaldce`.
 
 ```c
-struct zell_reflect_type {             /* std.reflect.TypeInfo, 232 bytes */
+struct zell_reflect_type {             /* reflect.TypeInfo, 232 bytes */
     zell_type_info rt;                 /* +0   name (C string), 16 + sizeof T, drop */
-    int32_t kind;                       /* +24  zell_reflect_kind (std.reflect.Kind order) */
+    int32_t kind;                       /* +24  zell_reflect_kind (reflect.Kind order) */
     zell_string *name;                 /* +32  short name: User, *User, []int, map[string]int */
     zell_string *full_name;            /* +40  namespace path + name */
     int64_t size, align;                /* +48, +56 */
@@ -2018,7 +2018,7 @@ literals.
 ### 17.2 Attribute values
 
 Every attribute is a constant value of its attribute struct (`@json` is
-`std.reflect.json {name string, omitEmpty bool, skip bool}`, `@deprecated`
+`reflect.json {name string, omitEmpty bool, skip bool}`, `@deprecated`
 is `{message string}`, user attributes are their `@attribute` structs, with
 field defaults filled in). `attrs` is a `[]any` in source order whose
 elements hold a `*A`: `{data, type}` with `type` = the table of `*A` and
@@ -2036,7 +2036,7 @@ new `any` (+1); a method error (or a check failure, `reflect: S.M: ...`) is
 returned as the error. `fnval` is a closure-convention thunk
 `fn(env, recv, args...)` (`MethodInfo.Call<F>()` returns `{fnval, NULL}`).
 
-### 17.4 std.encoding.json
+### 17.4 encoding.json
 
 | Zell | C | Notes |
 |---|---|---|
@@ -2046,10 +2046,10 @@ returned as the error. `fnval` is a closure-convention thunk
 The parser, `json.Value`, `Parse<T>` and `Format<T>` are Zell
 (`compiler/src/sema/reflect_src/json.zl`).
 
-## 18. std.diag and std.log
+## 18. diag and log
 
-Runtime halves of the Zell-source `std.diag` / `std.log`
-(`compiler/src/sema/stdlib_src/{diag,log}.zl`), declared in the std.diag
+Runtime halves of the Zell-source `diag` / `log`
+(`compiler/src/sema/stdlib_src/{diag,log}.zl`), declared in the diag
 section of `zell_rt.h`. Implemented in `src/diag.c` (slots, metrics,
 files), `src/profile.c` (pprof profiles) and `src/platform/posix.c`
 (SIGPROF sampler, stack bounds, ELF symbols).
@@ -2067,7 +2067,7 @@ files), `src/profile.c` (pprof profiles) and `src/platform/posix.c`
 | `diag.rtHeapText()` | `zell_string *zell_diag_rt_heap_text(void)` | `"<count> <type> <bytes>\n"` per type of the live objects, most frequent first; `""` unless leak tracking with type names is on (`--leak-check` without `--release`) |
 | `diag.rtHeapTypes()` | `zell_string *zell_diag_rt_heap_types(void)` (`src/diag_heap.c`) | `"<live>\t<allocated>\t<bytes>\t<type>\n"` per type, most live first: from the leak-check object list when it is on (`allocated` -1), else from the per-type counters of `ZELL_DIAG_HEAP=1` (read at startup: every allocation and free updates a per-thread table keyed by the type info, summed on demand; `bytes` = live x `type->size`), else `""` |
 | `diag.rtHeapCounting()` | `bool zell_diag_rt_heap_counting(void)` | whether the counters are on |
-| `runtime.rtCollectCycles()` / `runtime.rtCycleStat(i)` | `int64_t zell_runtime_rt_collect_cycles(void)` / `int64_t zell_runtime_rt_cycle_stat(int64_t i)` (`src/cycles.c`) | `std.runtime.CollectCycles` / `CycleStats` (3.8): stat 0 runs, 1 collected, 2 candidates, 3 examined, 4 pending, 5 threshold, 6 aborted, 7 mode |
+| `runtime.rtCollectCycles()` / `runtime.rtCycleStat(i)` | `int64_t zell_runtime_rt_collect_cycles(void)` / `int64_t zell_runtime_rt_cycle_stat(int64_t i)` (`src/cycles.c`) | `runtime.CollectCycles` / `CycleStats` (3.8): stat 0 runs, 1 collected, 2 candidates, 3 examined, 4 pending, 5 threshold, 6 aborted, 7 mode |
 | `diag.rtWriteHeapProfile(path)` | `void zell_diag_rt_write_heap_profile(const zell_string *path, zell_error **err)` | the same as a pprof profile (`inuse_objects`, `inuse_space`; one pseudo-function per type); error without tracking |
 | `log.rtOpen(path)` | `int64_t zell_log_rt_open(const zell_string *path, zell_error **err)` | `open(O_WRONLY\|O_CREAT\|O_APPEND\|O_CLOEXEC, 0644)`; error `open <path>: <strerror>` |
 | `log.rtWrite(fd, s)` | `void zell_log_rt_write(int64_t fd, const zell_string *s, zell_error **err)` | writes all of `s` (retries `EINTR`) |
@@ -2095,10 +2095,10 @@ keeps frame pointers (`"frame-pointer"="all"` on every function, set in
 
 ## 19. Cryptography and TLS
 
-The primitives behind `std.crypto.{aes, chacha, x25519, ecdh, ecdsa,
-ed25519, rsa, hkdf}`, the additions to `std.crypto.{hash, hmac}`, and the
-internal helpers of the Zell-source `std.crypto.x509`
-(`compiler/src/sema/stdlib_src/x509.zl`) and `std.net.tls`
+The primitives behind `crypto.{aes, chacha, x25519, ecdh, ecdsa,
+ed25519, rsa, hkdf}`, the additions to `crypto.{hash, hmac}`, and the
+internal helpers of the Zell-source `crypto.x509`
+(`compiler/src/sema/stdlib_src/x509.zl`) and `net.tls`
 (`tls.zl`, `tls_client.zl`, `tls_server.zl`). C declarations:
 `include/zell_crypto.h`; wrappers: `src/crypto/api.c`; primitives:
 `src/crypto/*.c` behind the private header `src/crypto/crypto.h`
@@ -2122,7 +2122,7 @@ ignored); an unknown one is the error `crypto: unknown hash "<name>" ...`.
 | `rsa.c` | RSA up to 8192 bits, 64-bit limbs, Montgomery. Verify PKCS#1 v1.5 / PSS (public, variable time). Sign from a PKCS#1 `RSAPrivateKey` DER: CRT, exponent blinding `d_p + r(p-1)`, constant-time 4-bit window exponentiation, result checked with `e` |
 | `util.c` | wiping, constant-time compare, CSPRNG (`zell__plat_random_bytes`), cpuid |
 
-**Public externs** (`std.crypto.*`):
+**Public externs** (`crypto.*`):
 
 | Zell | C | Notes |
 |---|---|---|
@@ -2153,7 +2153,7 @@ ignored); an unknown one is the error `crypto: unknown hash "<name>" ...`.
 | `tls.rtAeadSeal(ctx, nonce, aad, pt) []byte` / `rtAeadOpen(ctx, nonce, aad, ct) []byte!` | `zell_net_tls_rt_aead_seal(ctx, nonce, aad, pt, out)` / `_open(..., out, err)` | 12-byte nonce; a bad tag is the error `tls: bad record MAC`; an invalid context panics |
 
 The TLS protocol itself (record framing, key schedule, handshake state
-machines, tickets) is Zell over these and over `std.net` (16); TLS
+machines, tickets) is Zell over these and over `net` (16); TLS
 connections use the same non-blocking sockets and readiness waits, so a
 handshake never blocks a worker thread. Platform layer (15):
 `src/platform/certroots.c` provides `zell__plat_cert_bundle_path()`
@@ -2214,10 +2214,10 @@ are `runtime/tests/test_std3.c`.
 Programs built with `--debug-agent` (the default for debug builds; release
 builds only with the flag) carry statement hooks and static tables
 (`compiler/src/codegen/debug_agent.rs`); the agent itself is Zell code
-(`std.debug`, `compiler/src/sema/stdlib_src/debug*.zl`) that the compiler
+(`debug`, `compiler/src/sema/stdlib_src/debug*.zl`) that the compiler
 instantiates and links in. The C side (`src/debug.c`) filters the hot path,
 keeps the frame chain and per-task stop/step state, blocks stopped tasks,
-and gives `std.debug` its primitives. docs/DEBUGGER.md (stage 2) describes
+and gives `debug` its primitives. docs/DEBUGGER.md (stage 2) describes
 the design.
 
 ### 22.1 Tables
@@ -2239,7 +2239,7 @@ typedef struct {
 } zell_dbg_func;              /* 56 bytes */
 typedef struct {
     zell_string *name;        /* +0 */
-    const zell_type_info *type;  /* +8 a full std.reflect.TypeInfo (22.4) */
+    const zell_type_info *type;  /* +8 a full reflect.TypeInfo (22.4) */
     int32_t slot;              /* +16 index into the frame's locals array */
     int32_t flags;             /* +20 1 = the slot holds a heap cell (value at cell + 16) */
     int32_t line, end_line;    /* +24 +28 visible after `line` (parameters: from `line`) up to `end_line` */
@@ -2257,7 +2257,7 @@ Statement kinds: 0 a statement (every HIR statement with a span, plus one
 at each function's closing brace, run by every return), 1 a function
 entry (function breakpoints; steps ignore it), 2 reserved. `func` indexes
 `funcs`; statement ids are global and dense. Only user code gets records:
-functions whose full name starts with `std.` (the agent included) have no
+functions of the standard library (full name under a stdlib root; the agent included) have no
 hooks.
 
 ### 22.2 Hooks and frames
@@ -2286,7 +2286,7 @@ behind `if (on)`:
 
 `zell_dbg_boot(&tables, entry)` runs in the C `main` right after
 `zell_runtime_init`: with `ZELL_DEBUG` set and an agent linked (`entry`
-is `std.debug.AgentMain` wrapped as `void(void)`, NULL otherwise) it sets
+is `debug.AgentMain` wrapped as `void(void)`, NULL otherwise) it sets
 `zell_dbg_on` and calls `entry`. `zell_dbg_exit(code)` runs before the C
 `main` returns and in `zell_exit` (`os.Exit`): it calls the agent's exit
 hook once.
@@ -2307,7 +2307,7 @@ frame links above its caller's until it first suspends.
 
 ### 22.3 The agent's hook
 
-`std.debug.rtSetHook(func(stmt, frame, reason, task int) int)` registers
+`debug.rtSetHook(func(stmt, frame, reason, task int) int)` registers
 the callback `zell_dbg_stmt` (and the panic / error hooks) calls, with
 hooks disabled on the calling thread, when a statement has a breakpoint
 byte, a step of some task ends there, a freeze is on, or the next statement
@@ -2329,11 +2329,11 @@ own task), or (step in) in a callee of the frame. Without `single` the
 freeze ends and every stopped task goes on (a task still deciding in its
 hook is not released by another task's resume).
 
-### 22.4 What std.debug reads
+### 22.4 What debug reads
 
-Values are read with `std.unsafe` through the tables, frames (22.1, 22.2)
+Values are read with `unsafe` through the tables, frames (22.1, 22.2)
 and the reflection tables of §17: a local's `type` is a full
-`std.reflect.TypeInfo` (codegen loads reflection whenever the agent is
+`reflect.TypeInfo` (codegen loads reflection whenever the agent is
 linked), read at the offsets of its LLVM layout: `Kind` (i32) +24, `Name`
 +32, `Size` +48, `Fields` +64 (slice of `*FieldInfo`), `Variants` +128,
 `Elem` +160, `Key` +168, `Len` +176; `FieldInfo`: `Name` +0, `Type` +8,
@@ -2341,7 +2341,7 @@ linked), read at the offsets of its LLVM layout: `Kind` (i32) +24, `Name`
 vtable header (`vtable[0]` type, `vtable[1]` boxed), `any` its type word;
 `T!` keeps its error at `round8(sizeof T)`. Runtime helpers:
 
-| Zell (`std.debug`) | C | Notes |
+| Zell (`debug`) | C | Notes |
 |---|---|---|
 | `rtTables() int` | `zell_debug_rt_tables` | the tables (0 without agent) |
 | `rtSetHook(f)`, `rtSetExitHook(f)` | `zell_debug_rt_set_hook/_exit_hook(fn, env)` | closures as two words, env retained |
@@ -2358,22 +2358,22 @@ vtable header (`vtable[0]` type, `vtable[1]` boxed), `any` its type word;
 | `rtListen(host, port) int!`, `rtSockPort(fd)`, `rtAccept(fd)`, `rtRecv(fd, max) []byte`, `rtSend(fd, s) bool`, `rtClose(fd)` | | blocking TCP on a private poller: the agent thread is no scheduler task and must answer while every worker is blocked in a stopped task |
 | `rtEprint(s)`, `rtExit(code)`, `rtNowMs()` | | unbuffered stderr, `_exit` after flushing, monotonic ms |
 
-### 22.5 std.unsafe
+### 22.5 unsafe
 
 `ReadInt/ReadUint(addr, size)`, `ReadFloat(addr, size)`, `WriteInt(addr,
 size, v)`, `ReadBytes(addr, n)`, `WriteBytes(addr, b)`, `CString(addr)`,
 `AddrOf(x any)` / `TypeOf(x any)` (the two words of an `any`),
 `CallFunc(addr, []int) int` (C ABI, up to 8 integer arguments). Nothing is
-checked. Importing `std.unsafe` (and `std.plugin`) needs the capability in
+checked. Importing `unsafe` (and `plugin`) needs the capability in
 the package manifest (`[capabilities] unsafe = true` / `plugin = true`);
 plain (manifest-less) builds may not; the standard library may.
 
-### 22.6 std.thread
+### 22.6 thread
 
 `Spawn(f func()) int` starts an OS thread outside the scheduler (`await`
 there blocks), `Join(h)`, `Sleep(ms)`.
 
-### 22.7 std.plugin
+### 22.7 plugin
 
 `rtOpen(path) int!`, `rtSym(h, name) int!`, `rtClose(h)`: `dlopen(RTLD_NOW |
 RTLD_LOCAL)` / `dlsym` through the platform layer (`zell__plat_dl_*`), for
@@ -2396,7 +2396,7 @@ on the whole module for package builds). Today: `zell_database_sqlite_`
 function then fails with `sqlite: not available` and `rtAvailable()` is
 false), but a program using the driver still needs the library to link.
 
-### 23.2 std.database.sql / std.database.sqlite
+### 23.2 database.sql / database.sqlite
 
 | Zell | C | Notes |
 |---|---|---|
@@ -2422,7 +2422,7 @@ false), but a program using the driver still needs the library to link.
 | `ecdsa.GenerateKeyP384`, `PublicKeyP384`, `SignP384(priv, digest)` (DER), `VerifyP384(pub, digest, sig) bool`, `SignP384Raw` (r‖s, RFC 6979 without added randomness, for vectors) | `zell_crypto_ecdsa_*_p384` | nonces: RFC 6979 with HMAC-SHA384, hedged with 48 random bytes |
 | `aes.DecryptBlock`, `CbcEncrypt/CbcDecrypt` (PKCS#7), `CbcEncryptRaw/CbcDecryptRaw`, `Pkcs7Pad/Pkcs7Unpad(data, block)` | `zell_crypto_aes_*` | decryption: AES-NI or a table-free byte-oriented inverse cipher; unpadding is constant time (`aes-cbc: invalid padding`) |
 | `rsa.EncryptOAEP(n, e, hash, msg, label)`, `DecryptOAEP(keyDER, hash, ct, label)` | `zell_crypto_rsa_encrypt_oaep` / `_decrypt_oaep` | RFC 8017 7.1, MGF1 with the same hash; constant-time decoding, one error (`rsa: decryption error`) |
-| `rsa.rtGenPrime(bits, e) []byte!`, `IsProbablePrime(p, rounds) bool` | | random candidates with the top two bits set, trial division by primes < 1000, `p mod e != 1`, Miller-Rabin (variable time: key generation data only); `rsa.GenerateKey` (Zell) builds the PKCS#1 key with `std.math.big` |
+| `rsa.rtGenPrime(bits, e) []byte!`, `IsProbablePrime(p, rounds) bool` | | random candidates with the top two bits set, trial division by primes < 1000, `p mod e != 1`, Miller-Rabin (variable time: key generation data only); `rsa.GenerateKey` (Zell) builds the PKCS#1 key with `math.big` |
 
 ### 23.4 zstd encoder
 
@@ -2446,20 +2446,20 @@ expanded once into a process-wide buffer on the first dictionary reference.
 
 ## 24. Tier-3b infrastructure clients (redis, kafka, s3, blob)
 
-`std.data.redis`, `std.data.kafka`, `std.cloud.s3` and `std.cloud.blob` are
+`data.redis`, `data.kafka`, `cloud.s3` and `cloud.blob` are
 Zell (`compiler/src/sema/stdlib_src/{redis,redis_route,redis_client,kafka,
 kafka_producer,kafka_consumer,kafka_admin,s3,s3_multi,blob}.zl`) over
-std.net, std.net.tls, std.net.http and std.crypto. The C part is
+net, net.tls, net.http and crypto. The C part is
 `src/std_infra.c` (tests: `tests/test_infra.c`): sentinels and four byte
-helpers, Zell namespace `std.data` (internal, names start with `rt`).
+helpers, Zell namespace `data` (internal, names start with `rt`).
 
 | Zell | C | Semantics |
 |---|---|---|
-| `std.data.rtAppend(a, b []byte) []byte` | `zell_data_rt_append(const zell_slice *a, const zell_slice *b, zell_slice *out)` | Go's `append(a, b...)`: `out` (+1) shares `a`'s backing when it has room, else grows it (amortized); used by the RESP writer and the Kafka encoder |
-| `std.data.rtAppendStr(a []byte, s string) []byte` | `zell_data_rt_append_str` | the same with the bytes of a string |
-| `std.data.rtCrc16(s string) int` | `zell_data_rt_crc16` | CRC16/XMODEM (poly 0x1021, init 0); `redis.HashSlot` takes it mod 16384 |
-| `std.data.rtCrc32c(crc int, b []byte) int` | `zell_data_rt_crc32c` | CRC-32C (Castagnoli, reflected 0x82F63B78), slicing-by-8, continuing `crc` (0 to start); record batch v2 checksums. `uint32_t zell__crc32c(uint32_t, const uint8_t *, size_t)` is the same for C callers |
-| `std.data.rtMurmur2(b []byte) int` | `zell_data_rt_murmur2` | the Kafka Java client's `Utils.murmur2` (seed 0x9747b28c) as a signed 32-bit value; the default partitioner is `(murmur2 & 0x7fffffff) % n` |
+| `data.rtAppend(a, b []byte) []byte` | `zell_data_rt_append(const zell_slice *a, const zell_slice *b, zell_slice *out)` | Go's `append(a, b...)`: `out` (+1) shares `a`'s backing when it has room, else grows it (amortized); used by the RESP writer and the Kafka encoder |
+| `data.rtAppendStr(a []byte, s string) []byte` | `zell_data_rt_append_str` | the same with the bytes of a string |
+| `data.rtCrc16(s string) int` | `zell_data_rt_crc16` | CRC16/XMODEM (poly 0x1021, init 0); `redis.HashSlot` takes it mod 16384 |
+| `data.rtCrc32c(crc int, b []byte) int` | `zell_data_rt_crc32c` | CRC-32C (Castagnoli, reflected 0x82F63B78), slicing-by-8, continuing `crc` (0 to start); record batch v2 checksums. `uint32_t zell__crc32c(uint32_t, const uint8_t *, size_t)` is the same for C callers |
+| `data.rtMurmur2(b []byte) int` | `zell_data_rt_murmur2` | the Kafka Java client's `Utils.murmur2` (seed 0x9747b28c) as a signed 32-bit value; the default partitioner is `(murmur2 & 0x7fffffff) % n` |
 
 Sentinels (`StdConst::Error`, immortal, `errors.Is`):
 
@@ -2471,7 +2471,7 @@ Sentinels (`StdConst::Error`, immortal, `errors.Is`):
 | `redis.ErrPoolTimeout` | `zell_data_redis_err_pool_timeout()` | `redis: connection pool timeout` |
 | `redis.ErrCrossSlot` | `zell_data_redis_err_cross_slot()` | `redis: keys of the command map to different cluster slots` |
 | `kafka.ErrClosed` / `kafka.ErrNoBrokers` | `zell_data_kafka_err_closed()` / `_no_brokers()` | `kafka: client is closed` / `kafka: no broker is reachable` |
-| `s3.ErrNoSuchKey`, `ErrNoSuchBucket`, `ErrAccessDenied`, `ErrPreconditionFailed` | `zell_cloud_s3_err_no_such_key()` ... `_precondition()` | `s3: NoSuchKey` ... ; an `s3.Error` with one of these codes is built with `std.net.rtOpError` (16.3): its text is `s3: <message> (<resource>)`, its inner error the sentinel and its payload the boxed `s3.Error` (`errors.As`) |
+| `s3.ErrNoSuchKey`, `ErrNoSuchBucket`, `ErrAccessDenied`, `ErrPreconditionFailed` | `zell_cloud_s3_err_no_such_key()` ... `_precondition()` | `s3: NoSuchKey` ... ; an `s3.Error` with one of these codes is built with `net.rtOpError` (16.3): its text is `s3: <message> (<resource>)`, its inner error the sentinel and its payload the boxed `s3.Error` (`errors.As`) |
 | `blob.ErrNotFound` | `zell_cloud_blob_err_not_found()` | `blob: not found` |
 
 Design notes (the authoritative API is DESIGN.md, «Данные и форматы»):
@@ -2489,5 +2489,5 @@ Design notes (the authoritative API is DESIGN.md, «Данные и формат
   Heartbeat. The heartbeat task sleeps on a `task.Delay` that `Close`
   fires early (`zell_task_rt_fire`); it does not use a cancellation scope,
   which would keep the creating task — and the consumer it returns — alive.
-- **S3** request bodies are in memory (`std.net.http` sends strings), so
+- **S3** request bodies are in memory (`net.http` sends strings), so
   the payload is hashed; large objects go through multipart uploads.

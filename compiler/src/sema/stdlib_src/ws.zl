@@ -1,13 +1,13 @@
-// WebSockets (RFC 6455) over std.net.http: the server side upgrades a
+// WebSockets (RFC 6455) over net.http: the server side upgrades a
 // request inside an http.Handler (`await ws.Upgrade(req, res)?`), the
 // client dials ws:// or wss:// URLs (`await ws.Dial(url)?`). Text and
 // binary messages, fragmentation (received messages are reassembled;
 // SendFragments sends one), ping/pong (pings are answered automatically),
 // the closing handshake with status codes, client masking (C helper
-// std.net.http.rtMask). permessage-deflate (RFC 7692) is not implemented:
+// net.http.rtMask). permessage-deflate (RFC 7692) is not implemented:
 // no extension is negotiated. Sends are serialized by a mutex, so several
 // tasks may send on one Conn; one task at a time should receive.
-namespace std.net.ws
+namespace net.ws
 
 // A received or sent message (Type: TextMessage or BinaryMessage).
 struct Message {
@@ -16,7 +16,7 @@ struct Message {
 
     // Text returns the payload as a string.
     func Text() string {
-        return std.strings.FromBytes(this.Data)
+        return strings.FromBytes(this.Data)
     }
 
     // IsText reports whether the message is a text message.
@@ -27,7 +27,7 @@ struct Message {
 
 // A text message.
 func Text(s string) Message {
-    return Message{Type: 1, Data: std.strings.Bytes(s)}
+    return Message{Type: 1, Data: strings.Bytes(s)}
 }
 
 // A binary message.
@@ -44,7 +44,7 @@ struct CloseError {
 
     // Message returns "websocket: close CODE reason".
     func Message() string {
-        var s = "websocket: close " + std.fmt.Format("{0}", this.Code)
+        var s = "websocket: close " + fmt.Format("{0}", this.Code)
         if this.Reason != "" {
             s += " " + this.Reason
         }
@@ -60,7 +60,7 @@ struct CloseError {
 // Whether err is a CloseError with one of the codes.
 func IsCloseError(err error, codes []int) bool {
     var ce CloseError
-    if !std.errors.As(err, &ce) {
+    if !errors.As(err, &ce) {
         return false
     }
     if len(codes) == 0 {
@@ -75,9 +75,9 @@ func IsCloseError(err error, codes []int) bool {
 }
 
 struct connState {
-    rc          std.net.http.RawConn
+    rc          net.http.RawConn
     client      bool
-    wmu         std.task.Mutex
+    wmu         task.Mutex
     guard       int
     sentClose   bool
     gotClose    bool
@@ -105,7 +105,7 @@ struct Conn {
 
     // SendText sends a text message.
     func SendText(s string) Task<void!> {
-        return writeFrame(this.st, 1, std.strings.Bytes(s), true)
+        return writeFrame(this.st, 1, strings.Bytes(s), true)
     }
 
     // SendBinary sends a binary message.
@@ -176,7 +176,7 @@ struct Conn {
     }
 }
 
-func newConn(rc std.net.http.RawConn, client bool, proto string) Conn {
+func newConn(rc net.http.RawConn, client bool, proto string) Conn {
     return Conn{st: new connState{rc: rc, client: client, maxSize: 32 << 20}, Subprotocol: proto}
 }
 
@@ -210,16 +210,16 @@ func encodeFrame(st *connState, op int, data []byte, fin bool) []byte {
         }
     }
     if !st.client {
-        return std.net.rtJoin(h, data, n)
+        return net.rtJoin(h, data, n)
     }
-    var key = std.random.Int() & 4294967295
+    var key = random.Int() & 4294967295
     h = append(h, byte((key >> 24) & 255))
     h = append(h, byte((key >> 16) & 255))
     h = append(h, byte((key >> 8) & 255))
     h = append(h, byte(key & 255))
     var off = len(h)
-    var out = std.net.rtJoin(h, data, n)
-    std.net.http.rtMask(out, off, n, key, 0)
+    var out = net.rtJoin(h, data, n)
+    net.http.rtMask(out, off, n, key, 0)
     return out
 }
 
@@ -258,7 +258,7 @@ async func writeFragments(st *connState, typ int, parts [][]byte) void! {
             op = typ
         }
         var f = encodeFrame(st, op, p, i == len(parts) - 1)
-        out = std.net.rtJoin(out, f, len(f))
+        out = net.rtJoin(out, f, len(f))
     }
     if len(parts) == 0 {
         out = encodeFrame(st, typ, [], true)
@@ -271,7 +271,7 @@ func closePayload(code int, reason string) []byte {
         return []
     }
     var p []byte = [byte(code >> 8), byte(code & 255)]
-    return std.net.rtJoin(p, std.strings.Bytes(reason), len(reason))
+    return net.rtJoin(p, strings.Bytes(reason), len(reason))
 }
 
 func validCloseCode(c int) bool {
@@ -347,7 +347,7 @@ async func recv(st *connState) Message! {
         if n > 0 {
             payload = await st.rc.ReadExact(n)?
             if masked {
-                std.net.http.rtMask(payload, 0, n, key, 0)
+                net.http.rtMask(payload, 0, n, key, 0)
             }
         }
         switch op {
@@ -362,8 +362,8 @@ async func recv(st *connState) Message! {
                     if !validCloseCode(code) {
                         return await failConn(st, 1002, "invalid close code")
                     }
-                    reason = std.strings.FromBytes(payload[2..])
-                    if !std.unicode.utf8.ValidString(reason) {
+                    reason = strings.FromBytes(payload[2..])
+                    if !unicode.utf8.ValidString(reason) {
                         return await failConn(st, 1007, "invalid UTF-8 in the close reason")
                     }
                 }
@@ -398,14 +398,14 @@ async func recv(st *connState) Message! {
                 if !st.fragging {
                     return await failConn(st, 1002, "continuation without a message")
                 }
-                st.frag = std.net.rtJoin(st.frag, payload, n)
+                st.frag = net.rtJoin(st.frag, payload, n)
                 if !fin {
                     continue
                 }
                 var m = Message{Type: st.fragType, Data: st.frag}
                 st.frag = []
                 st.fragging = false
-                if m.Type == 1 && !std.unicode.utf8.Valid(m.Data) {
+                if m.Type == 1 && !unicode.utf8.Valid(m.Data) {
                     return await failConn(st, 1007, "invalid UTF-8 in a text message")
                 }
                 return m
@@ -419,7 +419,7 @@ async func recv(st *connState) Message! {
                     st.frag = payload
                     continue
                 }
-                if op == 1 && !std.unicode.utf8.Valid(payload) {
+                if op == 1 && !unicode.utf8.Valid(payload) {
                     return await failConn(st, 1007, "invalid UTF-8 in a text message")
                 }
                 return Message{Type: op, Data: payload}
@@ -457,8 +457,8 @@ async func closeConn(st *connState, code int, reason string) void! {
 // ---- handshake ----------------------------------------------------------------
 
 func acceptKey(key string) string {
-    return std.encoding.base64.Encode(
-        std.crypto.hash.Sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"),
+    return encoding.base64.Encode(
+        crypto.hash.Sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"),
     )
 }
 
@@ -475,20 +475,20 @@ struct UpgradeOptions {
 // Upgrade answers a WebSocket handshake request inside an HTTP handler
 // (HTTP/1.1 only) and returns the connection; a request that is not a
 // valid handshake gets 400 (426 for a wrong version) and ErrBadHandshake.
-func Upgrade(req *std.net.http.Request, res *std.net.http.Response) Task<Conn!> {
+func Upgrade(req *net.http.Request, res *net.http.Response) Task<Conn!> {
     return UpgradeWith(req, res, UpgradeOptions{})
 }
 
 // UpgradeWith is Upgrade with options (subprotocols, origin check, limits).
 async func UpgradeWith(
-    req *std.net.http.Request,
-    res *std.net.http.Response,
+    req *net.http.Request,
+    res *net.http.Response,
     opts UpgradeOptions,
 ) Conn! {
     var h = req.Headers
     if req.Method != "GET" ||
-        !std.net.http.HasToken(h["Connection"], "upgrade") ||
-        !std.net.http.HasToken(h["Upgrade"], "websocket") {
+        !net.http.HasToken(h["Connection"], "upgrade") ||
+        !net.http.HasToken(h["Upgrade"], "websocket") {
         res.Text(400, "400 Bad Request: not a WebSocket handshake\n")
         return ErrBadHandshake
     }
@@ -498,7 +498,7 @@ async func UpgradeWith(
         return ErrBadHandshake
     }
     var key = h["Sec-Websocket-Key"]
-    var raw = try std.encoding.base64.Decode(key) else []
+    var raw = try encoding.base64.Decode(key) else []
     if len(raw) != 16 {
         res.Text(400, "400 Bad Request: invalid Sec-WebSocket-Key\n")
         return ErrBadHandshake
@@ -518,7 +518,7 @@ async func UpgradeWith(
     var proto = ""
     if h["Sec-Websocket-Protocol"] != "" {
         for p in opts.Subprotocols {
-            if proto == "" && std.net.http.HasToken(h["Sec-Websocket-Protocol"], p) {
+            if proto == "" && net.http.HasToken(h["Sec-Websocket-Protocol"], p) {
                 proto = p
             }
         }
@@ -531,7 +531,7 @@ async func UpgradeWith(
         head += "Sec-WebSocket-Protocol: " + proto + "\r\n"
     }
     for k, v in opts.Headers {
-        head += std.net.http.CanonicalHeader(k) + ": " + v + "\r\n"
+        head += net.http.CanonicalHeader(k) + ": " + v + "\r\n"
     }
     head += "\r\n"
     rc.SetTimeout(0)
@@ -546,7 +546,7 @@ async func UpgradeWith(
 struct DialOptions {
     Headers      map[string]string
     Subprotocols []string
-    TLS          *std.net.tls.Config
+    TLS          *net.tls.Config
     // Milliseconds for the connect and the handshake (default 30000).
     Timeout int
 }
@@ -558,7 +558,7 @@ func Dial(url string) Task<Conn!> {
 
 // DialWith is Dial with options (headers, subprotocols, TLS, timeout).
 async func DialWith(url string, opts DialOptions) Conn! {
-    var u = std.net.http.ParseURL(url)?
+    var u = net.http.ParseURL(url)?
     if u.Scheme != "ws" && u.Scheme != "wss" && u.Scheme != "http" && u.Scheme != "https" {
         return error("websocket: unsupported URL scheme \"" + u.Scheme + "\"")
     }
@@ -566,9 +566,9 @@ async func DialWith(url string, opts DialOptions) Conn! {
     if ms <= 0 {
         ms = 30000
     }
-    var rc = await std.net.http.DialRaw(u, opts.TLS, ms)?
+    var rc = await net.http.DialRaw(u, opts.TLS, ms)?
     rc.SetTimeout(ms)
-    var key = std.encoding.base64.Encode(std.random.Bytes(16))
+    var key = encoding.base64.Encode(random.Bytes(16))
     var req = "GET " +
         u.RequestURI() +
         " HTTP/1.1\r\nHost: " +
@@ -577,10 +577,10 @@ async func DialWith(url string, opts DialOptions) Conn! {
         key +
         "\r\nSec-WebSocket-Version: 13\r\n"
     if len(opts.Subprotocols) > 0 {
-        req += "Sec-WebSocket-Protocol: " + std.strings.Join(opts.Subprotocols, ", ") + "\r\n"
+        req += "Sec-WebSocket-Protocol: " + strings.Join(opts.Subprotocols, ", ") + "\r\n"
     }
     for k, v in opts.Headers {
-        req += std.net.http.CanonicalHeader(k) + ": " + v + "\r\n"
+        req += net.http.CanonicalHeader(k) + ": " + v + "\r\n"
     }
     req += "\r\n"
     try {
@@ -588,22 +588,22 @@ async func DialWith(url string, opts DialOptions) Conn! {
         var res = await rc.ReadResponseHead()?
         if res.Status != 101 {
             rc.Close()
-            return std.errors.Wrap(
+            return errors.Wrap(
                 ErrBadHandshake,
-                "websocket: " + url + ": status " + std.fmt.Format("{0}", res.Status),
+                "websocket: " + url + ": status " + fmt.Format("{0}", res.Status),
             )
         }
-        if !std.net.http.HasToken(res.Headers["Upgrade"], "websocket") ||
-            !std.net.http.HasToken(res.Headers["Connection"], "upgrade") {
+        if !net.http.HasToken(res.Headers["Upgrade"], "websocket") ||
+            !net.http.HasToken(res.Headers["Connection"], "upgrade") {
             rc.Close()
-            return std.errors.Wrap(
+            return errors.Wrap(
                 ErrBadHandshake,
                 "websocket: " + url + ": missing Upgrade headers",
             )
         }
         if res.Headers["Sec-Websocket-Accept"] != acceptKey(key) {
             rc.Close()
-            return std.errors.Wrap(
+            return errors.Wrap(
                 ErrBadHandshake,
                 "websocket: " + url + ": wrong Sec-WebSocket-Accept",
             )

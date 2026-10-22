@@ -1055,7 +1055,7 @@ int64_t zell__cycles_at_exit(void) {
     return n < 0 ? 0 : n;
 }
 
-/* ---- std.runtime (compiler/src/sema/stdlib_src/runtime_cycles.zl) ---- */
+/* ---- runtime (compiler/src/sema/stdlib_src/runtime_cycles.zl) ---- */
 
 int64_t zell_runtime_rt_collect_cycles(void) { return zell_cycles_collect(); }
 

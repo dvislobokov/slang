@@ -319,7 +319,7 @@ void zell_error_report(const zell_error *err) {
     zell_release(m);
 }
 
-/* std.fs.ErrNotFound: an immortal sentinel; ENOENT errors wrap it. */
+/* fs.ErrNotFound: an immortal sentinel; ENOENT errors wrap it. */
 static ZELL_STRING_STORAGE(26) not_found_msg = ZELL_STRING_INIT(not_found_msg, "No such file or directory");
 
 static zell_error not_found_error = {

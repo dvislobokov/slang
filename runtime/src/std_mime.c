@@ -1,4 +1,4 @@
-/* std_mime.c - the extension -> media type table of std.mime
+/* std_mime.c - the extension -> media type table of mime
  * (runtime/ABI.md 19.5): a built-in table (Go's built-in types plus common
  * web, document, archive, font, audio and video types) and the entries
  * added at run time with AddExtensionType, under a lock. */

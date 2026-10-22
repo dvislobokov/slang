@@ -1,9 +1,9 @@
-// std.crypto.kdf: key derivation. Pbkdf2 (RFC 8018) and Scrypt (RFC 7914)
+// crypto.kdf: key derivation. Pbkdf2 (RFC 8018) and Scrypt (RFC 7914)
 // are runtime functions (crypto/kdf.c); Argon2 (RFC 9106, version 0x13)
-// runs in C as well (std_argon2.c); Hkdf wraps std.crypto.hkdf.
-// Passwords and salts are []byte (std.strings.Bytes for strings); memory
+// runs in C as well (std_argon2.c); Hkdf wraps crypto.hkdf.
+// Passwords and salts are []byte (strings.Bytes for strings); memory
 // is in KiB.
-namespace std.crypto.kdf
+namespace crypto.kdf
 
 // Argon2id(password, salt, time, memory KiB, threads, keyLen): the
 // recommended password hash (RFC 9106 4: t=3, m=65536, p=4 or t=1,
@@ -68,6 +68,6 @@ func Argon2(password []byte, salt []byte, p Argon2Params) []byte! {
 
 // HKDF (RFC 5869): Extract then Expand to keyLen bytes.
 func Hkdf(hash string, secret []byte, salt []byte, info []byte, keyLen int) []byte! {
-    var prk = std.crypto.hkdf.Extract(hash, salt, secret)?
-    return std.crypto.hkdf.Expand(hash, prk, info, keyLen)?
+    var prk = crypto.hkdf.Extract(hash, salt, secret)?
+    return crypto.hkdf.Expand(hash, prk, info, keyLen)?
 }

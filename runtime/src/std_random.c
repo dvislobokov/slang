@@ -1,4 +1,4 @@
-/* std_random.c - std.random (zell_random_*): a non-cryptographic PRNG,
+/* std_random.c - random (zell_random_*): a non-cryptographic PRNG,
  * xoshiro256** (Blackman & Vigna) seeded through splitmix64. One state per
  * process, guarded by a mutex; seeded from getrandom(2) on first use unless
  * Seed() is called. The sequence after Seed(n) is fixed for a given n

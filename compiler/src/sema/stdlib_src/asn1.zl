@@ -1,11 +1,11 @@
-// std.encoding.asn1: a DER reader and writer (the subset X.509, PKCS and
+// encoding.asn1: a DER reader and writer (the subset X.509, PKCS and
 // most protocols use). The element scanner and OID decoder are the ones
-// std.crypto.x509 uses (its reader in x509.zl); this module adds the
+// crypto.x509 uses (its reader in x509.zl); this module adds the
 // public typed API on top: INTEGER (int and big.Int), BOOLEAN, NULL,
 // OBJECT IDENTIFIER, OCTET STRING, BIT STRING, UTF8/Printable/IA5/
 // Numeric/T61/BMP strings, UTCTime, GeneralizedTime, SEQUENCE, SET and
 // context-specific [n] tags; and a Builder that writes the same.
-namespace std.encoding.asn1
+namespace encoding.asn1
 
 // One encoded element. Tag is the whole identifier byte (class bits,
 // constructed bit and tag number < 31), as in x509.
@@ -51,7 +51,7 @@ struct BitString {
 
 // Reads consecutive DER elements.
 struct Reader {
-    r *std.crypto.x509.reader
+    r *crypto.x509.reader
 
     // True if elements remain.
     func More() bool {
@@ -76,9 +76,9 @@ struct Reader {
                 "asn1: " +
                     what +
                     ": want tag 0x" +
-                    std.strconv.FormatInt(tag, 16) +
+                    strconv.FormatInt(tag, 16) +
                     ", found 0x" +
-                    std.strconv.FormatInt(v.Tag, 16),
+                    strconv.FormatInt(v.Tag, 16),
             )
         }
         return v
@@ -98,7 +98,7 @@ struct Reader {
 
     // An explicit context-specific tag [n] (constructed): its contents.
     func ReadExplicit(n int) Reader! {
-        var v = this.expect(0xA0 | n, "[" + std.strconv.Itoa(n) + "]")?
+        var v = this.expect(0xA0 | n, "[" + strconv.Itoa(n) + "]")?
         return NewReader(v.Bytes)
     }
 
@@ -109,7 +109,7 @@ struct Reader {
 
     // An implicit context-specific primitive tag [n]: its content bytes.
     func ReadImplicit(n int) []byte! {
-        var v = this.expect(0x80 | n, "[" + std.strconv.Itoa(n) + "] IMPLICIT")?
+        var v = this.expect(0x80 | n, "[" + strconv.Itoa(n) + "] IMPLICIT")?
         return v.Bytes
     }
 
@@ -162,13 +162,13 @@ struct Reader {
     }
 
     // An INTEGER of any size (two's complement).
-    func ReadBigInt() std.math.big.Int! {
+    func ReadBigInt() math.big.Int! {
         var v = this.expect(2, "INTEGER")?
         checkInt(v.Bytes)?
-        var mag = std.math.big.FromBytes(v.Bytes)
+        var mag = math.big.FromBytes(v.Bytes)
         if v.Bytes[0] >= 128 {
             // negative: value = mag - 2^(8n)
-            return mag.Sub(std.math.big.NewInt(1).Lsh(8 * len(v.Bytes)))
+            return mag.Sub(math.big.NewInt(1).Lsh(8 * len(v.Bytes)))
         }
         return mag
     }
@@ -176,7 +176,7 @@ struct Reader {
     // An OBJECT IDENTIFIER in dotted form ("1.2.840.113549").
     func ReadOID() string! {
         var v = this.expect(6, "OBJECT IDENTIFIER")?
-        return std.crypto.x509.oidString(v.Bytes)?
+        return crypto.x509.oidString(v.Bytes)?
     }
 
     // ReadOctetString reads an OCTET STRING.
@@ -199,10 +199,10 @@ struct Reader {
         var v = this.Next()?
         switch v.Tag {
             case 12:
-                if !std.unicode.utf8.Valid(v.Bytes) {
+                if !unicode.utf8.Valid(v.Bytes) {
                     return error("asn1: invalid UTF8String")
                 }
-                return std.strings.FromBytes(v.Bytes)
+                return strings.FromBytes(v.Bytes)
             case 19, 22, 18, 20, 26:
                 for b in v.Bytes {
                     if b >= 128 && v.Tag != 20 {
@@ -215,9 +215,9 @@ struct Reader {
                     for b in v.Bytes {
                         rs = append(rs, char(int(b)))
                     }
-                    return std.strings.FromRunes(rs)
+                    return strings.FromRunes(rs)
                 }
-                return std.strings.FromBytes(v.Bytes)
+                return strings.FromBytes(v.Bytes)
             case 30:
                 if len(v.Bytes) % 2 != 0 {
                     return error("asn1: invalid BMPString")
@@ -228,18 +228,18 @@ struct Reader {
                     u = append(u, (uint16(v.Bytes[i]) << 8) | uint16(v.Bytes[i + 1]))
                     i += 2
                 }
-                return std.strings.FromRunes(std.unicode.utf16.Decode(u))
+                return strings.FromRunes(unicode.utf16.Decode(u))
         }
-        return error("asn1: not a string type: tag 0x" + std.strconv.FormatInt(v.Tag, 16))
+        return error("asn1: not a string type: tag 0x" + strconv.FormatInt(v.Tag, 16))
     }
 
     // A UTCTime or GeneralizedTime, in UTC.
-    func ReadTime() std.time.Time! {
+    func ReadTime() time.Time! {
         var v = this.Next()?
-        var s = std.strings.FromBytes(v.Bytes)
+        var s = strings.FromBytes(v.Bytes)
         if v.Tag == 23 {
-            var t = try std.time.ParseTime("060102150405Z0700", s) catch err {
-                return error("asn1: invalid UTCTime " + std.strconv.Quote(s))
+            var t = try time.ParseTime("060102150405Z0700", s) catch err {
+                return error("asn1: invalid UTCTime " + strconv.Quote(s))
             }
             // RFC 5280: YY >= 50 means 19YY
             var y = t.Year()
@@ -250,15 +250,15 @@ struct Reader {
         }
         if v.Tag == 24 {
             var layout = "20060102150405Z0700"
-            if std.strings.Contains(s, ".") {
+            if strings.Contains(s, ".") {
                 layout = "20060102150405.999999999Z0700"
             }
-            var t = try std.time.ParseTime(layout, s) catch err {
-                return error("asn1: invalid GeneralizedTime " + std.strconv.Quote(s))
+            var t = try time.ParseTime(layout, s) catch err {
+                return error("asn1: invalid GeneralizedTime " + strconv.Quote(s))
             }
             return t.UTC()
         }
-        return error("asn1: not a time: tag 0x" + std.strconv.FormatInt(v.Tag, 16))
+        return error("asn1: not a time: tag 0x" + strconv.FormatInt(v.Tag, 16))
     }
 }
 
@@ -273,7 +273,7 @@ func checkInt(b []byte) void! {
 
 // A Reader over the DER bytes b.
 func NewReader(b []byte) Reader {
-    return Reader{r: std.crypto.x509.newReader(b)}
+    return Reader{r: crypto.x509.newReader(b)}
 }
 
 // Writes DER: values are appended in order; AddSequence/AddSet/
@@ -344,7 +344,7 @@ struct Builder {
     }
 
     // AddBigInt appends an INTEGER of arbitrary size.
-    func AddBigInt(v std.math.big.Int) {
+    func AddBigInt(v math.big.Int) {
         if v.Sign() >= 0 {
             var b = v.Bytes()
             if len(b) == 0 || b[0] >= 128 {
@@ -358,8 +358,8 @@ struct Builder {
             return
         }
         // two's complement of a negative value: 2^(8n) + v with n minimal
-        var n = (v.Abs().Sub(std.math.big.NewInt(1)).BitLen() + 8) / 8
-        var tc = std.math.big.NewInt(1).Lsh(8 * n).Add(v).Bytes()
+        var n = (v.Abs().Sub(math.big.NewInt(1)).BitLen() + 8) / 8
+        var tc = math.big.NewInt(1).Lsh(8 * n).Add(v).Bytes()
         for len(tc) < n {
             var z []byte = [byte(0)]
             for c in tc {
@@ -372,16 +372,16 @@ struct Builder {
 
     // A dotted OID; error if it is malformed.
     func AddOID(oid string) void! {
-        var parts = std.strings.Split(oid, ".")
+        var parts = strings.Split(oid, ".")
         if len(parts) < 2 {
-            return error("asn1: invalid OID " + std.strconv.Quote(oid))
+            return error("asn1: invalid OID " + strconv.Quote(oid))
         }
         var nums []int = []
         for p in parts {
-            nums = append(nums, std.strconv.Atoi(p)?("asn1: invalid OID " + std.strconv.Quote(oid)))
+            nums = append(nums, strconv.Atoi(p)?("asn1: invalid OID " + strconv.Quote(oid)))
         }
         if nums[0] > 2 || (nums[0] < 2 && nums[1] >= 40) {
-            return error("asn1: invalid OID " + std.strconv.Quote(oid))
+            return error("asn1: invalid OID " + strconv.Quote(oid))
         }
         var body []byte = []
         body = base128(body, nums[0] * 40 + nums[1])
@@ -407,27 +407,27 @@ struct Builder {
 
     // AddUTF8String appends a UTF8String.
     func AddUTF8String(s string) {
-        this.AddTagged(12, std.strings.Bytes(s))
+        this.AddTagged(12, strings.Bytes(s))
     }
 
     // AddPrintableString appends a PrintableString.
     func AddPrintableString(s string) {
-        this.AddTagged(19, std.strings.Bytes(s))
+        this.AddTagged(19, strings.Bytes(s))
     }
 
     // AddIA5String appends an IA5String.
     func AddIA5String(s string) {
-        this.AddTagged(22, std.strings.Bytes(s))
+        this.AddTagged(22, strings.Bytes(s))
     }
 
     // UTCTime (years 1950..2049) "YYMMDDHHMMSSZ".
-    func AddUTCTime(t std.time.Time) {
-        this.AddTagged(23, std.strings.Bytes(t.UTC().Format("060102150405Z")))
+    func AddUTCTime(t time.Time) {
+        this.AddTagged(23, strings.Bytes(t.UTC().Format("060102150405Z")))
     }
 
     // GeneralizedTime "YYYYMMDDHHMMSSZ" (fraction if non-zero).
-    func AddGeneralizedTime(t std.time.Time) {
-        this.AddTagged(24, std.strings.Bytes(t.UTC().Format("20060102150405.999999999Z")))
+    func AddGeneralizedTime(t time.Time) {
+        this.AddTagged(24, strings.Bytes(t.UTC().Format("20060102150405.999999999Z")))
     }
 
     // A SEQUENCE whose contents fill writes.

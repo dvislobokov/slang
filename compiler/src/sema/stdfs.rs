@@ -6,12 +6,12 @@
 //!
 //! ```text
 //! std/<namespace path>/<file>.zl      every sema/stdlib_src/*.zl and sema/reflect_src/*.zl
-//!                                     (`std.net.http` -> std/net/http/http_client.zl),
+//!                                     (`net.http` -> std/net/http/http_client.zl),
 //!                                     and std/collections/collections.zl (sema/collections.rs)
 //! std/<namespace path>/<last>_extern.zl
 //!                                     `extern func` declarations with doc comments for
 //!                                     the C runtime functions of stdlib.rs `FUNCS`
-//!                                     (`std.strings` -> std/strings/strings_extern.zl)
+//!                                     (`strings` -> std/strings/strings_extern.zl)
 //! ```
 //!
 //! The compiler loads the Zell-source modules from the first of
@@ -51,10 +51,10 @@ pub fn find_std_dir(env: Option<PathBuf>, exe: Option<PathBuf>) -> Option<PathBu
     repo.is_dir().then(|| repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf()))
 }
 
-/// `std.net.http` + `http.zl` -> `net/http/http.zl`.
+/// `net.http` + `http.zl` -> `net/http/http.zl`.
 pub fn rel_path(ns: &str, file: &str) -> PathBuf {
     let mut p = PathBuf::new();
-    for seg in ns.split('.').skip(1) {
+    for seg in ns.split('.') {
         p.push(seg);
     }
     p.push(file);
@@ -120,13 +120,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zell-stdfs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("net/http")).unwrap();
-        std::fs::write(dir.join("net/http/http.zl"), "namespace std.net.http\n// from disk\n").unwrap();
-        let (t, o) = load_from(Some(&dir), "std.net.http", "http.zl", "embedded");
+        std::fs::write(dir.join("net/http/http.zl"), "namespace net.http\n// from disk\n").unwrap();
+        let (t, o) = load_from(Some(&dir), "net.http", "http.zl", "embedded");
         assert!(t.contains("from disk"));
         assert_eq!(o, Origin::Disk(dir.join("net/http/http.zl")));
-        let (t, o) = load_from(Some(&dir), "std.net.http", "missing.zl", "embedded");
+        let (t, o) = load_from(Some(&dir), "net.http", "missing.zl", "embedded");
         assert_eq!((t.as_ref(), o), ("embedded", Origin::Embedded));
-        let (_, o) = load_from(None, "std.net.http", "http.zl", "embedded");
+        let (_, o) = load_from(None, "net.http", "http.zl", "embedded");
         assert_eq!(o, Origin::Embedded);
         // An explicit ZELL_STD wins, even when it does not exist.
         assert_eq!(find_std_dir(Some(dir.clone()), None), Some(dir.clone()));
@@ -145,7 +145,7 @@ mod tests {
         assert!(repo.join("net/http/http_client.zl").is_file());
         let ext = std::fs::read_to_string(repo.join("strings/strings_extern.zl")).unwrap();
         assert!(ext.contains("extern func Split("), "{ext}");
-        assert_eq!(rel_path("std.net.http", "http.zl"), PathBuf::from("net/http/http.zl"));
+        assert_eq!(rel_path("net.http", "http.zl"), PathBuf::from("net/http/http.zl"));
         // Every file of the tree parses (the extern files included).
         fn walk(d: &Path, out: &mut Vec<PathBuf>) {
             for e in std::fs::read_dir(d).unwrap().flatten() {

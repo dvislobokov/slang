@@ -1,4 +1,4 @@
-/* std_zstd.c - Zstandard decoder (RFC 8878) for std.compress.zstd
+/* std_zstd.c - Zstandard decoder (RFC 8878) for compress.zstd
  * (runtime/ABI.md 19.2). Whole frames are decoded into memory: Raw, RLE
  * and Compressed blocks, Huffman-coded literals (1 or 4 streams, treeless
  * reuse), FSE-coded sequences (predefined, RLE, compressed and repeat

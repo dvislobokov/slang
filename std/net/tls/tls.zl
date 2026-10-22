@@ -1,9 +1,9 @@
-// The Zell-source std.net.tls (see sema/stdsrc.rs for the rules): TLS 1.3
+// The Zell-source net.tls (see sema/stdsrc.rs for the rules): TLS 1.3
 // (RFC 8446) and TLS 1.2 restricted to ECDHE + AEAD (RFC 5246, 5288, 7905,
-// 7627), client and server, over std.net TCP connections. This file holds
+// 7627), client and server, over net TCP connections. This file holds
 // the public API, the key schedule and the record layer; the handshake
 // state machines are in tls_client.zl and tls_server.zl. Cryptography is
-// done by the C primitives of std.crypto.* (runtime/src/crypto/); the
+// done by the C primitives of crypto.* (runtime/src/crypto/); the
 // record AEAD contexts live in []byte blobs (rtAeadNew).
 //
 // Wire constants are written as numbers with their RFC names in comments:
@@ -13,7 +13,7 @@
 // 12 server_key_exchange, 13 certificate_request, 14 server_hello_done,
 // 15 certificate_verify, 16 client_key_exchange, 20 finished,
 // 24 key_update, 254 message_hash.
-namespace std.net.tls
+namespace net.tls
 
 // ---- byte helpers -------------------------------------------------------------
 
@@ -26,7 +26,7 @@ func u24(b []byte, i int) int {
 }
 
 func bytesOf(s string) []byte {
-    return std.strings.Bytes(s)
+    return strings.Bytes(s)
 }
 
 func cat(a []byte, b []byte) []byte {
@@ -50,7 +50,7 @@ func same(a []byte, b []byte) bool {
 }
 
 func randomBytes(n int) []byte! {
-    return std.crypto.rand.Bytes(n)?
+    return crypto.rand.Bytes(n)?
 }
 
 // Big-endian encoding of v in k bytes.
@@ -262,7 +262,7 @@ func alertText(d int) string {
         case 116: return "certificate required"
         case 120: return "no application protocol"
     }
-    return std.fmt.Format("alert({0})", d)
+    return fmt.Format("alert({0})", d)
 }
 
 // ---- cipher suites, groups and signature schemes ------------------------------
@@ -374,14 +374,14 @@ func CipherSuiteName(id int) string {
 
 // Suites in preference order (ChaCha20 first without AES hardware).
 func suites13() []int {
-    if std.crypto.aes.HasHardware() {
+    if crypto.aes.HasHardware() {
         return [4865, 4866, 4867]
     }
     return [4867, 4865, 4866]
 }
 
 func suites12() []int {
-    if std.crypto.aes.HasHardware() {
+    if crypto.aes.HasHardware() {
         return [49195, 49199, 49196, 49200, 52393, 52392]
     }
     return [52393, 52392, 49195, 49199, 49196, 49200]
@@ -398,7 +398,7 @@ func hashLen(h string) int {
 }
 
 func hashOf(h string, data []byte) []byte! {
-    return std.crypto.hash.Sum(h, data)?
+    return crypto.hash.Sum(h, data)?
 }
 
 func containsInt(xs []int, v int) bool {
@@ -417,7 +417,7 @@ func versionName(v int) string {
     if v == 771 {
         return "TLS 1.2"
     }
-    return std.fmt.Sprintf("0x%04x", v)
+    return fmt.Sprintf("0x%04x", v)
 }
 
 // Signature schemes we can verify, in our preference order:
@@ -438,7 +438,7 @@ func schemeHash(s int) string {
 }
 
 // The scheme to sign with for key, given what the peer accepts.
-func pickScheme(key std.crypto.x509.PrivateKey, peer []int, v13 bool) int {
+func pickScheme(key crypto.x509.PrivateKey, peer []int, v13 bool) int {
     var prefs []int = []
     if key.Algorithm == "ECDSA" && len(key.Bytes) == 48 {
         prefs = [1283]
@@ -461,26 +461,26 @@ func pickScheme(key std.crypto.x509.PrivateKey, peer []int, v13 bool) int {
     return 0
 }
 
-func signWith(key std.crypto.x509.PrivateKey, scheme int, content []byte) []byte! {
+func signWith(key crypto.x509.PrivateKey, scheme int, content []byte) []byte! {
     if scheme == 2055 {
-        return std.crypto.ed25519.Sign(key.Bytes, content)?
+        return crypto.ed25519.Sign(key.Bytes, content)?
     }
     var h = schemeHash(scheme)
     var digest = hashOf(h, content)?
     if scheme == 1027 {
-        return std.crypto.ecdsa.Sign(key.Bytes, digest)?
+        return crypto.ecdsa.Sign(key.Bytes, digest)?
     }
     if scheme == 1283 {
-        return std.crypto.ecdsa.SignP384(key.Bytes, digest)?
+        return crypto.ecdsa.SignP384(key.Bytes, digest)?
     }
     if scheme >= 2052 && scheme <= 2054 {
-        return std.crypto.rsa.SignPSS(key.Bytes, h, digest)?
+        return crypto.rsa.SignPSS(key.Bytes, h, digest)?
     }
-    return std.crypto.rsa.SignPKCS1v15(key.Bytes, h, digest)?
+    return crypto.rsa.SignPKCS1v15(key.Bytes, h, digest)?
 }
 
 func verifyWith(
-    cert *std.crypto.x509.Certificate,
+    cert *crypto.x509.Certificate,
     scheme int,
     content []byte,
     sig []byte,
@@ -488,7 +488,7 @@ func verifyWith(
 ) void! {
     var alg = cert.PublicKeyAlgorithm
     if scheme == 2055 {
-        if alg != "Ed25519" || !std.crypto.ed25519.Verify(cert.PublicKey, content, sig) {
+        if alg != "Ed25519" || !crypto.ed25519.Verify(cert.PublicKey, content, sig) {
             return error("tls: invalid Ed25519 signature from the peer")
         }
         return
@@ -496,7 +496,7 @@ func verifyWith(
     var h = schemeHash(scheme)
     if h == "" || (v13 && scheme >= 1025 && scheme <= 1537 && scheme % 256 == 1) {
         return error(
-            std.fmt.Sprintf("tls: peer used an unsupported signature scheme 0x%04x", scheme),
+            fmt.Sprintf("tls: peer used an unsupported signature scheme 0x%04x", scheme),
         )
     }
     var digest = hashOf(h, content)?
@@ -508,9 +508,9 @@ func verifyWith(
         }
         var good = false
         if alg == "ECDSA" && curve == "P-256" {
-            good = std.crypto.ecdsa.Verify(cert.PublicKey, digest, sig)
+            good = crypto.ecdsa.Verify(cert.PublicKey, digest, sig)
         } else if alg == "ECDSA" && curve == "P-384" {
-            good = std.crypto.ecdsa.VerifyP384(cert.PublicKey, digest, sig)
+            good = crypto.ecdsa.VerifyP384(cert.PublicKey, digest, sig)
         }
         if !good {
             return error("tls: invalid ECDSA signature from the peer")
@@ -522,9 +522,9 @@ func verifyWith(
     }
     var good = false
     if scheme >= 2052 && scheme <= 2054 {
-        good = std.crypto.rsa.VerifyPSS(cert.PublicKey, cert.RSAExponent, h, digest, sig)
+        good = crypto.rsa.VerifyPSS(cert.PublicKey, cert.RSAExponent, h, digest, sig)
     } else {
-        good = std.crypto.rsa.VerifyPKCS1v15(cert.PublicKey, cert.RSAExponent, h, digest, sig)
+        good = crypto.rsa.VerifyPKCS1v15(cert.PublicKey, cert.RSAExponent, h, digest, sig)
     }
     if !good {
         return error("tls: invalid RSA signature from the peer")
@@ -541,15 +541,15 @@ struct keyShare {
 
 func newKeyShare(group int) keyShare! {
     if group == 29 {
-        var p = std.crypto.x25519.GenerateKey()?
-        return keyShare{group: 29, priv: p, pub: std.crypto.x25519.PublicKey(p)?}
+        var p = crypto.x25519.GenerateKey()?
+        return keyShare{group: 29, priv: p, pub: crypto.x25519.PublicKey(p)?}
     }
     if group == 24 {
-        var p = std.crypto.ecdh.GenerateKeyP384()?
-        return keyShare{group: 24, priv: p, pub: std.crypto.ecdh.PublicKeyP384(p)?}
+        var p = crypto.ecdh.GenerateKeyP384()?
+        return keyShare{group: 24, priv: p, pub: crypto.ecdh.PublicKeyP384(p)?}
     }
-    var p = std.crypto.ecdh.GenerateKey()?
-    return keyShare{group: 23, priv: p, pub: std.crypto.ecdh.PublicKey(p)?}
+    var p = crypto.ecdh.GenerateKey()?
+    return keyShare{group: 23, priv: p, pub: crypto.ecdh.PublicKey(p)?}
 }
 
 func sharedSecret(ks keyShare, peer []byte) []byte! {
@@ -557,18 +557,18 @@ func sharedSecret(ks keyShare, peer []byte) []byte! {
         if len(peer) != 32 {
             return error("tls: invalid X25519 key share")
         }
-        return std.crypto.x25519.SharedSecret(ks.priv, peer)?
+        return crypto.x25519.SharedSecret(ks.priv, peer)?
     }
     if ks.group == 24 {
         if len(peer) != 97 {
             return error("tls: invalid P-384 key share")
         }
-        return std.crypto.ecdh.SharedSecretP384(ks.priv, peer)?
+        return crypto.ecdh.SharedSecretP384(ks.priv, peer)?
     }
     if len(peer) != 65 {
         return error("tls: invalid P-256 key share")
     }
-    return std.crypto.ecdh.SharedSecret(ks.priv, peer)?
+    return crypto.ecdh.SharedSecret(ks.priv, peer)?
 }
 
 // ---- key schedule ---------------------------------------------------------------
@@ -580,7 +580,7 @@ func ExpandLabel(hash string, secret []byte, label string, context []byte, lengt
     b.u16(length)
     b.vec8(bytesOf("tls13 " + label))
     b.vec8(context)
-    return std.crypto.hkdf.Expand(hash, secret, b.bytes(), length)?
+    return crypto.hkdf.Expand(hash, secret, b.bytes(), length)?
 }
 
 // DeriveSecret is Derive-Secret(secret, label, messages) of RFC 8446 7.1
@@ -595,7 +595,7 @@ func earlySecret(h string, psk []byte) []byte! {
     if len(ikm) == 0 {
         ikm = rtZeros(hashLen(h))
     }
-    return std.crypto.hkdf.Extract(h, [], ikm)?
+    return crypto.hkdf.Extract(h, [], ikm)?
 }
 
 // Next extract stage: HKDF-Extract(Derive-Secret(prev, "derived", ""), ikm).
@@ -606,12 +606,12 @@ func nextSecret(h string, prev []byte, ikm []byte) []byte! {
     if len(input) == 0 {
         input = rtZeros(hashLen(h))
     }
-    return std.crypto.hkdf.Extract(h, salt, input)?
+    return crypto.hkdf.Extract(h, salt, input)?
 }
 
 func finishedMAC(h string, baseKey []byte, transcriptHash []byte) []byte! {
     var fk = ExpandLabel(h, baseKey, "finished", [], hashLen(h))?
-    return std.crypto.hmac.Sum(h, fk, transcriptHash)?
+    return crypto.hmac.Sum(h, fk, transcriptHash)?
 }
 
 // TLS 1.2 PRF (RFC 5246 5): P_hash(secret, label + seed).
@@ -620,8 +620,8 @@ func prf12(h string, secret []byte, label string, seed []byte, n int) []byte! {
     var a = ls
     var out []byte = []
     for len(out) < n {
-        a = std.crypto.hmac.Sum(h, secret, a)?
-        out = cat(out, std.crypto.hmac.Sum(h, secret, cat(a, ls))?)
+        a = crypto.hmac.Sum(h, secret, a)?
+        out = cat(out, crypto.hmac.Sum(h, secret, cat(a, ls))?)
     }
     return out[..n]
 }
@@ -791,15 +791,15 @@ func OpenRecord(suite int, key []byte, iv []byte, seq int, rec []byte) []byte! {
 
 // Certificate is a certificate chain (leaf first) with its private key.
 struct Certificate {
-    Chain []*std.crypto.x509.Certificate
-    Key   std.crypto.x509.PrivateKey
+    Chain []*crypto.x509.Certificate
+    Key   crypto.x509.PrivateKey
 }
 
 // LoadKeyPair parses a PEM certificate chain and a PEM private key and
 // checks that the key belongs to the leaf.
 func LoadKeyPair(certPEM string, keyPEM string) Certificate! {
-    var chain = std.crypto.x509.ParsePEM(certPEM)?
-    var key = std.crypto.x509.ParsePrivateKeyPEM(keyPEM)?
+    var chain = crypto.x509.ParsePEM(certPEM)?
+    var key = crypto.x509.ParsePrivateKeyPEM(keyPEM)?
     if !key.Matches(chain[0]) {
         return error("tls: private key does not match the certificate")
     }
@@ -808,7 +808,7 @@ func LoadKeyPair(certPEM string, keyPEM string) Certificate! {
 
 // LoadKeyPairFiles is LoadKeyPair reading two files.
 func LoadKeyPairFiles(certFile string, keyFile string) Certificate! {
-    return LoadKeyPair(std.io.ReadFile(certFile)?, std.io.ReadFile(keyFile)?)?
+    return LoadKeyPair(io.ReadFile(certFile)?, io.ReadFile(keyFile)?)?
 }
 
 // Config configures a client.
@@ -818,8 +818,8 @@ struct Config {
     ServerName string
     // Application protocols to offer, in preference order ("h2", "http/1.1").
     ALPN []string
-    // Trust anchors; nil means the system roots (std.crypto.x509.SystemRoots).
-    RootCAs *std.crypto.x509.CertPool
+    // Trust anchors; nil means the system roots (crypto.x509.SystemRoots).
+    RootCAs *crypto.x509.CertPool
     // Certificate presented when the server asks for one.
     ClientCert *Certificate
     // Skips the chain and host name checks (the handshake signature is
@@ -841,7 +841,7 @@ struct ServerConfig {
     // VerifyClientCertIfGiven or RequireAndVerifyClientCert.
     ClientAuth int
     // Roots for verifying client certificates (nil: system roots).
-    ClientCAs  *std.crypto.x509.CertPool
+    ClientCAs  *crypto.x509.CertPool
     MinVersion int
     MaxVersion int
     // Application protocols the server supports, in preference order.
@@ -862,9 +862,9 @@ struct ConnectionState {
     ALPN       string
     ServerName string
     // Leaf first, as sent by the peer.
-    PeerCertificates []*std.crypto.x509.Certificate
+    PeerCertificates []*crypto.x509.Certificate
     // The verified chain (empty when not verified).
-    VerifiedChain []*std.crypto.x509.Certificate
+    VerifiedChain []*crypto.x509.Certificate
     // The handshake resumed an earlier session.
     Resumed           bool
     HandshakeComplete bool
@@ -886,8 +886,8 @@ struct session {
     received  int
     lifetime  int
     alpn      string
-    peerCerts []*std.crypto.x509.Certificate
-    verified  []*std.crypto.x509.Certificate
+    peerCerts []*crypto.x509.Certificate
+    verified  []*crypto.x509.Certificate
 }
 
 // SessionCache keeps the latest session ticket per server for clients
@@ -897,32 +897,32 @@ struct SessionCache {
     m     map[string]*session
 
     func get(key string) *session {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var s = this.m[key]
-        std.task.rtUnlock(&this.guard)
-        if s != nil && std.time.Now() > s.received + s.lifetime * 1000 {
+        task.rtUnlock(&this.guard)
+        if s != nil && time.Now() > s.received + s.lifetime * 1000 {
             return nil
         }
         return s
     }
 
     func put(key string, s *session) {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         this.m[key] = s
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     func remove(key string) {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         delete(this.m, key)
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
     }
 
     // Number of cached sessions.
     func Len() int {
-        std.task.rtLock(&this.guard)
+        task.rtLock(&this.guard)
         var n = len(this.m)
-        std.task.rtUnlock(&this.guard)
+        task.rtUnlock(&this.guard)
         return n
     }
 }
@@ -1018,7 +1018,7 @@ struct Conn {
 
 // The shared state of a connection.
 struct conn {
-    raw      std.net.Conn
+    raw      net.Conn
     isClient bool
     cfg      Config
     srv      *serverState
@@ -1042,14 +1042,14 @@ struct conn {
     sentClose bool
     gotClose  bool
     alert     int
-    hsMu      std.task.Mutex
-    wMu       std.task.Mutex
+    hsMu      task.Mutex
+    wMu       task.Mutex
     // results
     suite      suiteInfo
     alpn       string
     serverName string
-    peerCerts  []*std.crypto.x509.Certificate
-    verified   []*std.crypto.x509.Certificate
+    peerCerts  []*crypto.x509.Certificate
+    verified   []*crypto.x509.Certificate
     resumed    bool
     // TLS 1.3 secrets kept after the handshake
     resMaster []byte
@@ -1108,7 +1108,7 @@ struct conn {
         var typ = int(this.inbuf[0])
         var n = u16(this.inbuf, 3)
         if typ < 20 || typ > 23 {
-            return this.fail(10, std.fmt.Format("invalid record type {0} (not a TLS peer?)", typ))
+            return this.fail(10, fmt.Format("invalid record type {0} (not a TLS peer?)", typ))
         }
         if int(this.inbuf[1]) != 3 {
             return this.fail(70, "invalid record version")
@@ -1177,7 +1177,7 @@ struct conn {
         if m.typ != want {
             return this.fail(
                 10,
-                std.fmt.Format("unexpected handshake message {0} (want {1})", m.typ, what),
+                fmt.Format("unexpected handshake message {0} (want {1})", m.typ, what),
             )
         }
         return m
@@ -1351,7 +1351,7 @@ struct conn {
 
     async func readString(n int) string! {
         var b = await this.read(n)?
-        return std.strings.FromBytes(b)
+        return strings.FromBytes(b)
     }
 
     // Handles buffered post-handshake messages.
@@ -1387,7 +1387,7 @@ struct conn {
                 } else {
                     return this.fail(
                         10,
-                        std.fmt.Format("unexpected post-handshake message {0}", m.typ),
+                        fmt.Format("unexpected post-handshake message {0}", m.typ),
                     )
                 }
             } else if m.typ == 0 && this.isClient {
@@ -1481,14 +1481,14 @@ struct hsMsg {
     raw  []byte
 }
 
-func newConn(raw std.net.Conn, client bool) *conn {
+func newConn(raw net.Conn, client bool) *conn {
     var none []byte = []
     return new conn{raw: raw, isClient: client, inbuf: none, transcript: none}
 }
 
 // Client wraps an established TCP connection as the client side of TLS
 // and runs the handshake.
-async func Client(raw std.net.Conn, cfg Config) Conn! {
+async func Client(raw net.Conn, cfg Config) Conn! {
     var c = newConn(raw, true)
     c.cfg = cfg
     c.serverName = cfg.ServerName
@@ -1504,12 +1504,12 @@ async func Dial(addr string, cfg Config) Conn! {
 // DialTimeout is Dial with a timeout (ms, 0 = none) for the connect and
 // for every network operation of the handshake.
 async func DialTimeout(addr string, cfg Config, ms int) Conn! {
-    var hp = std.net.SplitHostPort(addr)?
+    var hp = net.SplitHostPort(addr)?
     var conf = cfg
     if conf.ServerName == "" {
         conf.ServerName = hp.Host
     }
-    var raw = await std.net.DialTimeout(addr, ms)?
+    var raw = await net.DialTimeout(addr, ms)?
     raw.SetTimeout(ms)
     var c = newConn(raw, true)
     c.cfg = conf
@@ -1535,7 +1535,7 @@ func newServerState(cfg ServerConfig) *serverState! {
 
 // ServerConn wraps an accepted TCP connection as the server side of TLS;
 // the handshake runs on first use (or Handshake()).
-func ServerConn(raw std.net.Conn, cfg ServerConfig) Conn! {
+func ServerConn(raw net.Conn, cfg ServerConfig) Conn! {
     var c = newConn(raw, false)
     c.srv = newServerState(cfg)?
     return Conn{c: c}
@@ -1543,7 +1543,7 @@ func ServerConn(raw std.net.Conn, cfg ServerConfig) Conn! {
 
 // Listener accepts TLS connections from a TCP listener.
 struct Listener {
-    l  std.net.Listener
+    l  net.Listener
     st *serverState
 
     // Waits for the next TCP connection; its handshake runs on first use.
@@ -1567,7 +1567,7 @@ struct Listener {
     }
 }
 
-async func acceptTLS(l std.net.Listener, st *serverState) Conn! {
+async func acceptTLS(l net.Listener, st *serverState) Conn! {
     var raw = await l.Accept()?
     var c = newConn(raw, false)
     c.srv = st
@@ -1575,7 +1575,7 @@ async func acceptTLS(l std.net.Listener, st *serverState) Conn! {
 }
 
 // Server makes a TLS listener from a TCP listener.
-func Server(l std.net.Listener, cfg ServerConfig) Listener! {
+func Server(l net.Listener, cfg ServerConfig) Listener! {
     if len(cfg.Certificates) == 0 {
         return error("tls: ServerConfig has no certificates")
     }
@@ -1584,6 +1584,6 @@ func Server(l std.net.Listener, cfg ServerConfig) Listener! {
 
 // Listen listens on addr ("host:port") and returns a TLS listener.
 func Listen(addr string, cfg ServerConfig) Listener! {
-    var l = std.net.Listen(addr)?
+    var l = net.Listen(addr)?
     return Server(l, cfg)?
 }

@@ -257,7 +257,7 @@ impl<'a> Fmt<'a> {
         concat(parts)
     }
 
-    /// Imports sorted: `std` and its children first, then the rest, one
+    /// Imports sorted: standard library namespaces first, then the rest, one
     /// blank line between the groups; comments move with their import.
     fn imports(&mut self, imports: &[Import]) -> Doc {
         let mut items: Vec<(bool, String, Doc)> = Vec::new();
@@ -269,7 +269,7 @@ impl<'a> Fmt<'a> {
                 line.push_str(&format!(" as {}", a.name));
             }
             let trail = self.trailing(imp.span.end);
-            let is_std = imp.path.segments.first().is_some_and(|s| s.name == "std");
+            let is_std = crate::sema::stdlib::is_std_namespace(&path);
             let key = format!("{path} {}", imp.alias.as_ref().map_or("", |a| a.name.as_str()));
             items.push((!is_std, key, concat(vec![pre, text(line), trail])));
         }

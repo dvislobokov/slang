@@ -1,8 +1,8 @@
 /* crypto.h - internal API of the cryptographic primitives (runtime/src/crypto/).
  *
  * Everything here is private to the runtime (zell__ prefix). The Zell-facing
- * wrappers (std.crypto.aes/chacha/x25519/ecdsa/ed25519/rsa/hkdf and the
- * internal rt* helpers of std.net.tls / std.crypto.x509) are in
+ * wrappers (crypto.aes/chacha/x25519/ecdsa/ed25519/rsa/hkdf and the
+ * internal rt* helpers of net.tls / crypto.x509) are in
  * api.c; see runtime/ABI.md section 19.
  *
  * Rules for every primitive:

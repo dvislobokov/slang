@@ -1,4 +1,4 @@
-// std.process: running child processes (Go's os/exec), asynchronously.
+// process: running child processes (Go's os/exec), asynchronously.
 //
 //   var r = await process.Run("git", ["status", "--short"])?
 //   println(r.ExitCode, r.Stdout)
@@ -9,11 +9,11 @@
 //   var out = await p.Stdout.ReadAll()?
 //   var code = await p.Wait()?
 //
-// The pipes implement std.io.AsyncReader / AsyncWriter (waits go through
+// The pipes implement io.AsyncReader / AsyncWriter (waits go through
 // the scheduler's poller; no worker thread blocks). Cancelling the task
 // that waits (task.WithTimeout, Options.Timeout) kills the child.
 // Runtime: runtime/src/std_process.c.
-namespace std.process
+namespace process
 
 // Stream modes for Options.Stdin/Stdout/Stderr.
 // Inherit (0): the parent's stream; Pipe (1): a pipe to this process;
@@ -29,7 +29,7 @@ struct Options {
     Stdout   int
     Stderr   int
     // Kill the child if it runs longer (zero: no limit).
-    Timeout std.time.Duration
+    Timeout time.Duration
 }
 
 // The read end of a child's stdout/stderr.
@@ -37,7 +37,7 @@ struct ReadPipe {
     st *pipeFd
 
     // Up to n bytes as they arrive; empty at the end of the stream
-    // (std.io.AsyncReader).
+    // (io.AsyncReader).
     func Read(n int) Task<[]byte!> {
         return readPipeRead(*this, n)
     }
@@ -56,7 +56,7 @@ struct ReadPipe {
 struct WritePipe {
     st *pipeFd
 
-    // Writes all of data (std.io.AsyncWriter).
+    // Writes all of data (io.AsyncWriter).
     func Write(data []byte) Task<int!> {
         return writePipeWrite(*this, data)
     }
@@ -114,7 +114,7 @@ struct Process {
     Stdin   WritePipe
     Stdout  ReadPipe
     Stderr  ReadPipe
-    timeout std.time.Duration
+    timeout time.Duration
 
     func Pid() int {
         return this.st.pid
@@ -137,7 +137,7 @@ struct Process {
         } catch err {}
     }
 
-    // Sends signal sig (std.os.signal.SIGTERM ...).
+    // Sends signal sig (os.signal.SIGTERM ...).
     func Signal(sig int) void! {
         if !this.st.done {
             rtKill(this.st.pid, sig)?
@@ -202,8 +202,8 @@ async func RunWith(cmd string, args []string, opts Options) Result! {
     var eb = await errs
     return Result{
         ExitCode: code,
-        Stdout: std.strings.FromBytes(ob),
-        Stderr: std.strings.FromBytes(eb),
+        Stdout: strings.FromBytes(ob),
+        Stderr: strings.FromBytes(eb),
     }
 }
 
@@ -211,9 +211,9 @@ async func RunWith(cmd string, args []string, opts Options) Result! {
 async func Output(cmd string, args []string) string! {
     var r = await Run(cmd, args)?
     if r.ExitCode != 0 {
-        var msg = std.strings.Trim(r.Stderr)
+        var msg = strings.Trim(r.Stderr)
         if msg == "" {
-            msg = "exit status " + std.strconv.Itoa(r.ExitCode)
+            msg = "exit status " + strconv.Itoa(r.ExitCode)
         }
         return error(cmd + ": " + msg)
     }
@@ -223,13 +223,13 @@ async func Output(cmd string, args []string) string! {
 // The path of an executable named file: file itself if it contains a
 // "/", else the first match in $PATH.
 func LookPath(file string) string! {
-    if std.strings.Contains(file, "/") {
+    if strings.Contains(file, "/") {
         if rtExecutable(file) {
             return file
         }
-        return error("exec: " + std.strconv.Quote(file) + ": not an executable file")
+        return error("exec: " + strconv.Quote(file) + ": not an executable file")
     }
-    for dir in std.strings.Split(std.os.Getenv("PATH"), ":") {
+    for dir in strings.Split(os.Getenv("PATH"), ":") {
         var d = dir
         if d == "" {
             d = "."
@@ -239,7 +239,7 @@ func LookPath(file string) string! {
             return p
         }
     }
-    return error("exec: " + std.strconv.Quote(file) + ": executable file not found in $PATH")
+    return error("exec: " + strconv.Quote(file) + ": executable file not found in $PATH")
 }
 
 async func readPipeRead(self ReadPipe, n int) []byte! {
@@ -255,7 +255,7 @@ async func readPipeRead(self ReadPipe, n int) []byte! {
         }
         var r = await rtWaitReadable(s.fd, -1)
         if r == 3 {
-            return std.task.ErrCancelled
+            return task.ErrCancelled
         }
         if r == 2 {
             return []
@@ -290,7 +290,7 @@ async func writePipeWrite(self WritePipe, data []byte) int! {
         }
         var r = await rtWaitWritable(s.fd, -1)
         if r == 3 {
-            return std.task.ErrCancelled
+            return task.ErrCancelled
         }
         if r == 2 {
             return error("process: write to closed stdin")
@@ -300,7 +300,7 @@ async func writePipeWrite(self WritePipe, data []byte) int! {
 }
 
 async func writePipeWriteString(self WritePipe, s string) int! {
-    return await self.Write(std.strings.Bytes(s))?
+    return await self.Write(strings.Bytes(s))?
 }
 
 async func processWait(self Process) int! {
@@ -310,7 +310,7 @@ async func processWait(self Process) int! {
     }
     var deadline = 0
     if self.timeout.Nanoseconds() > 0 {
-        deadline = std.diag.rtMonoNanos() + self.timeout.Nanoseconds()
+        deadline = diag.rtMonoNanos() + self.timeout.Nanoseconds()
     }
     for {
         var c = rtWaitPid(s.pid)?
@@ -325,7 +325,7 @@ async func processWait(self Process) int! {
         }
         var ms = -1
         if deadline > 0 {
-            var left = deadline - std.diag.rtMonoNanos()
+            var left = deadline - diag.rtMonoNanos()
             if left <= 0 {
                 self.killQuietly()
                 deadline = 0
@@ -337,13 +337,13 @@ async func processWait(self Process) int! {
             var r = await rtWaitReadable(s.pidfd, ms)
             if r == 3 {
                 self.killQuietly()
-                return std.task.ErrCancelled
+                return task.ErrCancelled
             }
         } else {
-            await std.task.Delay(5)
-            if std.task.IsCancelled() {
+            await task.Delay(5)
+            if task.IsCancelled() {
                 self.killQuietly()
-                return std.task.ErrCancelled
+                return task.ErrCancelled
             }
         }
     }

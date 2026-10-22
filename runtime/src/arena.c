@@ -1,4 +1,4 @@
-/* arena.c - std.arena: bump allocation of objects freed all at once (ABI.md 3.6).
+/* arena.c - arena: bump allocation of objects freed all at once (ABI.md 3.6).
  *
  * An arena is a list of chunks. Every allocation is a record: a 16-byte
  * prefix (record size, unused word) followed by an ordinary object header

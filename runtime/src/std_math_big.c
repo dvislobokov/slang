@@ -1,4 +1,4 @@
-/* std_math_big.c - natural-number (magnitude) arithmetic for std.math.big.
+/* std_math_big.c - natural-number (magnitude) arithmetic for math.big.
  *
  * A magnitude is a Zell []uint32 of little-endian base-2^32 limbs with no
  * high zero limbs (zero is the empty slice). Every function here takes

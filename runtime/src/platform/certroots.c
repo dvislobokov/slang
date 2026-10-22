@@ -1,5 +1,5 @@
 /* certroots.c - where the system keeps its trusted root certificates
- * (std.crypto.x509.SystemRoots). $SSL_CERT_FILE always wins. Linux
+ * (crypto.x509.SystemRoots). $SSL_CERT_FILE always wins. Linux
  * distributions and the BSDs ship a PEM bundle; macOS ships one too
  * (/etc/ssl/cert.pem, maintained with the system's roots; the keychain's
  * user-added roots are not included). Windows keeps roots in the

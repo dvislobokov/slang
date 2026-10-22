@@ -2,7 +2,7 @@
 #   valgrind --suppressions=runtime/tests/valgrind.supp ./program
 #
 # glibc keeps a per-thread resolver context (resolv.conf contents) for every
-# thread that called getaddrinfo; the resolver pool threads of std.net
+# thread that called getaddrinfo; the resolver pool threads of net
 # (runtime/src/std_net.c) are parked, not joined, at exit, and memcheck
 # reports the context reachable only from their TLS as lost.
 {

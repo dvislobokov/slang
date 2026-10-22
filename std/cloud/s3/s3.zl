@@ -1,4 +1,4 @@
-// std.cloud.s3: an S3 client written in Zell over std.net.http (docs/
+// cloud.s3: an S3 client written in Zell over net.http (docs/
 // STDLIB.md level 3b), compatible with AWS S3, MinIO, Cloudflare R2 and
 // Google Cloud Storage's XML API. Two files share the namespace:
 //
@@ -14,14 +14,14 @@
 // over https). Errors from the service are s3.Error values; NoSuchKey,
 // NoSuchBucket, AccessDenied and PreconditionFailed also match the
 // sentinels ErrNoSuchKey... with errors.Is.
-namespace std.cloud.s3
+namespace cloud.s3
 
 // ---- Signature V4 ----------------------------------------------------------------
 
 // RFC 3986 percent-encoding as SigV4 wants it: unreserved characters
 // (A-Z a-z 0-9 - _ . ~) as they are, '/' kept unless encodeSlash.
 func URIEncode(s string, encodeSlash bool) string {
-    var b = std.strings.Builder{}
+    var b = strings.Builder{}
     var hex = "0123456789ABCDEF"
     for i in 0..len(s) {
         var c = int(s[i])
@@ -41,7 +41,7 @@ struct Param {
 }
 
 func unescapeQuery(s string) string {
-    return try std.net.url.QueryUnescape(s) else s
+    return try net.url.QueryUnescape(s) else s
 }
 
 // Parses a raw query ("a=1&b") into parameters.
@@ -50,11 +50,11 @@ func parseQuery(raw string) []Param {
     if raw == "" {
         return out
     }
-    for part in std.strings.Split(raw, "&") {
+    for part in strings.Split(raw, "&") {
         if part == "" {
             continue
         }
-        var eq = std.strings.Index(part, "=")
+        var eq = strings.Index(part, "=")
         if eq < 0 {
             out = append(out, Param{Key: unescapeQuery(part)})
         } else {
@@ -71,14 +71,14 @@ func CanonicalQuery(params []Param) string {
     for p in params {
         enc = append(enc, URIEncode(p.Key, true) + "=" + URIEncode(p.Value, true))
     }
-    std.slices.Sort(enc)
-    return std.strings.Join(enc, "&")
+    slices.Sort(enc)
+    return strings.Join(enc, "&")
 }
 
 func collapseSpaces(s string) string {
-    var t = std.strings.Trim(s)
-    for std.strings.Contains(t, "  ") {
-        t = std.strings.Replace(t, "  ", " ")
+    var t = strings.Trim(s)
+    for strings.Contains(t, "  ") {
+        t = strings.Replace(t, "  ", " ")
     }
     return t
 }
@@ -93,16 +93,16 @@ struct Signed {
 }
 
 func hexSha256(data []byte) string {
-    return std.encoding.hex.Encode(try std.crypto.hash.Sum("sha256", data) else [])
+    return encoding.hex.Encode(try crypto.hash.Sum("sha256", data) else [])
 }
 
 func hmac(key []byte, text string) []byte {
-    return try std.crypto.hmac.Sum("sha256", key, std.strings.Bytes(text)) else []
+    return try crypto.hmac.Sum("sha256", key, strings.Bytes(text)) else []
 }
 
 // The SigV4 signing key: HMAC chain over date (YYYYMMDD), region, service.
 func SigningKey(secret string, date string, region string, service string) []byte {
-    var k = hmac(std.strings.Bytes("AWS4" + secret), date)
+    var k = hmac(strings.Bytes("AWS4" + secret), date)
     k = hmac(k, region)
     k = hmac(k, service)
     return hmac(k, "aws4_request")
@@ -115,14 +115,14 @@ func SigningKey(secret string, date string, region string, service string) []byt
 func SignV4(method string, path string, query string, headers map[string]string, payloadHash string, accessKey string, secretKey string, region string, service string, amzDate string) Signed {
     var lower = map[string]string{}
     for k, v in headers {
-        lower[std.strings.ToLower(k)] = collapseSpaces(v)
+        lower[strings.ToLower(k)] = collapseSpaces(v)
     }
-    var names = std.maps.SortedKeys(lower)
+    var names = maps.SortedKeys(lower)
     var canonHeaders = ""
     for n in names {
         canonHeaders += n + ":" + lower[n] + "\n"
     }
-    var signedHeaders = std.strings.Join(names, ";")
+    var signedHeaders = strings.Join(names, ";")
     var p = path
     if p == "" {
         p = "/"
@@ -130,15 +130,15 @@ func SignV4(method string, path string, query string, headers map[string]string,
     var canonical = method + "\n" + p + "\n" + CanonicalQuery(parseQuery(query)) + "\n" + canonHeaders + "\n" + signedHeaders + "\n" + payloadHash
     var date = amzDate[..8]
     var scope = date + "/" + region + "/" + service + "/aws4_request"
-    var sts = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hexSha256(std.strings.Bytes(canonical))
-    var sig = std.encoding.hex.Encode(hmac(SigningKey(secretKey, date, region, service), sts))
+    var sts = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hexSha256(strings.Bytes(canonical))
+    var sig = encoding.hex.Encode(hmac(SigningKey(secretKey, date, region, service), sts))
     var auth = "AWS4-HMAC-SHA256 Credential=" + accessKey + "/" + scope + ", SignedHeaders=" + signedHeaders + ", Signature=" + sig
     return Signed{CanonicalRequest: canonical, StringToSign: sts, Signature: sig, SignedHeaders: signedHeaders, Authorization: auth}
 }
 
 // "YYYYMMDDTHHMMSSZ" of a Unix time in milliseconds.
 func AmzDate(ms int) string {
-    return std.time.Format(ms, "%Y%m%dT%H%M%SZ")
+    return time.Format(ms, "%Y%m%dT%H%M%SZ")
 }
 
 // ---- credentials ------------------------------------------------------------------
@@ -154,42 +154,42 @@ struct Credentials {
 
 // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
 func EnvCredentials() Credentials! {
-    var ak = std.os.Getenv("AWS_ACCESS_KEY_ID")
-    var sk = std.os.Getenv("AWS_SECRET_ACCESS_KEY")
+    var ak = os.Getenv("AWS_ACCESS_KEY_ID")
+    var sk = os.Getenv("AWS_SECRET_ACCESS_KEY")
     if ak == "" || sk == "" {
         return error("s3: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not set")
     }
-    return Credentials{AccessKey: ak, SecretKey: sk, SessionToken: std.os.Getenv("AWS_SESSION_TOKEN"), Source: "env"}
+    return Credentials{AccessKey: ak, SecretKey: sk, SessionToken: os.Getenv("AWS_SESSION_TOKEN"), Source: "env"}
 }
 
 // The [section] of an INI text as a map.
 func iniSection(text string, section string) map[string]string {
     var out = map[string]string{}
     var cur = ""
-    for raw in std.strings.Split(text, "\n") {
-        var line = std.strings.Trim(raw)
-        if line == "" || std.strings.HasPrefix(line, "#") || std.strings.HasPrefix(line, ";") {
+    for raw in strings.Split(text, "\n") {
+        var line = strings.Trim(raw)
+        if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
             continue
         }
-        if std.strings.HasPrefix(line, "[") && std.strings.HasSuffix(line, "]") {
-            cur = std.strings.Trim(line[1..len(line) - 1])
+        if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+            cur = strings.Trim(line[1..len(line) - 1])
             continue
         }
         if cur != section {
             continue
         }
-        var eq = std.strings.Index(line, "=")
+        var eq = strings.Index(line, "=")
         if eq > 0 {
-            out[std.strings.Trim(line[..eq])] = std.strings.Trim(line[eq + 1..])
+            out[strings.Trim(line[..eq])] = strings.Trim(line[eq + 1..])
         }
     }
     return out
 }
 
 func homeDir() string {
-    var h = std.os.Getenv("HOME")
+    var h = os.Getenv("HOME")
     if h == "" {
-        h = std.os.Getenv("USERPROFILE")
+        h = os.Getenv("USERPROFILE")
     }
     return h
 }
@@ -200,22 +200,22 @@ func homeDir() string {
 func FileCredentials(path string, profile string) Credentials! {
     var p = path
     if p == "" {
-        p = std.os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
+        p = os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
     }
     if p == "" {
         p = homeDir() + "/.aws/credentials"
     }
     var prof = profile
     if prof == "" {
-        prof = std.os.Getenv("AWS_PROFILE")
+        prof = os.Getenv("AWS_PROFILE")
     }
     if prof == "" {
         prof = "default"
     }
-    var text = std.io.ReadFile(p)?("s3: credentials file")
+    var text = io.ReadFile(p)?("s3: credentials file")
     var sec = iniSection(text, prof)
     if sec["aws_access_key_id"] == "" || sec["aws_secret_access_key"] == "" {
-        return error("s3: profile " + std.strconv.Quote(prof) + " in " + p + " has no aws_access_key_id / aws_secret_access_key")
+        return error("s3: profile " + strconv.Quote(prof) + " in " + p + " has no aws_access_key_id / aws_secret_access_key")
     }
     return Credentials{AccessKey: sec["aws_access_key_id"], SecretKey: sec["aws_secret_access_key"], SessionToken: sec["aws_session_token"], Source: "file:" + prof}
 }
@@ -223,13 +223,13 @@ func FileCredentials(path string, profile string) Credentials! {
 // The region of AWS_REGION, AWS_DEFAULT_REGION or ~/.aws/config ("" if
 // none).
 func DefaultRegion() string {
-    var r = std.os.Getenv("AWS_REGION")
+    var r = os.Getenv("AWS_REGION")
     if r == "" {
-        r = std.os.Getenv("AWS_DEFAULT_REGION")
+        r = os.Getenv("AWS_DEFAULT_REGION")
     }
     if r == "" {
-        var text = try std.io.ReadFile(homeDir() + "/.aws/config") else ""
-        var prof = std.os.Getenv("AWS_PROFILE")
+        var text = try io.ReadFile(homeDir() + "/.aws/config") else ""
+        var prof = os.Getenv("AWS_PROFILE")
         var sec = "default"
         if prof != "" && prof != "default" {
             sec = "profile " + prof
@@ -246,19 +246,19 @@ async func IMDSCredentials(endpoint string) Credentials! {
     if base == "" {
         base = "http://169.254.169.254"
     }
-    var cl = std.net.http.Client{Timeout: 1000, MaxRedirects: -1}
-    var tr = await cl.Send(std.net.http.NewRequest("PUT", base + "/latest/api/token").Header("X-aws-ec2-metadata-token-ttl-seconds", "21600"))?
+    var cl = net.http.Client{Timeout: 1000, MaxRedirects: -1}
+    var tr = await cl.Send(net.http.NewRequest("PUT", base + "/latest/api/token").Header("X-aws-ec2-metadata-token-ttl-seconds", "21600"))?
     if tr.Status != 200 {
-        return error("s3: IMDS token request failed with status " + std.strconv.Itoa(tr.Status))
+        return error("s3: IMDS token request failed with status " + strconv.Itoa(tr.Status))
     }
     var token = tr.Body
-    var rr = await cl.Send(std.net.http.NewRequest("GET", base + "/latest/meta-data/iam/security-credentials/").Header("X-aws-ec2-metadata-token", token))?
+    var rr = await cl.Send(net.http.NewRequest("GET", base + "/latest/meta-data/iam/security-credentials/").Header("X-aws-ec2-metadata-token", token))?
     if rr.Status != 200 {
-        return error("s3: no instance profile (status " + std.strconv.Itoa(rr.Status) + ")")
+        return error("s3: no instance profile (status " + strconv.Itoa(rr.Status) + ")")
     }
-    var role = std.strings.Trim(std.strings.Split(rr.Body, "\n")[0])
-    var cr = await cl.Send(std.net.http.NewRequest("GET", base + "/latest/meta-data/iam/security-credentials/" + role).Header("X-aws-ec2-metadata-token", token))?
-    var v = std.encoding.json.ParseValue(cr.Body)?("s3: IMDS credentials")
+    var role = strings.Trim(strings.Split(rr.Body, "\n")[0])
+    var cr = await cl.Send(net.http.NewRequest("GET", base + "/latest/meta-data/iam/security-credentials/" + role).Header("X-aws-ec2-metadata-token", token))?
+    var v = encoding.json.ParseValue(cr.Body)?("s3: IMDS credentials")
     var ak = try v.Get("AccessKeyId").String() else ""
     var sk = try v.Get("SecretAccessKey").String() else ""
     var tk = try v.Get("Token").String() else ""
@@ -303,7 +303,7 @@ struct Config {
     MaxRetries int
     // per-request limit in milliseconds [60000]
     Timeout int
-    TLS *std.net.tls.Config
+    TLS *net.tls.Config
     // send UNSIGNED-PAYLOAD instead of hashing bodies (https only)
     UnsignedPayload bool
     // a fixed clock (Unix ms) for tests; nil: the system clock
@@ -334,7 +334,7 @@ struct Error {
 // The S3 error code in err's chain ("" if none).
 func ErrorCode(err error) string {
     var e Error
-    if std.errors.As(err, &e) {
+    if errors.As(err, &e) {
         return e.Code
     }
     return ""
@@ -364,12 +364,12 @@ func errorValue(e Error) error {
     if e.Resource != "" {
         prefix += " (" + e.Resource + ")"
     }
-    return std.net.rtOpError(boxed, prefix, sentinel)
+    return net.rtOpError(boxed, prefix, sentinel)
 }
 
 // The root element of an XML document.
-func xmlRoot(text string) std.encoding.xml.Value! {
-    var doc = std.encoding.xml.ParseValue(text)?("s3: bad XML response")
+func xmlRoot(text string) encoding.xml.Value! {
+    var doc = encoding.xml.ParseValue(text)?("s3: bad XML response")
     if doc.IsElement() {
         return doc
     }
@@ -381,7 +381,7 @@ func xmlRoot(text string) std.encoding.xml.Value! {
     return error("s3: empty XML response")
 }
 
-func childText(v std.encoding.xml.Value, name string) string {
+func childText(v encoding.xml.Value, name string) string {
     var c = v.Child(name)
     if c == nil {
         return ""
@@ -403,7 +403,7 @@ func responseError(status int, body string, resource string, requestID string) e
             case 304:
                 e.Code = "NotModified"
             default:
-                e.Code = "HTTP" + std.strconv.Itoa(status)
+                e.Code = "HTTP" + strconv.Itoa(status)
         }
         return errorValue(e)
     }
@@ -413,7 +413,7 @@ func responseError(status int, body string, resource string, requestID string) e
         e.RequestID = childText(root, "RequestId")
     }
     if e.Code == "" {
-        e.Code = "HTTP" + std.strconv.Itoa(status)
+        e.Code = "HTTP" + strconv.Itoa(status)
     }
     return errorValue(e)
 }
@@ -425,7 +425,7 @@ struct ObjectInfo {
     Key string
     Size int
     ETag string
-    LastModified std.time.Time
+    LastModified time.Time
     ContentType string
     StorageClass string
     VersionID string
@@ -469,7 +469,7 @@ struct GetOptions {
 // A bucket.
 struct BucketInfo {
     Name string
-    CreationDate std.time.Time
+    CreationDate time.Time
 }
 
 // One page of ListObjectsV2.
@@ -500,7 +500,7 @@ struct DeleteError {
 // The S3 client. Safe for concurrent use.
 struct Client {
     cfg Config
-    http std.net.http.Client
+    http net.http.Client
     scheme string
     host string
     retries int
@@ -588,12 +588,12 @@ struct Client {
     // else a multipart upload with up to concurrency parts of partSize
     // bytes (>= 5 MiB except the last; 0: 8 MiB) in flight; aborted on
     // failure.
-    func Upload(bucket string, key string, r std.io.Reader, partSize int, concurrency int) Task<PutResult!> {
+    func Upload(bucket string, key string, r io.Reader, partSize int, concurrency int) Task<PutResult!> {
         return upload(this, bucket, key, syncSource{r: r}, partSize, concurrency, PutOptions{})
     }
 
     // Upload with options, from an asynchronous reader (a network stream).
-    func UploadFrom(bucket string, key string, r std.io.AsyncReader, partSize int, concurrency int, opts PutOptions) Task<PutResult!> {
+    func UploadFrom(bucket string, key string, r io.AsyncReader, partSize int, concurrency int, opts PutOptions) Task<PutResult!> {
         return upload(this, bucket, key, asyncSource{r: r}, partSize, concurrency, opts)
     }
 
@@ -634,12 +634,12 @@ func bodyOf(body any) string {
         case string s:
             return s
         case []byte b:
-            return std.strings.FromBytes(b)
+            return strings.FromBytes(b)
     }
     if body == nil {
         return ""
     }
-    return std.fmt.Format("{0}", body)
+    return fmt.Format("{0}", body)
 }
 
 // A client for cfg. Without keys in cfg the environment and
@@ -695,7 +695,7 @@ func clientFor(cfg Config) *Client! {
     if c.Timeout <= 0 {
         c.Timeout = 60000
     }
-    var u = std.net.http.ParseURL(c.Endpoint)?("s3: endpoint")
+    var u = net.http.ParseURL(c.Endpoint)?("s3: endpoint")
     if u.Scheme != "http" && u.Scheme != "https" {
         return error("s3: endpoint must be http:// or https://")
     }
@@ -703,20 +703,20 @@ func clientFor(cfg Config) *Client! {
         return error("s3: UnsignedPayload needs an https endpoint")
     }
     var host = u.Host
-    if (u.Scheme == "https" && std.strings.HasSuffix(host, ":443")) || (u.Scheme == "http" && std.strings.HasSuffix(host, ":80")) {
-        host = host[..std.strings.LastIndex(host, ":")]
+    if (u.Scheme == "https" && strings.HasSuffix(host, ":443")) || (u.Scheme == "http" && strings.HasSuffix(host, ":80")) {
+        host = host[..strings.LastIndex(host, ":")]
     }
-    var hc = std.net.http.Client{TotalTimeout: c.Timeout, MaxRedirects: -1, TLS: c.TLS}
+    var hc = net.http.Client{TotalTimeout: c.Timeout, MaxRedirects: -1, TLS: c.TLS}
     return new Client{cfg: c, http: hc, scheme: u.Scheme, host: host}
 }
 
 // The URI-encoded path of an object key ("" key: the bucket).
 func keyPath(key string) string {
     var segs []string = []
-    for s in std.strings.Split(key, "/") {
+    for s in strings.Split(key, "/") {
         segs = append(segs, URIEncode(s, true))
     }
-    return std.strings.Join(segs, "/")
+    return strings.Join(segs, "/")
 }
 
 // (host, path) of a bucket/key for the client's addressing style.
@@ -745,7 +745,7 @@ func nowMs(c *Client) int {
     if c.cfg.Clock != nil {
         return c.cfg.Clock()
     }
-    return std.time.Now()
+    return time.Now()
 }
 
 func retryableStatus(status int) bool {
@@ -753,12 +753,12 @@ func retryableStatus(status int) bool {
 }
 
 func netError(err error) bool {
-    return std.errors.Is(err, std.net.ErrRefused) || std.errors.Is(err, std.net.ErrReset) || std.errors.Is(err, std.net.ErrEOF) || std.errors.Is(err, std.net.ErrClosed) || std.errors.Is(err, std.net.ErrTimeout) || std.errors.Is(err, std.net.ErrUnreachable)
+    return errors.Is(err, net.ErrRefused) || errors.Is(err, net.ErrReset) || errors.Is(err, net.ErrEOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, net.ErrTimeout) || errors.Is(err, net.ErrUnreachable)
 }
 
 // One signed request with retries. headers are extra headers (signed);
 // stream leaves the body on the connection.
-async func send(c *Client, method string, bucket string, key string, query []Param, headers map[string]string, body string, stream bool) std.net.http.Response! {
+async func send(c *Client, method string, bucket string, key string, query []Param, headers map[string]string, body string, stream bool) net.http.Response! {
     var (host, path) = target(c, bucket, key)
     var q = encodeQuery(query)
     var url = c.scheme + "://" + host + path
@@ -767,14 +767,14 @@ async func send(c *Client, method string, bucket string, key string, query []Par
     }
     var payload = "UNSIGNED-PAYLOAD"
     if !c.cfg.UnsignedPayload {
-        payload = hexSha256(std.strings.Bytes(body))
+        payload = hexSha256(strings.Bytes(body))
     }
     var attempt = 0
     for {
         var amz = AmzDate(nowMs(c))
         var sh = map[string]string{}
         for k, v in headers {
-            sh[std.strings.ToLower(k)] = v
+            sh[strings.ToLower(k)] = v
         }
         sh["host"] = host
         sh["x-amz-date"] = amz
@@ -783,7 +783,7 @@ async func send(c *Client, method string, bucket string, key string, query []Par
             sh["x-amz-security-token"] = c.cfg.SessionToken
         }
         var signed = SignV4(method, path, q, sh, payload, c.cfg.AccessKey, c.cfg.SecretKey, c.cfg.Region, "s3", amz)
-        var req = std.net.http.NewRequest(method, url)
+        var req = net.http.NewRequest(method, url)
         for k, v in sh {
             if k != "host" {
                 req.Header(k, v)
@@ -795,7 +795,7 @@ async func send(c *Client, method string, bucket string, key string, query []Par
             req.Body(body)
         }
         var cl = c.http
-        var t Task<std.net.http.Response!>
+        var t Task<net.http.Response!>
         if stream {
             t = cl.Stream(req)
         } else {
@@ -805,7 +805,7 @@ async func send(c *Client, method string, bucket string, key string, query []Par
             if attempt < c.cfg.MaxRetries && netError(err) {
                 attempt += 1
                 c.retries += 1
-                await std.task.Delay(backoffMs(attempt))
+                await task.Delay(backoffMs(attempt))
                 continue
             }
             return err
@@ -816,14 +816,14 @@ async func send(c *Client, method string, bucket string, key string, query []Par
             }
             attempt += 1
             c.retries += 1
-            await std.task.Delay(backoffMs(attempt))
+            await task.Delay(backoffMs(attempt))
             continue
         }
-        if res.Status == 503 || std.strings.Contains(res.Body, "<Code>SlowDown</Code>") {
+        if res.Status == 503 || strings.Contains(res.Body, "<Code>SlowDown</Code>") {
             if attempt < c.cfg.MaxRetries {
                 attempt += 1
                 c.retries += 1
-                await std.task.Delay(backoffMs(attempt))
+                await task.Delay(backoffMs(attempt))
                 continue
             }
         }
@@ -839,7 +839,7 @@ func backoffMs(attempt int) int {
     if d > 2000 {
         d = 2000
     }
-    return d + std.random.IntN(d / 2 + 1)
+    return d + random.IntN(d / 2 + 1)
 }
 
 func resource(bucket string, key string) string {
@@ -850,7 +850,7 @@ func resource(bucket string, key string) string {
 }
 
 // Fails unless the status is ok (the error parsed from the body).
-async func check(res std.net.http.Response, ok int, bucket string, key string) void! {
+async func check(res net.http.Response, ok int, bucket string, key string) void! {
     if res.Status == ok || (ok == 200 && res.Status == 204) || (ok == 204 && res.Status == 200) {
         return
     }
@@ -890,42 +890,42 @@ func putHeaders(opts PutOptions) map[string]string {
         h["If-None-Match"] = "*"
     }
     for k, v in opts.Metadata {
-        h["X-Amz-Meta-" + std.strings.ToLower(k)] = v
+        h["X-Amz-Meta-" + strings.ToLower(k)] = v
     }
     return h
 }
 
 async func putObject(c *Client, bucket string, key string, body string, opts PutOptions) PutResult! {
     var h = putHeaders(opts)
-    h["Content-Md5"] = std.encoding.base64.Encode(std.crypto.hash.Md5(body))
+    h["Content-Md5"] = encoding.base64.Encode(crypto.hash.Md5(body))
     var res = await send(c, "PUT", bucket, key, [], h, body, false)?
     await check(res, 200, bucket, key)?
     return PutResult{ETag: res.Header("ETag"), VersionID: res.Header("X-Amz-Version-Id")}
 }
 
-func parseHTTPTime(s string) std.time.Time {
-    var sec = try std.net.http.ParseTime(s) else 0
-    return std.time.Unix(sec, 0)
+func parseHTTPTime(s string) time.Time {
+    var sec = try net.http.ParseTime(s) else 0
+    return time.Unix(sec, 0)
 }
 
-func parseISOTime(s string) std.time.Time {
-    return try std.time.ParseTime(std.time.RFC3339, s) else std.time.Unix(0, 0)
+func parseISOTime(s string) time.Time {
+    return try time.ParseTime(time.RFC3339, s) else time.Unix(0, 0)
 }
 
 // Object metadata from response headers.
 func infoFromHeaders(key string, h map[string]string) ObjectInfo {
     var meta = map[string]string{}
     for k, v in h {
-        var l = std.strings.ToLower(k)
-        if std.strings.HasPrefix(l, "x-amz-meta-") {
+        var l = strings.ToLower(k)
+        if strings.HasPrefix(l, "x-amz-meta-") {
             meta[l[11..]] = v
         }
     }
-    var size = try std.strconv.Atoi(h["Content-Length"]) else 0
+    var size = try strconv.Atoi(h["Content-Length"]) else 0
     var cr = h["Content-Range"]
-    var slash = std.strings.LastIndex(cr, "/")
+    var slash = strings.LastIndex(cr, "/")
     if slash >= 0 {
-        size = try std.strconv.Atoi(cr[slash + 1..]) else size
+        size = try strconv.Atoi(cr[slash + 1..]) else size
     }
     return ObjectInfo{Key: key, Size: size, ETag: h["Etag"] + h["ETag"], LastModified: parseHTTPTime(h["Last-Modified"]), ContentType: h["Content-Type"], StorageClass: h["X-Amz-Storage-Class"], VersionID: h["X-Amz-Version-Id"], Metadata: meta}
 }
@@ -942,9 +942,9 @@ async func headObject(c *Client, bucket string, key string) ObjectInfo! {
 func getHeaders(opts GetOptions) map[string]string {
     var h = map[string]string{}
     if opts.HasRange {
-        var r = "bytes=" + std.strconv.Itoa(opts.RangeStart) + "-"
+        var r = "bytes=" + strconv.Itoa(opts.RangeStart) + "-"
         if opts.RangeEnd >= 0 {
-            r += std.strconv.Itoa(opts.RangeEnd)
+            r += strconv.Itoa(opts.RangeEnd)
         }
         h["Range"] = r
     }
@@ -967,7 +967,7 @@ func getQuery(opts GetOptions) []Param {
 // A streamed object body: an io.AsyncReader.
 struct Object {
     Info ObjectInfo
-    body *std.net.http.BodyReader
+    body *net.http.BodyReader
     // a body the HTTP client had already read (small responses)
     rest []byte
 
@@ -1008,7 +1008,7 @@ async func objectReadAll(o *Object) []byte! {
         o.rest = []
         return out
     }
-    return std.strings.Bytes(await o.body.ReadAll()?)
+    return strings.Bytes(await o.body.ReadAll()?)
 }
 
 async func getObject(c *Client, bucket string, key string, opts GetOptions) *Object! {
@@ -1016,7 +1016,7 @@ async func getObject(c *Client, bucket string, key string, opts GetOptions) *Obj
     if res.Status != 200 && res.Status != 206 {
         await check(res, 200, bucket, key)?
     }
-    return new Object{Info: infoFromHeaders(key, res.Headers), body: res.Reader, rest: std.strings.Bytes(res.Body)}
+    return new Object{Info: infoFromHeaders(key, res.Headers), body: res.Reader, rest: strings.Bytes(res.Body)}
 }
 
 async func getBytes(c *Client, bucket string, key string, opts GetOptions) []byte! {
@@ -1024,7 +1024,7 @@ async func getBytes(c *Client, bucket string, key string, opts GetOptions) []byt
     if res.Status != 200 && res.Status != 206 {
         await check(res, 200, bucket, key)?
     }
-    return std.strings.Bytes(res.Body)
+    return strings.Bytes(res.Body)
 }
 
 async func deleteObject(c *Client, bucket string, key string) void! {
@@ -1032,7 +1032,7 @@ async func deleteObject(c *Client, bucket string, key string) void! {
 }
 
 func xmlEscape(s string) string {
-    return std.encoding.xml.Escape(s)
+    return encoding.xml.Escape(s)
 }
 
 async func deleteObjects(c *Client, bucket string, keys []string) []DeleteError! {
@@ -1043,14 +1043,14 @@ async func deleteObjects(c *Client, bucket string, keys []string) []DeleteError!
         if end > len(keys) {
             end = len(keys)
         }
-        var b = std.strings.Builder{}
+        var b = strings.Builder{}
         b.Write("<Delete><Quiet>true</Quiet>")
         for k in keys[i..end] {
             b.Write("<Object><Key>" + xmlEscape(k) + "</Key></Object>")
         }
         b.Write("</Delete>")
         var body = b.String()
-        var h = map[string]string{"Content-Type": "application/xml", "Content-Md5": std.encoding.base64.Encode(std.crypto.hash.Md5(body))}
+        var h = map[string]string{"Content-Type": "application/xml", "Content-Md5": encoding.base64.Encode(crypto.hash.Md5(body))}
         var res = await send(c, "POST", bucket, "", [Param{Key: "delete"}], h, body, false)?
         await check(res, 200, bucket, "")?
         if res.Body != "" {
@@ -1080,8 +1080,8 @@ async func copyObject(c *Client, srcBucket string, srcKey string, dstBucket stri
     return PutResult{ETag: childText(root, "ETag"), VersionID: res.Header("X-Amz-Version-Id")}
 }
 
-func objectOf(v std.encoding.xml.Value) ObjectInfo {
-    var size = try std.strconv.Atoi(childText(v, "Size")) else 0
+func objectOf(v encoding.xml.Value) ObjectInfo {
+    var size = try strconv.Atoi(childText(v, "Size")) else 0
     return ObjectInfo{Key: childText(v, "Key"), Size: size, ETag: childText(v, "ETag"), LastModified: parseISOTime(childText(v, "LastModified")), StorageClass: childText(v, "StorageClass")}
 }
 
@@ -1094,7 +1094,7 @@ async func listObjects(c *Client, bucket string, opts ListOptions) ListPage! {
         q = append(q, Param{Key: "delimiter", Value: opts.Delimiter})
     }
     if opts.MaxKeys > 0 {
-        q = append(q, Param{Key: "max-keys", Value: std.strconv.Itoa(opts.MaxKeys)})
+        q = append(q, Param{Key: "max-keys", Value: strconv.Itoa(opts.MaxKeys)})
     }
     if opts.StartAfter != "" {
         q = append(q, Param{Key: "start-after", Value: opts.StartAfter})
@@ -1106,7 +1106,7 @@ async func listObjects(c *Client, bucket string, opts ListOptions) ListPage! {
     await check(res, 200, bucket, "")?
     var root = xmlRoot(res.Body)?
     var page = ListPage{IsTruncated: childText(root, "IsTruncated") == "true", NextContinuationToken: childText(root, "NextContinuationToken")}
-    page.KeyCount = try std.strconv.Atoi(childText(root, "KeyCount")) else 0
+    page.KeyCount = try strconv.Atoi(childText(root, "KeyCount")) else 0
     for o in root.Elements("Contents") {
         page.Objects = append(page.Objects, objectOf(o))
     }

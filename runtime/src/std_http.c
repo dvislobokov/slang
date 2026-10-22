@@ -1,4 +1,4 @@
-/* std_http.c - hot loops of std.net.http, std.net.ws and the HPACK coder
+/* std_http.c - hot loops of net.http, net.ws and the HPACK coder
  * (runtime/ABI.md 16.5): HTTP/1 head scanning and parsing straight from the
  * connection's read buffer (no per-line strings), header-name
  * canonicalisation with interned common names, response-head formatting

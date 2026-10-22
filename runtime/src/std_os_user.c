@@ -1,4 +1,4 @@
-/* std_os_user.c - std.os.user: the passwd/group databases through the
+/* std_os_user.c - os.user: the passwd/group databases through the
  * platform layer (getpwuid_r & co. on POSIX, so NSS sources work too; the
  * current user only on Windows). Results are [uid, gid, username, name,
  * home] / [gid, name] string slices; not found -> error. */

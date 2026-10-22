@@ -1,7 +1,7 @@
-// std.hash: the streaming hash interfaces (Go's hash.Hash, Hash32,
-// Hash64) implemented by std.hash.fnv, crc32, crc64, adler32 and
+// hash: the streaming hash interfaces (Go's hash.Hash, Hash32,
+// Hash64) implemented by hash.fnv, crc32, crc64, adler32 and
 // maphash, plus Combine for building hash keys from several values.
-namespace std.hash
+namespace hash
 
 // A streaming hash: Write data (never fails), then Sum.
 interface Hasher {
@@ -9,7 +9,7 @@ interface Hasher {
     func Write(p []byte) int!
     // Default: Write of the string's bytes (implementations may override).
     func WriteString(s string) int! {
-        return this.Write(std.strings.Bytes(s))?
+        return this.Write(strings.Bytes(s))?
     }
     // The hash of everything written so far (big-endian bytes); does not
     // change the state.
@@ -28,7 +28,7 @@ interface Hash32 {
     func Write(p []byte) int!
     // Default: Write of the string's bytes (implementations may override).
     func WriteString(s string) int! {
-        return this.Write(std.strings.Bytes(s))?
+        return this.Write(strings.Bytes(s))?
     }
     // Sum returns the hash as big-endian bytes.
     func Sum() []byte
@@ -48,7 +48,7 @@ interface Hash64 {
     func Write(p []byte) int!
     // Default: Write of the string's bytes (implementations may override).
     func WriteString(s string) int! {
-        return this.Write(std.strings.Bytes(s))?
+        return this.Write(strings.Bytes(s))?
     }
     // Sum returns the hash as big-endian bytes.
     func Sum() []byte

@@ -1,8 +1,8 @@
 /* api2.c - Zell-facing wrappers of the tier-3 crypto additions
- * (runtime/ABI.md section 23): std.crypto.kdf (PBKDF2, scrypt; Argon2 is
- * in ../std_argon2.c), std.crypto.hash.Blake2b, P-384 in std.crypto.ecdh /
- * std.crypto.ecdsa, AES-CBC and PKCS#7 in std.crypto.aes, RSA-OAEP and
- * prime generation in std.crypto.rsa. Conventions of api.c (ABI.md 14.1). */
+ * (runtime/ABI.md section 23): crypto.kdf (PBKDF2, scrypt; Argon2 is
+ * in ../std_argon2.c), crypto.hash.Blake2b, P-384 in crypto.ecdh /
+ * crypto.ecdsa, AES-CBC and PKCS#7 in crypto.aes, RSA-OAEP and
+ * prime generation in crypto.rsa. Conventions of api.c (ABI.md 14.1). */
 #include "../rt_internal.h"
 #include "crypto.h"
 
@@ -39,7 +39,7 @@ static int hash_alg(const zell_string *name, zell_error **err) {
     return alg;
 }
 
-/* ---- std.crypto.kdf ---- */
+/* ---- crypto.kdf ---- */
 
 void zell_crypto_kdf_pbkdf2(const zell_slice *pw, const zell_slice *salt, int64_t iter, int64_t n,
                              const zell_string *hash, zell_slice *out, zell_error **err) {

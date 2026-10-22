@@ -26,7 +26,7 @@
  * requests right after posting their CQEs, so the waiter can see the CQE
  * and close first). Then close(2) does not release the socket yet, and a
  * listener closed that way could still accept and reset a connection (2%
- * of examples/tcp_echo runs under gVisor). std.net therefore shuts a
+ * of examples/tcp_echo runs under gVisor). net therefore shuts a
  * listener down (shutdown(SHUT_RD), which stops listening whatever holds
  * the file) before closing it; for connected sockets the delay only
  * postpones the FIN by microseconds. examples/tcp_echo: 0 of 500 runs

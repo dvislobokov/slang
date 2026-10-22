@@ -1,6 +1,6 @@
-/* std_plugin.c - std.plugin: loading shared objects (runtime/ABI.md
+/* std_plugin.c - plugin: loading shared objects (runtime/ABI.md
  * section 22.7); the debug agent loads expressions compiled by
- * `zell serve` with it. Gated like std.unsafe (`plugin` capability). */
+ * `zell serve` with it. Gated like unsafe (`plugin` capability). */
 #include "rt_internal.h"
 #include "platform/platform.h"
 

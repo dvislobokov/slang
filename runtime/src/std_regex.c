@@ -1,4 +1,4 @@
-/* std_regex.c - the C half of std.regex (runtime/ABI.md 14.5). The engine
+/* std_regex.c - the C half of regex (runtime/ABI.md 14.5). The engine
  * (parser, compiler, Pike VM, lazy DFA) is Zell code in
  * compiler/src/sema/stdlib_src/regex.zl; this file holds what Zell cannot
  * express cheaply: the Unicode category/script tables and simple case
