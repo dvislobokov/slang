@@ -866,3 +866,49 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 5. `zell.diag`: CPU/heap/tasks профили в формате pprof, метрики,
    OpenTelemetry; `zell tool pprof/trace/counters`.
 6. xml/yaml/toml, HTTP/2, TLS, auth, cache, jobs, messaging, остальное.
+
+## План: тонкое ядро, фреймворк в пакетах
+
+Решение (2026-10-22): в стандартной библиотеке остаётся тонкий слой, как
+у Go; фреймворк живёт в отдельных репозиториях организации `zell-lang` и
+подключается пакетным менеджером (`import github.com/zell-lang/web`).
+
+**Остаётся в std:** `net`, `net.http` (клиент и сервер HTTP/1.1 и HTTP/2,
+TLS, WebSocket, роутер по пути и методу без атрибутов), `encoding.*`,
+`crypto`, `database.sql` (интерфейс драйверов), базовый `log`, `testing`.
+
+**Выносится:**
+
+| Пакет | Что | Что мешает вынести сейчас |
+|---|---|---|
+| `zell-lang/web` | атрибутная маршрутизация, DI, middleware, binding, OpenAPI, auth/JWT | таблица маршрутов и DI строятся в компиляторе (`sema/web.rs`) по атрибутам всех типов программы |
+| `zell-lang/data` | ORM: модель, change tracking, миграции, лямбда → SQL | трансляция лямбд в SQL в компиляторе (`sema/orm.rs`, `orm_model.rs`) |
+| `zell-lang/log`, `zell-lang/diag` | Serilog-подобный логгер; Prometheus, OpenTelemetry, pprof | ничего: обычный код |
+| `zell-lang/redis`, `kafka`, `s3` | клиенты | ничего: обычный код |
+
+**Две возможности языка, без которых `web` и `data` не станут обычными
+пакетами** (полезны сами по себе, не костыли под фреймворк):
+
+1. **Статическая рефлексия по программе**: `reflect.TypesWith<Controller>()`
+   возвращает все типы программы с атрибутом, вычисляется компилятором при
+   сборке, как `reflect.Fields<T>()`. На ней пакет `web` строит таблицу
+   маршрутов и DI-контейнер без хуков компилятора.
+2. **Деревья выражений**: параметр типа `expr<func(User) bool>` получает
+   лямбду как синтаксическое дерево-значение (аналог `Expression<Func<>>` в
+   C#); на нём ORM транслирует `Where(u => u.Age > 18)` в SQL уже в пакете.
+
+**Порядок:**
+
+1. Две возможности выше: спека (`DESIGN.md`, грамматика), компилятор,
+   спек-тесты, примеры.
+2. Перепись `web` и `data` на них внутри основного репозитория;
+   `examples/web_app` и тесты работают как раньше; `sema/web.rs`,
+   `sema/orm*.rs` удаляются.
+3. Перенос в `zell-lang/web` и `zell-lang/data` (манифест, тег `v0.1.0`,
+   CI); примеры и документация переходят на `import github.com/zell-lang/web`;
+   корни `web` и `data` снимаются с зарезервированных корней stdlib
+   (`compiler/src/sema/stdlib.rs`, `STD_ROOTS`).
+4. `log`/`diag`, `redis`/`kafka`/`s3` переносятся следом тем же путём.
+
+Открытые вопросы: держать ли `data` в одном репозитории с `web`; объединять
+ли `redis`/`kafka`/`s3` в один `zell-lang/cloud`.

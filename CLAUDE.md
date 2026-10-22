@@ -92,4 +92,6 @@ management (ownership elision; the cycle collector's gaps: cycles
 through maps in threaded processes, tasks, errors), generics, block `try`,
 error traces, reflection + attributes as values, `zell fmt`, stdlib
 (`collections`, `net`, `http`, `encoding.json`), framework packages
-(`docs/FRAMEWORK.md`), platforms (`docs/PLATFORMS.md`).
+(`docs/FRAMEWORK.md`; plan "тонкое ядро, фреймворк в пакетах": `web`/`data`
+move to `zell-lang/web`, `zell-lang/data` after `reflect.TypesWith<A>()` and
+expression trees land), platforms (`docs/PLATFORMS.md`).
