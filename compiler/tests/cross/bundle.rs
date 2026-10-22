@@ -31,7 +31,11 @@ fn bundle() -> Result<&'static Path, String> {
 }
 
 fn stage() -> Result<PathBuf, String> {
-    let dir = tmpdir("bundle");
+    // one fixed directory under target/ (not /tmp), replaced on every run,
+    // so staged toolchains (~200 MB) never pile up
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bundle-stage");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
     if let Some(b) = std::env::var_os("ZELL_BUNDLE").filter(|v| !v.is_empty()) {
         let b = PathBuf::from(b);
         if b.is_dir() {
