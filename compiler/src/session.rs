@@ -570,6 +570,13 @@ mod tests {
     }
 
     #[test]
+    fn sessions_and_analyses_cross_threads() {
+        fn shared<T: Send + Sync>() {}
+        shared::<Session>();
+        shared::<Analysis>();
+    }
+
+    #[test]
     fn cancelled_analysis_returns_none_and_recovers() {
         let mut s = Session::new();
         s.update_file("lib.sl", LIB);

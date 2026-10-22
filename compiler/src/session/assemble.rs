@@ -73,10 +73,17 @@ pub(crate) fn assemble(files: &[FileView], units: &[UnitView], merged: &Program,
     let mut ns_refs: Vec<(usize, Span, String)> = Vec::new();
     for (fi, f) in files.iter().enumerate() {
         let segs = &f.ast.namespace.segments;
+        // A user file declaring a std namespace records nothing for it
+        // (the std namespaces keep their std symbols).
+        let in_std = segs.first().is_some_and(|s| s.name == "std");
         for i in 0..segs.len() {
             let path = segs[..=i].iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
             let o = ns_order.len();
             ns_order.entry(path.clone()).or_insert(o);
+            if in_std {
+                defined.insert(path);
+                continue;
+            }
             if !defined.insert(path.clone()) {
                 ns_refs.push((fi, segs[i].span, path));
                 continue;

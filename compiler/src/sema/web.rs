@@ -1094,29 +1094,23 @@ impl<'a> Sema<'a> {
 
     /// [`Sema::web_finish`] in unit mode: the dependencies are checked by
     /// the caller against the registrations of the whole program; type
-    /// names are spelled from the namespace of the file needing them.
+    /// names are spelled with their full paths.
     fn web_finish_unit(&mut self) {
         let required = std::mem::take(&mut self.web.required);
-        let saved_ns = self.cur_ns;
         for (t, owner, span, file) in required {
             if self.web_std_type(t) {
                 continue;
             }
-            if let Some(fs) = self.file_scopes.get(file) {
-                self.cur_ns = fs.ns;
-            }
-            let tn = self.tn(t);
+            let tn = self.tn_full(t);
             let hint = match self.tt.get(t) {
                 Type::Pointer(x) => {
                     let x = *x;
-                    format!("app.Services.AddSingleton<{}>() (or AddScoped / AddTransient / AddInstance)", self.tn(x))
+                    format!("app.Services.AddSingleton<{}>() (or AddScoped / AddTransient / AddInstance)", self.tn_full(x))
                 }
                 _ => format!("app.Services.AddSingleton<{tn}, Impl>() or AddInstance"),
             };
             let diag = Diagnostic::error(format!("{owner} needs service {tn}, which is never registered: add {hint}"), span).in_file(file);
-            let key = self.tn_full(t);
-            self.unit.as_mut().unwrap().web_required.push(super::units::WebRequired { key, owner, diag });
+            self.unit.as_mut().unwrap().web_required.push(super::units::WebRequired { key: tn, owner, diag });
         }
-        self.cur_ns = saved_ns;
     }
 }

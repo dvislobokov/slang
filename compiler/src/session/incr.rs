@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Lines of source a run costs on top of its files (stdlib registration).
-const RUN_OVERHEAD_LINES: usize = 2000;
+const RUN_OVERHEAD_LINES: usize = 500;
 
 struct UnitEntry {
     key: u64,
@@ -61,6 +61,7 @@ pub(crate) struct Cache {
     merged: Merged,
     /// An update is in progress (a panic leaves it set: start over).
     busy: bool,
+    graph: Option<Graph>,
     /// Statistics of the last analysis, for tests and tuning.
     pub(crate) stats: Stats,
 }
@@ -80,7 +81,7 @@ pub struct Stats {
 
 impl Default for Cache {
     fn default() -> Cache {
-        Cache { units: HashMap::new(), merged: Merged { store: DeclStore::default(), version: 0, rebuild_at: 0 }, busy: false, stats: Stats::default() }
+        Cache { units: HashMap::new(), merged: Merged { store: DeclStore::default(), version: 0, rebuild_at: 0 }, busy: false, graph: None, stats: Stats::default() }
     }
 }
 
@@ -93,6 +94,7 @@ fn unit_name(ns: &str) -> &str {
     }
 }
 
+#[derive(Clone)]
 struct Unit {
     name: String,
     /// Global file indices, in session order.
@@ -103,7 +105,57 @@ struct Unit {
     lines: usize,
 }
 
-/// Groups the files into units and computes their dependencies and keys.
+/// The units and their dependencies, valid while no file is added,
+/// removed or changes its namespace, imports or identifiers.
+pub(crate) struct Graph {
+    /// Hash of what the graph depends on.
+    shape: u64,
+    units: Vec<Unit>,
+    unit_of_file: Vec<usize>,
+}
+
+/// The hash a [`Graph`] of `files` is valid for.
+fn graph_shape(files: &[(&str, &FileState)]) -> u64 {
+    let mut h = DefaultHasher::new();
+    for (p, f) in files {
+        p.hash(&mut h);
+        f.facts.deps_hash.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// The units of `files` with their keys (the graph of `cache` is reused
+/// when still valid).
+fn units_of_cached(files: &[(&str, &FileState)], cache: &mut Option<Graph>) -> (Vec<Unit>, Vec<usize>) {
+    let shape = graph_shape(files);
+    if cache.as_ref().is_none_or(|g| g.shape != shape) {
+        let (units, unit_of_file) = units_of(files);
+        *cache = Some(Graph { shape, units, unit_of_file });
+    }
+    let g = cache.as_ref().unwrap();
+    let mut units = g.units.clone();
+    for ui in 0..units.len() {
+        let mut h = DefaultHasher::new();
+        let mut lines = 0;
+        for &fi in &units[ui].files {
+            files[fi].0.hash(&mut h);
+            files[fi].1.facts.text_hash.hash(&mut h);
+            lines += files[fi].1.facts.lines;
+        }
+        0xffu8.hash(&mut h);
+        for &u in &units[ui].closure {
+            for &fi in &g.units[u].files {
+                files[fi].0.hash(&mut h);
+                files[fi].1.facts.sig_hash.hash(&mut h);
+            }
+        }
+        units[ui].key = h.finish();
+        units[ui].lines = lines;
+    }
+    (units, g.unit_of_file.clone())
+}
+
+/// Groups the files into units and computes their dependencies.
 fn units_of(files: &[(&str, &FileState)]) -> (Vec<Unit>, Vec<usize>) {
     let mut units: Vec<Unit> = Vec::new();
     let mut by_name: HashMap<&str, usize> = HashMap::new();
@@ -192,19 +244,6 @@ fn units_of(files: &[(&str, &FileState)]) -> (Vec<Unit>, Vec<usize>) {
             stack.extend(direct[u].iter().copied().filter(|&v| !seen[v]));
         }
         closure.sort();
-        let mut h = DefaultHasher::new();
-        for &fi in &units[ui].files {
-            files[fi].0.hash(&mut h);
-            files[fi].1.facts.text_hash.hash(&mut h);
-        }
-        0xffu8.hash(&mut h);
-        for &u in &closure {
-            for &fi in &units[u].files {
-                files[fi].0.hash(&mut h);
-                files[fi].1.facts.sig_hash.hash(&mut h);
-            }
-        }
-        units[ui].key = h.finish();
         units[ui].closure = closure;
     }
     (units, unit_of_file)
@@ -259,7 +298,7 @@ fn analyze_inner(sess: &Session, cache: &mut Cache, cancel: Option<&AtomicBool>)
     let files: Vec<(&str, &FileState)> = sess.files.iter().map(|(p, f)| (p.as_str(), &**f)).collect();
     let (units, unit_of_file) = {
         let _t = crate::build::phase("ide-units");
-        units_of(&files)
+        units_of_cached(&files, &mut cache.graph)
     };
     let text_of: HashMap<&str, u64> = files.iter().map(|(p, f)| (*p, f.facts.text_hash)).collect();
     let dirty: Vec<usize> = (0..units.len())

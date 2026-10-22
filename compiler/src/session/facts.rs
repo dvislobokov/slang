@@ -27,6 +27,9 @@ pub(crate) struct FileFacts {
     idents: Vec<u64>,
     /// Number of lines (a cost estimate).
     pub lines: usize,
+    /// Hash of the namespace, imports and identifiers (what the units and
+    /// their dependencies are computed from).
+    pub deps_hash: u64,
 }
 
 impl FileFacts {
@@ -116,18 +119,13 @@ pub(crate) fn facts(text: &str, tokens: &[Token], file: &ast::File) -> FileFacts
     for d in &file.decls {
         decl_shape(d, &mut h);
     }
-    FileFacts {
-        text_hash: hash_str(text),
-        sig_hash: h.finish(),
-        namespace: file.namespace.to_string(),
-        imports: file.imports.iter().map(|i| i.path.to_string()).collect(),
-        idents: {
-            let mut v: Vec<u64> = idents.into_iter().map(hash_str).collect();
-            v.sort_unstable();
-            v
-        },
-        lines: text.lines().count(),
-    }
+    let namespace = file.namespace.to_string();
+    let imports: Vec<String> = file.imports.iter().map(|i| i.path.to_string()).collect();
+    let mut idents: Vec<u64> = idents.into_iter().map(hash_str).collect();
+    idents.sort_unstable();
+    let mut d = DefaultHasher::new();
+    (&namespace, &imports, &idents).hash(&mut d);
+    FileFacts { text_hash: hash_str(text), sig_hash: h.finish(), namespace, imports, idents, lines: text.lines().count(), deps_hash: d.finish() }
 }
 
 /// Hashes the structure of a declaration (names, flags and types, not
