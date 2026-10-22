@@ -85,7 +85,15 @@ jobs:
           brew install llvm@18 lld
           echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
           echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
-      - uses: dtolnay/rust-toolchain@stable
+      # rustup is preinstalled on the hosted runners; retried, since the
+      # download of the toolchain sometimes fails on a DNS error.
+      - name: Rust (stable)
+        run: |
+          for i in 1 2 3 4; do
+            rustup toolchain install stable --profile minimal && rustup default stable && break
+            echo "rustup failed (attempt $i), retrying"; sleep 20
+          done
+          rustc --version
       - name: Runtime
         run: |
           if [ "$RUNNER_OS" = macOS ]; then make -C runtime CC=clang -j"$(sysctl -n hw.ncpu)"; else make -C runtime -j"$(nproc)"; fi
@@ -143,9 +151,16 @@ jobs:
           & "$prefix\bin\llvm-config.exe" --version
           if ($LASTEXITCODE -ne 0) { throw "llvm-config not found in $prefix" }
           "LLVM_SYS_180_PREFIX=$prefix" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
+      - name: Rust (stable, MSVC)
+        shell: pwsh
+        run: |
+          foreach ($i in 1..4) {
+            rustup toolchain install stable --profile minimal --target x86_64-pc-windows-msvc
+            if ($LASTEXITCODE -eq 0) { rustup default stable; break }
+            Write-Host "rustup failed (attempt $i), retrying"; Start-Sleep 20
+          }
+          rustc --version
+          if ($LASTEXITCODE -ne 0) { throw "no Rust toolchain" }
       - name: Compiler (release)
         shell: pwsh
         env:
