@@ -1,0 +1,10 @@
+# Zell MCP server for OpenAI Codex CLI.
+# Put this in ~/.codex/config.toml (all projects) or <project>/.codex/config.toml
+# (trusted projects), or run:  codex mcp add zell -- zell-mcp
+# Instructions: copy ../templates/AGENTS.md to the project root (or run
+# `zell init --agents codex`, which writes both).
+
+[mcp_servers.zell]
+command = "zell-mcp"
+args = []
+# startup_timeout_sec = 20   # the first analysis of a large project can take a few seconds

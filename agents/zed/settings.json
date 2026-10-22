@@ -1,0 +1,8 @@
+{
+  "context_servers": {
+    "zell": {
+      "command": "zell-mcp",
+      "args": []
+    }
+  }
+}

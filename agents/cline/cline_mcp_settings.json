@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "zell": {
+      "command": "zell-mcp",
+      "args": [],
+      "disabled": false,
+      "autoApprove": ["diagnostics", "definition", "references", "hover", "document_symbols", "workspace_symbols", "doc", "std_index"]
+    }
+  }
+}

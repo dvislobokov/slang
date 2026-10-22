@@ -6,7 +6,8 @@
 //! ([`fetch`], [`git`], [`http`]) with `h1:` checksums and the checksum
 //! log ([`sum`]), the content-addressable store ([`store`]),
 //! `zell vendor` ([`vendor`]), the module proxy server ([`proxy`]),
-//! `zell.lock` ([`lock`]), `zell init` ([`init`]), the package commands
+//! `zell.lock` ([`lock`]), `zell init` ([`init`]) and its `--agents`
+//! configuration for AI coding agents ([`agents`]), the package commands
 //! ([`cli`]) and the package-aware front end ([`check`]).
 //!
 //! Rules enforced for package builds:
@@ -17,6 +18,7 @@
 //!   roots of its package's declared dependencies (enforced inside sema by
 //!   [`crate::sema::ImportPolicy`]).
 
+pub mod agents;
 pub mod cli;
 pub mod fetch;
 pub mod git;

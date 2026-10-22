@@ -1,0 +1,4 @@
+# aider reads the Zell conventions on every start.
+# Copy ../templates/AGENTS.md to the project as CONVENTIONS.md
+# (or run `zell init --agents aider`, which writes both files).
+read: CONVENTIONS.md

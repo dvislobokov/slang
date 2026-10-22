@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "zell": {
+      "type": "stdio",
+      "command": "zell-mcp",
+      "args": []
+    }
+  }
+}

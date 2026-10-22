@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "zell": {
+      "command": "zell-mcp",
+      "args": []
+    }
+  }
+}

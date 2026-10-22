@@ -11,8 +11,11 @@ const USAGE: &str = "\
 usage: zell <command> [args]
 
 commands:
-  init [dir] [--name n] [--format toml|json|yaml] [--lib]
-                                 create a package (manifest + src/main.zl or src/lib.zl)
+  init [dir] [--name n] [--format toml|json|yaml] [--lib] [--agents list]
+                                 create a package (manifest + src/main.zl or src/lib.zl);
+                                 --agents claude,codex,gemini,cursor,windsurf,cline,aider,zed,
+                                 copilot,claude-skills or all: AI agent configuration (zell-mcp,
+                                 instructions; also in an existing package, see agents/README.md)
   build [path] [options]         build the project found from the current directory,
                                  a project directory, a plain directory or a single file
   run [path] [options] [-- args] build and run
@@ -178,10 +181,17 @@ fn init(args: &[String]) {
     let mut name = None;
     let mut format = Format::Toml;
     let mut lib = false;
+    let mut agents = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--lib" => lib = true,
+            "--agents" => {
+                i += 1;
+                let list = args.get(i).unwrap_or_else(|| usage_error("--agents needs a list such as claude,codex (or all)"));
+                agents = Some(package::agents::parse_list(list).unwrap_or_else(|e| usage_error(&e)));
+            }
+            a if a.starts_with("--agents=") => agents = Some(package::agents::parse_list(&a["--agents=".len()..]).unwrap_or_else(|e| usage_error(&e))),
             "--name" => {
                 i += 1;
                 name = Some(args.get(i).cloned().unwrap_or_else(|| usage_error("--name needs a value")));
@@ -207,13 +217,33 @@ fn init(args: &[String]) {
     }
     // `zell init name` creates ./name; the package is named after the directory.
     let dir = dir.unwrap_or_else(|| PathBuf::from("."));
-    match package::init::init(&dir, name.as_deref(), format, lib) {
-        Ok(files) => {
-            for f in files {
-                eprintln!("created {}", f.display());
+    // With --agents, an existing package only gets the agent files.
+    let existing = agents.is_some() && !package::manifest::manifests_in(&dir).is_empty();
+    if !existing {
+        match package::init::init(&dir, name.as_deref(), format, lib) {
+            Ok(files) => {
+                for f in files {
+                    eprintln!("created {}", f.display());
+                }
+            }
+            Err(e) => fail(&e),
+        }
+    }
+    if let Some(agents) = agents {
+        let report = package::agents::write(&dir, &agents).unwrap_or_else(|e| fail(&e));
+        for (f, outcome) in &report.files {
+            let f = f.display();
+            match outcome {
+                package::agents::Outcome::Created => eprintln!("created {f}"),
+                package::agents::Outcome::Updated => eprintln!("updated {f}"),
+                package::agents::Outcome::Unchanged => eprintln!("unchanged {f}"),
+                package::agents::Outcome::Skipped(note) => eprintln!("skipped {f}: {note}"),
             }
         }
-        Err(e) => fail(&e),
+        for n in &report.notes {
+            eprintln!("note: {n}");
+        }
+        eprintln!("agents use zell-mcp (and zell-lsp for Claude Code) from PATH: install the toolchain or build them (cargo build --release)");
     }
 }
 

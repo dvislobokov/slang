@@ -1,0 +1,12 @@
+{
+  "name": "zell",
+  "version": "0.1.0",
+  "description": "Zell language tools (zell-mcp) and the Zell guide for Gemini CLI",
+  "mcpServers": {
+    "zell": {
+      "command": "zell-mcp",
+      "args": []
+    }
+  },
+  "contextFileName": "GEMINI.md"
+}
