@@ -1,0 +1,84 @@
+namespace bench.async_io
+
+import io
+
+// Latency-bound loopback TCP: 1000 concurrent connections, each doing 1000
+// request/response round trips of 64 bytes (write 64, read the 64-byte
+// echo back), 1M round trips in all. Prints the bytes echoed (checksum),
+// then the throughput and the p50/p99/max round-trip latency.
+
+async func serve(c net.Conn) void! {
+    var buf = net.MakeBuffer(4096)
+    for {
+        var n = await c.ReadInto(buf)?
+        if n == 0 {
+            break
+        }
+        _ = await c.Write(buf[..n])?
+    }
+    c.Close()
+}
+
+async func acceptAll(l net.Listener, n int) void! {
+    for _ in 0..n {
+        var c = await l.Accept()?
+        _ = serve(c)
+    }
+}
+
+async func client(addr string, trips int, lat []int, base int) int! {
+    var c = await net.Dial(addr)?
+    var msg = strings.Bytes(strings.Repeat("p", 64))
+    var buf = net.MakeBuffer(64)
+    var got = 0
+    for k in 0..trips {
+        var t0 = time.NowNanos()
+        _ = await c.Write(msg)?
+        var have = 0
+        for have < 64 {
+            var n = await c.ReadInto(buf[have..])?
+            if n == 0 {
+                return error("unexpected EOF")
+            }
+            have += n
+        }
+        lat[base + k] = time.NowNanos() - t0
+        got += have
+    }
+    c.Close()
+    return got
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() void! {
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var conns = scaled(small, 50, 1000)
+    var trips = scaled(small, 50, 1000)
+    var l = net.Listen("127.0.0.1:0")?
+    var acc = acceptAll(l, conns)
+    var zero []int = [0]
+    var lat = slices.Repeat(zero, conns * trips)
+    var t0 = time.NowNanos()
+    var tasks []Task<int!> = []
+    for i in 0..conns {
+        tasks = append(tasks, client(l.Addr(), trips, lat, i * trips))
+    }
+    var total = 0
+    for t in tasks {
+        total += await t?
+    }
+    await acc?
+    var ns = time.NowNanos() - t0
+    l.Close()
+    slices.Sort(lat)
+    var n = len(lat)
+    println("async_io", total)
+    println("  total_ms", ns / 1000000, "rt_per_s", n * 1000 / (ns / 1000000), "p50_us", lat[n / 2] / 1000, "p99_us", lat[n * 99 / 100] / 1000, "max_us", lat[n - 1] / 1000)
+}

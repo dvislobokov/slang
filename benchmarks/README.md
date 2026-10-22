@@ -21,6 +21,7 @@ The script builds both with release settings and reports wall time, CPU time
 | `alloc_heavy` | binary trees of small heap nodes (depth 4..16) and 4M rounds of non-escaping temporaries (`new Stats{}`, `&acc` passed to a method) |
 | `heap_churn` | 20 rounds of 40 MB of small strings (two size classes) plus 32 x 256 KB buffers, all dropped each round; prints the RSS after the last round (memory returned to the OS) |
 | `shared_objects` | reference counts across threads: one task builds 200k objects that 8 tasks read 10 times, 8 tasks build objects one task reads, 8 tasks churn task-local objects; prints the ms of each phase |
+| `spawn_tasks` ... `select_many` | the async scheduler suite (`./scripts/bench-perf.sh async`): tasks, channels, mutex, timers, await chains, cancellation, loopback latency, first-of-many; see "Async benchmarks" at the end |
 
 ## Results, performance pass 2 (2026-10-21, 4 vCPU x86-64, clang/LLVM 18, go 1.24, `--release`)
 
@@ -494,3 +495,155 @@ Regressions and open items from this wave:
 - `alloc_heavy` with the collector on is within noise of `ZELL_CYCLES=off`
   after the pin-release optimisation; the W0001 warning it prints is
   expected (`Node` is a tree, but the type can form a cycle).
+
+## Async benchmarks (2026-10-22, 4 vCPU x86-64 VM, clang/LLVM 18, go 1.24, `--release`)
+
+Nine pairs of programs that compare the task scheduler (`async`/`await`,
+`task.Channel`, `task.Mutex`, `task.Delay`, cancellation, the I/O poller)
+with goroutines. Each one has a fixed workload and prints a checksum line
+first (identical for Zell and Go; `bench-perf.sh` reports a `checksum
+mismatch` otherwise), then its phase timings. `./scripts/bench-perf.sh
+async` runs the suite, `SCALE=small` gives every program a smoke workload
+that finishes in well under a second, and `DETAIL=1` prints the phase lines.
+
+| Benchmark | Workload |
+|---|---|
+| `spawn_tasks` | 1M tasks that yield once, compute a value and finish, all awaited; then 1M tasks parked at once on a `WaitGroup` gate (peak RSS = memory per suspended task) and released |
+| `channel_pingpong` | two tasks exchange 5M messages over unbuffered channels; 1M values through a 4-stage pipeline of buffered (128) channels |
+| `fanout_fanin` | 10k producers x 100 values into one channel (1024) and one consumer; a pool of 8 workers over 1M jobs (jobs and results channels of 1024) |
+| `mutex_contention` | 8 tasks, 10M increments in all under one `task.Mutex` (Go: `sync.Mutex`); one task locking 10M times uncontended |
+| `timers` | 100k tasks each `task.Delay` 1-10 ms (LCG durations); max and mean wake-up lateness |
+| `await_chain` | an async function awaiting itself 1000 deep, 10k times (no suspension), and 1k times with a `task.Yield` at the bottom (the chain suspends and 1000 frames resume); Go: plain recursion and `runtime.Gosched` |
+| `cancel_tree` | 10k tasks blocked (half `Recv`, half a 100 s `Delay`) in a `task.NewCancel` scope, cancelled at once, 10 rounds; the same with `task.WithTimeout(20)`; time from the cancel to the last task done (Go: `context.WithCancel` / `WithTimeout`) |
+| `async_io` | 1000 loopback TCP connections x 1000 round trips of 64 bytes (latency-bound, unlike `tcp_echo`); round trips/s and p50/p99/max latency |
+| `select_many` | one consumer takes 2M events from whichever of 8 unbuffered channels is ready; Zell has no `select`, so it keeps a `Recv` per channel and waits with `task.Any` (which cancels the losers, so every event re-arms the receives); for reference the same events through a merge channel fed by 8 forwarders |
+
+### Preliminary numbers (before the scheduler fixes below; NOT a quiet run)
+
+**Preliminary.** Single runs (not best of 5) at commit e51cf3d, measured
+while four other agents were building and testing on the same 4 vCPU
+machine (load average 2-4), so every figure can be off by 2x or more; the
+order of magnitude is what they show. The final best-of-5 table is a TODO
+below. Times in ms are the programs' own phase timings; wall/CPU/RSS from
+`bench-perf.sh`.
+
+| bench | phase | Zell | Go | Zell / Go |
+|---|---|---|---|---|
+| spawn_tasks | wall (CPU) | 10.1 s (12.2) | 17.7 s (24.8) | 0.57 |
+| | run 1M yielding tasks | 4 971 ms | 934 ms | 5.3 |
+| | park 1M tasks | 4 360 ms | 15 579 ms | 0.28 |
+| | wake 1M parked | 500 ms | 1 060 ms | 0.47 |
+| | peak RSS | 806 MB | 2 600 MB | **0.31** |
+| channel_pingpong | wall (CPU) | 167.7 s (261) | 1.48 s (2.2) | 113 |
+| | ping-pong 5M (1 worker: 6 472 ms) | 162 459 ms | 1 203 ms | 135 |
+| | 4-stage pipeline 1M (1 worker: 3 683 ms) | 5 280 ms | 271 ms | 19 |
+| fanout_fanin | wall (CPU) | 9.68 s (35.8) | 1.41 s (3.4) | 6.9 |
+| | fan-in 10k producers | 7 126 ms | 1 192 ms | 6.0 |
+| | worker pool 1M jobs | 2 545 ms | 214 ms | 12 |
+| mutex_contention | contended, 8 tasks | 34 006 ms | 590 ms | 58 |
+| | uncontended | 1 002 ms | 162 ms | 6.2 |
+| timers | wall | 194.3 s | 0.163 s | ~1200 |
+| | max / mean lateness | 187 s / 127 s | 21 ms / 1.4 ms | - |
+| await_chain | 10M async calls, no suspension | 1 600 ms (160 ns/call) | 94 ms (9 ns/call) | 17 |
+| | 1k chains of 1000 resuming | 782 ms | 10 ms | 78 |
+| cancel_tree | drain after Cancel(), avg / max | 158 / 300 ms | 12.7 / 16.5 ms | 12 |
+| | drain after WithTimeout, avg | 113 ms | 16.4 ms | 6.9 |
+| | peak RSS | 28 MB | 41 MB | 0.68 |
+| async_io | wall (CPU) | 34.5 s (84) | 9.05 s (24.8) | 3.8 |
+| | round trips/s | 29 100 | 113 000 | 3.9 (slower) |
+| | p50 / p99 / max | 33.7 / 61.3 / 103 ms | 8.1 / 18.6 / 64 ms | 4.2 / 3.3 / 1.6 |
+| select_many | `task.Any` emulation / Go `select` (Zell with 1 worker) | 4 161 ms | 70 796 ms (suspect) | - |
+| | merge channel (Zell with 1 worker) | 15 043 ms | 1 151 ms | 13 |
+
+The Go `select` figure (35 us per event) is far off what Go usually does
+and was measured during the heaviest load; treat it as noise until the
+quiet run. Zell's `select_many` was only run with `ZELL_WORKERS=1`.
+
+### Final table: TODO (quiet machine)
+
+TODO: `RUNS=5 ./scripts/bench-perf.sh async` (best of 5, alternating Zell
+and Go) on an otherwise idle machine, before and after the fixes below,
+with wall, CPU, peak RSS and Go = 1.0 ratios. Not done in this session: the
+machine was shared by five agents, so full-size timing was stopped; the
+fixes were checked with the C tests (also under TSan), the `--leak-check`
+examples and the `SCALE=small` runs only.
+
+### Analysis
+
+What the scheduler does well:
+
+- **Memory per task.** A suspended task is its coroutine frame (sized
+  exactly by LLVM) plus a `zell_task` header: 1M parked tasks peak at
+  806 MB including the 1M-element task slice, the gate's waiter slice and
+  phase 1's leftovers, about 0.8 KB per task against about 2.6 KB per
+  parked goroutine (2 KB minimum stack plus `g`). Parking and waking are
+  cheaper than in Go for the same reason (no stacks to allocate or fault
+  in). `cancel_tree` uses less memory than Go as well.
+- **Cancellation is cheap in itself**: `zell_task_cancel` collects the
+  hooks of the whole subtree in one walk and fires them. The drain time
+  above was dominated by the timer list (next point), not by the tree.
+
+What it does badly, and what was fixed in `runtime/src/task.c`:
+
+1. **Timers: O(n) list (fixed).** Timers were a sorted singly linked list:
+   every `task.Delay` insert walked it, and `zell_task_rt_fire`, which every
+   channel, mutex and WaitGroup wake-up goes through, scanned the *whole*
+   list under the global timer lock to see whether the signal was a
+   pending delay. 100k sleepers took 194 s to start and woke up to 187 s
+   late; cancelling 5k delays cost 5k list scans. Now: a binary min-heap
+   on (deadline, insertion sequence), each delay task points at its timer
+   so `rt_fire` removes it in O(log n) and skips the timer lock entirely
+   for tasks without a timer, the timer thread takes all due timers in one
+   lock round trip, and inserts wake the timer thread only for a new
+   earliest deadline.
+2. **A futex wake per job (fixed in part).** One global FIFO queue under one
+   mutex and condvar; every post signalled the condvar, and an idle worker
+   parked as soon as the queue was empty. Hand-off patterns (ping-pong, a
+   mutex passed to the next waiter, an await chain resuming) therefore
+   paid a sleep/wake round trip per message and bounced the queue lock
+   between threads: ping-pong is 25x *slower* with 4 workers than with 1.
+   Now: a worker that runs out of work polls the queue without the lock
+   for up to 50 us (one poller at a time, `sched_yield` every 64 polls)
+   before it parks; a post wakes a parked worker only when nobody polls;
+   and a poller that takes a job while more are queued wakes one parked
+   worker, so bursts still spread over the pool. Tested by
+   `relay_handoffs` and `timer_heap_order_and_fire` in
+   `runtime/tests/test_task.c` (also under `make tsan`).
+
+Open items (larger than a safe fix in this pass):
+
+- **No per-worker run queues, no work stealing, no LIFO slot.** Every job,
+  including the continuation of the task that just completed on this
+  worker, goes through the global queue (a `malloc`ed job and a lock round
+  trip); Go runs a just-readied goroutine next on the same P (`runnext`)
+  and steals from other Ps when idle. Per-worker deques with stealing, and
+  running the awaiting continuation inline when a task completes on a
+  worker, are the next scheduler steps; they would address `spawn_tasks`
+  phase 1 (5x), `await_chain` resumption (780 ns per resumed frame) and
+  `async_io` latency (two queue trips per round trip).
+- **Async call cost.** A call that never suspends still allocates a frame
+  and a task (160 ns vs a 9 ns Go call). Frame elision for immediately
+  awaited calls (LLVM's coro-elide needs the frame lifetime to be visible)
+  or a non-allocating fast path when the callee completes synchronously.
+- **`task.Channel` is written in Zell over signals and spin locks**
+  (std/task/task.zl), not over the C `zell_chan` in task.c: every wait
+  allocates a signal task and a cancellation hook, `send`/`recv` are
+  coroutines, an unbuffered `Send` waits for an acknowledgement (two
+  hand-offs per message), and `recv` wakes *every* blocked sender
+  (`wakeSenders`): with 10k producers on a full channel each receive wakes
+  10k tasks that re-queue (fan-in is 6x Go even with one worker). Waking
+  one sender needs a cancelled sender to remove its stale signal from
+  `sendq` (otherwise a wake-up can be lost), so it was left for a channel
+  rewrite on top of `zell_chan` with cancellation.
+- **`task.Mutex` convoys.** `Unlock` hands ownership to the oldest waiter
+  (FIFO, as specified), so under contention every lock is a scheduler
+  round trip (58x Go); Go's `sync.Mutex` lets a running goroutine barge
+  in and spins before queueing. An uncontended `Lock` still allocates a
+  completed task (`Delay(0)`): 100 ns vs 16 ns. A barging/spinning mode
+  (or handing ownership only after a starvation threshold, as Go does) and
+  a non-allocating fast path are open.
+- **No `select`.** `task.Any` cancels the losers, so waiting on whichever
+  of N channels is ready costs N new receives per event, and a loser that
+  already took a value must still be awaited. A `select` statement or
+  `task.Select` over channel operations needs a spec decision (DESIGN.md
+  "Асинхронность") first.

@@ -1,0 +1,98 @@
+namespace bench.fanout_fanin
+
+import io
+
+// Fan-in: 10k producer tasks each send 100 values into one channel
+// (capacity 1024) read by one consumer. Worker pool: 8 workers take 1M jobs
+// from a jobs channel and send results to a results channel (both capacity
+// 1024); main feeds the jobs and a collector sums the results.
+
+async func producer(out task.Channel<int>, id int, n int, wg *task.WaitGroup) {
+    for i in 0..n {
+        await out.Send(id * n + i)
+    }
+    wg.Done()
+}
+
+async func closeWhenDone(ch task.Channel<int>, wg *task.WaitGroup) {
+    await wg.Wait()
+    ch.Close()
+}
+
+async func fanin(producers int, each int) int {
+    var ch = task.Channel<int>(1024)
+    var wg = new task.WaitGroup{}
+    wg.Add(producers)
+    for p in 0..producers {
+        _ = producer(ch, p, each, wg)
+    }
+    var closer = closeWhenDone(ch, wg)
+    var sum = 0
+    for v in ch {
+        sum += v
+    }
+    await closer
+    return sum
+}
+
+func job(x int) int {
+    var h = x
+    for _ in 0..8 {
+        h = (h * 1103515245 + 12345) % 2147483648
+    }
+    return h % 1000
+}
+
+async func worker(jobs task.Channel<int>, results task.Channel<int>, wg *task.WaitGroup) {
+    for j in jobs {
+        await results.Send(job(j))
+    }
+    wg.Done()
+}
+
+async func collect(results task.Channel<int>) int {
+    var sum = 0
+    for v in results {
+        sum += v
+    }
+    return sum
+}
+
+async func pool(workers int, n int) int {
+    var jobs = task.Channel<int>(1024)
+    var results = task.Channel<int>(1024)
+    var wg = new task.WaitGroup{}
+    wg.Add(workers)
+    for _ in 0..workers {
+        _ = worker(jobs, results, wg)
+    }
+    var c = collect(results)
+    var closer = closeWhenDone(results, wg)
+    for i in 0..n {
+        await jobs.Send(i)
+    }
+    jobs.Close()
+    await closer
+    return await c
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() {
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var producers = scaled(small, 100, 10000)
+    var jobs = scaled(small, 10000, 1000000)
+    var t0 = time.NowNanos()
+    var a = await fanin(producers, 100)
+    var t1 = time.NowNanos()
+    var b = await pool(8, jobs)
+    var t2 = time.NowNanos()
+    println("fanout_fanin", a, b)
+    println("  fanin_ms", (t1 - t0) / 1000000, "pool_ms", (t2 - t1) / 1000000)
+}

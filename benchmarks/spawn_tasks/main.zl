@@ -1,0 +1,56 @@
+namespace bench.spawn_tasks
+
+import io
+
+// Task creation and scheduling. Phase 1: 1M tasks that each yield once to
+// the scheduler (so every task goes through the run queue, like a
+// goroutine), compute a trivial value and finish; main awaits them all.
+// Phase 2: 1M tasks parked at the same time on a WaitGroup gate (memory
+// per suspended task: peak RSS), then released and awaited.
+
+async func work(i int) int {
+    await task.Yield()
+    return (i * 7 + 3) % 1000
+}
+
+async func parked(i int, gate *task.WaitGroup) int {
+    await gate.Wait()
+    return i % 1000
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() {
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var n = scaled(small, 10000, 1000000)
+    var t0 = time.NowNanos()
+    var tasks []Task<int> = []
+    for i in 0..n {
+        tasks = append(tasks, work(i))
+    }
+    var sum = 0
+    for t in tasks {
+        sum += await t
+    }
+    var t1 = time.NowNanos()
+    tasks = []
+    var gate = new task.WaitGroup{}
+    gate.Add(1)
+    for i in 0..n {
+        tasks = append(tasks, parked(i, gate))
+    }
+    var t2 = time.NowNanos()
+    gate.Done()
+    for t in tasks {
+        sum += await t
+    }
+    var t3 = time.NowNanos()
+    println("spawn_tasks", sum)
+    println("  run1M_ms", (t1 - t0) / 1000000, "park1M_ms", (t2 - t1) / 1000000, "wake1M_ms", (t3 - t2) / 1000000)
+}

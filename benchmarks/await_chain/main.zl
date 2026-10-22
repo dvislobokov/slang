@@ -1,0 +1,51 @@
+namespace bench.await_chain
+
+import io
+
+// Deep await chains: an async function awaiting itself 1000 levels deep,
+// 10k times (10M async calls). Sync leaf: no level suspends, so this is
+// the cost of a coroutine frame + task per call. Yield leaf: the deepest
+// level yields once, so the whole chain suspends and 1000 frames resume in
+// a cascade (1k times).
+
+async func chain(d int, x int) int {
+    if d == 0 {
+        return x & 1023
+    }
+    return await chain(d - 1, x + d) + 1
+}
+
+async func chainYield(d int, x int) int {
+    if d == 0 {
+        await task.Yield()
+        return x & 1023
+    }
+    return await chainYield(d - 1, x + d) + 1
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() {
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var outer = scaled(small, 100, 10000)
+    var outerYield = scaled(small, 10, 1000)
+    var t0 = time.NowNanos()
+    var a = 0
+    for i in 0..outer {
+        a += await chain(1000, i)
+    }
+    var t1 = time.NowNanos()
+    var b = 0
+    for i in 0..outerYield {
+        b += await chainYield(1000, i)
+    }
+    var t2 = time.NowNanos()
+    println("await_chain", a, b)
+    println("  sync_ms", (t1 - t0) / 1000000, "yield_ms", (t2 - t1) / 1000000)
+}

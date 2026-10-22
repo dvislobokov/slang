@@ -1,0 +1,49 @@
+namespace bench.mutex_contention
+
+import io
+
+// task.Mutex. Contended: 8 tasks increment a shared counter under one
+// mutex, 10M increments in all. Uncontended: one task takes and releases
+// the mutex 10M times.
+
+struct Counter {
+    mu task.Mutex
+    n  int
+}
+
+async func incr(c *Counter, times int) {
+    await task.Yield()
+    for _ in 0..times {
+        await c.mu.Lock()
+        c.n += 1
+        c.mu.Unlock()
+    }
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() {
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var total = scaled(small, 100000, 10000000)
+    var c = new Counter{}
+    var t0 = time.NowNanos()
+    var ts []Task<void> = []
+    for _ in 0..8 {
+        ts = append(ts, incr(c, total / 8))
+    }
+    for t in ts {
+        await t
+    }
+    var t1 = time.NowNanos()
+    var u = new Counter{}
+    await incr(u, total)
+    var t2 = time.NowNanos()
+    println("mutex_contention", c.n, u.n)
+    println("  contended_ms", (t1 - t0) / 1000000, "uncontended_ms", (t2 - t1) / 1000000)
+}

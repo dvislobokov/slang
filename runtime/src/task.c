@@ -33,6 +33,13 @@ static int64_t q_nworkers;    /* target parallelism N */
 static int64_t q_alive;       /* worker threads alive (N core + spares) */
 static int64_t q_idle;        /* workers parked waiting for work */
 static int64_t q_blocked;     /* workers blocked inside zell_task_await */
+static int64_t q_spinning;    /* workers polling for work before parking */
+
+/* How long an out-of-work worker polls the queue before it parks on q_cv
+ * (and at most one does at a time). A job posted meanwhile is taken
+ * without a futex wake-up of a parked thread: hand-offs between tasks
+ * (channels, mutexes, awaits) would otherwise pay a sleep/wake per job. */
+#define SPIN_NS 50000
 
 static _Thread_local int t_is_worker;
 
@@ -45,13 +52,33 @@ static _Thread_local zell_object *t_ctx;
  * Travels with jobs and continuations like t_ctx; see ABI.md 10.11. */
 static _Thread_local zell_task *t_cur;
 
+/* q_head is written under q_mu but read without it by spinning workers. */
 static job *pop_locked(void) {
     job *j = q_head;
     if (j) {
-        q_head = j->next;
+        __atomic_store_n(&q_head, j->next, __ATOMIC_RELAXED);
         if (!q_head) q_tail = NULL;
     }
     return j;
+}
+
+/* Polls for work for up to SPIN_NS without the lock; q_mu is held on entry
+ * and on return. Returns whether work showed up. */
+static bool spin_for_work_locked(void) {
+    q_spinning++;
+    zell__plat_mutex_unlock(&q_mu);
+    bool found = false;
+    int64_t until = zell__plat_mono_ns() + SPIN_NS;
+    for (int i = 1;; i++) {
+        if (__atomic_load_n(&q_head, __ATOMIC_RELAXED)) { found = true; break; }
+        if ((i & 63) == 0) {
+            if (zell__plat_mono_ns() >= until) break;
+            zell__plat_yield();   /* a shared machine: let the poster run */
+        }
+    }
+    zell__plat_mutex_lock(&q_mu);
+    q_spinning--;
+    return found;
 }
 
 static void *worker_main(void *spare_flag) {
@@ -60,6 +87,7 @@ static void *worker_main(void *spare_flag) {
     zell__rc_thread_eligible();     /* biased refcounts (rc.c) */
     zell__plat_thread_stack_init(); /* frame walks of the CPU profiler */
     zell__plat_mutex_lock(&q_mu);
+    bool spun = false;   /* polled since the last job: park next time */
     for (;;) {
         job *j = pop_locked();
         if (!j) {
@@ -82,13 +110,24 @@ static void *worker_main(void *spare_flag) {
                 zell__plat_mutex_lock(&q_mu);
                 continue;
             }
+            if (!spun && q_spinning == 0 && q_nworkers > 1) {
+                spun = true;
+                spin_for_work_locked();
+                continue;
+            }
+            spun = false;
             q_idle++;
             zell__rc_park(0);
             zell__plat_cond_wait(&q_cv, &q_mu);
             q_idle--;
             continue;
         }
+        spun = false;
         q_active++;
+        /* More work queued and nobody polling: wake a parked worker, so a
+         * burst of posts (which skip the wake-up while one worker polls)
+         * still spreads over the pool. */
+        if (q_head && q_idle > 0 && q_spinning == 0) zell__plat_cond_signal(&q_cv);
         zell__plat_mutex_unlock(&q_mu);
         zell__rc_unpark();   /* after a park above; no-op otherwise */
         zell_resume_fn fn = j->fn;
@@ -201,9 +240,11 @@ static void sched_post_ctx(zell_resume_fn fn, void *arg, zell_object *ctx, zell_
     j->cur = cur;
     j->next = NULL;
     zell__plat_mutex_lock(&q_mu);
-    if (q_tail) q_tail->next = j; else q_head = j;
+    if (q_tail) q_tail->next = j; else __atomic_store_n(&q_head, j, __ATOMIC_RELAXED);
     q_tail = j;
-    zell__plat_cond_signal(&q_cv);
+    /* A polling worker takes the job without a wake-up; otherwise wake a
+     * parked one (none parked: every worker is busy and will look). */
+    if (q_spinning == 0 && q_idle > 0) zell__plat_cond_signal(&q_cv);
     zell__plat_mutex_unlock(&q_mu);
 }
 
@@ -275,6 +316,10 @@ struct zell_task {
     zell_object *caller_ctx;
     int32_t ctx_saved;
     int32_t dbg_id;             /* debug agent record (debug.c), 0 = none */
+    /* The pending zell_task_delay timer that completes this task, guarded
+     * by tm_mu (NULL once it fired or was removed): lets rt_fire drop the
+     * timer in O(log n) instead of scanning all timers. */
+    struct timer *timer;
     unsigned char slot[];       /* result_size bytes (8-aligned) */
 };
 
@@ -537,50 +582,127 @@ zell_task *zell_task_spawn(zell_task_fn fn, void *ctx) {
 }
 
 /* ======================================================================
- * Timers (zell_task_delay): one thread, sorted list, monotonic clock.
+ * Timers (zell_task_delay): one thread, a binary min-heap on (deadline,
+ * seq) so equal deadlines fire in insertion order, monotonic clock.
+ * Insert, pop and removal (rt_fire of a pending delay) are O(log n).
  * ====================================================================== */
 
 typedef struct timer {
     int64_t deadline;   /* monotonic ns */
+    uint64_t seq;       /* insertion order, breaks deadline ties */
+    int64_t idx;        /* position in tm_heap */
     zell_task *task;   /* owned: completed at the deadline, or */
     zell_task *cancel; /* owned: cancelled at the deadline (zell_task_set_deadline) */
-    struct timer *next;
+    struct timer *next; /* batch of due timers in timer_main */
 } timer;
 
 static zell__plat_mutex tm_mu = ZELL_PLAT_MUTEX_INIT;
 static zell__plat_cond tm_cv;
-static timer *tm_list;
+static timer **tm_heap;           /* guarded by tm_mu */
+static int64_t tm_n, tm_cap;
+static uint64_t tm_seq;
 static int tm_running, tm_stop;
 static zell__plat_thread tm_thread;
+
+static bool tm_less(const timer *a, const timer *b) {
+    return a->deadline < b->deadline || (a->deadline == b->deadline && a->seq < b->seq);
+}
+
+static void tm_set(int64_t i, timer *t) { tm_heap[i] = t; t->idx = i; }
+
+static void tm_sift_up(int64_t i) {
+    timer *t = tm_heap[i];
+    while (i > 0) {
+        int64_t p = (i - 1) / 2;
+        if (!tm_less(t, tm_heap[p])) break;
+        tm_set(i, tm_heap[p]);
+        i = p;
+    }
+    tm_set(i, t);
+}
+
+static void tm_sift_down(int64_t i) {
+    timer *t = tm_heap[i];
+    for (;;) {
+        int64_t c = 2 * i + 1;
+        if (c >= tm_n) break;
+        if (c + 1 < tm_n && tm_less(tm_heap[c + 1], tm_heap[c])) c++;
+        if (!tm_less(tm_heap[c], t)) break;
+        tm_set(i, tm_heap[c]);
+        i = c;
+    }
+    tm_set(i, t);
+}
+
+/* tm_mu held. */
+static void tm_push(timer *t) {
+    if (tm_n == tm_cap) {
+        int64_t cap = tm_cap ? tm_cap * 2 : 64;
+        timer **h = realloc(tm_heap, sizeof *h * (size_t)cap);
+        if (!h) zell_panic("out of memory (timer)");
+        tm_heap = h;
+        tm_cap = cap;
+    }
+    t->seq = tm_seq++;
+    tm_set(tm_n++, t);
+    tm_sift_up(t->idx);
+}
+
+/* Removes t from the heap (tm_mu held); clears its task's back pointer. */
+static void tm_remove(timer *t) {
+    int64_t i = t->idx;
+    timer *last = tm_heap[--tm_n];
+    if (last != t) {
+        tm_set(i, last);
+        if (i > 0 && tm_less(last, tm_heap[(i - 1) / 2])) tm_sift_up(i);
+        else tm_sift_down(i);
+    }
+    if (t->task) __atomic_store_n(&t->task->timer, NULL, __ATOMIC_RELEASE);
+}
 
 static void *timer_main(void *unused) {
     (void)unused;
     zell__plat_mutex_lock(&tm_mu);
     while (!tm_stop) {
-        if (!tm_list) { zell__plat_cond_wait(&tm_cv, &tm_mu); continue; }
-        int64_t left = tm_list->deadline - zell__plat_mono_ns();
+        if (tm_n == 0) { zell__plat_cond_wait(&tm_cv, &tm_mu); continue; }
+        int64_t now = zell__plat_mono_ns();
+        int64_t left = tm_heap[0]->deadline - now;
         if (left > 0) {
             zell__plat_cond_wait_ns(&tm_cv, &tm_mu, left);
             continue;
         }
-        timer *t = tm_list;
-        tm_list = t->next;
+        /* Take every due timer in one go (one lock round trip per batch). */
+        timer *due = NULL, **tail = &due;
+        while (tm_n > 0 && tm_heap[0]->deadline <= now) {
+            timer *t = tm_heap[0];
+            tm_remove(t);
+            t->next = NULL;
+            *tail = t;
+            tail = &t->next;
+        }
         zell__plat_mutex_unlock(&tm_mu);
-        if (t->task) zell_task_try_complete(t->task, NULL);  /* may race with rt_fire */
-        if (t->cancel) zell_task_cancel(t->cancel);
-        zell_release(t->task);
-        zell_release(t->cancel);
-        free(t);
+        while (due) {
+            timer *t = due;
+            due = t->next;
+            if (t->task) zell_task_try_complete(t->task, NULL);  /* may race with rt_fire */
+            if (t->cancel) zell_task_cancel(t->cancel);
+            zell_release(t->task);
+            zell_release(t->cancel);
+            free(t);
+        }
         zell__plat_mutex_lock(&tm_mu);
     }
     /* Pending timers at shutdown are dropped without completing. */
-    while (tm_list) {
-        timer *t = tm_list;
-        tm_list = t->next;
+    while (tm_n > 0) {
+        timer *t = tm_heap[0];
+        tm_remove(t);
         zell_release(t->task);
         zell_release(t->cancel);
         free(t);
     }
+    free(tm_heap);
+    tm_heap = NULL;
+    tm_cap = 0;
     zell__plat_mutex_unlock(&tm_mu);
     return NULL;
 }
@@ -641,11 +763,10 @@ static void timer_insert(int64_t ms, zell_task *t, zell_task *cancel) {
     tm->task = t;
     tm->cancel = cancel;
     zell__plat_mutex_lock(&tm_mu);
-    timer **pp = &tm_list;
-    while (*pp && (*pp)->deadline <= tm->deadline) pp = &(*pp)->next;
-    tm->next = *pp;
-    *pp = tm;
-    zell__plat_cond_signal(&tm_cv);
+    tm_push(tm);
+    if (t) __atomic_store_n(&t->timer, tm, __ATOMIC_RELEASE);
+    /* Only a new earliest deadline changes how long the timer thread sleeps. */
+    if (tm->idx == 0) zell__plat_cond_signal(&tm_cv);
     zell__plat_mutex_unlock(&tm_mu);
 }
 
@@ -1060,15 +1181,15 @@ zell_task *zell_task_rt_waker(void) { return task_new_ex(0, NULL, 0); }
 void zell_task_rt_fire(zell_task *t) {
     if (!t) zell_panic_nil();
     timer *found = NULL;
-    zell__plat_mutex_lock(&tm_mu);
-    for (timer **pp = &tm_list; *pp; pp = &(*pp)->next) {
-        if ((*pp)->task == t && t) {
-            found = *pp;
-            *pp = found->next;
-            break;
-        }
+    /* t->timer is set before a delay task is handed out and only cleared
+     * afterwards, so NULL here means no pending timer: signals, wakers and
+     * fired delays skip the global timer lock. */
+    if (__atomic_load_n(&t->timer, __ATOMIC_ACQUIRE)) {
+        zell__plat_mutex_lock(&tm_mu);
+        found = __atomic_load_n(&t->timer, __ATOMIC_ACQUIRE);
+        if (found) tm_remove(found);
+        zell__plat_mutex_unlock(&tm_mu);
     }
-    zell__plat_mutex_unlock(&tm_mu);
     zell_task_try_complete(t, NULL);
     if (found) {
         zell_release(found->task);

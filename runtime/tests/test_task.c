@@ -148,6 +148,80 @@ TEST(delay_any) {
     for (int i = 0; i < 3; i++) zell_release(ds[i]);
 }
 
+/* ---- timer heap: many delays fire in deadline order; rt_fire removes a
+ * pending delay from anywhere in the heap ---- */
+
+static int64_t fired_seq;
+typedef struct { int64_t ms, order; } fire_rec;
+static fire_rec fired[400];
+
+static void on_fired(void *arg) {
+    int64_t ms = (int64_t)(intptr_t)arg;
+    int64_t i = __atomic_fetch_add(&fired_seq, 1, __ATOMIC_ACQ_REL);
+    fired[i].ms = ms;
+    fired[i].order = i;
+}
+
+TEST(timer_heap_order_and_fire) {
+    enum { N = 400 };
+    static zell_task *ds[N];
+    fired_seq = 0;
+    for (int i = 0; i < N; i++) {
+        /* Durations 20..215 ms in a scrambled order, 2 per value. */
+        int64_t ms = 20 + (int64_t)((i * 37) % (N / 2));
+        ds[i] = zell_task_delay(ms);
+        if (i % 4 == 3) continue;  /* fired early below */
+        zell_task_add_continuation(ds[i], on_fired, (void *)(intptr_t)ms);
+    }
+    /* Fire every 4th delay now: removal from the middle of the heap. */
+    for (int i = 3; i < N; i += 4) {
+        zell_task_rt_fire(ds[i]);
+        assert(zell_task_is_done(ds[i]));
+        zell_task_rt_fire(ds[i]);  /* idempotent */
+    }
+    zell_task *all = zell_task_all(ds, N);
+    zell_task_await(all);
+    zell_release(all);
+    /* Continuations run as jobs; wait until all have recorded. */
+    while (__atomic_load_n(&fired_seq, __ATOMIC_ACQUIRE) < N - N / 4) sched_yield();
+    /* Timers fire in deadline order; their jobs may run a little out of
+     * order on 3 workers, but never by more than a few ms of deadline. */
+    for (int64_t i = 1; i < N - N / 4; i++) assert(fired[i].ms + 15 >= fired[i - 1].ms);
+    for (int i = 0; i < N; i++) zell_release(ds[i]);
+}
+
+/* ---- hand-offs between workers (spin-before-park path): a chain of
+ * spawns where each job posts the next, while the others are idle ---- */
+
+typedef struct { zell_task *done; int64_t left; } relay;
+
+static void relay_step(zell_task *t, void *ctx) {
+    relay *r = ctx;
+    if (--r->left == 0) {
+        zell_task_complete(r->done, NULL);
+    } else {
+        zell_task *next = zell_task_spawn(relay_step, r);
+        zell_release(next);
+    }
+    zell_task_complete(t, NULL);
+}
+
+TEST(relay_handoffs) {
+    relay r = { zell_task_new_plain(0, NULL), 20000 };
+    zell_task *first = zell_task_spawn(relay_step, &r);
+    zell_task_await(r.done);
+    zell_task_await(first);
+    zell_release(first);
+    zell_release(r.done);
+    /* After the burst the pool goes idle again and still wakes for work. */
+    zell_task *d = zell_task_delay(5);
+    zell_task_await(d);
+    zell_release(d);
+    zell_task *t = zell_task_spawn(square, (void *)(intptr_t)9);
+    assert(*(int64_t *)zell_task_await(t) == 81);
+    zell_release(t);
+}
+
 /* ---- results with refcounted payloads ---- */
 
 static void make_str(zell_task *t, void *ctx) {
@@ -338,6 +412,8 @@ int main(int argc, char **argv) {
     RUN(nested_await_on_worker);
     RUN(coroutine_protocol);
     RUN(delay_any);
+    RUN(timer_heap_order_and_fire);
+    RUN(relay_handoffs);
     RUN(refcounted_result);
     RUN(mutex);
     RUN(channel_unbuffered);

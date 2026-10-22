@@ -1,0 +1,77 @@
+namespace bench.cancel_tree
+
+import io
+
+// Cancellation: 10k tasks blocked in a cancellation scope (half in
+// Channel.Recv, half in a 100 s task.Delay), cancelled at once; measures
+// the time from the cancel to the last task finishing. 10 rounds with
+// task.NewCancel + Cancel(), 10 rounds with task.WithTimeout(20 ms).
+
+async func waiter(ch task.Channel<int>, i int) int {
+    if i % 2 == 0 {
+        _ = try await ch.Recv() catch _ {
+            return 1
+        }
+        return 0
+    }
+    await task.Delay(100000)
+    if task.IsCancelled() {
+        return 1
+    }
+    return 0
+}
+
+async func startAll(ch task.Channel<int>, n int) int {
+    var ts []Task<int> = []
+    for i in 0..n {
+        ts = append(ts, waiter(ch, i))
+    }
+    var c = 0
+    for t in ts {
+        c += await t
+    }
+    return c
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() {
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var n = scaled(small, 1000, 10000)
+    var rounds = scaled(small, 2, 10)
+    var ch = task.Channel<int>(0)
+    var cancelled = 0
+    var drainNs = 0
+    var maxDrain = 0
+    for _ in 0..rounds {
+        var h = task.NewCancel()
+        var all = task.SpawnWith(h.Context, func() Task<int> {
+            return startAll(ch, n)
+        })
+        await task.Delay(20)
+        var c0 = time.NowNanos()
+        h.Cancel()
+        cancelled += await all
+        var d = time.NowNanos() - c0
+        drainNs += d
+        if d > maxDrain {
+            maxDrain = d
+        }
+    }
+    var timeoutNs = 0
+    for _ in 0..rounds {
+        var s0 = time.NowNanos()
+        cancelled += await task.WithTimeout(20, func() Task<int> {
+            return startAll(ch, n)
+        })
+        timeoutNs += time.NowNanos() - s0 - 20000000
+    }
+    println("cancel_tree", cancelled)
+    println("  cancel_drain_us_avg", drainNs / rounds / 1000, "max", maxDrain / 1000, "timeout_drain_us_avg", timeoutNs / rounds / 1000)
+}

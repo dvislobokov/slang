@@ -1,0 +1,54 @@
+namespace bench.timers
+
+import io
+
+// Timers: 100k tasks each sleep 1-10 ms (task.Delay, durations from a
+// fixed LCG) and record how late they woke up. Prints the sum of the
+// requested sleeps (the checksum), then the max and mean lateness and the
+// share of wakeups more than 1 ms late.
+
+async func sleeper(ms int) int {
+    var t0 = time.NowNanos()
+    await task.Delay(ms)
+    return time.NowNanos() - t0 - ms * 1000000
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() {
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var n = scaled(small, 1000, 100000)
+    var seed = 12345
+    var tasks []Task<int> = []
+    var sum = 0
+    var t0 = time.NowNanos()
+    for _ in 0..n {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        var ms = 1 + seed / 65536 % 10
+        sum += ms
+        tasks = append(tasks, sleeper(ms))
+    }
+    var t1 = time.NowNanos()
+    var maxLate = 0
+    var totalLate = 0
+    var over1ms = 0
+    for t in tasks {
+        var late = await t
+        if late > maxLate {
+            maxLate = late
+        }
+        if late > 1000000 {
+            over1ms += 1
+        }
+        totalLate += late
+    }
+    var t2 = time.NowNanos()
+    println("timers", n, sum)
+    println("  start_ms", (t1 - t0) / 1000000, "total_ms", (t2 - t0) / 1000000, "max_late_us", maxLate / 1000, "mean_late_us", totalLate / n / 1000, "late_over_1ms", over1ms)
+}

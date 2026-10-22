@@ -1,0 +1,101 @@
+namespace bench.select_many
+
+import io
+
+// First-of-many: one consumer takes 2M events from whichever of 8
+// unbuffered channels is ready (8 producers, 250k events each). Zell has
+// no `select` statement; the consumer keeps one pending Recv per channel
+// and waits with task.Any, which cancels the losers, so each event re-arms
+// the receives (a loser that already took a value still delivers it).
+// For reference, the same events through a merge channel fed by 8
+// forwarder tasks (the select-free idiom).
+
+async func producer(ch task.Channel<int>, id int, n int) {
+    for i in 0..n {
+        await ch.Send(id * 1000000 + i)
+    }
+    ch.Close()
+}
+
+async func selectLoop(chs []task.Channel<int>, total int) int {
+    var sum = 0
+    var got = 0
+    for got < total {
+        var pending []Task<int!> = []
+        for c in chs {
+            pending = append(pending, c.Recv())
+        }
+        // task.Any takes the tasks as separate arguments (no slice form).
+        _ = await task.Any(pending[0], pending[1], pending[2], pending[3], pending[4], pending[5], pending[6], pending[7])
+        for p in pending {
+            var v = try await p catch _ {
+                continue
+            }
+            sum += v
+            got += 1
+        }
+    }
+    return sum
+}
+
+async func forward(src task.Channel<int>, out task.Channel<int>, wg *task.WaitGroup) {
+    for v in src {
+        await out.Send(v)
+    }
+    wg.Done()
+}
+
+async func closeWhenDone(ch task.Channel<int>, wg *task.WaitGroup) {
+    await wg.Wait()
+    ch.Close()
+}
+
+func makeChans(k int) []task.Channel<int> {
+    var chs []task.Channel<int> = []
+    for _ in 0..k {
+        chs = append(chs, task.Channel<int>(0))
+    }
+    return chs
+}
+
+// The workload: `small` (SCALE=small) for a quick smoke run, else full.
+func scaled(small bool, smallN int, fullN int) int {
+    if small {
+        return smallN
+    }
+    return fullN
+}
+
+async func main() {
+    var k = 8
+    var small = os.Getenv("SCALE") == "small"   // smoke workload
+    var each = scaled(small, 2500, 250000)
+    var chs = makeChans(k)
+    var t0 = time.NowNanos()
+    var ps []Task<void> = []
+    for i in 0..k {
+        ps = append(ps, producer(chs[i], i, each))
+    }
+    var a = await selectLoop(chs, k * each)
+    for p in ps {
+        await p
+    }
+    var t1 = time.NowNanos()
+    var chs2 = makeChans(k)
+    var merged = task.Channel<int>(0)
+    var wg = new task.WaitGroup{}
+    wg.Add(k)
+    for i in 0..k {
+        _ = producer(chs2[i], i, each)
+        _ = forward(chs2[i], merged, wg)
+    }
+    var closer = closeWhenDone(merged, wg)
+    var b = 0
+    for v in merged {
+        b += v
+    }
+    await closer
+    var t2 = time.NowNanos()
+    println("select_many", a, b)
+    println("  select_ms", (t1 - t0) / 1000000, "merge_ms", (t2 - t1) / 1000000)
+}

@@ -275,3 +275,21 @@ async func main() {
 // Output:
 // ticks: 3
 ```
+
+## What things cost
+
+Rough costs on a 4-core x86-64 machine, from the async benchmarks
+(`benchmarks/README.md`, "Async benchmarks"; preliminary single runs on a
+busy machine, before the timer and wake-up fixes made with them):
+
+| Operation | Zell | Go equivalent |
+|---|---|---|
+| a suspended task (memory) | ~0.8 KB | ~2.6 KB per parked goroutine |
+| `async` call that does not suspend | ~160 ns | ~9 ns function call |
+| uncontended `task.Mutex` lock + unlock | ~100 ns | ~16 ns `sync.Mutex` |
+| unbuffered channel message, one worker | ~1.3 us | ~0.2 us |
+
+Tasks are cheap to keep around in large numbers; hand-offs between tasks
+(channel messages, a contended mutex, resuming after `await`) are the
+expensive part, so prefer batching work per message and buffered channels
+on hot paths.
