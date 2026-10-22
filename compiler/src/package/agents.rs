@@ -285,7 +285,7 @@ pub fn write(dir: &Path, agents: &[Agent]) -> Result<Report, String> {
                 markdown_section(&mut r, dir.join("CONVENTIONS.md"))?;
                 let conf = dir.join(".aider.conf.yml");
                 match std::fs::read_to_string(&conf) {
-                    Err(_) => put(&mut r, conf, None, "# Zell conventions for aider (zell init --agents aider)\nread: CONVENTIONS.md\n")?,
+                    Err(_) => put(&mut r, conf, None, "# Zell conventions for aider (zell init --agents aider)\nread: CONVENTIONS.md\ntest-cmd: zell test\n")?,
                     Ok(t) if t.contains("CONVENTIONS.md") => r.files.push((conf, Outcome::Unchanged)),
                     Ok(_) => r.files.push((conf, Outcome::Skipped("add CONVENTIONS.md to its `read:` list".into()))),
                 }

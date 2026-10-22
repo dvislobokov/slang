@@ -196,6 +196,10 @@ namespace calc
 
 import io
 
+func Add(a int, b int) int {
+    return a + b
+}
+
 @test func TestAdd(t *testing.T) {
     testing.Equal(t, Add(2, 3), 5)                 // also NotEqual, True, False, Nil, Error, NoError, ErrorIs, Panics
     t.Run("negative", func(t *testing.T) {         // subtests; t.Parallel(), t.Log/Error/Fatal/Skip

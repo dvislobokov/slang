@@ -1,4 +1,5 @@
-# aider reads the Zell conventions on every start.
+# aider reads the Zell conventions on every start and runs the tests with /test.
 # Copy ../templates/AGENTS.md to the project as CONVENTIONS.md
 # (or run `zell init --agents aider`, which writes both files).
 read: CONVENTIONS.md
+test-cmd: zell test
