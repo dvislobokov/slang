@@ -1,0 +1,188 @@
+# The self-contained toolchain (docs/PLATFORMS.md, "Дистрибутив"): builds the
+# link inputs of every target (scripts/bundle-targets.sh), bin/lld
+# (scripts/build-lld.sh) and the archive (scripts/package-toolchain.sh) on
+# Linux, then checks it where nothing else is installed:
+#
+#   bundle-linux     archive for linux-amd64 / linux-arm64; cross.rs bundle::*
+#                    against the archive (glibc + musl natively, arm64 under QEMU,
+#                    Windows under Wine, macOS link checks)
+#   bundle-smoke     the archive in a bare ubuntu:24.04 container: build and run
+#                    examples for every target; then wine/qemu installed in a second
+#                    container for the foreign ones; the glibc executables again in
+#                    ubuntu:20.04 (the glibc 2.31 floor)
+#   bundle-macos     the Linux-cross-built macOS executables run on macos-14
+#                    (arm64) and macos-15-intel (amd64); libSystem.tbd checked
+#                    against the SDK; bin/lld for macOS built (cached for releases)
+#   bundle-windows   the Linux-cross-built Windows executables run on windows-latest
+name: bundle
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bundle-linux:
+    name: bundle-linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: LLVM 18, static lld libraries
+        run: |
+          sudo ./scripts/setup.sh
+          sudo apt-get install -y liblld-18-dev libzstd-dev zlib1g-dev libncurses-dev xz-utils
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache of the pinned downloads
+        uses: actions/cache@v4
+        with:
+          path: build/bundle-cache
+          key: bundle-cache-${{ hashFiles('scripts/bundle-targets.sh') }}
+          restore-keys: bundle-cache-
+      - name: Link inputs of every target
+        run: ./scripts/bundle-targets.sh && du -sh build/targets/*
+      - name: bin/lld
+        run: ./scripts/build-lld.sh
+      - name: Compiler (release) and archive
+        run: |
+          cargo build --release --bin zell --bin zell-lsp --bin zell-mcp
+          ./scripts/package-toolchain.sh --no-build --out dist
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-linux-${{ matrix.arch }}
+          path: |
+            dist/zell-*-linux-*.tar.xz
+            dist/zell-*-linux-*.tar.xz.sha256
+      - uses: actions/upload-artifact@v4
+        if: matrix.arch == 'amd64'
+        with:
+          name: bundle-targets
+          path: build/targets/
+      - name: Wine and QEMU for the staged-bundle tests
+        if: matrix.arch == 'amd64'
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine64 qemu-user-static libc6-arm64-cross
+      - name: cross.rs bundle::* against the archive (no clang on its PATH)
+        run: ZELL_BUNDLE="$(ls "$PWD"/dist/zell-*-linux-*.tar.xz)" cargo test -p zell --test cross bundle -- --nocapture
+
+  bundle-smoke:
+    needs: bundle-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-linux-amd64
+          path: dist
+      - name: Unpack
+        run: |
+          mkdir -p tc && tar xJf dist/zell-*-linux-amd64.tar.xz -C tc
+          echo "TC=$(ls -d tc/zell-*)" >> "$GITHUB_ENV"
+          du -sh dist/*.tar.xz "$(ls -d tc/zell-*)"
+      - name: Bare ubuntu:24.04, nothing installed but the archive
+        run: docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 sh -c "scripts/bundle-smoke.sh /w/$TC /w/smoke --run linux"
+      - name: Foreign targets (wine and qemu installed in the container)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 sh -c "
+            dpkg --add-architecture i386 && apt-get update -qq &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wine64 qemu-user-static libc6-arm64-cross >/dev/null &&
+            scripts/bundle-smoke.sh /w/$TC /w/smoke --run foreign"
+      - name: The glibc executables on Ubuntu 20.04 (glibc 2.31)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:20.04 sh -c '
+            ldd --version | head -1; fail=0
+            for e in smoke/linux-amd64/*.got; do
+              n=$(basename "$e" .got)
+              if smoke/linux-amd64/$n | cmp -s - examples/$n.out; then echo "ok $n"; else echo "FAIL $n"; fail=1; fi
+            done; exit $fail'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-smoke-executables
+          path: |
+            smoke/macos-*/
+            smoke/windows-amd64/
+            !smoke/**/*.log
+
+  bundle-macos:
+    needs: bundle-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-14
+          - arch: amd64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-smoke-executables
+          path: smoke
+      - name: Run the Linux-cross-built macOS executables
+        run: |
+          fail=0
+          for exe in smoke/macos-${{ matrix.arch }}/*; do
+            case "$exe" in *.got|*.err|*.log) continue ;; esac
+            n=$(basename "$exe"); chmod +x "$exe"
+            # the checkout may have CRLF line ends (core.autocrlf); the program prints \n
+            tr -d '\r' < "examples/$n.out" > "$RUNNER_TEMP/$n.out"
+            if "$exe" | cmp -s - "$RUNNER_TEMP/$n.out"; then echo "ok $n"; else echo "FAIL $n"; "$exe" | diff "$RUNNER_TEMP/$n.out" - | head -20; fail=1; fi
+          done
+          exit $fail
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-targets
+          path: build/targets
+      - name: libSystem.tbd against the SDK
+        run: |
+          brew install llvm@18
+          CLANG="$(brew --prefix llvm@18)/bin/clang" ./scripts/bundle-targets.sh --out build/targets --check-darwin-tbd
+      - name: Cache of bin/lld for macOS
+        uses: actions/cache@v4
+        with:
+          path: build/lld
+          key: lld-18-${{ matrix.os }}-${{ hashFiles('scripts/build-lld.sh', 'scripts/lld/lld-main.cpp') }}
+      - name: bin/lld (Homebrew's static LLVM, or from source)
+        run: |
+          brew install ninja zstd
+          [ -x build/lld/lld ] || LLVM_CONFIG="$(brew --prefix llvm@18)/bin/llvm-config" ./scripts/build-lld.sh
+          otool -L build/lld/lld
+          build/lld/lld -flavor darwin --version || build/lld/lld -flavor gnu --version
+
+  bundle-windows:
+    needs: bundle-smoke
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-smoke-executables
+          path: smoke
+      - name: Run the Linux-cross-built Windows executables
+        shell: bash
+        run: |
+          fail=0
+          for exe in smoke/windows-amd64/*.exe; do
+            n=$(basename "$exe" .exe)
+            # the checkout may have CRLF line ends (core.autocrlf); the program prints \n
+            tr -d '\r' < "examples/$n.out" > "$RUNNER_TEMP/$n.out"
+            if "$exe" | cmp -s - "$RUNNER_TEMP/$n.out"; then echo "ok $n"; else echo "FAIL $n"; "$exe" | diff "$RUNNER_TEMP/$n.out" - | head -20; fail=1; fi
+          done
+          exit $fail

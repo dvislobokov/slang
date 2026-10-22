@@ -81,6 +81,31 @@ musl-src|$UA/universe/m/musl/musl_1.2.5.orig.tar.gz|a9a118bbe84d8764da0ea0d28b3a
 compiler-rt-src|https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/compiler-rt-18.1.8.src.tar.xz|e054e99a9c9240720616e927cb52363abbc8b4f1ef0286bad3df79ec8fdf892f
 "
 
+# check_darwin_tbd DIR...: on a Mac, every symbol of the bundled
+# libSystem.tbd files must be exported by the SDK's libSystem or one of its
+# re-exported libraries (usr/lib/system/*.tbd); prints the ones that are not.
+check_darwin_tbd() {
+    sdk=${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}
+    cat "$sdk/usr/lib/libSystem.B.tbd" "$sdk"/usr/lib/system/*.tbd | tr ',[]' '\n\n\n' | sed -e "s/[' ]//g" -e '/^$/d' | sort -u > "$work/sdk.syms"
+    bad=0
+    for d in "$@"; do
+        sed -n "s/^      '\(.*\)',\{0,1\}$/\1/p" "$d/libSystem.tbd" | sort -u > "$work/ours.syms"
+        missing=$(comm -23 "$work/ours.syms" "$work/sdk.syms")
+        if [ -n "$missing" ]; then
+            echo "$d/libSystem.tbd: not in the SDK's libSystem:" $missing >&2
+            bad=1
+        else
+            echo "$d/libSystem.tbd: all $(wc -l < "$work/ours.syms" | tr -d ' ') symbols are in $sdk" >&2
+        fi
+    done
+    return $bad
+}
+
+if [ "${check_tbd:-no}" = yes ]; then
+    check_darwin_tbd "$out/aarch64-apple-darwin" "$out/x86_64-apple-darwin"
+    exit $?
+fi
+
 # --- tools -------------------------------------------------------------------
 CLANG=${CLANG:-$(command -v clang-18 || command -v clang || true)}
 [ -n "$CLANG" ] || { echo "bundle-targets.sh: needs clang 18 (scripts/setup.sh)" >&2; exit 1; }
@@ -388,31 +413,6 @@ darwin() {
     bundle_file "$o" "triple=$t" "libc=libSystem (text stub, $(wc -l < "$syms" | tr -d ' ') symbols; macOS >= 12)" \
         "runtime=built against $built" "compiler-rt=$COMPILER_RT_VERSION"
 }
-
-# check_darwin_tbd DIR...: on a Mac, every symbol of the bundled
-# libSystem.tbd files must be exported by the SDK's libSystem or one of its
-# re-exported libraries (usr/lib/system/*.tbd); prints the ones that are not.
-check_darwin_tbd() {
-    sdk=${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}
-    cat "$sdk/usr/lib/libSystem.B.tbd" "$sdk"/usr/lib/system/*.tbd | tr ',[]' '\n\n\n' | sed -e "s/[' ]//g" -e '/^$/d' | sort -u > "$work/sdk.syms"
-    bad=0
-    for d in "$@"; do
-        sed -n "s/^      '\(.*\)',\{0,1\}$/\1/p" "$d/libSystem.tbd" | sort -u > "$work/ours.syms"
-        missing=$(comm -23 "$work/ours.syms" "$work/sdk.syms")
-        if [ -n "$missing" ]; then
-            echo "$d/libSystem.tbd: not in the SDK's libSystem:" $missing >&2
-            bad=1
-        else
-            echo "$d/libSystem.tbd: all $(wc -l < "$work/ours.syms" | tr -d ' ') symbols are in $sdk" >&2
-        fi
-    done
-    return $bad
-}
-
-if [ "${check_tbd:-no}" = yes ]; then
-    check_darwin_tbd "$out/aarch64-apple-darwin" "$out/x86_64-apple-darwin"
-    exit $?
-fi
 
 for t in $targets; do
     echo "== $t" >&2
