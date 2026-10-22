@@ -49,7 +49,10 @@ if [ -n "$LC" ] && [ -f "$("$LC" --libdir)/liblldELF.a" ]; then
     done
     case "$(uname -s)" in
         Darwin)
-            # system libz/libc++/libcurses only; Homebrew's zstd linked in statically
+            # system libz/libc++/libcurses only (Apple's clang++: Homebrew's
+            # would add its own libc++/libunwind dylibs); Homebrew's zstd
+            # linked in statically
+            CXX=${LLD_CXX:-/usr/bin/clang++}
             zstd=$(brew --prefix zstd 2>/dev/null)/lib/libzstd.a
             [ -f "$zstd" ] || zstd=-lzstd
             sys="$zstd -lz -lcurses -lm"
@@ -90,3 +93,13 @@ else
 fi
 "$dst" -flavor gnu --version
 ls -l "$dst"
+# self-contained: no library outside the OS (Homebrew, /usr/local, a build tree)
+if command -v otool >/dev/null 2>&1; then
+    if otool -L "$dst" | tail -n +2 | grep -v -e '^[[:space:]]*/usr/lib/' -e '^[[:space:]]*/System/'; then
+        echo "build-lld.sh: $dst depends on libraries outside the OS (above)" >&2; exit 1
+    fi
+elif command -v ldd >/dev/null 2>&1 && [ -z "$exe" ]; then
+    if ldd "$dst" | grep -v -e 'linux-vdso' -e 'ld-linux' -e '/libc\.so' -e '/libm\.so' -e '/libdl\.so' -e '/librt\.so' -e '/libpthread\.so'; then
+        echo "build-lld.sh: $dst depends on libraries outside glibc (above)" >&2; exit 1
+    fi
+fi
