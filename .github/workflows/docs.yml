@@ -20,6 +20,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    outputs:
+      pages: ${{ steps.pages.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install LLVM 18
@@ -30,13 +32,29 @@ jobs:
         run: cargo build --release -p zell
       - name: Build the site
         run: ./target/release/zell doc --site site --base "/${{ github.event.repository.name }}/"
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      # Pages is a repository setting (Settings -> Pages -> Source: GitHub
+      # Actions); until it is on, the site is built and kept as an artifact
+      # and the deployment is skipped instead of failing the workflow.
+      - id: pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+      - name: Pages not enabled
+        if: steps.pages.outcome != 'success'
+        run: >-
+          echo "::warning::GitHub Pages is not enabled for this repository (Settings -> Pages -> Source: GitHub Actions); the site was built but not deployed. It is attached to this run as the 'site' artifact."
+      - if: steps.pages.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
         with:
+          path: site
+      - if: steps.pages.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
           path: site
 
   deploy:
     needs: build
+    if: needs.build.outputs.pages == 'true'
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
