@@ -1,0 +1,38 @@
+namespace bench.startup.cli
+
+import encoding
+import io
+
+// startup: a CLI that reads a 1 MB JSON configuration (argument 1,
+// written by the harness: ../harness -genconfig), decodes it into typed
+// structs and prints a summary (the Go side is main.go here).
+
+struct Route {
+    Path      string
+    Upstream  string
+    TimeoutMs int
+    Retries   int
+    Tags      []string
+}
+
+struct Config {
+    Name    string
+    Version int
+    Debug   bool
+    Routes  []Route
+}
+
+func main() void! {
+    var args = os.Args()
+    if len(args) < 2 {
+        return error("usage: cli <config.json>")
+    }
+    var cfg = json.Parse<Config>(io.ReadFile(args[1])?)?
+    var timeouts = 0
+    var tags = 0
+    for r in cfg.Routes {
+        timeouts += r.TimeoutMs * r.Retries
+        tags += len(r.Tags)
+    }
+    println(cfg.Name, cfg.Version, cfg.Debug, "routes", len(cfg.Routes), "timeouts", timeouts, "tags", tags)
+}

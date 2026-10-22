@@ -1,0 +1,86 @@
+namespace bench.logging
+
+import io
+
+// logging: the structured logger `log` (the Go side is main.go: zap,
+// zerolog, slog). Scenarios, RECORDS records each (default 5M,
+// SCALE=small: 100k):
+//   devnull   JSON (CLEF) sink to /dev/null
+//   file      JSON sink to a file (argument 1, default /tmp/zell-bench.log;
+//             deleted at exit unless KEEP_LOG=1, which run.sh sets to
+//             verify it)
+//   disabled  logger.Debug on an Information logger: the cost of a call
+//             whose level is off
+// Every record: a 4-property template plus 2 context properties
+// (Service from ForContext, RequestId from log.Context.Push).
+// stdout: the record count per scenario (equal for all loggers);
+// stderr: "scenario <name> <records/s> <allocs/record>".
+
+var methods = ["GET", "POST", "PUT", "DELETE"]
+var statuses = [200, 201, 404, 500, 302]
+
+func report(name string, n int, t0 int, a0 int) {
+    var secs = float(time.NowNanos() - t0) / 1e9
+    var allocs = float(diag.Runtime().Allocations - a0) / float(n)
+    io.Eprintln(fmt.Format("scenario {0} {1} {2}", name, int(float(n) / secs), allocs))
+    println(name, n)
+}
+
+func emit(l log.Logger, paths []string, n int) {
+    for i in 0..n {
+        l.Information(
+            "HTTP {Method} {Path} responded {Status} in {Elapsed} ms",
+            methods[i % 4],
+            paths[i % 1000],
+            statuses[i % 5],
+            float(i % 100) * 0.25,
+        )
+    }
+}
+
+async func run(name string, path string, paths []string, n int) {
+    var l = log.New().MinimumLevel(log.Level.Information).Enrich.FromContext().WriteTo.Json(log.JsonOptions{Path: path}).CreateLogger().ForContext(
+        "Service",
+        "bench",
+    )
+    var scope = log.Context.Push("RequestId", "req-1")
+    var t0 = time.NowNanos()
+    var a0 = diag.Runtime().Allocations
+    emit(l, paths, n)
+    await l.Close()
+    report(name, n, t0, a0)
+    scope.Pop()
+}
+
+async func main() {
+    var n = 5000000
+    if os.Getenv("SCALE") == "small" {
+        n = 100000
+    }
+    if os.Getenv("RECORDS") != "" {
+        n = try strings.ToInt(os.Getenv("RECORDS")) else n
+    }
+    var file = "/tmp/zell-bench.log"
+    var args = os.Args()
+    if len(args) > 1 {
+        file = args[1]
+    }
+    _ = fs.Remove(file)
+    var paths []string = []
+    for i in 0..1000 {
+        paths = append(paths, fmt.Format("/api/items/{0}", i))
+    }
+    await run("devnull", "/dev/null", paths, n)
+    await run("file", file, paths, n)
+    if os.Getenv("KEEP_LOG") != "1" {
+        _ = fs.Remove(file)
+    }
+
+    var off = log.New().MinimumLevel(log.Level.Information).WriteTo.Json(log.JsonOptions{Path: "/dev/null"}).CreateLogger()
+    var t0 = time.NowNanos()
+    var a0 = diag.Runtime().Allocations
+    for i in 0..n {
+        off.Debug("HTTP {Method} {Path} responded {Status} in {Elapsed} ms", methods[i % 4], paths[i % 1000], statuses[i % 5], float(i % 100) * 0.25)
+    }
+    report("disabled", n, t0, a0)
+}

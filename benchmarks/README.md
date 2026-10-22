@@ -740,3 +740,4 @@ used in place with an aligned copy kept per connection), and does one
 
 Latency, cores scaling and language-mechanism benchmarks: see [RESULTS-latency.md](RESULTS-latency.md).
 Stdlib benchmarks (`json_codec`, `encodings`, `crypto`, `file_io`, `sort_collect`): see [RESULTS-stdlib.md](RESULTS-stdlib.md).
+Framework benchmarks (web_api, orm_sqlite, logging, websocket_echo, startup): [RESULTS-framework.md](RESULTS-framework.md).

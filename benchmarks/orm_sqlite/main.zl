@@ -1,0 +1,155 @@
+namespace bench.orm_sqlite
+
+import data
+import io
+
+// orm_sqlite: the `data` ORM on SQLite, and on PostgreSQL when the DSN is
+// a postgres:// URL (the Go side is main.go: database/sql and GORM over
+// mattn/go-sqlite3 or pgx). Phases:
+//   migrate  one @migration (table + index) applied by ctx.Migrate()
+//   insert   N rows in batches of 1000 (AddRange + SaveChanges)
+//   lookup   L point lookups by primary key (no tracking)
+//   filter   Q queries with a lambda predicate (category == c && price > p,
+//            ORDER BY id LIMIT 10)
+//   update   U rows changed through change tracking (100 rows loaded,
+//            changed, saved per SaveChanges)
+// Usage: main [dsn]   (default ":memory:"; a file path for an on-disk
+// database, which is deleted first; postgres://...: its products and
+// __migrations tables are dropped first). SCALE=small: N=10k, L=20k, Q=1k,
+// U=1k. Checksums on stdout (equal for every implementation), times on
+// stderr: "phase <name> <ms>".
+
+@table("products")
+struct Product {
+    Id       int
+    Name     string
+    Category string
+    Price    int
+    Stock    int
+}
+
+struct Shop {
+    Context
+    Products Set<Product>
+}
+
+@migration("20260101000000_CreateProducts")
+struct CreateProducts {
+    func Up(m *Migrator) {
+        m.CreateTable("products", [
+            Column{Name: "id", Type: "int64", Key: true, Auto: true},
+            Column{Name: "name", Type: "string"},
+            Column{Name: "category", Type: "string"},
+            Column{Name: "price", Type: "int64"},
+            Column{Name: "stock", Type: "int64"},
+        ], [])
+        m.CreateIndex("products", "ix_products_category", ["category"], false)
+    }
+
+    func Down(m *Migrator) {
+        m.DropTable("products")
+    }
+}
+
+var cats = ["a", "b", "c", "d", "e", "f", "g", "h"]
+
+var t0 = 0
+
+func phase(name string) {
+    var now = time.NowNanos()
+    io.Eprintln(fmt.Format("phase {0} {1}", name, float((now - t0) / 1000) / 1000.0))
+    t0 = time.NowNanos()
+}
+
+async func main() void! {
+    var n = 100000
+    var lookups = 1000000
+    var queries = 10000
+    var updates = 10000
+    if os.Getenv("SCALE") == "small" {
+        n = 10000
+        lookups = 20000
+        queries = 1000
+        updates = 1000
+    }
+    var args = os.Args()
+    var dsn = ":memory:"
+    var provider = Provider.Sqlite
+    if len(args) > 1 {
+        dsn = args[1]
+        if strings.HasPrefix(dsn, "postgres://") {
+            provider = Provider.Postgres
+        } else {
+            _ = fs.Remove(dsn)
+        }
+    }
+    var ctx = Open<Shop>(provider, dsn)?
+    if provider == Provider.Postgres {
+        _ = await ctx.ExecuteSql("DROP TABLE IF EXISTS products", [])?
+        _ = await ctx.ExecuteSql("DROP TABLE IF EXISTS __migrations", [])?
+    }
+    t0 = time.NowNanos()
+    await ctx.Migrate()?
+    phase("migrate")
+
+    var batch = 1000
+    var i = 0
+    for i < n {
+        var rows []*Product = []
+        for j in i..i + batch {
+            rows = append(rows, new Product{
+                Name: fmt.Format("p-{0}", j),
+                Category: cats[j % 8],
+                Price: (j * 7919) % 100000,
+                Stock: j % 100,
+            })
+        }
+        ctx.Products.AddRange(rows)
+        _ = await ctx.SaveChanges()?
+        ctx.ClearTracker()
+        i += batch
+    }
+    phase("insert")
+
+    var sum = 0
+    for k in 0..lookups {
+        var id = (k * 7919) % n + 1
+        var p = await ctx.Products.AsNoTracking().FirstOrDefault((x) => x.Id == id)?
+        sum += p.Price + p.Stock
+    }
+    phase("lookup")
+    println("lookup", sum)
+
+    var found = 0
+    var idsum = 0
+    for k in 0..queries {
+        var c = cats[k % 8]
+        var min = (k * 37) % 100000
+        var rows = await ctx.Products.AsNoTracking().Where((x) => x.Category == c && x.Price > min).OrderBy((x) => x.Id).Take(10).ToList()?
+        found += len(rows)
+        for r in rows {
+            idsum += r.Id
+        }
+    }
+    phase("filter")
+    println("filter", found, idsum)
+
+    var changed = 0
+    var lo = 1
+    for changed < updates {
+        var hi = lo + 100
+        var rows = await ctx.Products.Where((x) => x.Id >= lo && x.Id < hi).ToList()?
+        for r in rows {
+            r.Stock += 1
+            r.Name = r.Name + "*"
+        }
+        changed += await ctx.SaveChanges()?
+        ctx.ClearTracker()
+        lo = hi
+    }
+    phase("update")
+    var stock = await ctx.Products.AsNoTracking().Sum((x) => x.Stock)?
+    var starred = await ctx.Products.AsNoTracking().Where((x) => x.Name.EndsWith("*")).Count()?
+    println("update", changed, stock, starred)
+    println("rows", await ctx.Products.Count()?)
+}
