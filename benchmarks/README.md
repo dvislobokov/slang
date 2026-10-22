@@ -647,3 +647,93 @@ Open items (larger than a safe fix in this pass):
   already took a value must still be awaited. A `select` statement or
   `task.Select` over channel operations needs a spec decision (DESIGN.md
   "Асинхронность") first.
+
+## Performance pass 3 (2026-10-22, 4 vCPU x86-64, `--release`)
+
+The machine was shared by five agents during this pass, so wall times are
+**preliminary (shared machine)**; the decisions below rest on callgrind
+instruction counts (`ZELL_TARGET_CPU=x86-64-v3`, since Valgrind lacks
+AVX-512) and syscall counts. `old` = commit e51cf3d, `new` = this pass.
+
+**TODO: the full `RUNS=5 ./scripts/bench-perf.sh` table (wall s and peak
+RSS, Go = 1.0) on a quiet machine.**
+
+Instructions (callgrind, whole program; `shared_objects` with
+`ZELL_WORKERS=4`, serialised by Valgrind):
+
+| bench | old | new | new / old |
+|---|---:|---:|---:|
+| heap_churn | 15.80G | 2.29G | 0.14 |
+| shared_objects | 12.36G | 4.40G | 0.36 |
+| alloc_heavy | 5.291G | 5.291G | 1.00 |
+| json_like | 1.701G | 1.701G | 1.00 |
+| strings | 711M | 711M | 1.00 |
+| map | 615M | 615M | 1.00 |
+| struct_map | 913M | 913M | 1.00 |
+| Zell HTTP/1.1 load generator, per request (Go server) | 35.3k | 26.5k | 0.75 |
+| Zell HTTP/2 + TLS server, per request (Go h2 client) | 100.2k* | 87.6k | 0.87 |
+
+(* already with the task and frame changes below; before them the server
+was not measured.)
+
+Preliminary wall times (shared machine, best of 3, ms or s):
+
+| bench | old | new | Go |
+|---|---:|---:|---:|
+| heap_churn | 2.175 s | 0.354 s | 1.185 s |
+| shared_objects phase 1 / 2 / 3 (ms) | 493-724 / 172-233 / 179-232 | 71-97 / 44-50 / 137-252 | 66-116 / 43-52 / 258-335 |
+
+Release `hello` (`--release`, stripped): 33 040 -> 14 696 bytes (text of
+the runtime part 11.4 KB -> 0.9 KB).
+
+What changed:
+
+1. **`heap_churn`: `strings.Repeat`** copied its input `count` times, one
+   `memcpy` per copy: `Repeat("c", 256 << 10)` made 262 144 one-byte
+   copies, and the benchmark made 480M of them in all — that, not mmap or
+   page faults, was the gap (`strace -c`: 74 mmap, 28 munmap, 160 mremap
+   for the whole run; the reserve already keeps the freed pages). Repeat
+   now fills one-byte inputs with `memset` and doubles the copied prefix
+   otherwise (as Go does), into an uninitialised string; `strings.Bytes`
+   (`zell_string_to_bytes`) no longer zeroes a backing it overwrites
+   completely. The allocator itself was left alone: its alloc + free fast
+   paths are ~60 + ~85 instructions per small string here.
+2. **`shared_objects`: borrowed locals** (`compiler/src/hir/borrow.rs`,
+   DESIGN.md "Память", spec test `memory2/borrowed_locals`). In a
+   heap-pure function (no stores outside plain locals, no unknown calls,
+   no `append`/`await`/`defer`, no values whose `Drop` touches the heap;
+   a fixpoint over the call graph), a `for x in slice` element and a
+   `var x = path` from a never-reassigned root are not retained or
+   released. `sumItems` lost all six refcount operations per item (three
+   atomic retains and releases on objects shared by 8 readers): phase 1
+   (8 readers) 5-7x faster, phase 2 (one reader of objects biased to 8
+   other threads) ~3.5x. `ZELL_NO_BORROW=1` at build time turns it off.
+3. **Release `hello` size.** The shutdown path reached `zell_release`
+   (through `zell__diag_shutdown`), the scheduler drain and the refcount
+   queues; all three are now function pointers set by the subsystem when it
+   starts (`zell_diag_rt_set_slots`, `zell__sched_start`,
+   `zell__rc_thread_enable`), so `hello` links none of the heap free path,
+   scavenger, biased-RC or scheduler-stop code.
+4. **HTTP.** Every async call made a task with a pthread mutex and
+   condition variable (init, lock, broadcast, destroy) and a coroutine
+   frame from `calloc`. Tasks now use a spin lock (critical sections are a
+   few stores) and threads blocking in `zell_task_await` wait on one
+   process-wide condition, woken only for tasks with waiters; frames come
+   from the object heap (`zell_coro_frame_alloc` / `zell_coro_frame_free`,
+   ABI.md 10.3); retain/release of never-biased (`NOBIAS`) objects such as
+   tasks is one atomic add instead of a CAS loop. On the TLS server,
+   `zell__crypto_wipe` (a volatile byte loop) wiped a 6 KB AES-GCM context
+   copy per record — 12% of the server's instructions; it is now `memset`
+   plus a compiler barrier. Preliminary req/s on the shared machine were
+   within noise of `old` (load generator 26.5k/23.3k -> 26.9k/27.3k against
+   the Go server, h2 server 19.3k/20.4k -> 19.5k/21.8k, Go h2 server 16.7k
+   in the same session), so the throughput comparison is part of the TODO
+   re-run.
+
+What remains: the load generator still spends ~30% of its instructions in
+refcount operations on task, context and buffer objects and ~4% in the
+benchmark's own `ToLower`; an async call that completes without
+suspending still allocates a task (a synchronous fast path would need an
+ABI change). The TLS server copies the GCM context per record (could be
+used in place with an aligned copy kept per connection), and does one
+`zell__aead` call per response rather than batching streams into records.
