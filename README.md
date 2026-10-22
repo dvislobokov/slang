@@ -63,34 +63,45 @@ async func main() {
 > build from source (next section): it takes a few minutes and gives you
 > `zell`, `zell-lsp` and `zell-mcp`.
 
-**A prebuilt toolchain** (`bin/zell`, `bin/zell-lsp`, `bin/zell-mcp`, `std/`, the
-runtime for the machine in `targets/<triple>/`, debugger formatters):
+**A prebuilt toolchain**, self-contained like Zig's: one archive with
+`bin/zell`, `bin/zell-lsp`, `bin/zell-mcp`, the linker `bin/lld`, `std/` and
+the link inputs of every tier-1/2 target in `targets/<triple>/` (runtime,
+compiler-rt, crt objects, glibc 2.31 stubs, musl, mingw-w64,
+`libSystem.tbd`). Nothing else is needed: no clang, no C library headers,
+no mingw-w64, no macOS SDK.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.sh | sh   # Linux, macOS
 irm https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.ps1 | iex        # Windows (PowerShell)
 ```
 
-`install.sh` unpacks `zell-<version>-<host>.tar.gz` (from the GitHub
-release, or `$ZELL_DIST_URL`, or `--from <archive>`) into
+`install.sh` unpacks `zell-<version>-<host>.tar.xz` (about 30 MB; from the
+GitHub release, or `$ZELL_DIST_URL`, or `--from <archive>`) into
 `~/.zell/toolchain/` and links `zell` into `~/.local/bin`; `install.ps1`
 does the same under `%USERPROFILE%\.zell\toolchain` and adds `bin\` to
-the user `PATH`. Linking programs needs `clang` (and `lld` for cross
-targets) on `PATH`. Runtimes for other targets are downloaded on demand:
+the user `PATH`. Every target works out of the box:
 
 ```sh
-zell target list                     # known targets and where their runtime is
-zell target add windows-amd64 linux-arm64 linux-amd64-musl   # into ~/.zell/targets
-zell build --target windows-amd64 app.zl                     # app.exe (run it with Wine: zell run --target ...)
+zell doctor                                  # checks the linker and every target's link inputs
+zell build app.zl                            # this machine
+zell build --target linux-amd64-musl app.zl  # fully static Linux executable
+zell build --target linux-arm64 app.zl       # dynamic, glibc >= 2.31
+zell build --target windows-amd64 app.zl     # app.exe (run it with Wine: zell run --target ...)
+zell build --target macos-arm64 app.zl       # a Mach-O executable, linked on any host
+zell target list                             # the targets and where their link inputs are
 ```
 
-(`$ZELL_TARGETS_URL` overrides the download URL template, see
-`docs/PLATFORMS.md`.) A toolchain archive is made with
-`scripts/package-toolchain.sh` (plus one `zell-runtime-<version>-<triple>.tar.gz`
-per cross-built runtime).
+Linux executables (glibc) run on any system with glibc 2.31 or newer
+(Ubuntu 20.04+, Debian 11+, RHEL 9+). `ZELL_LINKER=clang` links with the
+system clang instead. `zell target add <target>` still downloads extra
+targets into `~/.zell/targets`. Archives are made with
+`scripts/bundle-targets.sh`, `scripts/build-lld.sh` and
+`scripts/package-toolchain.sh`; licences of the bundled parts are in
+`THIRD_PARTY.md`; details in `docs/PLATFORMS.md`, "Дистрибутив".
 
 **From source** (Linux x86-64 or arm64, macOS; Windows through MSYS2). You
-need Rust, LLVM 18, clang and lld:
+need Rust, LLVM 18, clang and lld (a checkout links with the system clang;
+the bundled lld and link inputs come from `scripts/bundle-targets.sh`):
 
 ```sh
 git clone https://github.com/zell-lang/zell && cd zell

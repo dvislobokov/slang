@@ -25,13 +25,13 @@ arm64. Это требование к компилятору, рантайму, 
 `zell build --target windows-amd64` работает с любой машины:
 
 - LLVM генерирует код под любую цель из одного бинарника компилятора.
-- Линковщик `lld` (вшит в `zell`) умеет ELF, Mach-O и PE/COFF.
-- Рантайм и стандартная библиотека поставляются прекомпилированными для
-  всех платформ tier 1-2 (`~/.zell/targets/<triple>/libzell_rt.a` плюс
-  минимальный набор системных библиотек/импорт-библиотек: для Windows —
-  `kernel32.lib`, `ws2_32.lib` и т. п. из mingw-w64 или Windows SDK; для
-  macOS — `libSystem.tbd`; для Linux — glibc или musl). Недостающие цели
-  скачиваются `zell target add windows-amd64` (см. «Установка и цели»).
+- Линковщик `lld` (`bin/lld` тулчейна, один бинарник на ELF, Mach-O и
+  PE/COFF/MinGW) запускается самим `zell`, без clang.
+- Рантайм и всё для линковки поставляется для всех платформ tier 1-2 в
+  архиве тулчейна (`<prefix>/targets/<triple>/`: `libzell_rt.a`,
+  compiler-rt, crt-объекты, заглушки glibc 2.31, musl `libc.a`, CRT и
+  импорт-библиотеки mingw-w64, `libSystem.tbd`) — см. «Дистрибутив».
+  Дополнительные цели скачиваются `zell target add` в `~/.zell/targets`.
 - Условная компиляция: `@cfg(os: "windows")`, `@cfg(arch: "arm64")`,
   `@cfg(not(os: "linux"))`, `@cfg(any(...))`, `@cfg(all(...))`,
   `@cfg(feature: "tls")` на объявлениях (и их полях, методах, вариантах) и
@@ -382,16 +382,17 @@ macos-arm64|macos-amd64 --emit=obj` даёт Mach-O для всех 49 прим�
 
 ### Установка и цели (дистрибуция тулчейна)
 
-- `scripts/package-toolchain.sh [--no-build] [--out dist]` →
-  `zell-<версия>-<хост>.tar.gz` (`bin/zell`, `bin/zell-lsp`, `std/`,
-  `targets/<triple хоста>/libzell_rt.a`, `tools/` — формат-скрипты
-  lldb/gdb и клиент VS Code, `README.md`, `VERSION`) и по
-  `zell-runtime-<версия>-<triple>.tar.gz` (распаковывается в
-  `<triple>/libzell_rt.a`) на каждый рантайм из `runtime/build/<triple>/`,
-  плюс `.sha256` и `VERSION`. CI выкладывает их артефактами.
+- `scripts/package-toolchain.sh [--no-build] [--out dist] [--targets dir]
+  [--lld file]` → самодостаточный `zell-<версия>-<хост>.tar.xz` (состав —
+  «Дистрибутив» ниже) и по `zell-runtime-<версия>-<triple>.tar.gz`
+  (распаковывается в `<triple>/` — тот же каталог входов линковки) на
+  каждую цель, плюс `.sha256` и `VERSION`. Без `build/targets` (не
+  запускали `scripts/bundle-targets.sh`) пакуется только рантайм хоста, и
+  линковка требует clang.
 - Компилятор ищет рантайм хоста в `$ZELL_RUNTIME`, затем
   `<exe>/../targets/<triple>/` установленного тулчейна,
-  `$ZELL_TARGETS/<triple>/`, затем в репозитории; `std/` — в
+  `$ZELL_TARGETS/<triple>/`, затем в репозитории (для других целей — тот
+  же порядок без `$ZELL_RUNTIME`); `std/` — в
   `$ZELL_STD`, `<exe>/../std`, репозитории (иначе встроенные копии).
 - `zell target list` — известные цели (tier 1–2) и где лежит их рантайм;
   `zell target add <цель>... [--url шаблон]` скачивает
@@ -415,8 +416,8 @@ macos-arm64|macos-amd64 --emit=obj` даёт Mach-O для всех 49 прим�
   `file://`-шаблоном ставит рантаймы в `$ZELL_HOME/targets`, после чего
   `hello.exe` работает под Wine, а musl-бинарник — статически;
   `install.sh --from` и `ZELL_DIST_URL=file://…` ставят и запускают.
-  Компилятору для линковки по-прежнему нужен системный `clang` (`lld` для
-  кросс-целей): `lld` в бинарник не вшит.
+  С октября 2026 архив самодостаточен (см. «Дистрибутив»): системный
+  `clang` больше не нужен.
 
 ### Общее
 
@@ -436,10 +437,149 @@ macos-arm64|macos-amd64 --emit=obj` даёт Mach-O для всех 49 прим�
 PDB/CodeView-символы); запуск на настоящих macOS и Windows (всё выше —
 Wine и стабы); Keychain macOS (только `/etc/ssl/cert.pem`); история
 часовых поясов Windows до `Dynamic DST`; `libsqlite3` для кросс-целей
-linux-arm64/musl; `lld` не вшит; `AcceptEx`/`ConnectEx` и настоящий
+linux-arm64/musl; `AcceptEx`/`ConnectEx` и настоящий
 completion-путь передачи данных (`ReadInto`/`Write` прямо в буфер) — не
 нужны для корректности, могут дать производительность; FreeBSD и
 wasm32-wasi.
+
+## Дистрибутив
+
+**Решение** (владелец проекта): архив тулчейна самодостаточен, как у Zig.
+Пользователь распаковывает один архив и собирает, запускает и
+кросс-компилирует под все цели tier 1-2, ничего больше не устанавливая
+(ни clang, ни libc6-dev, ни mingw-w64, ни macOS SDK). Для Linux
+поставляются **и** заглушки glibc (как abilists у Zig: динамические
+исполняемые файлы для обычных систем), **и** musl (полностью статические).
+
+### Состав архива
+
+```text
+zell-<версия>-<хост>/
+  bin/zell, zell-lsp, zell-mcp
+  bin/lld (+ ссылки ld.lld, ld64.lld, lld-link; на Windows lld.exe и DLL MSVC-рантайма)
+  std/  tools/  THIRD_PARTY.md  README.md  VERSION
+  targets/SOURCES.sha256                      URL и sha256 всех скачанных входов
+  targets/<triple>/BUNDLE                     что это за каталог (читает `zell doctor`)
+  targets/<triple>/libzell_rt.a               рантайм, собранный под цель, без отладочной информации
+  targets/<triple>/libclang_rt.builtins.a     compiler-rt 18.1.8 (__udivti3, LSE-атомики arm64, ___chkstk_ms…)
+  targets/{x86_64,aarch64}-unknown-linux-gnu/ Scrt1.o crti.o crtn.o crtbeginS.o crtendS.o libc_nonshared.a,
+                                              заглушки libc.so libm.so libpthread.so libdl.so librt.so libutil.so
+                                              ld-linux-*.so.*, libsqlite3.so
+  targets/{x86_64,aarch64}-unknown-linux-musl/ crt1.o crti.o crtn.o crtbegin.o crtend.o libc.a (musl 1.2.5)
+  targets/x86_64-pc-windows-gnu/              crt2.o dllcrt2.o libmingw32.a libmingwex.a libmoldname.a libmsvcrt.a,
+                                              импорт-библиотеки kernel32, ws2_32, iphlpapi, bcrypt, … (mingw-w64 11.0.1)
+  targets/{aarch64,x86_64}-apple-darwin/      libSystem.tbd
+```
+
+Размеры (linux-amd64, `xz -9`): архив 28.8 МБ (gzip — 71 МБ, поэтому
+`.tar.xz`; для Windows дополнительно `.tar.gz` для старых `tar.exe`);
+`targets/` — 33 МБ распакованными (Windows-цель — 16 МБ из-за
+импорт-библиотек), `bin/lld` — 56 МБ, `bin/zell` — 67 МБ. Цель — не
+больше 80 МБ на архив хоста.
+
+### Линковка (`compiler/src/crosslink.rs`)
+
+Если рядом с найденным рантаймом цели лежит `BUNDLE`, `zell` сам строит
+командную строку `lld` целиком; иначе (рантайм из `runtime/` репозитория,
+старый `zell target add`) — прежний драйвер clang. `ZELL_LINKER=clang`
+принудительно выбирает clang, `ZELL_LLD` — другой lld. Рецепты:
+
+- **linux-gnu**: `lld -flavor gnu -m elf_x86_64|aarch64linux -pie
+  -dynamic-linker /lib64/ld-linux-x86-64.so.2|/lib/ld-linux-aarch64.so.1
+  --hash-style=gnu --build-id --eh-frame-hdr -z relro Scrt1.o crti.o
+  crtbeginS.o <объекты> libzell_rt.a -L<dir> --as-needed -lsqlite3?
+  -lpthread -ldl -lrt -lm builtins -lc libc_nonshared.a ld-linux…
+  crtendS.o crtn.o` (+ `--gc-sections`/`-s` в `--release`,
+  `--export-dynamic` в отладочной сборке). `--static` с glibc нужен
+  `libc.a`, его нет в архиве: при наличии clang линкуется им, иначе
+  ошибка с советом `--target linux-amd64-musl`.
+- **linux-musl**: `-static crt1.o crti.o crtbegin.o … --start-group libc.a
+  builtins --end-group crtend.o crtn.o`, без `PT_INTERP`.
+- **windows-amd64** (MinGW): `lld -flavor gnu -m i386pep` (MinGW-драйвер
+  lld) `crt2.o … -lws2_32 -liphlpapi -lbcrypt -lshell32 -ladvapi32
+  -lmingw32 builtins -lmoldname -lmingwex -lmsvcrt -luser32 -lkernel32`;
+  crtbegin/crtend gcc не нужны (SEH x86-64), libgcc заменён compiler-rt.
+- **macOS**: `lld -flavor darwin -arch arm64|x86_64 -platform_version macos
+  12.0.0 14.0 … builtins libSystem.tbd` (+ `-dead_strip`, `-x -S`); lld
+  подписывает arm64-бинарники ad hoc сам.
+
+Параллельный кодогенератор сливает части объекта `ld.lld -r` из архива,
+когда системного clang нет. `zell doctor` проверяет линковщик, `std/` и
+наличие всех файлов каждой цели; `zell target list` пишет `bundled`;
+`zell env ZELL_LINKER ZELL_TARGETS` — линковщик и каталоги целей.
+
+### Как собираются входы (`scripts/bundle-targets.sh`)
+
+Все загрузки закреплены URL и sha256 в скрипте (Ubuntu-архив хранит
+пакеты релизных карманов вечно; compiler-rt — релиз LLVM на GitHub),
+кэш — `build/bundle-cache` (`--cache`, `--offline` — сборка без сети из
+кэша). Запускается на Linux (CI), результат одинаков для всех хостов.
+
+- **glibc, пол 2.31.** crt-объекты и `libc_nonshared.a` — из `libc6-dev
+  2.31-0ubuntu9` (Ubuntu 20.04). Заглушки: из таблиц динамических символов
+  настоящих `.so` 2.31 (`libc6 2.31-0ubuntu9`) берутся все символы версии
+  по умолчанию (`@@GLIBC_2.x`, без `GLIBC_PRIVATE`) с типом, размером и
+  выравниванием (для copy-релокаций) и собираются ассемблером и
+  `ld.lld -shared --version-script` в `.so` без кода с тем же `SONAME`.
+  Исполняемый файл получает ровно те `NEEDED` и требования версий, что дал
+  бы настоящий glibc 2.31, поэтому работает на любом glibc ≥ 2.31 (Ubuntu
+  20.04+, Debian 11+, RHEL 9+). Рантайм собирается против заголовков 2.31
+  (`--sysroot`, `-nostdinc`): в нём нет `__isoc23_*` (2.38) и других новых
+  символов. SQLite: заглушка `libsqlite3.so.0` из 3.45.1 и `sqlite3.h`;
+  программа с `database.sqlite` требует `libsqlite3.so.0` в системе, как и
+  раньше.
+- **musl 1.2.5** собирается из исходников (`musl_1.2.5.orig.tar.gz` = релиз
+  musl) clang-ом под x86_64 и aarch64.
+- **mingw-w64 11.0.1**: CRT и импорт-библиотеки из `mingw-w64-x86-64-dev`
+  Ubuntu 24.04; заголовки — только для сборки рантайма. CRT — `msvcrt.dll`,
+  как раньше.
+- **macOS**: `libSystem.tbd` (TAPI v4) генерируется: символы, которые
+  импортируют рантайм и builtins, плюс `scripts/lld/darwin-symbols.txt`
+  (libcalls LLVM и общий C/POSIX API для FFI). Символы живут в
+  реэкспортах libSystem (libsystem_c, libsystem_kernel…), dyld находит их
+  через реэкспорты; `--check-darwin-tbd` на Mac сверяет список с `.tbd`
+  SDK. Рантайм на Linux собирается против `runtime/stub-sdk/macos`
+  (`STUBSDK=yes`; на x86_64 — с `$INODE64`-вариантами `stat`/`dirent`), в
+  релизе — на Mac против настоящего SDK (джоб `targets-macos`).
+- **compiler-rt 18.1.8 builtins** собираются из исходников под каждую
+  цель (список файлов как у CMake: generic, TF, x86 80-bit, `lse.S` по
+  операциям/размерам/моделям для outline-атомиков arm64 Linux, `chkstk.S`
+  для Windows), плюс `crtbegin`/`crtend` для ELF.
+
+`bin/lld` (`scripts/build-lld.sh`): Linux и macOS — драйвер lld
+(`scripts/lld/lld-main.cpp`, четыре flavour) статически слинкованный со
+статическими библиотеками LLVM 18 и lld дистрибутива (`liblld-18-dev`,
+Homebrew `llvm@18`), из бэкендов — только X86 и AArch64, без libxml2
+(слияние манифестов Windows не поддерживается), libstdc++/zlib/zstd/
+terminfo внутри: зависит только от libc. Если статических библиотек нет —
+сборка lld из `llvm-project-18.1.8.src.tar.xz` (кэшируется в CI).
+Windows — `lld.exe` официального `clang+llvm-18.1.8-x86_64-pc-windows-msvc`
+рядом с `vcruntime140.dll`/`msvcp140.dll`. Сами `zell`/`zell-lsp` хоста
+собраны на Ubuntu 24.04 и требуют glibc ≥ 2.39 на машине разработчика
+(это пол тулчейна, не программ, которые он собирает).
+
+Лицензии всех частей — `THIRD_PARTY.md` (lld и compiler-rt — Apache-2.0
+WITH LLVM-exception, musl — MIT, mingw-w64 — ZPL/public domain, crt glibc
+— LGPL с исключением для startup-файлов, заглушки — только списки имён).
+
+### Проверка
+
+- Локально (Linux x86-64, без clang в `PATH` у `zell`): примеры собраны и
+  запущены для linux-amd64 (и под загрузчиком glibc 2.31 из `libc6
+  2.31-0ubuntu9`: `ld-2.31.so --library-path …`), linux-amd64-musl
+  (статический), linux-arm64 (QEMU с glibc 2.31 и 2.39), linux-arm64-musl
+  (QEMU), windows-amd64 (Wine 9); macOS — слинкованы Mach-O (arm64
+  подписан ad hoc). `install.sh --from` + `zell doctor` — «toolchain
+  complete».
+- `compiler/tests/cross.rs`, модуль `bundle` (`compiler/tests/cross/
+  bundle.rs`): то же самое из распакованного архива (`$ZELL_BUNDLE`) или
+  собранного из `build/`, с `PATH` только из `bin/` тулчейна; glibc-бинарники
+  не должны требовать версий выше `GLIBC_2.31`.
+- CI `.github/workflows/bundle.yml`: сборка архива на linux-amd64/arm64,
+  `cross.rs bundle::*`, `scripts/bundle-smoke.sh` в голом контейнере
+  `ubuntu:24.04` (wine/qemu ставятся только для чужих целей), glibc-бинарники
+  в `ubuntu:20.04`, кросс-собранные на Linux бинарники macOS и Windows —
+  на настоящих macos-14, macos-15-intel и windows-latest.
 
 ## Этапы
 
