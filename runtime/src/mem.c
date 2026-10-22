@@ -279,7 +279,7 @@ void zell_release(void *obj) {
             return;
         }
         /* Objects of cyclic types record possible cycle roots (ABI.md 3.8). */
-        if (__builtin_expect(n & ZELL_RC_CYCLIC, 0)) {
+        if (__builtin_expect((n & ZELL_RC_CYCLIC) != 0, 0)) {
             zell__cycles_release(o);
             return;
         }
