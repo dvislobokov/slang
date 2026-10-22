@@ -1,10 +1,10 @@
 //! Semantic analysis tests: the example corpus plus focused unit tests.
 
-use slang::diagnostics::{Diagnostics, Severity};
-use slang::driver;
-use slang::hir::*;
-use slang::span::SourceFile;
-use slang::types::Type;
+use zell::diagnostics::{Diagnostics, Severity};
+use zell::driver;
+use zell::hir::*;
+use zell::span::SourceFile;
+use zell::types::Type;
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
@@ -13,7 +13,7 @@ use std::path::Path;
 
 /// Analyses several in-memory files.
 fn analyze(srcs: &[&str]) -> (Option<Program>, Vec<String>) {
-    let files: Vec<SourceFile> = srcs.iter().enumerate().map(|(i, s)| SourceFile::new(format!("f{i}.sl"), *s)).collect();
+    let files: Vec<SourceFile> = srcs.iter().enumerate().map(|(i, s)| SourceFile::new(format!("f{i}.zl"), *s)).collect();
     let mut diags = Diagnostics::new();
     let p = driver::check(&files, &mut diags);
     let errors = diags.items.iter().filter(|d| d.severity == Severity::Error).map(|d| d.message.clone()).collect();
@@ -122,7 +122,7 @@ fn every_example_checks_cleanly() {
     let mut count = 0;
     for entry in std::fs::read_dir(examples_dir()).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "sl") {
+        if path.extension().is_some_and(|e| e == "zl") {
             let (p, errors) = check_path(&path);
             assert!(errors.is_empty(), "{}: {errors:#?}", path.display());
             let p = p.unwrap();
@@ -146,26 +146,26 @@ fn multi_file_example_checks_cleanly() {
 /// Each compile-failure example and a key phrase its diagnostic must contain
 /// (derived from the file's `// error:` line).
 const ERROR_KEYWORDS: &[(&str, &str)] = &[
-    ("await_outside_async.sl", "await outside async"),
-    ("catch_falls_through.sl", "catch block must return"),
-    ("copy_drop_value.sl", "cannot copy a value of type File"),
-    ("extern_in_user_code.sl", "extern declarations exist only in the standard library"),
-    ("interior_pointer_escape.sl", "cannot keep interior pointer variable `p`"),
-    ("log_template_args.sl", "the template has 2 placeholders ({UserId}, {Amount}) but 3 arguments are given"),
-    ("missing_return.sl", "missing return"),
-    ("question_outside_fallible.sl", "? outside of fallible function"),
-    ("type_mismatch.sl", "cannot assign string to int"),
-    ("unhandled_result.sl", "result of type int! must be handled"),
-    ("unhandled_void_result.sl", "result of type void! must be handled"),
-    ("unknown_ident.sl", "unknown identifier undefinedName"),
-    ("unused_var.sl", "unused variable x"),
-    ("weak_to_interior.sl", "cannot keep an interior pointer"),
+    ("await_outside_async.zl", "await outside async"),
+    ("catch_falls_through.zl", "catch block must return"),
+    ("copy_drop_value.zl", "cannot copy a value of type File"),
+    ("extern_in_user_code.zl", "extern declarations exist only in the standard library"),
+    ("interior_pointer_escape.zl", "cannot keep interior pointer variable `p`"),
+    ("log_template_args.zl", "the template has 2 placeholders ({UserId}, {Amount}) but 3 arguments are given"),
+    ("missing_return.zl", "missing return"),
+    ("question_outside_fallible.zl", "? outside of fallible function"),
+    ("type_mismatch.zl", "cannot assign string to int"),
+    ("unhandled_result.zl", "result of type int! must be handled"),
+    ("unhandled_void_result.zl", "result of type void! must be handled"),
+    ("unknown_ident.zl", "unknown identifier undefinedName"),
+    ("unused_var.zl", "unused variable x"),
+    ("weak_to_interior.zl", "cannot keep an interior pointer"),
 ];
 
 #[test]
 fn every_compile_error_example_fails_with_its_diagnostic() {
     let dir = examples_dir().join("errors_compile");
-    let mut files: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).filter(|n| n.ends_with(".sl")).collect();
+    let mut files: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).filter(|n| n.ends_with(".zl")).collect();
     files.sort();
     let mapped: Vec<&str> = ERROR_KEYWORDS.iter().map(|(f, _)| *f).collect();
     assert_eq!(files, mapped, "ERROR_KEYWORDS must list every errors_compile file");
@@ -526,11 +526,11 @@ fn attributes_are_resolved_and_evaluated() {
 
 #[test]
 fn diagnostics_carry_file_index() {
-    let files = vec![SourceFile::new("a.sl", "namespace a\nfunc F() {}"), SourceFile::new("b.sl", "namespace b\nfunc G() { nope() }")];
+    let files = vec![SourceFile::new("a.zl", "namespace a\nfunc F() {}"), SourceFile::new("b.zl", "namespace b\nfunc G() { nope() }")];
     let mut diags = Diagnostics::new();
     assert!(driver::check(&files, &mut diags).is_none());
     assert_eq!(diags.items[0].file, 1);
-    assert!(diags.render_all_files(&files).contains("b.sl:2"));
+    assert!(diags.render_all_files(&files).contains("b.zl:2"));
 }
 
 #[test]
@@ -612,7 +612,7 @@ fn weak_pointers_convert_both_ways() {
 
 #[test]
 fn parameter_modes() {
-    use slang::hir::ownership::param_facts;
+    use zell::hir::ownership::param_facts;
     let p = ok(&prog("struct N { next *N\n s string }\nfunc read(n *N, s string) int { return len(s) + len(n.s) }\nfunc store(a *N, b *N) { a.next = b }\nfunc walk(n *N) int {\n var c = 0\n for n != nil { c += 1\n n = n.next }\n return c\n}\nasync func later(n *N) int { return len(n.s) }\nfunc main() {\n var a = new N{}\n store(a, new N{})\n println(read(a, \"x\"), walk(a))\n var t = later(a)\n _ = t\n}"));
     let facts = param_facts(&p);
     let id = |name: &str| FuncId(p.funcs.iter().position(|f| f.name == name).unwrap() as u32);
@@ -628,7 +628,7 @@ fn parameter_modes() {
 
 /// The W0001 warnings of a program (which must compile).
 fn cycle_warnings(src: &str) -> Vec<String> {
-    let files = vec![SourceFile::new("f0.sl".to_string(), src)];
+    let files = vec![SourceFile::new("f0.zl".to_string(), src)];
     let mut diags = Diagnostics::new();
     let p = driver::check(&files, &mut diags);
     assert!(p.is_some(), "unexpected errors: {:#?}", diags.items);
@@ -637,8 +637,8 @@ fn cycle_warnings(src: &str) -> Vec<String> {
 
 fn cyclic(p: &Program, name: &str) -> bool {
     let sid = p.structs.iter().position(|s| s.name == name).expect("struct");
-    let t = p.types.lookup(&Type::Struct(slang::types::DeclId(sid as u32))).unwrap();
-    slang::sema::cycles::analyze(p).is_cyclic(t)
+    let t = p.types.lookup(&Type::Struct(zell::types::DeclId(sid as u32))).unwrap();
+    zell::sema::cycles::analyze(p).is_cyclic(t)
 }
 
 #[test]
@@ -672,9 +672,9 @@ fn w0001_silenced_by_weak_allow_cycle_and_std() {
 
 #[test]
 fn deny_warnings_turns_w0001_into_an_error() {
-    slang::sema::cycles::set_deny_warnings(true);
+    zell::sema::cycles::set_deny_warnings(true);
     let (p, errors) = analyze(&["namespace app\nstruct L {\n    N *L\n}\nfunc main() {\n    var l = new L{}\n    l.N = nil\n}\n"]);
-    slang::sema::cycles::set_deny_warnings(false);
+    zell::sema::cycles::set_deny_warnings(false);
     assert!(p.is_none());
     assert!(errors.iter().any(|e| e.starts_with("W0001 type L")), "{errors:#?}");
 }

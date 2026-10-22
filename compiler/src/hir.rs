@@ -27,7 +27,7 @@
 //! * There are no generics: every instantiation of a generic function,
 //!   struct or enum is an ordinary item named after it (`Max<int>`,
 //!   `std.collections.List<string>`, `Pair<int, bool>.Swap`) with a mangled
-//!   symbol (`slang_app__Max__int`); `Type::Param` never appears.
+//!   symbol (`zell_app__Max__int`); `Type::Param` never appears.
 //! * `async func f() T` is a [`Function`] with `is_async = true` and
 //!   `ret = T`; calling it yields `Task<T>`, and its `Type::Func` signature
 //!   returns `Task<T>`. `return` inside it completes the task.
@@ -103,7 +103,7 @@ pub struct Program {
 /// What code generation needs for reflection (DESIGN.md "Рефлексия",
 /// runtime/ABI.md §17). Present only when the program uses `std.reflect`
 /// (directly, through `typeof`, `json`, or an attribute type): then every
-/// run-time type id (`slang_type_info`) is the header of a full
+/// run-time type id (`zell_type_info`) is the header of a full
 /// `std.reflect.TypeInfo` table.
 #[derive(Debug, Clone, Default)]
 pub struct Reflect {
@@ -355,7 +355,7 @@ pub struct Function {
     /// `namespace.Name` or `namespace.Struct.Method`; lambdas get
     /// `parent$lambdaN`.
     pub full_name: String,
-    /// Link-level symbol name, unique in the program (`slang_` prefixed,
+    /// Link-level symbol name, unique in the program (`zell_` prefixed,
     /// dots replaced by `__`).
     pub symbol: String,
     pub kind: FuncKind,
@@ -452,9 +452,9 @@ pub struct Global {
 /// A runtime (C) function referenced by the program.
 #[derive(Debug, Clone)]
 pub struct Extern {
-    /// Slang path, e.g. `std.strings.Split`.
+    /// Zell path, e.g. `std.strings.Split`.
     pub path: String,
-    /// C symbol, e.g. `slang_strings_split`.
+    /// C symbol, e.g. `zell_strings_split`.
     pub symbol: String,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
@@ -816,10 +816,10 @@ pub enum Builtin {
     /// others keep running). Only valid as the operand of `await`.
     TaskAny,
     /// `args = [arena handle]`: a zeroed `T` allocated in the arena; the
-    /// expression's type is `*T` (runtime `slang_arena_object`).
+    /// expression's type is `*T` (runtime `zell_arena_object`).
     ArenaNew,
     /// `args = [arena handle, n]`: `n` zeroed `T` in the arena; the type is
-    /// `[]T` (runtime `slang_arena_slice`).
+    /// `[]T` (runtime `zell_arena_slice`).
     ArenaSlice,
 }
 
@@ -834,22 +834,22 @@ pub struct PrintItem {
 /// Primitive print operations; runtime functions in parentheses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrintOp {
-    /// Signed integer of any width, sign-extended to i64 (`slang_print_int`).
+    /// Signed integer of any width, sign-extended to i64 (`zell_print_int`).
     Int,
-    /// Unsigned integer, zero-extended to u64 (`slang_print_uint`).
+    /// Unsigned integer, zero-extended to u64 (`zell_print_uint`).
     Uint,
-    /// `float`/`float32` as f64 (`slang_print_float`).
+    /// `float`/`float32` as f64 (`zell_print_float`).
     Float,
-    /// (`slang_print_bool`).
+    /// (`zell_print_bool`).
     Bool,
-    /// (`slang_print_rune`).
+    /// (`zell_print_rune`).
     Char,
     /// `string`; other types are wrapped in [`ExprKind::ToString`] first
-    /// (`slang_print_str`).
+    /// (`zell_print_str`).
     Str,
-    /// A single space (`slang_print_space`).
+    /// A single space (`zell_print_space`).
     Space,
-    /// `\n` (`slang_print_newline`).
+    /// `\n` (`zell_print_newline`).
     Newline,
 }
 

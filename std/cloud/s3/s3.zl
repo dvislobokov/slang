@@ -1,0 +1,1205 @@
+// std.cloud.s3: an S3 client written in Zell over std.net.http (docs/
+// STDLIB.md level 3b), compatible with AWS S3, MinIO, Cloudflare R2 and
+// Google Cloud Storage's XML API. Two files share the namespace:
+//
+//   s3.zl       AWS Signature V4 (canonical request, string to sign,
+//               signing key; header and presigned query signing),
+//               credentials (env, ~/.aws/credentials, IMDSv2), Config,
+//               Client: objects, buckets, listing, copy, errors, retries
+//   s3_multi.zl multipart uploads (parallel parts), presigned URLs,
+//               iteration over listings
+//
+// Payloads are hashed (x-amz-content-sha256) because request bodies are
+// in memory; Config.UnsignedPayload sends UNSIGNED-PAYLOAD instead (only
+// over https). Errors from the service are s3.Error values; NoSuchKey,
+// NoSuchBucket, AccessDenied and PreconditionFailed also match the
+// sentinels ErrNoSuchKey... with errors.Is.
+namespace std.cloud.s3
+
+// ---- Signature V4 ----------------------------------------------------------------
+
+// RFC 3986 percent-encoding as SigV4 wants it: unreserved characters
+// (A-Z a-z 0-9 - _ . ~) as they are, '/' kept unless encodeSlash.
+func URIEncode(s string, encodeSlash bool) string {
+    var b = std.strings.Builder{}
+    var hex = "0123456789ABCDEF"
+    for i in 0..len(s) {
+        var c = int(s[i])
+        if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 45 || c == 95 || c == 46 || c == 126 || (c == 47 && !encodeSlash) {
+            b.Write(s[i..i + 1])
+        } else {
+            b.Write("%" + hex[c >> 4..(c >> 4) + 1] + hex[c & 15..(c & 15) + 1])
+        }
+    }
+    return b.String()
+}
+
+// A query parameter (unencoded).
+struct Param {
+    Key string
+    Value string
+}
+
+func unescapeQuery(s string) string {
+    return try std.net.url.QueryUnescape(s) else s
+}
+
+// Parses a raw query ("a=1&b") into parameters.
+func parseQuery(raw string) []Param {
+    var out []Param = []
+    if raw == "" {
+        return out
+    }
+    for part in std.strings.Split(raw, "&") {
+        if part == "" {
+            continue
+        }
+        var eq = std.strings.Index(part, "=")
+        if eq < 0 {
+            out = append(out, Param{Key: unescapeQuery(part)})
+        } else {
+            out = append(out, Param{Key: unescapeQuery(part[..eq]), Value: unescapeQuery(part[eq + 1..])})
+        }
+    }
+    return out
+}
+
+// The canonical query string: encoded keys and values sorted by key, then
+// value.
+func CanonicalQuery(params []Param) string {
+    var enc []string = []
+    for p in params {
+        enc = append(enc, URIEncode(p.Key, true) + "=" + URIEncode(p.Value, true))
+    }
+    std.slices.Sort(enc)
+    return std.strings.Join(enc, "&")
+}
+
+func collapseSpaces(s string) string {
+    var t = std.strings.Trim(s)
+    for std.strings.Contains(t, "  ") {
+        t = std.strings.Replace(t, "  ", " ")
+    }
+    return t
+}
+
+// What SigV4 computed for a request (for tests and debugging).
+struct Signed {
+    CanonicalRequest string
+    StringToSign string
+    Signature string
+    SignedHeaders string
+    Authorization string
+}
+
+func hexSha256(data []byte) string {
+    return std.encoding.hex.Encode(try std.crypto.hash.Sum("sha256", data) else [])
+}
+
+func hmac(key []byte, text string) []byte {
+    return try std.crypto.hmac.Sum("sha256", key, std.strings.Bytes(text)) else []
+}
+
+// The SigV4 signing key: HMAC chain over date (YYYYMMDD), region, service.
+func SigningKey(secret string, date string, region string, service string) []byte {
+    var k = hmac(std.strings.Bytes("AWS4" + secret), date)
+    k = hmac(k, region)
+    k = hmac(k, service)
+    return hmac(k, "aws4_request")
+}
+
+// Signs a request. path is the URI-encoded path as sent, query its raw
+// query, headers every header to sign (any case; host included),
+// payloadHash the hex SHA-256 of the body or "UNSIGNED-PAYLOAD", amzDate
+// "YYYYMMDDTHHMMSSZ".
+func SignV4(method string, path string, query string, headers map[string]string, payloadHash string, accessKey string, secretKey string, region string, service string, amzDate string) Signed {
+    var lower = map[string]string{}
+    for k, v in headers {
+        lower[std.strings.ToLower(k)] = collapseSpaces(v)
+    }
+    var names = std.maps.SortedKeys(lower)
+    var canonHeaders = ""
+    for n in names {
+        canonHeaders += n + ":" + lower[n] + "\n"
+    }
+    var signedHeaders = std.strings.Join(names, ";")
+    var p = path
+    if p == "" {
+        p = "/"
+    }
+    var canonical = method + "\n" + p + "\n" + CanonicalQuery(parseQuery(query)) + "\n" + canonHeaders + "\n" + signedHeaders + "\n" + payloadHash
+    var date = amzDate[..8]
+    var scope = date + "/" + region + "/" + service + "/aws4_request"
+    var sts = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hexSha256(std.strings.Bytes(canonical))
+    var sig = std.encoding.hex.Encode(hmac(SigningKey(secretKey, date, region, service), sts))
+    var auth = "AWS4-HMAC-SHA256 Credential=" + accessKey + "/" + scope + ", SignedHeaders=" + signedHeaders + ", Signature=" + sig
+    return Signed{CanonicalRequest: canonical, StringToSign: sts, Signature: sig, SignedHeaders: signedHeaders, Authorization: auth}
+}
+
+// "YYYYMMDDTHHMMSSZ" of a Unix time in milliseconds.
+func AmzDate(ms int) string {
+    return std.time.Format(ms, "%Y%m%dT%H%M%SZ")
+}
+
+// ---- credentials ------------------------------------------------------------------
+
+// AWS credentials (SessionToken for temporary ones).
+struct Credentials {
+    AccessKey string
+    SecretKey string
+    SessionToken string
+    // where they came from: "static", "env", "file:<profile>", "imds"
+    Source string
+}
+
+// AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN.
+func EnvCredentials() Credentials! {
+    var ak = std.os.Getenv("AWS_ACCESS_KEY_ID")
+    var sk = std.os.Getenv("AWS_SECRET_ACCESS_KEY")
+    if ak == "" || sk == "" {
+        return error("s3: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not set")
+    }
+    return Credentials{AccessKey: ak, SecretKey: sk, SessionToken: std.os.Getenv("AWS_SESSION_TOKEN"), Source: "env"}
+}
+
+// The [section] of an INI text as a map.
+func iniSection(text string, section string) map[string]string {
+    var out = map[string]string{}
+    var cur = ""
+    for raw in std.strings.Split(text, "\n") {
+        var line = std.strings.Trim(raw)
+        if line == "" || std.strings.HasPrefix(line, "#") || std.strings.HasPrefix(line, ";") {
+            continue
+        }
+        if std.strings.HasPrefix(line, "[") && std.strings.HasSuffix(line, "]") {
+            cur = std.strings.Trim(line[1..len(line) - 1])
+            continue
+        }
+        if cur != section {
+            continue
+        }
+        var eq = std.strings.Index(line, "=")
+        if eq > 0 {
+            out[std.strings.Trim(line[..eq])] = std.strings.Trim(line[eq + 1..])
+        }
+    }
+    return out
+}
+
+func homeDir() string {
+    var h = std.os.Getenv("HOME")
+    if h == "" {
+        h = std.os.Getenv("USERPROFILE")
+    }
+    return h
+}
+
+// Credentials from a shared credentials file (path "": AWS_SHARED_
+// CREDENTIALS_FILE or ~/.aws/credentials; profile "": AWS_PROFILE or
+// "default").
+func FileCredentials(path string, profile string) Credentials! {
+    var p = path
+    if p == "" {
+        p = std.os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
+    }
+    if p == "" {
+        p = homeDir() + "/.aws/credentials"
+    }
+    var prof = profile
+    if prof == "" {
+        prof = std.os.Getenv("AWS_PROFILE")
+    }
+    if prof == "" {
+        prof = "default"
+    }
+    var text = std.io.ReadFile(p)?("s3: credentials file")
+    var sec = iniSection(text, prof)
+    if sec["aws_access_key_id"] == "" || sec["aws_secret_access_key"] == "" {
+        return error("s3: profile " + std.strconv.Quote(prof) + " in " + p + " has no aws_access_key_id / aws_secret_access_key")
+    }
+    return Credentials{AccessKey: sec["aws_access_key_id"], SecretKey: sec["aws_secret_access_key"], SessionToken: sec["aws_session_token"], Source: "file:" + prof}
+}
+
+// The region of AWS_REGION, AWS_DEFAULT_REGION or ~/.aws/config ("" if
+// none).
+func DefaultRegion() string {
+    var r = std.os.Getenv("AWS_REGION")
+    if r == "" {
+        r = std.os.Getenv("AWS_DEFAULT_REGION")
+    }
+    if r == "" {
+        var text = try std.io.ReadFile(homeDir() + "/.aws/config") else ""
+        var prof = std.os.Getenv("AWS_PROFILE")
+        var sec = "default"
+        if prof != "" && prof != "default" {
+            sec = "profile " + prof
+        }
+        r = iniSection(text, sec)["region"]
+    }
+    return r
+}
+
+// Instance-profile credentials from the EC2 metadata service (IMDSv2: a
+// session token first). endpoint "" is http://169.254.169.254.
+async func IMDSCredentials(endpoint string) Credentials! {
+    var base = endpoint
+    if base == "" {
+        base = "http://169.254.169.254"
+    }
+    var cl = std.net.http.Client{Timeout: 1000, MaxRedirects: -1}
+    var tr = await cl.Send(std.net.http.NewRequest("PUT", base + "/latest/api/token").Header("X-aws-ec2-metadata-token-ttl-seconds", "21600"))?
+    if tr.Status != 200 {
+        return error("s3: IMDS token request failed with status " + std.strconv.Itoa(tr.Status))
+    }
+    var token = tr.Body
+    var rr = await cl.Send(std.net.http.NewRequest("GET", base + "/latest/meta-data/iam/security-credentials/").Header("X-aws-ec2-metadata-token", token))?
+    if rr.Status != 200 {
+        return error("s3: no instance profile (status " + std.strconv.Itoa(rr.Status) + ")")
+    }
+    var role = std.strings.Trim(std.strings.Split(rr.Body, "\n")[0])
+    var cr = await cl.Send(std.net.http.NewRequest("GET", base + "/latest/meta-data/iam/security-credentials/" + role).Header("X-aws-ec2-metadata-token", token))?
+    var v = std.encoding.json.ParseValue(cr.Body)?("s3: IMDS credentials")
+    var ak = try v.Get("AccessKeyId").String() else ""
+    var sk = try v.Get("SecretAccessKey").String() else ""
+    var tk = try v.Get("Token").String() else ""
+    if ak == "" || sk == "" {
+        return error("s3: IMDS returned no credentials")
+    }
+    return Credentials{AccessKey: ak, SecretKey: sk, SessionToken: tk, Source: "imds"}
+}
+
+// The default chain: environment, the shared credentials file, then (if
+// imds) the instance metadata service.
+async func DefaultCredentials(imds bool) Credentials! {
+    var env = try EnvCredentials() catch _ {
+        var file = try FileCredentials("", "") catch err {
+            if !imds {
+                return error("s3: no credentials in the environment or ~/.aws/credentials")
+            }
+            return await IMDSCredentials("")?
+        }
+        return file
+    }
+    return env
+}
+
+// ---- configuration and errors ------------------------------------------------------
+
+// Client configuration. Endpoint examples: "" (AWS: https://s3.<region>.
+// amazonaws.com), "http://localhost:9000" (MinIO, with PathStyle),
+// "https://<account>.r2.cloudflarestorage.com" (R2, Region "auto"),
+// "https://storage.googleapis.com" (GCS HMAC keys).
+struct Config {
+    Endpoint string
+    // [us-east-1, or DefaultRegion()]
+    Region string
+    AccessKey string
+    SecretKey string
+    SessionToken string
+    // bucket in the path (http://host/bucket/key) instead of the host
+    // name (http://bucket.host/key)
+    PathStyle bool
+    // retries after network errors, 5xx, 429 and SlowDown [3; -1 none]
+    MaxRetries int
+    // per-request limit in milliseconds [60000]
+    Timeout int
+    TLS *std.net.tls.Config
+    // send UNSIGNED-PAYLOAD instead of hashing bodies (https only)
+    UnsignedPayload bool
+    // a fixed clock (Unix ms) for tests; nil: the system clock
+    Clock func() int
+}
+
+// An error response of the service.
+struct Error {
+    Status int
+    Code string
+    Text string
+    Resource string
+    RequestID string
+
+    // Message returns "s3: Code: text".
+    func Message() string {
+        var s = "s3: " + this.Code
+        if this.Text != "" {
+            s += ": " + this.Text
+        }
+        if this.Resource != "" {
+            s += " (" + this.Resource + ")"
+        }
+        return s
+    }
+}
+
+// The S3 error code in err's chain ("" if none).
+func ErrorCode(err error) string {
+    var e Error
+    if std.errors.As(err, &e) {
+        return e.Code
+    }
+    return ""
+}
+
+// The Error as an error value; codes with a sentinel are chained to it.
+func errorValue(e Error) error {
+    var sentinel error
+    switch e.Code {
+        case "NoSuchKey":
+            sentinel = ErrNoSuchKey
+        case "NoSuchBucket":
+            sentinel = ErrNoSuchBucket
+        case "AccessDenied":
+            sentinel = ErrAccessDenied
+        case "PreconditionFailed":
+            sentinel = ErrPreconditionFailed
+    }
+    if sentinel == nil {
+        return e
+    }
+    var boxed error = e
+    var prefix = "s3"
+    if e.Text != "" {
+        prefix += ": " + e.Text
+    }
+    if e.Resource != "" {
+        prefix += " (" + e.Resource + ")"
+    }
+    return std.net.rtOpError(boxed, prefix, sentinel)
+}
+
+// The root element of an XML document.
+func xmlRoot(text string) std.encoding.xml.Value! {
+    var doc = std.encoding.xml.ParseValue(text)?("s3: bad XML response")
+    if doc.IsElement() {
+        return doc
+    }
+    for c in doc.Children {
+        if c.IsElement() {
+            return c
+        }
+    }
+    return error("s3: empty XML response")
+}
+
+func childText(v std.encoding.xml.Value, name string) string {
+    var c = v.Child(name)
+    if c == nil {
+        return ""
+    }
+    return c.InnerText()
+}
+
+// The error of a failed response (status >= 300, or an <Error> body).
+func responseError(status int, body string, resource string, requestID string) error {
+    var e = Error{Status: status, Resource: resource, RequestID: requestID}
+    var root = try xmlRoot(body) catch _ {
+        switch status {
+            case 404:
+                e.Code = "NotFound"
+            case 403:
+                e.Code = "AccessDenied"
+            case 412:
+                e.Code = "PreconditionFailed"
+            case 304:
+                e.Code = "NotModified"
+            default:
+                e.Code = "HTTP" + std.strconv.Itoa(status)
+        }
+        return errorValue(e)
+    }
+    e.Code = childText(root, "Code")
+    e.Text = childText(root, "Message")
+    if childText(root, "RequestId") != "" {
+        e.RequestID = childText(root, "RequestId")
+    }
+    if e.Code == "" {
+        e.Code = "HTTP" + std.strconv.Itoa(status)
+    }
+    return errorValue(e)
+}
+
+// ---- the client ------------------------------------------------------------------------
+
+// Metadata of an object.
+struct ObjectInfo {
+    Key string
+    Size int
+    ETag string
+    LastModified std.time.Time
+    ContentType string
+    StorageClass string
+    VersionID string
+    // x-amz-meta-* headers, names lower-case without the prefix
+    Metadata map[string]string
+    // a common prefix of a delimited listing (no other field is set)
+    IsPrefix bool
+}
+
+// Options of PutObject (and of multipart uploads).
+struct PutOptions {
+    ContentType string
+    ContentEncoding string
+    ContentDisposition string
+    CacheControl string
+    // canned ACL: "private", "public-read"...
+    ACL string
+    StorageClass string
+    Metadata map[string]string
+    // only create (If-None-Match: *)
+    IfNoneMatch bool
+}
+
+// The result of a write.
+struct PutResult {
+    ETag string
+    VersionID string
+}
+
+// Options of GetObject. A range is RangeStart..RangeEnd inclusive
+// (RangeEnd -1: to the end; both 0 and HasRange false: whole object).
+struct GetOptions {
+    HasRange bool
+    RangeStart int
+    RangeEnd int
+    IfMatch string
+    IfNoneMatch string
+    VersionID string
+}
+
+// A bucket.
+struct BucketInfo {
+    Name string
+    CreationDate std.time.Time
+}
+
+// One page of ListObjectsV2.
+struct ListPage {
+    Objects []ObjectInfo
+    CommonPrefixes []string
+    IsTruncated bool
+    NextContinuationToken string
+    KeyCount int
+}
+
+// Options of ListObjectsV2.
+struct ListOptions {
+    Prefix string
+    Delimiter string
+    MaxKeys int
+    StartAfter string
+    ContinuationToken string
+}
+
+// A failed key of DeleteObjects.
+struct DeleteError {
+    Key string
+    Code string
+    Message string
+}
+
+// The S3 client. Safe for concurrent use.
+struct Client {
+    cfg Config
+    http std.net.http.Client
+    scheme string
+    host string
+    retries int
+
+    // ---- objects ----
+
+    // Stores body (a string or []byte).
+    func PutObject(bucket string, key string, body any, opts PutOptions) Task<PutResult!> {
+        return putObject(this, bucket, key, bodyOf(body), opts)
+    }
+
+    // The object with its body read into memory.
+    func GetObjectBytes(bucket string, key string) Task<[]byte!> {
+        return getBytes(this, bucket, key, GetOptions{})
+    }
+
+    // The object as a stream: read Body with Read(n) / ReadAll and Close
+    // it (or read to the end) to release the connection.
+    func GetObject(bucket string, key string, opts GetOptions) Task<*Object!> {
+        return getObject(this, bucket, key, opts)
+    }
+
+    // HeadObject returns the metadata of an object without its body.
+    func HeadObject(bucket string, key string) Task<ObjectInfo!> {
+        return headObject(this, bucket, key)
+    }
+
+    // Deletes an object (no error if it does not exist).
+    func DeleteObject(bucket string, key string) Task<void!> {
+        return deleteObject(this, bucket, key)
+    }
+
+    // Deletes up to 1000 keys per request; the keys that failed.
+    func DeleteObjects(bucket string, keys []string) Task<[]DeleteError!> {
+        return deleteObjects(this, bucket, keys)
+    }
+
+    // Copies an object (server side); metadata is copied unless
+    // opts.Metadata or ContentType is set (REPLACE).
+    func CopyObject(srcBucket string, srcKey string, dstBucket string, dstKey string, opts PutOptions) Task<PutResult!> {
+        return copyObject(this, srcBucket, srcKey, dstBucket, dstKey, opts)
+    }
+
+    // One page of a listing.
+    func ListObjectsV2(bucket string, opts ListOptions) Task<ListPage!> {
+        return listObjects(this, bucket, opts)
+    }
+
+    // Every object (and with a delimiter, every common prefix) under
+    // prefix, page by page: `for obj in c.List(bucket, "photos/", "")`.
+    func List(bucket string, prefix string, delimiter string) *ObjectIterator {
+        return new ObjectIterator{c: this, bucket: bucket, opts: ListOptions{Prefix: prefix, Delimiter: delimiter}}
+    }
+
+    // List with every option (MaxKeys is the page size).
+    func ListWith(bucket string, opts ListOptions) *ObjectIterator {
+        return new ObjectIterator{c: this, bucket: bucket, opts: opts}
+    }
+
+    // ---- buckets ----
+
+    // CreateBucket creates a bucket (in the client's region).
+    func CreateBucket(bucket string) Task<void!> {
+        return createBucket(this, bucket)
+    }
+
+    // DeleteBucket deletes an empty bucket.
+    func DeleteBucket(bucket string) Task<void!> {
+        return simple(this, "DELETE", bucket, "", [], 204)
+    }
+
+    // ListBuckets returns the buckets of the account.
+    func ListBuckets() Task<[]BucketInfo!> {
+        return listBuckets(this)
+    }
+
+    // BucketExists reports whether a bucket exists and is accessible.
+    func BucketExists(bucket string) Task<bool!> {
+        return bucketExists(this, bucket)
+    }
+
+    // ---- multipart and presigning (s3_multi.zl) ----
+
+    // Uploads everything r yields: one PutObject when it fits in one part,
+    // else a multipart upload with up to concurrency parts of partSize
+    // bytes (>= 5 MiB except the last; 0: 8 MiB) in flight; aborted on
+    // failure.
+    func Upload(bucket string, key string, r std.io.Reader, partSize int, concurrency int) Task<PutResult!> {
+        return upload(this, bucket, key, syncSource{r: r}, partSize, concurrency, PutOptions{})
+    }
+
+    // Upload with options, from an asynchronous reader (a network stream).
+    func UploadFrom(bucket string, key string, r std.io.AsyncReader, partSize int, concurrency int, opts PutOptions) Task<PutResult!> {
+        return upload(this, bucket, key, asyncSource{r: r}, partSize, concurrency, opts)
+    }
+
+    // CreateMultipartUpload starts a multipart upload and returns its upload ID.
+    func CreateMultipartUpload(bucket string, key string, opts PutOptions) Task<string!> {
+        return createMultipart(this, bucket, key, opts)
+    }
+
+    // UploadPart uploads part number part (from 1) and returns its ETag.
+    func UploadPart(bucket string, key string, uploadID string, part int, data []byte) Task<string!> {
+        return uploadPart(this, bucket, key, uploadID, part, data)
+    }
+
+    // CompleteMultipartUpload assembles the parts from their ETags (in part order).
+    func CompleteMultipartUpload(bucket string, key string, uploadID string, etags []string) Task<PutResult!> {
+        return completeMultipart(this, bucket, key, uploadID, etags)
+    }
+
+    // AbortMultipartUpload discards an unfinished multipart upload.
+    func AbortMultipartUpload(bucket string, key string, uploadID string) Task<void!> {
+        return abortMultipart(this, bucket, key, uploadID)
+    }
+
+    // A presigned URL for method on an object, valid expires seconds
+    // (1..604800); anyone with it can make that request.
+    func Presign(method string, bucket string, key string, expires int) string! {
+        return presign(this, method, bucket, key, expires, [])?
+    }
+
+    // Requests retried so far.
+    func Retries() int {
+        return this.retries
+    }
+}
+
+func bodyOf(body any) string {
+    switch body {
+        case string s:
+            return s
+        case []byte b:
+            return std.strings.FromBytes(b)
+    }
+    if body == nil {
+        return ""
+    }
+    return std.fmt.Format("{0}", body)
+}
+
+// A client for cfg. Without keys in cfg the environment and
+// ~/.aws/credentials are tried (NewClientAuto also tries IMDS).
+func NewClient(cfg Config) *Client! {
+    var c = cfg
+    if c.AccessKey == "" {
+        var cr = staticCredentials()?
+        c.AccessKey = cr.AccessKey
+        c.SecretKey = cr.SecretKey
+        c.SessionToken = cr.SessionToken
+    }
+    return clientFor(c)?
+}
+
+// Environment, then the shared credentials file.
+func staticCredentials() Credentials! {
+    var env = try EnvCredentials() catch _ {
+        return FileCredentials("", "")?
+    }
+    return env
+}
+
+// NewClient with the full credential chain, including IMDSv2.
+async func NewClientAuto(cfg Config) *Client! {
+    var c = cfg
+    if c.AccessKey == "" {
+        var cr = await DefaultCredentials(true)?
+        c.AccessKey = cr.AccessKey
+        c.SecretKey = cr.SecretKey
+        c.SessionToken = cr.SessionToken
+    }
+    return clientFor(c)?
+}
+
+func clientFor(cfg Config) *Client! {
+    var c = cfg
+    if c.Region == "" {
+        c.Region = DefaultRegion()
+    }
+    if c.Region == "" {
+        c.Region = "us-east-1"
+    }
+    if c.Endpoint == "" {
+        c.Endpoint = "https://s3." + c.Region + ".amazonaws.com"
+    }
+    if c.MaxRetries == 0 {
+        c.MaxRetries = 3
+    }
+    if c.MaxRetries < 0 {
+        c.MaxRetries = 0
+    }
+    if c.Timeout <= 0 {
+        c.Timeout = 60000
+    }
+    var u = std.net.http.ParseURL(c.Endpoint)?("s3: endpoint")
+    if u.Scheme != "http" && u.Scheme != "https" {
+        return error("s3: endpoint must be http:// or https://")
+    }
+    if c.UnsignedPayload && u.Scheme != "https" {
+        return error("s3: UnsignedPayload needs an https endpoint")
+    }
+    var host = u.Host
+    if (u.Scheme == "https" && std.strings.HasSuffix(host, ":443")) || (u.Scheme == "http" && std.strings.HasSuffix(host, ":80")) {
+        host = host[..std.strings.LastIndex(host, ":")]
+    }
+    var hc = std.net.http.Client{TotalTimeout: c.Timeout, MaxRedirects: -1, TLS: c.TLS}
+    return new Client{cfg: c, http: hc, scheme: u.Scheme, host: host}
+}
+
+// The URI-encoded path of an object key ("" key: the bucket).
+func keyPath(key string) string {
+    var segs []string = []
+    for s in std.strings.Split(key, "/") {
+        segs = append(segs, URIEncode(s, true))
+    }
+    return std.strings.Join(segs, "/")
+}
+
+// (host, path) of a bucket/key for the client's addressing style.
+func target(c *Client, bucket string, key string) (string, string) {
+    var kp = ""
+    if key != "" {
+        kp = "/" + keyPath(key)
+    }
+    if bucket == "" {
+        return (c.host, "/")
+    }
+    if c.cfg.PathStyle {
+        return (c.host, "/" + URIEncode(bucket, true) + kp)
+    }
+    if kp == "" {
+        kp = "/"
+    }
+    return (bucket + "." + c.host, kp)
+}
+
+func encodeQuery(params []Param) string {
+    return CanonicalQuery(params)
+}
+
+func nowMs(c *Client) int {
+    if c.cfg.Clock != nil {
+        return c.cfg.Clock()
+    }
+    return std.time.Now()
+}
+
+func retryableStatus(status int) bool {
+    return status == 500 || status == 502 || status == 503 || status == 504 || status == 429
+}
+
+func netError(err error) bool {
+    return std.errors.Is(err, std.net.ErrRefused) || std.errors.Is(err, std.net.ErrReset) || std.errors.Is(err, std.net.ErrEOF) || std.errors.Is(err, std.net.ErrClosed) || std.errors.Is(err, std.net.ErrTimeout) || std.errors.Is(err, std.net.ErrUnreachable)
+}
+
+// One signed request with retries. headers are extra headers (signed);
+// stream leaves the body on the connection.
+async func send(c *Client, method string, bucket string, key string, query []Param, headers map[string]string, body string, stream bool) std.net.http.Response! {
+    var (host, path) = target(c, bucket, key)
+    var q = encodeQuery(query)
+    var url = c.scheme + "://" + host + path
+    if q != "" {
+        url += "?" + q
+    }
+    var payload = "UNSIGNED-PAYLOAD"
+    if !c.cfg.UnsignedPayload {
+        payload = hexSha256(std.strings.Bytes(body))
+    }
+    var attempt = 0
+    for {
+        var amz = AmzDate(nowMs(c))
+        var sh = map[string]string{}
+        for k, v in headers {
+            sh[std.strings.ToLower(k)] = v
+        }
+        sh["host"] = host
+        sh["x-amz-date"] = amz
+        sh["x-amz-content-sha256"] = payload
+        if c.cfg.SessionToken != "" {
+            sh["x-amz-security-token"] = c.cfg.SessionToken
+        }
+        var signed = SignV4(method, path, q, sh, payload, c.cfg.AccessKey, c.cfg.SecretKey, c.cfg.Region, "s3", amz)
+        var req = std.net.http.NewRequest(method, url)
+        for k, v in sh {
+            if k != "host" {
+                req.Header(k, v)
+            }
+        }
+        req.Header("Authorization", signed.Authorization)
+        req.Header("Accept-Encoding", "identity")
+        if body != "" || method == "PUT" || method == "POST" {
+            req.Body(body)
+        }
+        var cl = c.http
+        var t Task<std.net.http.Response!>
+        if stream {
+            t = cl.Stream(req)
+        } else {
+            t = cl.Send(req)
+        }
+        var res = try await t catch err {
+            if attempt < c.cfg.MaxRetries && netError(err) {
+                attempt += 1
+                c.retries += 1
+                await std.task.Delay(backoffMs(attempt))
+                continue
+            }
+            return err
+        }
+        if retryableStatus(res.Status) && attempt < c.cfg.MaxRetries {
+            if res.Reader != nil {
+                res.Reader.Close()
+            }
+            attempt += 1
+            c.retries += 1
+            await std.task.Delay(backoffMs(attempt))
+            continue
+        }
+        if res.Status == 503 || std.strings.Contains(res.Body, "<Code>SlowDown</Code>") {
+            if attempt < c.cfg.MaxRetries {
+                attempt += 1
+                c.retries += 1
+                await std.task.Delay(backoffMs(attempt))
+                continue
+            }
+        }
+        return res
+    }
+}
+
+func backoffMs(attempt int) int {
+    var d = 50
+    for _ in 1..attempt {
+        d = d * 2
+    }
+    if d > 2000 {
+        d = 2000
+    }
+    return d + std.random.IntN(d / 2 + 1)
+}
+
+func resource(bucket string, key string) string {
+    if key == "" {
+        return bucket
+    }
+    return bucket + "/" + key
+}
+
+// Fails unless the status is ok (the error parsed from the body).
+async func check(res std.net.http.Response, ok int, bucket string, key string) void! {
+    if res.Status == ok || (ok == 200 && res.Status == 204) || (ok == 204 && res.Status == 200) {
+        return
+    }
+    var body = res.Body
+    if res.Reader != nil {
+        body = try await res.Reader.ReadAll() else ""
+    }
+    return responseError(res.Status, body, resource(bucket, key), res.Header("X-Amz-Request-Id"))
+}
+
+async func simple(c *Client, method string, bucket string, key string, query []Param, ok int) void! {
+    var res = await send(c, method, bucket, key, query, map[string]string{}, "", false)?
+    await check(res, ok, bucket, key)?
+}
+
+func putHeaders(opts PutOptions) map[string]string {
+    var h = map[string]string{}
+    if opts.ContentType != "" {
+        h["Content-Type"] = opts.ContentType
+    }
+    if opts.ContentEncoding != "" {
+        h["Content-Encoding"] = opts.ContentEncoding
+    }
+    if opts.ContentDisposition != "" {
+        h["Content-Disposition"] = opts.ContentDisposition
+    }
+    if opts.CacheControl != "" {
+        h["Cache-Control"] = opts.CacheControl
+    }
+    if opts.ACL != "" {
+        h["X-Amz-Acl"] = opts.ACL
+    }
+    if opts.StorageClass != "" {
+        h["X-Amz-Storage-Class"] = opts.StorageClass
+    }
+    if opts.IfNoneMatch {
+        h["If-None-Match"] = "*"
+    }
+    for k, v in opts.Metadata {
+        h["X-Amz-Meta-" + std.strings.ToLower(k)] = v
+    }
+    return h
+}
+
+async func putObject(c *Client, bucket string, key string, body string, opts PutOptions) PutResult! {
+    var h = putHeaders(opts)
+    h["Content-Md5"] = std.encoding.base64.Encode(std.crypto.hash.Md5(body))
+    var res = await send(c, "PUT", bucket, key, [], h, body, false)?
+    await check(res, 200, bucket, key)?
+    return PutResult{ETag: res.Header("ETag"), VersionID: res.Header("X-Amz-Version-Id")}
+}
+
+func parseHTTPTime(s string) std.time.Time {
+    var sec = try std.net.http.ParseTime(s) else 0
+    return std.time.Unix(sec, 0)
+}
+
+func parseISOTime(s string) std.time.Time {
+    return try std.time.ParseTime(std.time.RFC3339, s) else std.time.Unix(0, 0)
+}
+
+// Object metadata from response headers.
+func infoFromHeaders(key string, h map[string]string) ObjectInfo {
+    var meta = map[string]string{}
+    for k, v in h {
+        var l = std.strings.ToLower(k)
+        if std.strings.HasPrefix(l, "x-amz-meta-") {
+            meta[l[11..]] = v
+        }
+    }
+    var size = try std.strconv.Atoi(h["Content-Length"]) else 0
+    var cr = h["Content-Range"]
+    var slash = std.strings.LastIndex(cr, "/")
+    if slash >= 0 {
+        size = try std.strconv.Atoi(cr[slash + 1..]) else size
+    }
+    return ObjectInfo{Key: key, Size: size, ETag: h["Etag"] + h["ETag"], LastModified: parseHTTPTime(h["Last-Modified"]), ContentType: h["Content-Type"], StorageClass: h["X-Amz-Storage-Class"], VersionID: h["X-Amz-Version-Id"], Metadata: meta}
+}
+
+async func headObject(c *Client, bucket string, key string) ObjectInfo! {
+    var res = await send(c, "HEAD", bucket, key, [], map[string]string{}, "", false)?
+    if res.Status == 404 {
+        return errorValue(Error{Status: 404, Code: "NoSuchKey", Text: "The specified key does not exist.", Resource: resource(bucket, key), RequestID: res.Header("X-Amz-Request-Id")})
+    }
+    await check(res, 200, bucket, key)?
+    return infoFromHeaders(key, res.Headers)
+}
+
+func getHeaders(opts GetOptions) map[string]string {
+    var h = map[string]string{}
+    if opts.HasRange {
+        var r = "bytes=" + std.strconv.Itoa(opts.RangeStart) + "-"
+        if opts.RangeEnd >= 0 {
+            r += std.strconv.Itoa(opts.RangeEnd)
+        }
+        h["Range"] = r
+    }
+    if opts.IfMatch != "" {
+        h["If-Match"] = opts.IfMatch
+    }
+    if opts.IfNoneMatch != "" {
+        h["If-None-Match"] = opts.IfNoneMatch
+    }
+    return h
+}
+
+func getQuery(opts GetOptions) []Param {
+    if opts.VersionID != "" {
+        return [Param{Key: "versionId", Value: opts.VersionID}]
+    }
+    return []
+}
+
+// A streamed object body: an io.AsyncReader.
+struct Object {
+    Info ObjectInfo
+    body *std.net.http.BodyReader
+    // a body the HTTP client had already read (small responses)
+    rest []byte
+
+    // Up to n bytes; empty at the end.
+    func Read(n int) Task<[]byte!> {
+        return objectRead(this, n)
+    }
+
+    // The rest of the body.
+    func ReadAll() Task<[]byte!> {
+        return objectReadAll(this)
+    }
+
+    // Close releases the connection of an unread body.
+    func Close() {
+        if this.body != nil {
+            this.body.Close()
+        }
+    }
+}
+
+async func objectRead(o *Object, n int) []byte! {
+    if o.body == nil {
+        var k = n
+        if k > len(o.rest) {
+            k = len(o.rest)
+        }
+        var out = o.rest[..k]
+        o.rest = o.rest[k..]
+        return out
+    }
+    return await o.body.Read(n)?
+}
+
+async func objectReadAll(o *Object) []byte! {
+    if o.body == nil {
+        var out = o.rest
+        o.rest = []
+        return out
+    }
+    return std.strings.Bytes(await o.body.ReadAll()?)
+}
+
+async func getObject(c *Client, bucket string, key string, opts GetOptions) *Object! {
+    var res = await send(c, "GET", bucket, key, getQuery(opts), getHeaders(opts), "", true)?
+    if res.Status != 200 && res.Status != 206 {
+        await check(res, 200, bucket, key)?
+    }
+    return new Object{Info: infoFromHeaders(key, res.Headers), body: res.Reader, rest: std.strings.Bytes(res.Body)}
+}
+
+async func getBytes(c *Client, bucket string, key string, opts GetOptions) []byte! {
+    var res = await send(c, "GET", bucket, key, getQuery(opts), getHeaders(opts), "", false)?
+    if res.Status != 200 && res.Status != 206 {
+        await check(res, 200, bucket, key)?
+    }
+    return std.strings.Bytes(res.Body)
+}
+
+async func deleteObject(c *Client, bucket string, key string) void! {
+    await simple(c, "DELETE", bucket, key, [], 204)?
+}
+
+func xmlEscape(s string) string {
+    return std.encoding.xml.Escape(s)
+}
+
+async func deleteObjects(c *Client, bucket string, keys []string) []DeleteError! {
+    var failed []DeleteError = []
+    var i = 0
+    for i < len(keys) {
+        var end = i + 1000
+        if end > len(keys) {
+            end = len(keys)
+        }
+        var b = std.strings.Builder{}
+        b.Write("<Delete><Quiet>true</Quiet>")
+        for k in keys[i..end] {
+            b.Write("<Object><Key>" + xmlEscape(k) + "</Key></Object>")
+        }
+        b.Write("</Delete>")
+        var body = b.String()
+        var h = map[string]string{"Content-Type": "application/xml", "Content-Md5": std.encoding.base64.Encode(std.crypto.hash.Md5(body))}
+        var res = await send(c, "POST", bucket, "", [Param{Key: "delete"}], h, body, false)?
+        await check(res, 200, bucket, "")?
+        if res.Body != "" {
+            var root = xmlRoot(res.Body)?
+            for e in root.Elements("Error") {
+                failed = append(failed, DeleteError{Key: childText(e, "Key"), Code: childText(e, "Code"), Message: childText(e, "Message")})
+            }
+        }
+        i = end
+    }
+    return failed
+}
+
+async func copyObject(c *Client, srcBucket string, srcKey string, dstBucket string, dstKey string, opts PutOptions) PutResult! {
+    var h = putHeaders(opts)
+    h["X-Amz-Copy-Source"] = "/" + URIEncode(srcBucket, true) + "/" + keyPath(srcKey)
+    if len(opts.Metadata) > 0 || opts.ContentType != "" {
+        h["X-Amz-Metadata-Directive"] = "REPLACE"
+    }
+    var res = await send(c, "PUT", dstBucket, dstKey, [], h, "", false)?
+    await check(res, 200, dstBucket, dstKey)?
+    // a copy can fail after the 200 status: the body is then an <Error>
+    var root = xmlRoot(res.Body)?
+    if root.Name.Local == "Error" {
+        return responseError(200, res.Body, resource(dstBucket, dstKey), res.Header("X-Amz-Request-Id"))
+    }
+    return PutResult{ETag: childText(root, "ETag"), VersionID: res.Header("X-Amz-Version-Id")}
+}
+
+func objectOf(v std.encoding.xml.Value) ObjectInfo {
+    var size = try std.strconv.Atoi(childText(v, "Size")) else 0
+    return ObjectInfo{Key: childText(v, "Key"), Size: size, ETag: childText(v, "ETag"), LastModified: parseISOTime(childText(v, "LastModified")), StorageClass: childText(v, "StorageClass")}
+}
+
+async func listObjects(c *Client, bucket string, opts ListOptions) ListPage! {
+    var q = [Param{Key: "list-type", Value: "2"}]
+    if opts.Prefix != "" {
+        q = append(q, Param{Key: "prefix", Value: opts.Prefix})
+    }
+    if opts.Delimiter != "" {
+        q = append(q, Param{Key: "delimiter", Value: opts.Delimiter})
+    }
+    if opts.MaxKeys > 0 {
+        q = append(q, Param{Key: "max-keys", Value: std.strconv.Itoa(opts.MaxKeys)})
+    }
+    if opts.StartAfter != "" {
+        q = append(q, Param{Key: "start-after", Value: opts.StartAfter})
+    }
+    if opts.ContinuationToken != "" {
+        q = append(q, Param{Key: "continuation-token", Value: opts.ContinuationToken})
+    }
+    var res = await send(c, "GET", bucket, "", q, map[string]string{}, "", false)?
+    await check(res, 200, bucket, "")?
+    var root = xmlRoot(res.Body)?
+    var page = ListPage{IsTruncated: childText(root, "IsTruncated") == "true", NextContinuationToken: childText(root, "NextContinuationToken")}
+    page.KeyCount = try std.strconv.Atoi(childText(root, "KeyCount")) else 0
+    for o in root.Elements("Contents") {
+        page.Objects = append(page.Objects, objectOf(o))
+    }
+    for p in root.Elements("CommonPrefixes") {
+        page.CommonPrefixes = append(page.CommonPrefixes, childText(p, "Prefix"))
+    }
+    return page
+}
+
+// Iterates a listing page by page (Client.List).
+struct ObjectIterator {
+    c *Client
+    bucket string
+    opts ListOptions
+    buf []ObjectInfo
+    started bool
+    done bool
+    err error
+    pages int
+
+    // Next returns the next object of the listing and true, or false at the end (see Err).
+    async func Next() (ObjectInfo, bool) {
+        var none ObjectInfo
+        for {
+            if len(this.buf) > 0 {
+                var o = this.buf[0]
+                this.buf = this.buf[1..]
+                return (o, true)
+            }
+            if this.done {
+                return (none, false)
+            }
+            var page = try await listObjects(this.c, this.bucket, this.opts) catch err {
+                this.err = err
+                this.done = true
+                return (none, false)
+            }
+            this.pages += 1
+            for o in page.Objects {
+                this.buf = append(this.buf, o)
+            }
+            for p in page.CommonPrefixes {
+                this.buf = append(this.buf, ObjectInfo{Key: p, IsPrefix: true})
+            }
+            if page.IsTruncated && page.NextContinuationToken != "" {
+                this.opts.ContinuationToken = page.NextContinuationToken
+            } else {
+                this.done = true
+            }
+        }
+    }
+
+    // The error that ended the iteration (nil at a normal end).
+    func Err() error {
+        return this.err
+    }
+
+    // Pages fetched so far.
+    func Pages() int {
+        return this.pages
+    }
+}
+
+async func createBucket(c *Client, bucket string) void! {
+    var body = ""
+    var h = map[string]string{}
+    if c.cfg.Region != "us-east-1" && c.cfg.Region != "auto" {
+        body = "<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><LocationConstraint>" + c.cfg.Region + "</LocationConstraint></CreateBucketConfiguration>"
+        h["Content-Type"] = "application/xml"
+    }
+    var res = await send(c, "PUT", bucket, "", [], h, body, false)?
+    await check(res, 200, bucket, "")?
+}
+
+async func listBuckets(c *Client) []BucketInfo! {
+    var res = await send(c, "GET", "", "", [], map[string]string{}, "", false)?
+    await check(res, 200, "", "")?
+    var root = xmlRoot(res.Body)?
+    var out []BucketInfo = []
+    var bs = root.Child("Buckets")
+    if bs != nil {
+        for b in bs.Elements("Bucket") {
+            out = append(out, BucketInfo{Name: childText(b, "Name"), CreationDate: parseISOTime(childText(b, "CreationDate"))})
+        }
+    }
+    return out
+}
+
+async func bucketExists(c *Client, bucket string) bool! {
+    var res = await send(c, "HEAD", bucket, "", [], map[string]string{}, "", false)?
+    if res.Status == 404 {
+        return false
+    }
+    await check(res, 200, bucket, "")?
+    return true
+}

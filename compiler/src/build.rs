@@ -1,16 +1,16 @@
-//! `slang build` / `run` / `check` / `test`: front end -> LLVM module ->
+//! `zell build` / `run` / `check` / `test`: front end -> LLVM module ->
 //! verification -> optimisation (new pass manager) -> object file(s) ->
-//! link with `clang` against `libslang_rt.a`.
+//! link with `clang` against `libzell_rt.a`.
 //!
 //! Two kinds of builds:
 //!
 //! - **Plain**: a single file or a directory without a manifest. The whole
 //!   program becomes one object file, as before.
-//! - **Package**: a project found through `slang.toml|json|yaml` (see
+//! - **Package**: a project found through `zell.toml|json|yaml` (see
 //!   [`crate::package`]). Sema runs over the target and its dependency
 //!   closure with strict isolation; the resulting module is split into one
 //!   module per package ([`split_module`]), each compiled to its own object
-//!   `target/slang/<pkg>-<hash>.o`. The hash covers the package's split IR,
+//!   `target/zell/<pkg>-<hash>.o`. The hash covers the package's split IR,
 //!   the flags and the compiler, so an unchanged package is not recompiled.
 //!
 //! Every object gets one section per function and global (the equivalent
@@ -33,7 +33,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// What `slang build` produces.
+/// What `zell build` produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Emit {
     /// A linked executable (default).
@@ -44,7 +44,7 @@ pub enum Emit {
     Obj,
 }
 
-/// Options of `slang build` (and `run`, `check`, `test`).
+/// Options of `zell build` (and `run`, `check`, `test`).
 #[derive(Clone, Debug)]
 pub struct BuildOptions {
     /// File, directory or project directory; `None` = find the project
@@ -60,9 +60,9 @@ pub struct BuildOptions {
     pub static_link: bool,
     /// Log cache decisions and tool invocations to stderr.
     pub verbose: bool,
-    /// Fail instead of updating `slang.lock`.
+    /// Fail instead of updating `zell.lock`.
     pub locked: bool,
-    /// `--offline`: module dependencies only from `slang.lock` and the store.
+    /// `--offline`: module dependencies only from `zell.lock` and the store.
     pub offline: bool,
     /// Build every workspace member.
     pub workspace: bool,
@@ -188,35 +188,35 @@ pub fn parse_args(args: &[String]) -> Result<(BuildOptions, Vec<String>), String
     Ok((o, rest))
 }
 
-/// Locates `libslang_rt.a`: `$SLANG_RUNTIME` (the archive or its
+/// Locates `libzell_rt.a`: `$ZELL_RUNTIME` (the archive or its
 /// directory), an installed toolchain's `targets/<host triple>/` (and
-/// `$SLANG_TARGETS/<host triple>/`), next to the compiler
+/// `$ZELL_TARGETS/<host triple>/`), next to the compiler
 /// (`<exe>/../../runtime`), then the repository the compiler was built from.
 pub fn find_runtime() -> Result<PathBuf, String> {
     let mut cands = Vec::new();
-    if let Ok(p) = std::env::var("SLANG_RUNTIME") {
+    if let Ok(p) = std::env::var("ZELL_RUNTIME") {
         let p = PathBuf::from(p);
-        cands.push(if p.is_dir() { p.join("libslang_rt.a") } else { p });
+        cands.push(if p.is_dir() { p.join("libzell_rt.a") } else { p });
     }
     let host = crate::target::Target::host().triple;
     if let Some(b) = crate::toolchain::bundled_targets_dir() {
-        cands.push(b.join(&host).join("libslang_rt.a"));
+        cands.push(b.join(&host).join("libzell_rt.a"));
     }
-    cands.push(crate::toolchain::targets_dir().join(&host).join("libslang_rt.a"));
+    cands.push(crate::toolchain::targets_dir().join(&host).join("libzell_rt.a"));
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            cands.push(dir.join("../../runtime/libslang_rt.a"));
-            cands.push(dir.join("../../../runtime/libslang_rt.a"));
+            cands.push(dir.join("../../runtime/libzell_rt.a"));
+            cands.push(dir.join("../../../runtime/libzell_rt.a"));
         }
     }
-    cands.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../runtime/libslang_rt.a"));
+    cands.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../runtime/libzell_rt.a"));
     for c in &cands {
         if c.is_file() {
             return Ok(c.canonicalize().unwrap_or(c.clone()));
         }
     }
     Err(format!(
-        "cannot find libslang_rt.a (set SLANG_RUNTIME or run `make -C runtime`); looked in: {}",
+        "cannot find libzell_rt.a (set ZELL_RUNTIME or run `make -C runtime`); looked in: {}",
         cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ")
     ))
 }
@@ -230,11 +230,11 @@ fn find_clang() -> Result<String, String> {
         .ok_or_else(|| "cannot find clang (tried clang-18, clang)".into())
 }
 
-/// Whether host links use lld (`SLANG_LINKER=lld`, Linux, `ld.lld` on PATH).
+/// Whether host links use lld (`ZELL_LINKER=lld`, Linux, `ld.lld` on PATH).
 fn use_lld() -> bool {
     static LLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *LLD.get_or_init(|| {
-        cfg!(target_os = "linux") && std::env::var("SLANG_LINKER").is_ok_and(|v| v == "lld") && Command::new("ld.lld").arg("--version").output().is_ok_and(|o| o.status.success())
+        cfg!(target_os = "linux") && std::env::var("ZELL_LINKER").is_ok_and(|v| v == "lld") && Command::new("ld.lld").arg("--version").output().is_ok_and(|o| o.status.success())
     })
 }
 
@@ -272,7 +272,7 @@ fn opt_level(n: u8) -> OptimizationLevel {
 
 fn log(opts: &BuildOptions, msg: impl AsRef<str>) {
     if opts.verbose {
-        eprintln!("slang: {}", msg.as_ref());
+        eprintln!("zell: {}", msg.as_ref());
     }
 }
 
@@ -304,7 +304,7 @@ fn plan(opts: &BuildOptions) -> Result<Plan, String> {
             Some(p) => p,
             None => {
                 return Err(format!(
-                    "could not find {} in the current directory or any parent; pass a file or directory, or create a project with `slang init`",
+                    "could not find {} in the current directory or any parent; pass a file or directory, or create a project with `zell init`",
                     package::manifest::MANIFEST_NAMES.join(", ")
                 ))
             }
@@ -364,7 +364,7 @@ fn use_target(opts: &BuildOptions, codegen: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// `slang build`: builds every selected target; returns the produced files
+/// `zell build`: builds every selected target; returns the produced files
 /// (executables, or nothing for libraries).
 pub fn build(opts: &BuildOptions) -> Result<Vec<PathBuf>, String> {
     use_target(opts, true)?;
@@ -381,13 +381,13 @@ pub fn build(opts: &BuildOptions) -> Result<Vec<PathBuf>, String> {
     }
 }
 
-/// `slang run`: builds the program and runs it; returns its exit code.
+/// `zell run`: builds the program and runs it; returns its exit code.
 pub fn run(mut opts: BuildOptions, args: &[String]) -> Result<i32, String> {
     opts.emit = Emit::Exe;
     use_target(&opts, true)?;
     let (exe, tmp) = match plan(&opts)? {
         Plan::Plain(input) => {
-            let dir = std::env::temp_dir().join(format!("slang-run-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("zell-run-{}", std::process::id()));
             std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
             opts.output = Some(dir.join(format!("prog{}", crate::target::current().exe_suffix())));
             match build_plain(&input, &opts) {
@@ -418,7 +418,7 @@ pub fn run(mut opts: BuildOptions, args: &[String]) -> Result<i32, String> {
         if let Some(d) = tmp {
             let _ = std::fs::remove_dir_all(d);
         }
-        return Err(format!("cannot run a {} executable on this machine (use `slang build --target {}`)", target.triple, target.triple));
+        return Err(format!("cannot run a {} executable on this machine (use `zell build --target {}`)", target.triple, target.triple));
     };
     let status = runner.args(args).status().map_err(|e| format!("cannot run {}: {e}", exe.display()));
     if let Some(d) = tmp {
@@ -434,7 +434,7 @@ pub fn run(mut opts: BuildOptions, args: &[String]) -> Result<i32, String> {
     Ok(status.code().unwrap_or(1))
 }
 
-/// `slang check` (`dev`: `slang test`, dev-dependencies visible): runs the
+/// `zell check` (`dev`: `zell test`, dev-dependencies visible): runs the
 /// front end; with `dump_hir`, prints the HIR of each target.
 pub fn check(opts: &BuildOptions, dump_hir: bool, dev: bool) -> Result<usize, String> {
     use_target(opts, false)?;
@@ -462,26 +462,26 @@ pub fn check(opts: &BuildOptions, dump_hir: bool, dev: bool) -> Result<usize, St
 
 // -- front end ------------------------------------------------------------------
 
-/// `SLANG_TIME=1`: prints the duration of each build phase to stderr
+/// `ZELL_TIME=1`: prints the duration of each build phase to stderr
 /// (compile-time measurements, benchmarks/README.md).
 pub(crate) struct PhaseTimer(&'static str, std::time::Instant);
 
 impl Drop for PhaseTimer {
     fn drop(&mut self) {
-        eprintln!("slang: time {:<10} {:9.1} ms", self.0, self.1.elapsed().as_secs_f64() * 1e3);
+        eprintln!("zell: time {:<10} {:9.1} ms", self.0, self.1.elapsed().as_secs_f64() * 1e3);
     }
 }
 
 pub(crate) fn phase(name: &'static str) -> Option<PhaseTimer> {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    ON.get_or_init(|| std::env::var_os("SLANG_TIME").is_some()).then(|| PhaseTimer(name, std::time::Instant::now()))
+    ON.get_or_init(|| std::env::var_os("ZELL_TIME").is_some()).then(|| PhaseTimer(name, std::time::Instant::now()))
 }
 
 fn front_end_plain(input: &Path) -> Result<(Vec<crate::span::SourceFile>, Program), String> {
     let _t = phase("front-end");
     let paths = driver::collect_files(input).map_err(|e| format!("cannot read {}: {e}", input.display()))?;
     if paths.is_empty() {
-        return Err(format!("no .sl files in {}", input.display()));
+        return Err(format!("no .zl files in {}", input.display()));
     }
     let files = driver::load(&paths).map_err(|e| format!("cannot read source: {e}"))?;
     let mut diags = Diagnostics::new();
@@ -517,7 +517,7 @@ fn build_plain(input: &Path, opts: &BuildOptions) -> Result<PathBuf, String> {
     emit_plain(&program, &name, output, opts)
 }
 
-/// `slang test`: builds an executable from in-memory sources (the user's
+/// `zell test`: builds an executable from in-memory sources (the user's
 /// files, with `main` renamed, plus the generated test driver; see
 /// `main.rs`/`testrun.rs`). Paths stay those of the original files, so
 /// diagnostics and `@embed` resolve as usual.
@@ -578,7 +578,7 @@ fn lower<'ctx>(program: &Program, ctx: &'ctx Context, name: &str, output: &Path,
         (true, true) => 1,
         (true, false) => 2,
     };
-    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace, debug_info: opts.emits_debug_info(), optimized: opts.opt > 0, inline_rc: opts.opt >= 3 || (opts.opt > 0 && std::env::var_os("SLANG_INLINE_RC").is_some()), debug_agent: opts.debug_agent_on() }) {
+    let module = match codegen::emit_with(program, ctx, name, codegen::Options { leak_check, no_error_trace: opts.no_error_trace, debug_info: opts.emits_debug_info(), optimized: opts.opt > 0, inline_rc: opts.opt >= 3 || (opts.opt > 0 && std::env::var_os("ZELL_INLINE_RC").is_some()), debug_agent: opts.debug_agent_on() }) {
         Ok(m) => m,
         Err(errs) => {
             for e in &errs {
@@ -728,7 +728,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
         return Ok(Some(output));
     }
     let libs = module_link_libs(&module);
-    let cache = project.target_dir().join("slang");
+    let cache = project.target_dir().join("zell");
     std::fs::create_dir_all(&cache).map_err(|e| format!("cannot create {}: {e}", cache.display()))?;
     let compiler = compiler_id();
     let mut objs = Vec::new();
@@ -765,7 +765,7 @@ fn build_package(project: &Project, target: PkgId, opts: &BuildOptions) -> Resul
 /// A digest identifying this compiler binary (version, size, mtime), so a
 /// rebuilt compiler does not reuse objects of an older one.
 fn compiler_id() -> String {
-    let mut id = format!("slang {}", env!("CARGO_PKG_VERSION"));
+    let mut id = format!("zell {}", env!("CARGO_PKG_VERSION"));
     if let Some(m) = std::env::current_exe().ok().and_then(|e| std::fs::metadata(e).ok()) {
         let mtime = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
         id.push_str(&format!(" {} {mtime}", m.len()));
@@ -777,7 +777,7 @@ fn compiler_id() -> String {
 /// (a position in the build closure; `file_pkg` maps HIR files to it):
 ///
 /// - user functions and globals of `pkg` keep their bodies/initialisers
-///   and become external symbols (`slang_<namespace>__<name>` is unique
+///   and become external symbols (`zell_<namespace>__<name>` is unique
 ///   because namespace roots are unique);
 /// - those of other packages become external declarations;
 /// - `main` stays only in the package that defines the entry point;

@@ -1,5 +1,5 @@
 //! Direct module access through the system `git` (the `direct` entry of
-//! `SLANG_PROXY`, `SLANG_PRIVATE` paths and `{ git = ... }` dependencies).
+//! `ZELL_PROXY`, `ZELL_PRIVATE` paths and `{ git = ... }` dependencies).
 //! Credentials, `url.<base>.insteadOf` rewrites and proxies are whatever
 //! the user's git configuration says.
 

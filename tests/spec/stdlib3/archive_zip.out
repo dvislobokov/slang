@@ -6,7 +6,7 @@ hello from zip(1)
 2400 true true
 zip: no file nope in the archive
 zip: duplicate file name a.txt
-made by slang [a.txt dir/ dir/b.bin dir/big.txt]
+made by zell [a.txt dir/ dir/b.bin dir/big.txt]
 a.txt 8 5 7 0 420 
 dir/ 0 0 0 1700000000 493 
 dir/b.bin 0 3 3 1700000001 384 raw

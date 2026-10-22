@@ -1,4 +1,4 @@
-//! Incremental analysis (`slang::session`) must be observably identical
+//! Incremental analysis (`zell::session`) must be observably identical
 //! to a full analysis: after every edit of a random edit sequence over the
 //! `examples/` and `tests/spec/` corpora, the diagnostics, symbols (with
 //! their types), references, file facts and namespace members of
@@ -7,7 +7,7 @@
 //! `INCR_EDITS=<n>` sets the number of edits per corpus, `INCR_SEED=<n>`
 //! the seed of the edit sequence.
 
-use slang::session::Session;
+use zell::session::Session;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,7 @@ fn collect(d: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         if p.is_dir() {
             collect(&p, out);
-        } else if p.extension().is_some_and(|x| x == "sl") {
+        } else if p.extension().is_some_and(|x| x == "zl") {
             out.push(p);
         }
     }
@@ -125,7 +125,7 @@ fn check_corpus(dirs: &[&str], edits: usize, seed: u64) {
         let full = s.analyze_full();
         if inc.canonical() != full.canonical() {
             // Keep the edited text for a look.
-            let _ = std::fs::write(root().join("target/incremental-failure.sl"), &texts[k].2);
+            let _ = std::fs::write(root().join("target/incremental-failure.zl"), &texts[k].2);
         }
         compare(&inc.canonical(), &full.canonical(), &format!("edit {i} of {} ({stats:?})", texts[k].0));
     }

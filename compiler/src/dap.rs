@@ -1,10 +1,10 @@
 //! A Debug Adapter Protocol client for the in-process debug agent
-//! (`std.debug`, docs/DEBUGGER.md stage 2): the `slang debug run` /
-//! `slang debug attach` command-line debugger and the tests drive programs
+//! (`std.debug`, docs/DEBUGGER.md stage 2): the `zell debug run` /
+//! `zell debug attach` command-line debugger and the tests drive programs
 //! through it.
 //!
-//! The agent is started by the program itself (`SLANG_DEBUG=[host]:port[,wait]`)
-//! and announces its port on stderr as `slang-debug: listening on HOST:PORT`.
+//! The agent is started by the program itself (`ZELL_DEBUG=[host]:port[,wait]`)
+//! and announces its port on stderr as `zell-debug: listening on HOST:PORT`.
 
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -16,7 +16,7 @@ use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 /// The stderr line announcing the agent's address.
-pub const LISTENING: &str = "slang-debug: listening on ";
+pub const LISTENING: &str = "zell-debug: listening on ";
 
 /// A connection to an agent.
 pub struct Client {
@@ -166,7 +166,7 @@ impl Client {
     /// The initialize / attach handshake; `configure` sets breakpoints
     /// before `configurationDone` lets the program run.
     pub fn handshake(&mut self, configure: impl FnOnce(&mut Client) -> Result<(), String>) -> Result<Value, String> {
-        let caps = self.request("initialize", json!({"clientID": "slang", "adapterID": "slang", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path"}))?;
+        let caps = self.request("initialize", json!({"clientID": "zell", "adapterID": "zell", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path"}))?;
         self.wait_event("initialized", Duration::from_secs(10))?;
         self.request("attach", json!({}))?;
         configure(self)?;
@@ -201,7 +201,7 @@ impl Client {
 pub fn spawn(exe: &Path, args: &[String], port: u16, wait: bool, quiet_stdout: bool) -> Result<(Child, String), String> {
     let spec = if wait { format!("127.0.0.1:{port},wait") } else { format!("127.0.0.1:{port}") };
     let mut cmd = Command::new(exe);
-    cmd.args(args).env("SLANG_DEBUG", spec).env("SLANG_DEBUG_TRACE", "1").stderr(Stdio::piped());
+    cmd.args(args).env("ZELL_DEBUG", spec).env("ZELL_DEBUG_TRACE", "1").stderr(Stdio::piped());
     if quiet_stdout {
         cmd.stdout(Stdio::piped());
     }
@@ -530,17 +530,17 @@ fn describe_frame(f: &Value) -> String {
 
 /// The interactive debugger on connection `c`: sets up the session, then
 /// reads commands from stdin until `q` or the end of the program.
-/// `child` (a program started by `slang debug run`) is killed on `q`.
+/// `child` (a program started by `zell debug run`) is killed on `q`.
 pub fn repl(c: Client, mut child: Option<Child>) -> i32 {
     let mut r = Repl { c, task: 1, frame: 0, frames: Vec::new(), file: String::new(), bps: Vec::new(), funcs: Vec::new(), exc: vec!["panic".into()], err_types: String::new(), done: false };
-    if let Err(e) = r.c.request("initialize", json!({"clientID": "slang-cli", "adapterID": "slang", "linesStartAt1": true, "columnsStartAt1": true})) {
+    if let Err(e) = r.c.request("initialize", json!({"clientID": "zell-cli", "adapterID": "zell", "linesStartAt1": true, "columnsStartAt1": true})) {
         eprintln!("error: {e}");
         return 1;
     }
     let _ = r.c.wait_event("initialized", Duration::from_secs(10));
     let _ = r.c.request("attach", json!({}));
     let _ = r.c.request("setExceptionBreakpoints", json!({"filters": ["panic"]}));
-    println!("slang debug: set breakpoints, then `c` to start the program (help: h)");
+    println!("zell debug: set breakpoints, then `c` to start the program (help: h)");
     let stdin = std::io::stdin();
     let mut started = false;
     loop {
@@ -548,7 +548,7 @@ pub fn repl(c: Client, mut child: Option<Child>) -> i32 {
         if r.done {
             break;
         }
-        print!("(slang) ");
+        print!("(zell) ");
         let _ = std::io::stdout().flush();
         let mut line = String::new();
         if stdin.lock().read_line(&mut line).unwrap_or(0) == 0 {

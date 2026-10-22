@@ -157,7 +157,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
         } else if slot.cell {
             let c = self.b.build_load(self.ptr_ty(), slot.ptr, "cell").unwrap();
-            self.call_rt("slang_release", &[c.into()]);
+            self.call_rt("zell_release", &[c.into()]);
             if zero {
                 self.b.build_store(slot.ptr, self.ptr_ty().const_null()).unwrap();
             }
@@ -202,7 +202,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let env = self.b.build_extract_value(c, 1, "").unwrap();
         let fty = self.ctx.void_type().fn_type(&[self.ptr_ty().into()], false);
         self.b.build_indirect_call(fty, fnp, &[env.into()], "").unwrap();
-        self.call_rt("slang_release", &[env.into()]);
+        self.call_rt("zell_release", &[env.into()]);
         self.b.build_unconditional_branch(check).unwrap();
         self.b.position_at_end(done);
     }
@@ -231,7 +231,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.build_conditional_branch(full, bad, ok).unwrap();
         self.b.position_at_end(bad);
         let msg = self.cstr("too many pending deferred calls (limit 64)");
-        self.call_noreturn("slang_panic", &[msg.into()]);
+        self.call_noreturn("zell_panic", &[msg.into()]);
         self.br(ok);
         self.b.position_at_end(ok);
         let pair = self.pair_ty();
@@ -340,7 +340,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             return g.as_pointer_value();
         }
         let fty = self.ctx.void_type().fn_type(&[self.ptr_ty().into()], false);
-        let drop = self.module.add_function("slang.env.drop", fty, Some(inkwell::module::Linkage::Internal));
+        let drop = self.module.add_function("zell.env.drop", fty, Some(inkwell::module::Linkage::Internal));
         let _ = self.with_helper(drop, |cg| {
             let obj = drop.get_nth_param(0).unwrap().into_pointer_value();
             let np = cg.byte_gep(obj, 16);
@@ -358,7 +358,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             cg.b.position_at_end(body);
             let cp = unsafe { cg.b.build_in_bounds_gep(cg.ptr_ty(), cells, &[iv], "") }.unwrap();
             let cell = cg.b.build_load(cg.ptr_ty(), cp, "").unwrap();
-            cg.call_rt("slang_release", &[cell.into()]);
+            cg.call_rt("zell_release", &[cell.into()]);
             let i1 = cg.b.build_int_add(iv, cg.i64_ty().const_int(1, false), "").unwrap();
             cg.b.build_store(i, i1).unwrap();
             cg.b.build_unconditional_branch(head).unwrap();
@@ -388,8 +388,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             // the cycle collector and carry their own type info (codegen/cycles.rs).
             let size = self.i64_ty().const_int(24 + 8 * captures.len() as u64, false);
             let obj = match self.cyc_env_entry(func) {
-                Some(e) => self.call_rt_v("slang_cycles_new_entry", &[e.into(), size.into()]),
-                None => self.call_rt_v("slang_object_new", &[shared.into(), size.into()]),
+                Some(e) => self.call_rt_v("zell_cycles_new_entry", &[e.into(), size.into()]),
+                None => self.call_rt_v("zell_object_new", &[shared.into(), size.into()]),
             }
             .into_pointer_value();
             let np = self.byte_gep(obj, 16);
@@ -405,7 +405,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     }
                     CaptureSource::Upvalue(u) => self.upvalue_cell(*u),
                 };
-                self.call_rt("slang_retain", &[cell.into()]);
+                self.call_rt("zell_retain", &[cell.into()]);
                 let p = self.byte_gep(obj, 24 + 8 * i as u64);
                 self.b.build_store(p, cell).unwrap();
             }
@@ -462,7 +462,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         r
     }
 
-    /// Calls closure value `c` (of Slang type `fty`) with `args`.
+    /// Calls closure value `c` (of Zell type `fty`) with `args`.
     pub(crate) fn call_closure(&mut self, fty: TypeId, c: BasicValueEnum<'ctx>, args: &[BasicValueEnum<'ctx>]) -> R<Option<BasicValueEnum<'ctx>>> {
         let cs = c.into_struct_value();
         let fnp = self.b.build_extract_value(cs, 0, "fn").unwrap().into_pointer_value();
@@ -475,14 +475,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         Ok(self.b.build_indirect_call(lty, fnp, &all, "").unwrap().try_as_basic_value().left())
     }
 
-    /// Panics with `slang_panic_nil` if `p` is NULL.
+    /// Panics with `zell_panic_nil` if `p` is NULL.
     pub(crate) fn nil_check(&mut self, p: PointerValue<'ctx>) {
         let isnull = self.b.build_is_null(p, "isnil").unwrap();
         let bad = self.block("nil");
         let ok = self.block("notnil");
         self.b.build_conditional_branch(isnull, bad, ok).unwrap();
         self.b.position_at_end(bad);
-        self.call_rt("slang_panic_nil", &[]);
+        self.call_rt("zell_panic_nil", &[]);
         self.b.build_unreachable().unwrap();
         self.b.position_at_end(ok);
     }

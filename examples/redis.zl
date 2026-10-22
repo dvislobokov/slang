@@ -1,0 +1,195 @@
+// std.data.redis: a Redis client. So that the example runs anywhere it
+// talks to a tiny in-process server (bottom of the file) that understands
+// a handful of commands; point redis.Connect at a real server instead
+// ("redis://localhost:6379/0", "rediss://:password@host:6380").
+namespace examples.redis
+
+import std.io
+import std
+import std.data
+
+struct Session {
+    User string
+    Visits int
+}
+
+async func main() void! {
+    var srv = startServer()?
+    var c = await redis.Connect("redis://" + srv.addr + "/0")?
+
+    // strings, counters, a missing key
+    await c.Set("greeting", "hello")?
+    println(await c.Get("greeting")?)
+    println(await c.Incr("visits")?, await c.IncrBy("visits", 10)?)
+    try await c.Get("nobody") catch err {
+        println("nobody:", errors.Is(err, redis.Nil))
+    }
+
+    // hashes and typed JSON values
+    _ = await c.HSetMap("user:1", map[string]any{"name": "Ann", "lang": "zell"})?
+    var u = await c.HGetAll("user:1")?
+    println(u["name"], u["lang"])
+    await c.SetJSON<Session>("session:1", Session{User: "ann", Visits: 3}, 60000)?
+    var s = await c.GetJSON<Session>("session:1")?
+    println(s.User, s.Visits)
+
+    // a pipeline: three commands, one round trip
+    var p = c.Pipeline()
+    var a = p.Incr("hits")
+    var b = p.Incr("hits")
+    var g = p.Get("greeting")
+    _ = await p.Exec()?
+    println("pipeline:", await a?, await b?, await g?)
+
+    // MULTI/EXEC
+    var tx = c.TxPipeline()
+    _ = tx.Set("balance", 100)
+    var after = tx.IncrBy("balance", -30)
+    _ = await tx.Exec()?
+    println("balance:", await after?)
+
+    // pub/sub: `for msg in sub` until we have what we wanted
+    var sub = await c.Subscribe(["news"])?
+    _ = await c.Publish("news", "zell 1.0 released")?
+    for msg in sub {
+        println("news:", msg.Payload)
+        break
+    }
+    await sub.Close()
+
+    // errors from the server are typed
+    try await c.Incr("greeting") catch err {
+        println("server said:", redis.ErrorCode(err))
+    }
+    await c.Close()
+    srv.stop()
+}
+
+// ---- a tiny RESP server (not part of the client) -----------------------------------
+
+struct server {
+    l net.Listener
+    addr string
+    data map[string]string
+    subs []net.Conn
+    conns []net.Conn
+
+    func stop() {
+        this.l.Close()
+        for c in this.conns {
+            c.Close()
+        }
+        this.conns = []
+        this.subs = []
+    }
+}
+
+func bulk(s string) string {
+    return "$" + strconv.Itoa(len(s)) + "\r\n" + s + "\r\n"
+}
+
+func reply(srv *server, c net.Conn, args []string) string {
+    var key = ""
+    if len(args) > 1 {
+        key = args[1]
+    }
+    switch strings.ToUpper(args[0]) {
+        case "HELLO":
+            return "-ERR unknown command 'HELLO'\r\n"
+        case "PING":
+            return "+PONG\r\n"
+        case "SET":
+            srv.data[key] = args[2]
+            return "+OK\r\n"
+        case "GET":
+            var v = srv.data[key]
+            if v == "" {
+                return "$-1\r\n"
+            }
+            return bulk(v)
+        case "INCR", "INCRBY":
+            var by = 1
+            if len(args) > 2 {
+                by = try strconv.Atoi(args[2]) else 0
+            }
+            var cur = srv.data[key]
+            if cur == "" {
+                cur = "0"
+            }
+            var n = try strconv.Atoi(cur) catch _ {
+                return "-ERR value is not an integer or out of range\r\n"
+            }
+            srv.data[key] = strconv.Itoa(n + by)
+            return ":" + srv.data[key] + "\r\n"
+        case "HSET":
+            var i = 2
+            for i + 1 < len(args) {
+                srv.data[key + "/" + args[i]] = args[i + 1]
+                i += 2
+            }
+            return ":" + strconv.Itoa((len(args) - 2) / 2) + "\r\n"
+        case "HGETALL":
+            var out []string = []
+            for k in maps.SortedKeys(srv.data) {
+                if strings.HasPrefix(k, key + "/") {
+                    out = append(out, bulk(k[len(key) + 1..]))
+                    out = append(out, bulk(srv.data[k]))
+                }
+            }
+            return "*" + strconv.Itoa(len(out)) + "\r\n" + strings.Join(out, "")
+        case "MULTI":
+            return "+OK\r\n"
+        case "EXEC":
+            return "*2\r\n+OK\r\n:70\r\n"
+        case "SUBSCRIBE":
+            srv.subs = append(srv.subs, c)
+            return "*3\r\n$9\r\nsubscribe\r\n" + bulk(key) + ":1\r\n"
+        case "PUBLISH":
+            for s in srv.subs {
+                _ = s.Write(strings.Bytes("*3\r\n$7\r\nmessage\r\n" + bulk(key) + bulk(args[2])))
+            }
+            return ":" + strconv.Itoa(len(srv.subs)) + "\r\n"
+    }
+    return "+QUEUED\r\n"
+}
+
+async func serveConn(srv *server, c net.Conn) {
+    var buf []byte = []
+    for {
+        var chunk = try await c.Read(65536) catch _ {
+            break
+        }
+        if len(chunk) == 0 {
+            break
+        }
+        buf = strings.Bytes(strings.FromBytes(buf) + strings.FromBytes(chunk))
+        // commands are RESP arrays of bulk strings: the client's own parser reads them
+        var cmds = try redis.ParseReplies(buf) catch _ {
+            continue
+        }
+        buf = []
+        var out = ""
+        for cmd in cmds {
+            out += reply(srv, c, try cmd.Strings() else ["PING"])
+        }
+        _ = try await c.Write(strings.Bytes(out)) else 0
+    }
+    c.Close()
+}
+
+async func acceptAll(srv *server) {
+    for {
+        var c = try await srv.l.Accept() catch _ {
+            return
+        }
+        srv.conns = append(srv.conns, c)
+        _ = serveConn(srv, c)
+    }
+}
+
+func startServer() *server! {
+    var l = net.Listen("127.0.0.1:0")?
+    var srv = new server{l: l, addr: "127.0.0.1:" + strconv.Itoa(l.Port()), data: map[string]string{}}
+    _ = acceptAll(srv)
+    return srv
+}

@@ -16,8 +16,8 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
-fn slang() -> &'static str {
-    env!("CARGO_BIN_EXE_slang")
+fn zell() -> &'static str {
+    env!("CARGO_BIN_EXE_zell")
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -25,11 +25,11 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn formatters() -> PathBuf {
-    repo().join("tools/lldb/slang_formatters.py")
+    repo().join("tools/lldb/zell_formatters.py")
 }
 
 fn ensure_runtime() {
-    let lib = repo().join("runtime/libslang_rt.a");
+    let lib = repo().join("runtime/libzell_rt.a");
     if !lib.is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
@@ -37,7 +37,7 @@ fn ensure_runtime() {
 }
 
 fn tmpdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("slang-debug-test-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("zell-debug-test-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -55,11 +55,11 @@ fn lldb() -> Option<String> {
     t
 }
 
-/// `slang build <src> -o <out> <flags>`.
+/// `zell build <src> -o <out> <flags>`.
 fn build(src: &Path, out: &Path, flags: &[&str]) {
     ensure_runtime();
-    let o = Command::new(slang()).arg("build").arg(src).arg("-o").arg(out).args(flags).output().unwrap();
-    assert!(o.status.success(), "slang build {} failed:\n{}", src.display(), String::from_utf8_lossy(&o.stderr));
+    let o = Command::new(zell()).arg("build").arg(src).arg("-o").arg(out).args(flags).output().unwrap();
+    assert!(o.status.success(), "zell build {} failed:\n{}", src.display(), String::from_utf8_lossy(&o.stderr));
 }
 
 /// 1-based line of the `// BREAK <name>` marker in `src`.
@@ -98,7 +98,7 @@ fn assert_has(out: &str, want: &str) {
 #[test]
 fn lldb_formats_every_value_kind() {
     let Some(lldb) = lldb() else { return };
-    let src = fixture("values.sl");
+    let src = fixture("values.zl");
     let dir = tmpdir("values");
     let exe = dir.join("values");
     build(&src, &exe, &[]);
@@ -106,14 +106,14 @@ fn lldb_formats_every_value_kind() {
         &lldb,
         &exe,
         &[
-            format!("b values.sl:{}", marker(&src, "values")),
+            format!("b values.zl:{}", marker(&src, "values")),
             "run".into(),
             "frame variable".into(),
             "frame variable nums[1] *pp child->parent".into(),
         ],
     );
     for want in [
-        r#"(string) name = "slang""#,
+        r#"(string) name = "zell""#,
         r#"(string) empty = """#,
         "([]int) nums = [5, 3, 8]",
         "([]int) none = []",
@@ -145,7 +145,7 @@ fn lldb_formats_every_value_kind() {
 #[test]
 fn lldb_shows_fallible_results_and_functions() {
     let Some(lldb) = lldb() else { return };
-    let src = fixture("values.sl");
+    let src = fixture("values.zl");
     let dir = tmpdir("funcs");
     let exe = dir.join("values");
     build(&src, &exe, &[]);
@@ -153,9 +153,9 @@ fn lldb_shows_fallible_results_and_functions() {
         &lldb,
         &exe,
         &[
-            format!("b values.sl:{}", marker(&src, "parse_ret")),
+            format!("b values.zl:{}", marker(&src, "parse_ret")),
             "b app.Point.Length".into(),
-            format!("b values.sl:{}", marker(&src, "generic")),
+            format!("b values.zl:{}", marker(&src, "generic")),
             "run".into(),
             "frame variable".into(),
             "continue".into(),
@@ -177,7 +177,7 @@ fn lldb_shows_fallible_results_and_functions() {
     assert_has(&out, "(int!) ~r0 = 3");
     // Methods by name, after the prologue (the receiver is already stored).
     assert_has(&out, "values`app.Point.Length(this=0x");
-    assert_has(&out, "values`app.main at values.sl:");
+    assert_has(&out, "values`app.main at values.zl:");
     assert!(!out.contains("(app.Point *) this = NULL"), "breakpoint before the prologue:\n{out}");
     // Generic instances with readable names.
     assert_has(&out, "values`app.Max<int>(a=9, b=3)");
@@ -189,7 +189,7 @@ fn lldb_shows_fallible_results_and_functions() {
 #[test]
 fn lldb_async_locals_survive_await() {
     let Some(lldb) = lldb() else { return };
-    let src = fixture("async.sl");
+    let src = fixture("async.zl");
     let dir = tmpdir("async");
     let exe = dir.join("async");
     build(&src, &exe, &[]);
@@ -197,8 +197,8 @@ fn lldb_async_locals_survive_await() {
         &lldb,
         &exe,
         &[
-            format!("b async.sl:{}", marker(&src, "after_await")),
-            format!("b async.sl:{}", marker(&src, "tasks")),
+            format!("b async.zl:{}", marker(&src, "after_await")),
+            format!("b async.zl:{}", marker(&src, "tasks")),
             "run".into(),
             "frame variable".into(),
             "bt 2".into(),
@@ -207,7 +207,7 @@ fn lldb_async_locals_survive_await() {
         ],
     );
     // Stopped in the resume function, on a worker thread, after the await.
-    assert_has(&out, r#"async`app.Work(label="work", n=4) at async.sl:"#);
+    assert_has(&out, r#"async`app.Work(label="work", n=4) at async.zl:"#);
     assert_has(&out, "worker_main");
     for want in [r#"(string) label = "work""#, "(int) n = 4", "(int) before = 5", "(int) sq = 16", "(Task<int>) w = done: 21"] {
         assert_has(&out, want);
@@ -218,33 +218,33 @@ fn lldb_async_locals_survive_await() {
 
 /// `next` over an `await` that suspends: lldb's own step-over follows the
 /// native stack and stops in the caller of the coroutine (a known stage-1
-/// limitation, see docs/DEBUGGER.md); the formatters' `slang-next` command
+/// limitation, see docs/DEBUGGER.md); the formatters' `zell-next` command
 /// continues to the next line of the coroutine instead, on whichever worker
 /// resumes it.
 #[test]
 fn lldb_step_over_await() {
     let Some(lldb) = lldb() else { return };
-    let src = fixture("async.sl");
+    let src = fixture("async.zl");
     let dir = tmpdir("step");
     let exe = dir.join("async");
     build(&src, &exe, &[]);
     let before = marker(&src, "before_await");
     let after = marker(&src, "after_await");
-    let plain = run_lldb(&lldb, &exe, &[format!("b async.sl:{before}"), "run".into(), "breakpoint disable".into(), "next".into(), "frame info".into()]);
-    let landed_in_caller = plain.contains("async`app.main at async.sl:");
-    let landed_after = plain.contains(&format!("async`app.Work(label=\"work\", n=4) at async.sl:{after}"));
+    let plain = run_lldb(&lldb, &exe, &[format!("b async.zl:{before}"), "run".into(), "breakpoint disable".into(), "next".into(), "frame info".into()]);
+    let landed_in_caller = plain.contains("async`app.main at async.zl:");
+    let landed_after = plain.contains(&format!("async`app.Work(label=\"work\", n=4) at async.zl:{after}"));
     assert!(landed_in_caller || landed_after, "plain next:\n{plain}");
     if landed_in_caller {
         eprintln!("note: lldb `next` over a suspending await stops in the caller (expected until the native debugger, stage 2)");
     }
-    let out = run_lldb(&lldb, &exe, &[format!("b async.sl:{before}"), "run".into(), "breakpoint disable".into(), "slang-next".into(), "frame info".into(), "frame variable sq before".into()]);
-    assert_has(&out, &format!("async`app.Work(label=\"work\", n=4) at async.sl:{after}"));
+    let out = run_lldb(&lldb, &exe, &[format!("b async.zl:{before}"), "run".into(), "breakpoint disable".into(), "zell-next".into(), "frame info".into(), "frame variable sq before".into()]);
+    assert_has(&out, &format!("async`app.Work(label=\"work\", n=4) at async.zl:{after}"));
     assert_has(&out, "(int) sq = 16");
     assert_has(&out, "(int) before = 5");
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// The examples named in the stage-1 plan, built as `slang build` does by
+/// The examples named in the stage-1 plan, built as `zell build` does by
 /// default (debug info on), stopped at lines found by their text.
 #[test]
 fn lldb_on_examples() {
@@ -260,13 +260,13 @@ fn lldb_on_examples() {
         ("async", "async func Square(n int, delayMs int) int {", &["(int) n = "]),
     ];
     for (name, needle, wants) in cases {
-        let src = repo().join("examples").join(format!("{name}.sl"));
+        let src = repo().join("examples").join(format!("{name}.zl"));
         let exe = dir.join(name);
         build(&src, &exe, &[]);
         // Function headers: break on the first statement of the function.
         let line = line_with(&src, needle);
         let bp = if needle.starts_with("func ") || needle.starts_with("async func ") { line + 1 } else { line };
-        let out = run_lldb(&lldb, &exe, &[format!("b {name}.sl:{bp}"), "run".into(), "frame variable".into(), "bt 1".into()]);
+        let out = run_lldb(&lldb, &exe, &[format!("b {name}.zl:{bp}"), "run".into(), "frame variable".into(), "bt 1".into()]);
         assert!(out.contains("stop reason = breakpoint"), "{name}: breakpoint at line {bp} not hit:\n{out}");
         assert!(!out.contains("<unreadable>") && !out.contains("<invalid>"), "{name}: unreadable values:\n{out}");
         for want in *wants {
@@ -284,10 +284,10 @@ fn dwarfdump_verifies_all_examples() {
         return;
     };
     let dir = tmpdir("dwarf");
-    let mut srcs: Vec<PathBuf> = std::fs::read_dir(repo().join("examples")).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "sl")).collect();
+    let mut srcs: Vec<PathBuf> = std::fs::read_dir(repo().join("examples")).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "zl")).collect();
     srcs.push(repo().join("examples/multi"));
-    srcs.push(fixture("values.sl"));
-    srcs.push(fixture("async.sl"));
+    srcs.push(fixture("values.zl"));
+    srcs.push(fixture("async.zl"));
     srcs.sort();
     for src in &srcs {
         let name = src.file_stem().unwrap().to_string_lossy().to_string();
@@ -323,8 +323,8 @@ fn has_section(obj: &Path, name: &str) -> bool {
 #[test]
 fn debug_info_flags_and_identical_code() {
     let dir = tmpdir("flags");
-    let src = repo().join("benchmarks/fib/fib.sl");
-    let src = if src.is_file() { src } else { fixture("values.sl") };
+    let src = repo().join("benchmarks/fib/fib.zl");
+    let src = if src.is_file() { src } else { fixture("values.zl") };
     let dbg = dir.join("dbg.o");
     let rel = dir.join("rel.o");
     let relg = dir.join("relg.o");
@@ -353,20 +353,20 @@ fn debug_info_flags_and_identical_code() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// `slang debug --lldb` builds with debug info and loads the formatters.
+/// `zell debug --lldb` builds with debug info and loads the formatters.
 #[test]
-fn slang_debug_subcommand() {
+fn zell_debug_subcommand() {
     let Some(_) = lldb() else { return };
     let dir = tmpdir("subcmd");
-    let src = fixture("values.sl");
+    let src = fixture("values.zl");
     let script = dir.join("cmds.lldb");
-    std::fs::write(&script, format!("b values.sl:{}\nrun\nframe variable nums name\n", marker(&src, "values"))).unwrap();
+    std::fs::write(&script, format!("b values.zl:{}\nrun\nframe variable nums name\n", marker(&src, "values"))).unwrap();
     ensure_runtime();
-    let o = Command::new(slang()).arg("debug").arg("--lldb").arg("--batch").arg("--source").arg(&script).arg(&src).output().unwrap();
+    let o = Command::new(zell()).arg("debug").arg("--lldb").arg("--batch").arg("--source").arg(&script).arg(&src).output().unwrap();
     let out = String::from_utf8_lossy(&o.stdout);
     assert_has(&out, "([]int) nums = [5, 3, 8]");
-    assert_has(&out, r#"(string) name = "slang""#);
-    let p = Command::new(slang()).args(["debug", "--formatters", "lldb"]).output().unwrap();
+    assert_has(&out, r#"(string) name = "zell""#);
+    let p = Command::new(zell()).args(["debug", "--formatters", "lldb"]).output().unwrap();
     let path = String::from_utf8_lossy(&p.stdout).trim().to_string();
     assert!(Path::new(&path).is_file(), "formatters path {path:?}");
     let _ = std::fs::remove_dir_all(dir);
@@ -378,15 +378,15 @@ fn gdb_pretty_printers() {
         eprintln!("skipped: gdb is not installed");
         return;
     };
-    let src = fixture("values.sl");
+    let src = fixture("values.zl");
     let dir = tmpdir("gdb");
     let exe = dir.join("values");
     build(&src, &exe, &[]);
     let o = Command::new(&gdb)
         .args(["--batch", "-nx", "-ex"])
-        .arg(format!("source {}", repo().join("tools/gdb/slang_printers.py").display()))
+        .arg(format!("source {}", repo().join("tools/gdb/zell_printers.py").display()))
         .arg("-ex")
-        .arg(format!("break values.sl:{}", marker(&src, "values")))
+        .arg(format!("break values.zl:{}", marker(&src, "values")))
         .args(["-ex", "run", "-ex", "info locals", "-ex", "print child->parent"])
         .arg(&exe)
         .output()
@@ -397,7 +397,7 @@ fn gdb_pretty_printers() {
         return;
     }
     for want in [
-        r#"name = "slang""#,
+        r#"name = "zell""#,
         "nums = []int len 3 = {5, 3, 8}",
         r#"["alice"] = 30"#,
         r#"["bob"] = 31"#,
@@ -416,7 +416,7 @@ fn gdb_pretty_printers() {
 }
 
 // ---------------------------------------------------------------------------
-// lldb-dap (the adapter behind the VS Code `slang` debug type)
+// lldb-dap (the adapter behind the VS Code `zell` debug type)
 // ---------------------------------------------------------------------------
 
 struct Dap {
@@ -509,19 +509,19 @@ fn lldb_dap_launch_shows_formatted_locals() {
         eprintln!("skipped: lldb-dap is not installed");
         return;
     };
-    let src = fixture("values.sl");
+    let src = fixture("values.zl");
     let dir = tmpdir("dap");
     let exe = dir.join("values");
     build(&src, &exe, &[]);
     let mut d = Dap::start(&dap);
-    d.request("initialize", serde_json::json!({"adapterID": "slang", "clientID": "slang-test", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path"}));
-    // What the VS Code extension sends for `type: "slang"`, `request: "launch"`.
+    d.request("initialize", serde_json::json!({"adapterID": "zell", "clientID": "zell-test", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path"}));
+    // What the VS Code extension sends for `type: "zell"`, `request: "launch"`.
     d.request(
         "launch",
         serde_json::json!({
             "program": exe,
             "args": [],
-            "env": ["SLANG_DEBUG_TEST=1"],
+            "env": ["ZELL_DEBUG_TEST=1"],
             "cwd": dir,
             "initCommands": [format!("command script import \"{}\"", formatters().display())],
         }),
@@ -541,7 +541,7 @@ fn lldb_dap_launch_shows_formatted_locals() {
     let get = |name: &str| -> String {
         vars["body"]["variables"].as_array().unwrap().iter().find(|v| v["name"] == name).map(|v| v["value"].as_str().unwrap_or("").to_string()).unwrap_or_else(|| panic!("no local {name}: {vars}"))
     };
-    assert_eq!(get("name"), r#""slang""#);
+    assert_eq!(get("name"), r#""zell""#);
     assert_eq!(get("nums"), "[5, 3, 8]");
     assert_eq!(get("r"), "Ok(value = 1)");
     assert_eq!(get("ages"), r#"{"alice": 30, "bob": 31}"#);

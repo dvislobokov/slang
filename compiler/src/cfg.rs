@@ -4,7 +4,7 @@
 //! Runs between parsing and semantic analysis: declarations whose `@cfg`
 //! is false are removed from the AST (so they are not type-checked and
 //! their names do not exist), and a file excluded by its `@cfg` or by its
-//! name suffix (`_windows.sl`, `_arm64.sl`, see
+//! name suffix (`_windows.zl`, `_arm64.zl`, see
 //! [`Target::excludes_file`]) keeps only its namespace line. The `@cfg`
 //! attributes of kept declarations are dropped as well: they have no
 //! meaning after this pass.

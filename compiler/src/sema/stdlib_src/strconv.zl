@@ -1,0 +1,508 @@
+// std.strconv: conversions between strings and numbers/bools, Go's
+// strconv with T! results. Errors wrap the sentinels ErrSyntax / ErrRange
+// (errors.Is works) and name the function and input, as in Go:
+// `strconv.ParseInt: parsing "12a": invalid syntax`. Float formatting and
+// parsing are C (runtime/src/std_strconv.c); the rest is here.
+namespace std.strconv
+
+func fail(fn string, s string, e error) error {
+    return std.errors.Wrap(e, "strconv." + fn + ": parsing " + Quote(s))
+}
+
+func digitVal(c byte) int {
+    if c >= 48 && c <= 57 {
+        return int(c) - 48
+    }
+    if c >= 97 && c <= 122 {
+        return int(c) - 97 + 10
+    }
+    if c >= 65 && c <= 90 {
+        return int(c) - 65 + 10
+    }
+    return 99
+}
+
+// Parses an unsigned integer in base 2..36, or base 0: prefix 0x, 0o,
+// 0b or 0 selects the base and underscores may separate digits.
+func ParseUint(s string, base int) uint! {
+    return parseUint("ParseUint", s, base)?
+}
+
+func parseUint(fn string, s0 string, base0 int) uint! {
+    var s = s0
+    var base = base0
+    if s == "" {
+        return fail(fn, s0, ErrSyntax)
+    }
+    var underscores = false
+    if base == 0 {
+        base = 10
+        underscores = true
+        if s[0] == 48 {
+            if len(s) >= 3 && (s[1] == 120 || s[1] == 88) {
+                base = 16
+                s = s[2..]
+            } else if len(s) >= 3 && (s[1] == 111 || s[1] == 79) {
+                base = 8
+                s = s[2..]
+            } else if len(s) >= 3 && (s[1] == 98 || s[1] == 66) {
+                base = 2
+                s = s[2..]
+            } else {
+                base = 8
+                s = s[1..]
+                if s == "" {
+                    return 0
+                }
+            }
+        }
+    } else if base < 2 || base > 36 {
+        return std.errors.Wrap(
+            error("invalid base " + Itoa(base0)),
+            "strconv." + fn + ": parsing " + Quote(s0),
+        )
+    }
+    var max uint = 18446744073709551615
+    var ubase = uint(base)
+    var cutoff = max / ubase + 1
+    var n uint = 0
+    var sawDigit = false
+    var lastUnderscore = false
+    for i in 0..len(s) {
+        var c = s[i]
+        if c == 95 && underscores {
+            if lastUnderscore {
+                return fail(fn, s0, ErrSyntax)
+            }
+            lastUnderscore = true
+            continue
+        }
+        lastUnderscore = false
+        var d = digitVal(c)
+        if d >= base {
+            return fail(fn, s0, ErrSyntax)
+        }
+        sawDigit = true
+        if n >= cutoff {
+            return fail(fn, s0, ErrRange)
+        }
+        n = n * ubase
+        var n1 = n + uint(d)
+        if n1 < n {
+            return fail(fn, s0, ErrRange)
+        }
+        n = n1
+    }
+    if !sawDigit || lastUnderscore {
+        return fail(fn, s0, ErrSyntax)
+    }
+    return n
+}
+
+// Parses a signed integer (optional + or -) in the given base (see
+// ParseUint). Out of int64 range: ErrRange.
+func ParseInt(s string, base int) int! {
+    return parseInt("ParseInt", s, base)?
+}
+
+func parseInt(fn string, s string, base int) int! {
+    if s == "" {
+        return fail(fn, s, ErrSyntax)
+    }
+    var neg = false
+    var body = s
+    if s[0] == 43 || s[0] == 45 {
+        neg = s[0] == 45
+        body = s[1..]
+    }
+    var u = try parseUint(fn, body, base) catch err {
+        if std.errors.Is(err, ErrRange) {
+            return fail(fn, s, ErrRange)
+        }
+        if std.errors.Is(err, ErrSyntax) {
+            return fail(fn, s, ErrSyntax)
+        }
+        return err
+    }
+    var limit uint = 9223372036854775808
+    if neg {
+        if u > limit {
+            return fail(fn, s, ErrRange)
+        }
+        if u == limit {
+            return std.math.MinInt
+        }
+        return -int(u)
+    }
+    if u >= limit {
+        return fail(fn, s, ErrRange)
+    }
+    return int(u)
+}
+
+// ParseInt with a result that must fit in bits (8, 16, 32 or 64).
+func ParseIntBits(s string, base int, bits int) int! {
+    var n = parseInt("ParseInt", s, base)?
+    if bits > 0 && bits < 64 {
+        var hi = 1 << (bits - 1)
+        if n >= hi || n < -hi {
+            return fail("ParseInt", s, ErrRange)
+        }
+    }
+    return n
+}
+
+// ParseUint with a result that must fit in bits (8, 16, 32 or 64).
+func ParseUintBits(s string, base int, bits int) uint! {
+    var n = parseUint("ParseUint", s, base)?
+    if bits > 0 && bits < 64 {
+        var one uint = 1
+        if n >= one << uint(bits) {
+            return fail("ParseUint", s, ErrRange)
+        }
+    }
+    return n
+}
+
+// Base-10 ParseInt (Go's Atoi).
+func Atoi(s string) int! {
+    return parseInt("Atoi", s, 10)?
+}
+
+// Parses a float: decimal or hex (0x1p-2), inf/infinity/nan, optional
+// sign, no spaces. Overflow is ErrRange.
+func ParseFloat(s string) float! {
+    var f = try rtParseFloat(s) catch err {
+        return fail("ParseFloat", s, err)
+    }
+    return f
+}
+
+// "1", "t", "T", "TRUE", "true", "True" are true; "0", "f", "F",
+// "FALSE", "false", "False" are false.
+func ParseBool(s string) bool! {
+    switch s {
+        case "1", "t", "T", "TRUE", "true", "True":
+            return true
+        case "0", "f", "F", "FALSE", "false", "False":
+            return false
+    }
+    return fail("ParseBool", s, ErrSyntax)
+}
+
+// "true" or "false".
+func FormatBool(b bool) string {
+    if b {
+        return "true"
+    }
+    return "false"
+}
+
+// n in base 2..36 (lower-case digits).
+func FormatUint(n uint, base int) string {
+    if base < 2 || base > 36 {
+        panic("strconv: illegal base")
+    }
+    if n == 0 {
+        return "0"
+    }
+    var digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    var buf []byte = []
+    var ubase = uint(base)
+    var x = n
+    for x > 0 {
+        buf = append(buf, digits[int(x % ubase)])
+        x = x / ubase
+    }
+    std.slices.Reverse(buf)
+    return std.strings.FromBytes(buf)
+}
+
+// n in base 2..36 with a leading - when negative.
+func FormatInt(n int, base int) string {
+    if n < 0 {
+        return "-" + FormatUint(uint(0) - uint(n), base)
+    }
+    return FormatUint(uint(n), base)
+}
+
+// Base-10 FormatInt (Go's Itoa).
+func Itoa(n int) string {
+    return FormatInt(n, 10)
+}
+
+// Formats f: fmt is 'f' (-ddd.dddd), 'e' (-d.dddde+dd), 'E', 'g' ('e'
+// for large exponents, else 'f') or 'G'; prec is the number of digits
+// after the point ('f', 'e') or significant digits ('g'); -1 gives the
+// fewest digits that parse back to f exactly.
+func FormatFloat(f float, fmt char, prec int) string {
+    return rtFormatFloat(f, int(fmt), prec)
+}
+
+func hexDigit(n int) string {
+    return "0123456789abcdef"[n..n + 1]
+}
+
+func escapeRune(r char, quote char, ascii bool) string {
+    var c = int(r)
+    if r == quote || r == '\\' {
+        return "\\" + string(r)
+    }
+    switch c {
+        case 7: return "\\a"
+        case 8: return "\\b"
+        case 12: return "\\f"
+        case 10: return "\\n"
+        case 13: return "\\r"
+        case 9: return "\\t"
+        case 11: return "\\v"
+    }
+    if c < 32 || c == 127 {
+        return "\\x" + hexDigit(c / 16) + hexDigit(c % 16)
+    }
+    if c < 127 {
+        return string(r)
+    }
+    if !ascii && !(c >= 128 && c < 160) && c != 173 && c != 0xFFFD {
+        return string(r)
+    }
+    if c < 65536 {
+        return "\\u" +
+            hexDigit(c / 4096 % 16) +
+            hexDigit(c / 256 % 16) +
+            hexDigit(c / 16 % 16) +
+            hexDigit(c % 16)
+    }
+    var out = "\\U"
+    var shift = 28
+    for shift >= 0 {
+        out += hexDigit((c >> shift) & 15)
+        shift -= 4
+    }
+    return out
+}
+
+func quoteWith(s string, quote char, ascii bool) string {
+    var out = string(quote)
+    var i = 0
+    for i < len(s) {
+        var (r, size) = std.unicode.utf8.DecodeRuneAt(s, i)
+        if r == '\u{FFFD}' && size == 1 {
+            var b = int(s[i])
+            out += "\\x" + hexDigit(b / 16) + hexDigit(b % 16)
+        } else {
+            out += escapeRune(r, quote, ascii)
+        }
+        i += size
+    }
+    return out + string(quote)
+}
+
+// s as a double-quoted Zell/Go string literal: control characters,
+// invalid UTF-8 and non-printing runes escaped.
+func Quote(s string) string {
+    return quoteWith(s, '"', false)
+}
+
+// Like Quote, also escaping every non-ASCII rune (\u or \U).
+func QuoteToASCII(s string) string {
+    return quoteWith(s, '"', true)
+}
+
+// r as a single-quoted character literal.
+func QuoteRune(r char) string {
+    return "'" + escapeRune(r, '\'', false) + "'"
+}
+
+func unhex(s string, i int, n int) int {
+    if i + n > len(s) {
+        return -1
+    }
+    var v = 0
+    for k in 0..n {
+        var d = digitVal(s[i + k])
+        if d >= 16 {
+            return -1
+        }
+        v = v * 16 + d
+    }
+    return v
+}
+
+// The value of a quoted literal: "..." (escapes \a \b \f \n \r \t \v \\
+// \' \" \xHH \ooo \uHHHH \UHHHHHHHH), `raw` or a one-character 'c'.
+func Unquote(s string) string! {
+    var n = len(s)
+    if n < 2 || s[0] != s[n - 1] {
+        return fail("Unquote", s, ErrSyntax)
+    }
+    var q = s[0]
+    var body = s[1..n - 1]
+    if q == 96 {
+        if std.strings.Contains(body, "`") {
+            return fail("Unquote", s, ErrSyntax)
+        }
+        return std.strings.Replace(body, "\r", "")
+    }
+    if q != 34 && q != 39 {
+        return fail("Unquote", s, ErrSyntax)
+    }
+    var out = ""
+    var i = 0
+    var count = 0
+    for i < len(body) {
+        var c = body[i]
+        count += 1
+        if c == q || c == 10 {
+            return fail("Unquote", s, ErrSyntax)
+        }
+        if c != 92 {
+            var (_, size) = std.unicode.utf8.DecodeRuneAt(body, i)
+            out += body[i..i + size]
+            i += size
+            continue
+        }
+        if i + 1 >= len(body) {
+            return fail("Unquote", s, ErrSyntax)
+        }
+        var e = body[i + 1]
+        i += 2
+        switch e {
+            case 97: out += string(char(7))
+            case 98: out += string(char(8))
+            case 102: out += string(char(12))
+            case 110: out += "\n"
+            case 114: out += "\r"
+            case 116: out += "\t"
+            case 118: out += string(char(11))
+            case 92: out += "\\"
+            case 39, 34:
+                if e != q {
+                    return fail("Unquote", s, ErrSyntax)
+                }
+                out += string(char(e))
+            case 120:
+                var v = unhex(body, i, 2)
+                if v < 0 {
+                    return fail("Unquote", s, ErrSyntax)
+                }
+                out += std.strings.FromBytes([byte(v)])
+                i += 2
+            case 117, 85:
+                if e == 117 && i < len(body) && body[i] == 123 {
+                    var close = std.strings.Index(body[i..], "}")
+                    if close < 2 || close > 7 {
+                        return fail("Unquote", s, ErrSyntax)
+                    }
+                    var v = unhex(body, i + 1, close - 1)
+                    if v < 0 || v > 0x10FFFF || (v >= 0xD800 && v < 0xE000) {
+                        return fail("Unquote", s, ErrSyntax)
+                    }
+                    out += string(char(v))
+                    i += close + 1
+                    continue
+                }
+                var w = 4
+                if e == 85 {
+                    w = 8
+                }
+                var v = unhex(body, i, w)
+                if v < 0 || v > 0x10FFFF || (v >= 0xD800 && v < 0xE000) {
+                    return fail("Unquote", s, ErrSyntax)
+                }
+                out += string(char(v))
+                i += w
+            default:
+                if e >= 48 && e <= 55 {
+                    if i + 2 > len(body) {
+                        return fail("Unquote", s, ErrSyntax)
+                    }
+                    var v = int(e) - 48
+                    for k in 0..2 {
+                        var d = int(body[i + k]) - 48
+                        if d < 0 || d > 7 {
+                            return fail("Unquote", s, ErrSyntax)
+                        }
+                        v = v * 8 + d
+                    }
+                    if v > 255 {
+                        return fail("Unquote", s, ErrSyntax)
+                    }
+                    out += std.strings.FromBytes([byte(v)])
+                    i += 2
+                } else {
+                    return fail("Unquote", s, ErrSyntax)
+                }
+        }
+    }
+    if q == 39 && count != 1 {
+        return fail("Unquote", s, ErrSyntax)
+    }
+    return out
+}
+
+// Parses s as a T: any integer type (base 10, range-checked), float,
+// float32, bool or string (returned as is).
+func Parse<T>(s string) T! {
+    var out T
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+        out = s
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+        out = ParseBool(s)?
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int {
+        out = ParseInt(s, 10)?
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 {
+        out = int8(ParseIntBits(s, 10, 8)?)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 {
+        out = int16(ParseIntBits(s, 10, 16)?)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 {
+        out = int32(ParseIntBits(s, 10, 32)?)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint {
+        out = ParseUint(s, 10)?
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 {
+        out = byte(ParseUintBits(s, 10, 8)?)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 {
+        out = uint16(ParseUintBits(s, 10, 16)?)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+        out = uint32(ParseUintBits(s, 10, 32)?)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float {
+        out = ParseFloat(s)?
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+        out = float32(ParseFloat(s)?)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+        var rs = std.strings.Runes(s)
+        if len(rs) != 1 {
+            return fail("Parse", s, ErrSyntax)
+        }
+        out = rs[0]
+    } else {
+        panic("strconv.Parse: unsupported type " + std.reflect.TypeOf<T>().Name)
+    }
+    return out
+}
+
+// Formats v: integers in base 10, floats shortest ('g', -1), bool,
+// string as is, char as its UTF-8 text.
+func Format<T>(v T) string {
+    if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.String {
+        return v
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Bool {
+        return FormatBool(v)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Int32 {
+        return FormatInt(int(v), 10)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint8 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint16 ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Uint32 {
+        return FormatUint(uint(v), 10)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float ||
+        std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Float32 {
+        return FormatFloat(float(v), 'g', -1)
+    } else if std.reflect.TypeOf<T>().Kind == std.reflect.Kind.Char {
+        return string(v)
+    }
+    panic("strconv.Format: unsupported type " + std.reflect.TypeOf<T>().Name)
+}

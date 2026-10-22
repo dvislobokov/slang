@@ -7,12 +7,12 @@ digest: 32 bytes, first 44 last 36
 hex matches: true
 hmac: f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8
 verify: true false
-base64: U2xhbmcgKyBiYXNlNjQgPSBvaw==
-decoded: Slang + base64 = ok
+base64: WmVsbCArIGJhc2U2NCA9IG9r
+decoded: Zell + base64 = ok
 bad: invalid input
 raw: [251 255 16] std: +/8Q url: -_8Q
 url round trip: fbff10
-hex: 486921 Slang
+hex: 486921 Zell
 odd hex: encoding/hex: odd length hex string
 token length: 32
 key length: 32

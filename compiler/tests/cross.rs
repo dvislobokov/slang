@@ -1,4 +1,4 @@
-//! Cross-compilation tests (docs/PLATFORMS.md): `slang build --target
+//! Cross-compilation tests (docs/PLATFORMS.md): `zell build --target
 //! windows-amd64` on Linux, the executables run under Wine (with the IOCP
 //! poller and with the WSAPoll fallback) and compared byte for byte with the
 //! examples' `.out` files; `--target linux-arm64` run under user-mode QEMU;
@@ -13,7 +13,7 @@
 //! when missing). Without a toolchain a test prints why and passes (CI's
 //! Linux cross job installs them all).
 //!
-//! Output: Slang's `println` writes `\n` on every platform and the runtime
+//! Output: Zell's `println` writes `\n` on every platform and the runtime
 //! puts stdout/stderr in binary mode, so a Windows executable's output is
 //! compared as is, with no CRLF normalisation. Wine runs with
 //! `LC_ALL=C.UTF-8` (it maps UTF-16 file names to the Unix locale's
@@ -27,15 +27,15 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
-fn slang() -> &'static str {
-    env!("CARGO_BIN_EXE_slang")
+fn zell() -> &'static str {
+    env!("CARGO_BIN_EXE_zell")
 }
 
 fn tmpdir(name: &str) -> PathBuf {
     // unique per call: tests run in parallel and may use the same name
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let d = std::env::temp_dir().join(format!("slang-cross-{}-{n}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("zell-cross-{}-{n}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -59,7 +59,7 @@ fn windows_unavailable() -> Option<String> {
             if !ok("wine", &["--version"]) {
                 return Some("wine is not installed".into());
             }
-            let lib = repo().join("runtime/build/x86_64-pc-windows-gnu/libslang_rt.a");
+            let lib = repo().join("runtime/build/x86_64-pc-windows-gnu/libzell_rt.a");
             let st = Command::new("make").arg("-C").arg(repo().join("runtime")).arg("CROSS=x86_64-w64-mingw32").arg("-j8").output().expect("cannot run make");
             if !st.status.success() || !lib.is_file() {
                 return Some(format!("make -C runtime CROSS=x86_64-w64-mingw32 failed:\n{}", String::from_utf8_lossy(&st.stderr)));
@@ -73,7 +73,7 @@ fn windows_unavailable() -> Option<String> {
 
 fn wine() -> Command {
     let mut c = Command::new("wine");
-    c.env("WINEDEBUG", "-all").env("LC_ALL", "C.UTF-8").env("SLANG_NO_BACKTRACE", "1");
+    c.env("WINEDEBUG", "-all").env("LC_ALL", "C.UTF-8").env("ZELL_NO_BACKTRACE", "1");
     c
 }
 
@@ -82,7 +82,7 @@ fn build(src: &Path, out: &Path, extra: &[&str]) -> Result<(), String> {
 }
 
 fn build_for(target: &str, src: &Path, out: &Path, extra: &[&str]) -> Result<(), String> {
-    let b = Command::new(slang()).arg("build").arg(src).arg("--target").arg(target).arg("-o").arg(out).args(extra).output().unwrap();
+    let b = Command::new(zell()).arg("build").arg(src).arg("--target").arg(target).arg("-o").arg(out).args(extra).output().unwrap();
     if !b.status.success() {
         return Err(format!("build failed:\n{}", String::from_utf8_lossy(&b.stderr)));
     }
@@ -100,7 +100,7 @@ fn all_examples() -> Vec<(String, PathBuf, String)> {
     for e in std::fs::read_dir(&dir).unwrap() {
         let p = e.unwrap().path();
         let name = p.file_stem().unwrap().to_string_lossy().to_string();
-        if p.extension().is_some_and(|x| x == "sl") && p.with_extension("out").is_file() {
+        if p.extension().is_some_and(|x| x == "zl") && p.with_extension("out").is_file() {
             out.push((name, p.clone(), std::fs::read_to_string(p.with_extension("out")).unwrap()));
         } else if p.is_dir() && name != "errors_compile" {
             if let Some(o) = std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()).find(|f| f.extension().is_some_and(|x| x == "out")) {
@@ -114,7 +114,7 @@ fn all_examples() -> Vec<(String, PathBuf, String)> {
 
 /// Source and expected output of example `name` (a file or a directory).
 fn example(name: &str) -> (PathBuf, String) {
-    let file = repo().join("examples").join(format!("{name}.sl"));
+    let file = repo().join("examples").join(format!("{name}.zl"));
     if file.is_file() {
         return (file.clone(), std::fs::read_to_string(file.with_extension("out")).unwrap());
     }
@@ -163,7 +163,7 @@ const WINDOWS_EXAMPLES: &[&str] = &[
 
 /// Networking examples (Winsock2, loopback only), run with the IOCP poller
 /// (poll_iocp.c, the default) and again with the WSAPoll fallback
-/// (SLANG_POLLER=wsapoll). http_realtime (HTTP/2, WebSocket, SSE) failed
+/// (ZELL_POLLER=wsapoll). http_realtime (HTTP/2, WebSocket, SSE) failed
 /// once with a connection reset in the very first run on a fresh Wine
 /// prefix and passed in every run since.
 const WINDOWS_NET_EXAMPLES: &[&str] = &["tcp_echo", "http_server", "tls_echo", "redis", "http_realtime"];
@@ -212,12 +212,12 @@ fn windows_net_examples_wsapoll_under_wine() {
         eprintln!("skipping: {why}");
         return;
     }
-    let f = check_examples_env(WINDOWS_NET_EXAMPLES, &[], &[("SLANG_POLLER", "wsapoll")]);
-    assert!(f.is_empty(), "{} network example(s) failed with SLANG_POLLER=wsapoll:\n{}", f.len(), f.join("\n"));
+    let f = check_examples_env(WINDOWS_NET_EXAMPLES, &[], &[("ZELL_POLLER", "wsapoll")]);
+    assert!(f.is_empty(), "{} network example(s) failed with ZELL_POLLER=wsapoll:\n{}", f.len(), f.join("\n"));
 }
 
 /// std.database.sqlite on Windows with a sqlite3.dll next to the program
-/// ($SLANG_TEST_SQLITE3_DLL: e.g. built from the amalgamation with
+/// ($ZELL_TEST_SQLITE3_DLL: e.g. built from the amalgamation with
 /// `x86_64-w64-mingw32-gcc -O1 -shared -DSQLITE_API=__declspec(dllexport)
 /// sqlite3.c -o sqlite3.dll`); without one, Open fails cleanly.
 #[test]
@@ -231,12 +231,12 @@ fn windows_sqlite_with_dll() {
     let exe = dir.join("sql.exe");
     build(&src, &exe, &[]).unwrap();
     let r = run_wine(&exe);
-    let dll = std::env::var_os("SLANG_TEST_SQLITE3_DLL").map(PathBuf::from).filter(|p| p.is_file());
+    let dll = std::env::var_os("ZELL_TEST_SQLITE3_DLL").map(PathBuf::from).filter(|p| p.is_file());
     match dll {
         None => {
             assert!(!r.status.success());
             assert!(String::from_utf8_lossy(&r.stderr).contains("no sqlite3.dll or winsqlite3.dll"), "{}", String::from_utf8_lossy(&r.stderr));
-            eprintln!("no SLANG_TEST_SQLITE3_DLL: checked the clean failure only");
+            eprintln!("no ZELL_TEST_SQLITE3_DLL: checked the clean failure only");
         }
         Some(d) => {
             std::fs::copy(&d, dir.join("sqlite3.dll")).unwrap();
@@ -259,7 +259,7 @@ fn windows_processes_zones_roots_backtraces() {
         return;
     }
     let dir = tmpdir("winplat");
-    let src = dir.join("winplat.sl");
+    let src = dir.join("winplat.zl");
     std::fs::write(
         &src,
         r#"namespace t.winplat
@@ -309,17 +309,17 @@ async func main() void! {
     .unwrap();
     let exe = dir.join("winplat.exe");
     build(&src, &exe, &[]).unwrap();
-    let linux = Command::new(slang()).arg("run").arg(&src).output().unwrap();
+    let linux = Command::new(zell()).arg("run").arg(&src).output().unwrap();
     assert!(linux.status.success(), "{}", String::from_utf8_lossy(&linux.stderr));
     for poller in ["iocp", "wsapoll"] {
-        let r = wine().env("SLANG_POLLER", poller).env_remove("SSL_CERT_FILE").arg(&exe).output().unwrap();
+        let r = wine().env("ZELL_POLLER", poller).env_remove("SSL_CERT_FILE").arg(&exe).output().unwrap();
         assert!(r.status.success(), "{poller}: {}", String::from_utf8_lossy(&r.stderr));
         assert_eq!(String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&linux.stdout), "{poller}");
     }
     assert!(String::from_utf8_lossy(&linux.stdout).contains("wrote 2000000 exit 0\nchild got 2000000 bytes\nchild stderr\n"));
-    let r = wine().env_remove("SLANG_NO_BACKTRACE").arg(&exe).arg("panic").output().unwrap();
+    let r = wine().env_remove("ZELL_NO_BACKTRACE").arg(&exe).arg("panic").output().unwrap();
     let err = String::from_utf8_lossy(&r.stderr);
-    assert!(err.contains("(slang_t__winplat__inner+0x"), "backtrace without symbols:\n{err}");
+    assert!(err.contains("(zell_t__winplat__inner+0x"), "backtrace without symbols:\n{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -348,7 +348,7 @@ fn windows_target_constants_args_and_exit_code() {
         return;
     }
     let dir = tmpdir("consts");
-    let src = dir.join("consts.sl");
+    let src = dir.join("consts.zl");
     std::fs::write(
         &src,
         "namespace t.consts\n\nimport std\nimport std.io\n\nfunc main() {\n    println(os.Name, os.Arch, os.PathSeparator, len(os.LineSeparator))\n    var a = os.Args()\n    println(len(a), a[1], a[2])\n    println(\"h\u{e9}llo \u{2713}\")\n    os.Exit(3)\n}\n",
@@ -359,8 +359,8 @@ fn windows_target_constants_args_and_exit_code() {
     let r = wine().arg(&exe).arg("x y").arg("\u{e9}").output().unwrap();
     assert_eq!(r.status.code(), Some(3), "stderr: {}", String::from_utf8_lossy(&r.stderr));
     assert_eq!(String::from_utf8_lossy(&r.stdout), "windows amd64 \\ 2\n3 x y \u{e9}\nh\u{e9}llo \u{2713}\n");
-    // `slang run --target windows-amd64` goes through Wine.
-    let r = Command::new(slang()).arg("run").arg("--target").arg("windows-amd64").arg(&src).arg("--").arg("p").arg("q").env("LC_ALL", "C.UTF-8").output().unwrap();
+    // `zell run --target windows-amd64` goes through Wine.
+    let r = Command::new(zell()).arg("run").arg("--target").arg("windows-amd64").arg(&src).arg("--").arg("p").arg("q").env("LC_ALL", "C.UTF-8").output().unwrap();
     assert_eq!(r.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&r.stdout).starts_with("windows amd64"));
     let _ = std::fs::remove_dir_all(&dir);
@@ -373,7 +373,7 @@ fn windows_exe_is_pe_and_default_name_has_exe_suffix() {
         return;
     }
     let dir = tmpdir("pe");
-    let r = Command::new(slang()).arg("build").arg("--target").arg("windows-amd64").arg("--release").arg(repo().join("examples/hello.sl")).current_dir(&dir).output().unwrap();
+    let r = Command::new(zell()).arg("build").arg("--target").arg("windows-amd64").arg("--release").arg(repo().join("examples/hello.zl")).current_dir(&dir).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let exe = dir.join("hello.exe");
     let bytes = std::fs::read(&exe).unwrap();
@@ -427,7 +427,7 @@ fn musl_unavailable() -> Option<String> {
 /// the cross sysroot; musl: no static libsqlite3, the runtime has no sqlite).
 const NEEDS_SQLITE: &[&str] = &["sql", "web_app"];
 
-/// Builds every example for `target` and runs it through `slang run
+/// Builds every example for `target` and runs it through `zell run
 /// --target` (QEMU for arm64, natively for musl); returns the failures.
 fn check_target(target: &str, extra: &[&str]) -> Vec<String> {
     let dir = tmpdir(&format!("{target}{}", extra.join("")));
@@ -448,7 +448,7 @@ fn check_target(target: &str, extra: &[&str]) -> Vec<String> {
         } else {
             Command::new(&exe)
         };
-        let r = cmd.env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+        let r = cmd.env("ZELL_NO_BACKTRACE", "1").output().unwrap();
         let got = String::from_utf8_lossy(&r.stdout);
         if !r.status.success() {
             failures.push(format!("{name}: exit status {:?}, stderr:\n{}", r.status.code(), String::from_utf8_lossy(&r.stderr)));
@@ -469,9 +469,9 @@ fn linux_arm64_examples_under_qemu() {
     }
     let f = check_target("linux-arm64", &["--leak-check"]);
     assert!(f.is_empty(), "{} example(s) failed for linux-arm64:\n{}", f.len(), f.join("\n"));
-    // `slang run --target linux-arm64` goes through QEMU too
-    let r = Command::new(slang()).arg("run").arg("--target").arg("linux-arm64").arg(repo().join("examples/hello.sl")).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&r.stdout), "Hello, Slang!\n", "{}", String::from_utf8_lossy(&r.stderr));
+    // `zell run --target linux-arm64` goes through QEMU too
+    let r = Command::new(zell()).arg("run").arg("--target").arg("linux-arm64").arg(repo().join("examples/hello.zl")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&r.stdout), "Hello, Zell!\n", "{}", String::from_utf8_lossy(&r.stderr));
 }
 
 /// Every example as a fully static musl executable.
@@ -485,14 +485,14 @@ fn linux_musl_static_examples() {
     assert!(f.is_empty(), "{} example(s) failed for linux-amd64-musl:\n{}", f.len(), f.join("\n"));
     let dir = tmpdir("musl-static");
     let exe = dir.join("hello");
-    build_for("linux-amd64-musl", &repo().join("examples/hello.sl"), &exe, &["--release"]).unwrap();
+    build_for("linux-amd64-musl", &repo().join("examples/hello.zl"), &exe, &["--release"]).unwrap();
     let b = std::fs::read(&exe).unwrap();
     // ELF without a PT_INTERP program header: statically linked
     let phoff = u64::from_le_bytes(b[0x20..0x28].try_into().unwrap()) as usize;
     let (phentsize, phnum) = (u16::from_le_bytes(b[0x36..0x38].try_into().unwrap()) as usize, u16::from_le_bytes(b[0x38..0x3a].try_into().unwrap()) as usize);
     let interp = (0..phnum).any(|i| u32::from_le_bytes(b[phoff + i * phentsize..phoff + i * phentsize + 4].try_into().unwrap()) == 3);
     assert!(!interp, "the musl executable has an ELF interpreter (not static)");
-    assert_eq!(Command::new(&exe).output().unwrap().stdout, b"Hello, Slang!\n");
+    assert_eq!(Command::new(&exe).output().unwrap().stdout, b"Hello, Zell!\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -533,7 +533,7 @@ fn macos_arm64_objects_for_all_examples() {
     let mut failures = Vec::new();
     for (name, src, _) in all_examples() {
         let obj = dir.join(format!("{name}.o"));
-        let r = Command::new(slang()).arg("build").arg("--target").arg("macos-arm64").arg("--emit=obj").arg(&src).arg("-o").arg(&obj).output().unwrap();
+        let r = Command::new(zell()).arg("build").arg("--target").arg("macos-arm64").arg("--emit=obj").arg(&src).arg("-o").arg(&obj).output().unwrap();
         let magic = std::fs::read(&obj).ok().filter(|b| b.len() >= 4).map(|b| u32::from_le_bytes(b[0..4].try_into().unwrap()));
         if !r.status.success() || magic != Some(0xfeed_facf) {
             failures.push(format!("{name}: {}", String::from_utf8_lossy(&r.stderr)));
@@ -549,14 +549,14 @@ fn macos_arm64_objects_for_all_examples() {
 fn macos_arm64_emits_macho_object() {
     let dir = tmpdir("macos");
     let obj = dir.join("async.o");
-    let r = Command::new(slang()).arg("build").arg("--target").arg("macos-arm64").arg("--emit=obj").arg(repo().join("examples/async.sl")).arg("-o").arg(&obj).output().unwrap();
+    let r = Command::new(zell()).arg("build").arg("--target").arg("macos-arm64").arg("--emit=obj").arg(repo().join("examples/async.zl")).arg("-o").arg(&obj).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let b = std::fs::read(&obj).unwrap();
     assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()), 0xfeed_facf, "MH_MAGIC_64");
     assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 0x0100_000c, "CPU_TYPE_ARM64");
     assert_eq!(u32::from_le_bytes(b[12..16].try_into().unwrap()), 1, "MH_OBJECT");
     if std::env::var_os("SDKROOT").is_none() && !ok("xcrun", &["--version"]) {
-        let r = Command::new(slang()).arg("build").arg("--target").arg("macos-arm64").arg(repo().join("examples/hello.sl")).arg("-o").arg(dir.join("hello")).output().unwrap();
+        let r = Command::new(zell()).arg("build").arg("--target").arg("macos-arm64").arg(repo().join("examples/hello.zl")).arg("-o").arg(dir.join("hello")).output().unwrap();
         assert!(!r.status.success());
         assert!(String::from_utf8_lossy(&r.stderr).contains("macOS SDK"), "{}", String::from_utf8_lossy(&r.stderr));
     }
@@ -569,7 +569,7 @@ fn other_target_objects() {
     let dir = tmpdir("objs");
     for (target, magic) in [("linux-arm64", &b"\x7fELF"[..]), ("x86_64-pc-windows-msvc", &b"\x64\x86"[..])] {
         let obj = dir.join(format!("{target}.o"));
-        let r = Command::new(slang()).arg("build").arg("--target").arg(target).arg("--emit=obj").arg(repo().join("examples/structs.sl")).arg("-o").arg(&obj).output().unwrap();
+        let r = Command::new(zell()).arg("build").arg("--target").arg(target).arg("--emit=obj").arg(repo().join("examples/structs.zl")).arg("-o").arg(&obj).output().unwrap();
         assert!(r.status.success(), "{target}: {}", String::from_utf8_lossy(&r.stderr));
         let b = std::fs::read(&obj).unwrap();
         assert_eq!(&b[..magic.len()], magic, "{target}");
@@ -586,10 +586,10 @@ fn runtime_c_tests_under_wine() {
     }
     // the IOCP poller (default), then the WSAPoll fallback
     for poller in ["", "wsapoll"] {
-        let r = Command::new("make").arg("-C").arg(repo().join("runtime")).arg("CROSS=x86_64-w64-mingw32").arg("test-wine").env("SLANG_POLLER", poller).output().unwrap();
+        let r = Command::new("make").arg("-C").arg(repo().join("runtime")).arg("CROSS=x86_64-w64-mingw32").arg("test-wine").env("ZELL_POLLER", poller).output().unwrap();
         let out = String::from_utf8_lossy(&r.stdout);
         let fail = out.lines().find(|l| l.starts_with("WINE FAIL:")).unwrap_or("");
-        assert!(r.status.success() && fail.trim() == "WINE FAIL:", "C tests under wine (SLANG_POLLER={poller:?}):\n{out}");
+        assert!(r.status.success() && fail.trim() == "WINE FAIL:", "C tests under wine (ZELL_POLLER={poller:?}):\n{out}");
     }
 }
 
@@ -610,7 +610,7 @@ fn windows_console_output_is_utf8() {
         return;
     }
     let dir = tmpdir("console");
-    let src = dir.join("console.sl");
+    let src = dir.join("console.zl");
     std::fs::write(&src, "namespace t.console\n\nimport std.io\n\nfunc main() {\n    print(\"h\u{e9}\")\n    println(\"llo w\u{f6}rld \u{2713} \u{4e16}\u{754c}\")\n}\n").unwrap();
     let exe = dir.join("console.exe");
     build(&src, &exe, &[]).unwrap();

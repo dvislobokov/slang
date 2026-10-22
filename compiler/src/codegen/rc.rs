@@ -1,5 +1,5 @@
 //! Reference counting: which types are managed, retain/release of values
-//! and slots, per-type helpers, `slang_value_ops`, type infos and boxes.
+//! and slots, per-type helpers, `zell_value_ops`, type infos and boxes.
 
 use super::{CodeGen, Val};
 use crate::types::{Type, TypeId};
@@ -8,10 +8,10 @@ use inkwell::types::StructType;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::IntPredicate;
 
-/// Biased refcount words (runtime/ABI.md 3.1, `slang_rt.h`): the owner tag
-/// is `(word >> SLANG_RC_OWNER_SHIFT) & SLANG_RC_OWNER_MASK`.
-const SLANG_RC_OWNER_SHIFT: u64 = 47;
-const SLANG_RC_OWNER_MASK: u64 = 0x16FFF;
+/// Biased refcount words (runtime/ABI.md 3.1, `zell_rt.h`): the owner tag
+/// is `(word >> ZELL_RC_OWNER_SHIFT) & ZELL_RC_OWNER_MASK`.
+const ZELL_RC_OWNER_SHIFT: u64 = 47;
+const ZELL_RC_OWNER_MASK: u64 = 0x16FFF;
 
 /// How a value of some type holds references.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -147,46 +147,46 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     fn rc_name(retain: bool) -> &'static str {
         if retain {
-            "slang_retain"
+            "zell_retain"
         } else {
-            "slang_release"
+            "zell_release"
         }
     }
 
     fn ptr_rc_name(retain: bool) -> &'static str {
         if retain {
-            "slang_ptr_retain"
+            "zell_ptr_retain"
         } else {
-            "slang_ptr_release"
+            "zell_ptr_release"
         }
     }
 
-    /// The inline fast path of `slang_retain` / `slang_release` (and the
-    /// `slang_ptr_*` variants on a payload pointer): an internal
+    /// The inline fast path of `zell_retain` / `zell_release` (and the
+    /// `zell_ptr_*` variants on a payload pointer): an internal
     /// `alwaysinline` function that `call_rt` uses instead of the runtime
     /// symbol when `Options::inline_rc` (runtime/ABI.md 3.2).
     ///
-    /// While `slang_threaded == 0`: retain with count >= 0 stores `+1`,
-    /// release with 2 <= count < the lowest flag bit (`SLANG_RC_ZOMBIE`)
+    /// While `zell_threaded == 0`: retain with count >= 0 stores `+1`,
+    /// release with 2 <= count < the lowest flag bit (`ZELL_RC_ZOMBIE`)
     /// stores `-1`; NULL does nothing;
     /// everything else (other threads exist, immortal/arena/view counts,
     /// the last reference, a weak box) calls the runtime function.
     /// Otherwise, if the word is a biased count owned by this thread
-    /// (`(word >> 47) & SLANG_RC_OWNER_MASK == slang_rc_owner`, a
+    /// (`(word >> 47) & ZELL_RC_OWNER_MASK == zell_rc_owner`, a
     /// thread-local), retain with B != 0xFFFF and release with B >= 2 store
     /// the owner's half-word B +- 1 (16 bits at the object's address).
     pub(crate) fn rc_inline_fn(&mut self, name: &str) -> Option<FunctionValue<'ctx>> {
         let (retain, ptr) = match name {
-            "slang_retain" => (true, false),
-            "slang_release" => (false, false),
-            "slang_ptr_retain" => (true, true),
-            "slang_ptr_release" => (false, true),
+            "zell_retain" => (true, false),
+            "zell_release" => (false, false),
+            "zell_ptr_retain" => (true, true),
+            "zell_ptr_release" => (false, true),
             _ => return None,
         };
         if !self.opts.inline_rc {
             return None;
         }
-        let fname = format!("slang.rc.{name}");
+        let fname = format!("zell.rc.{name}");
         if let Some(f) = self.module.get_function(&fname) {
             return Some(f);
         }
@@ -195,12 +195,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let f = self.module.add_function(&fname, fty, Some(Linkage::Internal));
         f.add_attribute(inkwell::attributes::AttributeLoc::Function, self.attr("alwaysinline"));
         f.add_attribute(inkwell::attributes::AttributeLoc::Function, self.attr("nounwind"));
-        let slow_name = if retain { "slang_retain" } else { "slang_release" };
+        let slow_name = if retain { "zell_retain" } else { "zell_release" };
         let slow = self.rt(slow_name);
-        let mt_g = match self.module.get_global("slang_threaded") {
+        let mt_g = match self.module.get_global("zell_threaded") {
             Some(g) => g,
             None => {
-                let g = self.module.add_global(self.ctx.i8_type(), None, "slang_threaded");
+                let g = self.module.add_global(self.ctx.i8_type(), None, "zell_threaded");
                 g.set_linkage(Linkage::External);
                 g
             }
@@ -233,7 +233,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             b.build_int_compare(IntPredicate::SGE, rc, i64t.const_zero(), "").unwrap()
         } else {
             let m2 = b.build_int_sub(rc, i64t.const_int(2, false), "").unwrap();
-            // Below the lowest flag bit (SLANG_RC_ZOMBIE, bit 57): objects with
+            // Below the lowest flag bit (ZELL_RC_ZOMBIE, bit 57): objects with
             // a weak box or a cycle-collector flag take the runtime path.
             b.build_int_compare(IntPredicate::ULT, m2, i64t.const_int((1u64 << 57) - 2, false), "").unwrap()
         };
@@ -245,18 +245,18 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         // B (bits 0..15) changes with a plain 16-bit store; retain while
         // B != 0xFFFF, release while B >= 2.
         b.position_at_end(chk_own);
-        let owner_g = match self.module.get_global("slang_rc_owner") {
+        let owner_g = match self.module.get_global("zell_rc_owner") {
             Some(g) => g,
             None => {
-                let g = self.module.add_global(i64t, None, "slang_rc_owner");
+                let g = self.module.add_global(i64t, None, "zell_rc_owner");
                 g.set_linkage(Linkage::External);
                 g.set_thread_local(true);
                 g
             }
         };
         let tag = b.build_load(i64t, owner_g.as_pointer_value(), "owner").unwrap().into_int_value();
-        let hi = b.build_right_shift(rc, i64t.const_int(SLANG_RC_OWNER_SHIFT, false), false, "").unwrap();
-        let hi = b.build_and(hi, i64t.const_int(SLANG_RC_OWNER_MASK, false), "").unwrap();
+        let hi = b.build_right_shift(rc, i64t.const_int(ZELL_RC_OWNER_SHIFT, false), false, "").unwrap();
+        let hi = b.build_and(hi, i64t.const_int(ZELL_RC_OWNER_MASK, false), "").unwrap();
         let own = b.build_int_compare(IntPredicate::EQ, hi, tag, "").unwrap();
         let i16t = self.ctx.i16_type();
         let bias = b.build_int_truncate(rc, i16t, "b").unwrap();
@@ -491,7 +491,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
     }
 
-    /// `slang_value_ops*` for elements of type `t` (NULL for plain data).
+    /// `zell_value_ops*` for elements of type `t` (NULL for plain data).
     pub(crate) fn value_ops(&mut self, t: TypeId) -> PointerValue<'ctx> {
         // Element types holding references to cyclic objects get their own
         // ops with a visitor (`{retain, release, visit}`, ABI.md 3.3/3.8).
@@ -499,9 +499,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match self.rc_kind(t) {
             _ if cyclic => {}
             RcKind::None => return self.ptr_ty().const_null(),
-            RcKind::Ref => return self.rt_global("slang_ops_ref"),
-            RcKind::Ptr => return self.rt_global("slang_ops_ptr"),
-            RcKind::Slice => return self.rt_global("slang_ops_slice"),
+            RcKind::Ref => return self.rt_global("zell_ops_ref"),
+            RcKind::Ptr => return self.rt_global("zell_ops_ptr"),
+            RcKind::Slice => return self.rt_global("zell_ops_slice"),
             _ => {}
         }
         if let Some(p) = self.value_ops.get(&t) {
@@ -519,7 +519,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         g.as_pointer_value()
     }
 
-    /// `%slang_type_info = { ptr name, i64 size, ptr drop }`.
+    /// `%zell_type_info = { ptr name, i64 size, ptr drop }`.
     pub(crate) fn type_info_ty(&self) -> StructType<'ctx> {
         self.ctx.struct_type(&[self.ptr_ty().into(), self.i64_ty().into(), self.ptr_ty().into()], false)
     }
@@ -561,7 +561,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     }
 
     /// Body of `leak.fields` (see [`CodeGen::leak_fields_fn`]): one
-    /// `slang_leak_fields(ti, {offset, "Type.Field"}..., {-1, NULL})` per
+    /// `zell_leak_fields(ti, {offset, "Type.Field"}..., {-1, NULL})` per
     /// struct type info with `*T` fields (runtime/ABI.md 3.5).
     pub(crate) fn finish_leak_fields(&mut self) -> super::R<()> {
         let Some(f) = self.leak_fields_fn else { return Ok(()) };
@@ -598,10 +598,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         self.with_helper(f, |cg| {
             for (ti, g, acyclic) in regs {
-                cg.call_rt("slang_leak_fields", &[ti.into(), g.into()]);
+                cg.call_rt("zell_leak_fields", &[ti.into(), g.into()]);
                 // `@acyclic` promises are checked against the leaked cycles.
                 if let Some(name) = acyclic {
-                    cg.call_rt("slang_leak_acyclic", &[ti.into(), name.into()]);
+                    cg.call_rt("zell_leak_acyclic", &[ti.into(), name.into()]);
                 }
             }
             cg.b.build_return(None).unwrap();
@@ -637,7 +637,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     }
 
     /// An immortal string literal (ABI.md §4.1); borrowed:
-    /// `{ i64 -1, ptr @slang_type_string, i64 len, ptr <bytes>, [len+1 x i8] }`
+    /// `{ i64 -1, ptr @zell_type_string, i64 len, ptr <bytes>, [len+1 x i8] }`
     /// whose data pointer (+24) addresses its own bytes (+32).
     pub(crate) fn str_lit(&mut self, s: &str) -> PointerValue<'ctx> {
         if let Some(p) = self.strings.get(s) {
@@ -645,7 +645,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         let bytes = self.ctx.const_string(s.as_bytes(), true);
         let st = self.ctx.struct_type(&[self.i64_ty().into(), self.ptr_ty().into(), self.i64_ty().into(), self.ptr_ty().into(), bytes.get_type().into()], false);
-        let tis = self.rt_global("slang_type_string");
+        let tis = self.rt_global("zell_type_string");
         let n = self.fresh();
         let g = self.module.add_global(st, None, &format!(".str.{n}"));
         let i32t = self.ctx.i32_type();

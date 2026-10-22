@@ -1,23 +1,23 @@
 //! LLVM code generation: lowers a typed [`hir::Program`] to an LLVM module
-//! that links against the C runtime (`runtime/libslang_rt.a`, contract in
+//! that links against the C runtime (`runtime/libzell_rt.a`, contract in
 //! `runtime/ABI.md`).
 //!
 //! # Value representation (compiler-side ABI, v0.1)
 //!
-//! | Slang type | LLVM | Notes |
+//! | Zell type | LLVM | Notes |
 //! |---|---|---|
 //! | `int`, `uint`, `intN`, `uintN`, `byte` | `i64`, `iN` | signedness only in instructions |
 //! | `float` / `float32` | `double` / `float` | |
 //! | `bool` | `i1` | `zeroext` at every C call boundary; 1 byte in memory |
 //! | `char` | `i32` | code point |
-//! | `string` | `ptr` | runtime `slang_string*` (`{hdr, len, data ptr}`, ABI.md §4.1: owned or a view), NULL is `""`; literals are immortal constant globals whose `data` points at their own bytes |
+//! | `string` | `ptr` | runtime `zell_string*` (`{hdr, len, data ptr}`, ABI.md §4.1: owned or a view), NULL is `""`; literals are immortal constant globals whose `data` points at their own bytes |
 //! | `*T` | `ptr` | address of the `T` itself: the **payload** of a heap object (object + 16), owning one reference; see "Pointers" |
 //! | `weak *T` | `ptr` | runtime weak box (ABI.md §3.4), NULL = nil |
 //! | struct | named LLVM struct by value | fields in HIR order |
 //! | `[N]T` | `[N x T]` | by value |
 //! | `[]T` | `{ptr data, i64 len, i64 cap, ptr backing}` | ABI.md §5, the slice value owns one reference to `backing` |
-//! | `map[K]V` | `ptr` | runtime `slang_map*`; `string`/`int` keys use the fast paths |
-//! | `error` | `ptr` | runtime `slang_error*`, NULL = no error |
+//! | `map[K]V` | `ptr` | runtime `zell_map*`; `string`/`int` keys use the fast paths |
+//! | `error` | `ptr` | runtime `zell_error*`, NULL = no error |
 //! | `T!` | `{T, ptr err}` | `void!` is just the `ptr err` |
 //! | tuple | anonymous LLVM struct | |
 //! | plain enum | `i32` tag | variant index |
@@ -25,12 +25,12 @@
 //! | interface | `{ptr data, ptr vtable}` | vtable `{ptr typeid, i64 boxed, ptr method0, ...}` (methods in interface order) |
 //! | `any` | `{ptr data, ptr typeinfo}` | boxed, except bool/integers/floats/char, whose value bits are the data word (ABI.md §3.7) |
 //! | `func(..)` | `{ptr fn, ptr env}` | `fn(env, args...)`; `env` is NULL or an env object |
-//! | `Task<T>` | `ptr` | runtime `slang_task*` |
+//! | `Task<T>` | `ptr` | runtime `zell_task*` |
 //!
 //! **Heap objects.** Every heap allocation made by compiled code is an ABI.md
-//! §3 object (`slang_object_new`): `new T`, boxes (struct values stored in
+//! §3 object (`zell_object_new`): `new T`, boxes (struct values stored in
 //! interfaces / `any` / errors), *cells* and closure environments. One
-//! `slang_type_info` per boxed type `T` (`ti.<T>`) has a `drop` that releases
+//! `zell_type_info` per boxed type `T` (`ti.<T>`) has a `drop` that releases
 //! the references inside the `T` payload at offset 16. Its address is also
 //! the run-time type id used by type switches and `errors.As`; the type id of
 //! a stored `*S` is `ti.<*S>`.
@@ -38,8 +38,8 @@
 //! **Reflection** ([`reflect`], ABI.md §17). When the program uses
 //! `std.reflect` (`Program::reflect`), every type id is instead the payload
 //! of an immortal `std.reflect.TypeInfo` object whose first three words are
-//! the `slang_type_info` (`name`, `size`, `drop`), so the same pointer is
-//! the box type, `vtable[0]`, the `any` type word and a Slang
+//! the `zell_type_info` (`name`, `size`, `drop`), so the same pointer is
+//! the box type, `vtable[0]`, the `any` type word and a Zell
 //! `*reflect.TypeInfo`. Tables reference fields, methods (packed `invoke`
 //! thunks and closure thunks), variants and attribute values (constant
 //! structs) as immortal objects through NULL-backed slices. Functions
@@ -49,7 +49,7 @@
 //! **Interfaces.** Storing a struct value boxes a copy (`boxed = 1`);
 //! storing a `*S` stores the pointer (`boxed = 0`). Either way a non-nil
 //! interface value owns one reference to the object whose payload `data`
-//! is (released with `slang_ptr_release(data)`). Method `m` is `vtable[2 + m](data, args...)`;
+//! is (released with `zell_ptr_release(data)`). Method `m` is `vtable[2 + m](data, args...)`;
 //! methods promoted from embedded structs get an adjusting thunk. An
 //! interface default method is one function `F(iface this, args...)`; the
 //! slot of a type that does not declare the method holds a thunk
@@ -58,17 +58,17 @@
 //! are thunks loading the enum from `data` (enum methods take the value).
 //! `case I x:` on an `any` looks the vtable up with `iface.conv.N(typeid)`
 //! (NULL = no match) and unwraps a stored `*S` when `boxed = 0`. Storing a
-//! struct in an `error` boxes it and calls `slang_error_new_typed` with a
-//! `Message()` thunk; `error` method 0 is `slang_error_message`.
+//! struct in an `error` boxes it and calls `zell_error_new_typed` with a
+//! `Message()` thunk; `error` method 0 is `zell_error_message`.
 //!
 //! **Arenas.** `Builtin::ArenaNew` (`*T`) and `ArenaSlice` (`[]T`) call
-//! `slang_arena_object` / `slang_arena_slice` (runtime/ABI.md 3.6): the
-//! objects carry refcount `SLANG_RC_ARENA`, so the ordinary retain/release
+//! `zell_arena_object` / `zell_arena_slice` (runtime/ABI.md 3.6): the
+//! objects carry refcount `ZELL_RC_ARENA`, so the ordinary retain/release
 //! calls on them are no-ops and no special casing is emitted.
 //!
 //! **Leak check names.** With `--leak-check` type names (mode 2), C `main`
 //! calls `leak.fields`, which registers the `*T` field offsets of every
-//! struct type info as `"Type.Field"` (`slang_leak_fields`, ABI.md 3.5).
+//! struct type info as `"Type.Field"` (`zell_leak_fields`, ABI.md 3.5).
 //!
 //! **Closures.** A closure is `{fn, env}`. `env` is NULL for closures without
 //! captures, else an object `{hdr, i64 n, ptr cell[n]}` whose drop releases
@@ -88,20 +88,20 @@
 //! its payload. Leaving the scope of such a `p` releases the fields.
 //!
 //! **Reference counting fast paths.** With `Options::inline_rc` (`-O3`)
-//! `call_rt` routes `slang_retain`/`slang_release`/`slang_ptr_*` to internal
+//! `call_rt` routes `zell_retain`/`zell_release`/`zell_ptr_*` to internal
 //! `alwaysinline` helpers (`rc.rs`, `rc_inline_fn`) that update the count
 //! inline while the process is single-threaded, or the owner's 16-bit half
 //! of a biased count owned by this thread (the runtime's thread-local
-//! `slang_rc_owner`, declared `external thread_local`), and call the
+//! `zell_rc_owner`, declared `external thread_local`), and call the
 //! runtime otherwise (ABI.md 3.1, 3.2).
 //!
-//! **Fallible results** travel as first-class aggregates between Slang
-//! functions. Stdlib externs follow `slang_rt.h`: `[]T` params as
-//! `const slang_slice*`, a `[]T` result through a trailing out-pointer,
-//! `T!` as `T` plus a trailing `slang_error **err` (`void!`: only the
+//! **Fallible results** travel as first-class aggregates between Zell
+//! functions. Stdlib externs follow `zell_rt.h`: `[]T` params as
+//! `const zell_slice*`, a `[]T` result through a trailing out-pointer,
+//! `T!` as `T` plus a trailing `zell_error **err` (`void!`: only the
 //! out-error). Errors record a return trace (ABI.md §7.4, [`trace`]):
 //! creation sites and every `?` / catching `try` pass a static
-//! `slang_error_site` to the runtime. A `?` inside a block `try` branches
+//! `zell_error_site` to the runtime. A `?` inside a block `try` branches
 //! to its `catch` ([`TryTarget`]) instead of returning.
 //!
 //! **Functions.** Every function has a single exit block: `return` stores
@@ -120,8 +120,8 @@
 //! closures (their env), interface/`any` values, and aggregates (structs,
 //! tuples, arrays, `T!`, data enums) containing those or a struct with a
 //! destructor, via generated per-type retain/release helpers (also used as
-//! `slang_value_ops` for containers). `*T` uses `slang_ptr_retain/release`
-//! (header = payload - 16) and `slang_ops_ptr`.
+//! `zell_value_ops` for containers). `*T` uses `zell_ptr_retain/release`
+//! (header = payload - 16) and `zell_ops_ptr`.
 //!
 //! * Expression results are *owned* (+1: calls, constructors, `new`,
 //!   concatenation) or *borrowed* (loads from places, literals). Storing a
@@ -146,7 +146,7 @@
 //!   `try ... else return/break/continue`, `return`, `break`, `continue`
 //!   inside `catch` blocks).
 //! * Results are returned +1; runtime borrowed results are retained.
-//! * `s += x`, `s = s + x` (`slang_string_append`) and `xs = append(xs,
+//! * `s += x`, `s = s + x` (`zell_string_append`) and `xs = append(xs,
 //!   x)` on a local move the old value into the runtime call, which grows
 //!   uniquely referenced strings/backings in place.
 //! * **Destructors**: the release helper of a struct with `func Drop()`
@@ -170,20 +170,20 @@
 //!
 //! **Cycle collector** ([`cycles`], ABI.md 3.8). Types on a cycle of the
 //! type reference graph ([`crate::sema::cycles`]) are allocated with
-//! `slang_cycles_new_entry(entry, size)` (it sets the flag), where `entry` is a
+//! `zell_cycles_new_entry(entry, size)` (it sets the flag), where `entry` is a
 //! per-type registry entry (type info, payload visitor, destructor-only and
 //! release-only helpers, the `ti.<*S>` alias) that the runtime registers
 //! on first use; closure environments capturing such cells get a
 //! per-lambda type info and entry (alias: the lambda's function); every
-//! compiled `slang_value_ops` has a third `visit` word (non-NULL for
+//! compiled `zell_value_ops` has a third `visit` word (non-NULL for
 //! element types holding references to cyclic objects). Pins of a `*T` of
-//! a cyclic type (`expr.rs` `arg`/`keep`) read `slang_cycles_epoch` and are
-//! released with `slang_ptr_release_noroot` (`FnState::pins`).
+//! a cyclic type (`expr.rs` `arg`/`keep`) read `zell_cycles_epoch` and are
+//! released with `zell_ptr_release_noroot` (`FnState::pins`).
 //!
 //! **Leak check.** With [`Options::leak_check`] the C `main` calls
-//! `slang_leak_check_enable` first; after the entry point returns, the
+//! `zell_leak_check_enable` first; after the entry point returns, the
 //! globals are released (reverse initialisation order) before
-//! `slang_runtime_shutdown`, which reports live objects.
+//! `zell_runtime_shutdown`, which reports live objects.
 
 mod async_;
 mod cleanup;
@@ -299,7 +299,7 @@ pub(crate) enum Cleanup<'ctx> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options {
     /// 0: off; 1: report the number of live objects at exit; 2: also their
-    /// type names (`slang_leak_check_enable`).
+    /// type names (`zell_leak_check_enable`).
     pub leak_check: i32,
     /// Do not record error traces (`--no-error-trace`): the trace calls are
     /// elided; `errors.Trace` then returns "".
@@ -311,7 +311,7 @@ pub struct Options {
     /// The module will be optimised (`DW_AT_..._optimized` in the debug info).
     pub optimized: bool,
     /// Emit the reference-counting fast paths inline (`rc.rs`,
-    /// `rc_inline_fn`): `-O3`, or `SLANG_INLINE_RC=1` (they grow large
+    /// `rc_inline_fn`): `-O3`, or `ZELL_INLINE_RC=1` (they grow large
     /// programs' code by up to a third and their optimisation time by half,
     /// for a few percent on refcount-heavy loops; benchmarks/README.md).
     pub inline_rc: bool,
@@ -353,7 +353,7 @@ pub(crate) struct FnState<'a, 'ctx> {
     /// Cleanup entries that are *pins* of a `*T` of a cyclic type (a
     /// borrowed value retained for a call or a field access): the
     /// collection epoch read when it was taken, so the paired release can
-    /// skip recording a possible cycle root (`slang_ptr_release_noroot`).
+    /// skip recording a possible cycle root (`zell_ptr_release_noroot`).
     pub pins: HashMap<usize, inkwell::values::IntValue<'ctx>>,
     /// Per local: the slot holds a borrowed parameter (never released).
     pub borrowed: Vec<bool>,
@@ -404,7 +404,7 @@ pub struct CodeGen<'a, 'ctx> {
     /// (`iface::make_any`; the body of `any.inline` tests for them).
     pub(crate) any_inline_tys: Vec<TypeId>,
     /// `--leak-check` with type names: registers the `*T` fields of every
-    /// struct type info (`slang_leak_fields`); body emitted last.
+    /// struct type info (`zell_leak_fields`); body emitted last.
     pub(crate) leak_fields_fn: Option<FunctionValue<'ctx>>,
     pub(crate) thunks: HashMap<FuncId, FunctionValue<'ctx>>,
     pub(crate) method_thunks: HashMap<(u32, String), FunctionValue<'ctx>>,
@@ -442,7 +442,7 @@ pub struct CodeGen<'a, 'ctx> {
 /// (`x86-64`, `apple-m1` for macOS arm64, `generic` otherwise). The module's
 /// triple and data layout come from this machine, so type sizes, alignment
 /// and the C calling convention (SysV, Win64, AAPCS64) are the target's.
-/// The ABI boundary only passes scalars and pointers (`slang_slice` and
+/// The ABI boundary only passes scalars and pointers (`zell_slice` and
 /// other aggregates go by pointer, ABI.md), so the Win64 rules for structs
 /// by value and varargs never come into play.
 pub fn host_machine(opt: OptimizationLevel) -> Result<TargetMachine, String> {
@@ -491,7 +491,7 @@ pub fn emit_with<'ctx>(program: &Program, ctx: &'ctx Context, module_name: &str,
     let td = machine.get_target_data();
     module.set_data_layout(&td.get_data_layout());
     let ptr = ctx.ptr_type(inkwell::AddressSpace::default());
-    let slice_struct = ctx.opaque_struct_type("slang_slice");
+    let slice_struct = ctx.opaque_struct_type("zell_slice");
     slice_struct.set_body(&[ptr.into(), ctx.i64_type().into(), ctx.i64_type().into(), ptr.into()], false);
     let mut cg = CodeGen {
         ctx,
@@ -736,14 +736,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let argv = main.get_nth_param(1).unwrap();
         if self.opts.leak_check != 0 {
             let m = self.ctx.i32_type().const_int(self.opts.leak_check as u64, false);
-            self.call_rt("slang_leak_check_enable", &[m.into()]);
+            self.call_rt("zell_leak_check_enable", &[m.into()]);
             if self.opts.leak_check >= 2 {
                 let f = self.module.add_function("leak.fields", self.ctx.void_type().fn_type(&[], false), Some(Linkage::Internal));
                 self.leak_fields_fn = Some(f);
                 self.b.build_call(f, &[], "").unwrap();
             }
         }
-        self.call_rt("slang_runtime_init", &[argc.into(), argv.into()]);
+        self.call_rt("zell_runtime_init", &[argc.into(), argv.into()]);
         self.dbga_boot();
         for gid in &self.prog.global_init_order {
             let g = &self.prog.globals[gid.0 as usize];
@@ -767,20 +767,20 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let r = self.b.build_call(ef, &[], "").unwrap().try_as_basic_value().left();
         if self.prog.funcs[entry.0 as usize].is_async {
             let t = r.unwrap();
-            let slot = self.call_rt_v("slang_task_await", &[t.into()]).into_pointer_value();
+            let slot = self.call_rt_v("zell_task_await", &[t.into()]).into_pointer_value();
             if let Some(es) = err_slot {
                 let e = self.b.build_load(self.ptr_ty(), slot, "").unwrap();
-                self.call_rt("slang_retain", &[e.into()]);
+                self.call_rt("zell_retain", &[e.into()]);
                 self.b.build_store(es, e).unwrap();
             }
-            self.call_rt("slang_release", &[t.into()]);
+            self.call_rt("zell_release", &[t.into()]);
         } else if let (Some(es), Some(e)) = (err_slot, r) {
             self.b.build_store(es, e).unwrap();
         }
         // Globals are released in reverse initialisation order once no task
         // runs any more (their destructors run before the final shutdown).
         if self.prog.globals.iter().any(|g| self.needs_rc(g.ty)) {
-            self.call_rt("slang_runtime_drain", &[]);
+            self.call_rt("zell_runtime_drain", &[]);
         }
         for gid in self.prog.global_init_order.iter().rev() {
             let g = &self.prog.globals[gid.0 as usize];
@@ -800,14 +800,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let isnull = self.b.build_is_null(e, "").unwrap();
             self.b.build_conditional_branch(isnull, ok, failed).unwrap();
             self.b.position_at_end(failed);
-            self.call_rt("slang_error_report", &[e.into()]);
-            self.call_rt("slang_release", &[e.into()]);
+            self.call_rt("zell_error_report", &[e.into()]);
+            self.call_rt("zell_release", &[e.into()]);
             self.b.build_unconditional_branch(ok).unwrap();
             self.b.position_at_end(ok);
             code = self.b.build_select(isnull, i32t.const_zero(), i32t.const_int(1, false), "").unwrap().into_int_value();
         }
         self.dbga_exit(code);
-        self.call_rt("slang_runtime_shutdown", &[]);
+        self.call_rt("zell_runtime_shutdown", &[]);
         self.b.build_return(Some(&code)).unwrap();
         self.end_fn(saved, None);
         Ok(())

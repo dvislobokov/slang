@@ -1,0 +1,37 @@
+// HTML templates: the std.text.template engine with contextual
+// auto-escaping (see std.text.template's htmlctx.zl). Values of the
+// HTML, URL and JS types are trusted and inserted as they are where
+// their kind of content is expected.
+namespace std.html.template
+
+// Trusted HTML markup (not escaped in text context).
+struct HTML {
+    Text string
+}
+
+// A trusted URL (its scheme is not filtered).
+struct URL {
+    Text string
+}
+
+// A trusted JS expression (inserted as is in scripts).
+struct JS {
+    Text string
+}
+
+func Parse<T>(src string) std.text.template.Template<T>! {
+    var none = map[string]func([]std.text.template.Value) std.text.template.Value!{}
+    return std.text.template.parseHTML<T>("template", src, none)?
+}
+
+func ParseNamed<T>(name string, src string) std.text.template.Template<T>! {
+    var none = map[string]func([]std.text.template.Value) std.text.template.Value!{}
+    return std.text.template.parseHTML<T>(name, src, none)?
+}
+
+func ParseWith<T>(
+    src string,
+    funcs map[string]func([]std.text.template.Value) std.text.template.Value!,
+) std.text.template.Template<T>! {
+    return std.text.template.parseHTML<T>("template", src, funcs)?
+}

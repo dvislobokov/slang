@@ -1,0 +1,155 @@
+// test: std.cloud.s3 Signature V4 without a server: AWS SigV4 test-suite vectors (get-vanilla, get-vanilla-query-order-key-case, post-x-www-form-urlencoded: canonical request, string to sign, signature), the S3 documentation examples (GET Object with Range, a presigned URL; checked with botocore 1.43), RFC 3986 encoding and canonical query strings, the signing key chain, credentials from the environment and a shared credentials file, endpoint and addressing validation
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib5.s3_sigv4
+
+import std
+import std.cloud
+import std.io
+
+func show(name string, s s3.Signed) {
+    println("== " + name)
+    println(s.CanonicalRequest)
+    println("--")
+    println(s.StringToSign)
+    println("--")
+    println(s.Signature)
+}
+
+func main() void! {
+    var ak = "AKIDEXAMPLE"
+    var sk = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+    var empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    var h = map[string]string{"Host": "example.amazonaws.com", "X-Amz-Date": "20150830T123600Z"}
+    show(
+        "get-vanilla",
+        s3.SignV4("GET", "/", "", h, empty, ak, sk, "us-east-1", "service", "20150830T123600Z"),
+    )
+    show(
+        "get-vanilla-query-order-key-case",
+        s3.SignV4(
+            "GET",
+            "/",
+            "Param2=value2&Param1=value1",
+            h,
+            empty,
+            ak,
+            sk,
+            "us-east-1",
+            "service",
+            "20150830T123600Z",
+        ),
+    )
+    var hp = map[string]string{
+        "Host": "example.amazonaws.com",
+        "X-Amz-Date": "20150830T123600Z",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    var body = crypto.hash.Sha256Hex("Param1=value1")
+    show(
+        "post-x-www-form-urlencoded",
+        s3.SignV4("POST", "/", "", hp, body, ak, sk, "us-east-1", "service", "20150830T123600Z"),
+    )
+    var key = s3.SigningKey(sk, "20150830", "us-east-1", "iam")
+    println("signing key (iam)", encoding.hex.Encode(key))
+
+    // S3 documentation: GET Object with a Range, then a presigned URL,
+    // through the client with a fixed clock and virtual-hosted addressing
+    var s3ak = "AKIAIOSFODNN7EXAMPLE"
+    var s3sk = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    var hg = map[string]string{
+        "Host": "examplebucket.s3.amazonaws.com",
+        "Range": "bytes=0-9",
+        "x-amz-content-sha256": empty,
+        "x-amz-date": "20130524T000000Z",
+    }
+    var g = s3.SignV4(
+        "GET",
+        "/test.txt",
+        "",
+        hg,
+        empty,
+        s3ak,
+        s3sk,
+        "us-east-1",
+        "s3",
+        "20130524T000000Z",
+    )
+    show("s3-get-object", g)
+    println(g.Authorization)
+    var clock = func() int {
+        return 1369353600000
+    }
+    var c = s3.NewClient(s3.Config{
+        Endpoint: "https://s3.amazonaws.com",
+        Region: "us-east-1",
+        AccessKey: s3ak,
+        SecretKey: s3sk,
+        Clock: clock,
+    })?
+    println(c.Presign("GET", "examplebucket", "test.txt", 86400)?)
+    var ps = s3.NewClient(s3.Config{
+        Endpoint: "http://localhost:9000",
+        AccessKey: s3ak,
+        SecretKey: s3sk,
+        PathStyle: true,
+        SessionToken: "tok/en+",
+        Clock: clock,
+    })?
+    println(ps.Presign("PUT", "my bucket", "a b/c+d.txt", 3600)?)
+    try c.Presign("GET", "b", "k", 0) catch err {
+        println(err)
+    }
+
+    // encoding
+    println(s3.URIEncode("a b/c+d~e_f.g-h%ü", false), s3.URIEncode("a/b", true))
+    println(s3.CanonicalQuery([
+        s3.Param{Key: "prefix", Value: "photos/2024 "},
+        s3.Param{Key: "list-type", Value: "2"},
+        s3.Param{Key: "delete"},
+        s3.Param{Key: "a", Value: "2"},
+        s3.Param{Key: "a", Value: "1"},
+    ]))
+
+    // credentials
+    os.Setenv("AWS_ACCESS_KEY_ID", "AKENV")?
+    os.Setenv("AWS_SECRET_ACCESS_KEY", "envsecret")?
+    os.Setenv("AWS_SESSION_TOKEN", "")?
+    var ec = s3.EnvCredentials()?
+    println(ec.AccessKey, ec.SecretKey, ec.Source)
+    var dir = fs.TempDir() + "/zell_s3_creds_" + strconv.Itoa(os.Pid())
+    fs.MkdirAll(dir)?
+    io.WriteFile(
+        dir + "/credentials",
+        "# comment\n[default]\naws_access_key_id = AKDEFAULT\naws_secret_access_key = defsecret\n\n[ci]\naws_access_key_id=AKCI\naws_secret_access_key=cisecret\naws_session_token = citoken\n",
+    )?
+    var fc = s3.FileCredentials(dir + "/credentials", "ci")?
+    println(fc.AccessKey, fc.SecretKey, fc.SessionToken, fc.Source)
+    var dc = s3.FileCredentials(dir + "/credentials", "")?
+    println(dc.AccessKey, dc.Source)
+    try s3.FileCredentials(dir + "/credentials", "nope") catch err {
+        println(strings.Contains(err.Message(), "profile \"nope\""))
+    }
+    fs.RemoveAll(dir)?
+    // NewClient without keys falls back to the environment
+    var envc = s3.NewClient(s3.Config{Endpoint: "http://127.0.0.1:9", PathStyle: true})?
+    println(
+        "env client presign has AKENV:",
+        strings.Contains(envc.Presign("GET", "b", "k", 60)?, "AKENV%2F"),
+    )
+    os.Setenv("AWS_ACCESS_KEY_ID", "")?
+    try s3.EnvCredentials() catch err {
+        println(err)
+    }
+    try s3.NewClient(s3.Config{Endpoint: "ftp://x", AccessKey: "a", SecretKey: "b"}) catch err {
+        println(err)
+    }
+    try s3.NewClient(s3.Config{
+        Endpoint: "http://x",
+        AccessKey: "a",
+        SecretKey: "b",
+        UnsignedPayload: true,
+    }) catch err {
+        println(err)
+    }
+}

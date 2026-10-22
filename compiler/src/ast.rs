@@ -1,4 +1,4 @@
-//! Abstract syntax tree for Slang. See DESIGN.md for the language.
+//! Abstract syntax tree for Zell. See DESIGN.md for the language.
 //!
 //! The parser produces exactly these types; later phases (name resolution,
 //! type checking, codegen) consume them. Every node carries a `Span`.
@@ -173,7 +173,7 @@ pub struct FuncDecl {
     pub is_static: bool,
     /// `extern func Name(params) ret`: a declaration of a runtime (C)
     /// function without a body; only in the generated stdlib declaration
-    /// files `std/**/*_extern.sl` (sema/stdfs.rs).
+    /// files `std/**/*_extern.zl` (sema/stdfs.rs).
     pub is_extern: bool,
     pub span: Span,
 }

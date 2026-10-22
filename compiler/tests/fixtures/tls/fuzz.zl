@@ -1,0 +1,211 @@
+namespace tlstest.fuzz
+
+import std.io
+import std
+import std.net
+import std.crypto
+
+// Fuzz smoke test for compiler/tests/tls.rs: mutated and random inputs to
+// the X.509/PEM/private-key parsers, the record opener, and TLS servers and
+// clients talking to peers that send garbage. Nothing may panic or leak;
+// every input is either accepted or rejected with an error.
+
+const leafPEM = `-----BEGIN CERTIFICATE-----
+MIICuDCCAaCgAwIBAgIUdS+lqrpbi21LXEqyZdXdIhI1ztUwDQYJKoZIhvcNAQEL
+BQAwMDEfMB0GA1UEAwwWWmVsbCBUZXN0IEludGVybWVkaWF0ZTENMAsGA1UECgwE
+WmVsbDAgFw0yNjEwMjAxODQ1MjJaGA8yMTI2MDkyNjE4NDUyMlowGjEYMBYGA1UE
+AwwPd3d3LmV4YW1wbGUuY29tMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExAST
+XHe0RsnyrSxLcoiirNjWMx7PqbAzLL6zsT3D6danH2brCOamdHvlwAQD/1gvDGDx
+Gk4StMGclv137JceNKOBqDCBpTAJBgNVHRMEAjAAMA4GA1UdDwEB/wQEAwIHgDAT
+BgNVHSUEDDAKBggrBgEFBQcDATAzBgNVHREELDAqgg93d3cuZXhhbXBsZS5jb22C
+ESouYXBpLmV4YW1wbGUuY29thwR/AAABMB8GA1UdIwQYMBaAFA5+xfEnGSIhHnX6
+qv+7nMGhHoFaMB0GA1UdDgQWBBTKkSv+VuG9XHMaC+NkXLT6nmBX0jANBgkqhkiG
+9w0BAQsFAAOCAQEAL5EUSUR0yugL8fzpN5xvitEm34LLRlmOlPXATcc/pbgJrd/w
+t1SdK5dOmc7+H/Mp/oGORDwCba5ulOLtvD3ARXFGiDytDtFy72Nfjsf8i7q3wiRb
+as1Z0L7pTwxWEwqMk20MlCT2YY/Jzp0l0+iM9ImVapV4W8msM3eHMBPzd46bAm7T
+LdPvoj861+NYZNIdGPuzC+mxZvruSg68rBn3IKi55l1i4lkIFZImBEnN2ZvNH02n
+hvNkO6ybf/OBrEhDOd1yi5YjhGfBgiQ1hmUoPsO6x6vLJnfCwriLMspUQnTrZtdy
+Tovka5DjjvpKMNx3z/q4aaVB7sKkQv9KuDv6Aw==
+-----END CERTIFICATE-----`
+
+const interPEM = `-----BEGIN CERTIFICATE-----
+MIICujCCAmGgAwIBAgIUc8cZK8vXLXjqQVs7y79Judx/sq0wCgYIKoZIzj0EAwIw
+KzEaMBgGA1UEAwwRWmVsbCBUZXN0IFJvb3QgQ0ExDTALBgNVBAoMBFplbGwwIBcN
+MjYxMDIwMTg0NTIyWhgPMjEyNjA5MjYxODQ1MjJaMDAxHzAdBgNVBAMMFlplbGwg
+VGVzdCBJbnRlcm1lZGlhdGUxDTALBgNVBAoMBFplbGwwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQDwoCMOzNwNfjrKfItar6lpMus3Rka/svn+Rh5XLWwl
+Ohvi28QYSnmC5BsKNPyc0OaUEkejsTvX8HqCkEfzgG8yLTbgnfS8tLHgds01FNYX
+yuz1u0kXU4C/vHhDpoCQEuzw4JWlYEZescGQ0UsL9WIIuxRkyxGQrXBbQPuyWBoX
+Sm32J4aGQpg1V1KeSGxyRrzpFQ5HmV4D5ouK8s8iel7w3x3BhrJJ6gRriiKyo4L4
+tTM+FNF0fzchpM1Ej7Wi/E1y3l2ol0pDKHHJsQf4pJLEZ8MGp6fzCI1W+IG2NPHk
++ISkFqtVGScN+ul7u4CE+ksxbEQEVw2+zOEfFxX8BXTnAgMBAAGjgZAwgY0wEgYD
+VR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAQYwJwYDVR0eBCAwHqAcMA2C
+C2V4YW1wbGUuY29tMAuCCWxvY2FsaG9zdDAdBgNVHQ4EFgQUDn7F8ScZIiEedfqq
+/7ucwaEegVowHwYDVR0jBBgwFoAUTjT1K99WSlqTf/Z8XKsxinypc9QwCgYIKoZI
+zj0EAwIDRwAwRAIgAxLcnQH0NqZdDMgAGz9bA3A2iqZgjepB6FzhRk0MZUUCIDP1
+0nVlBRa8DkaleDFRrHND2aB3zdTsJV1kkFRxtfPa
+-----END CERTIFICATE-----`
+
+const certPEM = `-----BEGIN CERTIFICATE-----
+MIIBtjCCAV2gAwIBAgIBATAKBggqhkjOPQQDAjArMRIwEAYDVQQDDAlsb2NhbGhv
+c3QxFTATBgNVBAoMDFplbGwgZXhhbXBsZTAgFw0wMDAxMDEwMDAwMDBaGA8yMTAw
+MDEwMTAwMDAwMFowKzESMBAGA1UEAwwJbG9jYWxob3N0MRUwEwYDVQQKDAxaZWxs
+IGV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASc1zlpmSuVZO3wBCod
+f/2ckVINRHTUmOSXBzpVELQe6p45BK0zK1pyWibOTfHSGzqN94wNd2hMhWaKQIs0
+wMaQo3AwbjAaBgNVHREEEzARgglsb2NhbGhvc3SHBH8AAAEwEwYDVR0lBAwwCgYI
+KwYBBQUHAwEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYDVR0OBBYE
+FO3Pu7WkrsFL3x1cVZbVkCe31m0RMAoGCCqGSM49BAMCA0cAMEQCIGpTh2h8NI9Z
+GuHmqgmIvc/Q23bpqOkAIp/C00RTYPGZAiA1yB4ABbqgvV4v17SkrLUxptZkTCTc
+Qt9q+e7qPOGNFQ==
+-----END CERTIFICATE-----`
+
+const keyPEM = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgjA2gD248y45QVG96
+fXrFkd1iVNl1OOz2VN/OkZMN5jehRANCAASc1zlpmSuVZO3wBCodf/2ckVINRHTU
+mOSXBzpVELQe6p45BK0zK1pyWibOTfHSGzqN94wNd2hMhWaKQIs0wMaQ
+-----END PRIVATE KEY-----`
+
+// A copy of b with a few random changes (flip, overwrite, cut, extend).
+func mutate(b []byte) []byte {
+    var out []byte = []
+    for x in b {
+        out = append(out, x)
+    }
+    var k = random.IntN(4) + 1
+    for k > 0 {
+        k -= 1
+        var op = random.IntN(4)
+        if len(out) == 0 {
+            out = append(out, byte(random.IntN(256)))
+        } else if op == 0 {
+            var i = random.IntN(len(out))
+            out[i] = out[i] ^ byte(1 << random.IntN(8))
+        } else if op == 1 {
+            out[random.IntN(len(out))] = byte(random.IntN(256))
+        } else if op == 2 {
+            out = out[..random.IntN(len(out))]
+        } else {
+            out = append(out, byte(random.IntN(256)))
+        }
+    }
+    return out
+}
+
+func randomBytes(n int) []byte {
+    var out []byte = []
+    for len(out) < n {
+        out = append(out, byte(random.IntN(256)))
+    }
+    return out
+}
+
+func fuzzX509() void! {
+    var seeds []([]byte) = []
+    for b in x509.DecodePEM(leafPEM + "\n" + interPEM + "\n" + certPEM + "\n" + keyPEM)? {
+        seeds = append(seeds, b.Bytes)
+    }
+    var parsed = 0
+    var rejected = 0
+    for i in 0..3000 {
+        var input = mutate(seeds[i % len(seeds)])
+        if i % 7 == 0 {
+            input = randomBytes(random.IntN(300))
+        }
+        var c = try x509.ParseDER(input) else nil
+        if c != nil {
+            parsed += 1
+            try c.VerifyHostname("www.example.com") catch err {
+                rejected += 0
+            }
+            _ = c.Subject.String()
+        } else {
+            rejected += 1
+        }
+        _ = try x509.ParsePrivateKey(input) else x509.PrivateKey{}
+        var text = "-----BEGIN CERTIFICATE-----\n" + encoding.base64.Encode(input) + "\n-----END CERTIFICATE-----\n"
+        if i % 5 == 0 {
+            text = strings.FromBytes(input)
+        }
+        _ = try x509.ParsePEM(text) else []
+    }
+    println("x509: 3000 inputs,", parsed + rejected, "handled")
+}
+
+func fuzzRecords() void! {
+    var key = randomBytes(16)
+    var iv = randomBytes(12)
+    var good = tls.SealRecord(0x1301, key, iv, 0, 23, strings.Bytes("payload"))?
+    var opened = 0
+    for i in 0..2000 {
+        var rec = mutate(good)
+        if i % 3 == 0 {
+            rec = randomBytes(random.IntN(64))
+        }
+        var r = try tls.OpenRecord(0x1301, key, iv, 0, rec) else []
+        if len(r) > 0 && encoding.hex.Encode(rec) != encoding.hex.Encode(good) {
+            opened += 1
+        }
+    }
+    println("records: 2000 inputs, forgeries accepted:", opened)
+}
+
+// A raw TCP peer that sends garbage (sometimes behind a plausible header).
+async func garbagePeer(c net.Conn, round int) {
+    var data = randomBytes(random.IntN(600) + 1)
+    if round % 2 == 0 {
+        // a handshake record header followed by random handshake bytes
+        var hdr = [byte(22), byte(3), byte(1), byte(len(data) >> 8), byte(len(data) & 255)]
+        _ = try await c.Write(hdr) else 0
+    }
+    _ = try await c.Write(data) else 0
+    // closing at once: a peer that waits would deadlock on garbage that
+    // announces more bytes than it carries
+    c.Close()
+}
+
+async func fuzzServer(cert tls.Certificate) void! {
+    var tl = tls.Listen("127.0.0.1:0", tls.ServerConfig{Certificates: [cert]})?
+    var addr = fmt.Format("127.0.0.1:{0}", tl.Port())
+    var failed = 0
+    for i in 0..150 {
+        var raw = await net.Dial(addr)?
+        var peer = garbagePeer(raw, i)
+        var c = await tl.Accept()?
+        try await c.Handshake() catch err {
+            failed += 1
+        }
+        c.Close()
+        await peer
+    }
+    tl.Close()
+    println("server: 150 garbage clients, handshakes failed:", failed)
+}
+
+async func fuzzClient() void! {
+    var l = net.Listen("127.0.0.1:0")?
+    var addr = fmt.Format("127.0.0.1:{0}", l.Port())
+    var failed = 0
+    for i in 0..150 {
+        var dial = tls.DialTimeout(addr, tls.Config{InsecureSkipVerify: true}, 5000)
+        var raw = await l.Accept()?
+        var peer = garbagePeer(raw, i)
+        var c = try await dial catch err {
+            failed += 1
+            await peer
+            continue
+        }
+        c.Close()
+        await peer
+    }
+    l.Close()
+    println("client: 150 garbage servers, handshakes failed:", failed)
+}
+
+async func main() void! {
+    random.Seed(8448)
+    fuzzX509()?
+    fuzzRecords()?
+    var cert = tls.LoadKeyPair(certPEM, keyPEM)?
+    await fuzzServer(cert)?
+    await fuzzClient()?
+}

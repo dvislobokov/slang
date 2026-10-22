@@ -7,10 +7,10 @@ use crate::span::SourceFile;
 use crate::{ast, lexer, parser, sema};
 use std::path::{Path, PathBuf};
 
-/// The `.sl` files of `path`: the file itself, or every `.sl` file under a
+/// The `.zl` files of `path`: the file itself, or every `.zl` file under a
 /// directory (recursively), sorted by path for deterministic output. Files
 /// of a directory whose name suffix excludes them on the current target
-/// (`x_windows.sl` on Linux, see [`crate::target::Target::excludes_file`])
+/// (`x_windows.zl` on Linux, see [`crate::target::Target::excludes_file`])
 /// are left out; a file named explicitly is always taken.
 pub fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
     if path.is_file() {
@@ -24,7 +24,7 @@ pub fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
             let p = entry?.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|e| e == "sl") && !target.excludes_file(&p.to_string_lossy()) {
+            } else if p.extension().is_some_and(|e| e == "zl") && !target.excludes_file(&p.to_string_lossy()) {
                 out.push(p);
             }
         }

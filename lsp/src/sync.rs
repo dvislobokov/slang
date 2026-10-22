@@ -4,7 +4,7 @@
 //!
 //! Positions are UTF-16 (the negotiated `position_encoding`); lines end at
 //! `\n` (a `\r` before it is not part of the line), as in
-//! [`slang::span::SourceFile`]. Out-of-range positions are clamped like
+//! [`zell::span::SourceFile`]. Out-of-range positions are clamped like
 //! the LSP specification asks: a character past the end of its line means
 //! the end of the line, a line past the end of the text the end of the
 //! text.

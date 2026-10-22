@@ -1,4 +1,4 @@
-//! Compilation session for tools (LSP, `slang fmt`, ...): a set of source
+//! Compilation session for tools (LSP, `zell fmt`, ...): a set of source
 //! files kept in memory and re-analysed on demand (docs/TOOLING.md,
 //! "Session API").
 //!
@@ -13,7 +13,7 @@
 //! takes part in semantic analysis with its *current* text and all
 //! positions (diagnostics, symbols, references) refer to it.
 //!
-//! Read-only files: dependency sources (`.slang/deps/**`) are ordinary
+//! Read-only files: dependency sources (`.zell/deps/**`) are ordinary
 //! session files marked with [`Session::set_read_only`]; the standard
 //! library sources on disk come from a [`StdIndex`]
 //! ([`Session::set_std_index`]): they are not analysed (the compiler has
@@ -424,8 +424,8 @@ mod tests {
 
     fn session() -> Session {
         let mut s = Session::new();
-        s.update_file("models.sl", MODELS);
-        s.update_file("main.sl", MAIN);
+        s.update_file("models.zl", MODELS);
+        s.update_file("main.zl", MAIN);
         s
     }
 
@@ -434,8 +434,8 @@ mod tests {
         let a = session().analyze();
         assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
         assert!(a.program().is_some());
-        let main = a.file_index("main.sl").unwrap();
-        let models = a.file_index("models.sl").unwrap();
+        let main = a.file_index("main.zl").unwrap();
+        let models = a.file_index("models.zl").unwrap();
         let off = MAIN.find("Hello").unwrap() as u32 + 1;
         let loc = a.definition_at(main, off).unwrap();
         assert_eq!(loc.file, models);
@@ -456,21 +456,21 @@ mod tests {
         // A broken member before the method: the struct and its method
         // survive recovery, with current positions.
         let broken = MODELS.replace("Name string\n", "Name string\n    func (\n");
-        s.update_file("models.sl", broken.clone());
+        s.update_file("models.zl", broken.clone());
         let a = s.analyze();
-        let models = a.file_index("models.sl").unwrap();
+        let models = a.file_index("models.zl").unwrap();
         assert!(a.diagnostics.iter().all(|d| d.file == models), "{:?}", a.diagnostics);
         assert!(!a.diagnostics.is_empty());
-        // main.sl still resolves against models.sl, at its new position.
-        let main = a.file_index("main.sl").unwrap();
+        // main.zl still resolves against models.zl, at its new position.
+        let main = a.file_index("main.zl").unwrap();
         let loc = a.definition_at(main, MAIN.find("Hello").unwrap() as u32).unwrap();
         assert_eq!(loc.file, models);
         assert_eq!(&broken[loc.name_span.start as usize..loc.name_span.end as usize], "Hello");
-        // An unfinished body in main.sl: `u` and its members still resolve.
+        // An unfinished body in main.zl: `u` and its members still resolve.
         let main_broken = MAIN.replace("    println(u.Hello())\n", "    println(u.Hello())\n    var z = u.\n");
-        s.update_file("main.sl", main_broken.clone());
+        s.update_file("main.zl", main_broken.clone());
         let a = s.analyze();
-        let main = a.file_index("main.sl").unwrap();
+        let main = a.file_index("main.zl").unwrap();
         let off = main_broken.find("u.\n").unwrap() as u32;
         let id = a.symbol_at(main, off).expect("u resolves in the broken line");
         assert_eq!(a.index.symbol(id).signature, "var u User");
@@ -482,14 +482,14 @@ mod tests {
     fn analysis_survives_every_line_prefix() {
         // Sema must tolerate whatever the recovering parser produces.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        for name in ["examples/bank.sl", "examples/structs.sl", "examples/async.sl", "examples/generics.sl"] {
+        for name in ["examples/bank.zl", "examples/structs.zl", "examples/async.zl", "examples/generics.zl"] {
             let text = std::fs::read_to_string(root.join(name)).unwrap();
             let mut cuts: Vec<usize> = text.match_indices('\n').map(|(i, _)| i).collect();
             cuts.extend(text.char_indices().map(|(i, _)| i).step_by(37));
             cuts.sort();
             for cut in cuts {
                 let mut s = Session::new();
-                s.update_file("f.sl", &text[..cut]);
+                s.update_file("f.zl", &text[..cut]);
                 let a = s.analyze();
                 for d in &a.diagnostics {
                     assert!(d.span.end as usize <= cut, "{name}@{cut}: {d:?}");
@@ -502,7 +502,7 @@ mod tests {
     fn diagnostics_carry_codes_and_fixes() {
         let mut s = Session::new();
         let src = "namespace app\n\nimport std.strings\n\nfunc main() {\n    var x = 1\n}\n";
-        s.update_file("a.sl", src);
+        s.update_file("a.zl", src);
         let a = s.analyze();
         let d = a.diagnostics.iter().find(|d| d.code == Some(codes::UNUSED_VARIABLE)).expect("unused variable");
         let titles: Vec<&str> = d.fixes.iter().map(|f| f.title.as_str()).collect();
@@ -510,7 +510,7 @@ mod tests {
         let removed = apply_edits(src, &d.fixes[1].edits);
         assert_eq!(removed, "namespace app\n\nimport std.strings\n\nfunc main() {\n}\n");
         // Fixing the variable makes the unused import reportable.
-        s.update_file("a.sl", apply_edits(src, &d.fixes[0].edits));
+        s.update_file("a.zl", apply_edits(src, &d.fixes[0].edits));
         let a = s.analyze();
         let d = a.diagnostics.iter().find(|d| d.code == Some(codes::UNUSED_IMPORT)).expect("unused import");
         assert_eq!(apply_edits(&a.files[0].text, &d.fixes[0].edits), "namespace app\n\n\nfunc main() {\n    var _ = 1\n}\n");
@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn document_symbols_are_hierarchical() {
         let a = session().analyze();
-        let models = a.file_index("models.sl").unwrap();
+        let models = a.file_index("models.zl").unwrap();
         let syms = a.document_symbols(models);
         assert_eq!(syms[0].name, "app.models");
         let user = &syms[0].children[0];
@@ -539,10 +539,10 @@ mod tests {
         // A clone is a snapshot: later edits of the original do not reach it.
         let snapshot = s.clone();
         let mut s = s;
-        s.update_file("main.sl", MAIN.replace("u.Hello()", "u.Nope()"));
+        s.update_file("main.zl", MAIN.replace("u.Hello()", "u.Nope()"));
         assert!(snapshot.analyze().diagnostics.is_empty());
         assert!(!s.analyze().diagnostics.is_empty());
-        assert_eq!(snapshot.ast("main.sl").map(|f| f.decls.len()), Some(1));
+        assert_eq!(snapshot.ast("main.zl").map(|f| f.decls.len()), Some(1));
     }
 
     #[test]
@@ -562,33 +562,33 @@ mod tests {
     #[test]
     fn edits_reanalyse_only_the_units_they_reach() {
         let mut s = Session::new();
-        s.update_file("lib.sl", LIB);
-        s.update_file("main.sl", APP);
-        s.update_file("other.sl", OTHER);
+        s.update_file("lib.zl", LIB);
+        s.update_file("main.zl", APP);
+        s.update_file("other.zl", OTHER);
         let a = s.analyze();
         assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
         assert!(s.last_stats().full_run);
         // A body: only its own unit.
-        s.update_file("lib.sl", LIB.replace("x * 2", "x + x"));
+        s.update_file("lib.zl", LIB.replace("x * 2", "x + x"));
         let a = s.analyze();
         assert_eq!(s.last_stats(), Stats { dirty: 1, unit_runs: 1, full_run: false, units: 3 });
         assert_eq!(a.canonical(), s.analyze_full().canonical());
         // A signature: also the importer, which now has an error.
-        s.update_file("lib.sl", LIB.replace("x int) int", "x int) string").replace("x * 2", "\"\""));
+        s.update_file("lib.zl", LIB.replace("x int) int", "x int) string").replace("x * 2", "\"\""));
         let a = s.analyze();
         assert_eq!(s.last_stats().dirty, 2);
-        let main = a.file_index("main.sl").unwrap();
+        let main = a.file_index("main.zl").unwrap();
         assert!(a.diagnostics_for(main).count() > 0, "{:?}", a.diagnostics);
         assert_eq!(a.canonical(), s.analyze_full().canonical());
         // Nothing changed: nothing re-analysed.
         let _ = s.analyze();
         assert_eq!(s.last_stats().dirty, 0);
         // References across units resolve to the declaration.
-        s.update_file("lib.sl", LIB);
+        s.update_file("lib.zl", LIB);
         let a = s.analyze();
-        let main = a.file_index("main.sl").unwrap();
+        let main = a.file_index("main.zl").unwrap();
         let loc = a.definition_at(main, APP.find("Twice").unwrap() as u32).unwrap();
-        assert_eq!(a.files[loc.file].path, "lib.sl");
+        assert_eq!(a.files[loc.file].path, "lib.zl");
         let id = a.symbol_at(main, APP.find("Twice").unwrap() as u32).unwrap();
         assert_eq!(a.references_of(id).len(), 1);
         assert_eq!(a.index.symbol(id).signature, "func Twice(x int) int");
@@ -606,8 +606,8 @@ mod tests {
     #[test]
     fn cancelled_analysis_returns_none_and_recovers() {
         let mut s = Session::new();
-        s.update_file("lib.sl", LIB);
-        s.update_file("main.sl", APP);
+        s.update_file("lib.zl", LIB);
+        s.update_file("main.zl", APP);
         let cancel = std::sync::atomic::AtomicBool::new(true);
         assert!(s.analyze_cancellable(Some(&cancel)).is_none());
         let clone = s.clone();

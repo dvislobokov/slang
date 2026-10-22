@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn unified_diff_format() {
-        let d = unified_diff("f.sl", "a\nb\nc\n", "a\nB\nc\n");
-        assert_eq!(d, "--- f.sl\n+++ f.sl (formatted)\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n");
+        let d = unified_diff("f.zl", "a\nb\nc\n", "a\nB\nc\n");
+        assert_eq!(d, "--- f.zl\n+++ f.zl (formatted)\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n");
     }
 }

@@ -1,9 +1,0 @@
-[package]
-name = "app"
-version = "0.1.0"
-namespace = "app"
-entry = "src/main.sl"
-description = "Demo binary"
-
-[dependencies]
-lib-a = { path = "../lib-a" }

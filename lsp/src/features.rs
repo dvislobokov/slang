@@ -6,13 +6,13 @@ use lsp_types::{
     CompletionItem, CompletionItemKind, FoldingRange, FoldingRangeKind, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensEdit,
     SemanticTokensLegend,
 };
-use slang::diagnostics::Diagnostics;
-use slang::lexer;
-use slang::sema::index::{SymKey, Symbol, SymbolId, SymbolKind};
-use slang::session::{Analysis, DocumentSymbol};
-use slang::span::{SourceFile, Span};
-use slang::token::TokenKind;
-use slang::types::{Type, TypeId};
+use zell::diagnostics::Diagnostics;
+use zell::lexer;
+use zell::sema::index::{SymKey, Symbol, SymbolId, SymbolKind};
+use zell::session::{Analysis, DocumentSymbol};
+use zell::span::{SourceFile, Span};
+use zell::token::TokenKind;
+use zell::types::{Type, TypeId};
 use std::collections::{HashMap, HashSet};
 
 /// Semantic token types, in legend order.
@@ -96,7 +96,7 @@ fn kind_word(k: SymbolKind) -> &'static str {
 /// Markdown hover: signature block, kind and container, doc comment.
 pub(crate) fn hover_markdown(a: &Analysis, id: SymbolId) -> String {
     let s = a.index.symbol(id);
-    let mut out = format!("```slang\n{}\n```\n", s.signature);
+    let mut out = format!("```zell\n{}\n```\n", s.signature);
     let mut line = format!("*{}*", kind_word(s.kind));
     if let Some(c) = s.container {
         let c = a.index.symbol(c);
@@ -112,17 +112,17 @@ pub(crate) fn hover_markdown(a: &Analysis, id: SymbolId) -> String {
     out.push_str(&line);
     out.push('\n');
     if let Some(doc) = &s.doc {
-        // the `slang doc` pipeline: fenced code, Deprecated tag, symbol links
+        // the `zell doc` pipeline: fenced code, Deprecated tag, symbol links
         let link = |t: &str| symbol_link(a, s, t);
         out.push_str("\n---\n\n");
-        out.push_str(&slang::doc::markdown::to_markdown(&slang::doc::markdown::parse(doc), &link));
+        out.push_str(&zell::doc::markdown::to_markdown(&zell::doc::markdown::parse(doc), &link));
         out.push('\n');
     }
-    // the first example of a std symbol (std/**/*_test.sl), collapsed
+    // the first example of a std symbol (std/**/*_test.zl), collapsed
     if s.is_std {
-        if let Some(e) = slang::doc::std_examples().get(&s.full_name).and_then(|v| v.first()) {
+        if let Some(e) = zell::doc::std_examples().get(&s.full_name).and_then(|v| v.first()) {
             out.push('\n');
-            out.push_str(&slang::doc::example_markdown(e));
+            out.push_str(&zell::doc::example_markdown(e));
         }
     }
     out
@@ -588,8 +588,8 @@ fn global_name(a: &Analysis, file: usize, name: &str) -> Option<SymbolId> {
     }
     for imp in &info.imports {
         match imp {
-            slang::sema::index::ImportInfo::Named(alias, id) if alias == name => return Some(*id),
-            slang::sema::index::ImportInfo::Glob(ns) => {
+            zell::sema::index::ImportInfo::Named(alias, id) if alias == name => return Some(*id),
+            zell::sema::index::ImportInfo::Glob(ns) => {
                 let is_std = ns == "std" || ns.starts_with("std.");
                 if let Some((_, id)) = a.index.ns_members.get(ns).and_then(|ms| ms.iter().find(|(n, id)| n == name && (is_std || exported(n) || a.index.symbol(*id).kind == SymbolKind::Namespace))) {
                     return Some(*id);
@@ -739,12 +739,12 @@ fn scope_completions(a: &Analysis, file: usize, off: u32) -> Vec<CompletionItem>
         }
         for imp in &info.imports {
             match imp {
-                slang::sema::index::ImportInfo::Named(alias, id) => {
+                zell::sema::index::ImportInfo::Named(alias, id) => {
                     if seen.insert(alias.clone()) {
                         out.push(item(a, alias, *id));
                     }
                 }
-                slang::sema::index::ImportInfo::Glob(ns) => {
+                zell::sema::index::ImportInfo::Glob(ns) => {
                     let is_std = ns == "std" || ns.starts_with("std.");
                     for (name, id) in a.index.ns_members.get(ns).into_iter().flatten() {
                         if (is_std || exported(name)) && seen.insert(name.clone()) {

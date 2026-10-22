@@ -1,0 +1,1141 @@
+// The HTTP server (see http.zl for the file layout): Router with
+// middleware, Server with the HTTP/1.1 keep-alive loop (one task per
+// connection, requests on it served in order), streaming responses
+// (Response.Flush), SendFile and connection hijacking (WebSockets).
+// HTTP/2 connections (TLS ALPN "h2", or H2C prior knowledge) are handed to
+// serveH2 in http2.zl.
+namespace std.net.http
+
+// ---- routing ---------------------------------------------------------------
+
+struct route {
+    method string
+    parts  []string
+    // no {param} or * segment: matched by comparing `path`
+    isStatic bool
+    path     string
+    handler  func(*Request, *Response) Task<void!>
+}
+
+struct routeTable {
+    routes []route
+}
+
+// The routing step at the end of a Router's middleware chain.
+struct routerCore {
+    t *routeTable
+
+    func Serve(req *Request, res *Response) Task<void!> {
+        return dispatch(this.t, req, res)
+    }
+}
+
+// Router dispatches by method and path pattern; "{name}" segments match
+// any one segment and are stored in req.Params, a final "*" matches the
+// rest of the path. Unknown paths get 404, other methods 405 (with Allow);
+// HEAD requests are served by GET routes. Use(mw) adds middleware (a
+// `func(next Handler) Handler`) around every route, in the order added.
+struct Router {
+    t        *routeTable
+    mws      []func(Handler) Handler
+    chain    Handler
+    hasChain bool
+
+    func table() *routeTable {
+        if this.t == nil {
+            this.t = new routeTable{}
+        }
+        return this.t
+    }
+
+    // Handle registers h for method ("*" for any) and pattern.
+    func Handle(method string, pattern string, h func(*Request, *Response) Task<void!>) {
+        var parts = splitPath(pattern)
+        var isStatic = true
+        for p in parts {
+            if p == "*" || std.strings.HasPrefix(p, "{") {
+                isStatic = false
+            }
+        }
+        var t = this.table()
+        t.routes = append(t.routes, route{
+            method: method,
+            parts: parts,
+            isStatic: isStatic,
+            path: "/" + std.strings.Join(parts, "/"),
+            handler: h,
+        })
+    }
+
+    // Get registers h for GET (and HEAD) requests to pattern.
+    func Get(pattern string, h func(*Request, *Response) Task<void!>) {
+        this.Handle("GET", pattern, h)
+    }
+
+    // Post registers h for POST requests to pattern.
+    func Post(pattern string, h func(*Request, *Response) Task<void!>) {
+        this.Handle("POST", pattern, h)
+    }
+
+    // Put registers h for PUT requests to pattern.
+    func Put(pattern string, h func(*Request, *Response) Task<void!>) {
+        this.Handle("PUT", pattern, h)
+    }
+
+    // Delete registers h for DELETE requests to pattern.
+    func Delete(pattern string, h func(*Request, *Response) Task<void!>) {
+        this.Handle("DELETE", pattern, h)
+    }
+
+    // Patch registers h for PATCH requests to pattern.
+    func Patch(pattern string, h func(*Request, *Response) Task<void!>) {
+        this.Handle("PATCH", pattern, h)
+    }
+
+    // Options registers h for OPTIONS requests to pattern.
+    func Options(pattern string, h func(*Request, *Response) Task<void!>) {
+        this.Handle("OPTIONS", pattern, h)
+    }
+
+    // Any method ("*").
+    func Any(pattern string, h func(*Request, *Response) Task<void!>) {
+        this.Handle("*", pattern, h)
+    }
+
+    // Serves pattern (usually ending in "/*") with a Handler, any method.
+    func Mount(pattern string, h Handler) {
+        this.Handle("*", pattern, func(req *Request, res *Response) Task<void!> {
+            return h.Serve(req, res)
+        })
+    }
+
+    // Adds middleware around every route (outermost first).
+    func Use(mw func(Handler) Handler) {
+        this.mws = append(this.mws, mw)
+        this.hasChain = false
+    }
+
+    // Serve dispatches req through the middleware and the routes (Router is a Handler).
+    func Serve(req *Request, res *Response) Task<void!> {
+        if len(this.mws) == 0 {
+            return dispatch(this.table(), req, res)
+        }
+        if !this.hasChain {
+            this.chain = Chain(routerCore{t: this.table()}, this.mws)
+            this.hasChain = true
+        }
+        return this.chain.Serve(req, res)
+    }
+}
+
+// NewRouter makes an empty router.
+func NewRouter() *Router {
+    return new Router{t: new routeTable{}}
+}
+
+// Whether a request path splits into segments that join back to itself
+// (no empty segments, no trailing slash), so static routes can be
+// compared as strings.
+func cleanPath(p string) bool {
+    if len(p) == 0 || p[0] != 47 {
+        return false
+    }
+    if len(p) > 1 && p[len(p) - 1] == 47 {
+        return false
+    }
+    return !std.strings.Contains(p, "//")
+}
+
+func dispatch(t *routeTable, req *Request, res *Response) Task<void!> {
+    var clean = cleanPath(req.Path)
+    var parts []string
+    var split = false
+    var allowed = ""
+    for r in t.routes {
+        var params map[string]string
+        if r.isStatic && (clean || r.path == req.Path) {
+            if r.path != req.Path {
+                continue
+            }
+        } else {
+            if !split {
+                parts = splitPath(req.Path)
+                split = true
+            }
+            params = matchRoute(r.parts, parts)
+            if params == nil {
+                continue
+            }
+        }
+        if r.method != req.Method &&
+            r.method != "*" &&
+            !(r.method == "GET" && req.Method == "HEAD") {
+            if !rtHasToken(allowed, r.method) {
+                if allowed != "" {
+                    allowed += ", "
+                }
+                allowed += r.method
+            }
+            continue
+        }
+        if params != nil {
+            req.Params = params
+        }
+        return r.handler(req, res)
+    }
+    if allowed != "" {
+        res.SetHeader("Allow", allowed)
+        return plainStatus(res, 405)
+    }
+    return plainStatus(res, 404)
+}
+
+async func plainStatus(res *Response, status int) void! {
+    res.Text(status, itoa(status) + " " + StatusText(status) + "\n")
+}
+
+func splitPath(p string) []string {
+    var out []string = []
+    for s in std.strings.Split(p, "/") {
+        if s != "" {
+            out = append(out, s)
+        }
+    }
+    return out
+}
+
+// The parameters if pattern matches path, else nil.
+func matchRoute(pattern []string, path []string) map[string]string {
+    var params = map[string]string{}
+    for i, p in pattern {
+        if p == "*" && i == len(pattern) - 1 {
+            var rest = ""
+            for j in i..len(path) {
+                if j > i {
+                    rest += "/"
+                }
+                rest += path[j]
+            }
+            params["*"] = rest
+            return params
+        }
+        if i >= len(path) {
+            return nil
+        }
+        if std.strings.HasPrefix(p, "{") && std.strings.HasSuffix(p, "}") {
+            params[p[1..len(p) - 1]] = unescape(path[i])
+        } else if p != path[i] {
+            return nil
+        }
+    }
+    if len(pattern) != len(path) {
+        return nil
+    }
+    return params
+}
+
+// ---- server ---------------------------------------------------------------
+
+// Server serves HTTP/1.1 (and HTTP/2) on Addr ("host:port"; port 0 picks a
+// free one; "unix:/path" listens on a Unix socket). Every connection is a
+// task; keep-alive connections serve their requests in order, HTTP/2
+// connections run one task per stream. IdleTimeout (ms, default 5000)
+// closes connections that send nothing; Shutdown stops accepting, closes
+// idle connections and waits for the requests in flight.
+struct Server {
+    Addr        string
+    Handler     Handler
+    IdleTimeout int
+    // Serves HTTPS with this configuration when set (ALPN defaults to
+    // h2 and http/1.1, or http/1.1 alone with DisableHTTP2).
+    TLS *std.net.tls.ServerConfig
+    // Milliseconds for each read of a request body (0: no limit).
+    ReadTimeout int
+    // Milliseconds for each write of a response (0: no limit).
+    WriteTimeout int
+    // Limit of a request head (default 1 MB): larger heads get 431.
+    MaxHeaderBytes int
+    // Limit of a request body (0: none): larger bodies get 413.
+    MaxBodyBytes int
+    // Accept HTTP/2 with prior knowledge on plain TCP (h2c, RFC 9113 3.3).
+    H2C bool
+    // Do not offer h2 over TLS.
+    DisableHTTP2 bool
+    // HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS (default 250).
+    MaxConcurrentStreams int
+    // No Date header in responses.
+    NoDate bool
+    // Request bodies are not buffered: the handler runs once the head is
+    // read, req.Body is "" and req.Reader streams the body (HTTP/1.1 and
+    // HTTP/2). MaxBodyBytes still applies: the reader fails with
+    // ErrBodyTooLarge (a handler returning that error answers 413).
+    StreamBodies bool
+    st           *serverState
+
+    // Binds the listening socket (Serve does it if needed).
+    func Listen() void! {
+        if this.st != nil {
+            return
+        }
+        var l std.net.Listener
+        if std.strings.HasPrefix(this.Addr, "unix:") {
+            l = std.net.ListenUnix(this.Addr[5..])?
+        } else {
+            l = std.net.Listen(this.Addr)?
+        }
+        var idle = this.IdleTimeout
+        if idle == 0 {
+            idle = 5000
+        }
+        var maxHead = this.MaxHeaderBytes
+        if maxHead <= 0 {
+            maxHead = 1 << 20
+        }
+        var streams = this.MaxConcurrentStreams
+        if streams <= 0 {
+            streams = 250
+        }
+        var st = new serverState{
+            l: l,
+            handler: this.Handler,
+            idle: idle,
+            readTimeout: this.ReadTimeout,
+            writeTimeout: this.WriteTimeout,
+            maxHead: maxHead,
+            maxBody: this.MaxBodyBytes,
+            h2c: this.H2C,
+            maxStreams: streams,
+            noDate: this.NoDate,
+            streamBodies: this.StreamBodies,
+        }
+        if this.TLS != nil {
+            var cfg = *this.TLS
+            if len(cfg.ALPN) == 0 {
+                if this.DisableHTTP2 {
+                    cfg.ALPN = ["http/1.1"]
+                } else {
+                    cfg.ALPN = ["h2", "http/1.1"]
+                }
+            }
+            st.tlsL = try std.net.tls.Server(l, cfg) catch err {
+                l.Close()
+                return err
+            }
+            st.useTLS = true
+        }
+        this.st = st
+    }
+
+    // The bound port (after Listen).
+    func Port() int {
+        if this.st == nil {
+            return 0
+        }
+        return this.st.l.Port()
+    }
+
+    // "http://127.0.0.1:port" (or https) for the bound address (after Listen).
+    func URL() string {
+        if this.st == nil {
+            return ""
+        }
+        var scheme = "http"
+        if this.st.useTLS {
+            scheme = "https"
+        }
+        var a = this.st.l.Addr()
+        if std.strings.HasPrefix(a, "0.0.0.0:") || std.strings.HasPrefix(a, "[::]:") {
+            a = "127.0.0.1:" + itoa(this.st.l.Port())
+        }
+        return scheme + "://" + a
+    }
+
+    // Accepts connections until Shutdown.
+    func Serve() Task<void!> {
+        try this.Listen() catch err {
+            return failed(err)
+        }
+        return acceptLoop(this.st)
+    }
+
+    // Stops the server: no new connections, idle ones are closed (HTTP/2
+    // connections get GOAWAY), and the task completes once every request
+    // in flight has been answered.
+    func Shutdown() Task<void> {
+        if this.st == nil {
+            return std.task.Delay(0)
+        }
+        return shutdown(this.st)
+    }
+}
+
+// Listens on addr and serves h until the server fails.
+func ListenAndServe(addr string, h Handler) Task<void!> {
+    var srv = Server{Addr: addr, Handler: h}
+    return srv.Serve()
+}
+
+async func failed(err error) void! {
+    return err
+}
+
+struct connEntry {
+    c        *conn
+    idle     bool
+    hijacked bool
+    // set while the connection speaks HTTP/2 (Shutdown sends GOAWAY)
+    h2 *h2conn
+}
+
+struct serverState {
+    l            std.net.Listener
+    useTLS       bool
+    tlsL         std.net.tls.Listener
+    handler      Handler
+    idle         int
+    readTimeout  int
+    writeTimeout int
+    maxHead      int
+    maxBody      int
+    h2c          bool
+    maxStreams   int
+    noDate       bool
+    streamBodies bool
+    guard        int
+    closing      bool
+    conns        []*connEntry
+    wg           std.task.WaitGroup
+}
+
+// The next connection, wrapped in TLS for an HTTPS server (its handshake
+// runs in the connection task, on the first read).
+async func acceptConn(st *serverState) *conn! {
+    if st.useTLS {
+        var tc = await st.tlsL.Accept()?
+        return tlsConn(tc)
+    }
+    var c = await st.l.Accept()?
+    return plainConn(c)
+}
+
+async func acceptLoop(st *serverState) void! {
+    for {
+        var c = try await acceptConn(st) catch err {
+            if st.closing {
+                return
+            }
+            if std.errors.Is(err, std.net.ErrClosed) {
+                return
+            }
+            // EMFILE and friends: back off a little and go on
+            await std.task.Delay(5)
+            continue
+        }
+        var e = new connEntry{c: c, idle: true}
+        std.task.rtLock(&st.guard)
+        if st.closing {
+            std.task.rtUnlock(&st.guard)
+            c.close()
+            return
+        }
+        st.conns = append(st.conns, e)
+        st.wg.Add(1)
+        std.task.rtUnlock(&st.guard)
+        _ = serveConn(st, e)
+    }
+}
+
+async func shutdown(st *serverState) {
+    std.task.rtLock(&st.guard)
+    st.closing = true
+    var conns = st.conns
+    std.task.rtUnlock(&st.guard)
+    st.l.Close()
+    for e in conns {
+        if e.h2 != nil {
+            h2Shutdown(e.h2)
+        } else if e.idle {
+            e.c.close()
+        }
+    }
+    await st.wg.Wait()
+}
+
+func dropConn(st *serverState, e *connEntry) {
+    std.task.rtLock(&st.guard)
+    var keep []*connEntry = []
+    for x in st.conns {
+        if x != e {
+            keep = append(keep, x)
+        }
+    }
+    st.conns = keep
+    std.task.rtUnlock(&st.guard)
+    if !e.hijacked {
+        e.c.close()
+    }
+    e.h2 = nil
+    st.wg.Done()
+}
+
+// The response writer of one HTTP/1.1 connection (or one HTTP/2 stream),
+// shared by the requests on it; Response.w points here.
+struct respWriter {
+    c        *conn
+    b        *rbuf
+    h2       *h2stream
+    proto    string
+    keep     bool
+    headOnly bool
+    started  bool
+    chunked  bool
+    hijacked bool
+    noDate   bool
+}
+
+// The rtFormatHead flags for a response (see std_http.c).
+func headFlags(w *respWriter, status int) int {
+    var f = 0
+    if w.keep {
+        if w.proto == "HTTP/1.0" {
+            f = f | 1
+        }
+    } else {
+        f = f | 2
+    }
+    if w.headOnly {
+        f = f | 4
+    }
+    if w.noDate {
+        f = f | 8
+    }
+    if (status >= 100 && status < 200) || status == 204 || status == 304 {
+        f = f | 32 | 64
+    }
+    return f
+}
+
+func bodyless(status int) bool {
+    return (status >= 100 && status < 200) || status == 204 || status == 304
+}
+
+// Response.Flush on a server response.
+async func flushResponse(res *Response) void! {
+    var w = res.w
+    if w.hijacked {
+        return ErrHijacked
+    }
+    if w.h2 != nil {
+        await h2Flush(w.h2, res, false)?
+        return
+    }
+    var out = ""
+    var status = res.Status
+    if status == 0 {
+        status = 200
+    }
+    if !w.started {
+        w.started = true
+        var flags = headFlags(w, status) | 4 | 64
+        if !bodyless(status) {
+            if w.proto == "HTTP/1.1" {
+                flags = flags | 16
+                w.chunked = true
+            } else {
+                flags = (flags | 32 | 2) & (127 - 1)
+                w.keep = false
+            }
+        }
+        if res.Headers == nil || res.Headers["Content-Type"] == "" {
+            res.SetHeader("Content-Type", "text/plain; charset=utf-8")
+        }
+        out = rtFormatHead(status, "", res.Headers, 0, flags, "")
+    }
+    if len(res.Body) > 0 && !w.headOnly && !bodyless(status) {
+        if w.chunked {
+            out += hexString(len(res.Body)) + "\r\n" + res.Body + "\r\n"
+        } else {
+            out += res.Body
+        }
+    }
+    res.Body = ""
+    if out != "" {
+        _ = await w.c.writeString(out)?
+    }
+}
+
+// Finishes a streamed (Flush) or file (SendFile) response.
+async func finishResponse(w *respWriter, res *Response) bool! {
+    var status = res.Status
+    if status == 0 {
+        status = 200
+    }
+    if w.started {
+        var out = ""
+        if len(res.Body) > 0 && !w.headOnly && !bodyless(status) {
+            if w.chunked {
+                out = hexString(len(res.Body)) + "\r\n" + res.Body + "\r\n"
+            } else {
+                out = res.Body
+            }
+        }
+        if w.chunked {
+            out += "0\r\n\r\n"
+        }
+        res.Body = ""
+        if out != "" {
+            _ = await w.c.writeString(out)?
+        }
+        return w.keep
+    }
+    // a file body
+    var head = rtFormatHead(status, "", res.Headers, res.fileLen, headFlags(w, status) | 4, "")
+    if w.headOnly || bodyless(status) || res.fileLen == 0 {
+        _ = await w.c.writeString(head)?
+        return w.keep
+    }
+    w.c.setCork(true)
+    _ = await w.c.writeString(head)?
+    var n = await w.c.sendFile(res.file, res.fileOff, res.fileLen)?
+    w.c.setCork(false)
+    if n != res.fileLen {
+        return false
+    }
+    return w.keep
+}
+
+// ---- streamed request bodies --------------------------------------------------
+
+// RequestBody streams a request body (Server.StreamBodies, req.Reader): an
+// io.AsyncReader. Read returns up to n bytes, empty at the end; a body
+// above MaxBodyBytes fails with ErrBodyTooLarge.
+struct RequestBody {
+    // HTTP/1.1: the connection and its read buffer
+    c *conn
+    b *rbuf
+    // 0 Content-Length (left bytes), 1 chunked (left of this chunk),
+    // 3 done
+    mode int
+    left int
+    // MaxBodyBytes (-1: none) and the bytes read so far
+    limit int
+    total int
+    // "100 Continue" is still to be sent (the client expects it)
+    cont    bool
+    timeout int
+    failed  error
+    // HTTP/2: the request stream
+    h2 *h2stream
+
+    // Read returns up to n bytes of the body; an empty slice at its end.
+    func Read(n int) Task<[]byte!> {
+        return reqBodyRead(this, n)
+    }
+
+    // The rest of the body.
+    func ReadAll() Task<string!> {
+        return reqBodyReadAll(this)
+    }
+
+    // Skips what the handler left unread, up to max bytes (HTTP/1.1):
+    // true if the connection can serve the next request.
+    func discard(max int) Task<bool> {
+        return reqBodyDiscard(this, max)
+    }
+}
+
+async func reqBodyRead(rb *RequestBody, n int) []byte! {
+    if rb.failed != nil {
+        return rb.failed
+    }
+    if n <= 0 {
+        n = 32768
+    }
+    if rb.h2 != nil {
+        var piece = try await h2ReadReqBody(rb.h2, n) catch err {
+            rb.failed = err
+            return err
+        }
+        return piece
+    }
+    if rb.mode == 3 {
+        return []
+    }
+    var c = rb.c
+    var b = rb.b
+    if rb.cont {
+        rb.cont = false
+        _ = try await c.writeString("HTTP/1.1 100 Continue\r\n\r\n") else 0
+    }
+    c.setTimeout(rb.timeout)
+    try {
+        if rb.mode == 1 && rb.left == 0 {
+            var line = await readLine(c, b, 4096)?
+            var semi = std.strings.Index(line, ";")
+            if semi >= 0 {
+                line = line[..semi]
+            }
+            var size = parseHex(line)?
+            if size == 0 {
+                for {
+                    var tr = await readLine(c, b, 65536)?
+                    if tr == "" {
+                        break
+                    }
+                }
+                rb.mode = 3
+                return []
+            }
+            if rb.limit >= 0 && rb.total + size > rb.limit {
+                raise(ErrBodyTooLarge)?
+            }
+            rb.left = size
+        }
+        if b.buffered() == 0 {
+            if !await fill(c, b)? {
+                raise(error("unexpected end of stream in body"))?
+            }
+        }
+        var k = minInt(minInt(n, rb.left), b.buffered())
+        var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+        b.skip(k)
+        rb.left -= k
+        rb.total += k
+        if rb.left == 0 {
+            if rb.mode == 1 {
+                await fillTo(c, b, 2)?
+                if b.buf[b.r] != 13 || b.buf[b.r + 1] != 10 {
+                    raise(error("malformed chunk"))?
+                }
+                b.skip(2)
+            } else {
+                rb.mode = 3
+            }
+        }
+        return out
+    } catch err {
+        rb.failed = err
+        return err
+    }
+    return []
+}
+
+async func reqBodyReadAll(rb *RequestBody) string! {
+    var parts []byte = []
+    for {
+        var p = await reqBodyRead(rb, 65536)?
+        if len(p) == 0 {
+            return std.strings.FromBytes(parts)
+        }
+        parts = std.net.rtJoin(parts, p, len(p))
+    }
+    return ""
+}
+
+async func reqBodyDiscard(rb *RequestBody, max int) bool {
+    if rb.h2 != nil {
+        return true
+    }
+    if rb.failed != nil {
+        return false
+    }
+    // A client still waiting for "100 Continue" sends no body: nothing to skip.
+    if rb.cont {
+        return rb.mode == 3
+    }
+    var skipped = 0
+    for rb.mode != 3 {
+        if skipped > max {
+            return false
+        }
+        var p = try await reqBodyRead(rb, 65536) else []
+        if rb.failed != nil {
+            return false
+        }
+        skipped += len(p)
+    }
+    return true
+}
+
+func errorResponse(status int, msg string) *Response {
+    var res = new Response{}
+    res.Text(status, itoa(status) + " " + StatusText(status) + ": " + msg + "\n")
+    return res
+}
+
+// Writes a short error response and gives up the connection.
+async func writeError(c *conn, status int, msg string) {
+    var res = errorResponse(status, msg)
+    var out = rtFormatHead(status, "", res.Headers, len(res.Body), 2, res.Body)
+    _ = try await c.writeString(out) else 0
+}
+
+// Whether buf[r..] starts with the HTTP/2 client preface "PRI * HTTP/2.0".
+func isPreface(b *rbuf) bool {
+    if b.buffered() < 4 {
+        return false
+    }
+    return b.buf[b.r] == 80 && b.buf[b.r + 1] == 82 && b.buf[b.r + 2] == 73 && b.buf[b.r + 3] == 32
+}
+
+async func serveConn(st *serverState, e *connEntry) {
+    var c = e.c
+    if c.isTLS {
+        c.setTimeout(st.idle)
+        var proto = try await c.alpn() catch err {
+            dropConn(st, e)
+            return
+        }
+        if proto == "h2" {
+            await serveH2(st, e, newRbuf(16384))
+            dropConn(st, e)
+            return
+        }
+    }
+    var b = newRbuf(4096)
+    var remote = c.remoteAddr()
+    var scheme = "http"
+    if c.isTLS {
+        scheme = "https"
+    }
+    var rw = new respWriter{c: c, b: b, noDate: st.noDate}
+    for {
+        // 1. the head (usually already buffered after one read)
+        var end = rtHeadEnd(b.buf, b.scan, b.w)
+        if end < 0 {
+            c.setTimeout(st.idle)
+            var ok = true
+            for end < 0 {
+                if b.buffered() > st.maxHead {
+                    await writeError(c, 431, "request header too large")
+                    ok = false
+                    break
+                }
+                if st.h2c && isPreface(b) {
+                    break
+                }
+                b.scan = maxInt(b.r, b.w - 3)
+                b.room(2048)
+                var k = try await c.readInto(b.buf, b.w) else -1
+                if k <= 0 {
+                    ok = false
+                    break
+                }
+                b.w += k
+                end = rtHeadEnd(b.buf, b.scan, b.w)
+            }
+            if !ok {
+                break
+            }
+        }
+        if st.h2c && isPreface(b) {
+            e.idle = false
+            await serveH2(st, e, b)
+            break
+        }
+        // 2. parse it in place
+        var h = map[string]string{}
+        var parts = try rtParseHead(b.buf, b.r, end, 0, h) catch err {
+            await writeError(c, 400, err.Message())
+            break
+        }
+        var info = rtHeadInfo()
+        b.skip(end - b.r)
+        var req = new Request{
+            Method: parts[0],
+            Path: parts[1],
+            Query: parts[2],
+            Proto: parts[3],
+            Headers: h,
+            RemoteAddr: remote,
+            Scheme: scheme,
+            Host: h["Host"],
+        }
+        e.idle = false
+        // 3. the body (rtHeadInfo flags: std_http.c I_*)
+        var bodyOK = true
+        if (info & 256) != 0 {
+            await writeError(c, 400, "invalid Content-Length")
+            break
+        }
+        if (info & 4) != 0 {
+            await writeError(c, 501, "unsupported transfer encoding")
+            break
+        }
+        var body *RequestBody
+        if st.streamBodies {
+            // the handler reads it (req.Reader)
+            var limit = -1
+            if st.maxBody > 0 {
+                limit = st.maxBody
+            }
+            body = new RequestBody{
+                c: c,
+                b: b,
+                mode: 3,
+                limit: limit,
+                cont: (info & 32) != 0,
+                timeout: st.readTimeout,
+            }
+            if (info & 2) != 0 {
+                body.mode = 1
+            } else if (info & 1) != 0 && (info >> 16) > 0 {
+                if limit >= 0 && (info >> 16) > limit {
+                    await writeError(c, 413, ErrBodyTooLarge.Message())
+                    break
+                }
+                body.mode = 0
+                body.left = info >> 16
+            }
+            req.Reader = body
+        } else if (info & 2) != 0 {
+            if (info & 32) != 0 {
+                _ = try await c.writeString("HTTP/1.1 100 Continue\r\n\r\n") else 0
+            }
+            c.setTimeout(st.readTimeout)
+            var limit = -1
+            if st.maxBody > 0 {
+                limit = st.maxBody
+            }
+            try {
+                req.Body = await readChunked(c, b, limit)?
+            } catch err {
+                if std.errors.Is(err, ErrBodyTooLarge) {
+                    await writeError(c, 413, err.Message())
+                } else {
+                    await writeError(c, 400, err.Message())
+                }
+                bodyOK = false
+            }
+        } else if (info & 1) != 0 {
+            var n = info >> 16
+            if st.maxBody > 0 && n > st.maxBody {
+                await writeError(c, 413, ErrBodyTooLarge.Message())
+                break
+            }
+            if n > 0 {
+                if b.buffered() < n {
+                    if (info & 32) != 0 {
+                        _ = try await c.writeString("HTTP/1.1 100 Continue\r\n\r\n") else 0
+                    }
+                    c.setTimeout(st.readTimeout)
+                    try await fillTo(c, b, n) catch err {
+                        bodyOK = false
+                    }
+                }
+                if bodyOK {
+                    req.Body = b.take(n)
+                }
+            }
+        }
+        if !bodyOK {
+            break
+        }
+        // 4. the handler
+        var keep = !st.closing
+        if req.Proto == "HTTP/1.1" {
+            if (info & 8) != 0 {
+                keep = false
+            }
+        } else if (info & 16) == 0 {
+            keep = false
+        }
+        rw.proto = req.Proto
+        rw.keep = keep
+        rw.headOnly = req.Method == "HEAD"
+        rw.started = false
+        rw.chunked = false
+        var res = new Response{Status: 200, w: rw}
+        var trace = ""
+        if (info & 64) != 0 {
+            trace = h["Traceparent"]
+        }
+        var remoteSpan = std.diag.enterRemote(trace)
+        var failure = ""
+        var abort = false
+        var tooLarge = false
+        try await st.handler.Serve(req, res) catch err {
+            if std.errors.Is(err, ErrAbortHandler) {
+                abort = true
+            }
+            tooLarge = std.errors.Is(err, ErrBodyTooLarge)
+            failure = err.Message()
+            if failure == "" {
+                failure = "handler failed"
+            }
+        }
+        std.diag.leaveRemote(remoteSpan)
+        if rw.hijacked {
+            e.hijacked = true
+            break
+        }
+        if abort || (failure != "" && rw.started) {
+            break
+        }
+        if failure != "" {
+            if tooLarge {
+                res = errorResponse(413, failure)
+            } else {
+                res = errorResponse(500, failure)
+            }
+        }
+        // A streamed body the handler did not read to its end: the rest
+        // is skipped if it is small and well-formed, else the connection
+        // closes after the response.
+        if body != nil && !await body.discard(1 << 16) {
+            rw.keep = false
+        }
+        if res.Headers != nil && headerHas(res.Headers, "Connection", "close") {
+            rw.keep = false
+        }
+        if st.closing {
+            rw.keep = false
+        }
+        // 5. the response: one write for the usual case
+        c.setTimeout(st.writeTimeout)
+        var status = res.Status
+        if status == 0 {
+            status = 200
+        }
+        var ok = false
+        if !rw.started && res.file == "" {
+            var out = ""
+            if bodyless(status) {
+                out = rtFormatHead(status, "", res.Headers, 0, headFlags(rw, status), "")
+            } else {
+                out = rtFormatHead(
+                    status,
+                    "",
+                    res.Headers,
+                    len(res.Body),
+                    headFlags(rw, status),
+                    res.Body,
+                )
+            }
+            var wn = try await c.writeString(out) else -1
+            ok = wn >= 0 && rw.keep
+        } else {
+            ok = try await finishResponse(rw, res) else false
+        }
+        if !ok {
+            break
+        }
+        e.idle = true
+    }
+    dropConn(st, e)
+}
+
+// ---- hijacking --------------------------------------------------------------
+
+// RawConn is a connection taken over from the HTTP layer (Response.Hijack,
+// WebSockets) or dialed with DialRaw: bytes already buffered by the HTTP
+// reader are returned first.
+struct RawConn {
+    c *conn
+    b *rbuf
+
+    // Up to n bytes (buffered ones first); empty at the end of the stream.
+    func Read(n int) Task<[]byte!> {
+        return rawRead(this.c, this.b, n)
+    }
+
+    // Exactly n bytes; fails at the end of the stream.
+    func ReadExact(n int) Task<[]byte!> {
+        return rawReadExact(this.c, this.b, n)
+    }
+
+    // One CRLF line (without it).
+    func ReadLine() Task<string!> {
+        return readLine(this.c, this.b, 65536)
+    }
+
+    // The next response head (status line and headers), leaving the body
+    // buffered.
+    func ReadResponseHead() Task<Response!> {
+        return readHead(this.c, this.b)
+    }
+
+    // Write writes data to the connection.
+    func Write(data []byte) Task<int!> {
+        return this.c.write(data)
+    }
+
+    // WriteString writes s to the connection.
+    func WriteString(s string) Task<int!> {
+        return this.c.writeString(s)
+    }
+
+    // SetTimeout sets a timeout in milliseconds for every read and write (0: none).
+    func SetTimeout(ms int) {
+        this.c.setTimeout(ms)
+    }
+
+    // Close closes the connection.
+    func Close() {
+        this.c.close()
+    }
+
+    // IsClosed reports whether Close was called.
+    func IsClosed() bool {
+        return this.c.isClosed()
+    }
+
+    // RemoteAddr returns the peer's "ip:port".
+    func RemoteAddr() string {
+        return this.c.remoteAddr()
+    }
+
+    // LocalAddr returns the local "ip:port".
+    func LocalAddr() string {
+        return this.c.localAddr()
+    }
+
+    // Bytes received and not read yet.
+    func Buffered() int {
+        return this.b.buffered()
+    }
+}
+
+async func rawRead(c *conn, b *rbuf, n int) []byte! {
+    if b.buffered() == 0 {
+        if !await fill(c, b)? {
+            return []
+        }
+    }
+    var k = minInt(n, b.buffered())
+    var out = std.bytes.Clone(b.buf[b.r..b.r + k])
+    b.skip(k)
+    return out
+}
+
+async func rawReadExact(c *conn, b *rbuf, n int) []byte! {
+    await fillTo(c, b, n)?
+    var out = std.bytes.Clone(b.buf[b.r..b.r + n])
+    b.skip(n)
+    return out
+}
+
+// Response.Hijack: takes the connection over from the server (HTTP/1.x
+// only). The server neither writes a response nor closes it; the caller
+// owns it.
+func hijack(res *Response) RawConn! {
+    if res.w == nil {
+        return error("http: Hijack on a response without a connection")
+    }
+    if res.w.h2 != nil {
+        return error("http: Hijack is not supported on HTTP/2")
+    }
+    if res.w.hijacked {
+        return ErrHijacked
+    }
+    if res.w.started {
+        return error("http: Hijack after the response was started")
+    }
+    res.w.hijacked = true
+    return RawConn{c: res.w.c, b: res.w.b}
+}
+
+// Takes over the connection of a server response (see RawConn).
+func Hijack(res *Response) RawConn! {
+    return hijack(res)?
+}

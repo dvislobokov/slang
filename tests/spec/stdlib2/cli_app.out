@@ -34,7 +34,7 @@ Usage:
 
 Flags:
   -q, --quiet           no output
-  -p, --port int        listen port (default 8080, env $SLANG_CLI_TEST_PORT)
+  -p, --port int        listen port (default 8080, env $ZELL_CLI_TEST_PORT)
       --verbose         log every request
       --origin strings  allowed origin (repeatable)
       --max-conns int   (default 100)

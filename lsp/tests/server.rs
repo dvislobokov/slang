@@ -31,7 +31,7 @@ impl Client {
     /// Starts a server on `root` with initialize params adjusted by `adjust`.
     fn start_with(root: &Path, adjust: impl FnOnce(&mut InitializeParams)) -> Client {
         let (server_conn, client_conn) = Connection::memory();
-        let server = std::thread::spawn(move || slang_lsp::run(server_conn).expect("server failed"));
+        let server = std::thread::spawn(move || zell_lsp::run(server_conn).expect("server failed"));
         let mut c = Client { conn: client_conn, server: Some(server), next_id: 0, notes: Vec::new(), server_requests: Vec::new(), responses: Vec::new(), capabilities: Default::default() };
         let root_uri = Url::from_file_path(root).unwrap();
         #[allow(deprecated)]
@@ -97,7 +97,7 @@ impl Client {
 
     fn open(&self, uri: &Url, text: &str) {
         self.notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem { uri: uri.clone(), language_id: "slang".into(), version: 1, text: text.into() },
+            text_document: TextDocumentItem { uri: uri.clone(), language_id: "zell".into(), version: 1, text: text.into() },
         });
     }
 
@@ -144,7 +144,7 @@ fn repo() -> PathBuf {
 /// A fresh temporary project with copies of the given example files.
 fn project(files: &[&str]) -> (PathBuf, Vec<(Url, String)>) {
     static N: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!("slang-lsp-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    let dir = std::env::temp_dir().join(format!("zell-lsp-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut out = Vec::new();
@@ -179,11 +179,11 @@ fn range_text<'t>(text: &'t str, r: &Range) -> &'t str {
     &l[r.start.character as usize..r.end.character as usize]
 }
 
-const MULTI: &[&str] = &["multi/models.sl", "multi/namespaces.sl", "multi/report.sl"];
+const MULTI: &[&str] = &["multi/models.zl", "multi/namespaces.zl", "multi/report.zl"];
 
 #[test]
 fn examples_have_no_diagnostics() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let mut c = Client::start(&dir);
     c.open(&files[0].0, &files[0].1);
     assert_eq!(c.diagnostics(&files[0].0), vec![]);
@@ -218,7 +218,7 @@ fn workspace_files_are_discovered_without_opening() {
 
 #[test]
 fn error_is_reported_with_range_and_cleared() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -245,7 +245,7 @@ fn error_is_reported_with_range_and_cleared() {
 
 #[test]
 fn definition_of_method_call() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -276,8 +276,8 @@ fn references_and_rename_across_files() {
         partial_result_params: Default::default(),
     });
     let refs = refs.unwrap();
-    // models.sl: User{...} in New and the return type; namespaces.sl:
-    // User.New x2, app.models.User.New, []User; report.sl: app.models.User.
+    // models.zl: User{...} in New and the return type; namespaces.zl:
+    // User.New x2, app.models.User.New, []User; report.zl: app.models.User.
     let count = |u: &Url| refs.iter().filter(|l| &l.uri == u).count();
     assert_eq!(count(&files[0].0), 2, "{refs:?}");
     assert_eq!(count(&files[1].0), 4, "{refs:?}");
@@ -322,7 +322,7 @@ fn rename_refuses_std_symbols() {
 
 #[test]
 fn hover_shows_signature_and_doc() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -383,7 +383,7 @@ fn document_symbols_are_hierarchical() {
 
 #[test]
 fn semantic_tokens_are_classified_and_stable() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -402,7 +402,7 @@ fn semantic_tokens_are_classified_and_stable() {
     assert!(a.len() > 100, "{}", a.len());
     assert_eq!(a, get(&mut c));
     // Decode and look at a few tokens.
-    let types = slang_lsp::SEMANTIC_TOKEN_TYPES;
+    let types = zell_lsp::SEMANTIC_TOKEN_TYPES;
     let (mut line, mut col) = (0u32, 0u32);
     let mut decoded = Vec::new();
     for t in &a {
@@ -433,7 +433,7 @@ fn semantic_tokens_are_classified_and_stable() {
 
 #[test]
 fn folding_ranges_cover_blocks_and_comments() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -450,7 +450,7 @@ fn folding_ranges_cover_blocks_and_comments() {
 
 #[test]
 fn completion_members_and_scope() {
-    let (dir, files) = project(&["structs.sl"]);
+    let (dir, files) = project(&["structs.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -514,7 +514,7 @@ fn every_example_survives_all_queries() {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "sl") {
+            } else if p.extension().is_some_and(|x| x == "zl") {
                 paths.push(p);
             }
         }
@@ -622,10 +622,10 @@ fn apply_edits(text: &str, edits: &[TextEdit]) -> String {
     out
 }
 
-/// A project with one file `main.sl` holding `text`.
+/// A project with one file `main.zl` holding `text`.
 fn project_with(name: &str, text: &str) -> (PathBuf, Url) {
     static N: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!("slang-lsp-test2-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    let dir = std::env::temp_dir().join(format!("zell-lsp-test2-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let p = dir.join(name);
@@ -661,7 +661,7 @@ fn apply_action(c: &mut Client, uri: &Url, text: &str, at: Range, title: &str) -
 
 #[test]
 fn signature_help_shows_parameters_and_doc() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -693,7 +693,7 @@ fn signature_help_shows_parameters_and_doc() {
 
 #[test]
 fn inlay_hints_types_and_parameter_names() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -724,11 +724,11 @@ fn inlay_hints_types_and_parameter_names() {
     assert!(!hints.iter().any(|h| h.0 == pos_of(text, "var short InsufficientFunds", 0, 9)));
     // Settings turn each kind off.
     c.notify::<notification::DidChangeConfiguration>(DidChangeConfigurationParams {
-        settings: serde_json::json!({"slang": {"inlayHints": {"types": {"enabled": false}, "parameterNames": {"enabled": true}}}}),
+        settings: serde_json::json!({"zell": {"inlayHints": {"types": {"enabled": false}, "parameterNames": {"enabled": true}}}}),
     });
     let hints = get(&mut c);
     assert!(!hints.is_empty() && hints.iter().all(|h| h.1.ends_with(':')), "{hints:?}");
-    c.notify::<notification::DidChangeConfiguration>(DidChangeConfigurationParams { settings: serde_json::json!({"slang": {"inlayHints": {"parameterNames": {"enabled": false}}}}) });
+    c.notify::<notification::DidChangeConfiguration>(DidChangeConfigurationParams { settings: serde_json::json!({"zell": {"inlayHints": {"parameterNames": {"enabled": false}}}}) });
     assert!(get(&mut c).is_empty());
 }
 
@@ -757,7 +757,7 @@ func main() {
 
 #[test]
 fn code_actions_fix_structured_diagnostics() {
-    let (dir, uri) = project_with("main.sl", FIXES);
+    let (dir, uri) = project_with("main.zl", FIXES);
     let mut c = Client::start(&dir);
     c.open(&uri, FIXES);
     let d = c.diagnostics(&uri);
@@ -806,7 +806,7 @@ fn code_actions_fix_structured_diagnostics() {
 #[test]
 fn formatting_whole_document_and_range() {
     let src = "namespace app\nimport std.io\nfunc main() {\n    var x=1\n    println(x+1)\n}\nfunc other() {\n    var y=2\n    println(y)\n}\n";
-    let (dir, uri) = project_with("main.sl", src);
+    let (dir, uri) = project_with("main.zl", src);
     let mut c = Client::start(&dir);
     c.open(&uri, src);
     let opts = FormattingOptions { tab_size: 4, insert_spaces: true, ..Default::default() };
@@ -816,7 +816,7 @@ fn formatting_whole_document_and_range() {
         work_done_progress_params: Default::default(),
     });
     let formatted = apply_edits(src, &edits.unwrap());
-    assert_eq!(formatted, slang::fmt::format_source(src).unwrap());
+    assert_eq!(formatted, zell::fmt::format_source(src).unwrap());
     assert!(formatted.contains("    var x = 1\n    println(x + 1)\n"), "{formatted}");
     // Range formatting only touches the selected lines (`var y=2`).
     let line = pos_of(src, "var y=2", 0, 0).line;
@@ -871,7 +871,7 @@ fn workspace_symbols_and_highlights() {
 
 #[test]
 fn queries_work_in_a_file_with_syntax_errors() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -894,7 +894,7 @@ fn queries_work_in_a_file_with_syntax_errors() {
     let Some(GotoDefinitionResponse::Scalar(loc)) = def else { panic!("no definition") };
     assert_eq!(loc.range.start, pos_of(&broken, "func Money", 0, 5));
     // Member completion right after `.` in the broken file.
-    let edited = broken.replacen("    var bank = Bank.New(\"Slang Savings\")\n", "    var bank = Bank.New(\"Slang Savings\")\n    bank.\n", 1);
+    let edited = broken.replacen("    var bank = Bank.New(\"Zell Savings\")\n", "    var bank = Bank.New(\"Zell Savings\")\n    bank.\n", 1);
     c.change(uri, 3, &edited);
     let r: Option<CompletionResponse> = c.request::<request::Completion>(CompletionParams {
         text_document_position: tdp(uri, pos_of(&edited, "    bank.\n", 0, 9)),
@@ -913,11 +913,11 @@ fn queries_work_in_a_file_with_syntax_errors() {
 #[test]
 fn watched_files_are_added_and_removed() {
     let main = "namespace app\n\nimport std.io\n\nfunc main() {\n    println(Helper())\n}\n";
-    let (dir, uri) = project_with("main.sl", main);
+    let (dir, uri) = project_with("main.zl", main);
     let mut c = Client::start(&dir);
     c.open(&uri, main);
     assert!(c.diagnostics(&uri).iter().any(|d| d.message.contains("unknown identifier Helper")));
-    let helper = dir.join("helper.sl");
+    let helper = dir.join("helper.zl");
     std::fs::write(&helper, "namespace app\n\nfunc Helper() int {\n    return 1\n}\n").unwrap();
     let helper_uri = Url::from_file_path(&helper).unwrap();
     c.notify::<notification::DidChangeWatchedFiles>(DidChangeWatchedFilesParams { changes: vec![FileEvent { uri: helper_uri.clone(), typ: FileChangeType::CREATED }] });
@@ -976,7 +976,7 @@ async func fetch() void! {
 #[test]
 fn definition_and_hover_reach_into_std_sources() {
     let (dir, _) = project(&[]);
-    let path = dir.join("main.sl");
+    let path = dir.join("main.zl");
     std::fs::write(&path, STD_USER).unwrap();
     let uri = Url::from_file_path(&path).unwrap();
     let mut c = Client::start(&dir);
@@ -984,14 +984,14 @@ fn definition_and_hover_reach_into_std_sources() {
     // A C function: its generated extern declaration.
     let loc = definition(&mut c, &uri, pos_of(STD_USER, "Split(", 0, 1));
     let p = loc.uri.to_file_path().unwrap();
-    assert!(p.ends_with("std/strings/strings_extern.sl"), "{}", p.display());
+    assert!(p.ends_with("std/strings/strings_extern.zl"), "{}", p.display());
     let text = std::fs::read_to_string(&p).unwrap();
     assert_eq!(range_text(&text, &loc.range), "Split");
     assert!(line_text(&text, loc.range.start.line).starts_with("extern func Split("));
-    // A Slang-source stdlib function (a template).
+    // A Zell-source stdlib function (a template).
     let loc = definition(&mut c, &uri, pos_of(STD_USER, "Get(", 0, 1));
     let p = loc.uri.to_file_path().unwrap();
-    assert!(p.ends_with("std/net/http/http_client.sl"), "{}", p.display());
+    assert!(p.ends_with("std/net/http/http_client.zl"), "{}", p.display());
     let text = std::fs::read_to_string(&p).unwrap();
     assert_eq!(range_text(&text, &loc.range), "Get");
     // Hover shows the doc comments of the std sources.
@@ -1003,7 +1003,7 @@ fn definition_and_hover_reach_into_std_sources() {
     let msg = c.request_err::<request::PrepareRenameRequest>(tdp(&uri, pos_of(STD_USER, "Split(", 0, 1)));
     assert!(msg.contains("standard library"), "{msg}");
     let syms = workspace_symbols(&mut c, "Split");
-    assert!(syms.iter().any(|s| s.name == "Split" && s.location.uri.path().ends_with("std/strings/strings_extern.sl")), "{syms:?}");
+    assert!(syms.iter().any(|s| s.name == "Split" && s.location.uri.path().ends_with("std/strings/strings_extern.zl")), "{syms:?}");
     // References of a std symbol across project files.
     let refs: Option<Vec<Location>> = c.request::<request::References>(ReferenceParams {
         text_document_position: tdp(&uri, pos_of(STD_USER, "Split(", 0, 1)),
@@ -1012,34 +1012,34 @@ fn definition_and_hover_reach_into_std_sources() {
         partial_result_params: Default::default(),
     });
     let refs = refs.unwrap();
-    assert!(refs.iter().any(|l| l.uri == uri) && refs.iter().any(|l| l.uri.path().ends_with("strings_extern.sl")), "{refs:?}");
+    assert!(refs.iter().any(|l| l.uri == uri) && refs.iter().any(|l| l.uri.path().ends_with("strings_extern.zl")), "{refs:?}");
 }
 
 #[test]
-fn dependencies_in_slang_deps_are_read_only_project_files() {
+fn dependencies_in_zell_deps_are_read_only_project_files() {
     let (dir, _) = project(&[]);
     let w = |p: &str, s: &str| {
         let f = dir.join(p);
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
         std::fs::write(f, s).unwrap();
     };
-    w("slang.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.sl\"\n\n[dependencies]\n\"example.com/greet\" = \"^1\"\n");
+    w("zell.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.zl\"\n\n[dependencies]\n\"example.com/greet\" = \"^1\"\n");
     let main = "namespace app\n\nimport std.io\nimport greet\n\nfunc main() {\n    println(greet.Hello(\"x\"))\n}\n";
-    w("src/main.sl", main);
+    w("src/main.zl", main);
     w(
-        "slang.lock",
+        "zell.lock",
         "packages:\n- checksum: sha256:00\n  dependencies:\n  - greet\n  name: app\n  source: path:.\n  version: 0.1.0\n- checksum: h1:AA==\n  module: example.com/greet\n  name: greet\n  source: module\n  version: v1.0.0\nversion: 1\n",
     );
     let dep = "namespace greet\n\n// Hello greets who.\nfunc Hello(who string) string {\n    return \"hello \" + who\n}\n";
-    w(".slang/deps/example.com/greet@v1.0.0/slang.toml", "[package]\nname = \"greet\"\nversion = \"1.0.0\"\n");
-    w(".slang/deps/example.com/greet@v1.0.0/src/greet.sl", dep);
-    let uri = Url::from_file_path(dir.join("src/main.sl")).unwrap();
+    w(".zell/deps/example.com/greet@v1.0.0/zell.toml", "[package]\nname = \"greet\"\nversion = \"1.0.0\"\n");
+    w(".zell/deps/example.com/greet@v1.0.0/src/greet.zl", dep);
+    let uri = Url::from_file_path(dir.join("src/main.zl")).unwrap();
     let mut c = Client::start(&dir);
     c.open(&uri, main);
     assert_eq!(c.diagnostics(&uri), vec![]);
     let loc = definition(&mut c, &uri, pos_of(main, "Hello(", 0, 1));
     let p = loc.uri.to_file_path().unwrap();
-    assert!(p.ends_with(".slang/deps/example.com/greet@v1.0.0/src/greet.sl"), "{}", p.display());
+    assert!(p.ends_with(".zell/deps/example.com/greet@v1.0.0/src/greet.zl"), "{}", p.display());
     assert_eq!(range_text(dep, &loc.range), "Hello");
     let h = hover_text(&mut c, &uri, pos_of(main, "Hello(", 0, 1));
     assert!(h.contains("Hello greets who."), "{h}");
@@ -1056,13 +1056,13 @@ fn dependencies_in_slang_deps_are_read_only_project_files() {
     let syms = workspace_symbols(&mut c, "Hello");
     assert!(syms.iter().any(|s| s.location.uri == loc.uri), "{syms:?}");
     // No diagnostics are published for library files.
-    assert!(!c.notes.iter().any(|n| n.method == notification::PublishDiagnostics::METHOD && n.params.to_string().contains(".slang/deps")));
+    assert!(!c.notes.iter().any(|n| n.method == notification::PublishDiagnostics::METHOD && n.params.to_string().contains(".zell/deps")));
 }
 
 #[test]
 fn hover_renders_doc_markdown_and_std_examples() {
     let text = "namespace app\n\nimport std\nimport std.io\n\n// Words splits s. See `strings.Fields`.\n//\n// Deprecated: use strings.Fields.\nfunc Words(s string) []string {\n    return strings.Split(s, \" \")\n}\n\nfunc main() {\n    println(Words(\"a b\"))\n}\n";
-    let (dir, uri) = project_with("main.sl", text);
+    let (dir, uri) = project_with("main.zl", text);
     let mut c = Client::start(&dir);
     c.open(&uri, text);
     let hover = |c: &mut Client, pos| -> String {
@@ -1075,8 +1075,8 @@ fn hover_renders_doc_markdown_and_std_examples() {
     // a user function: Deprecated tag and a link for the backtick symbol
     let h = hover(&mut c, pos_of(text, "Words(\"a b\")", 0, 1));
     assert!(h.contains("**~~Deprecated~~** use strings.Fields."), "{h}");
-    assert!(h.contains("[`strings.Fields`](file://") && h.contains("strings_extern.sl#L"), "{h}");
-    // a std function: its first example from std/strings/strings_test.sl, collapsed
+    assert!(h.contains("[`strings.Fields`](file://") && h.contains("strings_extern.zl#L"), "{h}");
+    // a std function: its first example from std/strings/strings_test.zl, collapsed
     let h = hover(&mut c, pos_of(text, "Split(s", 0, 1));
     assert!(h.contains("<details><summary>Example</summary>") && h.contains("// Output") == false && h.contains("3 [a b c]"), "{h}");
 }

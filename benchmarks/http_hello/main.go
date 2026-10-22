@@ -1,6 +1,6 @@
 package main
 
-// HTTP/1.1 "hello" throughput with Go's net/http (same shape as main.sl):
+// HTTP/1.1 "hello" throughput with Go's net/http (same shape as main.zl):
 //   main                  server and load generator in one process
 //   main -server          only the server: prints its port (stderr), serves until killed
 //   main -load host:port  only the load generator

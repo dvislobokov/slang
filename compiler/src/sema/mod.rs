@@ -14,10 +14,10 @@
 //! Generic declarations ([`generics`]) are checked once against their
 //! constraints and monomorphised: every distinct instantiation becomes an
 //! ordinary HIR function, struct or enum. `std.collections` is a set of
-//! generic structs written in Slang ([`collections`]).
+//! generic structs written in Zell ([`collections`]).
 //!
 //! Reflection ([`reflect`]): `std.reflect`, `std.encoding.json` and
-//! `strings.Builder` are Slang sources loaded on first use; `typeof`,
+//! `strings.Builder` are Zell sources loaded on first use; `typeof`,
 //! compile-time `reflect.Fields<T>()` loops and static `if`s on type kinds
 //! are handled there, and [`hir::Program::reflect`] tells code generation
 //! which type tables and intrinsics to emit.
@@ -948,7 +948,7 @@ impl<'a> Sema<'a> {
         hir::Function {
             name: name.clone(),
             full_name: name.clone(),
-            symbol: format!("slang_{}", name.replace('.', "__")),
+            symbol: format!("zell_{}", name.replace('.', "__")),
             kind,
             namespace: ns,
             params: Vec::new(),

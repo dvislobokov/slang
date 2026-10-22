@@ -21,7 +21,7 @@ use std::collections::HashMap;
 /// What a pin slot holds.
 #[derive(Clone, Copy)]
 pub(crate) enum PinTy {
-    /// A heap object (a cell): `slang_retain`/`slang_release`.
+    /// A heap object (a cell): `zell_retain`/`zell_release`.
     Obj,
     /// An owned value of this type (slice, pointer).
     Val(TypeId),
@@ -115,7 +115,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match s.ty {
             PinTy::Obj => {
                 let v = self.b.build_load(self.ptr_ty(), s.ptr, "pin").unwrap();
-                self.call_rt("slang_release", &[v.into()]);
+                self.call_rt("zell_release", &[v.into()]);
                 self.b.build_store(s.ptr, self.ptr_ty().const_null()).unwrap();
             }
             PinTy::Val(t) => {
@@ -150,7 +150,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     ExprKind::Upvalue(i) => self.upvalue_cell_ptr(*i).into(),
                     _ => unreachable!("codegen: interior root"),
                 };
-                self.call_rt("slang_retain", &[cell.into()]);
+                self.call_rt("zell_retain", &[cell.into()]);
                 news.push(cell);
             }
             Pin::Root(_) => {}
@@ -173,7 +173,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     match s.ty {
                         PinTy::Obj => {
                             let v = self.b.build_load(self.ptr_ty(), s.ptr, "pin").unwrap();
-                            self.call_rt("slang_retain", &[v.into()]);
+                            self.call_rt("zell_retain", &[v.into()]);
                             news.push(v);
                         }
                         PinTy::Val(t) => {

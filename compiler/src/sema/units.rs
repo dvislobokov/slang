@@ -395,7 +395,7 @@ pub fn run_unit(files: &[&ast::File], texts: &[&str], full: Vec<bool>, index_ns:
 /// sees them. Symbols other than std ones are dropped.
 pub fn std_symbols() -> SymbolIndex {
     let mut diags = Diagnostics::new();
-    let tokens = crate::lexer::lex("namespace __slang_std_index__\n", &mut diags);
+    let tokens = crate::lexer::lex("namespace __zell_std_index__\n", &mut diags);
     let file = crate::parser::parse_file(tokens, &mut diags);
     let files = [&file];
     let mut s = Sema::new(&files, &mut diags);

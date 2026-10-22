@@ -716,7 +716,7 @@ impl<'a> Sema<'a> {
                 let Some(sid) = self.std_struct("std.errors", "Frame") else { return self.invalid(span) };
                 let st = self.struct_ty(sid);
                 let ret = self.tt.slice(st);
-                let x = self.extern_id("std.errors.Frames".into(), "slang_errors_frames", vec![self.tt.error], ret);
+                let x = self.extern_id("std.errors.Frames".into(), "zell_errors_frames", vec![self.tt.error], ret);
                 mk(ExprKind::Call { callee: Callee::Extern(x), args: vec![err] }, ret, span)
             }
             Special::ErrorsAs => {

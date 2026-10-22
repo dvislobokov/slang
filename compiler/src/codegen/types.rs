@@ -76,7 +76,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.llty_opt(id).unwrap_or_else(|| self.ctx.i8_type().into())
     }
 
-    /// Named LLVM struct for a Slang struct (fields in HIR order).
+    /// Named LLVM struct for a Zell struct (fields in HIR order).
     pub(crate) fn struct_llty(&mut self, sid: u32) -> StructType<'ctx> {
         if let Some(t) = self.struct_tys.get(&sid) {
             return *t;
@@ -139,7 +139,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         })
     }
 
-    /// LLVM function type used to call a closure of Slang type `func(..)`:
+    /// LLVM function type used to call a closure of Zell type `func(..)`:
     /// the environment pointer comes first.
     pub(crate) fn closure_fn_llty(&mut self, fty: TypeId) -> FunctionType<'ctx> {
         let Type::Func(sig) = self.ty(fty) else {

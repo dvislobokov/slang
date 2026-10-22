@@ -289,7 +289,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if op == crate::hir::BinOp::StrConcat {
             // The place's reference moves into the concatenation, which
             // extends the string in place when nobody else holds it.
-            let nv = self.call_rt_v("slang_string_append", &[old.into(), rv.get().into()]);
+            let nv = self.call_rt_v("zell_string_append", &[old.into(), rv.get().into()]);
             self.b.build_store(p, nv).unwrap();
             self.drop_val(rty, rv);
             return Ok(());
@@ -380,7 +380,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let sv = self.expr(string)?;
         let tmp = self.scoped_slot(string.ty, sv);
         let s = self.b.build_load(self.ptr_ty(), tmp, "").unwrap();
-        let len = self.call_rt_v("slang_string_len", &[s.into()]).into_int_value();
+        let len = self.call_rt_v("zell_string_len", &[s.into()]).into_int_value();
         let ctr = self.entry_alloca(self.i64_ty().into(), "i", false);
         let width = self.entry_alloca(self.i64_ty().into(), "w", false);
         self.b.build_store(ctr, self.i64_ty().const_zero()).unwrap();
@@ -394,7 +394,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let c = self.b.build_int_compare(IntPredicate::SLT, iv, len, "").unwrap();
         self.b.build_conditional_branch(c, bb, done).unwrap();
         self.b.position_at_end(bb);
-        let r = self.call_rt_v("slang_string_decode_rune", &[s.into(), iv.into(), width.into()]);
+        let r = self.call_rt_v("zell_string_decode_rune", &[s.into(), iv.into(), width.into()]);
         if let Some(l) = index {
             self.assign_local(l, Val::borrowed(iv.into()), true)?;
         }
@@ -418,7 +418,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let tmp = self.scoped_slot(map.ty, mv);
         let m = self.b.build_load(self.ptr_ty(), tmp, "").unwrap();
         let it = self.entry_alloca(self.i64_ty().array_type(4).into(), "it", false);
-        self.call_rt("slang_map_iter_init", &[it.into(), m.into()]);
+        self.call_rt("zell_map_iter_init", &[it.into(), m.into()]);
         let kp = self.entry_alloca(self.ptr_ty().into(), "kp", false);
         let vp = self.entry_alloca(self.ptr_ty().into(), "vp", false);
         let head = self.block("fm.head");
@@ -426,7 +426,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let done = self.block("fm.end");
         self.br(head);
         self.b.position_at_end(head);
-        let ok = self.call_rt_v("slang_map_iter_next", &[it.into(), kp.into(), vp.into()]).into_int_value();
+        let ok = self.call_rt_v("zell_map_iter_next", &[it.into(), kp.into(), vp.into()]).into_int_value();
         self.b.build_conditional_branch(ok, bb, done).unwrap();
         self.b.position_at_end(bb);
         if let Some(l) = key {
@@ -736,7 +736,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.scope_local(l);
             }
             None => {
-                self.call_rt("slang_release", &[e.into()]);
+                self.call_rt("zell_release", &[e.into()]);
             }
         }
         self.block_stmts(handler)?;
@@ -772,7 +772,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.scope_local(l);
             }
             None => {
-                self.call_rt("slang_release", &[e.into()]);
+                self.call_rt("zell_release", &[e.into()]);
             }
         }
         self.block_stmts(handler)?;
@@ -812,7 +812,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let isnull = self.b.build_is_null(e, "").unwrap();
         self.b.build_conditional_branch(isnull, ok, fail).unwrap();
         self.b.position_at_end(fail);
-        self.call_rt("slang_release", &[e.into()]);
+        self.call_rt("zell_release", &[e.into()]);
         let fd = self.depth();
         match fallback {
             TryFallback::Value(x) => {

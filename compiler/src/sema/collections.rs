@@ -1,5 +1,5 @@
 //! `std.collections`: `List<T>`, `Map<K, V>`, `Set<T>`, `Queue<T>` and
-//! `Stack<T>`, written in Slang (below) as generic structs over the builtin
+//! `Stack<T>`, written in Zell (below) as generic structs over the builtin
 //! slices and maps, parsed once and registered as stdlib templates. Their
 //! instances are ordinary monomorphised structs, so codegen and the runtime
 //! need nothing new.
@@ -20,7 +20,7 @@ use super::*;
 use crate::hir::{ExprKind, Stmt, StmtKind};
 use std::sync::OnceLock;
 
-/// The Slang source of `std.collections`.
+/// The Zell source of `std.collections`.
 const SOURCE: &str = r#"namespace std.collections
 
 // List is a growable list of T backed by a slice.
@@ -358,7 +358,7 @@ fn collections_ast() -> &'static ast::File {
     static AST: OnceLock<ast::File> = OnceLock::new();
     AST.get_or_init(|| {
         let mut diags = crate::diagnostics::Diagnostics::new();
-        let text = super::stdfs::load("std.collections", "collections.sl", SOURCE);
+        let text = super::stdfs::load("std.collections", "collections.zl", SOURCE);
         let tokens = crate::lexer::lex(&text, &mut diags);
         let file = crate::parser::parse(tokens, &mut diags);
         match file {
@@ -448,7 +448,7 @@ impl<'a> Sema<'a> {
     pub(crate) fn collection_for(&mut self, vars: &[ast::Ident], seq: hir::Expr, body: &ast::Block) -> Result<StmtKind, hir::Expr> {
         let Some(sid) = self.struct_of(seq.ty) else { return Err(seq) };
         let Some((name, args)) = self.std_collection(sid) else { return Err(seq) };
-        // The slice-backed core collections only (stdlib_src/collections2.sl
+        // The slice-backed core collections only (stdlib_src/collections2.zl
         // types iterate through their Items()/Keys() methods).
         if !matches!(name, "List" | "Map" | "Set" | "Queue" | "Stack") {
             return Err(seq);

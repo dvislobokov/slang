@@ -1,11 +1,11 @@
-Hello, Slang!
-len: 13
+Hello, Zell!
+len: 12
 equal: true less: true greater: true
 parts: 3 red blue
 joined: red | green | blue
 [padded]
 contains: true false
-upper: HELLO, SLANG!
+upper: HELLO, ZELL!
 replace: a+b+c
 ToInt: 43 -17 -1
 vowels: 7

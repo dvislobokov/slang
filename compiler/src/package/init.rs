@@ -1,10 +1,10 @@
-//! `slang init [name] [--format toml|json|yaml] [--lib]`.
+//! `zell init [name] [--format toml|json|yaml] [--lib]`.
 
 use super::manifest::{self, Format, Manifest, Package};
 use std::path::{Path, PathBuf};
 
 /// Creates a package in `dir` (created if missing): a manifest in `format`
-/// and `src/main.sl` (binary) or `src/lib.sl` (library). `name` defaults
+/// and `src/main.zl` (binary) or `src/lib.zl` (library). `name` defaults
 /// to the directory name. Returns the created files.
 pub fn init(dir: &Path, name: Option<&str>, format: Format, lib: bool) -> Result<Vec<PathBuf>, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
@@ -23,7 +23,7 @@ pub fn init(dir: &Path, name: Option<&str>, format: Format, lib: bool) -> Result
         return Err(format!("invalid package name `{name}`: use lowercase letters, digits and `-`, starting with a letter"));
     }
     let ns = name.replace('-', "_");
-    let src_file = if lib { "src/lib.sl" } else { "src/main.sl" };
+    let src_file = if lib { "src/lib.zl" } else { "src/main.zl" };
     let m = Manifest {
         package: Some(Package {
             name: name.clone(),

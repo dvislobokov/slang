@@ -1,4 +1,4 @@
-//! `slang doc`: documentation from the doc comments of Slang sources
+//! `zell doc`: documentation from the doc comments of Zell sources
 //! (docs/TOOLING.md, "Прочие инструменты").
 //!
 //! Conventions (the same as hover in the LSP, which renders doc comments
@@ -11,11 +11,11 @@
 //! * the body is Markdown ([`markdown`]): paragraphs, lists, headings,
 //!   fenced or indented code, `` `symbol` `` cross-links, and a paragraph
 //!   starting with `Deprecated:`;
-//! * `func ExampleSplit()` in a `*_test.sl` file is an example for `Split`
+//! * `func ExampleSplit()` in a `*_test.zl` file is an example for `Split`
 //!   of the namespace of its directory (`ExampleBuilder_WriteString` for a
 //!   method, `Example` for the namespace, `_suffix` starting with a lower
 //!   case letter for more than one); a trailing `// Output:` (or
-//!   `// Unordered output:`) comment block makes `slang test` run it and
+//!   `// Unordered output:`) comment block makes `zell test` run it and
 //!   compare its standard output.
 //!
 //! Only exported (upper-case) names are documented unless `--private`.
@@ -72,7 +72,7 @@ pub struct Item {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<String>,
-    /// Display path (`std/strings/strings.sl`), empty for compiler builtins.
+    /// Display path (`std/strings/strings.zl`), empty for compiler builtins.
     pub file: String,
     #[serde(skip)]
     pub path: Option<PathBuf>,
@@ -165,7 +165,7 @@ pub struct Options {
 /// One source file to document.
 pub struct Source {
     pub path: PathBuf,
-    /// The path shown in output (`std/strings/strings.sl`, `src/main.sl`).
+    /// The path shown in output (`std/strings/strings.zl`, `src/main.zl`).
     pub display: String,
     pub text: String,
     /// A stdlib file.
@@ -176,7 +176,7 @@ pub fn is_exported(name: &str) -> bool {
     name.starts_with(|c: char| c.is_ascii_uppercase())
 }
 
-/// Strips what is not documentation: the `C: slang_x (runtime/...)` line
+/// Strips what is not documentation: the `C: zell_x (runtime/...)` line
 /// of generated extern declarations, `Code generated` headers.
 fn clean_doc(d: &str) -> String {
     if d.starts_with("Code generated") {
@@ -365,7 +365,7 @@ pub fn examples_of(file: &ast::File, text: &str, display: &str) -> Vec<Example> 
 }
 
 pub fn is_test_file(p: &str) -> bool {
-    p.ends_with("_test.sl")
+    p.ends_with("_test.zl")
 }
 
 fn parse(text: &str) -> ast::File {
@@ -467,7 +467,7 @@ fn kind_order(k: &str) -> u8 {
 }
 
 impl Docs {
-    /// Documents `sources`; `*_test.sl` files contribute only examples.
+    /// Documents `sources`; `*_test.zl` files contribute only examples.
     pub fn build(sources: &[Source], opts: Options) -> Docs {
         let mut by_ns: BTreeMap<String, Namespace> = BTreeMap::new();
         // directory -> namespace of its non-test files
@@ -735,7 +735,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
             if !name.starts_with('.') && name != "target" && name != "node_modules" {
                 walk(&p, out);
             }
-        } else if p.extension().is_some_and(|x| x == "sl") {
+        } else if p.extension().is_some_and(|x| x == "zl") {
             out.push(p);
         }
     }
@@ -807,7 +807,7 @@ pub fn std_examples() -> &'static HashMap<String, Vec<Example>> {
 /// Hover text of an example: collapsed code and output.
 pub fn example_markdown(e: &Example) -> String {
     let title = if e.suffix.is_empty() { "Example".to_string() } else { format!("Example ({})", e.suffix) };
-    let mut s = format!("<details><summary>{title}</summary>\n\n```slang\n{}\n```\n", e.code);
+    let mut s = format!("<details><summary>{title}</summary>\n\n```zell\n{}\n```\n", e.code);
     if let Some(o) = &e.output {
         s.push_str(&format!("\nOutput:\n\n```text\n{o}\n```\n"));
     }
@@ -819,9 +819,9 @@ pub fn example_markdown(e: &Example) -> String {
 // CLI
 // ---------------------------------------------------------------------------
 
-const USAGE: &str = "usage: slang doc [path|namespace|symbol] [--html <dir>] [--json] [--check [--min N]] [--private] [--source-url URL]\n       slang doc --site <dir> [--base /slang/] [--repo-url URL] [repo]";
+const USAGE: &str = "usage: zell doc [path|namespace|symbol] [--html <dir>] [--json] [--check [--min N]] [--private] [--source-url URL]\n       zell doc --site <dir> [--base /zell/] [--repo-url URL] [repo]";
 
-/// What `slang doc <arg>` documents.
+/// What `zell doc <arg>` documents.
 struct Target {
     docs: Docs,
     /// Restrict output to this namespace (and item).
@@ -831,7 +831,7 @@ struct Target {
 
 fn project_sources(root: &Path, opts: Options) -> Vec<Source> {
     let _ = opts;
-    let manifest = ["slang.toml", "slang.json", "slang.yaml"].iter().any(|m| root.join(m).is_file());
+    let manifest = ["zell.toml", "zell.json", "zell.yaml"].iter().any(|m| root.join(m).is_file());
     let src = if manifest && root.join("src").is_dir() { root.join("src") } else { root.to_path_buf() };
     load_dir(&src, root, "", false)
 }
@@ -853,7 +853,7 @@ fn dep_sources(root: &Path) -> Vec<Source> {
             }
         }
     }
-    for base in [root.join(".slang/deps"), root.join("vendor")] {
+    for base in [root.join(".zell/deps"), root.join("vendor")] {
         let Ok(rd) = std::fs::read_dir(&base) else { continue };
         let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
         dirs.sort();
@@ -872,7 +872,7 @@ fn dep_sources(root: &Path) -> Vec<Source> {
 
 fn find_dep(root: &Path, module: &str) -> Option<PathBuf> {
     let esc = crate::package::store::escape_path(module);
-    let deps = root.join(".slang/deps");
+    let deps = root.join(".zell/deps");
     let (parent, last) = match esc.rsplit_once('/') {
         Some((p, l)) => (deps.join(p), l.to_string()),
         None => (deps.clone(), esc.clone()),
@@ -893,23 +893,23 @@ fn resolve_target(arg: Option<&str>, opts: Options) -> Result<Target, String> {
     let Some(arg) = arg else {
         let srcs = project_sources(&cwd, opts);
         if srcs.is_empty() {
-            return Err(format!("no .sl files in {}", cwd.display()));
+            return Err(format!("no .zl files in {}", cwd.display()));
         }
         return Ok(Target { docs: Docs::build(&srcs, opts), ns: None, item: None });
     };
     if arg == "std" {
         let srcs = load_std();
         if srcs.is_empty() {
-            return Err("the standard library sources were not found (set SLANG_STD)".into());
+            return Err("the standard library sources were not found (set ZELL_STD)".into());
         }
         return Ok(Target { docs: Docs::build(&srcs, opts), ns: None, item: None });
     }
     let p = Path::new(arg);
-    if p.exists() && (arg.contains('/') || arg.ends_with(".sl") || arg == "." || p.is_dir() && !arg.contains('.')) {
+    if p.exists() && (arg.contains('/') || arg.ends_with(".zl") || arg == "." || p.is_dir() && !arg.contains('.')) {
         let root = if p.is_file() { p.parent().unwrap_or(Path::new(".")).to_path_buf() } else { p.to_path_buf() };
         let srcs = if p.is_file() { load_dir(p, &root, "", false) } else { project_sources(p, opts) };
         if srcs.is_empty() {
-            return Err(format!("no .sl files in {arg}"));
+            return Err(format!("no .zl files in {arg}"));
         }
         return Ok(Target { docs: Docs::build(&srcs, opts), ns: None, item: None });
     }
@@ -918,11 +918,11 @@ fn resolve_target(arg: Option<&str>, opts: Options) -> Result<Target, String> {
             let srcs = load_dir(&d, d.parent().unwrap(), "", false);
             return Ok(Target { docs: Docs::build(&srcs, opts), ns: None, item: None });
         }
-        return Err(format!("{arg}: no such path or dependency (run `slang install`?)"));
+        return Err(format!("{arg}: no such path or dependency (run `zell install`?)"));
     }
     // a namespace or symbol: the project, its dependencies and std
     // the current project only when there is one (a manifest)
-    let is_project = ["slang.toml", "slang.json", "slang.yaml"].iter().any(|m| cwd.join(m).is_file());
+    let is_project = ["zell.toml", "zell.json", "zell.yaml"].iter().any(|m| cwd.join(m).is_file());
     let mut srcs = if is_project { project_sources(&cwd, opts) } else { Vec::new() };
     srcs.retain(|s| !s.text.lines().any(|l| l.trim_start().starts_with("namespace std.") || l.trim() == "namespace std"));
     srcs.extend(dep_sources(&cwd));
@@ -950,7 +950,7 @@ fn resolve_target(arg: Option<&str>, opts: Options) -> Result<Target, String> {
     Ok(Target { docs, ns: Some(ns), item: (!item.is_empty()).then_some(item) })
 }
 
-/// Runs `slang doc <args>`; returns the exit code.
+/// Runs `zell doc <args>`; returns the exit code.
 pub fn run(args: &[String]) -> i32 {
     let mut opts = Options::default();
     let (mut html, mut json, mut check, mut min, mut arg, mut source_url) = (None::<PathBuf>, false, false, 100.0f64, None::<String>, None::<String>);
@@ -1074,7 +1074,7 @@ pub fn run(args: &[String]) -> i32 {
     0
 }
 
-/// Writes to stdout, ignoring a closed pipe (`slang doc std | head`).
+/// Writes to stdout, ignoring a closed pipe (`zell doc std | head`).
 fn emit(s: &str) {
     use std::io::Write;
     let _ = std::io::stdout().lock().write_all(s.as_bytes());
@@ -1140,7 +1140,7 @@ fn examples_text(exs: &[Example]) -> String {
     o
 }
 
-/// `slang doc std.strings`: the namespace doc and one line per declaration.
+/// `zell doc std.strings`: the namespace doc and one line per declaration.
 pub fn namespace_text(n: &Namespace) -> String {
     let mut o = format!("namespace {}", n.name);
     if let Some(f) = n.files.first() {
@@ -1168,7 +1168,7 @@ pub fn namespace_text(n: &Namespace) -> String {
     o
 }
 
-/// `slang doc strings.Split`: signature, documentation, members, examples.
+/// `zell doc strings.Split`: signature, documentation, members, examples.
 pub fn item_text(docs: &Docs, n: &Namespace, path: &str) -> String {
     let _ = docs;
     let Some(it) = n.find(path) else { return String::new() };
@@ -1229,8 +1229,8 @@ mod tests {
         let lib = "// Package doc. More.\nnamespace demo\n\n// Add returns a + b.\n//\n// Deprecated: use `Sum`.\nfunc Add(a int, b int) int {\n    return a + b\n}\n\nfunc Sum(\n    xs []int,\n) int {\n    return 0\n}\n\nfunc hidden() {}\n\n// A point.\nstruct Point {\n    // X coordinate.\n    X int\n    y int\n\n    // Len is the length.\n    func Len() float {\n        return 0.0\n    }\n}\n";
         let test = "namespace demo_test\n\nimport demo\n\nfunc ExampleAdd() {\n    println(demo.Add(1, 2))\n    // Output:\n    // 3\n}\n\nfunc ExamplePoint_Len() {\n    println(1)\n}\n";
         let srcs = vec![
-            Source { path: "/x/demo/demo.sl".into(), display: "demo/demo.sl".into(), text: lib.into(), std: false },
-            Source { path: "/x/demo/demo_test.sl".into(), display: "demo/demo_test.sl".into(), text: test.into(), std: false },
+            Source { path: "/x/demo/demo.zl".into(), display: "demo/demo.zl".into(), text: lib.into(), std: false },
+            Source { path: "/x/demo/demo_test.zl".into(), display: "demo/demo_test.zl".into(), text: test.into(), std: false },
         ];
         let d = Docs::build(&srcs, Options::default());
         let n = d.namespace("demo").unwrap();

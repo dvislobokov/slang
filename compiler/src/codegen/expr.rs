@@ -219,7 +219,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let bad = self.block("oob");
         self.b.build_conditional_branch(ok, good, bad).unwrap();
         self.b.position_at_end(bad);
-        self.call_rt("slang_panic_bounds", &[i.into(), len.into()]);
+        self.call_rt("zell_panic_bounds", &[i.into(), len.into()]);
         self.b.build_unreachable().unwrap();
         self.b.position_at_end(good);
     }
@@ -471,11 +471,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     }
 
     fn byte_at_fn(&mut self) -> FunctionValue<'ctx> {
-        if let Some(f) = self.module.get_function("slang_string_byte_at") {
+        if let Some(f) = self.module.get_function("zell_string_byte_at") {
             return f;
         }
         let fty = self.ctx.i8_type().fn_type(&[self.ptr_ty().into(), self.i64_ty().into()], false);
-        self.module.add_function("slang_string_byte_at", fty, Some(Linkage::External))
+        self.module.add_function("zell_string_byte_at", fty, Some(Linkage::External))
     }
 
     fn sub_slice(&mut self, e: &Expr, base: &Expr, lo: Option<&Expr>, hi: Option<&Expr>) -> R<Val<'ctx>> {
@@ -495,10 +495,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let lo = bound(self, lo)?.unwrap_or(self.i64_ty().const_zero());
                 let hi = match bound(self, hi)? {
                     Some(h) => h,
-                    None => self.call_rt_v("slang_string_len", &[s.get().into()]).into_int_value(),
+                    None => self.call_rt_v("zell_string_len", &[s.get().into()]).into_int_value(),
                 };
                 self.unhold(h);
-                let r = self.call_rt_v("slang_string_slice", &[s.get().into(), lo.into(), hi.into()]);
+                let r = self.call_rt_v("zell_string_slice", &[s.get().into(), lo.into(), hi.into()]);
                 self.drop_val(base.ty, s);
                 Ok(Val::owned(r))
             }
@@ -514,7 +514,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.unhold(h);
                 let out = self.entry_alloca(self.slice_ty().into(), "sub", false);
                 let size = self.i64_ty().const_int(self.size_of(et), false);
-                self.call_rt("slang_slice_sub", &[out.into(), sp.into(), lo.into(), hi.into(), size.into()]);
+                self.call_rt("zell_slice_sub", &[out.into(), sp.into(), lo.into(), hi.into(), size.into()]);
                 self.drop_val(base.ty, s);
                 Ok(Val::owned(self.b.build_load(self.slice_ty(), out, "").unwrap()))
             }
@@ -530,7 +530,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let bad = self.block("sl.bad");
                 self.b.build_conditional_branch(ok, good, bad).unwrap();
                 self.b.position_at_end(bad);
-                self.call_rt("slang_panic_bounds", &[hi.into(), nv.into()]);
+                self.call_rt("zell_panic_bounds", &[hi.into(), nv.into()]);
                 self.b.build_unreachable().unwrap();
                 self.b.position_at_end(good);
                 let elt = self.llty(et);
@@ -564,7 +564,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     _ => None,
                 };
                 if let Some(c) = cell {
-                    self.call_rt("slang_retain", &[c.into()]);
+                    self.call_rt("zell_retain", &[c.into()]);
                     v = self.b.build_insert_value(v, c, 3, "").unwrap();
                     return Ok(Val::owned(v.into_struct_value().into()));
                 }
@@ -583,7 +583,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let size = self.i64_ty().const_int(self.size_of(et), false);
         let n = self.i64_ty().const_int(elems.len() as u64, false);
         let ops = self.value_ops(et);
-        self.call_rt("slang_slice_new_ops", &[out.into(), size.into(), n.into(), n.into(), ops.into()]);
+        self.call_rt("zell_slice_new_ops", &[out.into(), size.into(), n.into(), n.into(), ops.into()]);
         let elt = self.llty(et);
         let d = self.depth();
         let whole = self.b.build_load(self.slice_ty(), out, "").unwrap();
@@ -654,7 +654,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
     }
 
-    /// Declaration of a stdlib extern per `slang_rt.h` §14.
+    /// Declaration of a stdlib extern per `zell_rt.h` §14.
     fn extern_decl(&mut self, x: ExternId) -> FunctionValue<'ctx> {
         let ex = &self.prog.externs[x.0 as usize];
         if let Some(f) = self.module.get_function(&ex.symbol) {
@@ -743,7 +743,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if let Some(o) = out {
             r = Some(self.b.build_load(self.slice_ty(), o, "").unwrap());
         }
-        if ex.symbol == "slang_errors_wrap" {
+        if ex.symbol == "zell_errors_wrap" {
             if let Some(w) = r {
                 r = Some(self.trace_created(w, at));
             }
@@ -789,17 +789,17 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let vs = self.i64_ty().const_int(self.size_of(vt), false);
         let vops = self.value_ops(vt);
         Ok(match self.key_kind(kt) {
-            KeyKind::Str => self.call_rt_v("slang_map_new_str", &[vs.into(), vops.into()]),
-            KeyKind::Int => self.call_rt_v("slang_map_new_int", &[vs.into(), vops.into()]),
+            KeyKind::Str => self.call_rt_v("zell_map_new_str", &[vs.into(), vops.into()]),
+            KeyKind::Int => self.call_rt_v("zell_map_new_int", &[vs.into(), vops.into()]),
             KeyKind::Generic => {
                 let d = self.map_desc(kt, vt)?;
-                self.call_rt_v("slang_map_new", &[d.into(), self.i64_ty().const_zero().into()])
+                self.call_rt_v("zell_map_new", &[d.into(), self.i64_ty().const_zero().into()])
             }
         }
         .into_pointer_value())
     }
 
-    /// Constant `slang_map_desc` for scalar keys hashed bytewise.
+    /// Constant `zell_map_desc` for scalar keys hashed bytewise.
     fn map_desc(&mut self, kt: TypeId, vt: TypeId) -> R<PointerValue<'ctx>> {
         let mt = self.prog.types.get(kt).clone();
         if !matches!(mt, Type::Int(_) | Type::Bool | Type::Char | Type::Enum(_) | Type::Pointer(_)) || self.needs_rc(kt) {
@@ -817,7 +817,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let hash = self.module.add_function(&format!("map.hash.{n}"), hty, Some(Linkage::Internal));
         self.with_helper(hash, |cg| {
             let p = hash.get_nth_param(0).unwrap();
-            let h = cg.call_rt_v("slang_hash_bytes", &[p.into(), cg.i64_ty().const_int(ks, false).into()]);
+            let h = cg.call_rt_v("zell_hash_bytes", &[p.into(), cg.i64_ty().const_int(ks, false).into()]);
             cg.b.build_return(Some(&h)).unwrap();
             Ok(())
         })?;
@@ -861,29 +861,29 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// Borrowed value slot for `key`, or NULL.
     pub(crate) fn map_slot(&mut self, kt: TypeId, m: BasicValueEnum<'ctx>, key: BasicValueEnum<'ctx>, insert: bool) -> PointerValue<'ctx> {
         let r = match (self.key_kind(kt), insert) {
-            (KeyKind::Str, false) => self.call_rt_v("slang_map_get_str", &[m.into(), key.into()]),
-            (KeyKind::Int, false) => self.call_rt_v("slang_map_get_int", &[m.into(), key.into()]),
+            (KeyKind::Str, false) => self.call_rt_v("zell_map_get_str", &[m.into(), key.into()]),
+            (KeyKind::Int, false) => self.call_rt_v("zell_map_get_int", &[m.into(), key.into()]),
             (_, false) => {
                 let kp = self.spill(key);
-                self.call_rt_v("slang_map_get", &[m.into(), kp.into()])
+                self.call_rt_v("zell_map_get", &[m.into(), kp.into()])
             }
             (KeyKind::Str, true) => {
-                let f = self.map_insert_fn("slang_map_get_or_insert_str", self.ptr_ty().into());
+                let f = self.map_insert_fn("zell_map_get_or_insert_str", self.ptr_ty().into());
                 self.call_c(f, &[m.into(), key.into()]).unwrap()
             }
             (KeyKind::Int, true) => {
-                let f = self.map_insert_fn("slang_map_get_or_insert_int", self.i64_ty().into());
+                let f = self.map_insert_fn("zell_map_get_or_insert_int", self.i64_ty().into());
                 self.call_c(f, &[m.into(), key.into()]).unwrap()
             }
             (_, true) => {
                 let kp = self.spill(key);
-                self.call_rt_v("slang_map_get_or_insert", &[m.into(), kp.into()])
+                self.call_rt_v("zell_map_get_or_insert", &[m.into(), kp.into()])
             }
         };
         r.into_pointer_value()
     }
 
-    /// Declaration of `void *name(slang_map *, K key)` (ABI.md 6.2 key-typed
+    /// Declaration of `void *name(zell_map *, K key)` (ABI.md 6.2 key-typed
     /// `get_or_insert` fast paths).
     fn map_insert_fn(&mut self, name: &str, key_ty: inkwell::types::BasicMetadataTypeEnum<'ctx>) -> FunctionValue<'ctx> {
         if let Some(f) = self.module.get_function(name) {
@@ -898,11 +898,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let vp = self.spill(v);
         let _ = vt;
         match self.key_kind(kt) {
-            KeyKind::Str => self.call_rt("slang_map_set_str", &[m.into(), key.into(), vp.into()]),
-            KeyKind::Int => self.call_rt("slang_map_set_int", &[m.into(), key.into(), vp.into()]),
+            KeyKind::Str => self.call_rt("zell_map_set_str", &[m.into(), key.into(), vp.into()]),
+            KeyKind::Int => self.call_rt("zell_map_set_int", &[m.into(), key.into(), vp.into()]),
             KeyKind::Generic => {
                 let kp = self.spill(key);
-                self.call_rt("slang_map_set", &[m.into(), kp.into(), vp.into()])
+                self.call_rt("zell_map_set", &[m.into(), kp.into(), vp.into()])
             }
         };
         Ok(())

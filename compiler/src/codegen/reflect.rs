@@ -4,10 +4,10 @@
 //! When the program uses `std.reflect` ([`hir::Program::reflect`]), every
 //! run-time type id is a full table: [`CodeGen::type_info`] returns the
 //! payload address of an immortal object `{i64 -1, ptr null, TypeInfo}`
-//! whose first three words are the runtime's `slang_type_info` header
+//! whose first three words are the runtime's `zell_type_info` header
 //! (`name`, `size`, `drop`), so boxes, vtables (`vtable[0]`), `any` values,
 //! type switches and errors keep working unchanged, and a `*TypeInfo` read
-//! from them is an ordinary (immortal) Slang pointer. Tables are emitted
+//! from them is an ordinary (immortal) Zell pointer. Tables are emitted
 //! lazily, only for types that some code or table refers to; methods are
 //! listed only for the [`hir::Reflect::full`] types.
 //!
@@ -478,7 +478,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let done = cg.block("done");
             let fail = |cg: &mut Self, msg: String| {
                 let s = cg.str_lit(&msg);
-                let e = cg.call_rt_v("slang_error_new", &[s.into()]);
+                let e = cg.call_rt_v("zell_error_new", &[s.into()]);
                 let v = cg.b.build_insert_value(res_ty.const_zero(), e, 1, "").unwrap().into_struct_value();
                 cg.b.build_store(out, v).unwrap();
                 cg.b.build_unconditional_branch(done).unwrap();
@@ -627,7 +627,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     // A heap copy of the word, typed as an internal holder
                     // (not a scalar type, so the `any` owns and releases it).
                     let holder = cg.any_box_type_info();
-                    let obj = cg.call_rt_v("slang_object_new", &[holder.into(), cg.i64_ty().const_int(24, false).into()]).into_pointer_value();
+                    let obj = cg.call_rt_v("zell_object_new", &[holder.into(), cg.i64_ty().const_int(24, false).into()]).into_pointer_value();
                     let pl = cg.payload(obj);
                     let w = cg.b.build_ptr_to_int(data, cg.i64_ty(), "").unwrap();
                     cg.b.build_store(pl, w).unwrap();
@@ -704,10 +704,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     let pp = cg.byte_gep(t, off);
                     let ptr_to = cg.b.build_load(ptr, pp, "").unwrap().into_pointer_value();
                     // A dynamic type: the runtime flags it if it is registered cyclic.
-                    let alloc = if cg.cycles.any() { "slang_cycles_new_dyn" } else { "slang_object_new" };
+                    let alloc = if cg.cycles.any() { "zell_cycles_new_dyn" } else { "zell_object_new" };
                     let obj = cg.call_rt_v(alloc, &[t.into(), size.into()]).into_pointer_value();
                     let pl = cg.payload(obj);
-                    let bx = cg.call_rt_v("slang_object_new", &[ptr_to.into(), cg.i64_ty().const_int(24, false).into()]).into_pointer_value();
+                    let bx = cg.call_rt_v("zell_object_new", &[ptr_to.into(), cg.i64_ty().const_int(24, false).into()]).into_pointer_value();
                     let bp = cg.payload(bx);
                     cg.b.build_store(bp, pl).unwrap();
                     Some(cg.make_pair(bp, ptr_to))

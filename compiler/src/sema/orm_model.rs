@@ -9,7 +9,7 @@
 //! The model is built once per analysis, for every entity reachable from
 //! a context (a struct embedding `data.Context`) through its `Set<T>`
 //! fields and navigations; [`Sema::orm_model_json`] serialises it for the
-//! migrations CLI (`slang data migration add`, `crate::datacli`).
+//! migrations CLI (`zell data migration add`, `crate::datacli`).
 
 use super::*;
 use crate::hir::{AttrKind, ConstValue};

@@ -1,0 +1,119 @@
+namespace bench.sharedobjects
+
+import std
+import std.io
+
+// Reference counting across threads, three phases (8 tasks on the
+// scheduler's workers; ZELL_WORKERS defaults to the CPU count):
+//  1. one task builds 200k small objects; 8 tasks then read all of them 10
+//     times (each read retains and releases the object and its string);
+//  2. the opposite: 8 tasks build 25k objects each, one task reads all;
+//  3. 8 tasks churn task-local objects (build a list, pass pointers
+//     around, drop it): no sharing at all, but the process is threaded.
+
+struct Tag {
+    Label string
+    N     int
+}
+
+struct Item {
+    Name  string
+    Value int
+    Tag   *Tag
+}
+
+func build(n int, tag int) []*Item {
+    var items []*Item = []
+    var t = new Tag{Label: "t", N: tag}
+    for i in 0..n {
+        if i % 16 == 0 {
+            t = new Tag{Label: fmt.Format("tag{0}", i % 7), N: i}
+        }
+        items = append(items, new Item{Name: fmt.Format("item{0}", i % 100), Value: i + tag, Tag: t})
+    }
+    return items
+}
+
+func sumItems(items []*Item) int {
+    var s = 0
+    for it in items {
+        var cur = it
+        s += cur.Value + len(cur.Name)
+        var t = cur.Tag
+        s += t.N + len(t.Label)
+    }
+    return s
+}
+
+async func reader(items []*Item, rounds int) int {
+    await task.Yield()
+    var s = 0
+    for _ in 0..rounds {
+        s += sumItems(items)
+    }
+    return s
+}
+
+async func builder(n int, tag int) []*Item {
+    await task.Yield()
+    return build(n, tag)
+}
+
+async func churn(rounds int) int {
+    await task.Yield()
+    var s = 0
+    for r in 0..rounds {
+        var items = build(2000, r)
+        s += sumItems(items)
+        var keep []*Item = []
+        for it in items {
+            if it.Value % 3 == 0 {
+                keep = append(keep, it)
+            }
+        }
+        s += len(keep)
+    }
+    return s
+}
+
+async func main() {
+    var t0 = diag.rtMonoNanos()
+    // 1: one producer, 8 readers.
+    var shared = await builder(200000, 0)
+    var readers []Task<int> = []
+    for _ in 0..8 {
+        readers = append(readers, reader(shared, 10))
+    }
+    var total = 0
+    for r in readers {
+        total += await r
+    }
+    var t1 = diag.rtMonoNanos()
+    // 2: 8 producers, one reader.
+    var parts []Task<[]*Item> = []
+    for k in 0..8 {
+        parts = append(parts, builder(25000, k))
+    }
+    var all [][]*Item = []
+    for p in parts {
+        all = append(all, await p)
+    }
+    var sum2 = 0
+    for _ in 0..10 {
+        for items in all {
+            sum2 += sumItems(items)
+        }
+    }
+    var t2 = diag.rtMonoNanos()
+    // 3: task-local churn.
+    var churners []Task<int> = []
+    for _ in 0..8 {
+        churners = append(churners, churn(100))
+    }
+    var sum3 = 0
+    for c in churners {
+        sum3 += await c
+    }
+    var t3 = diag.rtMonoNanos()
+    println(total, sum2, sum3, "ms:", (t1 - t0) / 1000000, (t2 - t1) / 1000000, (t3 - t2) / 1000000)
+}

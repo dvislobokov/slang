@@ -18,7 +18,7 @@
 //!   this creates is rolled back afterwards; only the diagnostics remain.
 //! * **Instantiation**: each distinct `(template, type arguments)` pair is
 //!   lowered once into an ordinary HIR function, struct or enum with a
-//!   readable name (`Max<int>`) and a mangled symbol (`slang_ns__Max__int`),
+//!   readable name (`Max<int>`) and a mangled symbol (`zell_ns__Max__int`),
 //!   cached in [`GenState::cache`]. A generic struct instance instantiates
 //!   its methods with it. Bodies of instances are checked (with concrete
 //!   types) by the main checking loop, so codegen never sees generics.
@@ -197,9 +197,9 @@ impl hir::dump::DeclNames for Short<'_, '_> {
 }
 
 /// Link symbol for an instance's full name: `app.Max<int>` ->
-/// `slang_app__Max__int`, `Pair<[]int, *T>` -> `Pair__Sint_PT`.
+/// `zell_app__Max__int`, `Pair<[]int, *T>` -> `Pair__Sint_PT`.
 fn mangle(full_name: &str) -> String {
-    let mut s = String::from("slang_");
+    let mut s = String::from("zell_");
     let mut chars = full_name.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn mangling() {
-        assert_eq!(mangle("app.Max<int>"), "slang_app__Max__int");
-        assert_eq!(mangle("a.Pair<[]int, *a.T>.Swap"), "slang_a__Pair__Sint_Pa__T__Swap");
+        assert_eq!(mangle("app.Max<int>"), "zell_app__Max__int");
+        assert_eq!(mangle("a.Pair<[]int, *a.T>.Swap"), "zell_a__Pair__Sint_Pa__T__Swap");
     }
 }

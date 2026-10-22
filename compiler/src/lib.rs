@@ -1,4 +1,4 @@
-//! Slang compiler library. Phases:
+//! Zell compiler library. Phases:
 //! lexer -> parser (AST) -> sema (names, types) -> codegen (LLVM IR).
 
 pub mod ast;

@@ -1,5 +1,5 @@
 //! Compile-time expansion for `std.data` (docs/FRAMEWORK.md section 3),
-//! with the technique of [`super::web`]: the compiler generates Slang
+//! with the technique of [`super::web`]: the compiler generates Zell
 //! source of stdlib templates in namespace `std.data` whose type
 //! parameters are bound to the concrete types, and instantiates them.
 //!
@@ -58,7 +58,7 @@ impl Tys {
     }
 }
 
-/// A Slang string literal.
+/// A Zell string literal.
 fn lit(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -126,7 +126,7 @@ impl<'a> Sema<'a> {
         if let Some(&t) = self.orm.tmpls.get(&src) {
             return t;
         }
-        if std::env::var_os("SLANG_DATA_DUMP").is_some() {
+        if std::env::var_os("ZELL_DATA_DUMP").is_some() {
             eprintln!("{src}");
         }
         let file = parsed_template(&src, span);

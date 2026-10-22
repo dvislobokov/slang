@@ -1,0 +1,1507 @@
+// The Zell-source std.crypto.x509 (see sema/stdsrc.rs for the rules):
+// X.509 v3 certificates (RFC 5280) in DER and PEM, private keys (PKCS#8,
+// PKCS#1, SEC 1), chain building and verification against a pool of
+// roots, hostname matching (SAN dNSName with left-most wildcards, IP
+// addresses), validity periods, basic constraints, key usage, extended
+// key usage and the dNSName part of name constraints. Signature checks use
+// the C primitives of std.crypto.{rsa,ecdsa,ed25519}. Times are Unix
+// milliseconds (std.time).
+namespace std.crypto.x509
+
+// ---- DER --------------------------------------------------------------------
+
+// One DER element: tag byte, content, and the whole encoding.
+struct elem {
+    tag  int
+    body []byte
+    full []byte
+}
+
+// Sequential reader over the elements of a DER content.
+struct reader {
+    b   []byte
+    off int
+
+    func more() bool {
+        return this.off < len(this.b)
+    }
+
+    func peek() int {
+        if this.off >= len(this.b) {
+            return -1
+        }
+        return int(this.b[this.off])
+    }
+
+    func next() elem! {
+        var b = this.b
+        var start = this.off
+        if start + 2 > len(b) {
+            return error("x509: truncated DER element")
+        }
+        var tag = int(b[start])
+        if tag & 31 == 31 {
+            return error("x509: high-tag-number form not supported")
+        }
+        var n = int(b[start + 1])
+        var p = start + 2
+        if n >= 128 {
+            var k = n - 128
+            if k == 0 || k > 4 {
+                return error("x509: unsupported DER length")
+            }
+            if p + k > len(b) {
+                return error("x509: truncated DER length")
+            }
+            n = 0
+            for i in 0..k {
+                n = n * 256 + int(b[p + i])
+            }
+            if n < 128 || (k > 1 && int(b[p]) == 0) {
+                return error("x509: non-minimal DER length")
+            }
+            p += k
+        }
+        if n > len(b) - p {
+            return error("x509: DER element overruns its container")
+        }
+        this.off = p + n
+        return elem{tag: tag, body: b[p..p + n], full: b[start..p + n]}
+    }
+
+    // The next element, which must have the given tag.
+    func expect(tag int, what string) elem! {
+        var e = this.next()?
+        if e.tag != tag {
+            return error(std.fmt.Sprintf("x509: %s: want tag 0x%x, found 0x%x", what, tag, e.tag))
+        }
+        return e
+    }
+}
+
+func newReader(b []byte) *reader {
+    return new reader{b: b}
+}
+
+// Dotted form of an OBJECT IDENTIFIER body ("1.2.840.113549.1.1.11").
+func oidString(b []byte) string! {
+    if len(b) == 0 {
+        return error("x509: empty OID")
+    }
+    var out = ""
+    var v = 0
+    var first = true
+    for i in 0..len(b) {
+        var c = int(b[i])
+        if v == 0 && c == 128 {
+            return error("x509: non-minimal OID")
+        }
+        if v > 72057594037927935 {
+            return error("x509: OID component too large")
+        }
+        v = v * 128 + (c & 127)
+        if c & 128 == 0 {
+            if first {
+                var a = 2
+                if v < 40 {
+                    a = 0
+                } else if v < 80 {
+                    a = 1
+                }
+                out = std.fmt.Format("{0}.{1}", a, v - a * 40)
+                first = false
+            } else {
+                out += "." + std.fmt.Format("{0}", v)
+            }
+            v = 0
+        }
+    }
+    if int(b[len(b) - 1]) & 128 != 0 {
+        return error("x509: truncated OID")
+    }
+    return out
+}
+
+func readOID(r *reader, what string) string! {
+    var e = r.expect(6, what)?
+    return oidString(e.body)?
+}
+
+// A small non-negative INTEGER as int.
+func smallInt(e elem) int! {
+    if e.tag != 2 || len(e.body) == 0 || len(e.body) > 7 || int(e.body[0]) >= 128 {
+        return error("x509: invalid small INTEGER")
+    }
+    var v = 0
+    for i in 0..len(e.body) {
+        v = v * 256 + int(e.body[i])
+    }
+    return v
+}
+
+// The magnitude of a positive INTEGER (leading zero removed).
+func unsignedBytes(e elem) []byte! {
+    if e.tag != 2 || len(e.body) == 0 || int(e.body[0]) >= 128 {
+        return error("x509: invalid positive INTEGER")
+    }
+    if len(e.body) > 1 && int(e.body[0]) == 0 {
+        return e.body[1..]
+    }
+    return e.body
+}
+
+// The bits of a BIT STRING with no unused bits.
+func bitStringBytes(e elem) []byte! {
+    if e.tag != 3 || len(e.body) == 0 || int(e.body[0]) != 0 {
+        return error("x509: invalid BIT STRING")
+    }
+    return e.body[1..]
+}
+
+func bytesEqual(a []byte, b []byte) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i in 0..len(a) {
+        if a[i] != b[i] {
+            return false
+        }
+    }
+    return true
+}
+
+func hexBytes(b []byte) string {
+    return std.encoding.hex.Encode(b)
+}
+
+// ---- PEM ----------------------------------------------------------------------
+
+// One PEM block ("-----BEGIN Type-----" ... "-----END Type-----").
+struct PEMBlock {
+    Type  string
+    Bytes []byte
+}
+
+// DecodePEM returns every PEM block of text in order (text outside blocks
+// is ignored); a block with invalid base64 is an error.
+func DecodePEM(text string) []PEMBlock! {
+    var out []PEMBlock = []
+    var rest = text
+    for {
+        var i = std.strings.Index(rest, "-----BEGIN ")
+        if i < 0 {
+            return out
+        }
+        rest = rest[i + 11..]
+        var j = std.strings.Index(rest, "-----")
+        if j < 0 {
+            return error("x509: malformed PEM header")
+        }
+        var typ = rest[..j]
+        rest = rest[j + 5..]
+        var endMark = "-----END " + typ + "-----"
+        var k = std.strings.Index(rest, endMark)
+        if k < 0 {
+            return error("x509: missing \"" + endMark + "\"")
+        }
+        var body = rest[..k]
+        rest = rest[k + len(endMark)..]
+        // drop RFC 1421 headers ("Proc-Type: ...") if any
+        if std.strings.Contains(body, ":") {
+            var blank = std.strings.Index(body, "\n\n")
+            if blank >= 0 {
+                body = body[blank + 2..]
+            }
+        }
+        var b64 = std.strings.Join(std.strings.Fields(body), "")
+        var der = try std.encoding.base64.Decode(b64) catch err {
+            return error("x509: invalid base64 in PEM block " + typ)
+        }
+        out = append(out, PEMBlock{Type: typ, Bytes: der})
+    }
+}
+
+// EncodePEM formats der as one PEM block of the given type.
+func EncodePEM(typ string, der []byte) string {
+    var b64 = std.encoding.base64.Encode(der)
+    var out = "-----BEGIN " + typ + "-----\n"
+    var i = 0
+    for i < len(b64) {
+        var j = i + 64
+        if j > len(b64) {
+            j = len(b64)
+        }
+        out += b64[i..j] + "\n"
+        i = j
+    }
+    return out + "-----END " + typ + "-----\n"
+}
+
+// ---- names ----------------------------------------------------------------------
+
+// One attribute of a distinguished name.
+struct AttributeTypeAndValue {
+    // Dotted OID ("2.5.4.3").
+    Type  string
+    Value string
+}
+
+// Name is a distinguished name with the common attributes broken out.
+struct Name {
+    CommonName         string
+    Organization       []string
+    OrganizationalUnit []string
+    Country            []string
+    Province           []string
+    Locality           []string
+    SerialNumber       string
+    // Every attribute in order.
+    Names []AttributeTypeAndValue
+    // The DER encoding (compared byte for byte when building chains).
+    Raw []byte
+
+    // RFC 4514-style string, most specific attribute first ("CN=a,O=b,C=c").
+    func String() string {
+        var parts []string = []
+        var i = len(this.Names) - 1
+        for i >= 0 {
+            var a = this.Names[i]
+            parts = append(parts, attrShort(a.Type) + "=" + a.Value)
+            i -= 1
+        }
+        return std.strings.Join(parts, ",")
+    }
+}
+
+func attrShort(oid string) string {
+    switch oid {
+        case "2.5.4.3": return "CN"
+        case "2.5.4.6": return "C"
+        case "2.5.4.7": return "L"
+        case "2.5.4.8": return "ST"
+        case "2.5.4.10": return "O"
+        case "2.5.4.11": return "OU"
+        case "2.5.4.5": return "SERIALNUMBER"
+        case "1.2.840.113549.1.9.1": return "emailAddress"
+        case "0.9.2342.19200300.100.1.25": return "DC"
+    }
+    return oid
+}
+
+// Text of a directory string (PrintableString, UTF8String, IA5String,
+// T61String as Latin-1, BMPString as UCS-2).
+func dirString(e elem) string! {
+    switch e.tag {
+        case 12, 19, 22, 20, 26, 21:
+            return std.strings.FromBytes(e.body)
+        case 30:
+            if len(e.body) % 2 != 0 {
+                return error("x509: invalid BMPString")
+            }
+            var rs []char = []
+            var i = 0
+            for i < len(e.body) {
+                rs = append(rs, char(int(e.body[i]) * 256 + int(e.body[i + 1])))
+                i += 2
+            }
+            return std.strings.FromRunes(rs)
+        case 28:
+            return error("x509: UniversalString not supported")
+    }
+    return error(std.fmt.Sprintf("x509: unexpected string type 0x%x in name", e.tag))
+}
+
+func parseName(e elem) Name! {
+    if e.tag != 48 {
+        return error("x509: name is not a SEQUENCE")
+    }
+    var n = Name{Raw: e.full}
+    var rdns = newReader(e.body)
+    for rdns.more() {
+        var set = rdns.expect(49, "relative distinguished name")?
+        var atvs = newReader(set.body)
+        for atvs.more() {
+            var atv = atvs.expect(48, "attribute")?
+            var r = newReader(atv.body)
+            var typ = readOID(r, "attribute type")?
+            var v = r.next()?
+            var s = dirString(v)?
+            n.Names = append(n.Names, AttributeTypeAndValue{Type: typ, Value: s})
+            switch typ {
+                case "2.5.4.3": n.CommonName = s
+                case "2.5.4.5": n.SerialNumber = s
+                case "2.5.4.6": n.Country = append(n.Country, s)
+                case "2.5.4.7": n.Locality = append(n.Locality, s)
+                case "2.5.4.8": n.Province = append(n.Province, s)
+                case "2.5.4.10": n.Organization = append(n.Organization, s)
+                case "2.5.4.11": n.OrganizationalUnit = append(n.OrganizationalUnit, s)
+            }
+        }
+    }
+    return n
+}
+
+// ---- time -------------------------------------------------------------------------
+
+func digits(b []byte, i int, n int) int! {
+    var v = 0
+    for k in 0..n {
+        var c = int(b[i + k])
+        if c < 48 || c > 57 {
+            return error("x509: invalid time")
+        }
+        v = v * 10 + c - 48
+    }
+    return v
+}
+
+// Days since 1970-01-01 of a proleptic Gregorian date (y >= 0).
+func daysFromCivil(y0 int, m int, d int) int {
+    var y = y0
+    if m <= 2 {
+        y -= 1
+    }
+    var era = y / 400
+    var yoe = y - era * 400
+    var mp = (m + 9) % 12
+    var doy = (153 * mp + 2) / 5 + d - 1
+    var doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+// UTCTime (YYMMDDHHMMSSZ) or GeneralizedTime (YYYYMMDDHHMMSSZ) as Unix ms.
+func parseTime(e elem) int! {
+    var b = e.body
+    var y = 0
+    var p = 0
+    if e.tag == 23 {
+        if len(b) != 13 {
+            return error("x509: invalid UTCTime")
+        }
+        y = digits(b, 0, 2)?
+        if y >= 50 {
+            y += 1900
+        } else {
+            y += 2000
+        }
+        p = 2
+    } else if e.tag == 24 {
+        if len(b) != 15 {
+            return error("x509: invalid GeneralizedTime")
+        }
+        y = digits(b, 0, 4)?
+        p = 4
+    } else {
+        return error("x509: invalid time type")
+    }
+    if int(b[len(b) - 1]) != 90 {
+        return error("x509: time is not in UTC (Z)")
+    }
+    var mo = digits(b, p, 2)?
+    var d = digits(b, p + 2, 2)?
+    var h = digits(b, p + 4, 2)?
+    var mi = digits(b, p + 6, 2)?
+    var s = digits(b, p + 8, 2)?
+    if mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60 {
+        return error("x509: time out of range")
+    }
+    var days = daysFromCivil(y, mo, d)
+    return ((days * 24 + h) * 60 + mi) * 60000 + s * 1000
+}
+
+// ---- certificates ------------------------------------------------------------------
+
+// KeyUsage bits (RFC 5280 4.2.1.3) in Certificate.KeyUsage.
+// digitalSignature 1, contentCommitment 2, keyEncipherment 4,
+// dataEncipherment 8, keyAgreement 16, keyCertSign 32, cRLSign 64,
+// encipherOnly 128, decipherOnly 256.
+
+// Certificate is a parsed X.509 certificate.
+struct Certificate {
+    // The whole DER encoding and the signed part.
+    Raw                     []byte
+    RawTBSCertificate       []byte
+    RawSubjectPublicKeyInfo []byte
+    Version                 int
+    // Serial number, lower-case hex of the big-endian magnitude.
+    SerialNumber string
+    Subject      Name
+    Issuer       Name
+    // Validity period, Unix milliseconds.
+    NotBefore int
+    NotAfter  int
+    // "RSA", "ECDSA" or "Ed25519".
+    PublicKeyAlgorithm string
+    // EC point (65 bytes, uncompressed) or Ed25519 key (32 bytes); for RSA
+    // the modulus (PublicKey) and exponent (RSAExponent), big-endian.
+    PublicKey   []byte
+    RSAExponent []byte
+    // "P-256", "P-384", "P-521" for ECDSA keys.
+    Curve string
+    // E.g. "SHA256-RSA", "SHA384-RSAPSS", "ECDSA-SHA256", "Ed25519".
+    SignatureAlgorithm string
+    Signature          []byte
+    pssHash            string
+
+    BasicConstraintsValid bool
+    IsCA                  bool
+    // -1 if absent.
+    MaxPathLen int
+    // 0 if the extension is absent (see the bit list above).
+    KeyUsage int
+    // "serverAuth", "clientAuth", "codeSigning", "emailProtection",
+    // "timeStamping", "OCSPSigning", "any" or the dotted OID.
+    ExtKeyUsage    []string
+    DNSNames       []string
+    EmailAddresses []string
+    // Dotted IPv4 or RFC 5952-ish IPv6 text.
+    IPAddresses         []string
+    PermittedDNSDomains []string
+    ExcludedDNSDomains  []string
+    SubjectKeyId        []byte
+    AuthorityKeyId      []byte
+    // OIDs of critical extensions this parser does not understand
+    // (Verify rejects such certificates).
+    UnhandledCriticalExtensions []string
+
+    // Hex of the SHA-256 of Raw.
+    func Fingerprint() string {
+        var d = try std.crypto.hash.Sum("sha256", this.Raw) else []
+        return hexBytes(d)
+    }
+
+    func Equal(other *Certificate) bool {
+        return other != nil && bytesEqual(this.Raw, other.Raw)
+    }
+
+    // VerifyHostname checks that the certificate is valid for host (a DNS
+    // name, or an IP address matched against the IP SANs).
+    func VerifyHostname(host string) void! {
+        var h = host
+        if std.strings.HasPrefix(h, "[") && std.strings.HasSuffix(h, "]") {
+            h = h[1..len(h) - 1]
+        }
+        if std.net.rtIsIP(h) {
+            var want = canonicalIP(h)
+            for ip in this.IPAddresses {
+                if ip == want {
+                    return
+                }
+            }
+            return error("x509: certificate is not valid for IP address " + h)
+        }
+        var name = std.strings.ToLower(std.strings.TrimSuffix(h, "."))
+        for pattern in this.DNSNames {
+            if matchHostname(std.strings.ToLower(pattern), name) {
+                return
+            }
+        }
+        if len(this.DNSNames) == 0 {
+            return error(
+                "x509: certificate has no subject alternative names (the common name \"" +
+                    this.Subject.CommonName +
+                    "\" is not used for host names)",
+            )
+        }
+        return error(
+            "x509: certificate is valid for " +
+                std.strings.Join(this.DNSNames, ", ") +
+                ", not " +
+                host,
+        )
+    }
+
+    // CheckSignatureFrom checks that parent signed this certificate.
+    func CheckSignatureFrom(parent *Certificate) void! {
+        if parent.Version == 3 && !(parent.BasicConstraintsValid && parent.IsCA) {
+            return error("x509: issuer \"" + parent.Subject.String() + "\" is not a CA")
+        }
+        if parent.KeyUsage != 0 && parent.KeyUsage & 32 == 0 {
+            return error(
+                "x509: issuer \"" +
+                    parent.Subject.String() +
+                    "\" may not sign certificates (key usage)",
+            )
+        }
+        checkSignature(
+            this.SignatureAlgorithm,
+            this.pssHash,
+            parent,
+            this.RawTBSCertificate,
+            this.Signature,
+        )?
+    }
+
+    // CheckSignature checks sig over signed with this certificate's key,
+    // for a certificate-style algorithm name ("SHA256-RSA", "ECDSA-SHA256",
+    // "SHA256-RSAPSS", "Ed25519").
+    func CheckSignature(algorithm string, signed []byte, sig []byte) void! {
+        var ph = ""
+        if std.strings.HasSuffix(algorithm, "-RSAPSS") {
+            ph = std.strings.ToLower(std.strings.TrimSuffix(algorithm, "-RSAPSS"))
+        }
+        checkSignature(algorithm, ph, this, signed, sig)?
+    }
+}
+
+// Lower-case hash name of a signature algorithm ("SHA256-RSA" -> "sha256").
+func sigHash(alg string, pssHash string) string {
+    if pssHash != "" {
+        return pssHash
+    }
+    if std.strings.Contains(alg, "SHA256") {
+        return "sha256"
+    }
+    if std.strings.Contains(alg, "SHA384") {
+        return "sha384"
+    }
+    if std.strings.Contains(alg, "SHA512") {
+        return "sha512"
+    }
+    if std.strings.Contains(alg, "SHA1") {
+        return "sha1"
+    }
+    return ""
+}
+
+func checkSignature(alg string, pssHash string, key *Certificate, signed []byte, sig []byte) void! {
+    if alg == "Ed25519" {
+        if key.PublicKeyAlgorithm != "Ed25519" {
+            return error(
+                "x509: signature algorithm Ed25519 does not match the " +
+                    key.PublicKeyAlgorithm +
+                    " key",
+            )
+        }
+        if !std.crypto.ed25519.Verify(key.PublicKey, signed, sig) {
+            return error("x509: Ed25519 signature verification failed")
+        }
+        return
+    }
+    var h = sigHash(alg, pssHash)
+    if h == "" {
+        return error("x509: unsupported signature algorithm " + alg)
+    }
+    if h == "sha1" {
+        return error("x509: SHA-1 signatures are not accepted (" + alg + ")")
+    }
+    var digest = std.crypto.hash.Sum(h, signed)?
+    if std.strings.HasSuffix(alg, "-RSA") || std.strings.HasSuffix(alg, "-RSAPSS") {
+        if key.PublicKeyAlgorithm != "RSA" {
+            return error(
+                "x509: signature algorithm " +
+                    alg +
+                    " does not match the " +
+                    key.PublicKeyAlgorithm +
+                    " key",
+            )
+        }
+        var ok = false
+        if std.strings.HasSuffix(alg, "-RSAPSS") {
+            ok = std.crypto.rsa.VerifyPSS(key.PublicKey, key.RSAExponent, h, digest, sig)
+        } else {
+            ok = std.crypto.rsa.VerifyPKCS1v15(key.PublicKey, key.RSAExponent, h, digest, sig)
+        }
+        if !ok {
+            return error("x509: RSA signature verification failed")
+        }
+        return
+    }
+    if std.strings.HasPrefix(alg, "ECDSA-") {
+        if key.PublicKeyAlgorithm != "ECDSA" {
+            return error(
+                "x509: signature algorithm " +
+                    alg +
+                    " does not match the " +
+                    key.PublicKeyAlgorithm +
+                    " key",
+            )
+        }
+        if key.Curve == "P-384" {
+            if !std.crypto.ecdsa.VerifyP384(key.PublicKey, digest, sig) {
+                return error("x509: ECDSA signature verification failed")
+            }
+            return
+        }
+        if key.Curve != "P-256" {
+            return error(
+                "x509: ECDSA curve " + key.Curve + " is not supported (only P-256 and P-384)",
+            )
+        }
+        if !std.crypto.ecdsa.Verify(key.PublicKey, digest, sig) {
+            return error("x509: ECDSA signature verification failed")
+        }
+        return
+    }
+    return error("x509: unsupported signature algorithm " + alg)
+}
+
+// Name of an AlgorithmIdentifier; for RSASSA-PSS also the hash.
+struct algID {
+    name    string
+    pssHash string
+}
+
+func hashOID(oid string) string {
+    switch oid {
+        case "2.16.840.1.101.3.4.2.1": return "sha256"
+        case "2.16.840.1.101.3.4.2.2": return "sha384"
+        case "2.16.840.1.101.3.4.2.3": return "sha512"
+        case "1.3.14.3.2.26": return "sha1"
+    }
+    return ""
+}
+
+func parseSigAlg(e elem) algID! {
+    if e.tag != 48 {
+        return error("x509: AlgorithmIdentifier is not a SEQUENCE")
+    }
+    var r = newReader(e.body)
+    var oid = readOID(r, "signature algorithm")?
+    switch oid {
+        case "1.2.840.113549.1.1.11": return algID{name: "SHA256-RSA"}
+        case "1.2.840.113549.1.1.12": return algID{name: "SHA384-RSA"}
+        case "1.2.840.113549.1.1.13": return algID{name: "SHA512-RSA"}
+        case "1.2.840.113549.1.1.5": return algID{name: "SHA1-RSA"}
+        case "1.2.840.10045.4.3.2": return algID{name: "ECDSA-SHA256"}
+        case "1.2.840.10045.4.3.3": return algID{name: "ECDSA-SHA384"}
+        case "1.2.840.10045.4.3.4": return algID{name: "ECDSA-SHA512"}
+        case "1.2.840.10045.4.1": return algID{name: "ECDSA-SHA1"}
+        case "1.3.101.112": return algID{name: "Ed25519"}
+        case "1.2.840.113549.1.1.10":
+            // RSASSA-PSS-params: [0] hashAlgorithm (default SHA-1), [1] mgf, [2] salt length
+            var h = "sha1"
+            if r.more() {
+                var params = r.expect(48, "RSASSA-PSS parameters")?
+                var pr = newReader(params.body)
+                for pr.more() {
+                    var f = pr.next()?
+                    if f.tag == 160 {
+                        var hr = newReader(f.body)
+                        var ha = hr.expect(48, "PSS hash")?
+                        var har = newReader(ha.body)
+                        h = hashOID(readOID(har, "PSS hash")?)
+                    }
+                }
+            }
+            if h == "" || h == "sha1" {
+                return error("x509: unsupported RSASSA-PSS hash")
+            }
+            return algID{name: std.strings.ToUpper(h) + "-RSAPSS", pssHash: h}
+    }
+    return algID{name: oid}
+}
+
+func parsePublicKey(c *Certificate, spki elem) void! {
+    c.RawSubjectPublicKeyInfo = spki.full
+    var r = newReader(spki.body)
+    var alg = r.expect(48, "public key algorithm")?
+    var key = bitStringBytes(r.expect(3, "public key")?)?
+    var ar = newReader(alg.body)
+    var oid = readOID(ar, "public key algorithm")?
+    switch oid {
+        case "1.2.840.113549.1.1.1":
+            c.PublicKeyAlgorithm = "RSA"
+            var kr = newReader(key)
+            var seq = kr.expect(48, "RSA public key")?
+            var sr = newReader(seq.body)
+            c.PublicKey = unsignedBytes(sr.next()?)?
+            c.RSAExponent = unsignedBytes(sr.next()?)?
+        case "1.2.840.10045.2.1":
+            c.PublicKeyAlgorithm = "ECDSA"
+            var curve = readOID(ar, "EC curve")?
+            switch curve {
+                case "1.2.840.10045.3.1.7": c.Curve = "P-256"
+                case "1.3.132.0.34": c.Curve = "P-384"
+                case "1.3.132.0.35": c.Curve = "P-521"
+                default:
+                    c.Curve = curve
+            }
+            c.PublicKey = key
+        case "1.3.101.112":
+            c.PublicKeyAlgorithm = "Ed25519"
+            if len(key) != 32 {
+                return error("x509: invalid Ed25519 public key")
+            }
+            c.PublicKey = key
+        default:
+            c.PublicKeyAlgorithm = oid
+            c.PublicKey = key
+    }
+}
+
+func ekuName(oid string) string {
+    switch oid {
+        case "1.3.6.1.5.5.7.3.1": return "serverAuth"
+        case "1.3.6.1.5.5.7.3.2": return "clientAuth"
+        case "1.3.6.1.5.5.7.3.3": return "codeSigning"
+        case "1.3.6.1.5.5.7.3.4": return "emailProtection"
+        case "1.3.6.1.5.5.7.3.8": return "timeStamping"
+        case "1.3.6.1.5.5.7.3.9": return "OCSPSigning"
+        case "2.5.29.37.0": return "any"
+    }
+    return oid
+}
+
+// Text of an iPAddress general name (4 or 16 bytes).
+func ipText(b []byte) string! {
+    if len(b) == 4 {
+        return std.fmt.Format("{0}.{1}.{2}.{3}", int(b[0]), int(b[1]), int(b[2]), int(b[3]))
+    }
+    if len(b) == 16 {
+        var parts []string = []
+        var i = 0
+        for i < 16 {
+            parts = append(parts, std.fmt.Sprintf("%x", int(b[i]) * 256 + int(b[i + 1])))
+            i += 2
+        }
+        return std.strings.Join(parts, ":")
+    }
+    return error("x509: invalid IP address in certificate")
+}
+
+// Normalizes an IP literal the way ipText prints certificate addresses.
+func canonicalIP(s string) string {
+    if !std.strings.Contains(s, ":") {
+        return s
+    }
+    // expand "::" and drop leading zeros of each group
+    var groups []string = []
+    var halves = std.strings.SplitN(s, "::", 2)
+    var head []string = []
+    var tail []string = []
+    if halves[0] != "" {
+        head = std.strings.Split(halves[0], ":")
+    }
+    if len(halves) == 2 && halves[1] != "" {
+        tail = std.strings.Split(halves[1], ":")
+    }
+    for g in head {
+        groups = append(groups, g)
+    }
+    if len(halves) == 2 {
+        var missing = 8 - len(head) - len(tail)
+        for missing > 0 {
+            groups = append(groups, "0")
+            missing -= 1
+        }
+    }
+    for g in tail {
+        groups = append(groups, g)
+    }
+    var out []string = []
+    for g in groups {
+        var t = std.strings.TrimLeft(std.strings.ToLower(g), "0")
+        if t == "" {
+            t = "0"
+        }
+        out = append(out, t)
+    }
+    return std.strings.Join(out, ":")
+}
+
+func parseSAN(c *Certificate, value []byte) void! {
+    var outer = newReader(value)
+    var seq = outer.expect(48, "subjectAltName")?
+    var r = newReader(seq.body)
+    for r.more() {
+        var gn = r.next()?
+        switch gn.tag {
+            case 130: c.DNSNames = append(c.DNSNames, std.strings.FromBytes(gn.body))
+            case 129: c.EmailAddresses = append(c.EmailAddresses, std.strings.FromBytes(gn.body))
+            case 135: c.IPAddresses = append(c.IPAddresses, ipText(gn.body)?)
+        }
+    }
+}
+
+// The dNSName bases of a GeneralSubtrees.
+func subtreeDNS(body []byte) []string! {
+    var out []string = []
+    var r = newReader(body)
+    for r.more() {
+        var st = r.expect(48, "GeneralSubtree")?
+        var sr = newReader(st.body)
+        var base = sr.next()?
+        if base.tag == 130 {
+            out = append(out, std.strings.FromBytes(base.body))
+        }
+    }
+    return out
+}
+
+func parseExtension(c *Certificate, ext elem) void! {
+    var r = newReader(ext.body)
+    var oid = readOID(r, "extension id")?
+    var critical = false
+    if r.peek() == 1 {
+        var b = r.next()?
+        critical = len(b.body) == 1 && int(b.body[0]) != 0
+    }
+    var value = r.expect(4, "extension value")?.body
+    var vr = newReader(value)
+    switch oid {
+        case "2.5.29.19":
+            c.BasicConstraintsValid = true
+            var seq = vr.expect(48, "basicConstraints")?
+            var br = newReader(seq.body)
+            if br.peek() == 1 {
+                var b = br.next()?
+                c.IsCA = len(b.body) == 1 && int(b.body[0]) != 0
+            }
+            if br.peek() == 2 {
+                c.MaxPathLen = smallInt(br.next()?)?
+            }
+        case "2.5.29.15":
+            var bs = vr.expect(3, "keyUsage")?
+            if len(bs.body) < 1 {
+                return error("x509: invalid keyUsage")
+            }
+            var ku = 0
+            for i in 1..len(bs.body) {
+                var byteVal = int(bs.body[i])
+                for bit in 0..8 {
+                    if byteVal & (128 >> bit) != 0 {
+                        ku = ku | (1 << ((i - 1) * 8 + bit))
+                    }
+                }
+            }
+            c.KeyUsage = ku
+        case "2.5.29.37":
+            var seq = vr.expect(48, "extKeyUsage")?
+            var er = newReader(seq.body)
+            for er.more() {
+                c.ExtKeyUsage = append(c.ExtKeyUsage, ekuName(readOID(er, "extKeyUsage")?))
+            }
+        case "2.5.29.17":
+            parseSAN(c, value)?
+        case "2.5.29.30":
+            var seq = vr.expect(48, "nameConstraints")?
+            var nr = newReader(seq.body)
+            for nr.more() {
+                var t = nr.next()?
+                if t.tag == 160 {
+                    c.PermittedDNSDomains = subtreeDNS(t.body)?
+                } else if t.tag == 161 {
+                    c.ExcludedDNSDomains = subtreeDNS(t.body)?
+                }
+            }
+        case "2.5.29.14":
+            c.SubjectKeyId = vr.expect(4, "subjectKeyIdentifier")?.body
+        case "2.5.29.35":
+            var seq = vr.expect(48, "authorityKeyIdentifier")?
+            var ar = newReader(seq.body)
+            for ar.more() {
+                var f = ar.next()?
+                if f.tag == 128 {
+                    c.AuthorityKeyId = f.body
+                }
+            }
+        case "2.5.29.32", "2.5.29.31", "1.3.6.1.5.5.7.1.1", "1.3.6.1.4.1.11129.2.4.2":
+        // certificate policies, CRL distribution points, AIA, SCTs: not needed
+        default:
+            if critical {
+                c.UnhandledCriticalExtensions = append(c.UnhandledCriticalExtensions, oid)
+            }
+    }
+}
+
+// ParseDER parses one DER-encoded certificate.
+func ParseDER(der []byte) *Certificate! {
+    var top = newReader(der)
+    var certSeq = top.expect(48, "certificate")?
+    if top.more() {
+        return error("x509: trailing data after certificate")
+    }
+    var cr = newReader(certSeq.body)
+    var tbs = cr.expect(48, "tbsCertificate")?
+    var outerAlg = parseSigAlg(cr.next()?)?
+    var sig = bitStringBytes(cr.expect(3, "signature")?)?
+    var c = new Certificate{
+        Raw: certSeq.full,
+        RawTBSCertificate: tbs.full,
+        Version: 1,
+        MaxPathLen: -1,
+        SignatureAlgorithm: outerAlg.name,
+        pssHash: outerAlg.pssHash,
+        Signature: sig,
+    }
+    var r = newReader(tbs.body)
+    if r.peek() == 160 {
+        var v = r.next()?
+        var vr = newReader(v.body)
+        c.Version = smallInt(vr.next()?)? + 1
+    }
+    if c.Version < 1 || c.Version > 3 {
+        return error("x509: unsupported certificate version")
+    }
+    var serial = r.expect(2, "serial number")?
+    c.SerialNumber = hexBytes(serial.body)
+    var innerAlg = parseSigAlg(r.next()?)?
+    if innerAlg.name != outerAlg.name {
+        return error("x509: signature algorithm mismatch inside the certificate")
+    }
+    c.Issuer = parseName(r.next()?)?
+    var validity = r.expect(48, "validity")?
+    var vr = newReader(validity.body)
+    c.NotBefore = parseTime(vr.next()?)?
+    c.NotAfter = parseTime(vr.next()?)?
+    c.Subject = parseName(r.next()?)?
+    parsePublicKey(c, r.expect(48, "subjectPublicKeyInfo")?)?
+    for r.more() {
+        var f = r.next()?
+        if f.tag == 163 {
+            var er = newReader(f.body)
+            var exts = er.expect(48, "extensions")?
+            var xr = newReader(exts.body)
+            for xr.more() {
+                parseExtension(c, xr.expect(48, "extension")?)?
+            }
+        }
+    }
+    return c
+}
+
+// ParsePEM parses every CERTIFICATE block of text (other blocks are
+// skipped); it fails if there is none or one is invalid.
+func ParsePEM(text string) []*Certificate! {
+    var out []*Certificate = []
+    for b in DecodePEM(text)? {
+        if b.Type == "CERTIFICATE" {
+            out = append(out, ParseDER(b.Bytes)?)
+        }
+    }
+    if len(out) == 0 {
+        return error("x509: no CERTIFICATE block found")
+    }
+    return out
+}
+
+// ---- hostnames ----------------------------------------------------------------------
+
+// matchHostname matches a lower-case SAN pattern against a lower-case
+// host: exact, or "*.rest" matching exactly one left-most label.
+func matchHostname(pattern string, host string) bool {
+    var p = std.strings.TrimSuffix(pattern, ".")
+    if p == "" || host == "" {
+        return false
+    }
+    if !std.strings.HasPrefix(p, "*.") {
+        return p == host
+    }
+    var suffix = p[1..]
+    if std.strings.Contains(suffix, "*") || std.strings.Count(suffix, ".") < 2 {
+        return false
+    }
+    var dot = std.strings.Index(host, ".")
+    if dot <= 0 {
+        return false
+    }
+    return host[dot..] == suffix
+}
+
+// True if name is within the dNSName constraint base (RFC 5280 4.2.1.10).
+func dnsWithin(name string, base string) bool {
+    var b = std.strings.ToLower(base)
+    var n = std.strings.ToLower(std.strings.TrimPrefix(name, "*."))
+    if b == "" {
+        return true
+    }
+    if std.strings.HasPrefix(b, ".") {
+        return std.strings.HasSuffix(n, b)
+    }
+    return n == b || std.strings.HasSuffix(n, "." + b)
+}
+
+// ---- pools and verification -----------------------------------------------------------
+
+// CertPool is a set of certificates (trust anchors or intermediates).
+struct CertPool {
+    certs []*Certificate
+
+    func AddCert(c *Certificate) {
+        if !this.Contains(c) {
+            this.certs = append(this.certs, c)
+        }
+    }
+
+    // AppendPEM adds every certificate of a PEM text (invalid ones are
+    // skipped) and returns how many were added.
+    func AppendPEM(text string) int {
+        var blocks = try DecodePEM(text) else []
+        var n = 0
+        for b in blocks {
+            if b.Type != "CERTIFICATE" {
+                continue
+            }
+            var c = try ParseDER(b.Bytes) else nil
+            if c != nil {
+                this.AddCert(c)
+                n += 1
+            }
+        }
+        return n
+    }
+
+    func Len() int {
+        return len(this.certs)
+    }
+
+    func Certificates() []*Certificate {
+        return this.certs
+    }
+
+    func Contains(c *Certificate) bool {
+        for x in this.certs {
+            if bytesEqual(x.Raw, c.Raw) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // Candidates for the issuer of c (subject equals c's issuer; key ids
+    // must agree when both are present).
+    func issuersOf(c *Certificate) []*Certificate {
+        var out []*Certificate = []
+        for x in this.certs {
+            if !bytesEqual(x.Subject.Raw, c.Issuer.Raw) {
+                continue
+            }
+            if len(c.AuthorityKeyId) > 0 &&
+                len(x.SubjectKeyId) > 0 &&
+                !bytesEqual(c.AuthorityKeyId, x.SubjectKeyId) {
+                continue
+            }
+            out = append(out, x)
+        }
+        return out
+    }
+}
+
+func NewCertPool() *CertPool {
+    return new CertPool{}
+}
+
+// SystemRootsPath is the PEM bundle used by SystemRoots ($SSL_CERT_FILE or
+// the distribution's bundle; "" if there is none).
+func SystemRootsPath() string {
+    return rtSystemRootsPath()
+}
+
+// The parsed system roots, cached per process (in the std.diag slots).
+struct systemRootsCache {
+    path  string
+    size  int
+    mtime int
+    pool  *CertPool
+}
+
+// SystemRoots loads the operating system's trusted roots. They are parsed
+// once per process and reused while the bundle's path, size and
+// modification time stay the same (parsing a distribution bundle takes
+// milliseconds, which every TLS dial paid before); each call returns its
+// own pool (a copy of the cached one), so adding to it is safe.
+func SystemRoots() *CertPool! {
+    var path = rtSystemRootsPath()
+    if path == "" {
+        return error("x509: no system root certificates found (set SSL_CERT_FILE)")
+    }
+    var info = std.os.Stat(path)?
+    std.diag.rtLock()
+    var m = std.diag.rtSlots()
+    if m != nil {
+        switch m["x509.systemRoots"] {
+            case systemRootsCache c:
+                if c.path == path && c.size == info.Size && c.mtime == info.ModTimeNanos {
+                    std.diag.rtUnlock()
+                    return copyPool(c.pool)
+                }
+        }
+    }
+    std.diag.rtUnlock()
+    var text = std.io.ReadFile(path)?
+    var pool = NewCertPool()
+    if pool.AppendPEM(text) == 0 {
+        return error("x509: no certificates in " + path)
+    }
+    std.diag.rtLock()
+    m = std.diag.rtSlots()
+    if m == nil {
+        m = map[string]any{}
+        std.diag.rtSetSlots(m)
+    }
+    m["x509.systemRoots"] = systemRootsCache{
+        path: path,
+        size: info.Size,
+        mtime: info.ModTimeNanos,
+        pool: pool,
+    }
+    std.diag.rtUnlock()
+    return copyPool(pool)
+}
+
+// A new pool with the certificates of p (shared: they are not modified).
+func copyPool(p *CertPool) *CertPool {
+    var out = NewCertPool()
+    var cs []*Certificate = []
+    for c in p.certs {
+        cs = append(cs, c)
+    }
+    out.certs = cs
+    return out
+}
+
+// Options of Verify.
+struct VerifyOptions {
+    // Host name (or IP) the leaf must be valid for; "" skips the check.
+    DNSName string
+    // Trust anchors; nil means SystemRoots().
+    Roots *CertPool
+    // Extra certificates that may be used as intermediates.
+    Intermediates []*Certificate
+    // Unix ms to check validity at; 0 means now.
+    CurrentTime int
+    // Required extended key usage of the leaf: "serverAuth" (default when
+    // ""), "clientAuth", or "any".
+    KeyUsage string
+}
+
+// Verify builds a chain from cert to one of the roots and checks it:
+// signatures, validity periods, CA flags and path lengths, key usage,
+// extended key usage, dNSName name constraints and the host name. It
+// returns the chain, leaf first, root last.
+func Verify(cert *Certificate, opts VerifyOptions) []*Certificate! {
+    var roots = opts.Roots
+    if roots == nil {
+        roots = SystemRoots()?
+    }
+    var now = opts.CurrentTime
+    if now == 0 {
+        now = std.time.Now()
+    }
+    var eku = opts.KeyUsage
+    if eku == "" {
+        eku = "serverAuth"
+    }
+    checkLeaf(cert, now, eku)?
+    if opts.DNSName != "" {
+        cert.VerifyHostname(opts.DNSName)?
+    }
+    var inter = NewCertPool()
+    for c in opts.Intermediates {
+        inter.AddCert(c)
+    }
+    var chain []*Certificate = [cert]
+    var ok = buildChain(chain, roots, inter, now, 0)?
+    return ok
+}
+
+func checkTime(c *Certificate, now int) void! {
+    if now < c.NotBefore {
+        return error(
+            "x509: certificate \"" +
+                c.Subject.String() +
+                "\" is not valid yet (valid from " +
+                std.time.Format(c.NotBefore, "%Y-%m-%dT%H:%M:%SZ") +
+                ")",
+        )
+    }
+    if now > c.NotAfter {
+        return error(
+            "x509: certificate \"" +
+                c.Subject.String() +
+                "\" has expired (valid until " +
+                std.time.Format(c.NotAfter, "%Y-%m-%dT%H:%M:%SZ") +
+                ")",
+        )
+    }
+}
+
+func checkLeaf(c *Certificate, now int, eku string) void! {
+    checkTime(c, now)?
+    if len(c.UnhandledCriticalExtensions) > 0 {
+        return error("x509: unhandled critical extension " + c.UnhandledCriticalExtensions[0])
+    }
+    if eku != "any" && len(c.ExtKeyUsage) > 0 {
+        var found = false
+        for u in c.ExtKeyUsage {
+            if u == eku || u == "any" {
+                found = true
+            }
+        }
+        if !found {
+            return error(
+                "x509: certificate is not valid for " +
+                    eku +
+                    " (extended key usage: " +
+                    std.strings.Join(c.ExtKeyUsage, ", ") +
+                    ")",
+            )
+        }
+    }
+}
+
+// True if c is already in the chain (loop).
+func inChain(chain []*Certificate, c *Certificate) bool {
+    for x in chain {
+        if bytesEqual(x.Raw, c.Raw) {
+            return true
+        }
+    }
+    return false
+}
+
+// Checks the CA certificate ca placed above `below` intermediates.
+func checkCA(ca *Certificate, now int, below int) void! {
+    checkTime(ca, now)?
+    if len(ca.UnhandledCriticalExtensions) > 0 {
+        return error("x509: unhandled critical extension " + ca.UnhandledCriticalExtensions[0])
+    }
+    if ca.MaxPathLen >= 0 && below > ca.MaxPathLen {
+        return error("x509: path length constraint of \"" + ca.Subject.String() + "\" exceeded")
+    }
+}
+
+// Applies the dNSName constraints of ca to the leaf.
+func checkConstraints(ca *Certificate, leaf *Certificate) void! {
+    if len(ca.PermittedDNSDomains) == 0 && len(ca.ExcludedDNSDomains) == 0 {
+        return
+    }
+    for n in leaf.DNSNames {
+        for ex in ca.ExcludedDNSDomains {
+            if dnsWithin(n, ex) {
+                return error(
+                    "x509: name \"" +
+                        n +
+                        "\" is excluded by the constraints of \"" +
+                        ca.Subject.String() +
+                        "\"",
+                )
+            }
+        }
+        if len(ca.PermittedDNSDomains) > 0 {
+            var ok = false
+            for p in ca.PermittedDNSDomains {
+                if dnsWithin(n, p) {
+                    ok = true
+                }
+            }
+            if !ok {
+                return error(
+                    "x509: name \"" +
+                        n +
+                        "\" is not permitted by the constraints of \"" +
+                        ca.Subject.String() +
+                        "\"",
+                )
+            }
+        }
+    }
+}
+
+// Depth-first chain building: chain holds leaf..current; returns the
+// first complete chain ending at a root.
+func buildChain(
+    chain []*Certificate,
+    roots *CertPool,
+    inter *CertPool,
+    now int,
+    depth int,
+) []*Certificate! {
+    var cur = chain[len(chain) - 1]
+    if depth > 8 {
+        return error("x509: certificate chain too long")
+    }
+    var lastErr = error(
+        "x509: certificate signed by unknown authority (issuer \"" + cur.Issuer.String() + "\")",
+    )
+    // a self-signed leaf that is itself a root
+    if depth == 0 && roots.Contains(cur) {
+        return chain
+    }
+    for r in roots.issuersOf(cur) {
+        if inChain(chain, r) && !bytesEqual(r.Raw, cur.Raw) {
+            continue
+        }
+        try {
+            cur.CheckSignatureFrom(r)?
+            checkCA(r, now, depth)?
+            checkConstraints(r, chain[0])?
+        } catch err {
+            lastErr = err
+            continue
+        }
+        var full = append(chain, r)
+        return full
+    }
+    for c in inter.issuersOf(cur) {
+        if inChain(chain, c) {
+            continue
+        }
+        try {
+            cur.CheckSignatureFrom(c)?
+            checkCA(c, now, depth)?
+            checkConstraints(c, chain[0])?
+        } catch err {
+            lastErr = err
+            continue
+        }
+        var next []*Certificate = []
+        for x in chain {
+            next = append(next, x)
+        }
+        next = append(next, c)
+        var res = try buildChain(next, roots, inter, now, depth + 1) catch err {
+            lastErr = err
+            continue
+        }
+        return res
+    }
+    return lastErr
+}
+
+// ---- private keys -----------------------------------------------------------------------
+
+// PrivateKey is a parsed private key.
+struct PrivateKey {
+    // "RSA", "ECDSA" (P-256) or "Ed25519".
+    Algorithm string
+    // RSA: the PKCS#1 RSAPrivateKey DER; ECDSA: the 32-byte scalar;
+    // Ed25519: the 32-byte seed.
+    Bytes []byte
+    // RSA: modulus; ECDSA: 65-byte point; Ed25519: 32-byte key.
+    Public      []byte
+    RSAExponent []byte
+
+    // True if the key belongs to the certificate's public key.
+    func Matches(c *Certificate) bool {
+        if c.PublicKeyAlgorithm != this.Algorithm {
+            return false
+        }
+        if this.Algorithm == "RSA" {
+            return bytesEqual(c.PublicKey, this.Public) &&
+                bytesEqual(c.RSAExponent, this.RSAExponent)
+        }
+        return bytesEqual(c.PublicKey, this.Public)
+    }
+}
+
+func rsaKey(der []byte) PrivateKey! {
+    var top = newReader(der)
+    var seq = top.expect(48, "RSAPrivateKey")?
+    var r = newReader(seq.body)
+    var ver = smallInt(r.next()?)?
+    if ver != 0 {
+        return error("x509: unsupported RSA key version")
+    }
+    var n = unsignedBytes(r.next()?)?
+    var e = unsignedBytes(r.next()?)?
+    return PrivateKey{Algorithm: "RSA", Bytes: seq.full, Public: n, RSAExponent: e}
+}
+
+func ecKey(der []byte, outerCurve string) PrivateKey! {
+    var top = newReader(der)
+    var seq = top.expect(48, "ECPrivateKey")?
+    var r = newReader(seq.body)
+    var ver = smallInt(r.next()?)?
+    if ver != 1 {
+        return error("x509: unsupported EC key version")
+    }
+    var k = r.expect(4, "EC private key")?.body
+    var curve = outerCurve
+    for r.more() {
+        var f = r.next()?
+        if f.tag == 160 {
+            var cr = newReader(f.body)
+            curve = readOID(cr, "EC curve")?
+        }
+    }
+    if curve == "1.3.132.0.34" {
+        var s384 = k
+        if len(k) < 48 {
+            s384 = concatBytes(zeroBytes(48 - len(k)), k)
+        }
+        var pub384 = std.crypto.ecdsa.PublicKeyP384(s384)?
+        return PrivateKey{Algorithm: "ECDSA", Bytes: s384, Public: pub384}
+    }
+    if curve != "1.2.840.10045.3.1.7" {
+        return error("x509: unsupported EC curve " + curve + " (only P-256 and P-384)")
+    }
+    var scalar = k
+    if len(k) < 32 {
+        scalar = concatBytes(zeroBytes(32 - len(k)), k)
+    }
+    var pub = std.crypto.ecdsa.PublicKey(scalar)?
+    return PrivateKey{Algorithm: "ECDSA", Bytes: scalar, Public: pub}
+}
+
+func zeroBytes(n int) []byte {
+    var out []byte = []
+    for len(out) < n {
+        out = append(out, byte(0))
+    }
+    return out
+}
+
+func concatBytes(a []byte, b []byte) []byte {
+    var out []byte = []
+    for x in a {
+        out = append(out, x)
+    }
+    for x in b {
+        out = append(out, x)
+    }
+    return out
+}
+
+// ParsePrivateKey parses a DER private key: PKCS#8, PKCS#1 (RSA) or SEC 1 (EC).
+func ParsePrivateKey(der []byte) PrivateKey! {
+    var top = newReader(der)
+    var seq = top.expect(48, "private key")?
+    var r = newReader(seq.body)
+    var ver = r.expect(2, "private key version")?
+    if r.peek() == 48 {
+        // PKCS#8: version, AlgorithmIdentifier, OCTET STRING
+        var alg = r.expect(48, "PKCS#8 algorithm")?
+        var key = r.expect(4, "PKCS#8 key")?.body
+        var ar = newReader(alg.body)
+        var oid = readOID(ar, "PKCS#8 algorithm")?
+        switch oid {
+            case "1.2.840.113549.1.1.1": return rsaKey(key)?
+            case "1.2.840.10045.2.1":
+                var curve = readOID(ar, "EC curve")?
+                return ecKey(key, curve)?
+            case "1.3.101.112":
+                var kr = newReader(key)
+                var seed = kr.expect(4, "Ed25519 key")?.body
+                if len(seed) != 32 {
+                    return error("x509: invalid Ed25519 private key")
+                }
+                return PrivateKey{
+                    Algorithm: "Ed25519",
+                    Bytes: seed,
+                    Public: std.crypto.ed25519.PublicKey(seed)?,
+                }
+        }
+        return error("x509: unsupported private key algorithm " + oid)
+    }
+    var v = smallInt(ver)?
+    if v == 1 {
+        return ecKey(der, "")?
+    }
+    return rsaKey(der)?
+}
+
+// ParsePrivateKeyPEM parses the first PRIVATE KEY, RSA PRIVATE KEY or EC
+// PRIVATE KEY block of text.
+func ParsePrivateKeyPEM(text string) PrivateKey! {
+    for b in DecodePEM(text)? {
+        if b.Type == "PRIVATE KEY" || b.Type == "RSA PRIVATE KEY" || b.Type == "EC PRIVATE KEY" {
+            return ParsePrivateKey(b.Bytes)?
+        }
+        if b.Type == "ENCRYPTED PRIVATE KEY" {
+            return error("x509: encrypted private keys are not supported")
+        }
+    }
+    return error("x509: no private key block found")
+}

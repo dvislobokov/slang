@@ -1,7 +1,7 @@
-//! `slang doc --html <dir>`: a static site, one page per namespace, an
+//! `zell doc --html <dir>`: a static site, one page per namespace, an
 //! index page with client-side search over `search-index.json` (also
 //! loaded as `search-index.js`, so the site works from `file://`), and
-//! highlighted source pages with line anchors (`src/std/strings/strings.sl.html#L12`)
+//! highlighted source pages with line anchors (`src/std/strings/strings.zl.html#L12`)
 //! unless `--source-url` points the source links elsewhere.
 
 use super::markdown::{self, escape};
@@ -9,7 +9,7 @@ use super::{Docs, Example, Item, Namespace};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-/// The stylesheet of `slang doc --html` and `--site` (light and dark via
+/// The stylesheet of `zell doc --html` and `--site` (light and dark via
 /// `prefers-color-scheme`).
 pub const CSS: &str = r#":root{--bg:#fff;--fg:#1d1f23;--muted:#5f6670;--line:#e3e5e8;--code:#f5f6f8;--link:#0b62c4;--kw:#8a2be2;--str:#0a7a3a;--num:#b35900;--ty:#0b6e99;--com:#7a7f87;--dep:#b3261e;--side:#fafbfc}
 @media (prefers-color-scheme: dark){:root{--bg:#16181c;--fg:#e4e6ea;--muted:#9aa1ab;--line:#2b2f36;--code:#1f2228;--link:#6cb2ff;--kw:#c792ea;--str:#8fd18f;--num:#f0a868;--ty:#7fd0f0;--com:#868c96;--dep:#ff8a80;--side:#1a1c21}}
@@ -36,12 +36,12 @@ details{margin:.6em 0;border:1px solid var(--line);border-radius:6px;padding:4px
 @media (max-width:800px){.wrap{display:block}nav.side{border-right:0;border-bottom:1px solid var(--line)}}
 "#;
 
-/// The client-side search: `window.SLANG_INDEX` entries `{n, k, s, u}`
-/// (name, kind, summary, URL relative to the site root), `SLANG_ROOT` the
+/// The client-side search: `window.ZELL_INDEX` entries `{n, k, s, u}`
+/// (name, kind, summary, URL relative to the site root), `ZELL_ROOT` the
 /// path from the current page to the root.
 pub const SEARCH_JS: &str = r#"(function(){
 var q=document.getElementById('q'),out=document.getElementById('results');if(!q||!out)return;
-var idx=window.SLANG_INDEX||[],root=window.SLANG_ROOT||'';
+var idx=window.ZELL_INDEX||[],root=window.ZELL_ROOT||'';
 function score(e,t){var n=e.n.toLowerCase(),last=n.slice(n.lastIndexOf('.')+1);if(last===t||n===t)return 0;if(last.indexOf(t)===0)return 1;if(n.indexOf(t)>=0)return 2;if((e.s||'').toLowerCase().indexOf(t)>=0)return 3;return -1}
 function run(){var t=q.value.trim().toLowerCase();out.innerHTML='';if(!t)return;var hits=[];
 for(var i=0;i<idx.length;i++){var s=score(idx[i],t);if(s>=0)hits.push([s,idx[i]])}
@@ -68,13 +68,13 @@ pub const API_NAV: &[(&str, &str)] = &[("Packages", "index.html")];
 /// One HTML page with the shared header, search box and stylesheet.
 pub fn page(title: &str, body: &str, ch: &Chrome) -> String {
     let r = &ch.root;
-    let mut nav = format!("<a class=\"home\" href=\"{r}index.html\">Slang</a>");
+    let mut nav = format!("<a class=\"home\" href=\"{r}index.html\">Zell</a>");
     for (label, url) in ch.nav {
         nav.push_str(&format!("<a href=\"{r}{url}\">{}</a>", escape(label)));
     }
     let side = if ch.side.is_empty() { String::new() } else { format!("<nav class=\"side\">{}</nav>", ch.side) };
     format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{}</title><link rel=\"stylesheet\" href=\"{r}style.css\"></head>\n<body><header>{nav}<input id=\"q\" placeholder=\"Search (press /)\" autocomplete=\"off\" aria-label=\"Search\"><ul id=\"results\"></ul></header>\n<div class=\"wrap\">{side}<main>\n{body}</main></div>\n<script>window.SLANG_ROOT=\"{r}\";</script><script src=\"{r}search-index.js\"></script><script src=\"{r}search.js\"></script></body></html>\n",
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{}</title><link rel=\"stylesheet\" href=\"{r}style.css\"></head>\n<body><header>{nav}<input id=\"q\" placeholder=\"Search (press /)\" autocomplete=\"off\" aria-label=\"Search\"><ul id=\"results\"></ul></header>\n<div class=\"wrap\">{side}<main>\n{body}</main></div>\n<script>window.ZELL_ROOT=\"{r}\";</script><script src=\"{r}search-index.js\"></script><script src=\"{r}search.js\"></script></body></html>\n",
         escape(title)
     )
 }
@@ -156,7 +156,7 @@ fn examples_html(ctx: &Ctx, exs: &[Example]) -> String {
     let mut o = String::new();
     for e in exs {
         let title = if e.suffix.is_empty() { "Example".to_string() } else { format!("Example ({})", escape(&e.suffix)) };
-        o.push_str(&format!("<details id=\"{}\"><summary>{title}</summary>\n<pre><code class=\"language-slang\">{}</code></pre>\n", escape(&e.name), markdown::highlight(&e.code)));
+        o.push_str(&format!("<details id=\"{}\"><summary>{title}</summary>\n<pre><code class=\"language-zell\">{}</code></pre>\n", escape(&e.name), markdown::highlight(&e.code)));
         if let Some(out) = &e.output {
             o.push_str(&format!("<p class=\"muted\">Output:</p><pre><code>{}</code></pre>\n", escape(out)));
         }
@@ -321,7 +321,7 @@ pub fn write_site(docs: &Docs, dir: &Path, source_url: Option<&str>) -> Result<u
     write(&dir.join("search.js"), SEARCH_JS)?;
     let idx = search_index(docs);
     write(&dir.join("search-index.json"), &serde_json::to_string(&idx).unwrap())?;
-    write(&dir.join("search-index.js"), &format!("window.SLANG_INDEX = {};\n", serde_json::to_string(&idx).unwrap()))?;
+    write(&dir.join("search-index.js"), &format!("window.ZELL_INDEX = {};\n", serde_json::to_string(&idx).unwrap()))?;
     write(&dir.join("docs.json"), &serde_json::to_string(docs).unwrap())?;
     write_api(docs, dir, source_url, &layout)
 }

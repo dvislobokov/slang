@@ -1,5 +1,5 @@
 true true true true
 root 0 /root
 root 0
-user: unknown user no-such-user-slang
+user: unknown user no-such-user-zell
 user: invalid userid "x1": strconv.Atoi: parsing "x1": invalid syntax

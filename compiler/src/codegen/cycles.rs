@@ -3,8 +3,8 @@
 //! [`crate::sema::cycles`] marks the types that lie on a cycle of the type
 //! reference graph. For them this module emits:
 //!
-//! * allocation through `slang_cycles_new_entry(entry, size)` (it sets
-//!   `SLANG_RC_CYCLIC` in the header while the collector is on) for boxes
+//! * allocation through `zell_cycles_new_entry(entry, size)` (it sets
+//!   `ZELL_RC_CYCLIC` in the header while the collector is on) for boxes
 //!   of a cyclic type and for closure environments of lambdas that capture
 //!   one ([`CodeGen::cyc_alloc`]); `entry` is a per-type registry entry
 //!   (`cycles.entry.N`) the runtime registers on first use, so only types
@@ -14,7 +14,7 @@
 //!   that may be flagged: `tid` is NULL when the static type says so, or the
 //!   dynamic type id (interface/`any` type word, closure function pointer)
 //!   that the runtime looks up in its registry first;
-//! * a third `visit` word in every compiled `slang_value_ops` (non-NULL for
+//! * a third `visit` word in every compiled `zell_value_ops` (non-NULL for
 //!   element types that hold such references, so the runtime flags the
 //!   slice backings and maps made with them);
 //! * the entries `{key, visit, fin, clear, alias, state}` (ABI.md 3.8):
@@ -81,7 +81,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// with type info `ti`: through its registry entry when `t` is cyclic.
     pub(crate) fn cyc_alloc(&mut self, t: TypeId, ti: PointerValue<'ctx>, size: inkwell::values::IntValue<'ctx>) -> PointerValue<'ctx> {
         if !self.cycles.is_cyclic(t) {
-            return self.call_rt_v("slang_object_new", &[ti.into(), size.into()]).into_pointer_value();
+            return self.call_rt_v("zell_object_new", &[ti.into(), size.into()]).into_pointer_value();
         }
         let g = match self.cyc.entries.get(&t) {
             Some(g) => *g,
@@ -91,10 +91,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 g
             }
         };
-        self.call_rt_v("slang_cycles_new_entry", &[g.as_pointer_value().into(), size.into()]).into_pointer_value()
+        self.call_rt_v("zell_cycles_new_entry", &[g.as_pointer_value().into(), size.into()]).into_pointer_value()
     }
 
-    /// The `visit` word of a `slang_value_ops` for elements of `t`.
+    /// The `visit` word of a `zell_value_ops` for elements of `t`.
     pub(crate) fn ops_visit(&mut self, t: TypeId) -> PointerValue<'ctx> {
         if self.cycles.holds_cyclic(t) {
             self.cyc_visit_helper(t).as_global_value().as_pointer_value()
@@ -496,10 +496,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         if !self.cycles.is_cyclic(x) {
             return;
         }
-        let g = match self.module.get_global("slang_cycles_epoch") {
+        let g = match self.module.get_global("zell_cycles_epoch") {
             Some(g) => g,
             None => {
-                let g = self.module.add_global(self.i64_ty(), None, "slang_cycles_epoch");
+                let g = self.module.add_global(self.i64_ty(), None, "zell_cycles_epoch");
                 g.set_linkage(Linkage::External);
                 g
             }
@@ -513,10 +513,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
     }
 
-    /// The release paired with a pin: `slang_ptr_release_noroot(p, epoch)`
+    /// The release paired with a pin: `zell_ptr_release_noroot(p, epoch)`
     /// decrements without recording a possible root unless a collection
     /// ran in between (ABI.md 3.8).
     pub(crate) fn release_pin(&mut self, x: inkwell::values::BasicValueEnum<'ctx>, epoch: inkwell::values::IntValue<'ctx>) {
-        self.call_rt("slang_ptr_release_noroot", &[x.into(), epoch.into()]);
+        self.call_rt("zell_ptr_release_noroot", &[x.into(), epoch.into()]);
     }
 }

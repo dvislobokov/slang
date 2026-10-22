@@ -3,13 +3,13 @@
 //	go run main.go server            serves h2 over TLS (self-signed, ALPN) and h2c
 //	                                 (prior knowledge); prints "tls <port>" and
 //	                                 "h2c <port>" on stdout; stops on GET /quit
-//	go run main.go client <h2c> <tls> requests a Slang server over HTTP/2 (h2c prior
+//	go run main.go client <h2c> <tls> requests a Zell server over HTTP/2 (h2c prior
 //	                                 knowledge and TLS) and prints what it got
 //	go run main.go wsclient <url>    WebSocket client (handshake and framing by hand,
-//	                                 RFC 6455) against a Slang echo server
+//	                                 RFC 6455) against a Zell echo server
 //
 // The server also has /ws: a hand-written WebSocket echo endpoint (net/http
-// Hijacker), for the Slang client.
+// Hijacker), for the Zell client.
 package main
 
 import (

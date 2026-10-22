@@ -4,16 +4,16 @@
 //! identity, `Value.Set` type checks, `--leak-check`). The acceptance tests
 //! are `tests/spec/reflection` and `tests/spec/stdlib/json_*`.
 
-use slang::diagnostics::{Diagnostics, Severity};
-use slang::driver;
-use slang::hir::*;
-use slang::span::SourceFile;
-use slang::types::Type;
+use zell::diagnostics::{Diagnostics, Severity};
+use zell::driver;
+use zell::hir::*;
+use zell::span::SourceFile;
+use zell::types::Type;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn analyze(src: &str) -> (Option<Program>, Vec<String>) {
-    let files = vec![SourceFile::new("r.sl".to_string(), src.to_string())];
+    let files = vec![SourceFile::new("r.zl".to_string(), src.to_string())];
     let mut diags = Diagnostics::new();
     let p = driver::check(&files, &mut diags);
     let errors = diags.items.iter().filter(|d| d.severity == Severity::Error).map(|d| d.message.clone()).collect();
@@ -37,9 +37,9 @@ fn err(body: &str, needle: &str) {
     assert!(errors.iter().any(|e| e.contains(needle)), "no error containing {needle:?} in {errors:#?}");
 }
 
-fn struct_ty(p: &Program, name: &str) -> slang::types::TypeId {
+fn struct_ty(p: &Program, name: &str) -> zell::types::TypeId {
     let sid = p.structs.iter().position(|s| s.name == name).expect("struct") as u32;
-    (0..p.types.len() as u32).map(slang::types::TypeId).find(|t| matches!(p.types.get(*t), Type::Struct(d) if d.0 == sid)).expect("struct type")
+    (0..p.types.len() as u32).map(zell::types::TypeId).find(|t| matches!(p.types.get(*t), Type::Struct(d) if d.0 == sid)).expect("struct type")
 }
 
 const USER: &str = "struct User {\n    @json(name: \"id\") Id int\n    Email string\n    @json(skip: true) cache string\n}\n";
@@ -92,7 +92,7 @@ fn fields_loop_is_unrolled_once_per_field() {
     assert!(dump.contains("%0:v:t.User.Email:string"), "{dump}");
     // A struct without fields: the body is checked once but not emitted.
     let empty = p.funcs.iter().find(|f| f.name == "Names<Empty>").expect("instance");
-    assert!(!slang::hir::dump::type_name(&p.types, empty.ret, &p).is_empty());
+    assert!(!zell::hir::dump::type_name(&p.types, empty.ret, &p).is_empty());
 }
 
 #[test]
@@ -123,21 +123,21 @@ fn repo() -> PathBuf {
 }
 
 fn ensure_runtime() {
-    let lib = repo().join("runtime/libslang_rt.a");
+    let lib = repo().join("runtime/libzell_rt.a");
     if !lib.is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
     }
 }
 
-/// Runs `src` with `slang run --leak-check`: (exit code, stdout, stderr).
+/// Runs `src` with `zell run --leak-check`: (exit code, stdout, stderr).
 fn run(name: &str, src: &str) -> (i32, String, String) {
     ensure_runtime();
-    let dir = std::env::temp_dir().join(format!("slang-reflect-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell-reflect-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join(format!("{name}.sl"));
+    let file = dir.join(format!("{name}.zl"));
     std::fs::write(&file, src).unwrap();
-    let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("run").arg(&file).arg("--leak-check").env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("run").arg(&file).arg("--leak-check").env("ZELL_NO_BACKTRACE", "1").output().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     (r.status.code().unwrap_or(-1), String::from_utf8_lossy(&r.stdout).into_owned(), String::from_utf8_lossy(&r.stderr).into_owned())
 }

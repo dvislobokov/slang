@@ -1,7 +1,7 @@
-# Benchmarks: Slang vs Go
+# Benchmarks: Zell vs Go
 
-Equivalent programs in `*/main.sl` and `*/main.go`. Run with
-`./scripts/bench-perf.sh [name...]` (needs `target/release/slang` and `go`).
+Equivalent programs in `*/main.zl` and `*/main.go`. Run with
+`./scripts/bench-perf.sh [name...]` (needs `target/release/zell` and `go`).
 The script builds both with release settings and reports wall time, CPU time
 (user+sys) and peak RSS.
 
@@ -49,11 +49,11 @@ generator, best of 3 rounds: 101 000 req/s before, 101 300 after (epoll),
 
 Startup of `hello` (`--release`, 300 runs): 1.45 ms -> 1.08 ms (min), 1.81 ms
 -> 1.30 ms (median). Sizes (`--release`, stripped): `hello` 35 584 -> 14 840
-bytes (10 320 with `SLANG_LINKER=lld`), `http_server` 1 203 680 -> 1 232 968
+bytes (10 320 with `ZELL_LINKER=lld`), `http_server` 1 203 680 -> 1 232 968
 (the stdlib grew in between), `web_app` 1 756 672 (the old compiler cannot
 build today's `web_app`).
 
-Compile time (`slang build`, best of 3, wall / CPU):
+Compile time (`zell build`, best of 3, wall / CPU):
 
 | program | before | after | after, 1 codegen thread |
 |---|---|---|---|
@@ -68,19 +68,19 @@ A small debug build (a spec test) takes 0.72 -> 0.67 s. Building the whole
 spec corpus 4 at a time took 133 s before and 159 s after on the shared
 machine (load 4-6 from other jobs; the old compiler builds only 500 of the
 820 files with today's stdlib, the new one 509), so that comparison is
-inconclusive. `SLANG_TIME=1` prints the duration of each build phase.
+inconclusive. `ZELL_TIME=1` prints the duration of each build phase.
 
 What changed, by work item:
 
-1. **Strings: views instead of copies** (runtime/ABI.md 4.1). `slang_string`
+1. **Strings: views instead of copies** (runtime/ABI.md 4.1). `zell_string`
    is now `{hdr, len, char *data}` (32 bytes, owned bytes inline at +32), so
    a string can point into another string's bytes. `Split`/`Fields` put all
    their pieces into one *view block* (one allocation; each piece's refcount
    word forwards to the block), `s[a:b]`, `Trim*`, `SplitN` (and everything
-   built on `s[a..b]` in Slang: `Cut`, regex match texts) return standalone
+   built on `s[a..b]` in Zell: `Cut`, regex match texts) return standalone
    views for pieces of 64 bytes or more and copies below. Views are not
-   NUL-terminated: C APIs go through `slang_string_cstr`, and the runtime's
-   test build `-DSLANG_STRESS_NONUL` (no terminator on any string) passes the
+   NUL-terminated: C APIs go through `zell_string_cstr`, and the runtime's
+   test build `-DZELL_STRESS_NONUL` (no terminator on any string) passes the
    C tests, the examples and the spec corpus. `Split` with a one-byte
    separator counts and cuts 8 bytes at a time. `strings` 0.225 -> 0.072 s
    (Go 0.199 s). The other big part of that gain is general: object counts
@@ -91,10 +91,10 @@ What changed, by work item:
    they cannot be views (they were already copy-free C helpers).
 2. **Reference counting fast paths.** The scheduler (workers and timer
    thread) now starts with the first task, so a program without tasks stays
-   single-threaded; until a second thread starts (`slang_threaded`, set by
-   the platform's thread start), `slang_retain`/`slang_release` use plain
+   single-threaded; until a second thread starts (`zell_threaded`, set by
+   the platform's thread start), `zell_retain`/`zell_release` use plain
    stores instead of atomic RMW. The compiler can emit that fast path inline
-   (`codegen/rc.rs`), but only does so at `-O3` / `SLANG_INLINE_RC=1`: inline
+   (`codegen/rc.rs`), but only does so at `-O3` / `ZELL_INLINE_RC=1`: inline
    it gave json_like 7% and struct_map 2%, and grew `http_server` by 30% and
    its `--release` compile time by 70%.
 3. **Escape analysis** (`hir::ownership::stack_locals`, DESIGN.md
@@ -103,7 +103,7 @@ What changed, by work item:
    calls as escaping), and `var p = new T{...}` whose `p` never escapes, live
    in an entry alloca with an immortal header; leaving the scope releases
    the fields (running `Drop`). alloc_heavy: 0.395 -> 0.301 s from escape
-   analysis alone (`SLANG_NO_ESCAPE=1` turns it off), 1.12 -> 0.40 s in all
+   analysis alone (`ZELL_NO_ESCAPE=1` turns it off), 1.12 -> 0.40 s in all
    (the binary trees part is allocator/refcount bound). nbody's only boxing
    (`for b in bodies { b.Energy() }`) runs 5 times, so it stays at parity: it
    is bound by `sqrt` and division latency.
@@ -115,7 +115,7 @@ What changed, by work item:
 5. **io_uring** (`runtime/src/platform/poll_uring.c`, Linux 6.0+, raw
    system calls): readiness polls (`IORING_OP_POLL_ADD`) with the epoll
    backend's one-shot level-triggered semantics, synchronous cancel on
-   forget. Opt-in (`SLANG_IO_BACKEND=io_uring`): it is not faster than
+   forget. Opt-in (`ZELL_IO_BACKEND=io_uring`): it is not faster than
    one-shot epoll here (one submission per wait, like one `epoll_ctl`), and
    the kernel drops a completed poll's file reference lazily, so a listening
    socket closed right after its poll completed may still accept briefly
@@ -126,7 +126,7 @@ What changed, by work item:
    pointers set by the subsystems when they start, so `hello` links none of
    the I/O poller, resolver, debug agent or leak report code (text 24.6 KB
    -> 6.5 KB). `--gc-sections` already dropped unused stdlib code.
-   `SLANG_LINKER=lld` saves another 4.5 KB but is not the default: its
+   `ZELL_LINKER=lld` saves another 4.5 KB but is not the default: its
    layout made fib 15% slower.
 7. **Compile time.** The biggest hotspot was LLVM working on the whole
    stdlib: code generation emits every stdlib function a program could reach
@@ -137,7 +137,7 @@ What changed, by work item:
    machine code on up to 8 threads (`compiler/src/parcodegen.rs`: the
    optimised module is split by function, each thread re-parses the bitcode
    and keeps its part, the objects are merged with `clang -r`;
-   `SLANG_CODEGEN_THREADS=1` turns it off; it costs about 30% more CPU). The
+   `ZELL_CODEGEN_THREADS=1` turns it off; it costs about 30% more CPU). The
    stdlib sources are parsed on several threads (168 -> 37 ms per build).
    Generic instantiation was not a hotspot. The 2x target is reached for
    debug builds of large programs (http_server 1.87x) and small release
@@ -150,7 +150,7 @@ Wall time, best of 5 runs (`before` = commit 9b8d6b1 compiler + runtime,
 `after` = this tree); Go measured in the same session. Peak RSS from
 `./scripts/bench-perf.sh`.
 
-| bench | slang before s | slang after s | go s | after / go | slang RSS MB | go RSS MB |
+| bench | zell before s | zell after s | go s | after / go | zell RSS MB | go RSS MB |
 |---|---|---|---|---|---|---|
 | fib | 0.11 | 0.13 | 0.23 | 0.57 | 10.9 | 10.8 |
 | map | 0.64 | 0.29 | 0.52 | 0.56 | 53.0 | 45.3 |
@@ -168,9 +168,9 @@ What changed (runtime, plus codegen fast paths):
   took `strings` from ~0.6 s to ~0.2 s: `Split` makes 200k small strings per
   round and glibc's malloc spent most of its time consolidating. Strings are
   allocated uninitialised (only `len` and the NUL are written).
-- **`slang_release`** skips the atomic RMW when the count is exactly 1 (the
+- **`zell_release`** skips the atomic RMW when the count is exactly 1 (the
   caller holds the only reference); retain stays a relaxed increment and the
-  shared-count decrement `acq_rel`. Slice backings of `slang_ops_ref`
+  shared-count decrement `acq_rel`. Slice backings of `zell_ops_ref`
   elements release their elements without an indirect call per element.
 - **strings**: `Split`/`Count`/`Replace`/`Index`/`Contains` search with
   `memchr` + `memcmp` instead of a `memcmp` at every byte; `Split` counts
@@ -181,7 +181,7 @@ What changed (runtime, plus codegen fast paths):
   entry and function-pointer hash/eq became a SwissTable-style open-addressing
   table (control bytes, SWAR group matching, 7/8 load) with entries inline,
   specialised int and string key paths (inlined mixer / word-at-a-time string
-  hash, no indirect calls) and new `slang_map_get_or_insert_int/_str`, which
+  hash, no indirect calls) and new `zell_map_get_or_insert_int/_str`, which
   the compiler now uses for `m[k] op= v`.
 - **append** (`codegen/ops.rs`): `xs = append(xs, x)` stores the element and
   bumps `len` inline when `len < cap`; the runtime is called only to grow.
@@ -189,7 +189,7 @@ What changed (runtime, plus codegen fast paths):
   strided inner loop (`j += i`) cannot be vectorised by LLVM, but it is a
   plain load/compare/store with `len`/`data` reloaded (the slice variable's
   address escapes to the grow call, so LLVM cannot keep them in registers).
-- **float/int formatting** (`runtime/src/string.c`): `slang__format_float`
+- **float/int formatting** (`runtime/src/string.c`): `zell__format_float`
   tries an exact fast path for fixed-notation values (1e-4 <= |v| < 1e6, at
   most 15 digits) before the `%.*e` + `strtod` search, and ints are formatted
   without `snprintf`. `json_like` went 1.24 → 0.23 s (79% of its time was
@@ -214,14 +214,14 @@ runtime call per element operation, `strings` per-element `malloc` traffic.
 
 | | wall s | CPU s (user+sys) | peak RSS MB | throughput |
 |---|---|---|---|---|
-| Slang | 0.52 | 1.64 | 57 | ~1.9 GB/s echoed |
+| Zell | 0.52 | 1.64 | 57 | ~1.9 GB/s echoed |
 | Go | 0.62 | 1.91 | 110 | ~1.6 GB/s echoed |
 
 The kernel copies dominate both (sys time); only about 1 in 15 reads or
 writes has to wait for readiness, so the poller round trip (epoll_ctl
 one-shot arm, shard thread, run-queue post) is not the limit here. The
 first version of the benchmark built its buffers with `std.bytes.Repeat`
-(a Slang append loop: 196M appends, 5 s of user time); `net.MakeBuffer(n)`
+(a Zell append loop: 196M appends, 5 s of user time); `net.MakeBuffer(n)`
 / `strings.Bytes(strings.Repeat(..))` allocate in one C call.
 
 `http_hello` (`benchmarks/http_hello/run.sh`, requests/s, 64 keep-alive
@@ -229,22 +229,22 @@ connections, one request in flight each, server and load generator in
 separate processes sharing the 4 vCPUs; the machine was shared with other
 jobs, so the numbers move by ±15% between runs; two runs, the better one per cell):
 
-| server \ load generator | Slang load | Go load | Go HTTP/2 load (TLS, 64 streams, 1 connection) |
+| server \ load generator | Zell load | Go load | Go HTTP/2 load (TLS, 64 streams, 1 connection) |
 |---|---|---|---|
-| Slang `std.net.http` | 67 100 | 103 300 | 31 600 |
+| Zell `std.net.http` | 67 100 | 103 300 | 31 600 |
 | Go `net/http` | 64 400 | 117 300 | 32 600 |
 
 Six alternating rounds of the Go load generator against both servers
-(`go -load`, same process pair): Slang 71–86k req/s, Go 61–85k req/s, ratio
-98–117% (median about 110%), with the Slang server using 13–16 µs of CPU per
+(`go -load`, same process pair): Zell 71–86k req/s, Go 61–85k req/s, ratio
+98–117% (median about 110%), with the Zell server using 13–16 µs of CPU per
 request (user + system) against Go's 15–17 µs. Before the rework of the HTTP
-layer the Slang server did 51 700 req/s against Go's 104 300 (about half)
+layer the Zell server did 51 700 req/s against Go's 104 300 (about half)
 and used 35 µs of CPU per request. The HTTP/2 column is limited by the Go
 client (its single h2 connection serializes the 64 streams' writes); both
 servers stay below 100% CPU there.
 
 What changed (a callgrind profile of the old server put ~90% of its
-instructions in `http.sl`: `CanonicalHeader` alone 29%, `writeResponse` 22%,
+instructions in `http.zl`: `CanonicalHeader` alone 29%, `writeResponse` 22%,
 the router 14%, and in task allocation of `async` helpers):
 
 - Heads are parsed in place from the connection's read buffer by C helpers
@@ -262,29 +262,29 @@ the router 14%, and in task allocation of `async` helpers):
   without splitting the path or allocating a parameter map.
 
 HTTP/2 uses the same handler path with a task per stream; HPACK Huffman is
-C, the rest of the framing Slang.
+C, the rest of the framing Zell.
 
 ## Tier-2 stdlib (2026-10-20, `--release`, go 1.24)
 
 The time inside the measured section, as each program prints it (best of 3);
 the wall time from `bench-perf.sh` also includes generating the input.
 
-| bench | slang ms | go ms | slang / go | note |
+| bench | zell ms | go ms | zell / go | note |
 |---|---|---|---|---|
-| regex `FindAll` (10 MB, 30323 matches) | 55 | 505 | 0.11 | Go's `regexp` has no DFA (NFA or backtracker); Slang runs a lazy DFA forward, then a reverse DFA for the start |
+| regex `FindAll` (10 MB, 30323 matches) | 55 | 505 | 0.11 | Go's `regexp` has no DFA (NFA or backtracker); Zell runs a lazy DFA forward, then a reverse DFA for the start |
 | gzip compress, level 6 (20 MB) | 1444 | 1705 | 0.85 | output 3 044 375 vs 3 022 734 bytes (+0.7%) |
 | gzip decompress | 83 | 203 | 0.41 | table-driven inflate in C |
 
-Peak RSS is higher for Slang (46 / 104 MB vs 27 / 76 MB): the inputs are
+Peak RSS is higher for Zell (46 / 104 MB vs 27 / 76 MB): the inputs are
 built by appending, and the gzip program keeps the input, output and
 round-trip copy alive.
 
 
 ## Final results (2026-10-21, commit after the last wave, x86-64 Linux, clang/LLVM 18, go 1.24)
 
-Best of several runs on an otherwise idle machine; `--release` for Slang, default build for Go.
+Best of several runs on an otherwise idle machine; `--release` for Zell, default build for Go.
 
-| bench | Slang s | Go s | Slang/Go | Slang RSS | Go RSS |
+| bench | Zell s | Go s | Zell/Go | Zell RSS | Go RSS |
 |---|---|---|---|---|---|
 | strings (Split/ToUpper/Join, 1.2 MB) | 0.07 | 0.19 | **0.37x** | 23 MB | 21 MB |
 | regex (FindAll e-mails, 10 MB) | 0.21 | 0.58 | **0.36x** | 47 MB | 27 MB |
@@ -302,28 +302,28 @@ HTTP (`benchmarks/http_hello/run.sh`, Go load generator, 64 keep-alive connectio
 
 | server | HTTP/1.1 req/s | HTTP/2 over TLS req/s (64 streams) |
 |---|---|---|
-| Slang `std.net.http` | **116,507** | 26,290 |
+| Zell `std.net.http` | **116,507** | 26,290 |
 | Go `net/http` | 101,979 | 29,389 |
 
-The Slang load generator itself is slower than Go's (76k vs 117k req/s against the same server): client-side request building is the next thing to optimise.
+The Zell load generator itself is slower than Go's (76k vs 117k req/s against the same server): client-side request building is the next thing to optimise.
 
 Hello-world binary sizes (`scripts/bench-size.sh`, stripped release):
 
 | target | size |
 |---|---|
-| Slang linux-amd64 (dynamic libc) | 14 KB |
-| Slang linux-arm64 | 13 KB |
-| Slang linux-musl (fully static) | 58 KB |
-| Slang windows-amd64 | 68 KB |
+| Zell linux-amd64 (dynamic libc) | 14 KB |
+| Zell linux-arm64 | 13 KB |
+| Zell linux-musl (fully static) | 58 KB |
+| Zell windows-amd64 | 68 KB |
 | C (dynamic libc) | 15 KB |
 | Go (stripped) | 1404 KB |
 
-Summary: Slang is faster than Go on 9 of 11 CPU/memory benchmarks and on the HTTP/1.1 server, at parity on nbody and struct_map, and slightly behind on HTTP/2 over TLS. Memory use is lower or equal everywhere except regex (lazy DFA cache), gzip and map.
+Summary: Zell is faster than Go on 9 of 11 CPU/memory benchmarks and on the HTTP/1.1 server, at parity on nbody and struct_map, and slightly behind on HTTP/2 over TLS. Memory use is lower or equal everywhere except regex (lazy DFA cache), gzip and map.
 
 ## Cycle collector (2026-10-21, 4 vCPU x86-64, `--release`, 10 alternating runs, wall seconds min / median)
 
 `base` is the previous commit; `off`/`auto` are the same binary with
-`SLANG_CYCLES=off` / the default `auto` (DESIGN.md "Циклы"). `base` vs
+`ZELL_CYCLES=off` / the default `auto` (DESIGN.md "Циклы"). `base` vs
 `off` also contains the concurrent allocator/biased-refcount work, so the
 collector's own cost is `auto` vs `off`.
 
@@ -339,7 +339,7 @@ The first version recorded each of them as a possible root (the pin taken
 around `check(n.Left)` is released to a non-zero count) and kept a hidden
 buffer-index word per flagged object: +35..40 % (327M vs 209M
 instructions). Pins of `*T` of cyclic types now remember the collection
-epoch and are released with `slang_ptr_release_noroot`, which records
+epoch and are released with `zell_ptr_release_noroot`, which records
 nothing unless a collection overlapped the pin (0 candidates in this
 benchmark), the hidden word is gone, and the death of a flagged object
 that was never recorded takes the plain drop + free path. RSS is equal
@@ -354,7 +354,7 @@ The machine was shared with another agent's test runs (load average 2 to
 24 during these measurements), so wall times move by ±10-15% between
 sessions; where they disagree, the callgrind instruction counts
 (deterministic) and CPU time per request decide. `./scripts/bench-perf.sh`
-now takes `RUNS=N` (best of N, Slang and Go alternating) and `NOGO=1`.
+now takes `RUNS=N` (best of N, Zell and Go alternating) and `NOGO=1`.
 
 **1. Returning memory to the OS** (`runtime/src/heap.c`, ABI.md 3.2).
 RSS (MB, `/proc/self/statm`) of a program that allocates 250 MB in 1 MB
@@ -374,7 +374,7 @@ checks the same with a 1 s limit):
 1.94 s new vs 2.31 s old.)
 
 Best of 5, alternating, `new` built from this tree (`alloc_heavy` with
-`SLANG_CYCLES=off`, so the cycle collector's own cost is excluded; see the
+`ZELL_CYCLES=off`, so the cycle collector's own cost is excluded; see the
 previous section), wall s and peak RSS MB:
 
 | bench | old s | new s | old MB | new MB | instructions old → new |
@@ -385,7 +385,7 @@ previous section), wall s and peak RSS MB:
 | strings | 0.065 | 0.065 | 23.3 | 23.7 | 719M → 711M |
 | json_like | 0.180 | 0.168 | 23.3 | 24.8 | 1.651G → 1.701G (+3%; page faults 17.3k → 6.7k) |
 | struct_map | 0.203 | 0.198 | 12.1 | 12.4 | 914M → 913M |
-| alloc_heavy | 0.387 | 0.435 | 11.5 | 11.5 | 4.158G → 4.751G, of which 0.37G is `slang_cycles_new*` and the rest the collector's codegen; the heap's own alloc + free paths are 2.6G in both |
+| alloc_heavy | 0.387 | 0.435 | 11.5 | 11.5 | 4.158G → 4.751G, of which 0.37G is `zell_cycles_new*` and the rest the collector's codegen; the heap's own alloc + free paths are 2.6G in both |
 | regex | 0.207 | 0.209 | 46.6 | 51.0 | |
 | gzip | 1.694 | 1.752 | 104.7 | 113.3 | |
 | heap_churn (new) | 2.290 | 2.113 | 42.1 | 46.0 | RSS after the last round: 19 MB old (glibc trimmed the 132-byte strings) vs 43 MB new (one round's worth kept until the scavenger runs) |
@@ -396,16 +396,16 @@ in use / 4) and released the rest synchronously; heap_churn then did 6.5k
 everything up to the recent peak synchronously made gzip's RSS 173 MB (vs
 105): the reserve is now bounded by *peak − in use*, so in use + reserve
 stays within the recent peak, and a background scavenger (a thread that
-never touches objects, so `slang_threaded` stays 0) releases what stayed
+never touches objects, so `zell_threaded` stays 0) releases what stayed
 unused for 0.3 s beyond 16 MB. The allocation fast path is inlined into
-`slang_object_new` from `heap.h` (out of line it cost 18% more
+`zell_object_new` from `heap.h` (out of line it cost 18% more
 instructions on alloc_heavy). Medium objects (16-128 KB) stay with malloc
 (a mapping per 20 KB string would hit the 65k VMA limit); larger ones get a
 mapping each, grown by `mremap`, with freed mappings cached within the
 reserve.
 
 **2. Biased reference counting** (`runtime/src/rc.c`, ABI.md 3.1).
-`http_hello`, Go's load generator against the Slang server in another
+`http_hello`, Go's load generator against the Zell server in another
 process, best req/s of 4-5 rounds and the server's CPU time per request
 (user + sys, minimum over the rounds):
 
@@ -413,10 +413,10 @@ process, best req/s of 4-5 rounds and the server's CPU time per request
 |---|---:|---:|---:|---:|
 | old | 101 536 req/s | 16.4 µs | 74 585 req/s | 15.7 µs |
 | new (biased) | 98 440 req/s | 16.2 µs | 81 996 req/s | 16.2 µs |
-| new, `SLANG_NO_BIAS=1` | 100 272 req/s | 16.4 µs | 84 032 req/s | 15.5 µs |
+| new, `ZELL_NO_BIAS=1` | 100 272 req/s | 16.4 µs | 84 032 req/s | 15.5 µs |
 
-Before tasks were excluded from biasing (`SLANG_RC_NOBIAS`), the server
-used 19.9 µs per request (vs 18.6 without biasing): with `SLANG_RC_STATS=1`
+Before tasks were excluded from biasing (`ZELL_RC_NOBIAS`), the server
+used 19.9 µs per request (vs 18.6 without biasing): with `ZELL_RC_STATS=1`
 the in-process benchmark queued 1.8M objects for a merge (9 per request,
 91% of them `Task` objects, which every await hands to another thread);
 with tasks never biased it is 183k (5.6M -> 2.4M objects biased).
@@ -428,10 +428,10 @@ with tasks never biased it is 183k (5.6M -> 2.4M objects biased).
 |---|---:|---:|---:|
 | old (load ~5) | 426 | 125 | 124 |
 | new (load ~5) | 350 | 104 | 107 |
-| new, `SLANG_NO_BIAS=1` (load ~5) | 451 | 147 | 131 |
+| new, `ZELL_NO_BIAS=1` (load ~5) | 451 | 147 | 131 |
 | old (load ~20) | 437 | 137 | 140 |
 | new (load ~20) | 387 | 146 | 132 |
-| new, `SLANG_NO_BIAS=1` (load ~20) | 314 | 144 | 129 |
+| new, `ZELL_NO_BIAS=1` (load ~20) | 314 | 144 | 129 |
 | Go | 60-69 | 23-39 | 124-196 |
 
 The quieter session shows biasing 15-30% ahead in every phase, the loaded
@@ -440,11 +440,11 @@ are plain stores) is plausible but not established beyond the noise here.
 Phase 1 is bound by the shared counts of the 200k objects every reader
 touches (cache-line ping-pong; Go has no counts). Single-threaded
 programs never bias (their instruction counts above are unchanged).
-`tcp_echo` (`SLANG_RC_STATS`: 93k biased, 24k queued) is within noise.
+`tcp_echo` (`ZELL_RC_STATS`: 93k biased, 24k queued) is within noise.
 `hello` grew from 15 KB to 33 KB (the heap, the scavenger and rc.c are
-reachable from `slang_release`).
+reachable from `zell_release`).
 
-**3. io_uring** (`SLANG_IO_BACKEND=io_uring`): `examples/tcp_echo` gave 0
+**3. io_uring** (`ZELL_IO_BACKEND=io_uring`): `examples/tcp_echo` gave 0
 wrong outputs in 500 runs before and after the fix (the 2% flake was seen
 under gVisor; the race — a completed poll's file reference dropped just
 after its CQE is posted — remains possible, so a listener is now shut down
@@ -457,14 +457,14 @@ lock; submitting outside the lock did not help). So it stays opt-in.
 
 **4. testing.Panics** runs the function on a thread of its own and catches
 its panic (setjmp/longjmp), so the test's code runs once instead of once
-more per `Panics` call in a child process; `compiler/tests/slang_test_cmd.rs`
-covers both paths (`SLANG_TEST_PANICS=process` forces the old one).
+more per `Panics` call in a child process; `compiler/tests/zell_test_cmd.rs`
+covers both paths (`ZELL_TEST_PANICS=process` forces the old one).
 
 ## Memory wave results (2026-10-21, after cycle collector, OS memory return, biased RC)
 
 Best of 3 on an idle machine, `--release`, cycle collector in default `auto` mode.
 
-| bench | Slang s | Go s | Slang/Go | Slang RSS | Go RSS |
+| bench | Zell s | Go s | Zell/Go | Zell RSS | Go RSS |
 |---|---|---|---|---|---|
 | strings | 0.069 | 0.167 | **0.41x** | 24 MB | 18 MB |
 | regex | 0.234 | 0.588 | **0.40x** | 51 MB | 24 MB |
@@ -490,7 +490,7 @@ Regressions and open items from this wave:
   to make this visible; they are the next optimisation targets (large-object
   cache sizing, read-only borrows without retain across tasks).
 - Release `hello` grew from 14 KB to 32 KB: the segmented heap, the
-  scavenger and `rc.c` are reachable from `slang_release`.
-- `alloc_heavy` with the collector on is within noise of `SLANG_CYCLES=off`
+  scavenger and `rc.c` are reachable from `zell_release`.
+- `alloc_heavy` with the collector on is within noise of `ZELL_CYCLES=off`
   after the pin-release optimisation; the W0001 warning it prints is
   expected (`Node` is a tree, but the type can form a cycle).

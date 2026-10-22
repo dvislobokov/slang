@@ -1,4 +1,4 @@
-//! Readable text form of a [`Program`] (`slang check --dump-hir`) and the
+//! Readable text form of a [`Program`] (`zell check --dump-hir`) and the
 //! shared type-name formatter.
 
 use super::*;

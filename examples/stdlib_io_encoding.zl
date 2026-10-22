@@ -1,0 +1,79 @@
+namespace app
+
+import std
+import std.encoding
+import std.hash
+import std.io
+
+// Streams and encodings: a record file written through std.io writers
+// (BufferedWriter over a BytesWriter, MultiWriter feeding a hash), read
+// back with a Scanner and binary.Decode, plus base32/pem/hex, fnv/crc32
+// checksums, strconv and unicode helpers.
+
+@binary.binary(endian: "big")
+struct Record {
+    Id    uint32
+    Score int16
+    Flags byte
+}
+
+func main() void! {
+    var sink = io.NewBytesWriter()
+    var h = fnv.New64a()
+    var ws []io.Writer = [sink, &h]
+    var bw = io.NewBufferedWriter(io.MultiWriter(ws))
+    for i in 1..4 {
+        _ = bw.WriteString(
+            fmt.Format("item {0}: {1}\n", i, strconv.Quote(strings.Repeat("ab", i))),
+        )?
+    }
+    bw.Flush()?
+    println(sink.Len(), "bytes, fnv64a", strconv.FormatUint(h.Sum64(), 16))
+
+    var sc = io.NewScanner(io.NewBytesReader(sink.Bytes()))
+    for sc.Scan() {
+        var line = sc.Text()
+        var colon = strings.Index(line, ": ")
+        var value = strconv.Unquote(line[colon + 2..])?
+        println(line[..colon], "->", value, unicode.utf8.RuneCountInString(value))
+    }
+
+    var recs []byte = []
+    for r in [Record{Id: 1, Score: -5, Flags: 1}, Record{Id: 70000, Score: 300, Flags: 2}] {
+        for b in binary.Encode(r, binary.ByteOrder.LittleEndian) {
+            recs = append(recs, b)
+        }
+    }
+    println("records:", hex.Encode(recs), "size", binary.Size<Record>())
+    var second = binary.Decode<Record>(
+        recs[binary.Size<Record>()..],
+        binary.ByteOrder.LittleEndian,
+    )?
+    println("second:", second.Id, second.Score, second.Flags)
+    var v []byte = []
+    v = binary.AppendUvarint(v, 300)
+    var (n, k) = binary.Uvarint(v)
+    println("uvarint:", v, n, k)
+
+    var block = pem.Block{Type: "RECORDS", Bytes: recs}
+    block.SetHeader("Count", "2")
+    var text = pem.Encode(block)
+    print(text)
+    var back = pem.Decode(text)
+    if back.Block != nil {
+        println(
+            back.Block.Header("Count"),
+            slices.Equal(back.Block.Bytes, recs),
+            "crc32",
+            crc32.ChecksumIEEE(back.Block.Bytes),
+        )
+    }
+    println(base32.Encode(recs[..5]), strings.ToLower(base32.EncodeHex(strings.Bytes("zell"))))
+    var letters = 0
+    for r in "Größe 42!" {
+        if unicode.IsLetter(r) {
+            letters += 1
+        }
+    }
+    println("letters:", letters, string(unicode.ToUpper('ß')), string(unicode.ToTitle('ǆ')))
+}

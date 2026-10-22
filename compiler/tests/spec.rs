@@ -1,9 +1,9 @@
 //! Specification corpus runner: `tests/spec/<area>/**`.
 //!
-//! Every test is a single `.sl` file (with a sibling `.out` unless it is a
-//! compile-fail test) or a directory holding several `.sl` files plus one
+//! Every test is a single `.zl` file (with a sibling `.out` unless it is a
+//! compile-fail test) or a directory holding several `.zl` files plus one
 //! `.out` file. Directives live in the leading `//` comment lines, before
-//! `namespace` (for a directory: in its first `.sl` file by name):
+//! `namespace` (for a directory: in its first `.zl` file by name):
 //!
 //! | directive | meaning |
 //! |-----------|---------|
@@ -12,18 +12,18 @@
 //! | `// status: passing\|pending` | required; `pending` tests must currently FAIL |
 //! | `// exit: N` | expected exit code of the program (default 0) |
 //! | `// args: a b` | program arguments (split on whitespace) |
-//! | `// run-flags: --x` | use `slang run <src> <flags> -- <args>` instead of build + exec |
+//! | `// run-flags: --x` | use `zell run <src> <flags> -- <args>` instead of build + exec |
 //! | `// stderr: <text>` | stderr must contain `<text>` (stderr is otherwise not checked) |
 //! | `// warning: <text>` | the build's stderr must contain `<text>` (repeatable; e.g. a W0001 warning) |
 //! | `// no-warning: <text>` | the build's stderr must not contain `<text>` (repeatable) |
 //! | `// env: K=V` | environment variable of the program run (repeatable) |
-//! | `// build-flags: --x` | extra `slang build` flags (also for compile-fail tests) |
+//! | `// build-flags: --x` | extra `zell build` flags (also for compile-fail tests) |
 //!
 //! `SPEC_FILTER=<substring>` restricts the run to tests whose path (relative
-//! to the repository, e.g. `tests/spec/errors/trace_basic.sl`) contains it.
+//! to the repository, e.g. `tests/spec/errors/trace_basic.zl`) contains it.
 //! `SPEC_VERBOSE=1` prints every test result.
 //!
-//! Needs `clang` and `runtime/libslang_rt.a` (built with `make -C runtime`
+//! Needs `clang` and `runtime/libzell_rt.a` (built with `make -C runtime`
 //! when missing), like `run_examples.rs`.
 
 use std::io::Read;
@@ -50,12 +50,12 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
-fn slang() -> &'static str {
-    env!("CARGO_BIN_EXE_slang")
+fn zell() -> &'static str {
+    env!("CARGO_BIN_EXE_zell")
 }
 
 fn ensure_runtime() {
-    let lib = repo().join("runtime/libslang_rt.a");
+    let lib = repo().join("runtime/libzell_rt.a");
     if !lib.is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
@@ -80,7 +80,7 @@ struct Directives {
 struct Case {
     /// Path relative to the repository root, with `/` separators.
     rel: String,
-    /// `.sl` file or test directory.
+    /// `.zl` file or test directory.
     src: PathBuf,
     /// Expected stdout (`None` for compile-fail tests).
     out: Option<PathBuf>,
@@ -132,17 +132,17 @@ fn rel(p: &Path) -> String {
     p.strip_prefix(repo()).unwrap_or(p).to_string_lossy().replace('\\', "/")
 }
 
-/// Collects the cases of one area: every `.sl` file is one test, and every
-/// subdirectory is one multi-file test (all its `.sl` files are compiled
+/// Collects the cases of one area: every `.zl` file is one test, and every
+/// subdirectory is one multi-file test (all its `.zl` files are compiled
 /// together; it holds exactly one `.out` file unless it is a compile-fail
-/// test, and its directives are read from its first `.sl` file by name).
+/// test, and its directives are read from its first `.zl` file by name).
 fn collect(dir: &Path, cases: &mut Vec<Case>, problems: &mut Vec<String>) {
     for p in sorted_entries(dir) {
         if p.is_dir() {
             let entries = sorted_entries(&p);
             let outs: Vec<&PathBuf> = entries.iter().filter(|f| f.extension().is_some_and(|x| x == "out")).collect();
-            let Some(first) = entries.iter().find(|f| f.extension().is_some_and(|x| x == "sl")) else {
-                problems.push(format!("{}: no .sl files", rel(&p)));
+            let Some(first) = entries.iter().find(|f| f.extension().is_some_and(|x| x == "zl")) else {
+                problems.push(format!("{}: no .zl files", rel(&p)));
                 continue;
             };
             let d = match parse_directives(first) {
@@ -165,7 +165,7 @@ fn collect(dir: &Path, cases: &mut Vec<Case>, problems: &mut Vec<String>) {
                 }
             };
             cases.push(Case { rel: rel(&p), src: p.clone(), out, dirs: d });
-        } else if p.extension().is_some_and(|x| x == "sl") {
+        } else if p.extension().is_some_and(|x| x == "zl") {
             let d = match parse_directives(&p) {
                 Ok(d) => d,
                 Err(e) => {
@@ -187,7 +187,7 @@ fn collect(dir: &Path, cases: &mut Vec<Case>, problems: &mut Vec<String>) {
             };
             cases.push(Case { rel: rel(&p), src: p.clone(), out, dirs: d });
         } else if !p.extension().is_some_and(|x| x == "out") {
-            problems.push(format!("{}: unexpected file (only .sl, .out and test directories belong here)", rel(&p)));
+            problems.push(format!("{}: unexpected file (only .zl, .out and test directories belong here)", rel(&p)));
         }
     }
 }
@@ -231,7 +231,7 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output, Strin
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("slang-spec-{}-{tag}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("zell-spec-{}-{tag}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -244,7 +244,7 @@ fn check(case: &Case) -> Result<(), String> {
     let rel_src = case.src.strip_prefix(repo()).unwrap_or(&case.src).to_path_buf();
     let result = (|| {
         if let Some(kw) = &case.dirs.error {
-            let mut c = Command::new(slang());
+            let mut c = Command::new(zell());
             c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe).args(&case.dirs.build_flags);
             let o = run_with_timeout(c, Duration::from_secs(60))?;
             if o.code == Some(0) {
@@ -269,7 +269,7 @@ fn check(case: &Case) -> Result<(), String> {
             Ok(())
         };
         let out = if case.dirs.run_flags.is_empty() {
-            let mut c = Command::new(slang());
+            let mut c = Command::new(zell());
             c.current_dir(repo()).arg("build").arg(&rel_src).arg("-o").arg(&exe).args(&case.dirs.build_flags);
             let b = run_with_timeout(c, Duration::from_secs(60))?;
             if b.code != Some(0) {
@@ -277,14 +277,14 @@ fn check(case: &Case) -> Result<(), String> {
             }
             check_warnings(&b.stderr)?;
             let mut c = Command::new(&exe);
-            c.current_dir(repo()).env("SLANG_NO_BACKTRACE", "1").args(&case.dirs.args);
+            c.current_dir(repo()).env("ZELL_NO_BACKTRACE", "1").args(&case.dirs.args);
             for (k, v) in &case.dirs.env {
                 c.env(k, v);
             }
             run_with_timeout(c, RUN_TIMEOUT)?
         } else {
-            let mut c = Command::new(slang());
-            c.current_dir(repo()).env("SLANG_NO_BACKTRACE", "1").arg("run").arg(&rel_src).args(&case.dirs.run_flags).arg("--").args(&case.dirs.args);
+            let mut c = Command::new(zell());
+            c.current_dir(repo()).env("ZELL_NO_BACKTRACE", "1").arg("run").arg(&rel_src).args(&case.dirs.run_flags).arg("--").args(&case.dirs.args);
             for (k, v) in &case.dirs.env {
                 c.env(k, v);
             }

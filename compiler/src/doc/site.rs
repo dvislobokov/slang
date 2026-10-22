@@ -1,10 +1,10 @@
-//! `slang doc --site <dir>`: the project's documentation site (GitHub
+//! `zell doc --site <dir>`: the project's documentation site (GitHub
 //! Pages): the landing page from `README.md`, the guides of `docs/guide/`
 //! with a sidebar and prev/next links, the design documents (`DESIGN.md`,
 //! `docs/*.md` and the Markdown files they link to) under `design/`, and
 //! the standard library reference under `std/`, with one client-side
 //! search index over all of it. Every link is relative, so the site works
-//! under any base path (`https://<user>.github.io/slang/`); `--base` is
+//! under any base path (`https://zell-lang.github.io/zell/`); `--base` is
 //! only needed for `404.html`, which GitHub Pages serves at any depth.
 
 use super::html::{self, Chrome, Layout};
@@ -12,15 +12,15 @@ use super::markdown;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
-/// Options of `slang doc --site`.
+/// Options of `zell doc --site`.
 pub struct SiteOptions {
     /// The repository (README.md, docs/, std/).
     pub root: PathBuf,
     pub out: PathBuf,
-    /// The URL path the site is served under (`/slang/`), for 404.html.
+    /// The URL path the site is served under (`/zell/`), for 404.html.
     pub base: String,
     /// Where links to non-Markdown repository files point
-    /// (`https://github.com/org/slang/blob/master/`).
+    /// (`https://github.com/org/zell/blob/master/`).
     pub repo_url: String,
 }
 
@@ -110,7 +110,7 @@ fn collect_pages(root: &Path) -> Result<Vec<Page>, String> {
     let mut pages: Vec<Page> = Vec::new();
     let read = |rel: &str| std::fs::read_to_string(root.join(rel)).map_err(|e| format!("{rel}: {e}"));
     let readme = read("README.md")?;
-    pages.push(Page { src: "README.md".into(), out: "index.html".into(), section: Section::Home, title: "Slang".into() });
+    pages.push(Page { src: "README.md".into(), out: "index.html".into(), section: Section::Home, title: "Zell".into() });
     let mut guides: Vec<String> = std::fs::read_dir(root.join("docs/guide"))
         .map_err(|e| format!("docs/guide: {e}"))?
         .flatten()
@@ -179,7 +179,7 @@ pub fn default_repo_url(root: &Path) -> String {
     if url.starts_with("https://") {
         format!("{url}/blob/master/")
     } else {
-        "https://github.com/dvislobokov/slang/blob/master/".to_string()
+        "https://github.com/zell-lang/zell/blob/master/".to_string()
     }
 }
 
@@ -281,7 +281,7 @@ pub fn build_site(o: &SiteOptions) -> Result<usize, String> {
     // the standard library reference
     let srcs = super::load_std();
     if srcs.is_empty() {
-        return Err("the standard library sources were not found (set SLANG_STD)".into());
+        return Err("the standard library sources were not found (set ZELL_STD)".into());
     }
     let docs = super::Docs::build(&srcs, super::Options::default());
     let layout = Layout { root: "../", prefix: "std/", nav: SITE_NAV };
@@ -292,7 +292,7 @@ pub fn build_site(o: &SiteOptions) -> Result<usize, String> {
     html::write(&o.out.join("style.css"), html::CSS)?;
     html::write(&o.out.join("search.js"), html::SEARCH_JS)?;
     html::write(&o.out.join("search-index.json"), &serde_json::to_string(&idx).unwrap())?;
-    html::write(&o.out.join("search-index.js"), &format!("window.SLANG_INDEX = {};\n", serde_json::to_string(&idx).unwrap()))?;
+    html::write(&o.out.join("search-index.js"), &format!("window.ZELL_INDEX = {};\n", serde_json::to_string(&idx).unwrap()))?;
     html::write(&o.out.join("std/docs.json"), &serde_json::to_string(&docs).unwrap())?;
     html::write(&o.out.join(".nojekyll"), "")?;
     // 404 is served at any path: absolute links under the base

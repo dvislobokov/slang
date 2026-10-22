@@ -9,7 +9,7 @@ textproto: malformed MIME header initial line: " leading"
 "Hi\n.hidden\n..two\nend\n" true NEXT
 250 "mail.example.org\nSIZE 1000\nOK"
 550 no such user
-application/x-slang-pkg [.jpeg .jpg] [.slx]
+application/x-zell-pkg [.jpeg .jpg] [.slx]
 mime: extension "noDot" missing leading dot
 café au lait€ and été
 plain =?utf-8?q?Gr=C3=BC=C3=9Fe=2C_J=C3=BCrgen?=

@@ -1,5 +1,5 @@
-//! The package manifest: one schema, three syntaxes (`slang.toml`,
-//! `slang.json`, `slang.yaml`), all read through serde into [`Manifest`].
+//! The package manifest: one schema, three syntaxes (`zell.toml`,
+//! `zell.json`, `zell.yaml`), all read through serde into [`Manifest`].
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -8,7 +8,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// Manifest file names, in the order they are reported.
-pub const MANIFEST_NAMES: [&str; 3] = ["slang.toml", "slang.json", "slang.yaml"];
+pub const MANIFEST_NAMES: [&str; 3] = ["zell.toml", "zell.json", "zell.yaml"];
 
 /// Syntax of a manifest file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,9 +30,9 @@ impl Format {
 
     pub fn file_name(self) -> &'static str {
         match self {
-            Format::Toml => "slang.toml",
-            Format::Json => "slang.json",
-            Format::Yaml => "slang.yaml",
+            Format::Toml => "zell.toml",
+            Format::Json => "zell.json",
+            Format::Yaml => "zell.yaml",
         }
     }
 
@@ -51,10 +51,10 @@ impl fmt::Display for Format {
     }
 }
 
-/// A Slang package manifest (docs/PACKAGES.md).
+/// A Zell package manifest (docs/PACKAGES.md).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-#[schemars(title = "Slang package manifest")]
+#[schemars(title = "Zell package manifest")]
 pub struct Manifest {
     /// The package itself; absent in a virtual workspace root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -235,7 +235,7 @@ impl Manifest {
         }
     }
 
-    /// The JSON Schema of the manifest (`slang manifest schema`).
+    /// The JSON Schema of the manifest (`zell manifest schema`).
     pub fn json_schema() -> String {
         let schema = schemars::schema_for!(Manifest);
         serde_json::to_string_pretty(&schema).unwrap() + "\n"
@@ -396,7 +396,7 @@ pub fn find_upwards(start: &Path) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
-/// `slang manifest convert <fmt>`: rewrites the manifest of `dir` in
+/// `zell manifest convert <fmt>`: rewrites the manifest of `dir` in
 /// `format` and removes the old file. Returns (old, new) paths.
 pub fn convert(dir: &Path, format: Format) -> Result<(PathBuf, PathBuf), String> {
     let lm = load_dir(dir)?;

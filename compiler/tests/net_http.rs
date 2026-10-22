@@ -1,8 +1,8 @@
 //! End-to-end tests of the async runtime pieces that talk to the network:
-//! `examples/http_server.sl` (an HTTP server and client in one program),
-//! `examples/tcp_echo.sl`, `tests/spec/stdlib/net_many_conns.sl` (up to
+//! `examples/http_server.zl` (an HTTP server and client in one program),
+//! `examples/tcp_echo.zl`, `tests/spec/stdlib/net_many_conns.zl` (up to
 //! 10 000 concurrent connections) and
-//! `examples/channels.sl`, `cancel.sl` and `task_context.sl` are built with `--leak-check` and run with a
+//! `examples/channels.zl`, `cancel.zl` and `task_context.zl` are built with `--leak-check` and run with a
 //! deadline, with several worker counts, and must print their `.out` file
 //! byte for byte and release every object (sockets, tasks, channels).
 //!
@@ -10,7 +10,7 @@
 //! `compiler/tests/fixtures/h2` against `curl` (with nghttp2) and Go's
 //! net/http when those are installed (otherwise they are skipped).
 //!
-//! Needs `clang` and `runtime/libslang_rt.a` (`make -C runtime`).
+//! Needs `clang` and `runtime/libzell_rt.a` (`make -C runtime`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -21,17 +21,17 @@ fn repo() -> PathBuf {
 }
 
 fn ensure_runtime() {
-    if !repo().join("runtime/libslang_rt.a").is_file() {
+    if !repo().join("runtime/libzell_rt.a").is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
     }
 }
 
-/// Runs `exe` with `SLANG_WORKERS=workers`; kills it after `limit`.
+/// Runs `exe` with `ZELL_WORKERS=workers`; kills it after `limit`.
 fn run_with_deadline(exe: &Path, workers: &str, limit: Duration) -> (Option<i32>, String, String) {
     let mut child = Command::new(exe)
-        .env("SLANG_NO_BACKTRACE", "1")
-        .env("SLANG_WORKERS", workers)
+        .env("ZELL_NO_BACKTRACE", "1")
+        .env("ZELL_WORKERS", workers)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -45,7 +45,7 @@ fn run_with_deadline(exe: &Path, workers: &str, limit: Duration) -> (Option<i32>
             let _ = child.kill();
             let out = child.wait_with_output().unwrap();
             panic!(
-                "{} did not finish within {limit:?} (SLANG_WORKERS={workers}); stdout so far:\n{}",
+                "{} did not finish within {limit:?} (ZELL_WORKERS={workers}); stdout so far:\n{}",
                 exe.display(),
                 String::from_utf8_lossy(&out.stdout)
             );
@@ -58,19 +58,19 @@ fn run_with_deadline(exe: &Path, workers: &str, limit: Duration) -> (Option<i32>
 
 fn check_example(name: &str) {
     ensure_runtime();
-    let src = repo().join("examples").join(format!("{name}.sl"));
+    let src = repo().join("examples").join(format!("{name}.zl"));
     let want = std::fs::read_to_string(src.with_extension("out")).unwrap();
-    let dir = std::env::temp_dir().join(format!("slang-net-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell-net-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let exe = dir.join(name);
-    let b = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
+    let b = Command::new(env!("CARGO_BIN_EXE_zell")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
     assert!(b.status.success(), "build of {name} failed:\n{}", String::from_utf8_lossy(&b.stderr));
     for workers in ["1", "2", "8"] {
         for _ in 0..3 {
             let (code, out, err) = run_with_deadline(&exe, workers, Duration::from_secs(30));
-            assert_eq!(code, Some(0), "{name} (SLANG_WORKERS={workers}) failed, stderr:\n{err}");
-            assert!(err.is_empty(), "{name} (SLANG_WORKERS={workers}): unexpected stderr:\n{err}");
-            assert_eq!(out, want, "{name} (SLANG_WORKERS={workers}): output differs");
+            assert_eq!(code, Some(0), "{name} (ZELL_WORKERS={workers}) failed, stderr:\n{err}");
+            assert!(err.is_empty(), "{name} (ZELL_WORKERS={workers}): unexpected stderr:\n{err}");
+            assert_eq!(out, want, "{name} (ZELL_WORKERS={workers}): output differs");
         }
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -110,7 +110,7 @@ fn nofile_hard_limit() -> Option<u64> {
     fields.get(4).and_then(|h| h.parse().ok()).or(Some(u64::MAX))
 }
 
-/// `tests/spec/stdlib/net_many_conns.sl` with up to 10 000 concurrent
+/// `tests/spec/stdlib/net_many_conns.zl` with up to 10 000 concurrent
 /// connections (two descriptors each: the runtime raises the soft limit
 /// to the hard one), under `--leak-check`, with 1 and 4 workers.
 #[test]
@@ -124,17 +124,17 @@ fn ten_thousand_concurrent_connections() {
         eprintln!("skipping: open-files hard limit too low");
         return;
     }
-    let src = repo().join("tests/spec/stdlib/net_many_conns.sl");
-    let dir = std::env::temp_dir().join(format!("slang-net-{}-many", std::process::id()));
+    let src = repo().join("tests/spec/stdlib/net_many_conns.zl");
+    let dir = std::env::temp_dir().join(format!("zell-net-{}-many", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let exe = dir.join("many");
-    let b = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
+    let b = Command::new(env!("CARGO_BIN_EXE_zell")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
     assert!(b.status.success(), "build failed:\n{}", String::from_utf8_lossy(&b.stderr));
     for workers in ["1", "4"] {
         let mut child = Command::new(&exe)
             .arg(n.to_string())
-            .env("SLANG_NO_BACKTRACE", "1")
-            .env("SLANG_WORKERS", workers)
+            .env("ZELL_NO_BACKTRACE", "1")
+            .env("ZELL_WORKERS", workers)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -143,12 +143,12 @@ fn ten_thousand_concurrent_connections() {
         while child.try_wait().unwrap().is_none() {
             if start.elapsed() > Duration::from_secs(120) {
                 let _ = child.kill();
-                panic!("{n} connections did not finish within 120 s (SLANG_WORKERS={workers})");
+                panic!("{n} connections did not finish within 120 s (ZELL_WORKERS={workers})");
             }
             std::thread::sleep(Duration::from_millis(20));
         }
         let out = child.wait_with_output().unwrap();
-        assert!(out.status.success(), "{n} connections failed (SLANG_WORKERS={workers}):\n{}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "{n} connections failed (ZELL_WORKERS={workers}):\n{}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(String::from_utf8_lossy(&out.stdout), "echoed true connections\n");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -173,28 +173,28 @@ fn build_fixture(name: &str) -> PathBuf {
         return exe.clone();
     }
     ensure_runtime();
-    let src = repo().join("compiler/tests/fixtures/h2").join(format!("{name}.sl"));
-    let dir = std::env::temp_dir().join(format!("slang-h2-{}-{name}", std::process::id()));
+    let src = repo().join("compiler/tests/fixtures/h2").join(format!("{name}.zl"));
+    let dir = std::env::temp_dir().join(format!("zell-h2-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let exe = dir.join(name);
-    let b = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
+    let b = Command::new(env!("CARGO_BIN_EXE_zell")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
     assert!(b.status.success(), "build of {name} failed:\n{}", String::from_utf8_lossy(&b.stderr));
     built.insert(name.to_string(), exe.clone());
     exe
 }
 
-/// The Slang fixture server, its h2c and TLS ports, and its stderr.
-struct SlangServer {
+/// The Zell fixture server, its h2c and TLS ports, and its stderr.
+struct ZellServer {
     child: std::process::Child,
     h2c: u16,
     tls: u16,
     stderr: std::io::BufReader<std::process::ChildStderr>,
 }
 
-fn start_slang_server(workers: &str) -> SlangServer {
+fn start_zell_server(workers: &str) -> ZellServer {
     use std::io::BufRead;
     let exe = build_fixture("server");
-    let mut child = Command::new(&exe).env("SLANG_NO_BACKTRACE", "1").env("SLANG_WORKERS", workers).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+    let mut child = Command::new(&exe).env("ZELL_NO_BACKTRACE", "1").env("ZELL_WORKERS", workers).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
     let mut stderr = std::io::BufReader::new(child.stderr.take().unwrap());
     let (mut h2c, mut tls) = (0, 0);
     for _ in 0..2 {
@@ -207,10 +207,10 @@ fn start_slang_server(workers: &str) -> SlangServer {
             _ => panic!("unexpected server output {line:?}"),
         }
     }
-    SlangServer { child, h2c, tls, stderr }
+    ZellServer { child, h2c, tls, stderr }
 }
 
-impl SlangServer {
+impl ZellServer {
     /// GET /quit, then the server must exit 0 with nothing more on stderr
     /// (no leak report).
     fn stop(mut self) {
@@ -237,12 +237,12 @@ fn curl(args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// curl (libcurl + nghttp2) against the Slang server: HTTP/2 with prior
+/// curl (libcurl + nghttp2) against the Zell server: HTTP/2 with prior
 /// knowledge (h2c), HTTP/2 over TLS via ALPN, HTTP/1.1 on both listeners,
 /// large bodies in both directions (flow control), and the WebSocket
 /// handshake (RFC 6455 sample key).
 #[test]
-fn curl_http2_and_websocket_against_slang_server() {
+fn curl_http2_and_websocket_against_zell_server() {
     if !have("curl") {
         eprintln!("skipping: no curl");
         return;
@@ -253,7 +253,7 @@ fn curl_http2_and_websocket_against_slang_server() {
         return;
     }
     for workers in ["1", "4"] {
-        let s = start_slang_server(workers);
+        let s = start_zell_server(workers);
         let h2c = format!("http://127.0.0.1:{}", s.h2c);
         let tls = format!("https://localhost:{}", s.tls);
         let head = curl(&["--http2-prior-knowledge", "-i", &format!("{h2c}/hello")]);
@@ -263,7 +263,7 @@ fn curl_http2_and_websocket_against_slang_server() {
         assert!(head.starts_with("HTTP/2 200") && head.contains("x-proto: HTTP/2.0"), "h2 over TLS: {head}");
         assert_eq!(curl(&["--http2-prior-knowledge", &format!("{h2c}/big")]).len(), 1_000_000);
         assert_eq!(curl(&["--http2", "-k", &format!("{tls}/big")]).len(), 1_000_000);
-        let file = std::env::temp_dir().join(format!("slang-h2-{}-body", std::process::id()));
+        let file = std::env::temp_dir().join(format!("zell-h2-{}-body", std::process::id()));
         std::fs::write(&file, "z".repeat(300_000)).unwrap();
         let body = format!("@{}", file.display());
         assert_eq!(curl(&["--http2-prior-knowledge", "--data-binary", &body, &format!("{h2c}/echo")]), "300000 bytes\n");
@@ -282,8 +282,8 @@ fn curl_http2_and_websocket_against_slang_server() {
 }
 
 /// Go's net/http (stdlib only, `fixtures/h2/main.go`): its HTTP/2 client
-/// (h2c via http.Protocols, TLS via ALPN) against the Slang server, the
-/// Slang client against its HTTP/2 server, and WebSockets both ways
+/// (h2c via http.Protocols, TLS via ALPN) against the Zell server, the
+/// Zell client against its HTTP/2 server, and WebSockets both ways
 /// (framing written by hand on the Go side).
 #[test]
 fn go_http2_and_websocket_interop() {
@@ -291,7 +291,7 @@ fn go_http2_and_websocket_interop() {
         eprintln!("skipping: no go or curl");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("slang-h2-{}-go", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell-h2-{}-go", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let gobin = dir.join("goh2");
     let b = Command::new("go").arg("build").arg("-o").arg(&gobin).arg("main.go").current_dir(repo().join("compiler/tests/fixtures/h2")).env("GOFLAGS", "-mod=mod").env("GO111MODULE", "off").output().unwrap();
@@ -299,8 +299,8 @@ fn go_http2_and_websocket_interop() {
         eprintln!("skipping: go build failed:\n{}", String::from_utf8_lossy(&b.stderr));
         return;
     }
-    // Go client -> Slang server
-    let s = start_slang_server("4");
+    // Go client -> Zell server
+    let s = start_zell_server("4");
     let out = Command::new(&gobin).arg("client").arg(format!("http://127.0.0.1:{}", s.h2c)).arg(format!("https://127.0.0.1:{}", s.tls)).output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     let want_one = "GET HTTP/2.0 200 text/plain; charset=utf-8 \"hello via HTTP/2.0\\n\"\nGET HTTP/2.0 200 text/plain; charset=utf-8 \"1000000 bytes\"\nPOST HTTP/2.0 200 text/plain; charset=utf-8 \"100000 bytes\\n\"\nGET HTTP/2.0 404 text/plain; charset=utf-8 \"404 Not Found\\n\"\n";
@@ -309,7 +309,7 @@ fn go_http2_and_websocket_interop() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "handshake: 101 true\necho: 1 hello from go\nbinary echo: 2 70000 true\npong: 10 ping\nclose: 8 1000\n");
     s.stop();
 
-    // Slang client -> Go server
+    // Zell client -> Go server
     use std::io::BufRead;
     let mut go = Command::new(&gobin).arg("server").stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
     let mut rd = std::io::BufReader::new(go.stdout.take().unwrap());
@@ -326,12 +326,12 @@ fn go_http2_and_websocket_interop() {
     }
     let cli = build_fixture("client");
     for workers in ["1", "4"] {
-        let out = Command::new(&cli).arg(format!("http://127.0.0.1:{h2c}")).arg(format!("https://127.0.0.1:{tls}")).env("SLANG_NO_BACKTRACE", "1").env("SLANG_WORKERS", workers).output().unwrap();
+        let out = Command::new(&cli).arg(format!("http://127.0.0.1:{h2c}")).arg(format!("https://127.0.0.1:{tls}")).env("ZELL_NO_BACKTRACE", "1").env("ZELL_WORKERS", workers).output().unwrap();
         let one = "HTTP/2.0 200 HTTP/2.0 hello from go via HTTP/2.0\n10 x /big: 5000000\nPOST 150000 bytes\nchunk 0 | chunk 1 | chunk 2\ngzip: 10000 true true\nstreamed: 500000\n";
-        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{}{}dials: 1 1\n", one, one), "slang client (SLANG_WORKERS={workers}): {}", String::from_utf8_lossy(&out.stderr));
-        assert!(out.status.success() && out.stderr.is_empty(), "slang client stderr: {}", String::from_utf8_lossy(&out.stderr));
-        let out = Command::new(&cli).arg("ws").arg(format!("ws://127.0.0.1:{h2c}/ws")).env("SLANG_WORKERS", workers).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "echo: 1 hello from slang\nfragments: abc\nbinary: 2 70000\nclosed\n");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{}{}dials: 1 1\n", one, one), "zell client (ZELL_WORKERS={workers}): {}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success() && out.stderr.is_empty(), "zell client stderr: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new(&cli).arg("ws").arg(format!("ws://127.0.0.1:{h2c}/ws")).env("ZELL_WORKERS", workers).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "echo: 1 hello from zell\nfragments: abc\nbinary: 2 70000\nclosed\n");
         assert!(out.status.success() && out.stderr.is_empty(), "ws client stderr: {}", String::from_utf8_lossy(&out.stderr));
     }
     let _ = curl(&[&format!("http://127.0.0.1:{h2c}/quit")]);

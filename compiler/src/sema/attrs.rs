@@ -382,7 +382,7 @@ impl<'a> Sema<'a> {
         }
     }
 
-    /// A struct declared with `@attribute` in a Slang-source stdlib module
+    /// A struct declared with `@attribute` in a Zell-source stdlib module
     /// (`@binary(endian: "big")` of `std.encoding.binary`, `@flag` of
     /// `std.cli`): such structs are plain templates, instantiated here on
     /// first use as an attribute, marked as attribute structs and given

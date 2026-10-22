@@ -1,6 +1,6 @@
 # Kafka interop test
 
-`compiler/tests/kafka.rs` runs `kafka_real.sl` against a real broker. It is
+`compiler/tests/kafka.rs` runs `kafka_real.zl` against a real broker. It is
 `#[ignore]`d because a normal test run has no broker:
 
 ```sh
@@ -20,7 +20,7 @@ Kafka 3.x (tested with 3.7.0, Java 21) from
 
 ```sh
 KAFKA=/opt/kafka   # unpacked kafka_2.13-3.7.0
-rm -rf /tmp/slang-kafka-data
+rm -rf /tmp/zell-kafka-data
 $KAFKA/bin/kafka-storage.sh format -c compiler/tests/fixtures/kafka/server.properties \
   -t "$($KAFKA/bin/kafka-storage.sh random-uuid)" \
   --add-scram 'SCRAM-SHA-256=[name=bob,password=bob-secret]' \

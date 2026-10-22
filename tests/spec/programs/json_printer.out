@@ -1,5 +1,5 @@
 {
-  "name": "slang",
+  "name": "zell",
   "version": 0.1,
   "tags": ["fast", "simple"],
   "deps": {},
@@ -19,7 +19,7 @@
     "quote": "say \"hi\"\n"
   }
 }
-{"name": "slang", "version": 0.1, "tags": ["fast", "simple"], "deps": {}, "authors": [{"name": "ann", "commits": 3}, {"name": "bo", "commits": 1}], "meta": {"stable": false, "owner": null, "quote": "say \"hi\"\n"}}
+{"name": "zell", "version": 0.1, "tags": ["fast", "simple"], "deps": {}, "authors": [{"name": "ann", "commits": 3}, {"name": "bo", "commits": 1}], "meta": {"stable": false, "owner": null, "quote": "say \"hi\"\n"}}
 nodes 18
 authors.1.name = "bo"
 meta.stable = false

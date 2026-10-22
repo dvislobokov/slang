@@ -46,7 +46,7 @@ fn signature(text: &str, span: Span, name: Span) -> String {
 }
 
 impl StdIndex {
-    /// Parses every `.sl` file under `dir`.
+    /// Parses every `.zl` file under `dir`.
     pub fn load(dir: &Path) -> StdIndex {
         let mut paths = Vec::new();
         fn walk(d: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -55,7 +55,7 @@ impl StdIndex {
                 let p = e.path();
                 if p.is_dir() {
                     walk(&p, out);
-                } else if p.extension().is_some_and(|x| x == "sl") && !p.to_string_lossy().ends_with("_test.sl") {
+                } else if p.extension().is_some_and(|x| x == "zl") && !p.to_string_lossy().ends_with("_test.zl") {
                     // tests and examples are not declarations (doc::std_examples reads them)
                     out.push(p);
                 }

@@ -1,10 +1,10 @@
-//! End-to-end tests: build every runnable example with `slang build`, run
+//! End-to-end tests: build every runnable example with `zell build`, run
 //! it and compare stdout byte for byte with its `.out` file.
 //!
 //! Every example is built with `--leak-check`, so it must also release every
 //! heap object before exiting.
 //!
-//! Needs `clang` and `runtime/libslang_rt.a` (built with `make -C runtime`;
+//! Needs `clang` and `runtime/libzell_rt.a` (built with `make -C runtime`;
 //! the tests run `make` themselves if the archive is missing).
 
 use std::path::{Path, PathBuf};
@@ -22,12 +22,12 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
-fn slang() -> &'static str {
-    env!("CARGO_BIN_EXE_slang")
+fn zell() -> &'static str {
+    env!("CARGO_BIN_EXE_zell")
 }
 
 fn ensure_runtime() {
-    let lib = repo().join("runtime/libslang_rt.a");
+    let lib = repo().join("runtime/libzell_rt.a");
     if !lib.is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
@@ -35,7 +35,7 @@ fn ensure_runtime() {
 }
 
 fn tmpdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("slang-test-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("zell-test-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -46,7 +46,7 @@ fn examples() -> Vec<(String, PathBuf, PathBuf)> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(&dir).unwrap() {
         let p = e.unwrap().path();
-        if p.extension().is_some_and(|x| x == "sl") {
+        if p.extension().is_some_and(|x| x == "zl") {
             let o = p.with_extension("out");
             if o.is_file() {
                 out.push((p.file_stem().unwrap().to_string_lossy().to_string(), p.clone(), o));
@@ -66,11 +66,11 @@ fn examples() -> Vec<(String, PathBuf, PathBuf)> {
 fn build_and_run(name: &str, src: &Path, extra: &[&str]) -> Result<String, String> {
     let dir = tmpdir(&format!("{name}{}", extra.join("")));
     let exe = dir.join(name);
-    let b = Command::new(slang()).arg("build").arg(src).arg("-o").arg(&exe).args(extra).output().unwrap();
+    let b = Command::new(zell()).arg("build").arg(src).arg("-o").arg(&exe).args(extra).output().unwrap();
     if !b.status.success() {
         return Err(format!("build failed:\n{}", String::from_utf8_lossy(&b.stderr)));
     }
-    let r = Command::new(&exe).env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+    let r = Command::new(&exe).env("ZELL_NO_BACKTRACE", "1").output().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     if !r.status.success() {
         return Err(format!("exit status {:?}, stderr:\n{}", r.status.code(), String::from_utf8_lossy(&r.stderr)));
@@ -121,7 +121,7 @@ fn compile_errors_fail_to_build() {
     let tmp = tmpdir("errors");
     for e in std::fs::read_dir(dir).unwrap() {
         let p = e.unwrap().path();
-        let r = Command::new(slang()).arg("build").arg(&p).arg("-o").arg(tmp.join("x")).output().unwrap();
+        let r = Command::new(zell()).arg("build").arg(&p).arg("-o").arg(tmp.join("x")).output().unwrap();
         assert!(!r.status.success(), "{} should not compile", p.display());
         assert!(String::from_utf8_lossy(&r.stderr).contains("error"), "{}: no error diagnostic", p.display());
     }
@@ -132,7 +132,7 @@ fn compile_errors_fail_to_build() {
 fn emit_llvm_ir_is_valid() {
     let tmp = tmpdir("ir");
     let ll = tmp.join("hello.ll");
-    let r = Command::new(slang()).arg("build").arg(repo().join("examples/hello.sl")).arg("--emit=llvm-ir").arg("-o").arg(&ll).output().unwrap();
+    let r = Command::new(zell()).arg("build").arg(repo().join("examples/hello.zl")).arg("--emit=llvm-ir").arg("-o").arg(&ll).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     let text = std::fs::read_to_string(&ll).unwrap();
     assert!(text.contains("define i32 @main(i32"), "no C main in:\n{text}");
@@ -159,12 +159,12 @@ fn emit_obj_and_run_with_args() {
     ensure_runtime();
     let tmp = tmpdir("obj");
     let o = tmp.join("hello.o");
-    let r = Command::new(slang()).arg("build").arg(repo().join("examples/hello.sl")).arg("--emit=obj").arg("-o").arg(&o).output().unwrap();
+    let r = Command::new(zell()).arg("build").arg(repo().join("examples/hello.zl")).arg("--emit=obj").arg("-o").arg(&o).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
     assert!(std::fs::metadata(&o).unwrap().len() > 0);
-    let r = Command::new(slang()).arg("run").arg(repo().join("examples/hello.sl")).arg("-O2").arg("--").arg("x").output().unwrap();
+    let r = Command::new(zell()).arg("run").arg(repo().join("examples/hello.zl")).arg("-O2").arg("--").arg("x").output().unwrap();
     assert!(r.status.success());
-    assert_eq!(String::from_utf8_lossy(&r.stdout), "Hello, Slang!\n");
+    assert_eq!(String::from_utf8_lossy(&r.stdout), "Hello, Zell!\n");
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -172,17 +172,17 @@ fn emit_obj_and_run_with_args() {
 fn leak_check_reports_live_objects() {
     ensure_runtime();
     let tmp = tmpdir("leak");
-    let src = tmp.join("cycle.sl");
+    let src = tmp.join("cycle.zl");
     // A strong cycle: never freed by reference counting (a `weak` back
     // pointer would fix it); the cycle collector frees it at exit unless
-    // it is told not to run (SLANG_CYCLES=manual).
+    // it is told not to run (ZELL_CYCLES=manual).
     std::fs::write(&src, "namespace app\n\nstruct Node {\n    next *Node\n}\n\nfunc main() {\n    var a = new Node{}\n    var b = new Node{next: a}\n    a.next = b\n}\n").unwrap();
     let cases: [(&[&str], Option<&str>); 3] = [(&["--leak-check"], Some("  2 x app.Node\n")), (&["--leak-check", "--release"], None), (&[], None)];
     for (flags, names) in cases {
         let exe = tmp.join("cycle");
-        let b = Command::new(slang()).arg("build").arg(&src).arg("-o").arg(&exe).args(flags).output().unwrap();
+        let b = Command::new(zell()).arg("build").arg(&src).arg("-o").arg(&exe).args(flags).output().unwrap();
         assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
-        let r = Command::new(&exe).env("SLANG_CYCLES", "manual").output().unwrap();
+        let r = Command::new(&exe).env("ZELL_CYCLES", "manual").output().unwrap();
         let stderr = String::from_utf8_lossy(&r.stderr);
         if flags.is_empty() {
             assert!(r.status.success() && stderr.is_empty(), "{stderr}");

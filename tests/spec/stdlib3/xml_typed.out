@@ -29,7 +29,7 @@ Main bold text true
 5 Zed
 <?xml version="1.0" encoding="UTF-8"?>
 <doc q="&quot;quoted&quot;">
-  <!--generated - - by slang-->
+  <!--generated - - by zell-->
   <t>1 &lt; 2</t>
   <raw><![CDATA[x ]]]]><![CDATA[> y]]></raw>
 </doc>

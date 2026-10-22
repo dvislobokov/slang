@@ -1,4 +1,4 @@
-//! `slang proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb]`:
+//! `zell proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb]`:
 //! a module proxy that serves the static layout of [`super::fetch`] from
 //! a directory and fills it on demand from the upstream (git for
 //! `direct`, another proxy for a URL). With `--sumdb` it also keeps the
@@ -62,7 +62,7 @@ pub fn parse_args(args: &[String]) -> Result<(Config, String), String> {
                 }
             }
             "--sumdb" => sumdb = true,
-            _ => return Err(format!("unknown option `{a}` (usage: slang proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb])")),
+            _ => return Err(format!("unknown option `{a}` (usage: zell proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb])")),
         }
     }
     let dir = dir.ok_or("proxy serve needs --dir <cache>")?;
@@ -278,7 +278,7 @@ impl Proxy {
         log.extend_from_slice(record.as_bytes());
         write_file(&log_path, &log)?;
         write_file(&lookup, format!("{n}\n{record}").as_bytes())?;
-        let head = format!("slang-sumdb v1\n{}\n{}\n", n + 1, sum::base64(&Sha256::digest(&log)));
+        let head = format!("zell-sumdb v1\n{}\n{}\n", n + 1, sum::base64(&Sha256::digest(&log)));
         write_file(&sumdir.join("latest"), head.as_bytes())
     }
 }

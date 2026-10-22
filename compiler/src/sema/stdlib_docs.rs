@@ -1,6 +1,6 @@
 //! Documentation of the C-implemented stdlib functions ([`super::stdlib::FUNCS`]):
 //! (full path, parameter names, doc comment). `compiler/build.rs` reads
-//! this table (as text) to write `std/<ns>/<ns>_extern.sl`; the LSP shows
+//! this table (as text) to write `std/<ns>/<ns>_extern.zl`; the LSP shows
 //! the doc on hover. A row of `FUNCS` may also carry its own doc string
 //! (the optional sixth argument of `f!`), which wins over this table.
 //! Functions without an entry get generic parameter names (`a`, `b`, ...).
@@ -291,7 +291,7 @@ pub fn doc_of(std_path: &str) -> Option<(&'static str, &'static str)> {
 
 /// The functions the compiler lowers itself ([`super::stdlib::SPECIALS`]),
 /// which have no declaration file: (path, signature, documentation). Used
-/// by `slang doc` and the documentation coverage check.
+/// by `zell doc` and the documentation coverage check.
 pub const SPECIAL_DOCS: &[(&str, &str, &str)] = &[
     ("std.io.println", "func println(args ...any)", "println writes its arguments to standard output, separated by one space and followed by a newline.\n\nFloats print like Go's `%v`, slices as `[1 2 3]`, errors as their `Message()`."),
     ("std.io.print", "func print(args ...any)", "print is `println` without the trailing newline."),
@@ -395,7 +395,7 @@ pub fn const_doc(path: &str) -> Option<&'static str> {
     }).map(|(_, d)| *d)
 }
 
-/// Documentation of the namespaces without a Slang source file of their
+/// Documentation of the namespaces without a Zell source file of their
 /// own (only runtime functions) or without a namespace doc comment:
 /// (namespace, documentation). A comment above `namespace` in a source
 /// file wins.

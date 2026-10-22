@@ -1,0 +1,744 @@
+// Connection strings, errors and the value codecs of the PostgreSQL
+// driver (see postgres.zl).
+namespace std.database.postgres
+
+// ---- errors -------------------------------------------------------------------
+
+// An ErrorResponse or NoticeResponse of the server (protocol 53.8).
+struct Error {
+    // ERROR, FATAL, PANIC (errors); WARNING, NOTICE, INFO, LOG, DEBUG (notices).
+    Severity string
+    // SQLSTATE, e.g. "23505" (unique_violation).
+    Code       string
+    Msg        string
+    Detail     string
+    Hint       string
+    Position   int
+    Where      string
+    Schema     string
+    Table      string
+    Column     string
+    DataType   string
+    Constraint string
+    File       string
+    Line       int
+    Routine    string
+
+    func Message() string {
+        var s = "postgres: " + this.Severity + ": " + this.Msg + " (SQLSTATE " + this.Code + ")"
+        if this.Detail != "" {
+            s = s + ": " + this.Detail
+        }
+        return s
+    }
+
+    func SQLState() string {
+        return this.Code
+    }
+
+    // 23xxx: integrity constraint violation.
+    func IsConstraint() bool {
+        return std.strings.HasPrefix(this.Code, "23")
+    }
+}
+
+func parseError(p []byte) Error {
+    var e = Error{}
+    var r = reader{b: p}
+    for r.p < len(r.b) {
+        var t = int(r.b[r.p])
+        r.p += 1
+        if t == 0 {
+            break
+        }
+        var v = r.cstr()
+        if t == 83 {
+            // 'S' (localized); 'V' below is the non-localized one
+            if e.Severity == "" {
+                e.Severity = v
+            }
+        } else if t == 86 {
+            e.Severity = v
+        } else if t == 67 {
+            e.Code = v
+        } else if t == 77 {
+            e.Msg = v
+        } else if t == 68 {
+            e.Detail = v
+        } else if t == 72 {
+            e.Hint = v
+        } else if t == 80 {
+            e.Position = try std.strconv.Atoi(v) else 0
+        } else if t == 87 {
+            e.Where = v
+        } else if t == 115 {
+            e.Schema = v
+        } else if t == 116 {
+            e.Table = v
+        } else if t == 99 {
+            e.Column = v
+        } else if t == 100 {
+            e.DataType = v
+        } else if t == 110 {
+            e.Constraint = v
+        } else if t == 70 {
+            e.File = v
+        } else if t == 76 {
+            e.Line = try std.strconv.Atoi(v) else 0
+        } else if t == 82 {
+            e.Routine = v
+        }
+    }
+    return e
+}
+
+// ---- connection strings ---------------------------------------------------------
+
+// A parsed connection string (ParseDSN).
+struct Config {
+    // Host name, IP, or a directory holding the Unix socket
+    // (".s.PGSQL.<port>").
+    Host     string = "localhost"
+    Port     int = 5432
+    User     string
+    Password string
+    Database string
+    // disable, allow, prefer (default), require, verify-ca, verify-full.
+    SSLMode string = "prefer"
+    // PEM file of trusted roots for verify-ca/verify-full (default: the
+    // system roots).
+    SSLRootCert string
+    // Connect timeout in milliseconds (0: none); connect_timeout is seconds.
+    ConnectTimeout int
+    // Other startup parameters (application_name, search_path,
+    // statement_timeout, TimeZone, ...).
+    Params map[string]string
+}
+
+func unescapeURL(s string) string! {
+    if !std.strings.Contains(s, "%") && !std.strings.Contains(s, "+") {
+        return s
+    }
+    return std.net.url.QueryUnescape(s)?
+}
+
+// Parses "postgres://user:pass@host:port/db?sslmode=require&..." (also
+// "postgresql://") or the key/value form "host=... port=... user=...
+// password=... dbname=... sslmode=...". Missing values come from the
+// environment (PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE, PGSSLMODE);
+// the user defaults to $USER and the database to the user.
+func ParseDSN(dsn string) Config! {
+    var c = Config{Params: map[string]string{}}
+    var env = std.os.Getenv("PGHOST")
+    if env != "" {
+        c.Host = env
+    }
+    env = std.os.Getenv("PGPORT")
+    if env != "" {
+        c.Port = std.strconv.Atoi(env)?("postgres: PGPORT")
+    }
+    c.User = std.os.Getenv("PGUSER")
+    c.Password = std.os.Getenv("PGPASSWORD")
+    c.Database = std.os.Getenv("PGDATABASE")
+    env = std.os.Getenv("PGSSLMODE")
+    if env != "" {
+        c.SSLMode = env
+    }
+    var opts []string = []
+    var vals []string = []
+    var s = std.strings.Trim(dsn)
+    if std.strings.HasPrefix(s, "postgres://") || std.strings.HasPrefix(s, "postgresql://") {
+        var rest = s[std.strings.Index(s, "://") + 3..]
+        var q = std.strings.Index(rest, "?")
+        var query = ""
+        if q >= 0 {
+            query = rest[q + 1..]
+            rest = rest[..q]
+        }
+        var slash = std.strings.Index(rest, "/")
+        var authority = rest
+        if slash >= 0 {
+            authority = rest[..slash]
+            var db = unescapeURL(rest[slash + 1..])?
+            if db != "" {
+                c.Database = db
+            }
+        }
+        var at = std.strings.LastIndex(authority, "@")
+        if at >= 0 {
+            var ui = authority[..at]
+            authority = authority[at + 1..]
+            var colon = std.strings.Index(ui, ":")
+            if colon >= 0 {
+                c.User = unescapeURL(ui[..colon])?
+                c.Password = unescapeURL(ui[colon + 1..])?
+            } else {
+                c.User = unescapeURL(ui)?
+            }
+        }
+        if authority != "" {
+            if std.strings.HasPrefix(authority, "[") {
+                var close = std.strings.Index(authority, "]")
+                if close < 0 {
+                    return error("postgres: bad host in DSN")
+                }
+                c.Host = authority[1..close]
+                if close + 1 < len(authority) && authority[close + 1..close + 2] == ":" {
+                    c.Port = std.strconv.Atoi(authority[close + 2..])?("postgres: port")
+                }
+            } else {
+                var colon = std.strings.LastIndex(authority, ":")
+                if colon >= 0 {
+                    if colon > 0 {
+                        c.Host = unescapeURL(authority[..colon])?
+                    }
+                    c.Port = std.strconv.Atoi(authority[colon + 1..])?("postgres: port")
+                } else {
+                    c.Host = unescapeURL(authority)?
+                }
+            }
+        }
+        if query != "" {
+            for kv in std.strings.Split(query, "&") {
+                if kv == "" {
+                    continue
+                }
+                var eq = std.strings.Index(kv, "=")
+                if eq < 0 {
+                    return error("postgres: bad DSN parameter " + kv)
+                }
+                opts = append(opts, unescapeURL(kv[..eq])?)
+                vals = append(vals, unescapeURL(kv[eq + 1..])?)
+            }
+        }
+    } else {
+        var i = 0
+        var n = len(s)
+        for i < n {
+            for i < n && (s[i..i + 1] == " " || s[i..i + 1] == "\t" || s[i..i + 1] == "\n") {
+                i += 1
+            }
+            if i >= n {
+                break
+            }
+            var eq = std.strings.Index(s[i..], "=")
+            if eq < 0 {
+                return error("postgres: missing \"=\" after \"" + s[i..] + "\" in DSN")
+            }
+            var key = std.strings.Trim(s[i..i + eq])
+            i = i + eq + 1
+            for i < n && s[i..i + 1] == " " {
+                i += 1
+            }
+            var b = std.strings.Builder{}
+            if i < n && s[i..i + 1] == "'" {
+                i += 1
+                var closed = false
+                for i < n {
+                    var ch = s[i..i + 1]
+                    if ch == "\\" && i + 1 < n {
+                        b.Write(s[i + 1..i + 2])
+                        i += 2
+                        continue
+                    }
+                    if ch == "'" {
+                        i += 1
+                        closed = true
+                        break
+                    }
+                    b.Write(ch)
+                    i += 1
+                }
+                if !closed {
+                    return error("postgres: unterminated quoted value in DSN")
+                }
+            } else {
+                for i < n && s[i..i + 1] != " " {
+                    var ch = s[i..i + 1]
+                    if ch == "\\" && i + 1 < n {
+                        b.Write(s[i + 1..i + 2])
+                        i += 2
+                        continue
+                    }
+                    b.Write(ch)
+                    i += 1
+                }
+            }
+            opts = append(opts, key)
+            vals = append(vals, b.String())
+        }
+    }
+    for k, key in opts {
+        var v = vals[k]
+        if key == "host" {
+            c.Host = v
+        } else if key == "port" {
+            c.Port = std.strconv.Atoi(v)?("postgres: port")
+        } else if key == "user" {
+            c.User = v
+        } else if key == "password" {
+            c.Password = v
+        } else if key == "dbname" || key == "database" {
+            c.Database = v
+        } else if key == "sslmode" {
+            c.SSLMode = v
+        } else if key == "sslrootcert" {
+            c.SSLRootCert = v
+        } else if key == "connect_timeout" {
+            c.ConnectTimeout = 1000 * std.strconv.Atoi(v)?("postgres: connect_timeout")
+        } else if key == "sslcert" ||
+            key == "sslkey" ||
+            key == "sslpassword" ||
+            key == "target_session_attrs" {
+            // accepted, not used
+        } else {
+            c.Params[key] = v
+        }
+    }
+    if c.SSLMode != "disable" &&
+        c.SSLMode != "allow" &&
+        c.SSLMode != "prefer" &&
+        c.SSLMode != "require" &&
+        c.SSLMode != "verify-ca" &&
+        c.SSLMode != "verify-full" {
+        return error("postgres: invalid sslmode \"" + c.SSLMode + "\"")
+    }
+    if c.User == "" {
+        c.User = std.os.Getenv("USER")
+    }
+    if c.Database == "" {
+        c.Database = c.User
+    }
+    return c
+}
+
+// ---- type OIDs -------------------------------------------------------------------
+
+func typeName(oid int) string {
+    switch oid {
+        case 16: return "bool"
+        case 17: return "bytea"
+        case 18: return "char"
+        case 19: return "name"
+        case 20: return "int8"
+        case 21: return "int2"
+        case 23: return "int4"
+        case 25: return "text"
+        case 26: return "oid"
+        case 114: return "json"
+        case 142: return "xml"
+        case 700: return "float4"
+        case 701: return "float8"
+        case 1042: return "bpchar"
+        case 1043: return "varchar"
+        case 1082: return "date"
+        case 1083: return "time"
+        case 1114: return "timestamp"
+        case 1184: return "timestamptz"
+        case 1186: return "interval"
+        case 1700: return "numeric"
+        case 2950: return "uuid"
+        case 3802: return "jsonb"
+        case 1000: return "_bool"
+        case 1001: return "_bytea"
+        case 1005: return "_int2"
+        case 1007: return "_int4"
+        case 1009: return "_text"
+        case 1015: return "_varchar"
+        case 1016: return "_int8"
+        case 1021: return "_float4"
+        case 1022: return "_float8"
+        case 1182: return "_date"
+        case 1185: return "_timestamptz"
+        case 1115: return "_timestamp"
+        case 1231: return "_numeric"
+        case 2951: return "_uuid"
+        case 199: return "_json"
+        case 3807: return "_jsonb"
+    }
+    return std.fmt.Format("{0}", oid)
+}
+
+// Element type of an array type (0 if oid is no known array type).
+func arrayElem(oid int) int {
+    switch oid {
+        case 1000: return 16
+        case 1001: return 17
+        case 1005: return 21
+        case 1007: return 23
+        case 1009: return 25
+        case 1015: return 1043
+        case 1016: return 20
+        case 1021: return 700
+        case 1022: return 701
+        case 1182: return 1082
+        case 1185: return 1184
+        case 1115: return 1114
+        case 1231: return 1700
+        case 2951: return 2950
+        case 199: return 114
+        case 3807: return 3802
+    }
+    return 0
+}
+
+// Whether results of this type are requested in binary.
+func binaryResult(oid int) bool {
+    return oid == 16 ||
+        oid == 17 ||
+        oid == 20 ||
+        oid == 21 ||
+        oid == 23 ||
+        oid == 26 ||
+        oid == 700 ||
+        oid == 701 ||
+        oid == 2950 ||
+        oid == 1114 ||
+        oid == 1184 ||
+        oid == 1082 ||
+        oid == 25 ||
+        oid == 1043 ||
+        oid == 19 ||
+        oid == 1042 ||
+        oid == 114 ||
+        oid == 3802
+}
+
+// ---- decoding ------------------------------------------------------------------
+
+func be(b []byte, off int, n int) int {
+    var v = 0
+    for i in 0..n {
+        v = v * 256 + int(b[off + i])
+    }
+    return v
+}
+
+// Signed big-endian integer of n bytes.
+func bes(b []byte, off int, n int) int {
+    var v = be(b, off, n)
+    if n < 8 && int(b[off]) >= 128 {
+        v = v - (1 << (8 * n))
+    }
+    return v
+}
+
+// Unix seconds of 2000-01-01 (the PostgreSQL epoch).
+func pgEpoch() int {
+    return 946684800
+}
+
+func floorDiv(a int, b int) int {
+    var q = a / b
+    if (a % b != 0) && ((a < 0) != (b < 0)) {
+        q -= 1
+    }
+    return q
+}
+
+func microsToTime(us int) std.time.Time {
+    var sec = floorDiv(us, 1000000)
+    var rem = us - sec * 1000000
+    return std.time.Unix(pgEpoch() + sec, rem * 1000).UTC()
+}
+
+func hexDigit(c int) int {
+    if c >= 48 && c <= 57 {
+        return c - 48
+    }
+    if c >= 97 && c <= 102 {
+        return c - 87
+    }
+    if c >= 65 && c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+func formatUUID(b []byte) string {
+    var h = std.encoding.hex.Encode(b)
+    return h[0..8] + "-" + h[8..12] + "-" + h[12..16] + "-" + h[16..20] + "-" + h[20..32]
+}
+
+func decodeBinary(oid int, b []byte) any! {
+    switch oid {
+        case 16:
+            return len(b) == 1 && b[0] != 0
+        case 17:
+            return b
+        case 20:
+            return bes(b, 0, 8)
+        case 21:
+            return bes(b, 0, 2)
+        case 23:
+            return bes(b, 0, 4)
+        case 26:
+            return be(b, 0, 4)
+        case 700:
+            return float(std.math.Float32frombits(uint32(be(b, 0, 4))))
+        case 701:
+            return std.math.Float64frombits(uint(be(b, 0, 8)))
+        case 2950:
+            return formatUUID(b)
+        case 1114:
+            return microsToTime(bes(b, 0, 8))
+        case 1184:
+            return microsToTime(bes(b, 0, 8))
+        case 1082:
+            var days = bes(b, 0, 4)
+            return std.time.Unix(pgEpoch() + days * 86400, 0).UTC()
+        case 3802:
+            if len(b) > 0 && b[0] == 1 {
+                return std.strings.FromBytes(b[1..])
+            }
+            return std.strings.FromBytes(b)
+    }
+    return std.strings.FromBytes(b)
+}
+
+func decodeText(oid int, s string) any! {
+    switch oid {
+        case 16:
+            return s == "t"
+        case 20, 21, 23, 26:
+            return std.strconv.Atoi(s)?
+        case 700, 701:
+            if s == "NaN" {
+                return std.math.NaN()
+            }
+            if s == "Infinity" {
+                return std.math.Inf(1)
+            }
+            if s == "-Infinity" {
+                return std.math.Inf(-1)
+            }
+            return std.strconv.ParseFloat(s)?
+        case 17:
+            return decodeBytea(s)?
+        case 1114, 1184, 1082:
+            if s == "infinity" || s == "-infinity" {
+                return s
+            }
+            return parseTimestamp(s)?
+    }
+    var el = arrayElem(oid)
+    if el != 0 {
+        return parseArray(s, el)?
+    }
+    return s
+}
+
+func decodeBytea(s string) []byte! {
+    if std.strings.HasPrefix(s, "\\x") {
+        var out []byte = []
+        var i = 2
+        for i + 1 < len(s) {
+            var hi = hexDigit(int(s[i]))
+            var lo = hexDigit(int(s[i + 1]))
+            if hi < 0 || lo < 0 {
+                return error("postgres: bad bytea hex")
+            }
+            out = append(out, byte(hi * 16 + lo))
+            i += 2
+        }
+        return out
+    }
+    // escape format
+    var out []byte = []
+    var i = 0
+    for i < len(s) {
+        var c = int(s[i])
+        if c == 92 && i + 1 < len(s) && int(s[i + 1]) == 92 {
+            out = append(out, byte(92))
+            i += 2
+        } else if c == 92 && i + 3 < len(s) {
+            var v = (int(s[i + 1]) - 48) * 64 + (int(s[i + 2]) - 48) * 8 + (int(s[i + 3]) - 48)
+            out = append(out, byte(v))
+            i += 4
+        } else {
+            out = append(out, byte(c))
+            i += 1
+        }
+    }
+    return out
+}
+
+// "2024-01-02 03:04:05.123456", with "+03", "+05:30", "-08" offsets for
+// timestamptz; dates "2024-01-02"; " BC" years are not supported.
+func parseTimestamp(s string) std.time.Time! {
+    var t = s
+    var off = 0
+    var hasZone = false
+    if len(t) > 19 {
+        // zone suffix after the seconds/fraction
+        var i = len(t) - 1
+        for i > 10 && t[i..i + 1] != "+" && t[i..i + 1] != "-" {
+            i -= 1
+        }
+        if i > 10 {
+            var z = t[i + 1..]
+            var sign = 1
+            if t[i..i + 1] == "-" {
+                sign = -1
+            }
+            var parts = std.strings.Split(z, ":")
+            var hh = std.strconv.Atoi(parts[0])?
+            var mm = 0
+            var ss = 0
+            if len(parts) > 1 {
+                mm = std.strconv.Atoi(parts[1])?
+            }
+            if len(parts) > 2 {
+                ss = std.strconv.Atoi(parts[2])?
+            }
+            off = sign * (hh * 3600 + mm * 60 + ss)
+            hasZone = true
+            t = t[..i]
+        }
+    }
+    var year = std.strconv.Atoi(t[0..4])?
+    var month = std.strconv.Atoi(t[5..7])?
+    var day = std.strconv.Atoi(t[8..10])?
+    var hour = 0
+    var min = 0
+    var sec = 0
+    var nsec = 0
+    if len(t) >= 19 {
+        hour = std.strconv.Atoi(t[11..13])?
+        min = std.strconv.Atoi(t[14..16])?
+        sec = std.strconv.Atoi(t[17..19])?
+        if len(t) > 20 && t[19..20] == "." {
+            var frac = t[20..]
+            var digits = len(frac)
+            nsec = std.strconv.Atoi(frac)?
+            for d in digits..9 {
+                _ = d
+                nsec = nsec * 10
+            }
+        }
+    }
+    var u = std.time.Date(year, month, day, hour, min, sec, nsec, std.time.UTC())
+    if hasZone {
+        u = std.time.Unix(u.Unix() - off, nsec).UTC()
+    }
+    return u
+}
+
+// Parses a one-dimensional array literal "{1,2,NULL}" / {"a b","c\"d"}.
+func parseArray(s string, elem int) []any! {
+    var out []any = []
+    if len(s) < 2 || s[0..1] != "{" || s[len(s) - 1..] != "}" {
+        return error("postgres: bad array literal " + s)
+    }
+    var body = s[1..len(s) - 1]
+    if body == "" {
+        return out
+    }
+    var i = 0
+    var n = len(body)
+    var delim = ","
+    if elem == 603 {
+        delim = ";"
+    }
+    for i <= n {
+        var b = std.strings.Builder{}
+        var quoted = false
+        if i < n && body[i..i + 1] == "\"" {
+            quoted = true
+            i += 1
+            for i < n && body[i..i + 1] != "\"" {
+                if body[i..i + 1] == "\\" && i + 1 < n {
+                    i += 1
+                }
+                b.Write(body[i..i + 1])
+                i += 1
+            }
+            i += 1
+        } else {
+            for i < n && body[i..i + 1] != delim {
+                b.Write(body[i..i + 1])
+                i += 1
+            }
+        }
+        var item = b.String()
+        if !quoted && item == "NULL" {
+            out = append(out, nil)
+        } else if std.strings.HasPrefix(item, "{") && !quoted {
+            return error("postgres: multi-dimensional arrays are not supported")
+        } else {
+            out = append(out, decodeText(elem, item)?)
+        }
+        i += 1
+    }
+    return out
+}
+
+// ---- encoding ------------------------------------------------------------------
+
+func quoteArrayElem(s string) string {
+    var b = std.strings.Builder{}
+    b.Write("\"")
+    for i in 0..len(s) {
+        var c = s[i..i + 1]
+        if c == "\"" || c == "\\" {
+            b.Write("\\")
+        }
+        b.Write(c)
+    }
+    b.Write("\"")
+    return b.String()
+}
+
+func formatTime(t std.time.Time) string {
+    return t.Format("2006-01-02 15:04:05.999999999Z07:00")
+}
+
+// The text form of an argument, or isBinary for []byte (sent as raw
+// bytes); isNull for nil.
+func encodeText(v any) string! {
+    switch v {
+        case int n:
+            return std.fmt.Format("{0}", n)
+        case float f:
+            if std.math.IsNaN(f) {
+                return "NaN"
+            }
+            if std.math.IsInf(f, 1) {
+                return "Infinity"
+            }
+            if std.math.IsInf(f, -1) {
+                return "-Infinity"
+            }
+            return std.strconv.FormatFloat(f, 'g', -1)
+        case bool b:
+            if b {
+                return "t"
+            }
+            return "f"
+        case string s:
+            return s
+        case std.time.Time t:
+            return formatTime(t)
+        case []any items:
+            var b = std.strings.Builder{}
+            b.Write("{")
+            for i, x in items {
+                if i > 0 {
+                    b.Write(",")
+                }
+                if x == nil {
+                    b.Write("NULL")
+                } else {
+                    switch x {
+                        case []byte bs:
+                            b.Write(quoteArrayElem("\\x" + std.encoding.hex.Encode(bs)))
+                        default:
+                            b.Write(quoteArrayElem(encodeText(x)?))
+                    }
+                }
+            }
+            b.Write("}")
+            return b.String()
+    }
+    return error("postgres: unsupported argument type " + typeof(v).Name)
+}

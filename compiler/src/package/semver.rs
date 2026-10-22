@@ -241,7 +241,7 @@ impl Constraint {
         versions.iter().filter(|v| self.matches(v)).min()
     }
 
-    /// The newest of `versions` matching the constraint (`slang update`).
+    /// The newest of `versions` matching the constraint (`zell update`).
     pub fn highest<'a>(&self, versions: &'a [Version]) -> Option<&'a Version> {
         versions.iter().filter(|v| self.matches(v)).max()
     }

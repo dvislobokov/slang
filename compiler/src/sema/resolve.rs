@@ -219,7 +219,7 @@ impl<'a> Sema<'a> {
                     }
                     ast::Decl::Func(f) if f.is_extern => {
                         self.err(
-                            format!("`extern func {}` declares a runtime function; extern declarations exist only in the standard library's generated std/**/*_extern.sl files", f.name.name),
+                            format!("`extern func {}` declares a runtime function; extern declarations exist only in the standard library's generated std/**/*_extern.zl files", f.name.name),
                             f.name.span,
                         );
                     }
@@ -259,7 +259,7 @@ impl<'a> Sema<'a> {
         let fid = FuncId(self.funcs.len() as u32);
         let mut f = self.dummy_function(d.name.name.clone(), kind, self.cur_hir_ns());
         f.full_name = format!("{}.{local_name}", self.nss[self.cur_ns].path);
-        f.symbol = format!("slang_{}", f.full_name.replace('.', "__"));
+        f.symbol = format!("zell_{}", f.full_name.replace('.', "__"));
         f.is_async = d.is_async;
         f.exported = is_exported(&d.name.name);
         f.span = d.span;
@@ -274,7 +274,7 @@ impl<'a> Sema<'a> {
         let full_name = format!("{}.{}", self.nss[self.cur_ns].path, name.name);
         self.globals.push(hir::Global {
             name: name.name.clone(),
-            symbol: format!("slang_{}", full_name.replace('.', "__")),
+            symbol: format!("zell_{}", full_name.replace('.', "__")),
             full_name,
             namespace: self.cur_hir_ns(),
             ty: self.tt.invalid,

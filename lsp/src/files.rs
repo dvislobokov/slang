@@ -1,11 +1,11 @@
 //! `workspace/willRenameFiles`: when moving a file changes the namespace
 //! its path implies, the edits that keep the project compiling.
 //!
-//! Namespaces are not tied to paths in Slang, so edits are only computed
+//! Namespaces are not tied to paths in Zell, so edits are only computed
 //! for files of a package that follow the layout convention: a file
-//! `src/a/b/x.sl` of a package whose root namespace is `app` declares
-//! `namespace app.a.b` (`src/x.sl`: `namespace app`). Moving such a file
-//! to `src/c/x.sl` then
+//! `src/a/b/x.zl` of a package whose root namespace is `app` declares
+//! `namespace app.a.b` (`src/x.zl`: `namespace app`). Moving such a file
+//! to `src/c/x.zl` then
 //! - rewrites its `namespace` line to `app.c`;
 //! - when no other file declares `app.a.b` (the namespace moves as a
 //!   whole), rewrites `import app.a.b` and `import app.a.b.T` everywhere;
@@ -18,17 +18,17 @@
 
 use crate::range;
 use lsp_types::{TextEdit, Url};
-use slang::session::Analysis;
-use slang::span::Span;
+use zell::session::Analysis;
+use zell::span::Span;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// The namespace a package file at `path` has by the layout convention:
 /// the package's root namespace plus the directories below `src/`.
 pub(crate) fn derived_namespace(path: &Path) -> Option<String> {
-    let manifest = slang::package::manifest::find_upwards(path.parent()?).ok()??;
+    let manifest = zell::package::manifest::find_upwards(path.parent()?).ok()??;
     let root = manifest.parent()?;
-    let loaded = slang::package::manifest::load(&manifest).ok()?;
+    let loaded = zell::package::manifest::load(&manifest).ok()?;
     let ns_root = loaded.manifest.package.as_ref()?.namespace_root();
     let rel = path.strip_prefix(root.join("src")).ok()?;
     let mut ns = vec![ns_root];

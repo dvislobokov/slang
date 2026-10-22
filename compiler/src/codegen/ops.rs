@@ -42,13 +42,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let b = &self.b;
         let bool_ = |v: IntValue<'ctx>| Val::borrowed(v.into());
         match op {
-            BinOp::StrConcat => return Ok(Val::owned(self.call_rt_v("slang_string_concat", &[l.into(), r.into()]))),
+            BinOp::StrConcat => return Ok(Val::owned(self.call_rt_v("zell_string_concat", &[l.into(), r.into()]))),
             BinOp::StrEq | BinOp::StrNe => {
-                let eq = self.call_rt_v("slang_string_eq", &[l.into(), r.into()]).into_int_value();
+                let eq = self.call_rt_v("zell_string_eq", &[l.into(), r.into()]).into_int_value();
                 return Ok(bool_(if op == BinOp::StrEq { eq } else { self.b.build_not(eq, "").unwrap() }));
             }
             BinOp::StrLt | BinOp::StrLe | BinOp::StrGt | BinOp::StrGe => {
-                let c = self.call_rt_v("slang_string_compare", &[l.into(), r.into()]).into_int_value();
+                let c = self.call_rt_v("zell_string_compare", &[l.into(), r.into()]).into_int_value();
                 let pred = match op {
                     BinOp::StrLt => IntPredicate::SLT,
                     BinOp::StrLe => IntPredicate::SLE,
@@ -135,7 +135,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.build_conditional_branch(zero, bad, ok).unwrap();
         self.b.position_at_end(bad);
         let msg = self.cstr("runtime error: integer divide by zero");
-        self.call_rt("slang_panic", &[msg.into()]);
+        self.call_rt("zell_panic", &[msg.into()]);
         self.b.build_unreachable().unwrap();
         self.b.position_at_end(ok);
         if !signed {
@@ -254,9 +254,9 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 }
             }
             ConvKind::FloatToFloat => self.b.build_float_cast(x.into_float_value(), tt.into_float_type(), "").unwrap().into(),
-            ConvKind::CharToString => return Ok(Val::owned(self.call_rt_v("slang_string_from_rune", &[x.into()]))),
+            ConvKind::CharToString => return Ok(Val::owned(self.call_rt_v("zell_string_from_rune", &[x.into()]))),
             ConvKind::PtrToWeak | ConvKind::WeakToPtr => {
-                let f = if kind == ConvKind::PtrToWeak { "slang_weak_new" } else { "slang_weak_get" };
+                let f = if kind == ConvKind::PtrToWeak { "zell_weak_new" } else { "zell_weak_get" };
                 let r = self.call_rt_v(f, &[x.into()]);
                 self.drop_val(from, v);
                 return Ok(Val::owned(r));
@@ -270,7 +270,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     ///
     /// The common case `len < cap` is inlined: store the element (retaining
     /// it and releasing the slot's previous value, ABI.md 5.1) and bump
-    /// `len`. Only a full slice calls `slang_slice_append`, which grows the
+    /// `len`. Only a full slice calls `zell_slice_append`, which grows the
     /// backing (in place when uniquely referenced, ABI.md 5.2).
     pub(crate) fn append_fast(&mut self, sp: inkwell::values::PointerValue<'ctx>, et: TypeId, x: Val<'ctx>) {
         let size = self.size_of(et);
@@ -278,7 +278,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let xp = cg.spill(x.get());
             let sz = cg.i64_ty().const_int(size, false);
             let ops = cg.value_ops(et);
-            cg.call_rt("slang_slice_append", &[sp.into(), sz.into(), ops.into(), xp.into()]);
+            cg.call_rt("zell_slice_append", &[sp.into(), sz.into(), ops.into(), xp.into()]);
         };
         if size == 0 {
             slow_call(self);
@@ -332,10 +332,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// externs.
     pub(crate) fn math_intrinsic(&mut self, x: crate::hir::ExternId, args: &[Expr]) -> R<Option<Val<'ctx>>> {
         let name = match self.prog.externs[x.0 as usize].symbol.as_str() {
-            "slang_math_sqrt" => "llvm.sqrt",
-            "slang_math_abs" => "llvm.fabs",
-            "slang_math_floor" => "llvm.floor",
-            "slang_math_ceil" => "llvm.ceil",
+            "zell_math_sqrt" => "llvm.sqrt",
+            "zell_math_abs" => "llvm.fabs",
+            "zell_math_floor" => "llvm.floor",
+            "zell_math_ceil" => "llvm.ceil",
             _ => return Ok(None),
         };
         if args.len() != 1 {
@@ -358,7 +358,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         match op {
             Builtin::LenString => {
                 let s = self.expr(&args[0])?;
-                let r = self.call_rt_v("slang_string_len", &[s.get().into()]);
+                let r = self.call_rt_v("zell_string_len", &[s.get().into()]);
                 self.drop_val(args[0].ty, s);
                 Ok(Val::borrowed(r))
             }
@@ -380,7 +380,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             Builtin::LenMap => {
                 let m = self.expr(&args[0])?;
-                let r = self.call_rt_v("slang_map_len", &[m.get().into()]);
+                let r = self.call_rt_v("zell_map_len", &[m.get().into()]);
                 self.drop_val(args[0].ty, m);
                 Ok(Val::borrowed(r))
             }
@@ -408,11 +408,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let k = self.expr(&args[1])?;
                 self.unhold(hm);
                 match self.key_kind(kt) {
-                    super::expr::KeyKind::Str => self.call_rt("slang_map_delete_str", &[m.get().into(), k.get().into()]),
-                    super::expr::KeyKind::Int => self.call_rt("slang_map_delete_int", &[m.get().into(), k.get().into()]),
+                    super::expr::KeyKind::Str => self.call_rt("zell_map_delete_str", &[m.get().into(), k.get().into()]),
+                    super::expr::KeyKind::Int => self.call_rt("zell_map_delete_int", &[m.get().into(), k.get().into()]),
                     super::expr::KeyKind::Generic => {
                         let kp = self.spill(k.get());
-                        self.call_rt("slang_map_delete", &[m.get().into(), kp.into()])
+                        self.call_rt("zell_map_delete", &[m.get().into(), kp.into()])
                     }
                 };
                 self.drop_val(args[1].ty, k);
@@ -421,13 +421,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             Builtin::Panic => {
                 let v = self.expr(&args[0])?;
-                let f = if *self.ty(args[0].ty) == Type::String { "slang_panic_str" } else { "slang_panic_error" };
+                let f = if *self.ty(args[0].ty) == Type::String { "zell_panic_str" } else { "zell_panic_error" };
                 self.call_noreturn(f, &[v.get().into()]);
                 Ok(Val::void())
             }
             Builtin::ErrorNew => {
                 let m = self.expr(&args[0])?;
-                let r = self.call_rt_v("slang_error_new", &[m.get().into()]);
+                let r = self.call_rt_v("zell_error_new", &[m.get().into()]);
                 let r = self.trace_created(r, e.span.start);
                 self.drop_val(args[0].ty, m);
                 Ok(Val::owned(r))
@@ -439,7 +439,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let h = self.expr(&args[0])?.get();
                 let ti = self.type_info(t);
                 let size = self.i64_ty().const_int(16 + self.size_of(t), false);
-                let obj = self.call_rt_v("slang_arena_object", &[h.into(), ti.into(), size.into()]).into_pointer_value();
+                let obj = self.call_rt_v("zell_arena_object", &[h.into(), ti.into(), size.into()]).into_pointer_value();
                 // Arena objects ignore retain/release: owned or not is the same.
                 Ok(Val::owned(self.payload(obj).into()))
             }
@@ -450,7 +450,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let out = self.entry_alloca(self.slice_ty().into(), "aslice", false);
                 let size = self.i64_ty().const_int(self.size_of(et), false);
                 let ops = self.value_ops(et);
-                self.call_rt("slang_arena_slice", &[out.into(), h.into(), size.into(), n.into(), ops.into()]);
+                self.call_rt("zell_arena_slice", &[out.into(), h.into(), size.into(), n.into(), ops.into()]);
                 Ok(Val::owned(self.b.build_load(self.slice_ty(), out, "").unwrap()))
             }
         }

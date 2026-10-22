@@ -314,7 +314,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         Ok(())
     }
 
-    /// `slang_message_fn` thunk calling `S.Message()` on a box payload.
+    /// `zell_message_fn` thunk calling `S.Message()` on a box payload.
     fn message_thunk(&mut self, sid: u32) -> R<FunctionValue<'ctx>> {
         if let Some(f) = self.msg_thunks.get(&sid) {
             return Ok(*f);
@@ -339,8 +339,8 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let thunk = self.message_thunk(sid)?;
         let obj = self.new_box(st, v);
         let ti = self.type_info(st);
-        let e = self.call_rt_v("slang_error_new_typed", &[ti.into(), obj.into(), thunk.as_global_value().as_pointer_value().into()]);
-        self.call_rt("slang_release", &[obj.into()]);
+        let e = self.call_rt_v("zell_error_new_typed", &[ti.into(), obj.into(), thunk.as_global_value().as_pointer_value().into()]);
+        self.call_rt("zell_release", &[obj.into()]);
         Ok(e)
     }
 
@@ -492,7 +492,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     pub(crate) fn iface_call(&mut self, ty: TypeId, recv: &Expr, method: u32, args: &[Expr]) -> R<Val<'ctx>> {
         if *self.ty(recv.ty) == Type::Error {
             let rv = self.expr(recv)?;
-            let r = self.call_rt_v("slang_error_message", &[rv.get().into()]);
+            let r = self.call_rt_v("zell_error_message", &[rv.get().into()]);
             self.drop_val(recv.ty, rv);
             return Ok(Val::owned(r));
         }
@@ -680,7 +680,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let tp = self.expr(target)?.get().into_pointer_value();
         self.unhold(h);
         let ti = self.type_info(st);
-        let payload = self.call_rt_v("slang_error_as", &[ev.get().into(), ti.into()]).into_pointer_value();
+        let payload = self.call_rt_v("zell_error_as", &[ev.get().into(), ti.into()]).into_pointer_value();
         let found = self.b.build_is_not_null(payload, "").unwrap();
         let yes = self.block("as.yes");
         let done = self.block("as.done");

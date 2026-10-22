@@ -1,4 +1,4 @@
-//! `slang fmt`: the canonical formatter (docs/TOOLING.md, "Форматтер").
+//! `zell fmt`: the canonical formatter (docs/TOOLING.md, "Форматтер").
 //!
 //! One style, no options, like `gofmt`: 4-space indentation, braces on the
 //! same line, one space around binary operators, none inside parentheses,

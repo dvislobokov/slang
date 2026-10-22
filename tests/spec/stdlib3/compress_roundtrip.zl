@@ -1,0 +1,130 @@
+// test: std.compress round trips for deflate/zlib/gzip at every level (0..9, -1 default) on empty, tiny, random and repetitive data; streaming Writer (chunked Write, Flush makes a decodable prefix, Close) and Reader fed 1..4096-byte chunks; gzip header fields; Rest() after a stream
+// status: passing
+namespace spec.stdlib3.compress_roundtrip
+
+import std
+import std.io
+
+func same(a []byte, b []byte) bool {
+    if len(a) != len(b) {
+        return false
+    }
+    for i in 0..len(a) {
+        if a[i] != b[i] {
+            return false
+        }
+    }
+    return true
+}
+
+func pseudoRandom(n int) []byte {
+    var out []byte = []
+    var x = 2463534242
+    for _ in 0..n {
+        x = x ^ ((x << 13) & 4294967295)
+        x = x ^ (x >> 17)
+        x = x ^ ((x << 5) & 4294967295)
+        out = append(out, byte(x & 255))
+    }
+    return out
+}
+
+func feedChunks(r *compress.gzip.Reader, data []byte, size int) []byte! {
+    var got []byte = []
+    var i = 0
+    for i < len(data) {
+        var j = math.IMin(i + size, len(data))
+        r.Feed(data[i..j])?
+        for b in r.Read() {
+            got = append(got, b)
+        }
+        i = j
+    }
+    r.Close()?
+    return got
+}
+
+func main() void! {
+    var inputs = [
+        strings.Bytes(""),
+        strings.Bytes("a"),
+        strings.Bytes("abcabcabcabcabcabc"),
+        pseudoRandom(5000),
+        strings.Bytes(strings.Repeat("zell compresses text; ", 3000)),
+    ]
+    for i, data in inputs {
+        var sizes []int = []
+        var ok = true
+        for lv in [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
+            var d = compress.deflate.Compress(data, lv)
+            ok = ok && same(compress.deflate.Decompress(d)?, data)
+            var z = compress.zlib.Compress(data, lv)
+            ok = ok && same(compress.zlib.Decompress(z)?, data)
+            var g = compress.gzip.Compress(data, lv)
+            ok = ok && same(compress.gzip.Decompress(g)?, data)
+            if lv == 0 || lv == 1 || lv == 9 {
+                sizes = append(sizes, len(g))
+            }
+        }
+        println(i, len(data), ok, sizes[0] >= len(data), sizes[2] <= sizes[1])
+    }
+
+    // streaming writer: chunks, a flush in the middle, close
+    var big = strings.Bytes(strings.Repeat("0123456789abcdef", 20000))
+    var w = compress.gzip.NewWriter(compress.BestSpeed)
+    w.Header = compress.gzip.Header{Name: "data.bin", ModTime: 1700000000, OS: 3}
+    var stream []byte = []
+    var off = 0
+    for off < len(big) {
+        var end = math.IMin(off + 30000, len(big))
+        w.Write(big[off..end])
+        off = end
+        if off == 150000 {
+            w.Flush()
+            var prefix = w.Bytes()
+            for b in prefix {
+                stream = append(stream, b)
+            }
+            // a flushed prefix decodes to everything written so far
+            var pr = compress.gzip.NewReader()
+            pr.Feed(stream)?
+            println("flushed prefix:", len(pr.Read()), pr.Done())
+        }
+    }
+    w.Close()
+    for b in w.Bytes() {
+        stream = append(stream, b)
+    }
+    for size in [1, 7, 4096] {
+        var got = feedChunks(compress.gzip.NewReader(), stream, size)?
+        println("chunks of", size, same(got, big))
+    }
+    var r = compress.gzip.NewReader()
+    r.Feed(stream)?
+    var hp = r.Header()
+    println(hp.Name, hp.ModTime, hp.OS, r.Done())
+
+    // zlib and deflate streaming, Rest() after the end
+    var zw = compress.zlib.NewWriter(9)
+    zw.WriteString("hello ")
+    zw.WriteString("zlib")
+    zw.Close()
+    var zbytes = zw.Bytes()
+    zbytes = append(zbytes, byte(33))
+    var zr = compress.zlib.NewReader()
+    zr.Feed(zbytes)?
+    println(strings.FromBytes(zr.Read()), zr.Done(), len(zr.Rest()))
+    var dr = compress.deflate.NewReader()
+    var dd = compress.deflate.Compress(strings.Bytes("tail test"), 6)
+    dd = append(dd, byte(7))
+    dd = append(dd, byte(8))
+    dr.Feed(dd)?
+    println(strings.FromBytes(dr.Read()), dr.Done(), dr.Rest())
+
+    // two gzip members written separately decode as one stream
+    var m = compress.gzip.Compress(strings.Bytes("one,"), 6)
+    for b in compress.gzip.Compress(strings.Bytes("two"), 1) {
+        m = append(m, b)
+    }
+    println(strings.FromBytes(compress.gzip.Decompress(m)?))
+}

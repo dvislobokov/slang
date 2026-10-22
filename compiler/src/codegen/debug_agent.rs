@@ -2,23 +2,23 @@
 //! 2, runtime/ABI.md §22), emitted with [`super::Options::debug_agent`].
 //!
 //! Every function with source gets a 32-byte frame record `F`
-//! (`slang_dbg_frame`, not zeroed: `slang_dbg_enter` initialises it) and
-//! loads the hidden runtime flag `slang_dbg_on` once at entry. Then, each
+//! (`zell_dbg_frame`, not zeroed: `zell_dbg_enter` initialises it) and
+//! loads the hidden runtime flag `zell_dbg_on` once at entry. Then, each
 //! behind `if (on)` (a register test, predicted not taken):
 //!
-//! * after the parameters are stored: `slang_dbg_enter(&F, &func, locals, entry_stmt)`,
+//! * after the parameters are stored: `zell_dbg_enter(&F, &func, locals, entry_stmt)`,
 //!   where `locals` (unoptimised builds only) is a `[n x ptr]` frame array
 //!   filled in that branch with the address of every local's slot;
-//! * at every statement: `slang_dbg_stmt(&F, id)`;
-//! * at the start of the exit block: `slang_dbg_leave(&F)`;
-//! * around an `await` that may suspend: `slang_dbg_suspend(&F)` before
-//!   the continuation is registered, `slang_dbg_resume(&F)` once it is
+//! * at every statement: `zell_dbg_stmt(&F, id)`;
+//! * at the start of the exit block: `zell_dbg_leave(&F)`;
+//! * around an `await` that may suspend: `zell_dbg_suspend(&F)` before
+//!   the continuation is registered, `zell_dbg_resume(&F)` once it is
 //!   ready again (a no-op unless the frame was suspended).
 //!
 //! The static tables (statements, functions, locals, files, breakpoint
-//! bytes) are described in ABI.md §22.1; `slang_dbg_boot(&tables, entry)`
+//! bytes) are described in ABI.md §22.1; `zell_dbg_boot(&tables, entry)`
 //! in the C `main` starts the agent (`std.debug.AgentMain`, wrapped as a C
-//! function) when `SLANG_DEBUG` is set. Functions of the standard library
+//! function) when `ZELL_DEBUG` is set. Functions of the standard library
 //! (including the agent itself) get no hooks.
 
 use super::CodeGen;
@@ -29,17 +29,17 @@ use inkwell::types::StructType;
 use inkwell::values::{BasicValueEnum, FunctionValue, GlobalValue, IntValue, PointerValue};
 use inkwell::IntPredicate;
 
-/// Statement kinds (`slang_dbg_stmt.kind`).
+/// Statement kinds (`zell_dbg_stmt.kind`).
 const KIND_STMT: i32 = 0;
 const KIND_ENTRY: i32 = 1;
-/// `slang_dbg_func.flags`.
+/// `zell_dbg_func.flags`.
 const FUNC_ASYNC: i32 = 1;
-/// `slang_dbg_local.flags`: the slot holds a heap cell (value at cell + 16).
+/// `zell_dbg_local.flags`: the slot holds a heap cell (value at cell + 16).
 const LOCAL_CELL: i32 = 1;
-/// Version of the table layout (`slang_dbg_tables.version`).
+/// Version of the table layout (`zell_dbg_tables.version`).
 const TABLES_VERSION: u64 = 1;
 
-/// One `slang_dbg_local` record before emission.
+/// One `zell_dbg_local` record before emission.
 struct LocalRec {
     name: String,
     ty: crate::types::TypeId,
@@ -63,7 +63,7 @@ struct CurFn<'ctx> {
     locals: Vec<LocalRec>,
 }
 
-/// A `slang_dbg_func` record before emission.
+/// A `zell_dbg_func` record before emission.
 struct FuncRec<'ctx> {
     name: String,
     short: String,
@@ -101,10 +101,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             return;
         }
         let tables_ty = self.dbga_tables_ty();
-        let tables = self.module.add_global(tables_ty, None, "slang.dbg.tables");
+        let tables = self.module.add_global(tables_ty, None, "zell.dbg.tables");
         tables.set_linkage(Linkage::Internal);
         tables.set_alignment(8);
-        let on_flag = self.module.add_global(self.ctx.i8_type(), None, "slang_dbg_on");
+        let on_flag = self.module.add_global(self.ctx.i8_type(), None, "zell_dbg_on");
         on_flag.set_linkage(Linkage::External);
         self.dbga = Some(Box::new(Agent { stmts: Vec::new(), funcs: Vec::new(), cur: None, tables, on_flag, mode: 0, dispatch: None, clones: Vec::new() }));
     }
@@ -231,7 +231,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 None => cg.ptr_ty().const_null(),
             };
             let e = cg.ctx.i32_type().const_int(entry as u64, false);
-            cg.call_rt("slang_dbg_enter", &[frame.into(), func_rec.into(), lp.into(), e.into()]);
+            cg.call_rt("zell_dbg_enter", &[frame.into(), func_rec.into(), lp.into(), e.into()]);
         });
     }
 
@@ -239,7 +239,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// the agent off the code is the code of a build without the agent
     /// (tail calls, accumulator recursion and frame elision survive):
     /// `sym.dbg` with the hooks, and `sym` without them, which starts with
-    /// `if (slang_dbg_on) return sym.dbg(args)`. Async functions keep one
+    /// `if (zell_dbg_on) return sym.dbg(args)`. Async functions keep one
     /// (hooked) body. Returns `true` when both copies were emitted.
     pub(crate) fn dbga_emit_cloned(&mut self, fid: hir::FuncId) -> super::R<bool> {
         let f: &'a hir::Function = &self.prog.funcs[fid.0 as usize];
@@ -340,7 +340,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.dbga.as_mut().unwrap().funcs[index as usize].last = id;
         self.agent_guard(on, |cg| {
             let v = cg.ctx.i32_type().const_int(id as u64, false);
-            cg.call_rt("slang_dbg_stmt", &[frame.into(), v.into()]);
+            cg.call_rt("zell_dbg_stmt", &[frame.into(), v.into()]);
         });
     }
 
@@ -355,19 +355,19 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.dbga.as_mut().unwrap().funcs[index as usize].last = id;
         self.agent_guard(on, |cg| {
             let v = cg.ctx.i32_type().const_int(id as u64, false);
-            cg.call_rt("slang_dbg_stmt", &[frame.into(), v.into()]);
-            cg.call_rt("slang_dbg_leave", &[frame.into()]);
+            cg.call_rt("zell_dbg_stmt", &[frame.into(), v.into()]);
+            cg.call_rt("zell_dbg_leave", &[frame.into()]);
         });
     }
 
     /// Before an `await` registers its continuation.
     pub(crate) fn dbga_suspend(&mut self) {
-        self.agent_simple("slang_dbg_suspend");
+        self.agent_simple("zell_dbg_suspend");
     }
 
     /// Once an awaited task is ready (no-op unless the frame was suspended).
     pub(crate) fn dbga_resume(&mut self) {
-        self.agent_simple("slang_dbg_resume");
+        self.agent_simple("zell_dbg_resume");
     }
 
     fn agent_simple(&mut self, hook: &str) {
@@ -391,11 +391,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// placeholder that `finish_agent` replaces).
     fn dbga_func_ptr(&mut self, i: i32) -> PointerValue<'ctx> {
         let fty = self.dbga_func_ty();
-        let g = match self.module.get_global("slang.dbg.funcs") {
+        let g = match self.module.get_global("zell.dbg.funcs") {
             Some(g) => g,
             None => {
                 // An opaque array; its real type and initializer come later.
-                let g = self.module.add_global(fty.array_type(0), None, "slang.dbg.funcs");
+                let g = self.module.add_global(fty.array_type(0), None, "zell.dbg.funcs");
                 g.set_linkage(Linkage::Internal);
                 g
             }
@@ -408,7 +408,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.ctx.struct_type(&[p, p, i32t, i32t, i32t, i32t, i32t, i32t, p, p], false)
     }
 
-    /// In the C `main`, after `slang_runtime_init`: `slang_dbg_boot`.
+    /// In the C `main`, after `zell_runtime_init`: `zell_dbg_boot`.
     pub(crate) fn dbga_boot(&mut self) {
         let Some(a) = self.dbga.as_ref() else { return };
         let tables = a.tables.as_pointer_value();
@@ -416,7 +416,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let wrapper = match entry {
             Some(i) => {
                 let target = self.funcs[i];
-                let w = self.module.add_function("slang.dbg.agent", self.ctx.void_type().fn_type(&[], false), Some(Linkage::Internal));
+                let w = self.module.add_function("zell.dbg.agent", self.ctx.void_type().fn_type(&[], false), Some(Linkage::Internal));
                 let _ = self.with_helper(w, |cg| {
                     cg.b.build_call(target, &[], "").unwrap();
                     cg.b.build_return(None).unwrap();
@@ -426,13 +426,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             }
             None => self.ptr_ty().const_null(),
         };
-        self.call_rt("slang_dbg_boot", &[tables.into(), wrapper.into()]);
+        self.call_rt("zell_dbg_boot", &[tables.into(), wrapper.into()]);
     }
 
-    /// In the C `main`, before it returns `code`: `slang_dbg_exit`.
+    /// In the C `main`, before it returns `code`: `zell_dbg_exit`.
     pub(crate) fn dbga_exit(&mut self, code: IntValue<'ctx>) {
         if self.dbga.is_some() {
-            self.call_rt("slang_dbg_exit", &[code.into()]);
+            self.call_rt("zell_dbg_exit", &[code.into()]);
         }
     }
 
@@ -499,7 +499,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         // Statements.
         let srec = self.ctx.struct_type(&[i32t.into(); 6], false);
         let svals: Vec<_> = a.stmts.iter().map(|r| srec.const_named_struct(&r.iter().map(|x| i32t.const_int(*x as u64, true).into()).collect::<Vec<BasicValueEnum>>())).collect();
-        let stmts = self.agent_array(srec.const_array(&svals), "slang.dbg.stmts", true);
+        let stmts = self.agent_array(srec.const_array(&svals), "zell.dbg.stmts", true);
         // Locals and functions.
         let lrec = self.ctx.struct_type(&[p.into(), p.into(), i32t.into(), i32t.into(), i32t.into(), i32t.into()], false);
         let fty = self.dbga_func_ty();
@@ -519,7 +519,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     i32t.const_int(l.end_line as u64, true).into(),
                 ]));
             }
-            let locals = if lvals.is_empty() { p.const_null() } else { self.agent_array(lrec.const_array(&lvals), "slang.dbg.locals", true) };
+            let locals = if lvals.is_empty() { p.const_null() } else { self.agent_array(lrec.const_array(&lvals), "zell.dbg.locals", true) };
             let nm = self.str_lit(&fr.name);
             let sh = self.str_lit(&fr.short);
             fvals.push(fty.const_named_struct(&[
@@ -536,16 +536,16 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             ]));
         }
         let farr = fty.const_array(&fvals);
-        let funcs_g = self.module.add_global(farr.get_type(), None, "slang.dbg.funcs.def");
+        let funcs_g = self.module.add_global(farr.get_type(), None, "zell.dbg.funcs.def");
         funcs_g.set_linkage(Linkage::Internal);
         funcs_g.set_constant(true);
         funcs_g.set_alignment(8);
         funcs_g.set_initializer(&farr);
-        if let Some(ph) = self.module.get_global("slang.dbg.funcs") {
+        if let Some(ph) = self.module.get_global("zell.dbg.funcs") {
             ph.as_pointer_value().replace_all_uses_with(funcs_g.as_pointer_value());
             unsafe { ph.delete() };
         }
-        funcs_g.as_pointer_value().set_name("slang.dbg.funcs");
+        funcs_g.as_pointer_value().set_name("zell.dbg.funcs");
         // Files: absolute paths, like the DWARF compile units.
         let mut fps = Vec::new();
         for src in &self.prog.sources {
@@ -553,11 +553,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             let abs = std::fs::canonicalize(pth).unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(pth)).unwrap_or_else(|_| pth.to_path_buf()));
             fps.push(self.str_lit(&abs.to_string_lossy()));
         }
-        let files = self.agent_array(p.const_array(&fps), "slang.dbg.files", true);
+        let files = self.agent_array(p.const_array(&fps), "zell.dbg.files", true);
         // Breakpoint bytes (written by the agent).
         let n = a.stmts.len() as u32;
         let bp_ty = self.ctx.i8_type().array_type(n.max(1));
-        let bp = self.module.add_global(bp_ty, None, "slang.dbg.bp");
+        let bp = self.module.add_global(bp_ty, None, "zell.dbg.bp");
         bp.set_linkage(Linkage::Internal);
         bp.set_initializer(&bp_ty.const_zero());
         let tables_ty = self.dbga_tables_ty();

@@ -704,9 +704,9 @@ fn place_owner(e: &Expr) -> Option<LocalId> {
 pub fn stack_locals(p: &Program, f: &Function, facts: &ParamFacts) -> Vec<StackKind> {
     let n = f.locals.len();
     let mut kind = vec![StackKind::Normal; n];
-    // SLANG_NO_ESCAPE=1 turns the analysis off (for measurements).
+    // ZELL_NO_ESCAPE=1 turns the analysis off (for measurements).
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if f.is_async || *OFF.get_or_init(|| std::env::var_os("SLANG_NO_ESCAPE").is_some()) {
+    if f.is_async || *OFF.get_or_init(|| std::env::var_os("ZELL_NO_ESCAPE").is_some()) {
         return kind;
     }
     for (i, l) in f.locals.iter().enumerate() {

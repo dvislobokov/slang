@@ -1,11 +1,11 @@
-//! Reflection (DESIGN.md "Рефлексия"): the Slang sources of `std.reflect`,
+//! Reflection (DESIGN.md "Рефлексия"): the Zell sources of `std.reflect`,
 //! `std.encoding.json` and `std.strings.Builder`, their lazy loading, the
 //! `typeof` builtin, compile-time reflection in generic bodies and the
 //! summary handed to code generation ([`hir::Reflect`]).
 //!
 //! # Library sources
 //!
-//! The modules ([`MODULES`]) are written in Slang (`reflect_src/*.sl`),
+//! The modules ([`MODULES`]) are written in Zell (`reflect_src/*.zl`),
 //! parsed once per process and **loaded on first use**: the first lookup
 //! of one of their names (`reflect.TypeOf`, `json.Parse`,
 //! `strings.Builder`), `typeof`, or a builtin attribute used as a type
@@ -47,12 +47,12 @@ use super::*;
 use crate::hir::{ExprKind, Intrinsic, Stmt, StmtKind};
 use std::sync::OnceLock;
 
-/// Library modules written in Slang: (namespace, file name, source, names
+/// Library modules written in Zell: (namespace, file name, source, names
 /// that trigger loading; empty = any member of the namespace).
 const MODULES: &[(&str, &str, &str, &[&str])] = &[
-    ("std.reflect", "reflect.sl", include_str!("reflect_src/reflect.sl"), &[]),
-    ("std.encoding.json", "json.sl", include_str!("reflect_src/json.sl"), &[]),
-    ("std.strings", "builder.sl", include_str!("reflect_src/builder.sl"), &["Builder"]),
+    ("std.reflect", "reflect.zl", include_str!("reflect_src/reflect.zl"), &[]),
+    ("std.encoding.json", "json.zl", include_str!("reflect_src/json.zl"), &[]),
+    ("std.strings", "builder.zl", include_str!("reflect_src/builder.zl"), &["Builder"]),
 ];
 
 const REFLECT: usize = 0;
@@ -62,7 +62,7 @@ const JSON: usize = 1;
 pub(crate) const ATTR_STRUCTS: &[&str] = &["json", "deprecated", "inline", "test", "log", "csv", "xml", "yaml", "toml", "serde"];
 
 /// Builtin attributes whose value struct has another name in
-/// `reflect.sl`: `@log`'s is `logAttr`, so that `import std` (namespace
+/// `reflect.zl`: `@log`'s is `logAttr`, so that `import std` (namespace
 /// `log`) and `import std.reflect` can be used together.
 const ATTR_STRUCT_NAMES: &[(&str, &str)] = &[("log", "logAttr"), ("csv", "csvAttr"), ("xml", "xmlAttr"), ("yaml", "yamlAttr"), ("toml", "tomlAttr")];
 

@@ -1,0 +1,51 @@
+// test: TLS 1.3 and 1.2 between a Zell client and server with a P-384 certificate and key (ecdsa_secp384r1_sha384 in 1.3, ECDSA-SHA256 over P-384 in 1.2); x509 parses the P-384 key and verifies the self-signed certificate
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib4.tls_p384
+
+import std
+import std.io
+
+const CertPEM = "-----BEGIN CERTIFICATE-----\nMIIB0TCCAVigAwIBAgIUBmd9159FqN+PS96/cJnLhy9UkBkwCgYIKoZIzj0EAwIw\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTAyMDIyMzIyOFoYDzIxMjYwOTI2\nMjIzMjI4WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwdjAQBgcqhkjOPQIBBgUrgQQA\nIgNiAAT8P5ahXc6Q2MZyInunFgNxkrOccSUsHE5J1FqrtdGQ1+gcK13phReGl+zb\nI2nLLGBQGIg0FI5YIqDMg/Sqxpqq4QpmsQiDM6QoSKJcGBQx5FELNg+W+WGKm0XP\nXbwy/rmjaTBnMB0GA1UdDgQWBBT1YksILY4X9uknBlHYd1pSnm08ljAfBgNVHSME\nGDAWgBT1YksILY4X9uknBlHYd1pSnm08ljAPBgNVHRMBAf8EBTADAQH/MBQGA1Ud\nEQQNMAuCCWxvY2FsaG9zdDAKBggqhkjOPQQDAgNnADBkAjAPGKX2vhPeunfFdaFz\nD9vBde/yANbjOwxJWWyXuecpmAFFvUFBnMckl1yK37pda+sCMD51VoWJAFtHkbVS\nO+qXgNJ63R8/J7iutUMT6WrF1YeIWiP5vZQi15P7lzRB6wmH/g==\n-----END CERTIFICATE-----\n"
+const KeyPEM = "-----BEGIN PRIVATE KEY-----\nMIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDBI+c9z+owoRW69EyOo\nS9v+E2S2icHK7EgZJwL/z0JfGGn0Eq6v+/QGKdC31tlvWPmhZANiAAT8P5ahXc6Q\n2MZyInunFgNxkrOccSUsHE5J1FqrtdGQ1+gcK13phReGl+zbI2nLLGBQGIg0FI5Y\nIqDMg/Sqxpqq4QpmsQiDM6QoSKJcGBQx5FELNg+W+WGKm0XPXbwy/rk=\n-----END PRIVATE KEY-----\n"
+
+async func serveOne(l net.tls.Listener) void! {
+    var c = await l.Accept()?
+    var b = await c.Read(100)?
+    _ = await c.WriteString("echo " + strings.FromBytes(b))?
+    c.Close()
+}
+
+async func main() void! {
+    var certs = crypto.x509.ParsePEM(CertPEM)?
+    println(certs[0].PublicKeyAlgorithm, certs[0].Curve, certs[0].SignatureAlgorithm)
+    certs[0].CheckSignatureFrom(certs[0])?
+    var key = crypto.x509.ParsePrivateKeyPEM(KeyPEM)?
+    println(key.Algorithm, len(key.Bytes), key.Matches(certs[0]))
+    var pair = net.tls.LoadKeyPair(CertPEM, KeyPEM)?
+    var l = net.tls.Listen("127.0.0.1:0", net.tls.ServerConfig{Certificates: [pair]})?
+    var pool = crypto.x509.NewCertPool()
+    pool.AddCert(certs[0])
+    for v in [net.tls.V13, net.tls.V12] {
+        var srv = serveOne(l)
+        var c = await net.tls.Dial(fmt.Format("localhost:{0}", l.Port()), net.tls.Config{
+            RootCAs: pool,
+            MinVersion: v,
+            MaxVersion: v,
+        })?
+        _ = await c.WriteString("ping")?
+        var got = ""
+        for len(got) < 9 {
+            var b = await c.Read(64)?
+            if len(b) == 0 {
+                break
+            }
+            got = got + strings.FromBytes(b)
+        }
+        var st = c.ConnectionState()
+        println(st.Version == v, st.CipherSuiteName, got, st.PeerCertificates[0].Curve)
+        c.Close()
+        await srv?
+    }
+    l.Close()
+}

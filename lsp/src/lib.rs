@@ -1,19 +1,19 @@
-//! Slang language server (LSP over stdio), built on the compiler library's
-//! [`slang::session::Session`] API (docs/TOOLING.md, stages 1-5):
+//! Zell language server (LSP over stdio), built on the compiler library's
+//! [`zell::session::Session`] API (docs/TOOLING.md, stages 1-5):
 //! diagnostics (pushed, or pulled with `textDocument/diagnostic` and
 //! `workspace/diagnostic`), outline, folding, selection ranges,
 //! definition, declaration, type definition, implementation, references,
 //! rename (also of import paths when files move), hover, highlights,
 //! semantic tokens (full, delta, range), completion (with lazy resolve),
 //! signature help, inlay hints, code actions, code lenses, formatting
-//! (`slang::fmt`) and workspace symbols; `.sl` files created, deleted or
+//! (`zell::fmt`) and workspace symbols; `.zl` files created, deleted or
 //! renamed on disk are picked up through `workspace/didChangeWatchedFiles`
 //! and `workspace/didRenameFiles`.
 //!
 //! Library sources are part of the project, read-only (docs/TOOLING.md):
-//! the standard library from `std/` ([`slang::sema::stdfs::std_dir`],
-//! indexed by [`slang::stdindex::StdIndex`]) and the module dependencies
-//! that `slang.lock` lists, from `.slang/deps/` (or `vendor/`). Definition,
+//! the standard library from `std/` ([`zell::sema::stdfs::std_dir`],
+//! indexed by [`zell::stdindex::StdIndex`]) and the module dependencies
+//! that `zell.lock` lists, from `.zell/deps/` (or `vendor/`). Definition,
 //! hover, references and workspace symbols reach into them; rename refuses.
 //!
 //! # Scheduling
@@ -45,8 +45,8 @@ use lsp_server::{Connection, Message, Notification, Request, RequestId, Response
 use lsp_types::notification::Notification as _;
 use lsp_types::request::Request as _;
 use lsp_types::*;
-use slang::session::{Analysis, Session};
-use slang::span::Span;
+use zell::session::{Analysis, Session};
+use zell::span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -62,16 +62,16 @@ pub const DEBOUNCE: Duration = Duration::from_millis(100);
 const MAX_FILES: usize = 5000;
 
 /// Manifest file names that mark a project root (docs/PACKAGES.md).
-const MANIFESTS: &[&str] = &["slang.toml", "slang.json", "slang.yaml", "slang.yml"];
+const MANIFESTS: &[&str] = &["zell.toml", "zell.json", "zell.yaml", "zell.yml"];
 
-/// `slang/analyzerStatus`: counters of the analysis scheduler (for
+/// `zell/analyzerStatus`: counters of the analysis scheduler (for
 /// diagnosing the server and for tests).
-pub const ANALYZER_STATUS: &str = "slang/analyzerStatus";
+pub const ANALYZER_STATUS: &str = "zell/analyzerStatus";
 
-/// `slang/documentText`: the server's copy of an open document's text,
+/// `zell/documentText`: the server's copy of an open document's text,
 /// `{"uri": ...}` -> string or null (for diagnosing sync problems, and
 /// for tests).
-pub const DOCUMENT_TEXT: &str = "slang/documentText";
+pub const DOCUMENT_TEXT: &str = "zell/documentText";
 
 /// Runs the server on stdin/stdout until the client disconnects.
 pub fn run_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -133,7 +133,7 @@ pub fn run(connection: Connection) -> Result<(), Box<dyn std::error::Error + Sen
     if !advertise_pull {
         server_caps.diagnostic_provider = None;
     }
-    let result = InitializeResult { capabilities: server_caps, server_info: Some(ServerInfo { name: "slang-lsp".into(), version: Some(env!("CARGO_PKG_VERSION").into()) }) };
+    let result = InitializeResult { capabilities: server_caps, server_info: Some(ServerInfo { name: "zell-lsp".into(), version: Some(env!("CARGO_PKG_VERSION").into()) }) };
     connection.initialize_finish(id, serde_json::to_value(result)?)?;
     let (events_tx, events_rx) = crossbeam_channel::unbounded();
     let mut server = Server::new(connection.sender.clone(), events_tx, caps, mode);
@@ -196,7 +196,7 @@ fn event_loop(connection: &Connection, server: &mut Server, events: &Receiver<Ev
 pub fn capabilities() -> ServerCapabilities {
     let sl_files = FileOperationRegistrationOptions {
         filters: vec![
-            FileOperationFilter { scheme: Some("file".into()), pattern: FileOperationPattern { glob: "**/*.sl".into(), matches: Some(FileOperationPatternKind::File), options: None } },
+            FileOperationFilter { scheme: Some("file".into()), pattern: FileOperationPattern { glob: "**/*.zl".into(), matches: Some(FileOperationPatternKind::File), options: None } },
             FileOperationFilter { scheme: Some("file".into()), pattern: FileOperationPattern { glob: "**".into(), matches: Some(FileOperationPatternKind::Folder), options: None } },
         ],
     };
@@ -242,7 +242,7 @@ pub fn capabilities() -> ServerCapabilities {
             ..Default::default()
         })),
         diagnostic_provider: Some(DiagnosticServerCapabilities::Options(DiagnosticOptions {
-            identifier: Some("slang".into()),
+            identifier: Some("zell".into()),
             inter_file_dependencies: true,
             workspace_diagnostics: true,
             work_done_progress_options: Default::default(),
@@ -272,7 +272,7 @@ struct Inflight {
     cancel: Arc<AtomicBool>,
 }
 
-/// Scheduler counters (`slang/analyzerStatus`).
+/// Scheduler counters (`zell/analyzerStatus`).
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Stats {
@@ -327,7 +327,7 @@ struct Server {
     /// Progress token of the initial indexing, ended by the first analysis.
     indexing: Option<NumberOrString>,
     next_server_request: i32,
-    /// `slang.inlayHints.*` settings.
+    /// `zell.inlayHints.*` settings.
     hints: assist::HintSettings,
     /// Artificial delay of each analysis (`initializationOptions.debug.analysisDelayMs`).
     analysis_delay: Duration,
@@ -343,14 +343,14 @@ fn path_of(uri: &Url) -> String {
 }
 
 /// `data` of an item naming symbol `id` (completion items, inlay hints).
-pub(crate) fn symbol_data(a: &Analysis, id: slang::sema::index::SymbolId) -> serde_json::Value {
+pub(crate) fn symbol_data(a: &Analysis, id: zell::sema::index::SymbolId) -> serde_json::Value {
     let s = a.index.symbol(id);
     serde_json::json!({"sym": id.0, "name": s.name, "fullName": s.full_name})
 }
 
 /// The symbol named by [`symbol_data`] (plus `"v"`, the analysis version
 /// it was made in): by id in the same analysis, else by full name.
-pub(crate) fn symbol_from_data(a: &Analysis, version: u64, data: &serde_json::Value) -> Option<slang::sema::index::SymbolId> {
+pub(crate) fn symbol_from_data(a: &Analysis, version: u64, data: &serde_json::Value) -> Option<zell::sema::index::SymbolId> {
     let name = data.get("name")?.as_str()?;
     let full = data.get("fullName")?.as_str()?;
     let id = data.get("sym")?.as_u64()? as usize;
@@ -399,9 +399,9 @@ impl Server {
     /// client supports it; the progress ends with the first analysis.
     #[allow(deprecated)]
     fn initial_index(&mut self, params: &InitializeParams) {
-        let token = self.progress_begin("Slang", "loading the standard library");
-        self.std_dir = slang::sema::stdfs::std_dir();
-        self.session.set_std_index(self.std_dir.as_deref().map(|d| Arc::new(slang::stdindex::StdIndex::load(d))));
+        let token = self.progress_begin("Zell", "loading the standard library");
+        self.std_dir = zell::sema::stdfs::std_dir();
+        self.session.set_std_index(self.std_dir.as_deref().map(|d| Arc::new(zell::stdindex::StdIndex::load(d))));
         if let Some(t) = &token {
             self.progress_report(t, "indexing workspace files", Some(30));
         }
@@ -427,7 +427,7 @@ impl Server {
         self.dirty = Instant::now().checked_sub(DEBOUNCE).or(self.dirty);
     }
 
-    /// Loads every `.sl` file of the project rooted at `root`: `src/**` when
+    /// Loads every `.zl` file of the project rooted at `root`: `src/**` when
     /// a manifest is present (and `src/` exists), else the whole tree.
     fn add_root(&mut self, root: PathBuf) {
         if self.roots.iter().any(|r| root.starts_with(r)) {
@@ -456,15 +456,15 @@ impl Server {
         self.touch();
     }
 
-    /// Loads the sources of the modules `slang.lock` lists, from
-    /// `vendor/` when vendored, else `.slang/deps/` (read-only).
+    /// Loads the sources of the modules `zell.lock` lists, from
+    /// `vendor/` when vendored, else `.zell/deps/` (read-only).
     fn add_dependencies(&mut self, root: &Path) {
-        let Some(lock) = std::fs::read_to_string(root.join("slang.lock")).ok().and_then(|t| slang::package::lock::LockFile::parse(&t).ok()) else { return };
+        let Some(lock) = std::fs::read_to_string(root.join("zell.lock")).ok().and_then(|t| zell::package::lock::LockFile::parse(&t).ok()) else { return };
         let vendored = root.join("vendor/modules.yaml").is_file();
         for p in &lock.packages {
             let Some(module) = &p.module else { continue };
-            let name = format!("{}@{}", slang::package::store::escape_path(module), p.version);
-            let dir = if vendored { root.join("vendor").join(&name) } else { root.join(".slang/deps").join(&name) };
+            let name = format!("{}@{}", zell::package::store::escape_path(module), p.version);
+            let dir = if vendored { root.join("vendor").join(&name) } else { root.join(".zell/deps").join(&name) };
             let mut files = Vec::new();
             collect_sl(&dir.join("src"), &mut files);
             files.sort();
@@ -493,7 +493,7 @@ impl Server {
         let mut dir = path.parent();
         while let Some(d) = dir {
             if MANIFESTS.iter().any(|m| d.join(m).is_file()) {
-                let token = self.progress_begin("Slang", &format!("indexing {}", d.display()));
+                let token = self.progress_begin("Zell", &format!("indexing {}", d.display()));
                 self.add_root(d.to_path_buf());
                 if let Some(t) = token {
                     self.progress_end(&t, "done");
@@ -570,11 +570,11 @@ impl Server {
     }
 
     /// The current text of a file (project files parsed: see [`Server::flush`]).
-    fn current_source(&mut self, uri: &Url) -> Option<slang::span::SourceFile> {
+    fn current_source(&mut self, uri: &Url) -> Option<zell::span::SourceFile> {
         self.flush();
         let key = path_of(uri);
         match self.session.text(&key) {
-            Some(t) => Some(slang::span::SourceFile::new(key.clone(), t.to_string())),
+            Some(t) => Some(zell::span::SourceFile::new(key.clone(), t.to_string())),
             // A library file: the std sources are in the analysis only.
             None => self.analysis.as_ref().and_then(|a| a.files.iter().find(|f| f.path == key).map(|f| (**f).clone())),
         }
@@ -614,7 +614,7 @@ impl Server {
                 }
             }
             Outcome::Panicked => {
-                self.log(MessageType::ERROR, "slang-lsp: internal error during analysis");
+                self.log(MessageType::ERROR, "zell-lsp: internal error during analysis");
                 self.analysis_version = version;
                 self.dirty = None;
             }
@@ -664,7 +664,7 @@ impl Server {
     fn publish(&mut self) {
         use std::hash::{Hash, Hasher};
         let Some(a) = &self.analysis else { return };
-        let mut by_file: Vec<Vec<&slang::diagnostics::Diagnostic>> = vec![Vec::new(); a.files.len()];
+        let mut by_file: Vec<Vec<&zell::diagnostics::Diagnostic>> = vec![Vec::new(); a.files.len()];
         for d in &a.diagnostics {
             if let Some(v) = by_file.get_mut(d.file) {
                 v.push(d);
@@ -684,7 +684,7 @@ impl Server {
                 f.text.hash(&mut h);
             }
             for d in &by_file[i] {
-                (d.span.start, d.span.end, &d.message, d.code, d.severity == slang::diagnostics::Severity::Error).hash(&mut h);
+                (d.span.start, d.span.end, &d.message, d.code, d.severity == zell::diagnostics::Severity::Error).hash(&mut h);
                 for (n, s) in &d.notes {
                     (n, s.map(|s| (s.start, s.end))).hash(&mut h);
                 }
@@ -716,7 +716,7 @@ impl Server {
         a.diagnostics_for(i).map(|d| self.to_lsp_diag(a, d)).collect()
     }
 
-    fn to_lsp_diag(&self, a: &Analysis, d: &slang::diagnostics::Diagnostic) -> Diagnostic {
+    fn to_lsp_diag(&self, a: &Analysis, d: &zell::diagnostics::Diagnostic) -> Diagnostic {
         let file = &a.files[d.file];
         let mut message = d.message.clone();
         let mut related = Vec::new();
@@ -729,10 +729,10 @@ impl Server {
         Diagnostic {
             range: range(file, d.span),
             severity: Some(match d.severity {
-                slang::diagnostics::Severity::Error => DiagnosticSeverity::ERROR,
-                slang::diagnostics::Severity::Warning => DiagnosticSeverity::WARNING,
+                zell::diagnostics::Severity::Error => DiagnosticSeverity::ERROR,
+                zell::diagnostics::Severity::Warning => DiagnosticSeverity::WARNING,
             }),
-            source: Some("slang".into()),
+            source: Some("zell".into()),
             code: d.code.map(|c| NumberOrString::String(c.into())),
             message,
             related_information: (!related.is_empty()).then_some(related),
@@ -754,7 +754,7 @@ impl Server {
     /// Sends a request to the client (its response is ignored).
     fn server_request<R: request::Request>(&mut self, params: R::Params) {
         self.next_server_request += 1;
-        let id = RequestId::from(format!("slang-lsp/{}", self.next_server_request));
+        let id = RequestId::from(format!("zell-lsp/{}", self.next_server_request));
         let _ = self.sender.send(Message::Request(Request::new(id, R::METHOD.to_string(), params)));
     }
 
@@ -777,7 +777,7 @@ impl Server {
             return None;
         }
         self.next_server_request += 1;
-        let token = NumberOrString::String(format!("slang-lsp/progress/{}", self.next_server_request));
+        let token = NumberOrString::String(format!("zell-lsp/progress/{}", self.next_server_request));
         self.server_request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams { token: token.clone() });
         let begin = WorkDoneProgressBegin { title: title.into(), cancellable: Some(false), message: Some(message.into()), percentage: Some(0) };
         self.notify::<notification::Progress>(ProgressParams { token: token.clone(), value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(begin)) });
@@ -849,7 +849,7 @@ impl Server {
                 let Ok(p) = serde_json::from_value::<DidChangeWatchedFilesParams>(n.params) else { return };
                 for ev in p.changes {
                     let Ok(path) = ev.uri.to_file_path() else { continue };
-                    if path.extension().is_none_or(|x| x != "sl") {
+                    if path.extension().is_none_or(|x| x != "zl") {
                         continue;
                     }
                     let key = path.display().to_string();
@@ -874,8 +874,8 @@ impl Server {
             }
             notification::DidChangeConfiguration::METHOD => {
                 let Ok(p) = serde_json::from_value::<DidChangeConfigurationParams>(n.params) else { return };
-                if let Some(slang) = p.settings.get("slang") {
-                    self.hints.update(slang);
+                if let Some(zell) = p.settings.get("zell") {
+                    self.hints.update(zell);
                 }
             }
             notification::DidCloseTextDocument::METHOD => {
@@ -900,7 +900,7 @@ impl Server {
     }
 
     /// The session files a rename moves: `(old key, new path)` for each
-    /// renamed `.sl` file, and for each file under a renamed directory.
+    /// renamed `.zl` file, and for each file under a renamed directory.
     fn renamed_files(&self, p: &RenameFilesParams) -> Vec<(String, PathBuf)> {
         let mut out = Vec::new();
         for r in &p.files {
@@ -945,13 +945,13 @@ impl Server {
 }
 
 /// LSP range of a byte span.
-pub(crate) fn range(f: &slang::span::SourceFile, s: Span) -> Range {
+pub(crate) fn range(f: &zell::span::SourceFile, s: Span) -> Range {
     let (l1, c1) = f.utf16_position(s.start);
     let (l2, c2) = f.utf16_position(s.end.max(s.start));
     Range { start: Position { line: l1, character: c1 }, end: Position { line: l2, character: c2 } }
 }
 
-/// Recursively collects `.sl` files, skipping hidden and build directories.
+/// Recursively collects `.zl` files, skipping hidden and build directories.
 fn collect_sl(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
@@ -964,7 +964,7 @@ fn collect_sl(dir: &Path, out: &mut Vec<PathBuf>) {
             if !name.starts_with('.') && !matches!(name.as_str(), "target" | "node_modules" | "out") {
                 collect_sl(&p, out);
             }
-        } else if p.extension().is_some_and(|x| x == "sl") {
+        } else if p.extension().is_some_and(|x| x == "zl") {
             out.push(p);
         }
     }

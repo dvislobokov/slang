@@ -5,20 +5,20 @@
 //! compiler build:
 //!
 //! ```text
-//! std/<namespace path>/<file>.sl      every sema/stdlib_src/*.sl and sema/reflect_src/*.sl
-//!                                     (`std.net.http` -> std/net/http/http_client.sl),
-//!                                     and std/collections/collections.sl (sema/collections.rs)
-//! std/<namespace path>/<last>_extern.sl
+//! std/<namespace path>/<file>.zl      every sema/stdlib_src/*.zl and sema/reflect_src/*.zl
+//!                                     (`std.net.http` -> std/net/http/http_client.zl),
+//!                                     and std/collections/collections.zl (sema/collections.rs)
+//! std/<namespace path>/<last>_extern.zl
 //!                                     `extern func` declarations with doc comments for
 //!                                     the C runtime functions of stdlib.rs `FUNCS`
-//!                                     (`std.strings` -> std/strings/strings_extern.sl)
+//!                                     (`std.strings` -> std/strings/strings_extern.zl)
 //! ```
 //!
-//! The compiler loads the Slang-source modules from the first of
-//! `$SLANG_STD`, `<exe dir>/../std` (an installed toolchain) and the
+//! The compiler loads the Zell-source modules from the first of
+//! `$ZELL_STD`, `<exe dir>/../std` (an installed toolchain) and the
 //! repository's `std/` that exists, file by file, and falls back to the
 //! copies embedded in the binary when a file is absent (or when
-//! `$SLANG_STD` names a directory without it). The extern files are only
+//! `$ZELL_STD` names a directory without it). The extern files are only
 //! read by tools (LSP navigation, hover); the compiler's knowledge of the
 //! C functions is the `FUNCS` table itself.
 
@@ -32,10 +32,10 @@ const REPO_STD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../std");
 /// The directory the standard library is loaded from, if any.
 pub fn std_dir() -> Option<PathBuf> {
     static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
-    DIR.get_or_init(|| find_std_dir(std::env::var_os("SLANG_STD").map(PathBuf::from), std::env::current_exe().ok())).clone()
+    DIR.get_or_init(|| find_std_dir(std::env::var_os("ZELL_STD").map(PathBuf::from), std::env::current_exe().ok())).clone()
 }
 
-/// [`std_dir`] for explicit inputs: `env` is `$SLANG_STD` (used even when
+/// [`std_dir`] for explicit inputs: `env` is `$ZELL_STD` (used even when
 /// it does not exist: an explicit setting is never second-guessed),
 /// `exe` the running executable.
 pub fn find_std_dir(env: Option<PathBuf>, exe: Option<PathBuf>) -> Option<PathBuf> {
@@ -51,7 +51,7 @@ pub fn find_std_dir(env: Option<PathBuf>, exe: Option<PathBuf>) -> Option<PathBu
     repo.is_dir().then(|| repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf()))
 }
 
-/// `std.net.http` + `http.sl` -> `net/http/http.sl`.
+/// `std.net.http` + `http.zl` -> `net/http/http.zl`.
 pub fn rel_path(ns: &str, file: &str) -> PathBuf {
     let mut p = PathBuf::new();
     for seg in ns.split('.').skip(1) {
@@ -117,42 +117,42 @@ mod tests {
 
     #[test]
     fn modules_load_from_disk_or_fall_back_to_embedded() {
-        let dir = std::env::temp_dir().join(format!("slang-stdfs-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zell-stdfs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("net/http")).unwrap();
-        std::fs::write(dir.join("net/http/http.sl"), "namespace std.net.http\n// from disk\n").unwrap();
-        let (t, o) = load_from(Some(&dir), "std.net.http", "http.sl", "embedded");
+        std::fs::write(dir.join("net/http/http.zl"), "namespace std.net.http\n// from disk\n").unwrap();
+        let (t, o) = load_from(Some(&dir), "std.net.http", "http.zl", "embedded");
         assert!(t.contains("from disk"));
-        assert_eq!(o, Origin::Disk(dir.join("net/http/http.sl")));
-        let (t, o) = load_from(Some(&dir), "std.net.http", "missing.sl", "embedded");
+        assert_eq!(o, Origin::Disk(dir.join("net/http/http.zl")));
+        let (t, o) = load_from(Some(&dir), "std.net.http", "missing.zl", "embedded");
         assert_eq!((t.as_ref(), o), ("embedded", Origin::Embedded));
-        let (_, o) = load_from(None, "std.net.http", "http.sl", "embedded");
+        let (_, o) = load_from(None, "std.net.http", "http.zl", "embedded");
         assert_eq!(o, Origin::Embedded);
-        // An explicit SLANG_STD wins, even when it does not exist.
+        // An explicit ZELL_STD wins, even when it does not exist.
         assert_eq!(find_std_dir(Some(dir.clone()), None), Some(dir.clone()));
         assert_eq!(find_std_dir(Some(dir.join("nope")), None), None);
         // <exe>/../std of an installed toolchain.
         std::fs::create_dir_all(dir.join("tc/bin")).unwrap();
         std::fs::create_dir_all(dir.join("tc/std/strings")).unwrap();
-        assert_eq!(find_std_dir(None, Some(dir.join("tc/bin/slang"))), Some(dir.join("tc/std")));
+        assert_eq!(find_std_dir(None, Some(dir.join("tc/bin/zell"))), Some(dir.join("tc/std")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn repository_std_tree_is_generated() {
         let repo = Path::new(REPO_STD);
-        assert!(repo.join("strings/strings_extern.sl").is_file(), "compiler/build.rs writes std/");
-        assert!(repo.join("net/http/http_client.sl").is_file());
-        let ext = std::fs::read_to_string(repo.join("strings/strings_extern.sl")).unwrap();
+        assert!(repo.join("strings/strings_extern.zl").is_file(), "compiler/build.rs writes std/");
+        assert!(repo.join("net/http/http_client.zl").is_file());
+        let ext = std::fs::read_to_string(repo.join("strings/strings_extern.zl")).unwrap();
         assert!(ext.contains("extern func Split("), "{ext}");
-        assert_eq!(rel_path("std.net.http", "http.sl"), PathBuf::from("net/http/http.sl"));
+        assert_eq!(rel_path("std.net.http", "http.zl"), PathBuf::from("net/http/http.zl"));
         // Every file of the tree parses (the extern files included).
         fn walk(d: &Path, out: &mut Vec<PathBuf>) {
             for e in std::fs::read_dir(d).unwrap().flatten() {
                 let p = e.path();
                 if p.is_dir() {
                     walk(&p, out);
-                } else if p.extension().is_some_and(|x| x == "sl") {
+                } else if p.extension().is_some_and(|x| x == "zl") {
                     out.push(p);
                 }
             }

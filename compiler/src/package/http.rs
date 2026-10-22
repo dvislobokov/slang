@@ -36,7 +36,7 @@ fn get_plain(url: &str, rest: &str, redirects: u32) -> Result<Option<Vec<u8>>, S
     let err = |e: std::io::Error| format!("GET {url}: {e}");
     let mut s = TcpStream::connect(&addr).map_err(err)?;
     s.set_read_timeout(Some(Duration::from_secs(120))).map_err(err)?;
-    write!(s, "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUser-Agent: slang/{}\r\nAccept: */*\r\nConnection: close\r\n\r\n", env!("CARGO_PKG_VERSION")).map_err(err)?;
+    write!(s, "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUser-Agent: zell/{}\r\nAccept: */*\r\nConnection: close\r\n\r\n", env!("CARGO_PKG_VERSION")).map_err(err)?;
     let mut raw = Vec::new();
     s.read_to_end(&mut raw).map_err(err)?;
     let head_end = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| format!("GET {url}: malformed response"))?;
@@ -83,7 +83,7 @@ fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn get_curl(url: &str) -> Result<Option<Vec<u8>>, String> {
-    let tmp = std::env::temp_dir().join(format!("slang-curl-{}-{}", std::process::id(), unique()));
+    let tmp = std::env::temp_dir().join(format!("zell-curl-{}-{}", std::process::id(), unique()));
     let out = std::process::Command::new("curl")
         .args(["-sS", "-L", "--max-time", "300", "-o"])
         .arg(&tmp)

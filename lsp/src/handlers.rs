@@ -7,8 +7,8 @@ use crate::{assist, features, files, lens, nav, path_of, range, Server};
 use lsp_server::{Request, RequestId};
 use lsp_types::request::Request as _;
 use lsp_types::*;
-use slang::session::Analysis;
-use slang::span::Span;
+use zell::session::Analysis;
+use zell::span::Span;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -91,7 +91,7 @@ impl Server {
                 Err((code, msg)) => self.reply_err(req.id, code, msg),
             },
             Err(e) => {
-                eprintln!("slang-lsp: bad params for {}: {e}", req.method);
+                eprintln!("zell-lsp: bad params for {}: {e}", req.method);
                 self.reply_err(req.id, lsp_server::ErrorCode::InvalidParams as i32, e.to_string());
             }
         }
@@ -183,8 +183,8 @@ impl Server {
         let ast = match self.session.ast(&f.path) {
             Some(ast) => ast,
             None => {
-                let mut d = slang::diagnostics::Diagnostics::new();
-                parsed = slang::parser::parse_file(slang::lexer::lex(&f.text, &mut d), &mut d);
+                let mut d = zell::diagnostics::Diagnostics::new();
+                parsed = zell::parser::parse_file(zell::lexer::lex(&f.text, &mut d), &mut d);
                 &parsed
             }
         };
@@ -207,14 +207,14 @@ impl Server {
     // -- rename ------------------------------------------------------------------
 
     /// The renamable symbol at a position, or a reason why there is none.
-    fn rename_target(a: &Analysis, file: usize, off: u32) -> Result<(slang::sema::index::SymbolId, Span), String> {
+    fn rename_target(a: &Analysis, file: usize, off: u32) -> Result<(zell::sema::index::SymbolId, Span), String> {
         let sym_id = a.symbol_at(file, off).ok_or("no symbol at this position")?;
         let sym = a.index.symbol(sym_id);
         if sym.is_std || sym.loc.is_none() {
             return Err(format!("{} is part of the standard library or a builtin and cannot be renamed", sym.name));
         }
         if sym.loc.is_some_and(|l| a.is_read_only(l.file)) || a.is_read_only(file) {
-            return Err(format!("{} is declared in a read-only dependency (.slang/deps) and cannot be renamed", sym.name));
+            return Err(format!("{} is declared in a read-only dependency (.zell/deps) and cannot be renamed", sym.name));
         }
         let span = a.name_span_at(file, off).ok_or("no name at this position")?;
         Ok((sym_id, span))
@@ -231,7 +231,7 @@ impl Server {
         let tdp = p.text_document_position;
         let Some((a, file, off)) = self.locate(&tdp.text_document, Some(tdp.position)) else { return Ok(None) };
         if !features::is_identifier(&p.new_name) {
-            return Err((REQUEST_FAILED, format!("`{}` is not a valid Slang identifier", p.new_name)));
+            return Err((REQUEST_FAILED, format!("`{}` is not a valid Zell identifier", p.new_name)));
         }
         let (sym_id, _) = Self::rename_target(&a, file, off).map_err(|m| (REQUEST_FAILED, m))?;
         let sym = a.index.symbol(sym_id);

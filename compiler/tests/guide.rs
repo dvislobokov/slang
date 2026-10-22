@@ -1,15 +1,15 @@
-//! Every ```` ```slang ```` block of `docs/guide/*.md` and `README.md` is
+//! Every ```` ```zell ```` block of `docs/guide/*.md` and `README.md` is
 //! a complete program that must compile; a block ending with an
 //! `// Output:` comment is also run and its standard output compared
-//! (white space around the output trimmed, as for `slang test` examples);
+//! (white space around the output trimmed, as for `zell test` examples);
 //! a block with a `// check-only` line is only type-checked (servers,
 //! programs reading files or the network, `@test` files); a block whose
 //! first line is `// error: <text>` must fail to compile with a diagnostic
 //! containing `<text>` (what the compiler rejects); a block with a
-//! `// slang test` line is a test file that `slang test` must pass. A block with none of
+//! `// zell test` line is a test file that `zell test` must pass. A block with none of
 //! these markers fails the test, so no example goes stale silently.
 //!
-//! Needs `clang` and `runtime/libslang_rt.a` (built with `make -C runtime`).
+//! Needs `clang` and `runtime/libzell_rt.a` (built with `make -C runtime`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,13 +19,13 @@ fn repo() -> PathBuf {
 }
 
 fn ensure_runtime() {
-    if !repo().join("runtime/libslang_rt.a").is_file() {
+    if !repo().join("runtime/libzell_rt.a").is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
     }
 }
 
-/// One ```slang block: (file, line of the fence, source).
+/// One ```zell block: (file, line of the fence, source).
 struct Block {
     file: String,
     line: usize,
@@ -43,7 +43,7 @@ fn blocks() -> Vec<Block> {
         let mut cur: Option<(usize, Vec<&str>)> = None;
         for (i, l) in text.lines().enumerate() {
             match &mut cur {
-                None if l.trim_start().starts_with("```slang") => cur = Some((i + 1, Vec::new())),
+                None if l.trim_start().starts_with("```zell") => cur = Some((i + 1, Vec::new())),
                 Some((start, body)) if l.trim_start().starts_with("```") => {
                     out.push(Block { file: name.clone(), line: *start, src: body.join("\n") + "\n" });
                     cur = None;
@@ -82,34 +82,34 @@ fn check(b: &Block, dir: &Path) -> Result<(), String> {
     let want = expected_output(&b.src);
     let check_only = b.src.lines().any(|l| l.trim() == "// check-only");
     let want_error = b.src.lines().next().and_then(|l| l.strip_prefix("// error: ")).map(str::trim);
-    let run_tests = b.src.lines().any(|l| l.trim() == "// slang test");
+    let run_tests = b.src.lines().any(|l| l.trim() == "// zell test");
     if want.is_none() && !check_only && want_error.is_none() && !run_tests {
         return Err("needs a trailing `// Output:` comment, a `// check-only` line or a leading `// error:` line".into());
     }
-    // test files are named like test files, so `slang test` finds their examples
-    let src = dir.join(format!("block{}{}.sl", b.line, if run_tests { "_test" } else { "" }));
+    // test files are named like test files, so `zell test` finds their examples
+    let src = dir.join(format!("block{}{}.zl", b.line, if run_tests { "_test" } else { "" }));
     std::fs::write(&src, &b.src).unwrap();
-    let slang = env!("CARGO_BIN_EXE_slang");
+    let zell = env!("CARGO_BIN_EXE_zell");
     if let Some(msg) = want_error {
-        let o = Command::new(slang).arg("check").arg(&src).output().unwrap();
+        let o = Command::new(zell).arg("check").arg(&src).output().unwrap();
         let err = String::from_utf8_lossy(&o.stderr);
         return if !o.status.success() && err.contains(msg) { Ok(()) } else { Err(format!("expected a compile error containing {msg:?}, got status {:?}:\n{err}", o.status.code())) };
     }
     if run_tests {
-        let o = Command::new(slang).arg("test").arg(&src).env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+        let o = Command::new(zell).arg("test").arg(&src).env("ZELL_NO_BACKTRACE", "1").output().unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
-        return if o.status.success() && out.contains("ok") { Ok(()) } else { Err(format!("slang test failed:\n{out}{}", String::from_utf8_lossy(&o.stderr))) };
+        return if o.status.success() && out.contains("ok") { Ok(()) } else { Err(format!("zell test failed:\n{out}{}", String::from_utf8_lossy(&o.stderr))) };
     }
     if check_only {
-        let o = Command::new(slang).arg("check").arg(&src).output().unwrap();
-        return if o.status.success() { Ok(()) } else { Err(format!("slang check failed:\n{}", String::from_utf8_lossy(&o.stderr))) };
+        let o = Command::new(zell).arg("check").arg(&src).output().unwrap();
+        return if o.status.success() { Ok(()) } else { Err(format!("zell check failed:\n{}", String::from_utf8_lossy(&o.stderr))) };
     }
     let exe = dir.join(format!("block{}", b.line));
-    let o = Command::new(slang).arg("build").arg(&src).arg("-o").arg(&exe).output().unwrap();
+    let o = Command::new(zell).arg("build").arg(&src).arg("-o").arg(&exe).output().unwrap();
     if !o.status.success() {
-        return Err(format!("slang build failed:\n{}", String::from_utf8_lossy(&o.stderr)));
+        return Err(format!("zell build failed:\n{}", String::from_utf8_lossy(&o.stderr)));
     }
-    let r = Command::new(&exe).current_dir(dir).env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+    let r = Command::new(&exe).current_dir(dir).env("ZELL_NO_BACKTRACE", "1").output().unwrap();
     let got = String::from_utf8_lossy(&r.stdout).to_string();
     let want = want.unwrap();
     if normalize(&got) != normalize(&want) {
@@ -122,10 +122,10 @@ fn check(b: &Block, dir: &Path) -> Result<(), String> {
 fn guide_code_blocks_compile_and_run() {
     ensure_runtime();
     let all = blocks();
-    assert!(all.len() >= 40, "only {} slang blocks found", all.len());
+    assert!(all.len() >= 40, "only {} zell blocks found", all.len());
     let filter = std::env::var("GUIDE_FILTER").unwrap_or_default();
     let all: Vec<Block> = all.into_iter().filter(|b| format!("{}:{}", b.file, b.line).contains(&filter)).collect();
-    let dir = std::env::temp_dir().join(format!("slang-guide-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell-guide-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let failures = std::sync::Mutex::new(Vec::new());
     let next = std::sync::atomic::AtomicUsize::new(0);

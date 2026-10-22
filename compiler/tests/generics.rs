@@ -3,14 +3,14 @@
 //! `std.collections` types. End-to-end behaviour is covered by
 //! `tests/spec/generics`.
 
-use slang::diagnostics::{Diagnostics, Severity};
-use slang::driver;
-use slang::hir::*;
-use slang::span::SourceFile;
-use slang::types::Type;
+use zell::diagnostics::{Diagnostics, Severity};
+use zell::driver;
+use zell::hir::*;
+use zell::span::SourceFile;
+use zell::types::Type;
 
 fn analyze(src: &str) -> (Option<Program>, Vec<String>, Vec<String>) {
-    let files = vec![SourceFile::new("g.sl".to_string(), src.to_string())];
+    let files = vec![SourceFile::new("g.zl".to_string(), src.to_string())];
     let mut diags = Diagnostics::new();
     let p = driver::check(&files, &mut diags);
     let errors: Vec<_> = diags.items.iter().filter(|d| d.severity == Severity::Error).collect();
@@ -58,7 +58,7 @@ fn inference_from_arguments() {
     for name in ["Max<int>", "Max<float>", "Max<string>", "Max<int8>"] {
         let f = funcs_named(&p, name);
         assert_eq!(f.len(), 1, "{name}");
-        assert_eq!(f[0].symbol, format!("slang_t__{}", name.replace('<', "__").replace('>', "")));
+        assert_eq!(f[0].symbol, format!("zell_t__{}", name.replace('<', "__").replace('>', "")));
     }
     no_params_left(&p);
 }
@@ -123,7 +123,7 @@ fn each_instantiation_is_compiled_once() {
     assert!(!p.structs.iter().any(|s| s.name.contains("<T>")));
     no_params_left(&p);
     let dump = p.dump();
-    assert!(dump.contains("t.Max<int> [slang_t__Max__int]"), "{dump}");
+    assert!(dump.contains("t.Max<int> [zell_t__Max__int]"), "{dump}");
     assert!(dump.contains("struct #") && dump.contains("t.Stack<int>"), "{dump}");
 }
 
@@ -146,7 +146,7 @@ fn generic_enums_and_switch() {
     let e: Vec<&Enum> = p.enums.iter().filter(|e| e.name.starts_with("Option<")).collect();
     assert_eq!(e.len(), 2);
     let int_opt = e.iter().find(|e| e.name == "Option<int>").unwrap();
-    assert_eq!(p.types.get(int_opt.variants[0].fields[0].1), &Type::Int(slang::types::IntKind::I64));
+    assert_eq!(p.types.get(int_opt.variants[0].fields[0].1), &Type::Int(zell::types::IntKind::I64));
     let get = funcs_named(&p, "Get")[0];
     let StmtKind::Switch(sw) = &get.body.stmts[0].kind else { panic!("switch") };
     assert!(matches!(sw.cases[0].patterns[0], Pattern::Variant { variant: 0, .. }));

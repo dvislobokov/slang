@@ -1,15 +1,15 @@
 7 2.5 pear 0.5
 200 -3
-[2 5 1] 8
+[2 4 1] 7
 [true true false]
 7 9
 age 42 42 age
 9 8
 at 2 absent
 > 5 > true > text
-3 rust true 1 [rust slang c]
+3 rust true 1 [rust zell c]
 0 rust
-1 slang
+1 zell
 2 c
 bob 32
 cid 40

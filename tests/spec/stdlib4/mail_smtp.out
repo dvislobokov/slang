@@ -16,7 +16,7 @@ To: <bob@example.com>, "Smith, Carol" <carol@example.org>
 Subject: =?utf-8?q?=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82=2C_a_subject_that_is_long_?=
  =?utf-8?q?enough_to_need_several_encoded_words_in_the_header?=
 Message-ID: <fixed@example.com>
-X-Mailer: slang
+X-Mailer: zell
 MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="BOUND_2"
 
@@ -52,7 +52,7 @@ plain: MAIL FROM:<ann@example.com>
 plain: RCPT TO:<bob@example.com>
 plain: RCPT TO:<carol@example.org>
 plain: RCPT TO:<dave@example.net>
-plain: DATA 899 bytes
+plain: DATA 898 bytes
 plain: QUIT
 dot-stuffed line kept: true
 tls: EHLO localhost (tls=false)
@@ -63,7 +63,7 @@ tls: MAIL FROM:<ann@example.com>
 tls: RCPT TO:<bob@example.com>
 tls: RCPT TO:<carol@example.org>
 tls: RCPT TO:<dave@example.net>
-tls: DATA 899 bytes
+tls: DATA 898 bytes
 tls: QUIT
 send error: smtp: 550 5.1.1 no such user
 true 550 false

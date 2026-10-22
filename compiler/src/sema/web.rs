@@ -22,7 +22,7 @@
 //!   factory of `*T`: `T.New(deps...)` with resolved arguments, or the
 //!   zero `T` with its `@inject` fields resolved.
 //!
-//! The generated code is Slang source text of a stdlib template in
+//! The generated code is Zell source text of a stdlib template in
 //! namespace `std.web` whose type parameters are bound to the concrete
 //! types (so no type is ever spelled), parsed once per distinct text with
 //! every token placed at the call site, and instantiated like any other
@@ -101,7 +101,7 @@ impl Tys {
     }
 }
 
-/// A Slang string literal.
+/// A Zell string literal.
 fn lit(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -117,7 +117,7 @@ fn lit(s: &str) -> String {
     out
 }
 
-/// A Slang constant for an attribute value.
+/// A Zell constant for an attribute value.
 fn const_src(v: &ConstValue) -> String {
     match v {
         ConstValue::Int(i) => i.to_string(),
@@ -266,7 +266,7 @@ impl<'a> Sema<'a> {
         if let Some(&t) = self.web.tmpls.get(&src) {
             return t;
         }
-        if std::env::var_os("SLANG_WEB_DUMP").is_some() {
+        if std::env::var_os("ZELL_WEB_DUMP").is_some() {
             eprintln!("{src}");
         }
         let file = parsed_template(&src, span);

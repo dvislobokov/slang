@@ -8,7 +8,7 @@
 //!   `if`/`for`/`switch` a `{` after a name opens the block, not a literal
 //!   (`no_struct_lit`, reset inside parentheses, brackets, call arguments and
 //!   blocks). Elsewhere `Name{` / `path.Name{` is a struct literal (any case,
-//!   matching grammar/slang.bnf; attribute structs like `range` are lowercase).
+//!   matching grammar/zell.bnf; attribute structs like `range` are lowercase).
 //! - **`await` and `?`**: `await f()?` parses as `(await f())?`, so the error
 //!   of the awaited result is propagated (see DESIGN.md, «Асинхронность»).
 //! - **Fallible types**: `!` applies to the whole preceding type, so
@@ -1774,7 +1774,7 @@ fn assign_op(kind: &TokenKind) -> Option<AssignOp> {
 
 /// If `expr` is a dotted name (`Point`, `app.models.User`, `tag`), the path
 /// of a struct literal. Lowercase names are allowed too (attribute structs
-/// such as `range` are lowercase, and grammar/slang.bnf accepts them); a `{`
+/// such as `range` are lowercase, and grammar/zell.bnf accepts them); a `{`
 /// after a name can only start a literal outside `if`/`for`/`switch` headers.
 fn struct_lit_path(expr: &Expr) -> Option<Path> {
     fn collect(expr: &Expr, out: &mut Vec<Ident>) -> bool {

@@ -1,0 +1,199 @@
+// Multipart uploads and presigned URLs (see s3.zl for the file layout).
+namespace std.cloud.s3
+
+// Where Upload reads its data from: a std.io.Reader or an AsyncReader.
+interface partSource {
+    func next(n int) Task<[]byte!>
+}
+
+struct syncSource {
+    r std.io.Reader
+
+    func next(n int) Task<[]byte!> {
+        return readSync(this.r, n)
+    }
+}
+
+async func readSync(r std.io.Reader, n int) []byte! {
+    var out []byte = []
+    var buf = std.net.rtBytes(65536)
+    for len(out) < n {
+        var want = n - len(out)
+        var chunk = buf
+        if want < len(buf) {
+            chunk = buf[..want]
+        }
+        var k = r.Read(chunk)?
+        if k == 0 {
+            break
+        }
+        out = std.data.rtAppend(out, chunk[..k])
+    }
+    return out
+}
+
+struct asyncSource {
+    r std.io.AsyncReader
+
+    func next(n int) Task<[]byte!> {
+        return readAsync(this.r, n)
+    }
+}
+
+async func readAsync(r std.io.AsyncReader, n int) []byte! {
+    var out []byte = []
+    for len(out) < n {
+        var b = await r.Read(n - len(out))?
+        if len(b) == 0 {
+            break
+        }
+        out = std.data.rtAppend(out, b)
+    }
+    return out
+}
+
+async func createMultipart(c *Client, bucket string, key string, opts PutOptions) string! {
+    var res = await send(c, "POST", bucket, key, [Param{Key: "uploads"}], putHeaders(opts), "", false)?
+    await check(res, 200, bucket, key)?
+    var root = xmlRoot(res.Body)?
+    var id = childText(root, "UploadId")
+    if id == "" {
+        return error("s3: no UploadId in the CreateMultipartUpload response")
+    }
+    return id
+}
+
+async func uploadPart(c *Client, bucket string, key string, uploadID string, part int, data []byte) string! {
+    var q = [Param{Key: "partNumber", Value: std.strconv.Itoa(part)}, Param{Key: "uploadId", Value: uploadID}]
+    var body = std.strings.FromBytes(data)
+    var h = map[string]string{"Content-Md5": std.encoding.base64.Encode(std.crypto.hash.Md5(body))}
+    var res = await send(c, "PUT", bucket, key, q, h, body, false)?
+    await check(res, 200, bucket, key)?
+    var etag = res.Header("ETag")
+    if etag == "" {
+        return error("s3: UploadPart returned no ETag")
+    }
+    return etag
+}
+
+async func completeMultipart(c *Client, bucket string, key string, uploadID string, etags []string) PutResult! {
+    var b = std.strings.Builder{}
+    b.Write("<CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">")
+    for i, e in etags {
+        b.Write("<Part><PartNumber>" + std.strconv.Itoa(i + 1) + "</PartNumber><ETag>" + xmlEscape(e) + "</ETag></Part>")
+    }
+    b.Write("</CompleteMultipartUpload>")
+    var h = map[string]string{"Content-Type": "application/xml"}
+    var res = await send(c, "POST", bucket, key, [Param{Key: "uploadId", Value: uploadID}], h, b.String(), false)?
+    await check(res, 200, bucket, key)?
+    // like CopyObject, Complete can fail after the 200 status
+    var root = xmlRoot(res.Body)?
+    if root.Name.Local == "Error" {
+        return responseError(200, res.Body, resource(bucket, key), res.Header("X-Amz-Request-Id"))
+    }
+    return PutResult{ETag: childText(root, "ETag"), VersionID: res.Header("X-Amz-Version-Id")}
+}
+
+async func abortMultipart(c *Client, bucket string, key string, uploadID string) void! {
+    await simple(c, "DELETE", bucket, key, [Param{Key: "uploadId", Value: uploadID}], 204)?
+}
+
+// The result of Upload.
+struct uploadState {
+    etags []string
+    err error
+}
+
+async func partTask(c *Client, bucket string, key string, id string, n int, data []byte, st *uploadState) {
+    var etag = try await uploadPart(c, bucket, key, id, n, data) catch err {
+        if st.err == nil {
+            st.err = err
+        }
+        return
+    }
+    st.etags[n - 1] = etag
+}
+
+async func upload(c *Client, bucket string, key string, src partSource, partSize int, concurrency int, opts PutOptions) PutResult! {
+    var size = partSize
+    if size <= 0 {
+        size = 8 << 20
+    }
+    var conc = concurrency
+    if conc <= 0 {
+        conc = 4
+    }
+    var first = await src.next(size)?
+    if len(first) < size {
+        return await putObject(c, bucket, key, std.strings.FromBytes(first), opts)?
+    }
+    var id = await createMultipart(c, bucket, key, opts)?
+    var st = new uploadState{}
+    var res = try await uploadParts(c, bucket, key, id, src, size, conc, first, st) catch err {
+        try await abortMultipart(c, bucket, key, id) catch _ {
+        }
+        return err
+    }
+    return res
+}
+
+// The parts of a multipart upload (up to conc in flight), then Complete.
+async func uploadParts(c *Client, bucket string, key string, id string, src partSource, size int, conc int, first []byte, st *uploadState) PutResult! {
+    var inflight []Task<void> = []
+    var data = first
+    var n = 0
+    var readErr error
+    for len(data) > 0 && st.err == nil {
+        n += 1
+        if n > 10000 {
+            st.err = error("s3: more than 10000 parts (use a larger partSize)")
+            break
+        }
+        st.etags = append(st.etags, "")
+        inflight = append(inflight, partTask(c, bucket, key, id, n, data, st))
+        if len(inflight) >= conc {
+            await inflight[0]
+            inflight = inflight[1..]
+        }
+        if st.err != nil {
+            break
+        }
+        data = try await src.next(size) catch err {
+            readErr = err
+            break
+        }
+    }
+    for t in inflight {
+        await t
+    }
+    if readErr != nil {
+        return readErr
+    }
+    if st.err != nil {
+        return st.err
+    }
+    return await completeMultipart(c, bucket, key, id, st.etags)?
+}
+
+// ---- presigned URLs -----------------------------------------------------------------
+
+// A presigned URL (query authentication, UNSIGNED-PAYLOAD). extra are
+// further query parameters to sign (response-content-type...).
+func presign(c *Client, method string, bucket string, key string, expires int, extra []Param) string! {
+    if expires < 1 || expires > 604800 {
+        return error("s3: presigned URLs expire after 1 to 604800 seconds")
+    }
+    var (host, path) = target(c, bucket, key)
+    var amz = AmzDate(nowMs(c))
+    var scope = amz[..8] + "/" + c.cfg.Region + "/s3/aws4_request"
+    var q = [Param{Key: "X-Amz-Algorithm", Value: "AWS4-HMAC-SHA256"}, Param{Key: "X-Amz-Credential", Value: c.cfg.AccessKey + "/" + scope}, Param{Key: "X-Amz-Date", Value: amz}, Param{Key: "X-Amz-Expires", Value: std.strconv.Itoa(expires)}, Param{Key: "X-Amz-SignedHeaders", Value: "host"}]
+    if c.cfg.SessionToken != "" {
+        q = append(q, Param{Key: "X-Amz-Security-Token", Value: c.cfg.SessionToken})
+    }
+    for p in extra {
+        q = append(q, p)
+    }
+    var query = CanonicalQuery(q)
+    var signed = SignV4(std.strings.ToUpper(method), path, query, map[string]string{"host": host}, "UNSIGNED-PAYLOAD", c.cfg.AccessKey, c.cfg.SecretKey, c.cfg.Region, "s3", amz)
+    return c.scheme + "://" + host + path + "?" + query + "&X-Amz-Signature=" + signed.Signature
+}

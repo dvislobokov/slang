@@ -1,12 +1,12 @@
-//! `slang fmt [paths] [--check] [--diff] [--stdin]`.
+//! `zell fmt [paths] [--check] [--diff] [--stdin]`.
 
 use super::{format_source, unified_diff, FmtError};
 use crate::span::SourceFile;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-pub const USAGE: &str = "usage: slang fmt [paths...] [--check] [--diff] [--stdin]
-  paths    files or directories (recursively, .sl files); default: .
+pub const USAGE: &str = "usage: zell fmt [paths...] [--check] [--diff] [--stdin]
+  paths    files or directories (recursively, .zl files); default: .
   --check  do not write; list files that are not formatted, exit 1 if any
   --diff   do not write; print a unified diff of the changes
   --stdin  format standard input to standard output";
@@ -97,7 +97,7 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
     let verb = if check || diff { "would be reformatted" } else { "reformatted" };
-    eprintln!("slang fmt: {changed} of {} file(s) {verb}{}", files.len(), if failed > 0 { format!(", {failed} failed") } else { String::new() });
+    eprintln!("zell fmt: {changed} of {} file(s) {verb}{}", files.len(), if failed > 0 { format!(", {failed} failed") } else { String::new() });
     if failed > 0 || (check && changed > 0) {
         1
     } else {
@@ -112,7 +112,7 @@ fn report(file: &SourceFile, e: &FmtError) {
     }
 }
 
-/// `.sl` files under `dir`, skipping hidden and build directories.
+/// `.zl` files under `dir`, skipping hidden and build directories.
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
@@ -122,7 +122,7 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
             if !name.starts_with('.') && !matches!(name.as_str(), "target" | "node_modules" | "build" | "out") {
                 collect(&p, out);
             }
-        } else if p.extension().is_some_and(|x| x == "sl") {
+        } else if p.extension().is_some_and(|x| x == "zl") {
             out.push(p);
         }
     }

@@ -1,5 +1,5 @@
 bottom 15
 Dive 10 12 Dive 12 main 17
 15
-  created at   tests/spec/errors2/trace_many_frames.sl:10  Dive
-  returned via tests/spec/errors2/trace_many_frames.sl:17  main
+  created at   tests/spec/errors2/trace_many_frames.zl:10  Dive
+  returned via tests/spec/errors2/trace_many_frames.zl:17  main

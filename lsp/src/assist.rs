@@ -1,6 +1,6 @@
 //! Editing assistance on top of an [`Analysis`] (docs/TOOLING.md, LSP
 //! stages 3-5): signature help, inlay hints, quick fixes from structured
-//! diagnostics, formatting edits (via `slang::fmt`), workspace symbols and
+//! diagnostics, formatting edits (via `zell::fmt`), workspace symbols and
 //! document highlights.
 
 use crate::range;
@@ -9,11 +9,11 @@ use lsp_types::{
     MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, Position, Range, SignatureHelp, SignatureInformation, SymbolInformation, TextEdit, Url,
     WorkspaceEdit,
 };
-use slang::ast::{self, Expr, ExprKind, Stmt, StmtKind};
-use slang::sema::index::{short_type_name, SymbolId, SymbolKind};
-use slang::session::Analysis;
-use slang::span::{SourceFile, Span};
-use slang::types::Type;
+use zell::ast::{self, Expr, ExprKind, Stmt, StmtKind};
+use zell::sema::index::{short_type_name, SymbolId, SymbolKind};
+use zell::session::Analysis;
+use zell::span::{SourceFile, Span};
+use zell::types::Type;
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -367,7 +367,7 @@ pub(crate) fn signature_help(a: &Analysis, file: usize, off: u32) -> Option<Sign
 // Inlay hints
 // ---------------------------------------------------------------------------
 
-/// Which inlay hints to show (`slang.inlayHints.*` settings).
+/// Which inlay hints to show (`zell.inlayHints.*` settings).
 #[derive(Clone, Copy, Debug)]
 pub struct HintSettings {
     pub types: bool,
@@ -535,8 +535,8 @@ pub(crate) fn resolve_inlay_hint(a: &Analysis, version: u64, mut hint: InlayHint
 
 /// The index symbol of the struct, enum or interface behind type `t`
 /// (through pointers, slices, fallible results and tasks).
-fn type_symbol(a: &Analysis, mut t: slang::types::TypeId) -> Option<SymbolId> {
-    use slang::sema::index::SymKey;
+fn type_symbol(a: &Analysis, mut t: zell::types::TypeId) -> Option<SymbolId> {
+    use zell::sema::index::SymKey;
     for _ in 0..16 {
         t = match a.hir.types.get(t) {
             Type::Pointer(x) | Type::Weak(x) | Type::Slice(x) | Type::Array(x, _) | Type::Fallible(x) | Type::Task(x) => *x,
@@ -558,7 +558,7 @@ fn spans_touch(a: Span, b: Span) -> bool {
 }
 
 /// Quick fixes for the diagnostics of `file` overlapping `span`.
-pub(crate) fn code_actions(a: &Analysis, file: usize, uri: &Url, span: Span, to_lsp: impl Fn(&slang::diagnostics::Diagnostic) -> lsp_types::Diagnostic) -> Vec<CodeActionOrCommand> {
+pub(crate) fn code_actions(a: &Analysis, file: usize, uri: &Url, span: Span, to_lsp: impl Fn(&zell::diagnostics::Diagnostic) -> lsp_types::Diagnostic) -> Vec<CodeActionOrCommand> {
     let f = &a.files[file];
     let mut out = Vec::new();
     for d in a.diagnostics_for(file).filter(|d| spans_touch(d.span, span)) {
@@ -583,9 +583,9 @@ pub(crate) fn code_actions(a: &Analysis, file: usize, uri: &Url, span: Span, to_
 /// hunks touching lines `lines` (inclusive) when given. `None` when the
 /// file does not parse.
 pub(crate) fn format_edits(f: &SourceFile, lines: Option<(u32, u32)>) -> Option<Vec<TextEdit>> {
-    let formatted = slang::fmt::format_source(&f.text).ok()?;
+    let formatted = zell::fmt::format_source(&f.text).ok()?;
     let mut out = Vec::new();
-    for h in slang::fmt::line_hunks(&f.text, &formatted) {
+    for h in zell::fmt::line_hunks(&f.text, &formatted) {
         if let Some((from, to)) = lines {
             let (hs, he) = (h.old_start as u32, (h.old_start + h.old_len) as u32);
             let touches = if h.old_len == 0 { hs >= from && hs <= to + 1 } else { hs <= to && he > from };
@@ -616,7 +616,7 @@ pub(crate) fn workspace_symbols(a: &Analysis, query: &str, uri_of: impl Fn(usize
     let mut out: Vec<(usize, SymbolInformation)> = Vec::new();
     for s in &a.index.symbols {
         let Some(loc) = s.loc else { continue };
-        if !workspace_kind(s.kind) || matches!(s.key, slang::sema::index::SymKey::LocalConst(..)) || !fuzzy(query, &s.name) {
+        if !workspace_kind(s.kind) || matches!(s.key, zell::sema::index::SymKey::LocalConst(..)) || !fuzzy(query, &s.name) {
             continue;
         }
         let Some(uri) = uri_of(loc.file) else { continue };

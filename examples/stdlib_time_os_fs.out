@@ -15,7 +15,7 @@ getenv: hello
 setenv with empty name fails
 pid > 0: true hostname set: true
 join: a/c.txt /srv/app x
-base: main.sl dir .
+base: main.zl dir .
 dir: /srv/app . /
 ext: .gz []
 abs: true true

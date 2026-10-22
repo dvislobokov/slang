@@ -1,10 +1,10 @@
-//! Cross-compilation support of `slang build --target` (docs/PLATFORMS.md):
+//! Cross-compilation support of `zell build --target` (docs/PLATFORMS.md):
 //! where the runtime archive of a target lives, how an executable for it is
 //! linked, and how one is run on this machine (Wine for Windows).
 //!
-//! - **Runtime**: `$SLANG_TARGETS/<triple>/libslang_rt.a` (default
-//!   `~/.slang/targets/<triple>/`, filled by `slang target add`), the
-//!   toolchain's `targets/<triple>/`, then `runtime/build/<triple>/libslang_rt.a` next to the
+//! - **Runtime**: `$ZELL_TARGETS/<triple>/libzell_rt.a` (default
+//!   `~/.zell/targets/<triple>/`, filled by `zell target add`), the
+//!   toolchain's `targets/<triple>/`, then `runtime/build/<triple>/libzell_rt.a` next to the
 //!   compiler or in the repository it was built from (`make -C runtime
 //!   CROSS=x86_64-w64-mingw32` puts the Windows archive there).
 //! - **Windows (MinGW ABI)**: `clang -target <cpu>-w64-mingw32`, which finds
@@ -16,13 +16,13 @@
 //! - **macOS**: needs an SDK (`$SDKROOT`, or `xcrun --show-sdk-path` on a
 //!   Mac) for `libSystem.tbd`; without one only `--emit=obj` works.
 //! - **Other ELF targets**: `clang --target=<triple> -fuse-ld=lld` with
-//!   `--sysroot=$SLANG_SYSROOT` when set (Debian/Ubuntu's
+//!   `--sysroot=$ZELL_SYSROOT` when set (Debian/Ubuntu's
 //!   `gcc-aarch64-linux-gnu` is found without one). Run here through
-//!   `qemu-<arch>` (`$SLANG_QEMU`, `-L $SLANG_SYSROOT` or
+//!   `qemu-<arch>` (`$ZELL_QEMU`, `-L $ZELL_SYSROOT` or
 //!   `/usr/<cpu>-linux-gnu` for the dynamic loader).
 //! - **musl** (`linux-amd64-musl`): always `-static`; linked by `musl-gcc`
-//!   (`$SLANG_MUSL_CC`; Debian/Ubuntu `musl-tools`) when it targets the
-//!   same CPU, else clang with `--sysroot=$SLANG_SYSROOT` (a musl sysroot).
+//!   (`$ZELL_MUSL_CC`; Debian/Ubuntu `musl-tools`) when it targets the
+//!   same CPU, else clang with `--sysroot=$ZELL_SYSROOT` (a musl sysroot).
 //!   The runtime comes from `make -C runtime CROSS=x86_64-linux-musl`.
 
 use crate::target::{ObjectFormat, Target};
@@ -32,23 +32,23 @@ use std::process::Command;
 /// Windows system libraries the runtime imports from.
 pub const WINDOWS_LIBS: &[&str] = &["ws2_32", "iphlpapi", "bcrypt", "shell32", "advapi32"];
 
-/// The directory of prebuilt target runtimes (`$SLANG_TARGETS`, default
-/// `$SLANG_HOME/targets` = `~/.slang/targets`; `slang target add` fills it).
+/// The directory of prebuilt target runtimes (`$ZELL_TARGETS`, default
+/// `$ZELL_HOME/targets` = `~/.zell/targets`; `zell target add` fills it).
 pub fn targets_dir() -> Option<PathBuf> {
     Some(crate::toolchain::targets_dir())
 }
 
-/// Locates `libslang_rt.a` built for `t` (not the host): `$SLANG_TARGETS`,
+/// Locates `libzell_rt.a` built for `t` (not the host): `$ZELL_TARGETS`,
 /// the toolchain's own `targets/`, then the repository's `runtime/build/`.
 pub fn find_runtime(t: &Target) -> Result<PathBuf, String> {
     let mut cands = crate::toolchain::runtime_candidates(&t.triple);
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            cands.push(dir.join("../../runtime/build").join(&t.triple).join("libslang_rt.a"));
-            cands.push(dir.join("../../../runtime/build").join(&t.triple).join("libslang_rt.a"));
+            cands.push(dir.join("../../runtime/build").join(&t.triple).join("libzell_rt.a"));
+            cands.push(dir.join("../../../runtime/build").join(&t.triple).join("libzell_rt.a"));
         }
     }
-    cands.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../runtime/build").join(&t.triple).join("libslang_rt.a"));
+    cands.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../runtime/build").join(&t.triple).join("libzell_rt.a"));
     for c in &cands {
         if c.is_file() {
             return Ok(c.canonicalize().unwrap_or(c.clone()));
@@ -56,7 +56,7 @@ pub fn find_runtime(t: &Target) -> Result<PathBuf, String> {
     }
     let hint = if t.os == "windows" { "make -C runtime CROSS=x86_64-w64-mingw32".to_string() } else { format!("make -C runtime CROSS={} (needs the target's C headers)", t.triple) };
     Err(format!(
-        "no Slang runtime for {} (download it with `slang target add {}`, or build it with `{hint}`); looked in: {}",
+        "no Zell runtime for {} (download it with `zell target add {}`, or build it with `{hint}`); looked in: {}",
         t.triple,
         t.triple,
         cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ")
@@ -93,9 +93,9 @@ fn have(tool: &str) -> bool {
 }
 
 /// The musl-gcc wrapper for a musl target of the host's CPU
-/// (`$SLANG_MUSL_CC`, else `musl-gcc` when installed).
+/// (`$ZELL_MUSL_CC`, else `musl-gcc` when installed).
 fn musl_cc(t: &Target) -> Option<String> {
-    if let Ok(cc) = std::env::var("SLANG_MUSL_CC") {
+    if let Ok(cc) = std::env::var("ZELL_MUSL_CC") {
         return Some(cc);
     }
     let host_cpu = std::env::consts::ARCH;
@@ -183,7 +183,7 @@ pub fn link_command(t: &Target, objs: &[PathBuf], rt: &Path, output: &Path, libs
         }
         ObjectFormat::Elf => {
             cmd.arg("-fuse-ld=lld");
-            if let Ok(s) = std::env::var("SLANG_SYSROOT") {
+            if let Ok(s) = std::env::var("ZELL_SYSROOT") {
                 cmd.arg(format!("--sysroot={s}"));
             }
             cmd.arg("-lpthread");
@@ -204,7 +204,7 @@ pub fn link_command(t: &Target, objs: &[PathBuf], rt: &Path, output: &Path, libs
 }
 
 /// A command that runs executable `exe` of target `t` here: directly for
-/// the host, through Wine (`$SLANG_WINE`, else `wine`) for Windows on
+/// the host, through Wine (`$ZELL_WINE`, else `wine`) for Windows on
 /// another OS; `None` if this machine cannot run it.
 pub fn run_command(t: &Target, exe: &Path) -> Option<Command> {
     if t.is_host() {
@@ -217,13 +217,13 @@ pub fn run_command(t: &Target, exe: &Path) -> Option<Command> {
         }
         // another CPU: user-mode QEMU, with the target's dynamic loader
         let cpu = t.triple.split('-').next().unwrap_or("");
-        let cands = match std::env::var("SLANG_QEMU") {
+        let cands = match std::env::var("ZELL_QEMU") {
             Ok(q) => vec![q],
             Err(_) => vec![format!("qemu-{cpu}-static"), format!("qemu-{cpu}")],
         };
         let qemu = cands.into_iter().find(|q| Command::new(q).arg("--version").output().is_ok_and(|o| o.status.success()))?;
         let mut c = Command::new(qemu);
-        let root = std::env::var("SLANG_SYSROOT").unwrap_or_else(|_| format!("/usr/{cpu}-linux-gnu"));
+        let root = std::env::var("ZELL_SYSROOT").unwrap_or_else(|_| format!("/usr/{cpu}-linux-gnu"));
         if !t.is_musl() && Path::new(&root).is_dir() {
             c.arg("-L").arg(root);
         }
@@ -231,7 +231,7 @@ pub fn run_command(t: &Target, exe: &Path) -> Option<Command> {
         return Some(c);
     }
     if t.os == "windows" && t.arch == "amd64" && !cfg!(windows) {
-        let wine = std::env::var("SLANG_WINE").unwrap_or_else(|_| "wine".into());
+        let wine = std::env::var("ZELL_WINE").unwrap_or_else(|_| "wine".into());
         if Command::new(&wine).arg("--version").output().is_ok_and(|o| o.status.success()) {
             let mut c = Command::new(wine);
             c.arg(exe);

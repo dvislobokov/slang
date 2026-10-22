@@ -883,7 +883,7 @@ impl<'a> Sema<'a> {
         let name = format!("defer{}", self.lambda_count);
         let mut f = self.dummy_function(name.clone(), hir::FuncKind::Lambda { parent }, self.funcs[parent.0 as usize].namespace);
         f.full_name = format!("{}${name}", self.funcs[parent.0 as usize].full_name);
-        f.symbol = format!("slang_{}", f.full_name.replace('.', "__").replace('$', "_"));
+        f.symbol = format!("zell_{}", f.full_name.replace('.', "__").replace('$', "_"));
         f.span = span;
         f.captures = caps.iter().map(|(l, t)| hir::Capture { name: "$tmp".into(), ty: *t, source: hir::CaptureSource::Local(*l) }).collect();
         f.body = hir::Block { stmts: vec![Stmt { kind: stmt, span }], span };

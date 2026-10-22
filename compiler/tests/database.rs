@@ -5,11 +5,11 @@
 //! certificate made by `openssl`, `pg_hba.conf` rules for trust, cleartext
 //! password, MD5, SCRAM-SHA-256 and TLS-only users, a free TCP port and a
 //! Unix socket in the directory. It then runs
-//! `tests/fixtures/database/postgres_real.sl` (built with `--leak-check`)
+//! `tests/fixtures/database/postgres_real.zl` (built with `--leak-check`)
 //! and compares its output with `postgres_real.out`, and stops the server.
 //! Without PostgreSQL binaries (`initdb`, `pg_ctl`, `postgres`) or
 //! `openssl` the test is skipped with a note; the protocol is still covered
-//! by the mock-server spec test `tests/spec/stdlib4/postgres_mock.sl`.
+//! by the mock-server spec test `tests/spec/stdlib4/postgres_mock.zl`.
 
 use std::process::Command;
 
@@ -25,7 +25,7 @@ fn postgres_real_server() {
         return;
     }
     let root = pgcluster::is_root();
-    let dir = std::env::temp_dir().join(format!("slang_pgtest_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell_pgtest_{}", std::process::id()));
     let cluster = pgcluster::init(&dir);
     let ds = dir.to_string_lossy().to_string();
     let ok = Command::new("openssl")
@@ -49,14 +49,14 @@ fn postgres_real_server() {
     );
     assert!(setup.status.success(), "psql setup failed:\n{}", String::from_utf8_lossy(&setup.stderr));
 
-    if !repo().join("runtime/libslang_rt.a").is_file() {
+    if !repo().join("runtime/libzell_rt.a").is_file() {
         assert!(Command::new("make").arg("-C").arg(repo().join("runtime")).status().unwrap().success());
     }
-    let src = repo().join("compiler/tests/fixtures/database/postgres_real.sl");
+    let src = repo().join("compiler/tests/fixtures/database/postgres_real.zl");
     let exe = dir.join("postgres_real");
-    let b = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
+    let b = Command::new(env!("CARGO_BIN_EXE_zell")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
     assert!(b.status.success(), "build failed:\n{}", String::from_utf8_lossy(&b.stderr));
-    let run = Command::new(&exe).env("PGTEST_PORT", &port).env("PGTEST_DIR", &ds).env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+    let run = Command::new(&exe).env("PGTEST_PORT", &port).env("PGTEST_DIR", &ds).env("ZELL_NO_BACKTRACE", "1").output().unwrap();
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
     assert!(run.status.success(), "program failed ({:?}):\n{stdout}\n{stderr}", run.status.code());

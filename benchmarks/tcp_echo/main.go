@@ -1,7 +1,7 @@
 package main
 
 // 1000 concurrent TCP connections through loopback, each sending 1 MB in
-// 64 KB writes and reading the echo back (same shape as main.sl).
+// 64 KB writes and reading the echo back (same shape as main.zl).
 
 import (
 	"fmt"

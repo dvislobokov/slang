@@ -1,10 +1,10 @@
 [package]
-name = "slang"
+name = "zell"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "slang"
+name = "zell"
 path = "src/main.rs"
 
 [dependencies]

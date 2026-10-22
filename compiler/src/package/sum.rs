@@ -3,7 +3,7 @@
 //!
 //! # The `h1:` hash
 //!
-//! The checksum of a module version, recorded in `slang.lock`, in the
+//! The checksum of a module version, recorded in `zell.lock`, in the
 //! store index and in the checksum log, is computed over the module's file
 //! tree (every regular file at the tag, without `.git/`):
 //!
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn h1_is_order_independent_and_content_sensitive() {
-        let a = vec![("b.sl".to_string(), b"x".to_vec()), ("a/c.sl".to_string(), b"y".to_vec())];
+        let a = vec![("b.zl".to_string(), b"x".to_vec()), ("a/c.zl".to_string(), b"y".to_vec())];
         let mut b = a.clone();
         b.reverse();
         assert_eq!(h1(&a), h1(&b));
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn zip_round_trips_and_is_reproducible() {
-        let files = vec![("slang.toml".to_string(), b"[package]\n".to_vec()), ("src/lib.sl".to_string(), b"namespace a\n".to_vec())];
+        let files = vec![("src/lib.zl".to_string(), b"namespace a\n".to_vec()), ("zell.toml".to_string(), b"[package]\n".to_vec())];
         let z = zip_write("example.com/a@v1.0.0", &files);
         assert_eq!(z, zip_write("example.com/a@v1.0.0", &files));
         assert_eq!(zip_read(&z, "example.com/a@v1.0.0").unwrap(), files);

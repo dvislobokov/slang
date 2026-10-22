@@ -30,7 +30,7 @@ postgres: transaction was aborted (COMMIT rolled back)
 sum 1900 true
 timeout: task cancelled
 cancelled quickly true
-after timeout slangtest
+after timeout zelltest
 [NOTICE hello 42]
 copied 3
 copy out: 1	one

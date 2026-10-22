@@ -1,8 +1,0 @@
-# Uses lib-b without declaring it: only lib-a is a dependency.
-[package]
-name = "app"
-version = "0.1.0"
-entry = "src/main.sl"
-
-[dependencies]
-lib-a = { path = "../../workspace/lib-a" }

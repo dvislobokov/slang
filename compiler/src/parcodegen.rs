@@ -30,10 +30,10 @@ use std::sync::Arc;
 const MIN_INSTRUCTIONS: usize = 60_000;
 const PER_PARTITION: usize = 40_000;
 
-/// Number of code generation threads (`SLANG_CODEGEN_THREADS`, default:
+/// Number of code generation threads (`ZELL_CODEGEN_THREADS`, default:
 /// the available parallelism, at most 8; 1 disables the split).
 fn threads() -> usize {
-    if let Some(n) = std::env::var("SLANG_CODEGEN_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
+    if let Some(n) = std::env::var("ZELL_CODEGEN_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
         return n.clamp(1, 64);
     }
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8)
@@ -71,8 +71,8 @@ pub fn write_object_parallel(module: &Module, opt: OptimizationLevel, path: &Pat
     // preserves, so partitions refer to functions by this index).
     let weights: Vec<usize> = module.get_functions().filter(|f| f.count_basic_blocks() > 0).map(|f| instructions(f) + 8).collect();
     let total: usize = weights.iter().sum();
-    if std::env::var_os("SLANG_CODEGEN_DEBUG").is_some() {
-        eprintln!("slang: parcodegen: {} functions, {} instructions", weights.len(), total);
+    if std::env::var_os("ZELL_CODEGEN_DEBUG").is_some() {
+        eprintln!("zell: parcodegen: {} functions, {} instructions", weights.len(), total);
     }
     if total < MIN_INSTRUCTIONS || weights.len() < 2 * k {
         return Ok(false);

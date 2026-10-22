@@ -5,8 +5,8 @@
 //! ([`resolve`], [`semver`]) and fetched through proxies or git
 //! ([`fetch`], [`git`], [`http`]) with `h1:` checksums and the checksum
 //! log ([`sum`]), the content-addressable store ([`store`]),
-//! `slang vendor` ([`vendor`]), the module proxy server ([`proxy`]),
-//! `slang.lock` ([`lock`]), `slang init` ([`init`]), the package commands
+//! `zell vendor` ([`vendor`]), the module proxy server ([`proxy`]),
+//! `zell.lock` ([`lock`]), `zell init` ([`init`]), the package commands
 //! ([`cli`]) and the package-aware front end ([`check`]).
 //!
 //! Rules enforced for package builds:
@@ -62,7 +62,7 @@ pub(crate) fn display_path(p: &Path) -> String {
 }
 
 /// Loads, parses and analyses `target` with all its dependencies.
-/// `dev` makes the target's dev-dependencies visible (for `slang test`).
+/// `dev` makes the target's dev-dependencies visible (for `zell test`).
 pub fn check(project: &Project, target: PkgId, dev: bool, diags: &mut Diagnostics) -> Result<Checked, String> {
     let closure = project.closure(target, dev);
     let mut files = Vec::new();
@@ -71,7 +71,7 @@ pub fn check(project: &Project, target: PkgId, dev: bool, diags: &mut Diagnostic
         let p = &project.packages[id];
         let paths = p.source_files()?;
         if paths.is_empty() {
-            return Err(format!("package `{}` has no source files (expected {}/src/**/*.sl)", p.name, display_path(&p.dir)));
+            return Err(format!("package `{}` has no source files (expected {}/src/**/*.zl)", p.name, display_path(&p.dir)));
         }
         for path in paths {
             let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;

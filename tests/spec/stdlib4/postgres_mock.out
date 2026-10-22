@@ -23,13 +23,13 @@ server: auth: proof ok
 server: Q 
 server: Q select 1
 server: Q select * from items
-server: Parse slang_1 select * from items where id > $1
-server: Bind slang_1 args=[0] formats=[1 1 1 0 0 1 1]
-server: Parse slang_2 select $1
-server: Bind slang_2 args=[77] formats=[1]
-server: Bind slang_2 args=[78] formats=[1]
-server: Parse slang_3 update items set ok = $1 where id = $2
-server: Bind slang_3 args=[t 1] formats=[]
+server: Parse zell_1 select * from items where id > $1
+server: Bind zell_1 args=[0] formats=[1 1 1 0 0 1 1]
+server: Parse zell_2 select $1
+server: Bind zell_2 args=[77] formats=[1]
+server: Bind zell_2 args=[78] formats=[1]
+server: Parse zell_3 update items set ok = $1 where id = $2
+server: Bind zell_3 args=[t 1] formats=[]
 server: Q insert into items values (1), (2), (3)
 server: Q notice
 server: Q boom

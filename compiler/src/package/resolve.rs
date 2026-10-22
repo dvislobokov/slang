@@ -6,12 +6,12 @@
 //! constraint. The selected version of a module is the highest minimum
 //! over every requirement on it reachable from the workspace, including
 //! requirements of versions that were later superseded (Go's MVS), or the
-//! version in `slang.lock` when that is higher and still matches: a new
-//! release changes nothing until `slang update`. Upper bounds of the
+//! version in `zell.lock` when that is higher and still matches: a new
+//! release changes nothing until `zell update`. Upper bounds of the
 //! constraints of the final graph are then checked, and only one major
 //! version of a module may appear in the graph.
 //!
-//! `slang update [module]` selects, for the named modules (or all), the
+//! `zell update [module]` selects, for the named modules (or all), the
 //! newest version matching every constraint instead.
 //!
 //! Git pins (`{ git, tag | branch | rev }`) select exactly their commit
@@ -121,7 +121,7 @@ pub fn requirement(from: &str, key: &str, dep: &Dependency) -> Result<Option<Req
     }
 }
 
-/// Which modules `slang update` upgrades.
+/// Which modules `zell update` upgrades.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Update {
     #[default]
@@ -154,7 +154,7 @@ pub struct Selected {
     pub module: String,
     pub version: String,
     pub h1: String,
-    /// `slang.lock` source: `module`, or `git+<url>?<ref>#<commit>` for pins.
+    /// `zell.lock` source: `module`, or `git+<url>?<ref>#<commit>` for pins.
     pub source: String,
     /// Stored files (absent in vendor mode).
     pub index: Option<Index>,
@@ -250,11 +250,11 @@ pub fn resolve(roots: Vec<Requirement>, lock: Option<&LockFile>, fetcher: &Fetch
             let pinned = pins.iter().find(|((pm, _, _), (pv, _))| pm == &m && pv == &v).map(|(_, (_, f))| f.index.clone());
             let (name, bytes) = match pinned {
                 Some(idx) => {
-                    let n = idx.manifest.clone().ok_or_else(|| format!("{m}@{v} has no manifest (slang.toml, slang.json or slang.yaml)"))?;
+                    let n = idx.manifest.clone().ok_or_else(|| format!("{m}@{v} has no manifest (zell.toml, zell.json or zell.yaml)"))?;
                     let f = idx.files.iter().find(|f| f.path == n).unwrap();
                     (n, fetcher.store.read_file(f)?)
                 }
-                None => fetcher.manifest(&m, &v, url.as_deref())?.ok_or_else(|| format!("{m}@{v} has no manifest (slang.toml, slang.json or slang.yaml)"))?,
+                None => fetcher.manifest(&m, &v, url.as_deref())?.ok_or_else(|| format!("{m}@{v} has no manifest (zell.toml, zell.json or zell.yaml)"))?,
             };
             let man = parse_manifest(&m, &v, &name, &bytes)?;
             let rs = module_requirements(&m, &v, &man)?;
@@ -312,7 +312,7 @@ pub fn resolve(roots: Vec<Requirement>, lock: Option<&LockFile>, fetcher: &Fetch
         if let Some((lv, lsum, _)) = locked.get(&m) {
             if lv == &v && lsum != &index.h1 {
                 return Err(format!(
-                    "SECURITY ERROR: checksum mismatch for {m}@{v}\n  downloaded: {}\n  slang.lock: {lsum}\nthe module content differs from the locked one; it may have been tampered with",
+                    "SECURITY ERROR: checksum mismatch for {m}@{v}\n  downloaded: {}\n  zell.lock: {lsum}\nthe module content differs from the locked one; it may have been tampered with",
                     index.h1
                 ));
             }
@@ -428,20 +428,20 @@ pub fn from_vendor(vendor: &std::path::Path, lock: &LockFile, roots: &[Requireme
     let mut stack: Vec<Requirement> = roots.to_vec();
     let mut seen = HashSet::new();
     while let Some(r) = stack.pop() {
-        let (v, sum, source) = by_module.get(&r.module).cloned().ok_or_else(|| format!("{} ({}) is not in slang.lock; vendor/ is out of date, run `slang vendor`", r.module, r.describe()))?;
+        let (v, sum, source) = by_module.get(&r.module).cloned().ok_or_else(|| format!("{} ({}) is not in zell.lock; vendor/ is out of date, run `zell vendor`", r.module, r.describe()))?;
         if let (Some(c), Some(ver)) = (r.constraint(), Version::parse(&v)) {
             if !c.matches(&ver) {
-                return Err(format!("{}: locked {v} does not match `{c}` ({}); run `slang update` and `slang vendor`", r.module, r.describe()));
+                return Err(format!("{}: locked {v} does not match `{c}` ({}); run `zell update` and `zell vendor`", r.module, r.describe()));
             }
         }
         if !seen.insert(r.module.clone()) {
             continue;
         }
         let dir = vendor.join(format!("{}@{v}", store::escape_path(&r.module)));
-        let files = super::sum::read_tree(&dir).map_err(|e| format!("vendor/: {e}; run `slang vendor`"))?;
+        let files = super::sum::read_tree(&dir).map_err(|e| format!("vendor/: {e}; run `zell vendor`"))?;
         let h = super::sum::h1(&files);
         if h != sum {
-            return Err(format!("vendor/{}@{v}: checksum mismatch (vendor {h}, slang.lock {sum}); run `slang vendor`", r.module));
+            return Err(format!("vendor/{}@{v}: checksum mismatch (vendor {h}, zell.lock {sum}); run `zell vendor`", r.module));
         }
         let (name, bytes) = super::fetch::manifest_entry(&files).ok_or_else(|| format!("vendor/{}@{v} has no manifest", r.module))?;
         let man = parse_manifest(&r.module, &v, &name, &bytes)?;

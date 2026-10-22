@@ -314,7 +314,7 @@ impl<'a> Sema<'a> {
         self.ide.is_some()
     }
 
-    /// Checking stdlib code written in Slang (`std.collections`, `std.net`,
+    /// Checking stdlib code written in Zell (`std.collections`, `std.net`,
     /// ...): its spans are not in any user file, so nothing is recorded.
     fn ide_in_std(&self) -> bool {
         let std = self.nss.get(self.cur_ns).is_some_and(|n| n.is_std);

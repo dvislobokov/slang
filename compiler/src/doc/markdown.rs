@@ -1,4 +1,4 @@
-//! The small Markdown dialect of doc comments, shared by `slang doc`
+//! The small Markdown dialect of doc comments, shared by `zell doc`
 //! (HTML and terminal output) and the LSP hover.
 //!
 //! Blocks: paragraphs, `#` headings, `-`/`*`/`1.` lists (one paragraph
@@ -17,7 +17,7 @@ pub enum Block {
     Para(String),
     /// `ordered`, items (inline text each).
     List(bool, Vec<String>),
-    /// Language (`slang` for indented code), text without the indentation.
+    /// Language (`zell` for indented code), text without the indentation.
     Code(String, String),
     /// The text after `Deprecated:`.
     Deprecated(String),
@@ -123,7 +123,7 @@ pub fn parse_with(doc: &str, page: bool) -> Vec<Block> {
                 i += 1;
             }
             i += 1;
-            let lang = if lang.trim().is_empty() { "slang" } else { lang.trim() };
+            let lang = if lang.trim().is_empty() { "zell" } else { lang.trim() };
             out.push(Block::Code(lang.to_string(), dedent(&body)));
             after_blank = false;
             continue;
@@ -135,7 +135,7 @@ pub fn parse_with(doc: &str, page: bool) -> Vec<Block> {
                 body.push(lines[i]);
                 i += 1;
             }
-            out.push(Block::Code("slang".into(), dedent(&body)));
+            out.push(Block::Code("zell".into(), dedent(&body)));
             after_blank = false;
             continue;
         }
@@ -415,7 +415,7 @@ pub fn slug(text: &str) -> String {
 }
 
 /// A whole Markdown document to HTML: headings get GitHub-style ids (made
-/// unique), links are rewritten by `href`, `slang` code is highlighted.
+/// unique), links are rewritten by `href`, `zell` code is highlighted.
 /// Returns the HTML and the (level, text, id) of every heading.
 pub fn page_html(md: &str, href: Href) -> (String, Vec<(u8, String, String)>) {
     let blocks = parse_with(md, true);
@@ -457,7 +457,7 @@ fn render_block(b: &Block, link: Resolver, href: Href, shift: u8) -> String {
             o + &format!("</{tag}>\n")
         }
         Block::Code(lang, code) => {
-            let body = if lang == "slang" { highlight(code) } else { escape(code) };
+            let body = if lang == "zell" { highlight(code) } else { escape(code) };
             format!("<pre><code class=\"language-{}\">{body}</code></pre>\n", escape(lang))
         }
         Block::Table(head, rows) => {
@@ -480,7 +480,7 @@ fn render_block(b: &Block, link: Resolver, href: Href, shift: u8) -> String {
     }
 }
 
-/// Highlights Slang code for HTML with the compiler's lexer: keywords
+/// Highlights Zell code for HTML with the compiler's lexer: keywords
 /// `k`, strings and chars `s`, numbers `n`, type names (upper case) `t`,
 /// attributes `a`, comments `c` (the text between tokens).
 pub fn highlight(code: &str) -> String {
@@ -565,7 +565,7 @@ fn inline_md(s: &str, link: Resolver) -> String {
     o
 }
 
-/// Blocks to normalized CommonMark (fenced `slang` code, `Deprecated` as a
+/// Blocks to normalized CommonMark (fenced `zell` code, `Deprecated` as a
 /// struck-through tag, symbol links): what the LSP hover shows.
 pub fn to_markdown(blocks: &[Block], link: Resolver) -> String {
     let mut parts = Vec::new();
@@ -673,7 +673,7 @@ mod tests {
         let doc = "Split slices s. More text\nhere.\n\n  var x = 1\n  println(x)\n\n- one\n- two\n  continued\n\n# Notes\n\nDeprecated: use `Fields`.";
         let b = parse(doc);
         assert_eq!(b[0], Block::Para("Split slices s. More text here.".into()));
-        assert_eq!(b[1], Block::Code("slang".into(), "var x = 1\nprintln(x)".into()));
+        assert_eq!(b[1], Block::Code("zell".into(), "var x = 1\nprintln(x)".into()));
         assert_eq!(b[2], Block::List(false, vec!["one".into(), "two continued".into()]));
         assert_eq!(b[3], Block::Heading(1, "Notes".into()));
         assert_eq!(b[4], Block::Deprecated("use `Fields`.".into()));
@@ -692,7 +692,7 @@ mod tests {
         assert!(h.contains("<span class=\"k\">var</span>") && h.contains("<span class=\"c\">// c</span>"), "{h}");
         assert!(h.contains("class=\"deprecated\""), "{h}");
         let m = to_markdown(&b, &link);
-        assert!(m.contains("[`Fields`](#Fields)") && m.contains("```slang\nvar s") && m.contains("**~~Deprecated~~** gone."), "{m}");
+        assert!(m.contains("[`Fields`](#Fields)") && m.contains("```zell\nvar s") && m.contains("**~~Deprecated~~** gone."), "{m}");
         let t = to_text(&b, "    ");
         assert!(t.contains("    Use Fields or x, bold and em <b>.") && t.contains("        var s"), "{t}");
     }

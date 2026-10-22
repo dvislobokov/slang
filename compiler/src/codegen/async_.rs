@@ -6,9 +6,9 @@
 //! common exit block (defers, release of locals), which completes the task,
 //! drops the frame's task reference and branches to `cleanup` (frees the
 //! frame; there is no final suspend) and `suspended` (`coro.end`, `ret
-//! task`). `await t` registers `slang_coro_resume(hdl)` as a continuation of
+//! task`). `await t` registers `zell_coro_resume(hdl)` as a continuation of
 //! `t` and suspends unless `t` is already done. Outside a coroutine (C
-//! `main`), `await` blocks with `slang_task_await`.
+//! `main`), `await` blocks with `zell_task_await`.
 
 use super::{unsupported, CodeGen, Coro, Val, R};
 use crate::hir::{self, Expr, ExprKind};
@@ -50,14 +50,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.position_at_end(init);
         let size = self.i64_ty().const_int(self.size_of(f.ret), false);
         let ops = self.value_ops(f.ret);
-        let task = self.call_rt_v("slang_task_new", &[size.into(), ops.into()]).into_pointer_value();
-        self.call_rt("slang_retain", &[task.into()]);
+        let task = self.call_rt_v("zell_task_new", &[size.into(), ops.into()]).into_pointer_value();
+        self.call_rt("zell_retain", &[task.into()]);
         let null = self.ptr_ty().const_null().as_value_ref();
         let zero = self.ctx.i32_type().const_zero().as_value_ref();
         let id = self.intrinsic("llvm.coro.id", &mut [zero, null, null, null]);
         let sz = self.intrinsic("llvm.coro.size.i64", &mut []);
         let szv = unsafe { IntValue::new(sz) };
-        let mem = self.call_rt_v("slang_alloc", &[szv.into()]);
+        let mem = self.call_rt_v("zell_alloc", &[szv.into()]);
         let hdl = self.intrinsic("llvm.coro.begin", &mut [id, mem.as_value_ref()]);
         let hdl = unsafe { PointerValue::new(hdl) };
         // Zeroing stores emitted later by `entry_alloca` follow this code.
@@ -66,7 +66,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.position_at_end(cleanup);
         let fr = self.intrinsic("llvm.coro.free", &mut [id, hdl.as_value_ref()]);
         let frv = unsafe { PointerValue::new(fr) };
-        self.call_rt("slang_free", &[frv.into()]);
+        self.call_rt("zell_free", &[frv.into()]);
         self.b.build_unconditional_branch(suspended).unwrap();
         self.b.position_at_end(suspended);
         let fls = self.ctx.bool_type().const_zero().as_value_ref();
@@ -85,7 +85,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             Some((p, t)) => (p, Some(t)),
             None => (self.ptr_ty().const_null(), None),
         };
-        self.call_rt("slang_task_complete", &[co.task.into(), slot.into()]);
+        self.call_rt("zell_task_complete", &[co.task.into(), slot.into()]);
         if let Some(t) = rt {
             if self.needs_rc(t) {
                 let lt = self.llty(t);
@@ -93,7 +93,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 self.release_val(t, v);
             }
         }
-        self.call_rt("slang_release", &[co.task.into()]);
+        self.call_rt("zell_release", &[co.task.into()]);
         self.b.build_unconditional_branch(co.cleanup).unwrap();
         Ok(())
     }
@@ -101,18 +101,18 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// Waits for task `t`; returns its (borrowed) result slot.
     fn await_slot(&mut self, t: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let Some(co) = self.fs().coro else {
-            return self.call_rt_v("slang_task_await", &[t.into()]).into_pointer_value();
+            return self.call_rt_v("zell_task_await", &[t.into()]).into_pointer_value();
         };
         let ready = self.block("await.ready");
         let try_ = self.block("await.try");
         let susp = self.block("await.suspend");
-        let done = self.call_rt_v("slang_task_is_done", &[t.into()]).into_int_value();
+        let done = self.call_rt_v("zell_task_is_done", &[t.into()]).into_int_value();
         self.b.build_conditional_branch(done, ready, try_).unwrap();
         self.b.position_at_end(try_);
         self.dbga_suspend();
         let save = self.intrinsic("llvm.coro.save", &mut [co.hdl.as_value_ref()]);
-        let resume = self.rt("slang_coro_resume").as_global_value().as_pointer_value();
-        let reg = self.call_rt_v("slang_task_add_continuation", &[t.into(), resume.into(), co.hdl.into()]).into_int_value();
+        let resume = self.rt("zell_coro_resume").as_global_value().as_pointer_value();
+        let reg = self.call_rt_v("zell_task_add_continuation", &[t.into(), resume.into(), co.hdl.into()]).into_int_value();
         self.b.build_conditional_branch(reg, susp, ready).unwrap();
         self.b.position_at_end(susp);
         let fls = self.ctx.bool_type().const_zero().as_value_ref();
@@ -122,7 +122,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         self.b.build_switch(sv, co.suspended, &[(i8t.const_zero(), ready), (i8t.const_int(1, false), co.cleanup)]).unwrap();
         self.b.position_at_end(ready);
         self.dbga_resume();
-        self.call_rt_v("slang_task_result", &[t.into()]).into_pointer_value()
+        self.call_rt_v("zell_task_result", &[t.into()]).into_pointer_value()
     }
 
     /// Loads an owned copy of a `T` result from `slot`.
@@ -152,7 +152,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         })
     }
 
-    /// `await task.Any(t1, ..., tn)`: `slang_task_any` yields the index of
+    /// `await task.Any(t1, ..., tn)`: `zell_task_any` yields the index of
     /// the first task to complete; its result is copied out (retained).
     fn await_any(&mut self, ty: TypeId, tasks: &[Expr]) -> R<Val<'ctx>> {
         let n = tasks.len() as u32;
@@ -168,13 +168,13 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             tvs.push(v);
         }
         self.forget_from(d);
-        let any = self.call_rt_v("slang_task_any", &[arr.into(), self.i64_ty().const_int(n as u64, false).into()]).into_pointer_value();
+        let any = self.call_rt_v("zell_task_any", &[arr.into(), self.i64_ty().const_int(n as u64, false).into()]).into_pointer_value();
         let slot = self.await_slot(any);
         let idx = self.b.build_load(self.i64_ty(), slot, "any.idx").unwrap().into_int_value();
-        self.call_rt("slang_release", &[any.into()]);
+        self.call_rt("zell_release", &[any.into()]);
         let p = unsafe { self.b.build_in_bounds_gep(arr_ty, arr, &[self.i64_ty().const_zero(), idx], "") }.unwrap();
         let winner = self.b.build_load(self.ptr_ty(), p, "").unwrap().into_pointer_value();
-        let rslot = self.call_rt_v("slang_task_result", &[winner.into()]).into_pointer_value();
+        let rslot = self.call_rt_v("zell_task_result", &[winner.into()]).into_pointer_value();
         let r = self.load_result(ty, rslot);
         for (t, tv) in tasks.iter().zip(tvs) {
             self.drop_val(t.ty, tv);
@@ -230,7 +230,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let first = self.b.build_is_null(err, "").unwrap();
                 let keep = self.b.build_select(first, e, err, "").unwrap().into_pointer_value();
                 let drop = self.b.build_select(first, self.ptr_ty().const_null(), e, "").unwrap();
-                self.call_rt("slang_release", &[drop.into()]);
+                self.call_rt("zell_release", &[drop.into()]);
                 err = keep;
             }
             if let Some(val) = val {

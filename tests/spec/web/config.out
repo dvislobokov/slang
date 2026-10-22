@@ -8,5 +8,5 @@ defaults: embedded
 options: 6000 1 false
 changed: port 6000 replicas [y1 y2 y3]
 reloaded: true 2 [y1 y2 y3]
-reload failed: /tmp/slang-web-spec-config/appsettings.staging.json: json: invalid character 'o' at offset 1
+reload failed: /tmp/zell-web-spec-config/appsettings.staging.json: json: invalid character 'o' at offset 1
 kept: 6000 2 true

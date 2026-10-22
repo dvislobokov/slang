@@ -1,19 +1,19 @@
 //! `textDocument/codeLens` and `codeLens/resolve`.
 //!
 //! Lenses (commands executed by the client, see editors/vscode):
-//! - on each `@test` function: "▶ Run test" (`slang.runTest`) and
-//!   "Debug test" (`slang.debugTest`), arguments `[file uri, test name]`;
-//! - on `main`: "▶ Run" (`slang.run`, argument `[file uri]`);
+//! - on each `@test` function: "▶ Run test" (`zell.runTest`) and
+//!   "Debug test" (`zell.debugTest`), arguments `[file uri, test name]`;
+//! - on `main`: "▶ Run" (`zell.run`, argument `[file uri]`);
 //! - on each exported top-level declaration: "N references", computed
-//!   lazily by `codeLens/resolve` (command `slang.showReferences` with
+//!   lazily by `codeLens/resolve` (command `zell.showReferences` with
 //!   `[uri, position, locations]`, like VS Code's `editor.action.showReferences`).
 
 use crate::range;
 use lsp_types::{CodeLens, Command, Location, Url};
-use slang::ast;
-use slang::sema::index::SymbolKind;
-use slang::session::Analysis;
-use slang::span::Span;
+use zell::ast;
+use zell::sema::index::SymbolKind;
+use zell::session::Analysis;
+use zell::span::Span;
 
 fn exported(name: &str) -> bool {
     name.chars().next().is_some_and(|c| c.is_uppercase())
@@ -48,10 +48,10 @@ pub(crate) fn code_lenses(a: &Analysis, file: usize, uri: &Url) -> Vec<CodeLens>
                 let r = range(f, func.name.span);
                 if is_test && func.generics.is_empty() {
                     let args = vec![serde_json::json!(uri), serde_json::json!(func.name.name)];
-                    out.push(CodeLens { range: r, command: command("▶ Run test", "slang.runTest", args.clone()), data: None });
-                    out.push(CodeLens { range: r, command: command("Debug test", "slang.debugTest", args), data: None });
+                    out.push(CodeLens { range: r, command: command("▶ Run test", "zell.runTest", args.clone()), data: None });
+                    out.push(CodeLens { range: r, command: command("Debug test", "zell.debugTest", args), data: None });
                 } else if func.name.name == "main" && func.params.is_empty() && func.body.is_some() {
-                    out.push(CodeLens { range: r, command: command("▶ Run", "slang.run", vec![serde_json::json!(uri)]), data: None });
+                    out.push(CodeLens { range: r, command: command("▶ Run", "zell.run", vec![serde_json::json!(uri)]), data: None });
                 }
                 if !is_test {
                     refs_lens(&func.name, &mut out);
@@ -94,6 +94,6 @@ pub(crate) fn resolve_lens(a: &Analysis, mut lens: CodeLens, file_of: impl Fn(&U
     let n = locations.len();
     let title = if n == 1 { "1 reference".to_string() } else { format!("{n} references") };
     let at = id.and_then(|id| a.index.symbol(id).loc).map(|l| range(&a.files[l.file], Span::new(l.name_span.start, l.name_span.start)).start).unwrap_or(lens.range.start);
-    lens.command = command(&title, "slang.showReferences", vec![serde_json::json!(uri), serde_json::json!(at), serde_json::json!(locations)]);
+    lens.command = command(&title, "zell.showReferences", vec![serde_json::json!(uri), serde_json::json!(at), serde_json::json!(locations)]);
     lens
 }

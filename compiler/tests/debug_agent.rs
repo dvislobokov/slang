@@ -1,13 +1,13 @@
 //! The in-process debug agent (docs/DEBUGGER.md stage 2): programs built
-//! with `--debug-agent` and started with `SLANG_DEBUG=127.0.0.1:0,wait` are
-//! driven over the Debug Adapter Protocol with `slang::dap::Client`.
+//! with `--debug-agent` and started with `ZELL_DEBUG=127.0.0.1:0,wait` are
+//! driven over the Debug Adapter Protocol with `zell::dap::Client`.
 //!
-//! Fixtures: `tests/fixtures/debug_agent/*.sl` and the stage-1 fixtures
-//! `tests/fixtures/debug/{values,async}.sl`, with `// BREAK <name>` markers
+//! Fixtures: `tests/fixtures/debug_agent/*.zl` and the stage-1 fixtures
+//! `tests/fixtures/debug/{values,async}.zl`, with `// BREAK <name>` markers
 //! on the lines the tests stop at.
 
 use serde_json::{json, Value};
-use slang::dap::Client;
+use zell::dap::Client;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -24,7 +24,7 @@ fn fixture(rel: &str) -> PathBuf {
 }
 
 fn ensure_runtime() {
-    let lib = repo().join("runtime/libslang_rt.a");
+    let lib = repo().join("runtime/libzell_rt.a");
     if !lib.is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
@@ -32,7 +32,7 @@ fn ensure_runtime() {
 }
 
 fn tmpdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("slang-dbga-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("zell-dbga-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -40,7 +40,7 @@ fn tmpdir(name: &str) -> PathBuf {
 /// Builds `src` into `out` with extra flags.
 fn build(src: &Path, out: &Path, flags: &[&str]) {
     ensure_runtime();
-    let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(src).arg("-o").arg(out).args(flags).output().unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("build").arg(src).arg("-o").arg(out).args(flags).output().unwrap();
     assert!(r.status.success(), "build of {} failed:\n{}", src.display(), String::from_utf8_lossy(&r.stderr));
 }
 
@@ -67,7 +67,7 @@ impl Session {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let exe = tmpdir(&format!("{stem}-{n}")).join(&stem);
         build(&src, &exe, flags);
-        let (child, addr) = slang::dap::spawn(&exe, &[], 0, true, true).expect("agent did not start");
+        let (child, addr) = zell::dap::spawn(&exe, &[], 0, true, true).expect("agent did not start");
         let c = Client::connect(&addr, T).expect("cannot connect to the agent");
         Session { src, child, c }
     }
@@ -143,7 +143,7 @@ fn find<'a>(vs: &'a [(String, String, String, i64)], name: &str) -> &'a (String,
 
 #[test]
 fn breakpoint_stops_with_variables() {
-    let mut s = Session::start("debug/values.sl", &[]);
+    let mut s = Session::start("debug/values.zl", &[]);
     let caps = s.begin(&[("values", "", "")]);
     assert_eq!(caps["supportsConditionalBreakpoints"], true);
     let ev = s.stopped();
@@ -157,7 +157,7 @@ fn breakpoint_stops_with_variables() {
         let v = find(&vs, name);
         assert_eq!((v.1.as_str(), v.2.as_str()), (ty, val), "variable {name}");
     };
-    check("name", "string", "\"slang\"");
+    check("name", "string", "\"zell\"");
     check("empty", "string", "\"\"");
     check("nums", "[]int", "len 3, cap 3: [5 3 8]");
     check("none", "[]int", "len 0, cap 0: []");
@@ -199,12 +199,12 @@ fn breakpoint_stops_with_variables() {
     assert_eq!(s.eval(t, "nilShape == nil").unwrap(), "true");
     assert!(s.eval(t, "missing + 1").is_err());
     let out = s.finish();
-    assert!(out.starts_with("slang "), "{out}");
+    assert!(out.starts_with("zell "), "{out}");
 }
 
 #[test]
 fn generic_instance_locals() {
-    let mut s = Session::start("debug_agent/generic.sl", &[]);
+    let mut s = Session::start("debug_agent/generic.zl", &[]);
     s.begin(&[("wrap", "", "")]);
     let t = s.stopped()["threadId"].as_i64().unwrap();
     let vs = s.vars(t);
@@ -220,7 +220,7 @@ fn generic_instance_locals() {
 
 #[test]
 fn error_values_and_step_out() {
-    let mut s = Session::start("debug/values.sl", &[]);
+    let mut s = Session::start("debug/values.zl", &[]);
     s.begin(&[("parse_ret", "", "")]);
     // Stopped at the closing brace of Parse (every return passes it): the
     // failing call first, with its result `~r0`-like locals still there.
@@ -246,7 +246,7 @@ fn error_values_and_step_out() {
 
 #[test]
 fn next_over_await_stays_in_task() {
-    let mut s = Session::start("debug/async.sl", &[]);
+    let mut s = Session::start("debug/async.zl", &[]);
     s.begin(&[("before_await", "", "")]);
     let ev = s.stopped();
     let t = ev["threadId"].as_i64().unwrap();
@@ -268,7 +268,7 @@ fn next_over_await_stays_in_task() {
 
 #[test]
 fn logpoint_prints_without_stopping() {
-    let mut s = Session::start("debug_agent/loop.sl", &[]);
+    let mut s = Session::start("debug_agent/loop.zl", &[]);
     s.begin(&[("square", "", "sq of {i}: {i * 1}"), ("loop", "i >= 3 && i < 5", "loop i={i} total={total}")]);
     let out_wait = Instant::now();
     s.c.wait_event("terminated", T).expect("the program must run to the end");
@@ -285,7 +285,7 @@ fn logpoint_prints_without_stopping() {
 
 #[test]
 fn conditional_breakpoint_stops_only_when_true() {
-    let mut s = Session::start("debug_agent/loop.sl", &[]);
+    let mut s = Session::start("debug_agent/loop.zl", &[]);
     s.begin(&[("square", "i == 7", "")]);
     let t = s.stopped()["threadId"].as_i64().unwrap();
     let vs = s.vars(t);
@@ -301,7 +301,7 @@ fn conditional_breakpoint_stops_only_when_true() {
 
 #[test]
 fn function_breakpoint_and_step_in() {
-    let mut s = Session::start("debug_agent/loop.sl", &[]);
+    let mut s = Session::start("debug_agent/loop.zl", &[]);
     s.begin(&[("loop", "i == 2", "")]);
     let t = s.stopped()["threadId"].as_i64().unwrap();
     s.c.request("stepIn", json!({"threadId": t})).unwrap();
@@ -327,7 +327,7 @@ fn main_i(s: &mut Session, t: i64) -> i64 {
 
 #[test]
 fn pause_and_continue() {
-    let mut s = Session::start("debug_agent/spin.sl", &[]);
+    let mut s = Session::start("debug_agent/spin.zl", &[]);
     s.begin(&[]);
     std::thread::sleep(Duration::from_millis(200));
     s.c.request("pause", json!({"threadId": 1})).unwrap();
@@ -350,7 +350,7 @@ fn pause_and_continue() {
 
 #[test]
 fn exception_breakpoint_on_panic() {
-    let mut s = Session::start("debug_agent/panic.sl", &[]);
+    let mut s = Session::start("debug_agent/panic.zl", &[]);
     s.c.handshake(|c| c.request("setExceptionBreakpoints", json!({"filters": ["panic"]})).map(|_| ())).unwrap();
     let ev = s.stopped();
     assert_eq!(ev["reason"], "exception");
@@ -374,7 +374,7 @@ fn exception_breakpoint_on_panic() {
 
 #[test]
 fn closure_captures_and_tuples() {
-    let mut s = Session::start("debug_agent/closure.sl", &[]);
+    let mut s = Session::start("debug_agent/closure.zl", &[]);
     s.begin(&[("tuple", "", ""), ("lambda", "", "")]);
     let t = s.stopped()["threadId"].as_i64().unwrap();
     assert_eq!(s.top(t).2, line_of(&s.src, "tuple"));
@@ -400,7 +400,7 @@ fn closure_captures_and_tuples() {
 
 #[test]
 fn exception_breakpoint_on_error_creation() {
-    let mut s = Session::start("debug_agent/panic.sl", &[]);
+    let mut s = Session::start("debug_agent/panic.zl", &[]);
     s.c.handshake(|c| c.request("setExceptionBreakpoints", json!({"filters": [], "filterOptions": [{"filterId": "error", "condition": "NotFound"}]})).map(|_| ())).unwrap();
     let ev = s.stopped();
     assert_eq!(ev["reason"], "exception");
@@ -414,7 +414,7 @@ fn exception_breakpoint_on_error_creation() {
 
 #[test]
 fn two_tasks_step_independently() {
-    let mut s = Session::start("debug_agent/tasks.sl", &[]);
+    let mut s = Session::start("debug_agent/tasks.zl", &[]);
     s.begin(&[("w1", "", "")]);
     let (w1, w2, w3) = (line_of(&s.src, "w1"), line_of(&s.src, "w2"), line_of(&s.src, "w3"));
     // Both tasks reach w1 (the second one is frozen there or reports its
@@ -477,7 +477,7 @@ fn two_tasks_step_independently() {
 
 #[test]
 fn release_build_with_agent_stops() {
-    let mut s = Session::start("debug_agent/loop.sl", &["--release", "--debug-agent"]);
+    let mut s = Session::start("debug_agent/loop.zl", &["--release", "--debug-agent"]);
     s.begin(&[("square", "", "")]);
     let t = s.stopped()["threadId"].as_i64().unwrap();
     let frames = s.c.stack(t).unwrap();
@@ -490,9 +490,9 @@ fn release_build_with_agent_stops() {
 #[test]
 fn capability_gate() {
     let dir = tmpdir("gate");
-    let f = dir.join("u.sl");
+    let f = dir.join("u.zl");
     std::fs::write(&f, "namespace app\n\nimport std.io\nimport std.unsafe\n\nfunc main() {\n    println(ReadInt(0, 0))\n}\n").unwrap();
-    let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("check").arg(&f).output().unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("check").arg(&f).output().unwrap();
     assert!(!r.status.success());
     assert!(String::from_utf8_lossy(&r.stderr).contains("needs the `unsafe` capability"), "{}", String::from_utf8_lossy(&r.stderr));
     // Reaching it by its full path without an import is gated too
@@ -503,7 +503,7 @@ fn capability_gate() {
         ("import std.io\n\nfunc main() {\n    println(try std.plugin.rtOpen(\"x\") else 0)\n}\n", "plugin"),
     ] {
         std::fs::write(&f, format!("namespace app\n\n{body}")).unwrap();
-        let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("check").arg(&f).output().unwrap();
+        let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("check").arg(&f).output().unwrap();
         assert!(!r.status.success(), "{body}");
         let err = String::from_utf8_lossy(&r.stderr);
         assert!(err.contains(&format!("needs the `{cap}` capability")), "{body}: {err}");
@@ -511,21 +511,21 @@ fn capability_gate() {
     // A package granting the capability may import it.
     let pkg = dir.join("pkg");
     std::fs::create_dir_all(pkg.join("src")).unwrap();
-    std::fs::write(pkg.join("slang.toml"), "[package]\nname = \"low\"\nversion = \"0.1.0\"\nentry = \"src/main.sl\"\n\n[capabilities]\nunsafe = true\n").unwrap();
-    std::fs::write(pkg.join("src/main.sl"), "namespace low\n\nimport std.io\nimport std.unsafe\n\nfunc main() {\n    var b = [7]\n    println(len(b), CString(0))\n}\n").unwrap();
-    let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("check").current_dir(&pkg).output().unwrap();
+    std::fs::write(pkg.join("zell.toml"), "[package]\nname = \"low\"\nversion = \"0.1.0\"\nentry = \"src/main.zl\"\n\n[capabilities]\nunsafe = true\n").unwrap();
+    std::fs::write(pkg.join("src/main.zl"), "namespace low\n\nimport std.io\nimport std.unsafe\n\nfunc main() {\n    var b = [7]\n    println(len(b), CString(0))\n}\n").unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("check").current_dir(&pkg).output().unwrap();
     assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
 }
 
 /// Hook overhead: `Fib(35)` built `--release` (no agent) against
-/// `--release --debug-agent` with SLANG_DEBUG unset. Optimised builds keep a
+/// `--release --debug-agent` with ZELL_DEBUG unset. Optimised builds keep a
 /// hook-free copy of every function (debug_agent.rs), so the numbers must
 /// be close; the bound here is loose because CI machines are noisy, the
 /// measured numbers are printed (`cargo test -- --nocapture`).
 #[test]
 fn overhead_with_agent_off() {
     let dir = tmpdir("overhead");
-    let src = fixture("debug_agent/fib.sl");
+    let src = fixture("debug_agent/fib.zl");
     let (plain, agent) = (dir.join("plain"), dir.join("agent"));
     build(&src, &plain, &["--release"]);
     build(&src, &agent, &["--release", "--debug-agent"]);
@@ -533,7 +533,7 @@ fn overhead_with_agent_off() {
         (0..7)
             .map(|_| {
                 let t = Instant::now();
-                let st = Command::new(exe).env_remove("SLANG_DEBUG").output().unwrap();
+                let st = Command::new(exe).env_remove("ZELL_DEBUG").output().unwrap();
                 assert!(st.status.success());
                 t.elapsed().as_secs_f64()
             })

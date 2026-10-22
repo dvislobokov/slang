@@ -5,9 +5,9 @@
 //! against `T`, see [`super::tmplcheck`]).
 //!
 //! The checks only report diagnostics; the call is compiled as usual (the
-//! Slang implementation parses the literal again at run time, where it
+//! Zell implementation parses the literal again at run time, where it
 //! can no longer fail). The regex validator mirrors the parser of
-//! `stdlib_src/regex_syntax.sl` rule for rule and produces the same
+//! `stdlib_src/regex_syntax.zl` rule for rule and produces the same
 //! messages (byte offsets into the pattern); keep the two in sync.
 
 use super::*;
@@ -530,7 +530,7 @@ impl<'a> Sema<'a> {
     }
 
     /// Checks a template literal against its data type `ty` (the rules of
-    /// `stdlib_src/template_check.sl`); `custom` allows unknown functions
+    /// `stdlib_src/template_check.zl`); `custom` allows unknown functions
     /// (`ParseWith`, whose function map is only known at run time).
     fn check_template_literal(&mut self, src: &str, ty: TypeId, custom: bool, span: Span) {
         let tree = match TmplParser::new(src, custom).parse() {
@@ -574,13 +574,13 @@ enum TArg {
     Pipe(Box<TPipe>, Vec<String>),
 }
 
-/// Built-in template functions (template_exec.sl `builtin`).
+/// Built-in template functions (template_exec.zl `builtin`).
 const TMPL_FUNCS: &[&str] = &[
     "and", "or", "not", "len", "index", "slice", "print", "printf", "println", "eq", "ne", "lt", "le", "gt", "ge", "html", "js", "urlquery", "upper",
     "lower", "title", "trim", "join", "split", "contains", "hasPrefix", "hasSuffix", "replace", "repeat", "default",
 ];
 
-/// The template parser of `template.sl`, rule for rule (same messages).
+/// The template parser of `template.zl`, rule for rule (same messages).
 struct TmplParser<'s> {
     src: &'s str,
     b: &'s [u8],

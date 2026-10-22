@@ -2,17 +2,17 @@
 //! стандартной библиотеки и зависимостей для IDE"; layout in
 //! `src/sema/stdfs.rs`):
 //!
-//! * every `src/sema/stdlib_src/*.sl` and `src/sema/reflect_src/*.sl`, and
+//! * every `src/sema/stdlib_src/*.zl` and `src/sema/reflect_src/*.zl`, and
 //!   the `std.collections` source of `src/sema/collections.rs`, copied to
-//!   `std/<namespace path>/<file>.sl`;
+//!   `std/<namespace path>/<file>.zl`;
 //! * for every namespace with rows in the `FUNCS` table of
-//!   `src/sema/stdlib.rs`, `std/<namespace path>/<last segment>_extern.sl`
+//!   `src/sema/stdlib.rs`, `std/<namespace path>/<last segment>_extern.zl`
 //!   with one `extern func` declaration per row and its doc comment (the
 //!   row's own doc or `src/sema/stdlib_docs.rs`).
 //!
-//! Files are only rewritten when their contents change, and `.sl` files
+//! Files are only rewritten when their contents change, and `.zl` files
 //! of `std/` that are no longer generated are removed, except the
-//! hand-written tests and examples `std/**/*_test.sl` (`slang test std`).
+//! hand-written tests and examples `std/**/*_test.zl` (`zell test std`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -56,8 +56,8 @@ fn rel_dir(ns: &str) -> PathBuf {
     ns.split('.').skip(1).collect()
 }
 
-/// Slang spelling of a type of the table's mini syntax (`func(a;b) r`).
-fn slang_type(t: &str) -> String {
+/// Zell spelling of a type of the table's mini syntax (`func(a;b) r`).
+fn zell_type(t: &str) -> String {
     t.trim().replace(';', ", ")
 }
 
@@ -75,7 +75,7 @@ fn main() {
         let Ok(rd) = std::fs::read_dir(sema.join(dir)) else { continue };
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().is_none_or(|x| x != "sl") {
+            if p.extension().is_none_or(|x| x != "zl") {
                 continue;
             }
             let Ok(src) = std::fs::read_to_string(&p) else { continue };
@@ -87,7 +87,7 @@ fn main() {
         if let Some(start) = c.find("const SOURCE: &str = r#\"") {
             let body = &c[start + "const SOURCE: &str = r#\"".len()..];
             if let Some(end) = body.find("\"#;") {
-                files.insert(PathBuf::from("collections/collections.sl"), body[..end].to_string());
+                files.insert(PathBuf::from("collections/collections.zl"), body[..end].to_string());
             }
         }
     }
@@ -131,14 +131,14 @@ fn main() {
             .zip(&types)
             .map(|(n, t)| {
                 let n = if KEYWORDS.contains(&n.as_str()) { format!("{n}_") } else { n.clone() };
-                format!("{n} {}", slang_type(t))
+                format!("{n} {}", zell_type(t))
             })
             .collect();
-        let ret = if ret.trim() == "void" { String::new() } else { format!(" {}", slang_type(ret)) };
+        let ret = if ret.trim() == "void" { String::new() } else { format!(" {}", zell_type(ret)) };
         let mut decl = String::new();
         if doc.is_empty() {
             let internal = name.starts_with("rt") && name[2..].starts_with(|c: char| c.is_ascii_uppercase());
-            decl.push_str(if internal { "// Internal runtime primitive (used by the Slang sources of this namespace).\n" } else { "" });
+            decl.push_str(if internal { "// Internal runtime primitive (used by the Zell sources of this namespace).\n" } else { "" });
         } else {
             for dl in doc.lines() {
                 decl.push_str(&format!("// {dl}\n"));
@@ -157,7 +157,7 @@ fn main() {
             text.push('\n');
             text.push_str(&d);
         }
-        files.insert(rel_dir(&ns).join(format!("{last}_extern.sl")), text);
+        files.insert(rel_dir(&ns).join(format!("{last}_extern.zl")), text);
     }
 
     // Write what changed, remove what is no longer generated.
@@ -180,7 +180,7 @@ fn main() {
             if p.is_dir() {
                 prune(&p, root, keep);
                 let _ = std::fs::remove_dir(&p);
-            } else if p.extension().is_some_and(|x| x == "sl") && !p.to_string_lossy().ends_with("_test.sl") && !keep.contains_key(p.strip_prefix(root).unwrap()) {
+            } else if p.extension().is_some_and(|x| x == "zl") && !p.to_string_lossy().ends_with("_test.zl") && !keep.contains_key(p.strip_prefix(root).unwrap()) {
                 let _ = std::fs::remove_file(&p);
             }
         }

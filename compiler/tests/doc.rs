@@ -1,6 +1,6 @@
-//! `slang doc` and the documentation toolchain end to end: terminal and
+//! `zell doc` and the documentation toolchain end to end: terminal and
 //! JSON output, the coverage check of the standard library, the static
-//! sites (`--html`, `--site`) with a link checker, and `slang test std`
+//! sites (`--html`, `--site`) with a link checker, and `zell test std`
 //! (the stdlib's runnable examples) including a failing example.
 
 use std::path::{Path, PathBuf};
@@ -10,20 +10,20 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
-fn slang(args: &[&str]) -> (i32, String, String) {
-    let o = Command::new(env!("CARGO_BIN_EXE_slang")).args(args).current_dir(repo()).env("SLANG_NO_BACKTRACE", "1").output().expect("cannot run slang");
+fn zell(args: &[&str]) -> (i32, String, String) {
+    let o = Command::new(env!("CARGO_BIN_EXE_zell")).args(args).current_dir(repo()).env("ZELL_NO_BACKTRACE", "1").output().expect("cannot run zell");
     (o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stdout).to_string(), String::from_utf8_lossy(&o.stderr).to_string())
 }
 
 fn tmp(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("slang-doc-test-{}-{name}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("zell-doc-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
 }
 
 fn ensure_runtime() {
-    if !repo().join("runtime/libslang_rt.a").is_file() {
+    if !repo().join("runtime/libzell_rt.a").is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
     }
@@ -31,26 +31,26 @@ fn ensure_runtime() {
 
 #[test]
 fn terminal_output_of_a_symbol_and_a_namespace() {
-    let (code, out, err) = slang(&["doc", "strings.Split"]);
+    let (code, out, err) = zell(&["doc", "strings.Split"]);
     assert_eq!(code, 0, "{err}");
     assert!(out.starts_with("func Split(s string, sep string) []string\n"), "{out}");
-    assert!(out.contains("Split slices s into all substrings") && out.contains("std/strings/strings_extern.sl:"), "{out}");
+    assert!(out.contains("Split slices s into all substrings") && out.contains("std/strings/strings_extern.zl:"), "{out}");
     assert!(out.contains("Example:\n") && out.contains("    // Output:\n    // 3 [a b c]"), "{out}");
-    let (code, out, _) = slang(&["doc", "std.time"]);
+    let (code, out, _) = zell(&["doc", "std.time"]);
     assert_eq!(code, 0);
     assert!(out.starts_with("namespace std.time  // std/time") && out.contains("func Date(year int"), "{out}");
     // a method, through the last segment of the namespace
-    let (code, out, _) = slang(&["doc", "http.Client.Do"]);
+    let (code, out, _) = zell(&["doc", "http.Client.Do"]);
     assert_eq!(code, 0);
     assert!(out.contains("func Do(method string, url string"), "{out}");
-    let (code, _, err) = slang(&["doc", "strings.NoSuchThing"]);
+    let (code, _, err) = zell(&["doc", "strings.NoSuchThing"]);
     assert_eq!(code, 1);
     assert!(err.contains("no such namespace or symbol"), "{err}");
 }
 
 #[test]
 fn json_output() {
-    let (code, out, _) = slang(&["doc", "std.strings", "--json"]);
+    let (code, out, _) = zell(&["doc", "std.strings", "--json"]);
     assert_eq!(code, 0);
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["name"], "std.strings");
@@ -62,7 +62,7 @@ fn json_output() {
 
 #[test]
 fn std_documentation_coverage_is_at_least_90_percent() {
-    let (code, out, _) = slang(&["doc", "--check", "std", "--min", "90"]);
+    let (code, out, _) = zell(&["doc", "--check", "std", "--min", "90"]);
     let last = out.lines().last().unwrap_or("");
     assert_eq!(code, 0, "{last}");
     assert!(last.starts_with("documented ") && last.contains("examples"), "{last}");
@@ -72,25 +72,25 @@ fn std_documentation_coverage_is_at_least_90_percent() {
 #[test]
 fn project_docs_private_and_check() {
     let d = tmp("project");
-    std::fs::write(d.join("slang.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nnamespace = \"demo\"\n").unwrap();
+    std::fs::write(d.join("zell.toml"), "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nnamespace = \"demo\"\n").unwrap();
     std::fs::create_dir_all(d.join("src")).unwrap();
-    std::fs::write(d.join("src/lib.sl"), "// Package demo does things.\nnamespace demo\n\n// Add adds.\nfunc Add(a int, b int) int {\n    return a + b\n}\n\nfunc Sub(a int, b int) int {\n    return a - b\n}\n\nfunc helper() {}\n").unwrap();
+    std::fs::write(d.join("src/lib.zl"), "// Package demo does things.\nnamespace demo\n\n// Add adds.\nfunc Add(a int, b int) int {\n    return a + b\n}\n\nfunc Sub(a int, b int) int {\n    return a - b\n}\n\nfunc helper() {}\n").unwrap();
     let p = d.to_str().unwrap();
-    let (code, out, _) = slang(&["doc", p]);
+    let (code, out, _) = zell(&["doc", p]);
     assert_eq!(code, 0);
     assert!(out.contains("namespace demo") && out.contains("Package demo does things.") && out.contains("func Add(a int, b int) int") && !out.contains("helper"), "{out}");
-    let (_, out, _) = slang(&["doc", p, "--private"]);
+    let (_, out, _) = zell(&["doc", p, "--private"]);
     assert!(out.contains("func helper()"), "{out}");
-    let (code, out, _) = slang(&["doc", "--check", p]);
+    let (code, out, _) = zell(&["doc", "--check", p]);
     assert_eq!(code, 1);
     assert!(out.contains("demo.Sub: missing doc comment") && out.contains("documented 1/2 exported symbols (50.0%)"), "{out}");
     let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
-fn std_examples_run_under_slang_test() {
+fn std_examples_run_under_zell_test() {
     ensure_runtime();
-    let (code, out, err) = slang(&["test", "std"]);
+    let (code, out, err) = zell(&["test", "std"]);
     assert_eq!(code, 0, "{out}\n{err}");
     let last = out.lines().last().unwrap_or("");
     assert!(last.starts_with("ok") && last.contains("examples passed, 0 failed"), "{out}");
@@ -103,11 +103,11 @@ fn a_wrong_example_output_fails() {
     ensure_runtime();
     let d = tmp("example");
     std::fs::write(
-        d.join("calc_test.sl"),
+        d.join("calc_test.zl"),
         "namespace calc_test\n\nimport std.io\n\nfunc ExampleGood() {\n    println(1 + 1)\n    // Output: 2\n}\n\nfunc ExampleBad() {\n    println(\"two\")\n    // Output:\n    // three\n}\n\nfunc ExampleCompiledOnly() {\n    println(\"not run\")\n}\n",
     )
     .unwrap();
-    let (code, out, err) = slang(&["test", d.to_str().unwrap(), "-v"]);
+    let (code, out, err) = zell(&["test", d.to_str().unwrap(), "-v"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(out.contains("--- PASS: ExampleGood") && out.contains("got:\n    two\nwant:\n    three\n--- FAIL: ExampleBad"), "{out}");
     assert!(!out.contains("ExampleCompiledOnly") && out.contains("1 examples passed, 1 failed"), "{out}");
@@ -121,15 +121,15 @@ fn read(p: &Path) -> String {
 #[test]
 fn html_reference_of_the_stdlib() {
     let d = tmp("html");
-    let (code, _, err) = slang(&["doc", "std", "--html", d.to_str().unwrap()]);
+    let (code, _, err) = zell(&["doc", "std", "--html", d.to_str().unwrap()]);
     assert_eq!(code, 0, "{err}");
     let strings = read(&d.join("std.strings.html"));
     assert!(strings.contains("id=\"Split\"") && strings.contains("<pre class=\"sig\">"), "no Split section");
     assert!(strings.contains("<details id=\"ExampleSplit\">"), "no example");
-    assert!(strings.contains("href=\"src/std/strings/strings_extern.sl.html#L"), "no source link");
+    assert!(strings.contains("href=\"src/std/strings/strings_extern.zl.html#L"), "no source link");
     let idx = read(&d.join("search-index.json"));
     assert!(idx.contains("\"std.strings.Split\""));
-    let bad = slang::doc::site::check_links(&d);
+    let bad = zell::doc::site::check_links(&d);
     assert!(bad.is_empty(), "broken links: {:?}", &bad[..bad.len().min(20)]);
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -137,12 +137,12 @@ fn html_reference_of_the_stdlib() {
 #[test]
 fn documentation_site_links_resolve() {
     let d = tmp("site");
-    let (code, _, err) = slang(&["doc", "--site", d.to_str().unwrap(), "--base", "/slang/"]);
+    let (code, _, err) = zell(&["doc", "--site", d.to_str().unwrap(), "--base", "/zell/"]);
     assert_eq!(code, 0, "{err}");
     for f in ["index.html", "guide/tour.html", "guide/faq.html", "design/DESIGN.html", "design/index.html", "std/index.html", "std/std.strings.html", "404.html", "style.css", "search-index.js", ".nojekyll"] {
         assert!(d.join(f).is_file(), "missing {f}");
     }
-    let bad = slang::doc::site::check_links(&d);
+    let bad = zell::doc::site::check_links(&d);
     assert!(bad.is_empty(), "{} broken links, e.g. {:?}", bad.len(), &bad[..bad.len().min(20)]);
     // the landing page is the README; guides have prev/next
     let index = read(&d.join("index.html"));
@@ -150,10 +150,10 @@ fn documentation_site_links_resolve() {
     let errors = read(&d.join("guide/errors.html"));
     assert!(errors.contains("class=\"pager\"") && errors.contains("href=\"tour.html\">&larr;") && errors.contains("href=\"async.html\""), "pager");
     // 404 uses absolute links under the base
-    assert!(read(&d.join("404.html")).contains("href=\"/slang/style.css\""));
+    assert!(read(&d.join("404.html")).contains("href=\"/zell/style.css\""));
     // the std index lists every std namespace with documentation
     let std_index = read(&d.join("std/index.html"));
-    let docs = slang::doc::Docs::build(&slang::doc::load_std(), slang::doc::Options::default());
+    let docs = zell::doc::Docs::build(&zell::doc::load_std(), zell::doc::Options::default());
     for n in docs.namespaces.iter().filter(|n| n.std && !(n.items.is_empty() && n.examples.is_empty() && n.doc.is_empty())) {
         assert!(std_index.contains(&format!("href=\"{}.html\"", n.name)), "std/index.html does not list {}", n.name);
     }

@@ -1,13 +1,13 @@
 //! The content-addressable store (docs/PACKAGES.md, "Хранилище и кэш"):
 //!
 //! ```text
-//! $SLANG_STORE (default $SLANG_HOME/store, $SLANG_HOME = ~/.slang)
+//! $ZELL_STORE (default $ZELL_HOME/store, $ZELL_HOME = ~/.zell)
 //!   files/<sha256>                          every file once, read-only
 //!   packages/<module path>/<version>/index.yaml   path -> hash of one module version
 //!   projects.txt                            project roots that installed from here (for prune)
 //! ```
 //!
-//! A project's `.slang/deps/<module path>@<version>/` is filled with hard
+//! A project's `.zell/deps/<module path>@<version>/` is filled with hard
 //! links to `files/` (a copy when linking fails, e.g. across file
 //! systems), so ten projects with one dependency store it once. Module
 //! paths in directory names are case-encoded like Go (`!x` for `X`).
@@ -17,20 +17,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-/// `$SLANG_HOME` or `~/.slang`.
-pub fn slang_home() -> PathBuf {
-    if let Some(h) = std::env::var_os("SLANG_HOME").filter(|v| !v.is_empty()) {
+/// `$ZELL_HOME` or `~/.zell`.
+pub fn zell_home() -> PathBuf {
+    if let Some(h) = std::env::var_os("ZELL_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(h);
     }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    home.join(".slang")
+    home.join(".zell")
 }
 
-/// `$SLANG_STORE` or `$SLANG_HOME/store`.
+/// `$ZELL_STORE` or `$ZELL_HOME/store`.
 pub fn store_root() -> PathBuf {
-    match std::env::var_os("SLANG_STORE").filter(|v| !v.is_empty()) {
+    match std::env::var_os("ZELL_STORE").filter(|v| !v.is_empty()) {
         Some(s) => PathBuf::from(s),
-        None => slang_home().join("store"),
+        None => zell_home().join("store"),
     }
 }
 
@@ -93,7 +93,7 @@ pub struct Index {
     pub version: String,
     /// The `h1:` hash of the module tree ([`sum::h1`]).
     pub h1: String,
-    /// File name of the module's manifest (`slang.toml`, ...), if any.
+    /// File name of the module's manifest (`zell.toml`, ...), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest: Option<String>,
     /// Where it was fetched from (`git+<url>#<commit>`, `proxy+<url>`).
@@ -109,7 +109,7 @@ pub struct Store {
 }
 
 /// Name of the marker a materialised directory carries (its `h1:`).
-pub const MARKER: &str = ".slang-h1";
+pub const MARKER: &str = ".zell-h1";
 
 fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
     let dir = path.parent().unwrap();
@@ -170,9 +170,9 @@ impl Store {
     /// The bytes of one file of `idx` (hash-checked).
     pub fn read_file(&self, f: &IndexFile) -> Result<Vec<u8>, String> {
         let p = self.file_path(&f.sha256);
-        let data = std::fs::read(&p).map_err(|e| format!("store file {} is missing: {e}; run `slang store verify`", p.display()))?;
+        let data = std::fs::read(&p).map_err(|e| format!("store file {} is missing: {e}; run `zell store verify`", p.display()))?;
         if sum::sha256_hex(&data) != f.sha256 {
-            return Err(format!("store file {} is corrupted (hash mismatch); run `slang store verify`", p.display()));
+            return Err(format!("store file {} is corrupted (hash mismatch); run `zell store verify`", p.display()));
         }
         Ok(data)
     }
@@ -196,7 +196,7 @@ impl Store {
         for f in &idx.files {
             let src = self.file_path(&f.sha256);
             if !src.is_file() {
-                return Err(format!("{}@{}: store file {} is missing; run `slang install` again", idx.module, idx.version, src.display()));
+                return Err(format!("{}@{}: store file {} is missing; run `zell install` again", idx.module, idx.version, src.display()));
             }
             let to = dest.join(&f.path);
             std::fs::create_dir_all(to.parent().unwrap()).map_err(|e| format!("cannot create {}: {e}", to.parent().unwrap().display()))?;
@@ -242,7 +242,7 @@ impl Store {
         out
     }
 
-    /// `slang store verify`: re-hashes every file and checks every index.
+    /// `zell store verify`: re-hashes every file and checks every index.
     /// Returns the problems found (empty when the store is sound).
     pub fn verify(&self) -> Vec<String> {
         let mut problems = Vec::new();
@@ -279,14 +279,14 @@ impl Store {
         problems
     }
 
-    /// `slang store prune`: removes versions no registered project's
-    /// `slang.lock` mentions, then files no index references. Returns
+    /// `zell store prune`: removes versions no registered project's
+    /// `zell.lock` mentions, then files no index references. Returns
     /// (removed versions, removed files).
     pub fn prune(&self) -> (Vec<String>, usize) {
         let mut keep: HashSet<(String, String)> = HashSet::new();
         let mut live_projects = Vec::new();
         for root in std::fs::read_to_string(self.root.join("projects.txt")).unwrap_or_default().lines() {
-            let Ok(text) = std::fs::read_to_string(Path::new(root).join("slang.lock")) else { continue };
+            let Ok(text) = std::fs::read_to_string(Path::new(root).join("zell.lock")) else { continue };
             live_projects.push(root.to_string());
             if let Ok(lock) = super::lock::LockFile::parse(&text) {
                 for p in lock.packages {

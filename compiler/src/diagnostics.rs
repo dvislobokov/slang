@@ -111,7 +111,7 @@ impl Diagnostic {
     /// Human-readable rendering:
     /// ```text
     /// error: unexpected token
-    ///   --> main.sl:3:5
+    ///   --> main.zl:3:5
     ///    |
     ///  3 |     var = 1
     ///    |     ^

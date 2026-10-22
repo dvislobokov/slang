@@ -1,6 +1,6 @@
-//! `slang test`: finds `@test` functions, generates a driver and runs it.
+//! `zell test`: finds `@test` functions, generates a driver and runs it.
 //!
-//! Discovery parses every `.sl` file of the path (the real parser, no
+//! Discovery parses every `.zl` file of the path (the real parser, no
 //! type checking) and takes each top-level `@test` function:
 //! `func TestX(t *testing.T)` (a test), `func BenchX(b *testing.B)` (a
 //! benchmark) or `func X()` (a test without a handle), and each `@bench
@@ -11,26 +11,26 @@
 //! tests a file is generated that lists them as `std.testing.Case`s
 //! (in the same namespace, so unexported test functions work too), plus a
 //! driver namespace whose `main` awaits `std.testing.Main` (stdlib_src/
-//! testing.sl), which runs each test in a child process and prints the
+//! testing.zl), which runs each test in a child process and prints the
 //! summary. Existing `main` functions are renamed in memory so the driver
 //! is the entry point. The sources keep their paths, so diagnostics and
 //! `@embed` work as in a normal build.
 //!
-//! Examples: every `func ExampleX()` of a `*_test.sl` file (see
-//! [`slang::doc`]) is compiled into the same binary; the driver runs one
-//! when started with `--slang-example <ns.Name>`. After the tests, each
+//! Examples: every `func ExampleX()` of a `*_test.zl` file (see
+//! [`zell::doc`]) is compiled into the same binary; the driver runs one
+//! when started with `--zell-example <ns.Name>`. After the tests, each
 //! example with a trailing `// Output:` comment is run that way and its
 //! standard output compared with the comment (surrounding white space
 //! trimmed; `// Unordered output:` compares the lines as a multiset).
 //!
-//! `slang test std` (or a directory inside the standard library, like
-//! `slang test std/strings`) runs the tests and examples of the stdlib's
-//! `*_test.sl` files: only those files are compiled as user code, the
+//! `zell test std` (or a directory inside the standard library, like
+//! `zell test std/strings`) runs the tests and examples of the stdlib's
+//! `*_test.zl` files: only those files are compiled as user code, the
 //! modules themselves come from the compiler as in any build.
 
-use slang::ast;
-use slang::diagnostics::Diagnostics;
-use slang::span::SourceFile;
+use zell::ast;
+use zell::diagnostics::Diagnostics;
+use zell::span::SourceFile;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -42,9 +42,9 @@ enum Kind {
     Bench,
 }
 
-const DRIVER_NS: &str = "slang_test_driver__";
+const DRIVER_NS: &str = "zell_test_driver__";
 
-/// Runs `slang test <args>`; returns the exit code.
+/// Runs `zell test <args>`; returns the exit code.
 pub fn run(args: &[String]) -> i32 {
     let mut path: Option<String> = None;
     let mut pass: Vec<String> = Vec::new();
@@ -73,20 +73,20 @@ pub fn run(args: &[String]) -> i32 {
     // `std`, `std.strings`: the standard library's test files
     if let Some(p) = root.to_str().filter(|p| *p == "std" || p.starts_with("std.")).map(str::to_string) {
         if !root.exists() || p == "std" {
-            match slang::sema::stdfs::std_dir() {
+            match zell::sema::stdfs::std_dir() {
                 Some(d) => root = p.split('.').skip(1).fold(d, |acc, seg| acc.join(seg)),
                 None => {
-                    eprintln!("error: the standard library sources were not found (set SLANG_STD)");
+                    eprintln!("error: the standard library sources were not found (set ZELL_STD)");
                     return 1;
                 }
             }
         }
     }
-    let std_mode = slang::sema::stdfs::std_dir().is_some_and(|d| {
+    let std_mode = zell::sema::stdfs::std_dir().is_some_and(|d| {
         let d = d.canonicalize().unwrap_or(d);
         root.canonicalize().is_ok_and(|r| r.starts_with(&d))
     });
-    let mut opts = match slang::build::parse_args(&build_args) {
+    let mut opts = match zell::build::parse_args(&build_args) {
         Ok((o, _)) => o,
         Err(e) => {
             eprintln!("error: {e}");
@@ -94,21 +94,21 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     opts.input = Some(root.clone());
-    let src_root = if root.join("src").is_dir() && (root.join("slang.toml").is_file() || root.join("slang.json").is_file() || root.join("slang.yaml").is_file()) {
+    let src_root = if root.join("src").is_dir() && (root.join("zell.toml").is_file() || root.join("zell.json").is_file() || root.join("zell.yaml").is_file()) {
         root.join("src")
     } else {
         root.clone()
     };
-    let collected = slang::driver::collect_files(&src_root).map(|mut p| {
+    let collected = zell::driver::collect_files(&src_root).map(|mut p| {
         if std_mode {
-            p.retain(|f| slang::doc::is_test_file(&f.to_string_lossy()));
+            p.retain(|f| zell::doc::is_test_file(&f.to_string_lossy()));
         }
         p
     });
     let paths = match collected {
         Ok(p) if !p.is_empty() => p,
         Ok(_) => {
-            eprintln!("error: no .sl files in {}", src_root.display());
+            eprintln!("error: no .zl files in {}", src_root.display());
             return 1;
         }
         Err(e) => {
@@ -116,7 +116,7 @@ pub fn run(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let mut files = match slang::driver::load(&paths) {
+    let mut files = match zell::driver::load(&paths) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("error: cannot read source: {e}");
@@ -124,17 +124,17 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     let mut tests: BTreeMap<String, Vec<(String, Kind, bool)>> = BTreeMap::new();
-    let mut examples: Vec<(String, slang::doc::Example)> = Vec::new();
+    let mut examples: Vec<(String, zell::doc::Example)> = Vec::new();
     for f in &mut files {
         let mut diags = Diagnostics::new();
-        let tokens = slang::lexer::lex(&f.text, &mut diags);
-        let Some(file) = slang::parser::parse(tokens, &mut diags) else { continue };
+        let tokens = zell::lexer::lex(&f.text, &mut diags);
+        let Some(file) = zell::parser::parse(tokens, &mut diags) else { continue };
         if diags.has_errors() {
             continue;
         }
         let ns = file.namespace.to_string();
-        if slang::doc::is_test_file(&f.path) {
-            for e in slang::doc::examples_of(&file, &f.text, &f.path) {
+        if zell::doc::is_test_file(&f.path) {
+            for e in zell::doc::examples_of(&file, &f.text, &f.path) {
                 examples.push((format!("{ns}.{}", e.name), e));
             }
         }
@@ -166,7 +166,7 @@ pub fn run(args: &[String]) -> i32 {
         if !mains.is_empty() {
             let mut text = f.text.clone();
             for (s, e) in mains.into_iter().rev() {
-                text.replace_range(s..e, "slangUserMain__");
+                text.replace_range(s..e, "zellUserMain__");
             }
             *f = SourceFile::new(f.path.clone(), text);
         }
@@ -176,12 +176,12 @@ pub fn run(args: &[String]) -> i32 {
         println!("no tests found in {}", src_root.display());
         return 0;
     }
-    let tmp = std::env::temp_dir().join(format!("slang-test-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("zell-test-{}", std::process::id()));
     if let Err(e) = std::fs::create_dir_all(&tmp) {
         eprintln!("error: cannot create {}: {e}", tmp.display());
         return 1;
     }
-    let mut driver = format!("namespace {DRIVER_NS}\n\nasync func main() {{\n    var args = std.os.Args()\n    if len(args) == 3 && args[1] == \"--slang-example\" {{\n");
+    let mut driver = format!("namespace {DRIVER_NS}\n\nasync func main() {{\n    var args = std.os.Args()\n    if len(args) == 3 && args[1] == \"--zell-example\" {{\n");
     for (full, e) in &examples {
         let call = if e.is_async { format!("await {full}()") } else { format!("{full}()") };
         let call = if e.fallible { format!("try {call} catch err {{\n                std.io.Eprintln(err.Message())\n                std.os.Exit(1)\n            }}") } else { call };
@@ -189,7 +189,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     driver.push_str("        return\n    }\n    var cases []std.testing.Case = []\n");
     for (k, (ns, list)) in tests.iter().enumerate() {
-        let mut gen = format!("namespace {ns}\n\n// generated by `slang test`\nfunc SlangTestCases{k}__() []std.testing.Case {{\n    var out []std.testing.Case = []\n");
+        let mut gen = format!("namespace {ns}\n\n// generated by `zell test`\nfunc ZellTestCases{k}__() []std.testing.Case {{\n    var out []std.testing.Case = []\n");
         for (name, kind, parallel) in list {
             let case = match kind {
                 Kind::Test if *parallel => format!("std.testing.Case{{Name: \"{name}\", Run: {name}, Parallel: true}}"),
@@ -200,13 +200,13 @@ pub fn run(args: &[String]) -> i32 {
             gen.push_str(&format!("    out = append(out, {case})\n"));
         }
         gen.push_str("    return out\n}\n");
-        files.push(SourceFile::new(tmp.join(format!("tests_{k}.sl")).display().to_string(), gen));
-        driver.push_str(&format!("    for c in {ns}.SlangTestCases{k}__() {{\n        cases = append(cases, c)\n    }}\n"));
+        files.push(SourceFile::new(tmp.join(format!("tests_{k}.zl")).display().to_string(), gen));
+        driver.push_str(&format!("    for c in {ns}.ZellTestCases{k}__() {{\n        cases = append(cases, c)\n    }}\n"));
     }
     driver.push_str("    std.os.Exit(await std.testing.Main(cases))\n}\n");
-    files.push(SourceFile::new(tmp.join("driver.sl").display().to_string(), driver));
+    files.push(SourceFile::new(tmp.join("driver.zl").display().to_string(), driver));
     let exe = tmp.join("tests");
-    let code = match slang::build::build_sources(files, &exe, &opts) {
+    let code = match zell::build::build_sources(files, &exe, &opts) {
         Ok(exe) => {
             let tests_code = if total == 0 {
                 0
@@ -262,7 +262,7 @@ fn normalize_output(s: &str, unordered: bool) -> String {
 }
 
 /// Runs every example that has an expected output; returns the exit code.
-fn run_examples(exe: &std::path::Path, examples: &[(String, slang::doc::Example)], pass: &[String]) -> i32 {
+fn run_examples(exe: &std::path::Path, examples: &[(String, zell::doc::Example)], pass: &[String]) -> i32 {
     let verbose = pass.iter().any(|a| a == "-v" || a == "--verbose");
     let json = pass.iter().any(|a| a == "--json");
     let filter = pass.iter().position(|a| a == "--filter").and_then(|i| pass.get(i + 1)).cloned().unwrap_or_default();
@@ -275,7 +275,7 @@ fn run_examples(exe: &std::path::Path, examples: &[(String, slang::doc::Example)
             continue;
         }
         let t0 = std::time::Instant::now();
-        let out = std::process::Command::new(exe).arg("--slang-example").arg(full).env("SLANG_NO_BACKTRACE", "1").output();
+        let out = std::process::Command::new(exe).arg("--zell-example").arg(full).env("ZELL_NO_BACKTRACE", "1").output();
         let secs = t0.elapsed().as_secs_f64();
         let (ok, report) = match out {
             Err(e) => (false, format!("    cannot run: {e}\n")),

@@ -9,7 +9,7 @@ tx 6 rejected: transfer to alice: insufficient funds in bob: balance $30.01, nee
   short by $69.98
 tx 7 rejected: deposit must be positive
 tx 8 ok: withdraw $15.05 from carol
-== Slang Savings report ==
+== Zell Savings report ==
 alice: $85.50 (+$25.50 -$40.00)
 bob: $30.01 (+$0.00 -$19.99)
 carol: $24.95 (+$40.00 -$15.05)

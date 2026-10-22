@@ -1,0 +1,220 @@
+// test: std.crypto.x509 parses certificates and keys (PEM/DER) and verifies chains: SAN/wildcard/IP host names, validity, EKU, CA flags, name constraints
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.x509_verify
+
+import std
+import std.crypto
+import std.io
+
+// A P-256 root, an RSA intermediate (pathlen 0, name constraints
+// example.com and localhost) and a P-256 leaf for www.example.com,
+// *.api.example.com and 127.0.0.1, valid 2026-10-20 .. 2126.
+const rootPEM = `-----BEGIN CERTIFICATE-----
+MIIBvTCCAWOgAwIBAgIUA9Sb9VwlxjjxD1YgDii/0p4QUi0wCgYIKoZIzj0EAwIw
+KzEaMBgGA1UEAwwRWmVsbCBUZXN0IFJvb3QgQ0ExDTALBgNVBAoMBFplbGwwIBcN
+MjYxMDIwMTg0NTIyWhgPMjEyNjA5MjYxODQ1MjJaMCsxGjAYBgNVBAMMEVplbGwg
+VGVzdCBSb290IENBMQ0wCwYDVQQKDARaZWxsMFkwEwYHKoZIzj0CAQYIKoZIzj0D
+AQcDQgAEVYJDfEzyvbNZPHpb9UhH+Lzpc+hlmbgvu8/1YrFg7gOvkImu0ZEXZgQ8
+XlCeFhsMECG+8WubBuRc1ZqtlDWbXaNjMGEwHQYDVR0OBBYEFE409SvfVkpak3/2
+fFyrMYp8qXPUMB8GA1UdIwQYMBaAFE409SvfVkpak3/2fFyrMYp8qXPUMA8GA1Ud
+EwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMCA0gAMEUCIQDE
+OhDuSZd95nf0MCvBwho4hu1jIIihI+K/aOVWvDj+LwIgD2a4noOvUK4mHgB9rbS5
+vLeLXgeajtfTTSgrlhMOy7s=
+-----END CERTIFICATE-----`
+
+const interPEM = `-----BEGIN CERTIFICATE-----
+MIICujCCAmGgAwIBAgIUc8cZK8vXLXjqQVs7y79Judx/sq0wCgYIKoZIzj0EAwIw
+KzEaMBgGA1UEAwwRWmVsbCBUZXN0IFJvb3QgQ0ExDTALBgNVBAoMBFplbGwwIBcN
+MjYxMDIwMTg0NTIyWhgPMjEyNjA5MjYxODQ1MjJaMDAxHzAdBgNVBAMMFlplbGwg
+VGVzdCBJbnRlcm1lZGlhdGUxDTALBgNVBAoMBFplbGwwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQDwoCMOzNwNfjrKfItar6lpMus3Rka/svn+Rh5XLWwl
+Ohvi28QYSnmC5BsKNPyc0OaUEkejsTvX8HqCkEfzgG8yLTbgnfS8tLHgds01FNYX
+yuz1u0kXU4C/vHhDpoCQEuzw4JWlYEZescGQ0UsL9WIIuxRkyxGQrXBbQPuyWBoX
+Sm32J4aGQpg1V1KeSGxyRrzpFQ5HmV4D5ouK8s8iel7w3x3BhrJJ6gRriiKyo4L4
+tTM+FNF0fzchpM1Ej7Wi/E1y3l2ol0pDKHHJsQf4pJLEZ8MGp6fzCI1W+IG2NPHk
++ISkFqtVGScN+ul7u4CE+ksxbEQEVw2+zOEfFxX8BXTnAgMBAAGjgZAwgY0wEgYD
+VR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAQYwJwYDVR0eBCAwHqAcMA2C
+C2V4YW1wbGUuY29tMAuCCWxvY2FsaG9zdDAdBgNVHQ4EFgQUDn7F8ScZIiEedfqq
+/7ucwaEegVowHwYDVR0jBBgwFoAUTjT1K99WSlqTf/Z8XKsxinypc9QwCgYIKoZI
+zj0EAwIDRwAwRAIgAxLcnQH0NqZdDMgAGz9bA3A2iqZgjepB6FzhRk0MZUUCIDP1
+0nVlBRa8DkaleDFRrHND2aB3zdTsJV1kkFRxtfPa
+-----END CERTIFICATE-----`
+
+const leafPEM = `-----BEGIN CERTIFICATE-----
+MIICuDCCAaCgAwIBAgIUdS+lqrpbi21LXEqyZdXdIhI1ztUwDQYJKoZIhvcNAQEL
+BQAwMDEfMB0GA1UEAwwWWmVsbCBUZXN0IEludGVybWVkaWF0ZTENMAsGA1UECgwE
+WmVsbDAgFw0yNjEwMjAxODQ1MjJaGA8yMTI2MDkyNjE4NDUyMlowGjEYMBYGA1UE
+AwwPd3d3LmV4YW1wbGUuY29tMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExAST
+XHe0RsnyrSxLcoiirNjWMx7PqbAzLL6zsT3D6danH2brCOamdHvlwAQD/1gvDGDx
+Gk4StMGclv137JceNKOBqDCBpTAJBgNVHRMEAjAAMA4GA1UdDwEB/wQEAwIHgDAT
+BgNVHSUEDDAKBggrBgEFBQcDATAzBgNVHREELDAqgg93d3cuZXhhbXBsZS5jb22C
+ESouYXBpLmV4YW1wbGUuY29thwR/AAABMB8GA1UdIwQYMBaAFA5+xfEnGSIhHnX6
+qv+7nMGhHoFaMB0GA1UdDgQWBBTKkSv+VuG9XHMaC+NkXLT6nmBX0jANBgkqhkiG
+9w0BAQsFAAOCAQEAL5EUSUR0yugL8fzpN5xvitEm34LLRlmOlPXATcc/pbgJrd/w
+t1SdK5dOmc7+H/Mp/oGORDwCba5ulOLtvD3ARXFGiDytDtFy72Nfjsf8i7q3wiRb
+as1Z0L7pTwxWEwqMk20MlCT2YY/Jzp0l0+iM9ImVapV4W8msM3eHMBPzd46bAm7T
+LdPvoj861+NYZNIdGPuzC+mxZvruSg68rBn3IKi55l1i4lkIFZImBEnN2ZvNH02n
+hvNkO6ybf/OBrEhDOd1yi5YjhGfBgiQ1hmUoPsO6x6vLJnfCwriLMspUQnTrZtdy
+Tovka5DjjvpKMNx3z/q4aaVB7sKkQv9KuDv6Aw==
+-----END CERTIFICATE-----`
+
+// Issued by the intermediate for evil.org, outside its name constraints.
+const evilPEM = `-----BEGIN CERTIFICATE-----
+MIICfzCCAWegAwIBAgIUdS+lqrpbi21LXEqyZdXdIhI1ztYwDQYJKoZIhvcNAQEL
+BQAwMDEfMB0GA1UEAwwWWmVsbCBUZXN0IEludGVybWVkaWF0ZTENMAsGA1UECgwE
+WmVsbDAgFw0yNjEwMjAxOTIwMDBaGA8yMTI2MDkyNjE5MjAwMFowEzERMA8GA1UE
+AwwIZXZpbC5vcmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATEBJNcd7RGyfKt
+LEtyiKKs2NYzHs+psDMsvrOxPcPp1qcfZusI5qZ0e+XABAP/WC8MYPEaThK0wZyW
+/Xfslx40o3cwdTAJBgNVHRMEAjAAMBMGA1UdJQQMMAoGCCsGAQUFBwMBMBMGA1Ud
+EQQMMAqCCGV2aWwub3JnMB0GA1UdDgQWBBTKkSv+VuG9XHMaC+NkXLT6nmBX0jAf
+BgNVHSMEGDAWgBQOfsXxJxkiIR51+qr/u5zBoR6BWjANBgkqhkiG9w0BAQsFAAOC
+AQEA7J/tYiNEW6nsvTxKEzR/ADf0rlFyPwMMtlNSBg6H7681swW1qBmqROP+GNIO
+C3nvVQJneJkS5zj/+RuIPToRj5T9hDKO/DQG2eN9+XJe//vvlxkV5nN0kJgl66kN
+tkPKU+aqXcpcE8lLe+d1id+JL2mHJLxycHSVYcbSO7AGvAWQWO77wn2P0KPVKYG6
+X3qQTeY9oBj02i/YS3LobPzStQbdQaIx98u2zFKZC/OWIK9uVlaJj0g39m/KAiVd
+GiJHhrJnj7BqxRLjxtm9MJcqHVAQEd7TZu6LV4QBj0tty9RadjRcUJoOAp1z3JEy
+Y/Zu8xQbeTe8Z/EHC/NI15o2+Q==
+-----END CERTIFICATE-----`
+
+const leafKey = `-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIAGsc29bth8PGwXhidNXSRXaTopYnKsTbhwVo65AEA6EoAoGCCqGSM49
+AwEHoUQDQgAExASTXHe0RsnyrSxLcoiirNjWMx7PqbAzLL6zsT3D6danH2brCOam
+dHvlwAQD/1gvDGDxGk4StMGclv137JceNA==
+-----END EC PRIVATE KEY-----`
+
+func check(leaf *x509.Certificate, opts x509.VerifyOptions, what string) {
+    var chain = try x509.Verify(leaf, opts) catch err {
+        println(what + ":", err)
+        return
+    }
+    var names []string = []
+    for c in chain {
+        names = append(names, c.Subject.CommonName)
+    }
+    println(what + ": ok", strings.Join(names, " <- "))
+}
+
+func main() void! {
+    var root = x509.ParsePEM(rootPEM)?[0]
+    var inter = x509.ParsePEM(interPEM)?[0]
+    var leaf = x509.ParsePEM(leafPEM)?[0]
+    println("subject:", leaf.Subject.String(), "issuer:", leaf.Issuer.String())
+    println(
+        "version:",
+        leaf.Version,
+        "sig:",
+        leaf.SignatureAlgorithm,
+        "key:",
+        leaf.PublicKeyAlgorithm,
+        leaf.Curve,
+        len(leaf.PublicKey),
+    )
+    println(
+        "san:",
+        leaf.DNSNames,
+        leaf.IPAddresses,
+        "eku:",
+        leaf.ExtKeyUsage,
+        "ku:",
+        leaf.KeyUsage,
+        "ca:",
+        leaf.IsCA,
+    )
+    println(
+        "inter:",
+        inter.PublicKeyAlgorithm,
+        len(inter.PublicKey) * 8,
+        "bits, ca:",
+        inter.IsCA,
+        "pathlen:",
+        inter.MaxPathLen,
+        "permitted:",
+        inter.PermittedDNSDomains,
+    )
+    println(
+        "root:",
+        root.Subject.CommonName,
+        "ca:",
+        root.IsCA,
+        "self-signed:",
+        root.Subject.String() == root.Issuer.String(),
+    )
+    println(
+        "not before:",
+        time.Format(leaf.NotBefore, "%Y-%m-%d"),
+        "not after:",
+        time.Format(leaf.NotAfter, "%Y-%m-%d"),
+    )
+    println(
+        "aki = parent ski:",
+        encoding.hex.Encode(leaf.AuthorityKeyId) == encoding.hex.Encode(inter.SubjectKeyId),
+    )
+    var der = x509.ParseDER(leaf.Raw)?
+    println("der round trip:", der.Equal(leaf), len(der.Fingerprint()))
+    var pem = x509.EncodePEM("CERTIFICATE", leaf.Raw)
+    println("pem round trip:", x509.ParsePEM(pem)?[0].Equal(leaf))
+
+    var pool = x509.NewCertPool()
+    pool.AddCert(root)
+    var t2030 = time.Parse("2030-01-01", "%Y-%m-%d")?
+    var base = x509.VerifyOptions{Roots: pool, Intermediates: [inter], CurrentTime: t2030}
+    var o = base
+    o.DNSName = "www.example.com"
+    check(leaf, o, "www.example.com")
+    o.DNSName = "WWW.Example.COM."
+    check(leaf, o, "case and trailing dot")
+    o.DNSName = "v1.api.example.com"
+    check(leaf, o, "wildcard")
+    o.DNSName = "a.b.api.example.com"
+    check(leaf, o, "wildcard two labels")
+    o.DNSName = "api.example.com"
+    check(leaf, o, "wildcard apex")
+    o.DNSName = "127.0.0.1"
+    check(leaf, o, "ip")
+    o.DNSName = "10.0.0.1"
+    check(leaf, o, "other ip")
+    o.DNSName = ""
+    o.KeyUsage = "clientAuth"
+    check(leaf, o, "client auth")
+    var noInter = base
+    noInter.Intermediates = []
+    check(leaf, noInter, "missing intermediate")
+    var late = base
+    late.CurrentTime = time.Parse("2200-01-01", "%Y-%m-%d")?
+    check(leaf, late, "in 2200")
+    var early = base
+    early.CurrentTime = time.Parse("2001-01-01", "%Y-%m-%d")?
+    check(leaf, early, "in 2001")
+    var other = base
+    other.Roots = x509.NewCertPool()
+    check(leaf, other, "empty pool")
+    var selfRoot = base
+    selfRoot.DNSName = ""
+    check(root, selfRoot, "root itself")
+    // the intermediate has no extended key usage, so it passes as a leaf
+    check(inter, base, "intermediate as leaf")
+    var evil = x509.ParsePEM(evilPEM)?[0]
+    check(evil, base, "name constraints")
+    try leaf.CheckSignatureFrom(root) catch err {
+        println("leaf signed by root:", err)
+    }
+    inter.CheckSignatureFrom(root)?
+    println("intermediate signed by root: ok")
+
+    var key = x509.ParsePrivateKeyPEM(leafKey)?
+    println(
+        "key:",
+        key.Algorithm,
+        len(key.Bytes),
+        "matches leaf:",
+        key.Matches(leaf),
+        "matches inter:",
+        key.Matches(inter),
+    )
+    try x509.ParsePEM("not a certificate") catch err {
+        println("garbage:", err)
+    }
+    var blocks = x509.DecodePEM(rootPEM + "\n" + leafKey)?
+    println("blocks:", len(blocks), blocks[0].Type, blocks[1].Type)
+}

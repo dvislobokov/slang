@@ -13,13 +13,13 @@
 //! template.
 
 use crate::assist::Walker;
-use slang::ast;
-use slang::diagnostics::Diagnostics;
-use slang::hir::{FuncId, LocalKind, MethodSig, Program};
-use slang::sema::index::{SymKey, SymbolKind};
-use slang::session::Analysis;
-use slang::span::Span;
-use slang::types::{Type, TypeId};
+use zell::ast;
+use zell::diagnostics::Diagnostics;
+use zell::hir::{FuncId, LocalKind, MethodSig, Program};
+use zell::sema::index::{SymKey, SymbolKind};
+use zell::session::Analysis;
+use zell::span::Span;
+use zell::types::{Type, TypeId};
 
 /// A declaration's place: file index and the span of its name.
 pub(crate) type Target = (usize, Span);
@@ -142,7 +142,7 @@ fn find_method(p: &Program, sid: u32, name: &str, depth: usize) -> Option<(FuncI
 }
 
 fn is_static(p: &Program, f: FuncId) -> bool {
-    p.funcs.get(f.0 as usize).is_some_and(|f| matches!(f.kind, slang::hir::FuncKind::Method { is_static: true, .. }))
+    p.funcs.get(f.0 as usize).is_some_and(|f| matches!(f.kind, zell::hir::FuncKind::Method { is_static: true, .. }))
 }
 
 fn method_of(p: &Program, imp: Implementor, name: &str) -> Option<FuncId> {
@@ -157,7 +157,7 @@ fn implementors(p: &Program, iid: u32) -> Vec<Implementor> {
     let Some(it) = p.interfaces.get(iid as usize) else { return Vec::new() };
     let is_std = |n: &str| n.starts_with("std.");
     // Sealed: only types of the interface's own namespace.
-    let allowed = |ns: slang::hir::NamespaceId, full: &str| !it.sealed || (ns == it.namespace && is_std(full) == is_std(&it.full_name));
+    let allowed = |ns: zell::hir::NamespaceId, full: &str| !it.sealed || (ns == it.namespace && is_std(full) == is_std(&it.full_name));
     let satisfies = |imp: Implementor| {
         it.methods.iter().all(|m| match method_of(p, imp, &m.name) {
             Some(f) => same_signature(p, f, m),
@@ -337,7 +337,7 @@ pub(crate) fn selection_chain(f: &ast::File, text: &str, off: u32) -> Vec<Span> 
         }
     }
     let mut diags = Diagnostics::new();
-    let tokens = slang::lexer::lex(text, &mut diags);
+    let tokens = zell::lexer::lex(text, &mut diags);
     let token = tokens.iter().find(|t| t.span.start <= off && off < t.span.end).or_else(|| tokens.iter().find(|t| t.span.end == off && t.span.end > t.span.start));
     if let Some(t) = token {
         spans.push(t.span);
@@ -369,7 +369,7 @@ mod tests {
     fn selection_chain_is_nested() {
         let text = "namespace app\n\nfunc main() {\n    var x = 1 + 2 * 3\n}\n";
         let mut d = Diagnostics::new();
-        let f = slang::parser::parse_file(slang::lexer::lex(text, &mut d), &mut d);
+        let f = zell::parser::parse_file(zell::lexer::lex(text, &mut d), &mut d);
         let off = text.find("2 *").unwrap() as u32;
         let chain = selection_chain(&f, text, off);
         let texts: Vec<&str> = chain.iter().map(|s| &text[s.start as usize..s.end as usize]).collect();

@@ -789,7 +789,7 @@ impl<'a> Sema<'a> {
         let name = format!("lambda{}", self.lambda_count);
         let mut f = self.dummy_function(name.clone(), hir::FuncKind::Lambda { parent }, self.funcs[parent.0 as usize].namespace);
         f.full_name = format!("{}${name}", self.funcs[parent.0 as usize].full_name);
-        f.symbol = format!("slang_{}", f.full_name.replace('.', "__").replace('$', "_"));
+        f.symbol = format!("zell_{}", f.full_name.replace('.', "__").replace('$', "_"));
         f.span = span;
         self.funcs.push(f);
         self.func_src.push(FuncSrc::Synthetic);

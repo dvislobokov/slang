@@ -8,10 +8,10 @@
 //! the failover to the promoted replica; and a 3-master Cluster
 //! (`redis-cli --cluster create`), where the program migrates a slot to see
 //! ASK and MOVED redirects. It then runs
-//! `tests/fixtures/redis/redis_real.sl` (built with `--leak-check`) and
+//! `tests/fixtures/redis/redis_real.zl` (built with `--leak-check`) and
 //! compares its output with `redis_real.out`. Without `redis-server` and
 //! `redis-cli` the test is skipped with a note; the protocol is still
-//! covered by the mock-server spec tests `tests/spec/stdlib5/redis_*.sl`.
+//! covered by the mock-server spec tests `tests/spec/stdlib5/redis_*.zl`.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -71,7 +71,7 @@ fn redis_real_servers() {
         eprintln!("skipping: redis-server / redis-cli not found");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("slang_redistest_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell_redistest_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut servers = Servers(Vec::new());
@@ -142,15 +142,15 @@ fn redis_real_servers() {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    if !repo().join("runtime/libslang_rt.a").is_file() {
+    if !repo().join("runtime/libzell_rt.a").is_file() {
         assert!(Command::new("make").arg("-C").arg(repo().join("runtime")).status().unwrap().success());
     }
-    let src = repo().join("compiler/tests/fixtures/redis/redis_real.sl");
+    let src = repo().join("compiler/tests/fixtures/redis/redis_real.zl");
     let exe = dir.join("redis_real");
-    let b = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
+    let b = Command::new(env!("CARGO_BIN_EXE_zell")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
     assert!(b.status.success(), "build failed:\n{}", String::from_utf8_lossy(&b.stderr));
     let mut cmd = Command::new(&exe);
-    cmd.env("SLANG_NO_BACKTRACE", "1");
+    cmd.env("ZELL_NO_BACKTRACE", "1");
     for (k, v) in &envs {
         cmd.env(k, v);
     }

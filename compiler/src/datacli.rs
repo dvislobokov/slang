@@ -1,32 +1,32 @@
-//! `slang data ...`: migrations of `std.data` (docs/FRAMEWORK.md section 3).
+//! `zell data ...`: migrations of `std.data` (docs/FRAMEWORK.md section 3).
 //!
-//! * `slang data migration add <Name>` type-checks the project, takes the
+//! * `zell data migration add <Name>` type-checks the project, takes the
 //!   model of its contexts from the compiler (attributes, conventions and
 //!   `Configure`, see `sema/orm_model.rs`), compares it with
-//!   `migrations/snapshot.json` and writes `migrations/<timestamp>_<Name>.sl`:
+//!   `migrations/snapshot.json` and writes `migrations/<timestamp>_<Name>.zl`:
 //!   a struct with `@migration("<timestamp>_<Name>")` whose `Up`/`Down`
 //!   methods call the `data.Migrator` API (`CreateTable`, `AddColumn`,
 //!   `AlterColumn`, `CreateIndex`, `AddForeignKey`, ... and their inverses),
 //!   then updates the snapshot.
-//! * `slang data update [target]`, `slang data script` and `slang data list`
+//! * `zell data update [target]`, `zell data script` and `zell data list`
 //!   build a small program from the migration files and a generated `main`
 //!   that calls `data.RunMigrations` (the runtime migrator renders the DDL
 //!   for the provider; applied migrations are recorded in `__migrations`),
 //!   and run it.
 //!
-//! Provider and DSN come from `--provider`/`--dsn` or `SLANG_DATA_PROVIDER`
-//! and `SLANG_DATA_DSN`.
+//! Provider and DSN come from `--provider`/`--dsn` or `ZELL_DATA_PROVIDER`
+//! and `ZELL_DATA_DSN`.
 
 use crate::diagnostics::Diagnostics;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "\
-usage: slang data <command> [options]
+usage: zell data <command> [options]
 
 commands:
   migration add <Name>   compare the model with migrations/snapshot.json and write
-                         migrations/<timestamp>_<Name>.sl (Up/Down) and the new snapshot
+                         migrations/<timestamp>_<Name>.zl (Up/Down) and the new snapshot
   migration list         list the migration files
   update [target]        apply the pending migrations (or migrate up/down to target; 0 = none)
   script                 print the SQL of all migrations for the provider
@@ -35,8 +35,8 @@ commands:
 options:
   --project <dir>        the project directory (default: .)
   --dir <dir>            the migrations directory (default: <project>/migrations)
-  --provider <p>         postgres or sqlite (default: $SLANG_DATA_PROVIDER, else sqlite)
-  --dsn <dsn>            data source name (default: $SLANG_DATA_DSN)
+  --provider <p>         postgres or sqlite (default: $ZELL_DATA_PROVIDER, else sqlite)
+  --dsn <dsn>            data source name (default: $ZELL_DATA_DSN)
   --context <Name>       the context whose namespace the migrations get (default: the first)";
 
 struct Opts {
@@ -52,8 +52,8 @@ fn parse(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         project: PathBuf::from("."),
         dir: None,
-        provider: std::env::var("SLANG_DATA_PROVIDER").unwrap_or_else(|_| "sqlite".into()),
-        dsn: std::env::var("SLANG_DATA_DSN").unwrap_or_default(),
+        provider: std::env::var("ZELL_DATA_PROVIDER").unwrap_or_else(|_| "sqlite".into()),
+        dsn: std::env::var("ZELL_DATA_DSN").unwrap_or_default(),
         context: None,
         rest: Vec::new(),
     };
@@ -84,13 +84,13 @@ impl Opts {
     }
 }
 
-/// Runs `slang data <args>`; returns the exit code.
+/// Runs `zell data <args>`; returns the exit code.
 pub fn run(args: &[String]) -> Result<i32, String> {
     let o = parse(args)?;
     let cmd: Vec<&str> = o.rest.iter().map(|s| s.as_str()).collect();
     match cmd.as_slice() {
         ["migration", "add", name] => migration_add(&o, name).map(|_| 0),
-        ["migration", "add"] => Err("migration add needs a name: slang data migration add AddUsers".into()),
+        ["migration", "add"] => Err("migration add needs a name: zell data migration add AddUsers".into()),
         ["migration", "list"] | ["migrations"] => {
             for (id, _) in migration_files(&o.mig_dir())? {
                 println!("{id}");
@@ -115,7 +115,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
 pub fn project_model(project: &Path) -> Result<Value, String> {
     let paths = crate::driver::collect_files(project).map_err(|e| format!("cannot read {}: {e}", project.display()))?;
     if paths.is_empty() {
-        return Err(format!("no .sl files in {}", project.display()));
+        return Err(format!("no .zl files in {}", project.display()));
     }
     let files = crate::driver::load(&paths).map_err(|e| format!("cannot read source: {e}"))?;
     let mut diags = Diagnostics::new();
@@ -152,7 +152,7 @@ fn s(v: &Value, k: &str) -> String {
 
 // -- code generation ----------------------------------------------------------------
 
-/// A Slang string literal.
+/// A Zell string literal.
 fn lit(x: &str) -> String {
     let mut out = String::from("\"");
     for c in x.chars() {
@@ -304,9 +304,9 @@ pub fn diff(old: &Value, new: &Value) -> (String, String) {
     (up, down.concat())
 }
 
-/// UTC `YYYYMMDDHHMMSS` (or `$SLANG_DATA_TIMESTAMP`).
+/// UTC `YYYYMMDDHHMMSS` (or `$ZELL_DATA_TIMESTAMP`).
 fn timestamp() -> String {
-    if let Ok(t) = std::env::var("SLANG_DATA_TIMESTAMP") {
+    if let Ok(t) = std::env::var("ZELL_DATA_TIMESTAMP") {
         return t;
     }
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -330,7 +330,7 @@ fn migration_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let Ok(rd) = std::fs::read_dir(dir) else { return Ok(out) };
     for e in rd.flatten() {
         let p = e.path();
-        if p.extension().is_some_and(|x| x == "sl") {
+        if p.extension().is_some_and(|x| x == "zl") {
             let stem = p.file_stem().unwrap().to_string_lossy().to_string();
             if stem.len() > 15 && stem.as_bytes()[14] == b'_' && stem[..14].chars().all(|c| c.is_ascii_digit()) {
                 out.push((stem, p));
@@ -371,11 +371,11 @@ fn migration_add(o: &Opts, name: &str) -> Result<(), String> {
     }
     let id = format!("{}_{name}", timestamp());
     let src = format!(
-        "// Generated by `slang data migration add {name}` (std.data). Migrations\n// are ordinary code: edit them as needed; the model they lead to is\n// in snapshot.json next to this file.\nnamespace {ns}\n\nimport std.data\n\n@migration({})\nstruct {name} {{\n    func Up(m *Migrator) {{\n{up}    }}\n\n    func Down(m *Migrator) {{\n{down}    }}\n}}\n",
+        "// Generated by `zell data migration add {name}` (std.data). Migrations\n// are ordinary code: edit them as needed; the model they lead to is\n// in snapshot.json next to this file.\nnamespace {ns}\n\nimport std.data\n\n@migration({})\nstruct {name} {{\n    func Up(m *Migrator) {{\n{up}    }}\n\n    func Down(m *Migrator) {{\n{down}    }}\n}}\n",
         lit(&id)
     );
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let file = dir.join(format!("{id}.sl"));
+    let file = dir.join(format!("{id}.zl"));
     std::fs::write(&file, src).map_err(|e| format!("cannot write {}: {e}", file.display()))?;
     std::fs::write(&snap_path, serde_json::to_string_pretty(&snapshot).unwrap() + "\n").map_err(|e| format!("cannot write {}: {e}", snap_path.display()))?;
     println!("created {}", file.display());
@@ -393,17 +393,17 @@ fn run_migrations(o: &Opts, command: &str, target: &str) -> Result<i32, String> 
         sources.push(crate::span::SourceFile::new(p.display().to_string(), text));
     }
     if command != "script" && o.dsn.is_empty() {
-        return Err("no data source: pass --dsn (or set SLANG_DATA_DSN)".into());
+        return Err("no data source: pass --dsn (or set ZELL_DATA_DSN)".into());
     }
     let main = format!(
-        "namespace slangdatacli\n\nimport std.data\n\nasync func main() void! {{\n    var p = ParseProvider({})?\n    await RunMigrations(p, {}, Migrations(), {}, {})?\n}}\n",
+        "namespace zelldatacli\n\nimport std.data\n\nasync func main() void! {{\n    var p = ParseProvider({})?\n    await RunMigrations(p, {}, Migrations(), {}, {})?\n}}\n",
         lit(&o.provider),
         lit(&o.dsn),
         lit(command),
         lit(target)
     );
-    sources.push(crate::span::SourceFile::new(dir.join("<slang data>.sl").display().to_string(), main));
-    let tmp = std::env::temp_dir().join(format!("slang_data_{}", std::process::id()));
+    sources.push(crate::span::SourceFile::new(dir.join("<zell data>.zl").display().to_string(), main));
+    let tmp = std::env::temp_dir().join(format!("zell_data_{}", std::process::id()));
     std::fs::create_dir_all(&tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
     let exe = tmp.join("migrate");
     let opts = crate::build::BuildOptions::new(&dir);

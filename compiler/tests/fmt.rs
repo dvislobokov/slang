@@ -1,8 +1,8 @@
-//! `slang fmt`: golden cases (`tests/fixtures/fmt/NN_name.in.sl` ->
-//! `NN_name.out.sl`) plus idempotence and round-trip over every `.sl` file
+//! `zell fmt`: golden cases (`tests/fixtures/fmt/NN_name.in.zl` ->
+//! `NN_name.out.zl`) plus idempotence and round-trip over every `.zl` file
 //! of the repository's examples, benchmarks, spec corpus and std sources.
 
-use slang::fmt::{format_source, normalized, FmtError};
+use zell::fmt::{format_source, normalized, FmtError};
 use std::path::{Path, PathBuf};
 
 fn repo() -> PathBuf {
@@ -14,14 +14,14 @@ fn sl_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         if p.is_dir() {
             sl_files(&p, out);
-        } else if p.extension().is_some_and(|x| x == "sl") {
+        } else if p.extension().is_some_and(|x| x == "zl") {
             out.push(p);
         }
     }
 }
 
-fn parse(src: &str) -> slang::ast::File {
-    let (file, diags) = slang::parser::parse_source(src);
+fn parse(src: &str) -> zell::ast::File {
+    let (file, diags) = zell::parser::parse_source(src);
     assert!(!diags.has_errors(), "{:?}", diags.items);
     file
 }
@@ -29,13 +29,13 @@ fn parse(src: &str) -> slang::ast::File {
 #[test]
 fn golden_cases() {
     let dir = repo().join("compiler/tests/fixtures/fmt");
-    let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".in.sl")).collect();
+    let mut inputs: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".in.zl")).collect();
     inputs.sort();
     assert!(inputs.len() >= 10, "expected at least 10 golden cases, found {}", inputs.len());
     let mut failures = Vec::new();
     for input in &inputs {
         let src = std::fs::read_to_string(input).unwrap();
-        let expected_path = PathBuf::from(input.to_string_lossy().replace(".in.sl", ".out.sl"));
+        let expected_path = PathBuf::from(input.to_string_lossy().replace(".in.zl", ".out.zl"));
         let expected = std::fs::read_to_string(&expected_path).unwrap_or_else(|_| panic!("missing {}", expected_path.display()));
         match format_source(&src) {
             Ok(out) if out == expected => {}
@@ -106,24 +106,24 @@ fn long_lines_break_and_short_ones_join() {
 
 #[test]
 fn cli_check_and_stdin() {
-    let dir = std::env::temp_dir().join(format!("slang-fmt-cli-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell-fmt-cli-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("a.sl");
+    let file = dir.join("a.zl");
     std::fs::write(&file, "namespace t\nfunc f() { var x=1\n_ = x }\n").unwrap();
-    let slang = env!("CARGO_BIN_EXE_slang");
-    let check = std::process::Command::new(slang).args(["fmt", "--check"]).arg(&dir).output().unwrap();
+    let zell = env!("CARGO_BIN_EXE_zell");
+    let check = std::process::Command::new(zell).args(["fmt", "--check"]).arg(&dir).output().unwrap();
     assert_eq!(check.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&check.stdout).contains("a.sl"));
-    let diff = std::process::Command::new(slang).args(["fmt", "--diff"]).arg(&file).output().unwrap();
+    assert!(String::from_utf8_lossy(&check.stdout).contains("a.zl"));
+    let diff = std::process::Command::new(zell).args(["fmt", "--diff"]).arg(&file).output().unwrap();
     assert!(String::from_utf8_lossy(&diff.stdout).contains("+    var x = 1"), "{}", String::from_utf8_lossy(&diff.stdout));
-    let write = std::process::Command::new(slang).arg("fmt").arg(&dir).output().unwrap();
+    let write = std::process::Command::new(zell).arg("fmt").arg(&dir).output().unwrap();
     assert!(write.status.success());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "namespace t\n\nfunc f() {\n    var x = 1\n    _ = x\n}\n");
-    let again = std::process::Command::new(slang).args(["fmt", "--check"]).arg(&dir).output().unwrap();
+    let again = std::process::Command::new(zell).args(["fmt", "--check"]).arg(&dir).output().unwrap();
     assert!(again.status.success());
     use std::io::Write;
-    let mut child = std::process::Command::new(slang)
+    let mut child = std::process::Command::new(zell)
         .args(["fmt", "--stdin"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

@@ -1,6 +1,6 @@
 //! Front-end side of the in-process debug agent (docs/DEBUGGER.md stage 2):
 //! a build with `--debug-agent` instantiates `std.debug.AgentMain` (the
-//! agent, written in Slang in `stdlib_src/debug*.sl`) so code generation
+//! agent, written in Zell in `stdlib_src/debug*.zl`) so code generation
 //! can start it from the C `main`; and the capability gate of the
 //! low-level modules the agent is built on (`std.unsafe`, `std.plugin`).
 

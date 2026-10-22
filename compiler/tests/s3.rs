@@ -2,11 +2,11 @@
 //!
 //! The test starts `minio server` (from `PATH` or `$MINIO_BIN`) on a free
 //! port with a temporary data directory and root credentials, waits for
-//! `/minio/health/live`, runs `tests/fixtures/s3/s3_real.sl` (built with
+//! `/minio/health/live`, runs `tests/fixtures/s3/s3_real.zl` (built with
 //! `--leak-check`) and compares its output with `s3_real.out`. Without a
 //! MinIO binary the test is skipped with a note (MinIO is not packaged for
 //! apt; `go install github.com/minio/minio@latest` builds it); the client
-//! is still covered by the spec tests `tests/spec/stdlib5/s3_*.sl` (AWS
+//! is still covered by the spec tests `tests/spec/stdlib5/s3_*.zl` (AWS
 //! SigV4 vectors and an in-process S3 server that verifies signatures).
 
 use std::net::{TcpListener, TcpStream};
@@ -53,7 +53,7 @@ fn s3_real_minio() {
         eprintln!("skipping: minio not found (set MINIO_BIN or put it on PATH)");
         return;
     };
-    let dir = std::env::temp_dir().join(format!("slang_s3test_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell_s3test_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("data")).unwrap();
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
@@ -65,8 +65,8 @@ fn s3_real_minio() {
         .arg(format!("127.0.0.1:{port}"))
         .arg("--console-address")
         .arg(format!("127.0.0.1:{console}"))
-        .env("MINIO_ROOT_USER", "slangadmin")
-        .env("MINIO_ROOT_PASSWORD", "slangsecret123")
+        .env("MINIO_ROOT_USER", "zelladmin")
+        .env("MINIO_ROOT_PASSWORD", "zellsecret123")
         .env("MINIO_BROWSER", "off")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -78,18 +78,18 @@ fn s3_real_minio() {
         assert!(start.elapsed() < Duration::from_secs(30), "minio did not start");
         std::thread::sleep(Duration::from_millis(100));
     }
-    if !repo().join("runtime/libslang_rt.a").is_file() {
+    if !repo().join("runtime/libzell_rt.a").is_file() {
         assert!(Command::new("make").arg("-C").arg(repo().join("runtime")).status().unwrap().success());
     }
-    let src = repo().join("compiler/tests/fixtures/s3/s3_real.sl");
+    let src = repo().join("compiler/tests/fixtures/s3/s3_real.zl");
     let exe = dir.join("s3_real");
-    let b = Command::new(env!("CARGO_BIN_EXE_slang")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
+    let b = Command::new(env!("CARGO_BIN_EXE_zell")).arg("build").arg(&src).arg("-o").arg(&exe).arg("--leak-check").output().unwrap();
     assert!(b.status.success(), "build failed:\n{}", String::from_utf8_lossy(&b.stderr));
     let run = Command::new(&exe)
         .env("S3_ENDPOINT", format!("http://127.0.0.1:{port}"))
-        .env("S3_ACCESS_KEY", "slangadmin")
-        .env("S3_SECRET_KEY", "slangsecret123")
-        .env("SLANG_NO_BACKTRACE", "1")
+        .env("S3_ACCESS_KEY", "zelladmin")
+        .env("S3_SECRET_KEY", "zellsecret123")
+        .env("ZELL_NO_BACKTRACE", "1")
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&run.stdout).into_owned();

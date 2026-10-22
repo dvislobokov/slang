@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-// Two phases: binary trees, then small non-escaping temporaries (see main.sl).
+// Two phases: binary trees, then small non-escaping temporaries (see main.zl).
 
 type Node struct {
 	Left, Right *Node

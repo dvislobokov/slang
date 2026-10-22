@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Finds all e-mail addresses in a generated 10 MB text (same text as main.sl).
+// Finds all e-mail addresses in a generated 10 MB text (same text as main.zl).
 func main() {
 	words := []string{"lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua", "x@y"}
 	names := []string{"john.smith", "alice", "bob_42", "carol+news", "dave-ops"}

@@ -11,11 +11,11 @@ fn doc(uri: &Url) -> TextDocumentIdentifier {
 }
 
 fn status(c: &mut Client) -> serde_json::Value {
-    c.request_raw(slang_lsp::ANALYZER_STATUS, serde_json::Value::Null)
+    c.request_raw(zell_lsp::ANALYZER_STATUS, serde_json::Value::Null)
 }
 
 fn server_text(c: &mut Client, uri: &Url) -> Option<String> {
-    serde_json::from_value(c.request_raw(slang_lsp::DOCUMENT_TEXT, serde_json::json!({ "uri": uri }))).unwrap()
+    serde_json::from_value(c.request_raw(zell_lsp::DOCUMENT_TEXT, serde_json::json!({ "uri": uri }))).unwrap()
 }
 
 fn change_range(c: &Client, uri: &Url, version: i32, changes: Vec<TextDocumentContentChangeEvent>) {
@@ -87,7 +87,7 @@ fn model_position(chars: &[char], i: usize) -> Position {
 #[test]
 fn incremental_sync_matches_a_reference_model() {
     let text = "namespace app\n\nimport std.io\n\n// Привет, 𝄞!\nfunc main() {\n    println(\"ü\")\n}\n";
-    let (dir, uri) = project_with("main.sl", text);
+    let (dir, uri) = project_with("main.zl", text);
     let mut c = Client::start(&dir);
     c.open(&uri, text);
     let mut model: Vec<char> = text.chars().collect();
@@ -135,7 +135,7 @@ const SLOW: fn(&mut InitializeParams) = |p| p.initialization_options = Some(serd
 #[test]
 fn cancel_request_answers_a_waiting_request() {
     let text = "namespace app\n\nfunc F(a int) int {\n    return a\n}\n";
-    let (dir, uri) = project_with("main.sl", text);
+    let (dir, uri) = project_with("main.zl", text);
     let mut c = Client::start_with(&dir, SLOW);
     c.open(&uri, text);
     let _ = status(&mut c); // the server is past loading std and the workspace
@@ -166,7 +166,7 @@ fn edits_supersede_the_analysis_in_flight() {
     let v1 = "namespace app\n\nfunc F(a int) int {\n    return a\n}\n";
     let v2 = v1.replace("a int) int", "b int) int").replace("return a", "return b");
     let v3 = v1.replace("a int) int", "c int) int").replace("return a", "return c");
-    let (dir, uri) = project_with("main.sl", v1);
+    let (dir, uri) = project_with("main.zl", v1);
     let mut c = Client::start_with(&dir, |p| p.initialization_options = Some(serde_json::json!({"debug": {"analysisDelayMs": 300}})));
     c.open(&uri, v1);
     assert_eq!(c.diagnostics(&uri), vec![]);
@@ -196,7 +196,7 @@ fn flat(tokens: &[SemanticToken]) -> Vec<u32> {
 
 #[test]
 fn semantic_tokens_delta_and_range() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -328,7 +328,7 @@ func main() {
 
 #[test]
 fn implementation_type_definition_and_declaration() {
-    let (dir, uri) = project_with("main.sl", SHAPES);
+    let (dir, uri) = project_with("main.zl", SHAPES);
     let mut c = Client::start(&dir);
     c.open(&uri, SHAPES);
     assert_eq!(c.diagnostics(&uri), vec![]);
@@ -376,11 +376,11 @@ fn implementation_type_definition_and_declaration() {
 
 #[test]
 fn completion_resolve_adds_documentation() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
-    let anchor = "    var bank = Bank.New(\"Slang Savings\")\n";
+    let anchor = "    var bank = Bank.New(\"Zell Savings\")\n";
     let edited = text.replacen(anchor, &format!("{anchor}    Mon\n"), 1);
     c.change(uri, 2, &edited);
     let r: Option<CompletionResponse> = c.request::<request::Completion>(CompletionParams {
@@ -396,7 +396,7 @@ fn completion_resolve_adds_documentation() {
     let resolved: CompletionItem = c.request::<request::ResolveCompletionItem>(money.clone());
     assert_eq!(resolved.detail.as_deref(), Some("func Money(cents int) string"));
     match &resolved.documentation {
-        Some(Documentation::MarkupContent(m)) => assert!(m.kind == MarkupKind::Markdown && m.value.contains("Amounts are integer cents.") && m.value.contains("```slang"), "{}", m.value),
+        Some(Documentation::MarkupContent(m)) => assert!(m.kind == MarkupKind::Markdown && m.value.contains("Amounts are integer cents.") && m.value.contains("```zell"), "{}", m.value),
         other => panic!("{other:?}"),
     }
     // After another analysis the item still resolves (by its full name).
@@ -411,7 +411,7 @@ fn completion_resolve_adds_documentation() {
 
 #[test]
 fn inlay_hint_and_code_action_resolve() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -441,7 +441,7 @@ fn inlay_hint_and_code_action_resolve() {
     assert!(t.contains("func Open(owner string, initial int)"), "{t}");
 
     // Code actions are complete already: resolve returns them as they are.
-    let (dir, uri) = project_with("main.sl", FIXES);
+    let (dir, uri) = project_with("main.zl", FIXES);
     let mut c = Client::start(&dir);
     c.open(&uri, FIXES);
     let actions = code_actions(&mut c, &uri, Range { start: pos_of(FIXES, "unused", 0, 0), end: pos_of(FIXES, "unused", 0, 6) });
@@ -475,7 +475,7 @@ func main() {
 
 #[test]
 fn code_lenses_for_tests_main_and_references() {
-    let (dir, uri) = project_with("main.sl", LENSES);
+    let (dir, uri) = project_with("main.zl", LENSES);
     let mut c = Client::start(&dir);
     c.open(&uri, LENSES);
     assert_eq!(c.diagnostics(&uri), vec![]);
@@ -485,12 +485,12 @@ fn code_lenses_for_tests_main_and_references() {
     assert_eq!(
         cmds,
         [
-            ("TestAdd".to_string(), "▶ Run test".to_string(), "slang.runTest".to_string()),
-            ("TestAdd".into(), "Debug test".into(), "slang.debugTest".into()),
-            ("main".into(), "▶ Run".into(), "slang.run".into()),
+            ("TestAdd".to_string(), "▶ Run test".to_string(), "zell.runTest".to_string()),
+            ("TestAdd".into(), "Debug test".into(), "zell.debugTest".into()),
+            ("main".into(), "▶ Run".into(), "zell.run".into()),
         ]
     );
-    let run_test = lenses.iter().find(|l| l.command.as_ref().is_some_and(|c| c.command == "slang.runTest")).unwrap();
+    let run_test = lenses.iter().find(|l| l.command.as_ref().is_some_and(|c| c.command == "zell.runTest")).unwrap();
     assert_eq!(run_test.command.as_ref().unwrap().arguments, Some(vec![serde_json::json!(uri), serde_json::json!("TestAdd")]));
     // Only exported declarations get a (lazy) reference count.
     let unresolved: Vec<&CodeLens> = lenses.iter().filter(|l| l.command.is_none()).collect();
@@ -498,7 +498,7 @@ fn code_lenses_for_tests_main_and_references() {
     let r: CodeLens = c.request::<request::CodeLensResolve>(unresolved[0].clone());
     let cmd = r.command.expect("resolved");
     assert_eq!(cmd.title, "3 references");
-    assert_eq!(cmd.command, "slang.showReferences");
+    assert_eq!(cmd.command, "zell.showReferences");
     let args = cmd.arguments.unwrap();
     assert_eq!(args[0], serde_json::json!(uri));
     let locs: Vec<Location> = serde_json::from_value(args[2].clone()).unwrap();
@@ -508,7 +508,7 @@ fn code_lenses_for_tests_main_and_references() {
 
 #[test]
 fn selection_ranges_expand_from_the_token_to_the_file() {
-    let (dir, files) = project(&["bank.sl"]);
+    let (dir, files) = project(&["bank.zl"]);
     let (uri, text) = &files[0];
     let mut c = Client::start(&dir);
     c.open(uri, text);
@@ -577,8 +577,8 @@ fn progress_is_reported_for_initial_indexing() {
 #[test]
 fn pull_diagnostics_for_documents_and_the_workspace() {
     let main = "namespace app\n\nimport std.io\n\nfunc main() {\n    println(Helper())\n}\n";
-    let (dir, uri) = project_with("main.sl", main);
-    let helper = dir.join("helper.sl");
+    let (dir, uri) = project_with("main.zl", main);
+    let helper = dir.join("helper.zl");
     std::fs::write(&helper, "namespace app\n\nfunc Other() int {\n    return 1\n}\n").unwrap();
     let helper_uri = Url::from_file_path(&helper).unwrap();
     let mut c = Client::start_with(&dir, |p| {
@@ -622,7 +622,7 @@ fn pull_diagnostics_for_documents_and_the_workspace() {
     let parked = c.send_request(request::WorkspaceDiagnosticRequest::METHOD, ws(known.clone()));
     let _ = status(&mut c);
     assert!(!c.responses.iter().any(|r| r.id == parked), "nothing changed: the request waits");
-    // Defining Helper fixes main.sl: the parked request is answered.
+    // Defining Helper fixes main.zl: the parked request is answered.
     c.change(&uri, 2, &format!("{main}\nfunc Helper() int {{\n    return 2\n}}\n"));
     let r = c.response(&parked);
     let r: WorkspaceDiagnosticReportResult = serde_json::from_value(r.result.unwrap()).unwrap();
@@ -631,7 +631,7 @@ fn pull_diagnostics_for_documents_and_the_workspace() {
         WorkspaceDocumentDiagnosticReport::Full(f) if f.uri == uri => Some(f),
         _ => None,
     });
-    assert!(main_report.expect("main.sl changed").full_document_diagnostic_report.items.is_empty());
+    assert!(main_report.expect("main.zl changed").full_document_diagnostic_report.items.is_empty());
     assert!(r.items.iter().any(|i| matches!(i, WorkspaceDocumentDiagnosticReport::Unchanged(u) if u.uri == helper_uri)));
     assert!(c.server_requests.iter().any(|r| r.method == request::WorkspaceDiagnosticRefresh::METHOD), "the client is asked to refresh");
     // Up to date again: parked, and a parked request can be cancelled.
@@ -653,10 +653,10 @@ fn pull_diagnostics_for_documents_and_the_workspace() {
     assert_eq!(e.code, lsp_server::ErrorCode::RequestCanceled as i32);
 }
 
-/// A package `app` with `src/main.sl` and the given files under `src/`.
+/// A package `app` with `src/main.zl` and the given files under `src/`.
 fn package(files: &[(&str, &str)]) -> PathBuf {
     let (dir, _) = project(&[]);
-    std::fs::write(dir.join("slang.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.sl\"\n").unwrap();
+    std::fs::write(dir.join("zell.toml"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nnamespace = \"app\"\nentry = \"src/main.zl\"\n").unwrap();
     for (p, text) in files {
         let f = dir.join("src").join(p);
         std::fs::create_dir_all(f.parent().unwrap()).unwrap();
@@ -688,13 +688,13 @@ const RENAME_USER: &str = "namespace app.models\n\nstruct User {\n    Name strin
 
 #[test]
 fn renaming_a_file_updates_its_namespace_and_imports() {
-    let dir = package(&[("main.sl", RENAME_MAIN), ("models/user.sl", RENAME_USER)]);
-    let main = dir.join("src/main.sl");
+    let dir = package(&[("main.zl", RENAME_MAIN), ("models/user.zl", RENAME_USER)]);
+    let main = dir.join("src/main.zl");
     let main_uri = Url::from_file_path(&main).unwrap();
     let mut c = Client::start(&dir);
     c.open(&main_uri, RENAME_MAIN);
     assert_eq!(c.diagnostics(&main_uri), vec![]);
-    let (from, to) = (dir.join("src/models/user.sl"), dir.join("src/accounts/user.sl"));
+    let (from, to) = (dir.join("src/models/user.zl"), dir.join("src/accounts/user.zl"));
     let edit = will_rename(&mut c, &from, &to).expect("edits for a path-derived namespace");
     let changes = edit.changes.as_ref().unwrap();
     assert_eq!(changes.len(), 2, "{changes:?}");
@@ -702,7 +702,7 @@ fn renaming_a_file_updates_its_namespace_and_imports() {
     assert_eq!(apply_edits(RENAME_USER, user_edits), RENAME_USER.replace("namespace app.models", "namespace app.accounts"));
     let new_main = apply_edits(RENAME_MAIN, &changes[&main_uri]);
     assert_eq!(new_main, RENAME_MAIN.replace("import app.models", "import app.accounts"));
-    // The client applies the edits (main.sl is open), moves the file and tells the server.
+    // The client applies the edits (main.zl is open), moves the file and tells the server.
     let main_edits = changes[&main_uri].clone();
     let mut disk = edit.clone();
     disk.changes.as_mut().unwrap().remove(&main_uri);
@@ -712,7 +712,7 @@ fn renaming_a_file_updates_its_namespace_and_imports() {
     let def = definition(&mut c, &main_uri, pos_of(RENAME_MAIN, "NewUser(", 0, 1));
     assert_eq!(def.uri, Url::from_file_path(&to).unwrap(), "the moved file is indexed at its new path");
     // A rename that keeps the namespace (same directory): no edits.
-    assert!(will_rename(&mut c, &to, &dir.join("src/accounts/users.sl")).is_none());
+    assert!(will_rename(&mut c, &to, &dir.join("src/accounts/users.zl")).is_none());
 }
 
 #[test]
@@ -720,19 +720,19 @@ fn renaming_a_file_of_a_shared_namespace_adds_imports() {
     let user = "namespace app.models\n\nstruct User {\n    Name string\n    R Role\n}\n\nfunc NewUser(n string) User {\n    return User{Name: n, R: Role{Name: \"admin\"}}\n}\n";
     let role = "namespace app.models\n\nstruct Role {\n    Name string\n}\n";
     let main = "namespace app\n\nimport std.io\nimport app.models\n\nfunc main() {\n    var u = NewUser(\"x\")\n    var r = Role{Name: \"r\"}\n    println(u.Name, r.Name)\n}\n";
-    let dir = package(&[("main.sl", main), ("models/user.sl", user), ("models/role.sl", role)]);
-    let main_uri = Url::from_file_path(dir.join("src/main.sl")).unwrap();
+    let dir = package(&[("main.zl", main), ("models/user.zl", user), ("models/role.zl", role)]);
+    let main_uri = Url::from_file_path(dir.join("src/main.zl")).unwrap();
     let mut c = Client::start(&dir);
     c.open(&main_uri, main);
     assert_eq!(c.diagnostics(&main_uri), vec![]);
-    let (from, to) = (dir.join("src/models/user.sl"), dir.join("src/accounts/user.sl"));
+    let (from, to) = (dir.join("src/models/user.zl"), dir.join("src/accounts/user.zl"));
     let edit = will_rename(&mut c, &from, &to).expect("edits");
     let changes = edit.changes.as_ref().unwrap();
     let new_user = apply_edits(user, &changes[&Url::from_file_path(&from).unwrap()]);
     assert!(new_user.starts_with("namespace app.accounts\nimport app.models\n"), "{new_user}");
     let new_main = apply_edits(main, &changes[&main_uri]);
     assert!(new_main.contains("import app.models\nimport app.accounts\n"), "{new_main}");
-    assert!(!changes.contains_key(&Url::from_file_path(dir.join("src/models/role.sl")).unwrap()));
+    assert!(!changes.contains_key(&Url::from_file_path(dir.join("src/models/role.zl")).unwrap()));
     let mut disk = edit.clone();
     disk.changes.as_mut().unwrap().remove(&main_uri);
     apply_and_move(&c, &disk, &from, &to);
@@ -746,13 +746,13 @@ fn renaming_a_file_of_a_shared_namespace_adds_imports() {
 fn renaming_files_outside_the_layout_convention_gives_no_edits() {
     // Not a package: namespaces are free.
     let text = "namespace app.models\n\nfunc F() int {\n    return 1\n}\n";
-    let (dir, uri) = project_with("f.sl", text);
+    let (dir, uri) = project_with("f.zl", text);
     let mut c = Client::start(&dir);
     c.open(&uri, text);
-    assert!(will_rename(&mut c, &dir.join("f.sl"), &dir.join("sub/f.sl")).is_none());
+    assert!(will_rename(&mut c, &dir.join("f.zl"), &dir.join("sub/f.zl")).is_none());
     // A package file whose namespace does not follow its path.
-    let dir = package(&[("main.sl", "namespace app\n\nfunc main() {\n}\n"), ("models/odd.sl", "namespace app.other\n\nfunc G() int {\n    return 1\n}\n")]);
+    let dir = package(&[("main.zl", "namespace app\n\nfunc main() {\n}\n"), ("models/odd.zl", "namespace app.other\n\nfunc G() int {\n    return 1\n}\n")]);
     let mut c = Client::start(&dir);
     let _ = status(&mut c);
-    assert!(will_rename(&mut c, &dir.join("src/models/odd.sl"), &dir.join("src/x/odd.sl")).is_none());
+    assert!(will_rename(&mut c, &dir.join("src/models/odd.zl"), &dir.join("src/x/odd.zl")).is_none());
 }

@@ -39,10 +39,10 @@ fn project(path: Option<&Path>) -> Result<Project, String> {
 }
 
 fn old_lock(root: &Path) -> Option<LockFile> {
-    std::fs::read_to_string(root.join("slang.lock")).ok().and_then(|t| LockFile::parse(&t).ok())
+    std::fs::read_to_string(root.join("zell.lock")).ok().and_then(|t| LockFile::parse(&t).ok())
 }
 
-/// Removes module directories of `.slang/deps/` that are not in the graph.
+/// Removes module directories of `.zell/deps/` that are not in the graph.
 fn clean_deps(project: &Project) -> usize {
     let keep: HashSet<PathBuf> = project.packages.iter().filter(|p| p.source.module().is_some()).map(|p| p.dir.clone()).collect();
     let mut removed = 0;
@@ -74,9 +74,9 @@ fn modules(p: &Project) -> Vec<PkgId> {
     m
 }
 
-/// `slang install [--offline] [--locked] [path]`: resolves the graph
-/// (from `slang.lock` when it still fits), fills the store and
-/// `.slang/deps/`, writes the lock.
+/// `zell install [--offline] [--locked] [path]`: resolves the graph
+/// (from `zell.lock` when it still fits), fills the store and
+/// `.zell/deps/`, writes the lock.
 pub fn install(args: &[String]) -> Result<(), String> {
     let f = flags(args, false)?;
     resolve::set_options(Options { offline: f.offline, update: Update::None });
@@ -101,7 +101,7 @@ fn version_of(s: &Source) -> String {
     }
 }
 
-/// `slang update [module|name ...] [--offline]`: newest versions within
+/// `zell update [module|name ...] [--offline]`: newest versions within
 /// the constraints, for the named modules or all.
 pub fn update(args: &[String]) -> Result<(), String> {
     let f = flags(args, true)?;
@@ -140,7 +140,7 @@ pub fn update(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    eprintln!("{}", if changed == 0 { "everything is up to date".to_string() } else { format!("{changed} change(s) written to slang.lock") });
+    eprintln!("{}", if changed == 0 { "everything is up to date".to_string() } else { format!("{changed} change(s) written to zell.lock") });
     Ok(())
 }
 
@@ -152,7 +152,7 @@ fn label(p: &Project, id: PkgId) -> String {
     }
 }
 
-/// `slang tree [path]`: the dependency graph of every member.
+/// `zell tree [path]`: the dependency graph of every member.
 pub fn tree(args: &[String]) -> Result<String, String> {
     let f = flags(args, false)?;
     resolve::set_options(Options { offline: f.offline, update: Update::None });
@@ -185,18 +185,18 @@ pub fn tree(args: &[String]) -> Result<String, String> {
     Ok(out)
 }
 
-/// `slang why <module|name> [path]`: every chain from a workspace member
+/// `zell why <module|name> [path]`: every chain from a workspace member
 /// to the package, with the requirement at each step.
 pub fn why(args: &[String]) -> Result<String, String> {
     let f = flags(args, true)?;
-    let [target] = f.rest.as_slice() else { return Err("usage: slang why <module path | package name>".into()) };
+    let [target] = f.rest.as_slice() else { return Err("usage: zell why <module path | package name>".into()) };
     resolve::set_options(Options { offline: f.offline, update: Update::None });
     let p = project(f.path.as_deref())?;
     let id = p
         .packages
         .iter()
         .position(|n| n.source.module() == Some(target.as_str()) || &n.name == target)
-        .ok_or_else(|| format!("`{target}` is not in the dependency graph (see `slang tree`)"))?;
+        .ok_or_else(|| format!("`{target}` is not in the dependency graph (see `zell tree`)"))?;
     let mut chains = Vec::new();
     fn go(p: &Project, cur: PkgId, target: PkgId, path: &mut Vec<String>, chains: &mut Vec<String>) {
         if cur == target {
@@ -238,7 +238,7 @@ pub fn why(args: &[String]) -> Result<String, String> {
     Ok(chains.into_iter().map(|c| c + "\n").collect())
 }
 
-/// `slang vendor [path]`.
+/// `zell vendor [path]`.
 pub fn vendor(args: &[String]) -> Result<(), String> {
     let f = flags(args, false)?;
     let start = match &f.path {
@@ -256,7 +256,7 @@ pub fn vendor(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// `slang store verify|prune|path`.
+/// `zell store verify|prune|path`.
 pub fn store_cmd(args: &[String]) -> Result<String, String> {
     let s = Store::open();
     match args.first().map(String::as_str) {
@@ -275,23 +275,23 @@ pub fn store_cmd(args: &[String]) -> Result<String, String> {
             out.push_str(&format!("pruned {} module version(s), {files} file(s)\n", versions.len()));
             Ok(out)
         }
-        _ => Err("usage: slang store verify | prune | path".into()),
+        _ => Err("usage: zell store verify | prune | path".into()),
     }
 }
 
-/// `slang env [NAME...]`: the toolchain and package-manager settings.
+/// `zell env [NAME...]`: the toolchain and package-manager settings.
 pub fn env(args: &[String]) -> Result<String, String> {
     let std_dir = crate::sema::stdfs::std_dir().map(|d| d.display().to_string()).unwrap_or_else(|| "(embedded)".into());
     let get = |n: &str| std::env::var(n).unwrap_or_default();
     let vars: Vec<(&str, String)> = vec![
-        ("SLANG_STD", std_dir),
-        ("SLANG_HOME", store::slang_home().display().to_string()),
-        ("SLANG_STORE", store::store_root().display().to_string()),
-        ("SLANG_PROXY", super::fetch::Config::proxy_spec()),
-        ("SLANG_NOPROXY", get("SLANG_NOPROXY")),
-        ("SLANG_PRIVATE", get("SLANG_PRIVATE")),
-        ("SLANG_SUMDB", std::env::var("SLANG_SUMDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "off".into())),
-        ("SLANG_NOSUMDB", get("SLANG_NOSUMDB")),
+        ("ZELL_STD", std_dir),
+        ("ZELL_HOME", store::zell_home().display().to_string()),
+        ("ZELL_STORE", store::store_root().display().to_string()),
+        ("ZELL_PROXY", super::fetch::Config::proxy_spec()),
+        ("ZELL_NOPROXY", get("ZELL_NOPROXY")),
+        ("ZELL_PRIVATE", get("ZELL_PRIVATE")),
+        ("ZELL_SUMDB", std::env::var("ZELL_SUMDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "off".into())),
+        ("ZELL_NOSUMDB", get("ZELL_NOSUMDB")),
     ];
     if args.is_empty() {
         return Ok(vars.iter().map(|(k, v)| format!("{k}=\"{v}\"\n")).collect());
@@ -305,13 +305,13 @@ pub fn env(args: &[String]) -> Result<String, String> {
     Ok(out)
 }
 
-/// `slang proxy serve ...`.
+/// `zell proxy serve ...`.
 pub fn proxy(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("serve") => {
             let (cfg, addr) = super::proxy::parse_args(&args[1..])?;
             super::proxy::serve(cfg, &addr)
         }
-        _ => Err("usage: slang proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb]".into()),
+        _ => Err("usage: zell proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb]".into()),
     }
 }

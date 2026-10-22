@@ -3,17 +3,17 @@
 //! sinks, context propagation, the W3C traceparent hooks of std.net.http
 //! with the OTLP/JSON exporter, and CPU / heap profiles read back with
 //! `go tool pprof` (skipped when `go` is not installed). The acceptance
-//! programs are `examples/{log,metrics,tracing,cpuprofile}.sl` and
+//! programs are `examples/{log,metrics,tracing,cpuprofile}.zl` and
 //! `tests/spec/stdlib/log_*`.
 
-use slang::diagnostics::{Diagnostics, Severity};
-use slang::driver;
-use slang::span::SourceFile;
+use zell::diagnostics::{Diagnostics, Severity};
+use zell::driver;
+use zell::span::SourceFile;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn analyze(src: &str) -> Vec<String> {
-    let files = vec![SourceFile::new("l.sl".to_string(), src.to_string())];
+    let files = vec![SourceFile::new("l.zl".to_string(), src.to_string())];
     let mut diags = Diagnostics::new();
     let _ = driver::check(&files, &mut diags);
     diags.items.iter().filter(|d| d.severity == Severity::Error).map(|d| d.message.clone()).collect()
@@ -72,7 +72,7 @@ fn repo() -> PathBuf {
 }
 
 fn ensure_runtime() {
-    let lib = repo().join("runtime/libslang_rt.a");
+    let lib = repo().join("runtime/libzell_rt.a");
     if !lib.is_file() {
         let st = Command::new("make").arg("-C").arg(repo().join("runtime")).status().expect("cannot run make");
         assert!(st.success(), "make -C runtime failed");
@@ -80,19 +80,19 @@ fn ensure_runtime() {
 }
 
 fn tmp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("slang-logdiag-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("zell-logdiag-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
-/// Runs `src` with `slang run --leak-check` (plus `flags`) in `dir`: (exit
+/// Runs `src` with `zell run --leak-check` (plus `flags`) in `dir`: (exit
 /// code, stdout, stderr).
 fn run_in(dir: &Path, src: &str, flags: &[&str]) -> (i32, String, String) {
     ensure_runtime();
-    let file = dir.join("main.sl");
+    let file = dir.join("main.zl");
     std::fs::write(&file, src).unwrap();
-    let r = Command::new(env!("CARGO_BIN_EXE_slang")).arg("run").arg(&file).arg("--leak-check").args(flags).current_dir(dir).env("SLANG_NO_BACKTRACE", "1").output().unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_zell")).arg("run").arg(&file).arg("--leak-check").args(flags).current_dir(dir).env("ZELL_NO_BACKTRACE", "1").output().unwrap();
     (r.status.code().unwrap_or(-1), String::from_utf8_lossy(&r.stdout).into_owned(), String::from_utf8_lossy(&r.stderr).into_owned())
 }
 
@@ -164,7 +164,7 @@ fn have_go() -> bool {
 }
 
 fn pprof_top(path: &Path, extra: &[&str]) -> String {
-    let o = Command::new(env!("CARGO_BIN_EXE_slang")).args(["tool", "pprof"]).args(extra).arg("-top").arg(path).output().unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_zell")).args(["tool", "pprof"]).args(extra).arg("-top").arg(path).output().unwrap();
     assert!(o.status.success(), "pprof failed: {}", String::from_utf8_lossy(&o.stderr));
     String::from_utf8_lossy(&o.stdout).into_owned()
 }

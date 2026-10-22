@@ -1,7 +1,7 @@
 //! Project discovery and the package graph: workspace members, `path`
 //! dependencies (resolved recursively, deduplicated by canonical path),
 //! module dependencies (selected by [`super::resolve`], materialised in
-//! `.slang/deps/` from the [`super::store`]), cycle detection and
+//! `.zell/deps/` from the [`super::store`]), cycle detection and
 //! namespace-root ownership.
 
 use super::manifest::{self, Dependency, LoadedManifest};
@@ -18,13 +18,13 @@ pub enum Source {
     /// A local directory, relative to the workspace root (`/`-separated;
     /// `.` for the root itself; absolute if outside the root).
     Path(String),
-    /// A module version (`slang.lock` `source`: `module`, or
+    /// A module version (`zell.lock` `source`: `module`, or
     /// `git+<url>?<ref>#<commit>` for a git pin).
     Module { path: String, version: String, h1: String, lock_source: String },
 }
 
 impl Source {
-    /// The `source` field of `slang.lock`.
+    /// The `source` field of `zell.lock`.
     pub fn lock_id(&self) -> String {
         match self {
             Source::Path(p) => format!("path:{p}"),
@@ -73,7 +73,7 @@ impl PackageNode {
         self.entry().is_some()
     }
 
-    /// Source files: `src/**/*.sl` plus the entry file, sorted.
+    /// Source files: `src/**/*.zl` plus the entry file, sorted.
     pub fn source_files(&self) -> Result<Vec<PathBuf>, String> {
         let src = self.dir.join("src");
         let mut files = if src.is_dir() { crate::driver::collect_files(&src).map_err(|e| format!("cannot read {}: {e}", src.display()))? } else { Vec::new() };
@@ -94,7 +94,7 @@ impl PackageNode {
 /// A discovered project: the root manifest and the whole package graph.
 #[derive(Clone, Debug)]
 pub struct Project {
-    /// Canonical directory of the root (workspace) manifest; `slang.lock`
+    /// Canonical directory of the root (workspace) manifest; `zell.lock`
     /// and `target/` live here.
     pub root: PathBuf,
     pub root_manifest: LoadedManifest,
@@ -104,7 +104,7 @@ pub struct Project {
     /// The root manifest's own package, if it has `[package]`.
     pub root_package: Option<PkgId>,
     /// The member nearest to the directory the project was discovered
-    /// from (what a plain `slang build` builds), if any.
+    /// from (what a plain `zell build` builds), if any.
     pub current: Option<PkgId>,
 }
 
@@ -289,12 +289,12 @@ impl Project {
     }
 
     pub fn lock_path(&self) -> PathBuf {
-        self.root.join("slang.lock")
+        self.root.join("zell.lock")
     }
 
-    /// `.slang/deps/` of the project (materialised module dependencies).
+    /// `.zell/deps/` of the project (materialised module dependencies).
     pub fn deps_dir(&self) -> PathBuf {
-        self.root.join(".slang").join("deps")
+        self.root.join(".zell").join("deps")
     }
 
     /// The package of module `path`, if it is in the graph.
@@ -457,23 +457,23 @@ impl Builder {
     }
 }
 
-/// Directory of a materialised module under `.slang/deps/`.
+/// Directory of a materialised module under `.zell/deps/`.
 pub fn module_dir(root: &Path, module: &str, version: &str) -> PathBuf {
-    root.join(".slang").join("deps").join(format!("{}@{version}", super::store::escape_path(module)))
+    root.join(".zell").join("deps").join(format!("{}@{version}", super::store::escape_path(module)))
 }
 
 impl Builder {
     /// Selects versions for the pending module dependencies (MVS, or the
-    /// `vendor/` copy), materialises them in `.slang/deps/` and adds them
+    /// `vendor/` copy), materialises them in `.zell/deps/` and adds them
     /// to the graph.
     fn attach_modules(&mut self) -> Result<(), String> {
         use super::resolve;
         let opts = resolve::options();
-        let lock = std::fs::read_to_string(self.root.join("slang.lock")).ok().and_then(|t| super::lock::LockFile::parse(&t).ok());
+        let lock = std::fs::read_to_string(self.root.join("zell.lock")).ok().and_then(|t| super::lock::LockFile::parse(&t).ok());
         let roots: Vec<resolve::Requirement> = self.pending.iter().map(|p| p.req.clone()).collect();
         let vendor = self.root.join("vendor");
         let selected = if vendor.join(super::vendor::MODULES_FILE).is_file() && opts.update == resolve::Update::None {
-            let lock = lock.as_ref().ok_or("vendor/ exists but slang.lock does not; run `slang vendor` again")?;
+            let lock = lock.as_ref().ok_or("vendor/ exists but zell.lock does not; run `zell vendor` again")?;
             resolve::from_vendor(&vendor, lock, &roots)?
         } else {
             let fetcher = super::fetch::Fetcher::new(opts.offline);

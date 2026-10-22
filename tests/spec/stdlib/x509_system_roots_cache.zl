@@ -1,0 +1,62 @@
+// test: x509.SystemRoots is parsed once per process and reused while the bundle file is unchanged; each call returns its own pool; a changed bundle (size/mtime) is parsed again
+// status: passing
+// run-flags: --leak-check
+namespace spec.stdlib.x509_system_roots_cache
+
+import std
+import std.crypto
+import std.io
+
+const rootPEM = `-----BEGIN CERTIFICATE-----
+MIIBvTCCAWOgAwIBAgIUA9Sb9VwlxjjxD1YgDii/0p4QUi0wCgYIKoZIzj0EAwIw
+KzEaMBgGA1UEAwwRWmVsbCBUZXN0IFJvb3QgQ0ExDTALBgNVBAoMBFplbGwwIBcN
+MjYxMDIwMTg0NTIyWhgPMjEyNjA5MjYxODQ1MjJaMCsxGjAYBgNVBAMMEVplbGwg
+VGVzdCBSb290IENBMQ0wCwYDVQQKDARaZWxsMFkwEwYHKoZIzj0CAQYIKoZIzj0D
+AQcDQgAEVYJDfEzyvbNZPHpb9UhH+Lzpc+hlmbgvu8/1YrFg7gOvkImu0ZEXZgQ8
+XlCeFhsMECG+8WubBuRc1ZqtlDWbXaNjMGEwHQYDVR0OBBYEFE409SvfVkpak3/2
+fFyrMYp8qXPUMB8GA1UdIwQYMBaAFE409SvfVkpak3/2fFyrMYp8qXPUMA8GA1Ud
+EwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMCA0gAMEUCIQDE
+OhDuSZd95nf0MCvBwho4hu1jIIihI+K/aOVWvDj+LwIgD2a4noOvUK4mHgB9rbS5
+vLeLXgeajtfTTSgrlhMOy7s=
+-----END CERTIFICATE-----`
+
+const interPEM = `-----BEGIN CERTIFICATE-----
+MIICujCCAmGgAwIBAgIUc8cZK8vXLXjqQVs7y79Judx/sq0wCgYIKoZIzj0EAwIw
+KzEaMBgGA1UEAwwRWmVsbCBUZXN0IFJvb3QgQ0ExDTALBgNVBAoMBFplbGwwIBcN
+MjYxMDIwMTg0NTIyWhgPMjEyNjA5MjYxODQ1MjJaMDAxHzAdBgNVBAMMFlplbGwg
+VGVzdCBJbnRlcm1lZGlhdGUxDTALBgNVBAoMBFplbGwwggEiMA0GCSqGSIb3DQEB
+AQUAA4IBDwAwggEKAoIBAQDwoCMOzNwNfjrKfItar6lpMus3Rka/svn+Rh5XLWwl
+Ohvi28QYSnmC5BsKNPyc0OaUEkejsTvX8HqCkEfzgG8yLTbgnfS8tLHgds01FNYX
+yuz1u0kXU4C/vHhDpoCQEuzw4JWlYEZescGQ0UsL9WIIuxRkyxGQrXBbQPuyWBoX
+Sm32J4aGQpg1V1KeSGxyRrzpFQ5HmV4D5ouK8s8iel7w3x3BhrJJ6gRriiKyo4L4
+tTM+FNF0fzchpM1Ej7Wi/E1y3l2ol0pDKHHJsQf4pJLEZ8MGp6fzCI1W+IG2NPHk
++ISkFqtVGScN+ul7u4CE+ksxbEQEVw2+zOEfFxX8BXTnAgMBAAGjgZAwgY0wEgYD
+VR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAQYwJwYDVR0eBCAwHqAcMA2C
+C2V4YW1wbGUuY29tMAuCCWxvY2FsaG9zdDAdBgNVHQ4EFgQUDn7F8ScZIiEedfqq
+/7ucwaEegVowHwYDVR0jBBgwFoAUTjT1K99WSlqTf/Z8XKsxinypc9QwCgYIKoZI
+zj0EAwIDRwAwRAIgAxLcnQH0NqZdDMgAGz9bA3A2iqZgjepB6FzhRk0MZUUCIDP1
+0nVlBRa8DkaleDFRrHND2aB3zdTsJV1kkFRxtfPa
+-----END CERTIFICATE-----`
+
+func main() void! {
+    var path = fs.Join(fs.TempDir(), fmt.Format("zell-roots-{0}.pem", os.Pid()))
+    io.WriteFile(path, rootPEM + "\n")?
+    os.Setenv("SSL_CERT_FILE", path)?
+    var a = x509.SystemRoots()?
+    println("first:", a.Len())
+    // the caller's pool is its own: adding to it does not change the cache
+    a.AppendPEM(interPEM)
+    var b = x509.SystemRoots()?
+    println("after adding to the first pool:", a.Len(), b.Len())
+    // a cached call is much cheaper than parsing (timed over many calls)
+    var t0 = time.Now()
+    for _ in 0..200 {
+        _ = x509.SystemRoots()?
+    }
+    println("200 cached calls under 1 s:", time.Now() - t0 < 1000)
+    // a changed bundle is read again
+    io.WriteFile(path, rootPEM + "\n" + interPEM + "\n")?
+    var c = x509.SystemRoots()?
+    println("changed bundle:", c.Len())
+    fs.Remove(path)?
+}

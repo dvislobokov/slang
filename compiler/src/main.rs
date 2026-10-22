@@ -4,15 +4,15 @@ use std::process::exit;
 
 mod testrun;
 
-use slang::diagnostics::Diagnostics;
-use slang::package::{self, Format};
+use zell::diagnostics::Diagnostics;
+use zell::package::{self, Format};
 
 const USAGE: &str = "\
-usage: slang <command> [args]
+usage: zell <command> [args]
 
 commands:
   init [dir] [--name n] [--format toml|json|yaml] [--lib]
-                                 create a package (manifest + src/main.sl or src/lib.sl)
+                                 create a package (manifest + src/main.zl or src/lib.zl)
   build [path] [options]         build the project found from the current directory,
                                  a project directory, a plain directory or a single file
   run [path] [options] [-- args] build and run
@@ -22,26 +22,26 @@ commands:
                                  run the @test functions (and @test benchmarks
                                  taking *testing.B with --bench), see std.testing
   doc [path|namespace|symbol] [--html dir] [--json] [--check [--min N]] [--private]
-                                 documentation from doc comments: `slang doc strings.Split`,
-                                 `slang doc std --html out/` (the stdlib reference), --check: coverage
+                                 documentation from doc comments: `zell doc strings.Split`,
+                                 `zell doc std --html out/` (the stdlib reference), --check: coverage
   debug [--lldb|--gdb] [path] [options] [-- args]
                                  build with debug info and start lldb (default) or gdb
-                                 with the Slang formatters loaded (docs/DEBUGGER.md)
+                                 with the Zell formatters loaded (docs/DEBUGGER.md)
                                  (--source <file>: run debugger commands, --batch: then exit)
   debug --formatters lldb|gdb    print the path of the formatter script
   debug run [path] [--port N] [--headless [--wait]] [options] [-- args]
                                  build with the in-process debug agent and debug it
                                  (gdb-like commands; --headless: only start the agent,
                                  for an editor to attach)
-  debug attach [host:]port       debug a program started with SLANG_DEBUG=[host]:port
-  install [--offline] [--locked] fetch module dependencies into the store and .slang/deps/,
-                                 write slang.lock (--offline: only from the lock and the store)
+  debug attach [host:]port       debug a program started with ZELL_DEBUG=[host]:port
+  install [--offline] [--locked] fetch module dependencies into the store and .zell/deps/,
+                                 write zell.lock (--offline: only from the lock and the store)
   update [module|name ...]       newest versions within the constraints (all, or the named)
   tree                           print the dependency graph
   why <module|name>              print every chain of requirements leading to a package
   vendor                         copy all modules into vendor/ (builds then use it)
   store verify|prune|path        check, clean up or locate the module store
-  env [NAME ...]                 print SLANG_STD, SLANG_HOME, SLANG_STORE, SLANG_PROXY, ...
+  env [NAME ...]                 print ZELL_STD, ZELL_HOME, ZELL_STORE, ZELL_PROXY, ...
   proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb]
                                  serve a module proxy (static layout) and checksum log
   manifest schema                print the manifest JSON Schema
@@ -49,16 +49,16 @@ commands:
                                  rewrite the manifest in another format
   data migration add <Name> | update [target] | script | list
                                  std.data migrations: diff the model against
-                                 migrations/snapshot.json, apply, print SQL (slang data help)
-  parse <file.sl>                print the AST
+                                 migrations/snapshot.json, apply, print SQL (zell data help)
+  parse <file.zl>                print the AST
   fmt [paths] [--check] [--diff] [--stdin]
-                                 format .sl files in place (canonical style)
-  lsp                            run the language server on stdio (execs slang-lsp)
+                                 format .zl files in place (canonical style)
+  lsp                            run the language server on stdio (execs zell-lsp)
   tool pprof [args] <profile>    inspect a std.diag profile (runs `go tool pprof`)
   target list                    known targets and where their runtime is
   target add <target>... [--url template]
-                                 download prebuilt runtimes into ~/.slang/targets
-                                 ($SLANG_TARGETS_URL; docs/PLATFORMS.md)
+                                 download prebuilt runtimes into ~/.zell/targets
+                                 ($ZELL_TARGETS_URL; docs/PLATFORMS.md)
 
   version                      print the compiler version
 
@@ -77,8 +77,8 @@ build options:
   -p, --package <name> one workspace member (repeatable)
   --target <t>         target for @cfg, file suffixes and os.Name/os.Arch
                        (triple or alias such as linux-amd64; non-host only for check)
-  --locked             fail if slang.lock would change
-  --offline            module dependencies only from slang.lock and the store
+  --locked             fail if zell.lock would change
+  --offline            module dependencies only from zell.lock and the store
   -v, --verbose        log the object cache and the linker";
 
 fn main() {
@@ -90,32 +90,32 @@ fn main() {
     let rest = &args[2..];
     match args[1].as_str() {
         "version" | "--version" | "-V" => {
-            println!("slang {} ({})", env!("CARGO_PKG_VERSION"), std::env::consts::ARCH);
+            println!("zell {} ({})", env!("CARGO_PKG_VERSION"), std::env::consts::ARCH);
         }
         "parse" => match rest.first() {
             Some(p) => parse(p),
             None => usage_error("parse needs a file"),
         },
         "test" => exit(testrun::run(rest)),
-        "doc" => exit(slang::doc::run(rest)),
+        "doc" => exit(zell::doc::run(rest)),
         "check" => {
             let dump = rest.iter().any(|a| a == "--dump-hir");
             let flags: Vec<String> = rest.iter().filter(|a| *a != "--dump-hir").cloned().collect();
             let opts = parse_build_args(&flags).0;
-            match slang::build::check(&opts, dump, false) {
+            match zell::build::check(&opts, dump, false) {
                 Ok(_) => {}
                 Err(e) => fail(&e),
             }
         }
         "build" => {
             let opts = parse_build_args(rest).0;
-            if let Err(e) = slang::build::build(&opts) {
+            if let Err(e) = zell::build::build(&opts) {
                 fail(&e);
             }
         }
         "run" => {
             let (opts, extra) = parse_build_args(rest);
-            match slang::build::run(opts, &extra) {
+            match zell::build::run(opts, &extra) {
                 Ok(code) => exit(code),
                 Err(e) => fail(&e),
             }
@@ -125,9 +125,9 @@ fn main() {
         "manifest" => manifest(rest),
         "lsp" => lsp(rest),
         "tool" => tool(rest),
-        "target" => print(slang::toolchain::run(rest)),
-        "fmt" => exit(slang::fmt::cli::run(rest)),
-        "data" => match slang::datacli::run(rest) {
+        "target" => print(zell::toolchain::run(rest)),
+        "fmt" => exit(zell::fmt::cli::run(rest)),
+        "data" => match zell::datacli::run(rest) {
             Ok(code) => exit(code),
             Err(e) => fail(&e),
         },
@@ -169,8 +169,8 @@ fn usage_error(e: &str) -> ! {
     exit(2);
 }
 
-fn parse_build_args(args: &[String]) -> (slang::build::BuildOptions, Vec<String>) {
-    slang::build::parse_args(args).unwrap_or_else(|e| usage_error(&e))
+fn parse_build_args(args: &[String]) -> (zell::build::BuildOptions, Vec<String>) {
+    zell::build::parse_args(args).unwrap_or_else(|e| usage_error(&e))
 }
 
 fn init(args: &[String]) {
@@ -205,7 +205,7 @@ fn init(args: &[String]) {
         }
         i += 1;
     }
-    // `slang init name` creates ./name; the package is named after the directory.
+    // `zell init name` creates ./name; the package is named after the directory.
     let dir = dir.unwrap_or_else(|| PathBuf::from("."));
     match package::init::init(&dir, name.as_deref(), format, lib) {
         Ok(files) => {
@@ -242,13 +242,13 @@ fn manifest(args: &[String]) {
                 Err(e) => fail(&e),
             }
         }
-        _ => usage_error("usage: slang manifest schema | slang manifest convert <toml|json|yaml> [dir]"),
+        _ => usage_error("usage: zell manifest schema | zell manifest convert <toml|json|yaml> [dir]"),
     }
 }
 
-fn read(path: &str) -> slang::span::SourceFile {
+fn read(path: &str) -> zell::span::SourceFile {
     match std::fs::read_to_string(path) {
-        Ok(t) => slang::span::SourceFile::new(path.to_string(), t),
+        Ok(t) => zell::span::SourceFile::new(path.to_string(), t),
         Err(e) => fail(&format!("cannot read {path}: {e}")),
     }
 }
@@ -256,19 +256,19 @@ fn read(path: &str) -> slang::span::SourceFile {
 fn parse(path: &str) {
     let file = read(path);
     let mut diags = Diagnostics::new();
-    let tokens = slang::lexer::lex(&file.text, &mut diags);
-    let ast = if diags.has_errors() { None } else { slang::parser::parse(tokens, &mut diags) };
+    let tokens = zell::lexer::lex(&file.text, &mut diags);
+    let ast = if diags.has_errors() { None } else { zell::parser::parse(tokens, &mut diags) };
     if !diags.is_empty() {
         eprint!("{}", diags.render_all(&file));
     }
     if diags.has_errors() {
         exit(1);
     }
-    // Ignore write errors such as a closed pipe (`slang parse f | head`).
+    // Ignore write errors such as a closed pipe (`zell parse f | head`).
     let _ = writeln!(std::io::stdout(), "{:#?}", ast.unwrap());
 }
 
-/// `slang tool <name> [args]`: diagnostics tools. `pprof` shells out to
+/// `zell tool <name> [args]`: diagnostics tools. `pprof` shells out to
 /// `go tool pprof` (or a `pprof` binary on PATH), which reads the
 /// `profile.proto` files written by `diag.StopCPUProfile` and
 /// `diag.WriteHeapProfile`.
@@ -283,46 +283,46 @@ fn tool(args: &[String]) {
                     Err(e) => fail(&format!("cannot start {program}: {e}")),
                 }
             }
-            fail("slang tool pprof needs `go` (go tool pprof) or `pprof` on PATH")
+            fail("zell tool pprof needs `go` (go tool pprof) or `pprof` on PATH")
         }
         Some(t) => usage_error(&format!("unknown tool `{t}` (available: pprof)")),
         None => usage_error("tool needs a name (available: pprof)"),
     }
 }
 
-/// `slang lsp`: runs the `slang-lsp` binary (next to this executable, else
+/// `zell lsp`: runs the `zell-lsp` binary (next to this executable, else
 /// on PATH) with stdio inherited, so editors can launch either command.
 fn lsp(args: &[String]) {
-    let exe = if cfg!(windows) { "slang-lsp.exe" } else { "slang-lsp" };
+    let exe = if cfg!(windows) { "zell-lsp.exe" } else { "zell-lsp" };
     let sibling = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(exe))).filter(|p| p.is_file());
     let program = sibling.unwrap_or_else(|| PathBuf::from(exe));
     match std::process::Command::new(&program).args(args).status() {
         Ok(status) => exit(status.code().unwrap_or(1)),
-        Err(e) => fail(&format!("cannot start {}: {e} (build it with `cargo build -p slang-lsp`)", program.display())),
+        Err(e) => fail(&format!("cannot start {}: {e} (build it with `cargo build -p zell-lsp`)", program.display())),
     }
 }
 
 /// The lldb formatters and gdb printers (tools/), embedded so that an
 /// installed compiler works without the repository.
-const LLDB_FORMATTERS: &str = include_str!("../../tools/lldb/slang_formatters.py");
-const GDB_PRINTERS: &str = include_str!("../../tools/gdb/slang_printers.py");
+const LLDB_FORMATTERS: &str = include_str!("../../tools/lldb/zell_formatters.py");
+const GDB_PRINTERS: &str = include_str!("../../tools/gdb/zell_printers.py");
 
-/// Path of the formatter script for `which` (`lldb` or `gdb`): `$SLANG_TOOLS`,
+/// Path of the formatter script for `which` (`lldb` or `gdb`): `$ZELL_TOOLS`,
 /// `tools/` of the source tree next to the compiler, or the embedded copy
 /// written to the temporary directory.
 fn formatter_script(which: &str) -> PathBuf {
     let (rel, embedded) = match which {
-        "gdb" => ("gdb/slang_printers.py", GDB_PRINTERS),
-        _ => ("lldb/slang_formatters.py", LLDB_FORMATTERS),
+        "gdb" => ("gdb/zell_printers.py", GDB_PRINTERS),
+        _ => ("lldb/zell_formatters.py", LLDB_FORMATTERS),
     };
     let mut roots = Vec::new();
-    if let Ok(t) = std::env::var("SLANG_TOOLS") {
+    if let Ok(t) = std::env::var("ZELL_TOOLS") {
         roots.push(PathBuf::from(t));
     }
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) {
         roots.push(dir.join("../../tools"));
         roots.push(dir.join("../../../tools"));
-        roots.push(dir.join("../share/slang/tools"));
+        roots.push(dir.join("../share/zell/tools"));
     }
     roots.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../tools")));
     for r in roots {
@@ -331,7 +331,7 @@ fn formatter_script(which: &str) -> PathBuf {
             return p.canonicalize().unwrap_or(p);
         }
     }
-    let dir = std::env::temp_dir().join(format!("slang-tools-{}", env!("CARGO_PKG_VERSION")));
+    let dir = std::env::temp_dir().join(format!("zell-tools-{}", env!("CARGO_PKG_VERSION")));
     let p = dir.join(rel);
     if let Some(parent) = p.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -344,9 +344,9 @@ fn formatter_script(which: &str) -> PathBuf {
     p
 }
 
-/// `slang debug [--lldb|--gdb] [path] [build options] [-- args]`: builds
-/// with debug info and runs the debugger on the executable with the Slang
-/// formatters loaded. `slang debug --formatters lldb|gdb` prints the script
+/// `zell debug [--lldb|--gdb] [path] [build options] [-- args]`: builds
+/// with debug info and runs the debugger on the executable with the Zell
+/// formatters loaded. `zell debug --formatters lldb|gdb` prints the script
 /// path (used by the VS Code extension for `initCommands`).
 fn debug(args: &[String]) {
     match args.first().map(String::as_str) {
@@ -385,10 +385,10 @@ fn debug(args: &[String]) {
         i += 1;
     }
     let (mut opts, prog_args) = parse_build_args(&flags);
-    opts.emit = slang::build::Emit::Exe;
+    opts.emit = zell::build::Emit::Exe;
     opts.strip = false;
     opts.debug_info = true;
-    let tmp = std::env::temp_dir().join(format!("slang-debug-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("zell-debug-{}", std::process::id()));
     let plain = opts.input.as_ref().is_some_and(|p| p.is_file());
     if plain && opts.output.is_none() {
         if let Err(e) = std::fs::create_dir_all(&tmp) {
@@ -397,7 +397,7 @@ fn debug(args: &[String]) {
         let stem = opts.input.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "prog".into());
         opts.output = Some(tmp.join(stem));
     }
-    let exes = slang::build::build(&opts).unwrap_or_else(|e| fail(&e));
+    let exes = zell::build::build(&opts).unwrap_or_else(|e| fail(&e));
     let exe = match exes.as_slice() {
         [e] => e.clone(),
         [] => fail("nothing to debug: no executable was built"),
@@ -435,10 +435,10 @@ fn debug(args: &[String]) {
     }
 }
 
-/// `slang debug run [path] [--port N] [--headless [--wait]] [build options] [-- args]`:
+/// `zell debug run [path] [--port N] [--headless [--wait]] [build options] [-- args]`:
 /// builds with the debug agent and starts the program with
-/// `SLANG_DEBUG`; without `--headless`, debugs it with the command-line
-/// client (`slang::dap::repl`).
+/// `ZELL_DEBUG`; without `--headless`, debugs it with the command-line
+/// client (`zell::dap::repl`).
 fn debug_agent_run(args: &[String]) {
     let mut port = 0u16;
     let mut headless = false;
@@ -462,9 +462,9 @@ fn debug_agent_run(args: &[String]) {
         i += 1;
     }
     let (mut opts, prog_args) = parse_build_args(&flags);
-    opts.emit = slang::build::Emit::Exe;
+    opts.emit = zell::build::Emit::Exe;
     opts.debug_agent = Some(true);
-    let tmp = std::env::temp_dir().join(format!("slang-debug-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("zell-debug-{}", std::process::id()));
     let plain = opts.input.as_ref().is_some_and(|p| p.is_file());
     if plain && opts.output.is_none() {
         if let Err(e) = std::fs::create_dir_all(&tmp) {
@@ -473,7 +473,7 @@ fn debug_agent_run(args: &[String]) {
         let stem = opts.input.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "prog".into());
         opts.output = Some(tmp.join(stem));
     }
-    let exes = slang::build::build(&opts).unwrap_or_else(|e| fail(&e));
+    let exes = zell::build::build(&opts).unwrap_or_else(|e| fail(&e));
     let exe = match exes.as_slice() {
         [e] => e.clone(),
         [] => fail("nothing to debug: no executable was built"),
@@ -481,25 +481,25 @@ fn debug_agent_run(args: &[String]) {
     };
     let code = if headless {
         let spec = if wait { format!("127.0.0.1:{port},wait") } else { format!("127.0.0.1:{port}") };
-        let st = std::process::Command::new(&exe).args(&prog_args).env("SLANG_DEBUG", spec).status();
+        let st = std::process::Command::new(&exe).args(&prog_args).env("ZELL_DEBUG", spec).status();
         match st {
             Ok(s) => s.code().unwrap_or(1),
             Err(e) => fail(&format!("cannot run {}: {e}", exe.display())),
         }
     } else {
-        let (child, addr) = slang::dap::spawn(&exe, &prog_args, port, true, false).unwrap_or_else(|e| fail(&e));
-        let c = slang::dap::Client::connect(&addr, std::time::Duration::from_secs(10)).unwrap_or_else(|e| fail(&format!("cannot connect to the debug agent at {addr}: {e}")));
-        slang::dap::repl(c, Some(child))
+        let (child, addr) = zell::dap::spawn(&exe, &prog_args, port, true, false).unwrap_or_else(|e| fail(&e));
+        let c = zell::dap::Client::connect(&addr, std::time::Duration::from_secs(10)).unwrap_or_else(|e| fail(&format!("cannot connect to the debug agent at {addr}: {e}")));
+        zell::dap::repl(c, Some(child))
     };
     let _ = std::fs::remove_dir_all(&tmp);
     exit(code);
 }
 
-/// `slang debug attach [host:]port`: the command-line client for a
-/// program already running with `SLANG_DEBUG`.
+/// `zell debug attach [host:]port`: the command-line client for a
+/// program already running with `ZELL_DEBUG`.
 fn debug_agent_attach(args: &[String]) {
     let Some(a) = args.first() else { usage_error("debug attach needs [host:]port") };
     let addr = if a.starts_with(':') { format!("127.0.0.1{a}") } else if a.contains(':') { a.clone() } else { format!("127.0.0.1:{a}") };
-    let c = slang::dap::Client::connect(&addr, std::time::Duration::from_secs(10)).unwrap_or_else(|e| fail(&format!("cannot connect to the debug agent at {addr}: {e}")));
-    exit(slang::dap::repl(c, None));
+    let c = zell::dap::Client::connect(&addr, std::time::Duration::from_secs(10)).unwrap_or_else(|e| fail(&format!("cannot connect to the debug agent at {addr}: {e}")));
+    exit(zell::dap::repl(c, None));
 }

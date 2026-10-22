@@ -1,0 +1,128 @@
+namespace examples.log
+
+import std
+import std.io
+
+// std.log: Serilog-style structured logging. Message templates are parsed
+// at compile time; `{@X}` destructures X through compile-time reflection
+// (fields marked @log(skip: true) stay out); `{X:0.00}` formats; the level
+// is checked before any argument is evaluated. A fixed clock keeps the
+// output reproducible.
+
+struct Item {
+    Sku string
+    Qty int
+}
+
+struct Order {
+    Id    int
+    Total float
+    Items []Item
+    @log(skip: true) CardNumber string
+}
+
+struct PaymentService {
+    Retries int
+}
+
+var evaluated = 0
+
+func costly() int {
+    evaluated += 1
+    return 42
+}
+
+func fixedClock() int {
+    return 1700000000123
+}
+
+func charge(amount float) void! {
+    if amount > 50.0 {
+        return error("card declined")
+    }
+}
+
+async func main() {
+    var levels = log.NewLevelSwitch(log.Level.Debug)
+    var logger = log.New().MinimumLevelControlledBy(levels).MinimumLevelOverride(
+        "examples.log.noisy",
+        log.Level.Warning,
+    ).Enrich.WithProperty("App", "shop").Enrich.FromContext().Clock(fixedClock).WriteTo.Console(
+        log.ConsoleOptions{
+            Template: "{Timestamp:HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}",
+            Stdout: true,
+        },
+    ).Filter.ByExcluding((e *log.Event) => e.Template == "health check").CreateLogger()
+
+    var order = Order{
+        Id: 7,
+        Total: 99.5,
+        Items: [Item{Sku: "A-1", Qty: 2}],
+        CardNumber: "4111-1111",
+    }
+    logger.Info("user {UserId} bought {@Order} for {Amount:0.00}", 42, order, order.Total)
+    logger.Debug("{Name} is written as is by {{Message:lj}}", "alice")
+    logger.Info("health check")
+
+    // Disabled levels cost nothing: the argument is not evaluated.
+    logger.Verbose("never {Value}", costly())
+    println("evaluated:", evaluated)
+    levels.Set(log.Level.Verbose)
+    logger.Verbose("now {Value}", costly())
+    println("evaluated:", evaluated)
+
+    // Context properties follow the task (and tasks it starts).
+    var scope = log.Context.Push("RequestId", "req-1")
+    var props = log.New().Enrich.FromContext().Clock(fixedClock).WriteTo.Console(log.ConsoleOptions{
+        Template: "{Message} {Properties}{NewLine}",
+        Stdout: true,
+    }).CreateLogger()
+    props.Info("cart has {Count} items", 3)
+    await task.Go(async func() {
+        props.Warning("in a child task {Flag}", true)
+    })
+    scope.Pop()
+    props.Info("after Pop {Done}", true)
+
+    // Categories and per-category minimum levels.
+    var noisy = logger.ForCategory("examples.log.noisy.cache")
+    noisy.Info("hidden by the override")
+    noisy.Warning("cache miss rate {Rate:P1}", 0.25)
+    log.SetGlobal(props)
+    log.For<PaymentService>().Info("ready with {Retries} retries", 3)
+
+    // Errors: the message and the error trace become properties.
+    var errors = log.New().Clock(fixedClock).WriteTo.Console(log.ConsoleOptions{
+        Template: "[{Level:u3}] {Message} ({ErrorMessage}){NewLine}",
+        Stdout: true,
+    }).CreateLogger()
+    try charge(order.Total) catch err {
+        errors.Error(err, "payment of {Amount:F2} failed for {UserId}", order.Total, 42)
+    }
+
+    // Compact JSON (CLEF) lines.
+    var json = log.New().Clock(fixedClock).Enrich.WithProperty("App", "shop").WriteTo.Json(
+        log.JsonOptions{Stdout: true},
+    ).CreateLogger()
+    json.Warning("disk {Disk} at {Used:0.0}%", "/var", 91.27)
+    json.Info("order {@Order}", order)
+
+    // A rolling file behind an asynchronous queue.
+    var dir = fs.Join(fs.TempDir(), "zell-example-log")
+    _ = fs.RemoveAll(dir)
+    var file = log.New().Clock(fixedClock).WriteTo.Async(log.NewFileSink(
+        fs.Join(dir, "app-.log"),
+        log.FileOptions{RollingInterval: log.RollingInterval.Day, Retain: 7},
+    ), 64).CreateLogger()
+    file.Info("written by {Who}", "the file sink")
+    file.Error("and flushed on {Event}", "Close")
+    await file.Close()
+    for name in try fs.ReadDir(dir) else [] {
+        println("file:", fs.Base(name))
+        print(try io.ReadFile(fs.Join(dir, fs.Base(name))) else "")
+    }
+    _ = fs.RemoveAll(dir)
+
+    // The default logger (log.Info) writes to stderr; here it is `props`.
+    log.Info("goodbye from {Where}", "log.Info")
+}

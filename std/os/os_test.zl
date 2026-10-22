@@ -1,0 +1,19 @@
+// Examples for std.os.
+namespace os_test
+
+import std
+import std.io
+
+func ExampleGetenv() void! {
+    os.Setenv("ZELL_EXAMPLE_COLOR", "blue")?
+    println(os.Getenv("ZELL_EXAMPLE_COLOR"), os.Getenv("ZELL_EXAMPLE_UNSET") == "")
+    // Output:
+    // blue true
+}
+
+func ExampleArgs() {
+    // Args()[0] is the program; the rest are the command-line arguments.
+    println(len(os.Args()) >= 1)
+    // Output:
+    // true
+}

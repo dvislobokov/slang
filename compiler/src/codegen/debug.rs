@@ -20,23 +20,23 @@
 //!   runtime values are *handles*: an 8-byte struct `{T *ptr}`, so that
 //!   debuggers display just the formatter's summary.
 //!
-//! | Slang | DWARF |
+//! | Zell | DWARF |
 //! |---|---|
 //! | `int`, `uint8`, ... | base types (`char` is `DW_ATE_UTF`, `bool` `DW_ATE_boolean`) |
-//! | `string` | handle `string {slang_string *ptr}`, `slang_string {refcount, type, len, data[]}` |
+//! | `string` | handle `string {zell_string *ptr}`, `zell_string {refcount, type, len, data[]}` |
 //! | `[]T` | struct `[]T {T *data; int len; int cap; void *backing}` |
 //! | `[N]T` | array |
 //! | `*T` | pointer to `T` (the payload) |
-//! | `weak *T` | handle -> `slang_weak<T> {hdr, slang_obj<T> *target}` |
-//! | `map[K]V` | handle -> `slang_map[K]V` (runtime table, ABI.md §6, with `slots` typed as `slang_map_entry[K]V {key, value}`) |
-//! | `error` | handle `error {slang_error *ptr}` (ABI.md §7.1) |
+//! | `weak *T` | handle -> `zell_weak<T> {hdr, zell_obj<T> *target}` |
+//! | `map[K]V` | handle -> `zell_map[K]V` (runtime table, ABI.md §6, with `slots` typed as `zell_map_entry[K]V {key, value}`) |
+//! | `error` | handle `error {zell_error *ptr}` (ABI.md §7.1) |
 //! | `T!` | struct `T! {T value; error err}`; `void!` is a typedef of `error` |
 //! | tuple | struct `(A, B) {_0, _1}` |
 //! | plain enum | enumeration |
 //! | data enum | struct `E {E.Tag tag; union E.payload {struct E.V V; ...}}` |
-//! | interface | struct `I {void *data; slang_vtable *vtable}`; `any` uses `slang_type_info *type` |
+//! | interface | struct `I {void *data; zell_vtable *vtable}`; `any` uses `zell_type_info *type` |
 //! | `func(..)` | struct `func(..) {fnptr fn; void *env}` |
-//! | `Task<T>` | handle -> the opaque `slang.task` (formatters read it through `slang_debug_task_layout`, ABI.md §20) |
+//! | `Task<T>` | handle -> the opaque `zell.task` (formatters read it through `zell_debug_task_layout`, ABI.md §20) |
 
 use super::CodeGen;
 use crate::hir::{self, LocalId, LocalKind};
@@ -105,7 +105,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         }
         let m = self.module.as_mut_ptr();
         let mut units = Vec::new();
-        let producer = concat!("slang ", env!("CARGO_PKG_VERSION"));
+        let producer = concat!("zell ", env!("CARGO_PKG_VERSION"));
         for src in &self.prog.sources {
             let p = std::path::Path::new(&src.path);
             let abs = std::fs::canonicalize(p).unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(p)).unwrap_or_else(|_| p.to_path_buf()));
@@ -506,32 +506,32 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             "int64" => i64t,
             "byte" => self.di_basic("uint8", 8, DW_ATE_UNSIGNED),
             "cchar" => self.di_basic("char", 8, DW_ATE_SIGNED_CHAR),
-            "slang_type_info" => {
+            "zell_type_info" => {
                 let cc = self.di_rt("cchar");
                 let cstr = self.di_ptr(cc, "");
                 let ms = vec![self.di_member("name", cstr, 64, 0), self.di_member("size", i64t, 64, 8), self.di_member("drop", void_ptr, 64, 16)];
-                self.di_struct("slang_type_info", 24, 8, ms)
+                self.di_struct("zell_type_info", 24, 8, ms)
             }
-            "slang_type_info*" => {
-                let t = self.di_rt("slang_type_info");
+            "zell_type_info*" => {
+                let t = self.di_rt("zell_type_info");
                 self.di_ptr(t, "")
             }
-            "slang_string" => {
-                let ti = self.di_rt("slang_type_info*");
+            "zell_string" => {
+                let ti = self.di_rt("zell_type_info*");
                 let cc = self.di_rt("cchar");
                 let data = self.di_ptr(cc, "");
                 let ms = vec![self.di_member("refcount", i64t, 64, 0), self.di_member("type", ti, 64, 8), self.di_member("len", i64t, 64, 16), self.di_member("data", data, 64, 24)];
-                self.di_struct("slang_string", 32, 8, ms)
+                self.di_struct("zell_string", 32, 8, ms)
             }
             "string" => {
-                let st = self.di_rt("slang_string");
+                let st = self.di_rt("zell_string");
                 let p = self.di_ptr(st, "");
                 self.di_handle(p, "string")
             }
-            "slang_error" => {
-                let tmp = self.di_temp("slang_error");
-                self.dbg.as_mut().unwrap().named.insert("slang_error", tmp);
-                let ti = self.di_rt("slang_type_info*");
+            "zell_error" => {
+                let tmp = self.di_temp("zell_error");
+                self.dbg.as_mut().unwrap().named.insert("zell_error", tmp);
+                let ti = self.di_rt("zell_type_info*");
                 let str_t = self.di_rt("string");
                 let errp = self.di_ptr(tmp, "");
                 let ms = vec![
@@ -546,28 +546,28 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                     self.di_member("created", void_ptr, 64, 64),
                     self.di_member("nframes", i64t, 64, 72),
                 ];
-                let real = self.di_struct("slang_error", 224, 8, ms);
+                let real = self.di_struct("zell_error", 224, 8, ms);
                 unsafe { di::LLVMMetadataReplaceAllUsesWith(tmp, real) };
                 real
             }
             "error" => {
-                let st = self.di_rt("slang_error");
+                let st = self.di_rt("zell_error");
                 let p = self.di_ptr(st, "");
                 self.di_handle(p, "error")
             }
-            "slang_vtable" => {
-                let ti = self.di_rt("slang_type_info*");
+            "zell_vtable" => {
+                let ti = self.di_rt("zell_type_info*");
                 let fns = self.di_array(void_ptr, 64, 8, -1);
                 let ms = vec![self.di_member("type", ti, 64, 0), self.di_member("boxed", i64t, 64, 8), self.di_member("methods", fns, 0, 16)];
-                self.di_struct("slang_vtable", 16, 8, ms)
+                self.di_struct("zell_vtable", 16, 8, ms)
             }
-            "slang_object" => {
-                let ti = self.di_rt("slang_type_info*");
+            "zell_object" => {
+                let ti = self.di_rt("zell_type_info*");
                 let ms = vec![self.di_member("refcount", i64t, 64, 0), self.di_member("type", ti, 64, 8)];
-                self.di_struct("slang_object", 16, 8, ms)
+                self.di_struct("zell_object", 16, 8, ms)
             }
-            "slang_task*" => {
-                let t = self.di_fwd("slang.task");
+            "zell_task*" => {
+                let t = self.di_fwd("zell.task");
                 self.di_ptr(t, "")
             }
             _ => unreachable!("debug: unknown runtime type {which}"),
@@ -578,12 +578,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
 
     /// `Task<T>` (async function results).
     fn di_named_task(&mut self, t: TypeId) -> Meta {
-        let p = self.di_rt("slang_task*");
+        let p = self.di_rt("zell_task*");
         let name = format!("Task<{}>", self.type_name(t));
         self.di_handle(p, &name)
     }
 
-    /// The DWARF type of Slang type `t` (memoised).
+    /// The DWARF type of Zell type `t` (memoised).
     pub(crate) fn di_type(&mut self, t: TypeId) -> Meta {
         if let Some(m) = self.dbg.as_ref().unwrap().types.get(&t) {
             return *m;
@@ -652,12 +652,12 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let it = cg.di_type(inner);
                 let lt = cg.llty(inner);
                 let (sz, al) = cg.size_align(lt);
-                let hdr = cg.di_rt("slang_object");
-                let objname = format!("slang_obj<{}>", cg.type_name(inner));
+                let hdr = cg.di_rt("zell_object");
+                let objname = format!("zell_obj<{}>", cg.type_name(inner));
                 let ms = vec![cg.di_member("hdr", hdr, 128, 0), cg.di_member("value", it, sz * 8, 16)];
                 let obj = cg.di_struct(&objname, 16 + sz, al.max(8), ms);
                 let objp = cg.di_ptr(obj, "");
-                let boxname = format!("slang_weak<{}>", cg.type_name(inner));
+                let boxname = format!("zell_weak<{}>", cg.type_name(inner));
                 let ms = vec![cg.di_member("hdr", hdr, 128, 0), cg.di_member("target", objp, 64, 16)];
                 let bx = cg.di_struct(&boxname, 24, 8, ms);
                 let p = cg.di_ptr(bx, "");
@@ -707,18 +707,18 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 })
             }
             Type::Task(_) => {
-                let p = self.di_rt("slang_task*");
+                let p = self.di_rt("zell_task*");
                 self.di_handle(p, &name)
             }
             Type::Any => {
                 let vp = self.di_rt("void*");
-                let ti = self.di_rt("slang_type_info*");
+                let ti = self.di_rt("zell_type_info*");
                 let ms = vec![self.di_member("data", vp, 64, 0), self.di_member("type", ti, 64, 8)];
                 self.di_struct("any", 16, 8, ms)
             }
             Type::Interface(_) => {
                 let vp = self.di_rt("void*");
-                let vt = self.di_rt("slang_vtable");
+                let vt = self.di_rt("zell_vtable");
                 let vtp = self.di_ptr(vt, "");
                 let ms = vec![self.di_member("data", vp, 64, 0), self.di_member("vtable", vtp, 64, 8)];
                 self.di_struct(&name, 16, 8, ms)
@@ -812,10 +812,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         let r8 = |n: u64| n.div_ceil(8) * 8;
         let suffix = name.strip_prefix("map").unwrap_or(name);
         let ems = vec![self.di_member("key", kt, ks * 8, 0), self.di_member("value", vt, vs * 8, r8(ks))];
-        let entry = self.di_struct(&format!("slang_map_entry{suffix}"), r8(ks) + r8(vs), 8, ems);
+        let entry = self.di_struct(&format!("zell_map_entry{suffix}"), r8(ks) + r8(vs), 8, ems);
         let entryp = self.di_ptr(entry, "");
         let i64t = self.di_rt("int64");
-        let ti = self.di_rt("slang_type_info*");
+        let ti = self.di_rt("zell_type_info*");
         let byte = self.di_rt("byte");
         let bytep = self.di_ptr(byte, "");
         let desc = self.di_array(byte, 8, 1, 48);
@@ -833,7 +833,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             self.di_member("ctrl", bytep, 64, 112),
             self.di_member("slots", entryp, 64, 120),
         ];
-        let table = self.di_struct(&format!("slang_map{suffix}"), 128, 8, ms);
+        let table = self.di_struct(&format!("zell_map{suffix}"), 128, 8, ms);
         let p = self.di_ptr(table, "");
         self.di_handle(p, name)
     }

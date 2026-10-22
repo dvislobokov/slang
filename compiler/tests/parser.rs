@@ -1,9 +1,9 @@
 //! Integration tests for the lexer + parser.
 
-use slang::ast::*;
-use slang::diagnostics::{Diagnostic, Diagnostics, Severity};
-use slang::span::SourceFile;
-use slang::{lexer, parser};
+use zell::ast::*;
+use zell::diagnostics::{Diagnostic, Diagnostics, Severity};
+use zell::span::SourceFile;
+use zell::{lexer, parser};
 
 const DESIGN: &str = include_str!("../../DESIGN.md");
 
@@ -22,7 +22,7 @@ fn parse_ok(src: &str) -> File {
     let (file, diags) = try_parse(src);
     let errors: Vec<_> = diags.items.iter().filter(|d| d.severity == Severity::Error).collect();
     if !errors.is_empty() || file.is_none() {
-        let sf = SourceFile::new("test.sl", src);
+        let sf = SourceFile::new("test.zl", src);
         panic!("unexpected errors:\n{}\n--- source ---\n{src}", diags.render_all(&sf));
     }
     file.unwrap()
@@ -155,7 +155,7 @@ fn named(t: &TypeExpr) -> String {
 // DESIGN.md
 // ---------------------------------------------------------------------------
 
-/// All ```slang code blocks of DESIGN.md, with the section title they follow.
+/// All ```zell code blocks of DESIGN.md, with the section title they follow.
 fn design_snippets() -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut section = String::new();
@@ -169,8 +169,8 @@ fn design_snippets() -> Vec<(String, String)> {
                 code.push_str(line);
                 code.push('\n');
             }
-        } else if line.starts_with("```slang") {
-            // "```slang pending" marks syntax described in the design but
+        } else if line.starts_with("```zell") {
+            // "```zell pending" marks syntax described in the design but
             // not implemented yet; those blocks are skipped.
             if !line.contains("pending") {
                 current = Some(String::new());
@@ -238,7 +238,7 @@ fn snippet_to_file(code: &str) -> String {
 #[test]
 fn design_example_program() {
     let section = DESIGN.split("## Пример программы").nth(1).expect("example section");
-    let src = section.split("```slang\n").nth(1).unwrap().split("```").next().unwrap();
+    let src = section.split("```zell\n").nth(1).unwrap().split("```").next().unwrap();
     let file = parse_ok(src);
 
     assert_eq!(file.namespace.to_string(), "app");
@@ -291,7 +291,7 @@ fn design_example_program() {
     assert!(matches!(&**v, ElseValue::Expr(Expr { kind: ExprKind::Int(0), .. })));
 
     // Round trip on spans: every declaration's span covers exactly its source text.
-    let sf = SourceFile::new("example.sl", src);
+    let sf = SourceFile::new("example.zl", src);
     let texts: Vec<_> = file.decls.iter().map(|d| sf.slice(d.span())).collect();
     assert!(texts[0].starts_with("struct Counter {") && texts[0].ends_with('}'));
     assert!(texts[1].starts_with("struct Parser {") && texts[1].ends_with('}'));
@@ -379,7 +379,7 @@ fn example_corpus_parses() {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "sl") {
+            } else if p.extension().is_some_and(|x| x == "zl") {
                 files.push(p);
             }
         }
@@ -1080,11 +1080,11 @@ fn error_messages_are_expected_found() {
 fn error_spans_point_at_the_token() {
     let src = "namespace t\nfunc f() {\n    var = 1\n}\n";
     let d = parse_err(src);
-    let sf = SourceFile::new("t.sl", src);
+    let sf = SourceFile::new("t.zl", src);
     assert_eq!(sf.slice(d[0].span), "=");
     assert_eq!(sf.line_col(d[0].span.start), (3, 9));
     let rendered = d[0].render(&sf);
-    assert!(rendered.contains("t.sl:3:9"), "{rendered}");
+    assert!(rendered.contains("t.zl:3:9"), "{rendered}");
 }
 
 #[test]
@@ -1113,7 +1113,7 @@ func c() int { return 1 }
     let d = parse_err(src);
     assert!(d.len() >= 5, "expected several errors, got {d:#?}");
     assert!(d.iter().all(|d| d.message.starts_with("expected")), "{d:#?}");
-    let sf = SourceFile::new("t.sl", src);
+    let sf = SourceFile::new("t.zl", src);
     let lines: Vec<usize> = d.iter().map(|d| sf.line_col(d.span.start).0).collect();
     for line in [4, 6, 7, 13, 17] {
         assert!(lines.contains(&line), "no error on line {line}: {lines:?}");
@@ -1149,7 +1149,7 @@ fn lexer_errors_flow_through_diagnostics() {
 fn never_panics_on_truncated_input() {
     // Every prefix of a realistic program must produce a result, not a panic.
     let section = DESIGN.split("## Пример программы").nth(1).unwrap();
-    let src = section.split("```slang\n").nth(1).unwrap().split("```").next().unwrap();
+    let src = section.split("```zell\n").nth(1).unwrap().split("```").next().unwrap();
     let extra = "\nfunc g<T>(x map[string]List<List<int>>) { var f = (a, b int) => a + b; switch { case T t, x > 1: break }; var p = new Point{X: [1, 2], Y: map[int]int{1: 2}}?(\"c\"); for i, v in 0..10 { defer h() } }\n@a(b: 1) enum E { @x A(v int), B }\n";
     let full = format!("{src}{extra}");
     let mut boundaries: Vec<usize> = full.char_indices().map(|(i, _)| i).collect();
@@ -1159,14 +1159,14 @@ fn never_panics_on_truncated_input() {
     }
 }
 
-/// Every `.sl` file of the examples, spec corpus and benchmarks.
+/// Every `.zl` file of the examples, spec corpus and benchmarks.
 fn corpus_files() -> Vec<std::path::PathBuf> {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for e in std::fs::read_dir(dir).unwrap().flatten() {
             let p = e.path();
             if p.is_dir() {
                 walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "sl") {
+            } else if p.extension().is_some_and(|x| x == "zl") {
                 out.push(p);
             }
         }
@@ -1216,7 +1216,7 @@ fn every_prefix_of_the_corpus_gives_a_file() {
 
 #[test]
 fn recovery_produces_error_nodes() {
-    let (file, diags) = slang::parser::parse_source("namespace t\nfunc f() {\n    var c = 1\n    c.\n}\nfunc g() {\n    h(1,\n}\nfunc k() {\n    var x = \n    if {\n}\n");
+    let (file, diags) = zell::parser::parse_source("namespace t\nfunc f() {\n    var c = 1\n    c.\n}\nfunc g() {\n    h(1,\n}\nfunc k() {\n    var x = \n    if {\n}\n");
     assert!(diags.has_errors());
     let names: Vec<String> = file
         .decls
@@ -1247,7 +1247,7 @@ fn recovery_produces_error_nodes() {
     let k = body(2);
     assert!(matches!(&k[0].kind, StmtKind::Var(v) if matches!(v.init.as_ref().unwrap().kind, ExprKind::Error)), "{k:#?}");
     // A missing `}` before the next declaration closes the body there.
-    let (file, _) = slang::parser::parse_source("namespace t\nfunc a() {\n    if x {\n        y()\n}\nfunc b() {}\nstruct S { A int\nstruct T {}\n");
+    let (file, _) = zell::parser::parse_source("namespace t\nfunc a() {\n    if x {\n        y()\n}\nfunc b() {}\nstruct S { A int\nstruct T {}\n");
     let kinds: Vec<String> = file.decls.iter().map(|d| match d {
         Decl::Func(f) => format!("func {}", f.name.name),
         Decl::Struct(s) => format!("struct {}", s.name.name),
@@ -1256,17 +1256,17 @@ fn recovery_produces_error_nodes() {
     }).collect();
     assert_eq!(kinds, ["func a", "func b", "struct S", "struct T"], "{:#?}", file.decls);
     // Garbage between declarations becomes an error declaration.
-    let (file, _) = slang::parser::parse_source("namespace t\n) ] }\nfunc ok() {}\n");
+    let (file, _) = zell::parser::parse_source("namespace t\n) ] }\nfunc ok() {}\n");
     assert!(matches!(file.decls[0], Decl::Error(_)));
     assert!(matches!(&file.decls[1], Decl::Func(f) if f.name.name == "ok"));
     // Statement-level recovery keeps the following statements.
-    let (file, _) = slang::parser::parse_source("namespace t\nfunc f() {\n    a b c\n    after()\n}\n");
+    let (file, _) = zell::parser::parse_source("namespace t\nfunc f() {\n    a b c\n    after()\n}\n");
     let Decl::Func(f) = &file.decls[0] else { panic!() };
     let stmts = &f.body.as_ref().unwrap().stmts;
     assert!(stmts.iter().any(|s| matches!(s.kind, StmtKind::Error)), "{stmts:#?}");
     assert!(matches!(&stmts.last().unwrap().kind, StmtKind::Expr(Expr { kind: ExprKind::Call { .. }, .. })));
     // A missing type becomes TypeKind::Error.
-    let (file, _) = slang::parser::parse_source("namespace t\nvar m map[string]\n");
+    let (file, _) = zell::parser::parse_source("namespace t\nvar m map[string]\n");
     let Decl::Var(v) = &file.decls[0] else { panic!("{:#?}", file.decls) };
     assert!(matches!(&v.ty.as_ref().unwrap().kind, TypeKind::Map(_, val) if matches!(val.kind, TypeKind::Error)));
 }
@@ -1404,7 +1404,7 @@ fn trailing_dot_joins_the_next_line_and_recovers() {
     // While typing (`c.` before `}` or a keyword), the recovering parser
     // still produces the Field node with an empty name, so the LSP has
     // the receiver `c`.
-    let (file, diags) = slang::parser::parse_source("namespace t\nfunc f() {\n    var c = 1\n    c.\n    var d = 2\n}\n");
+    let (file, diags) = zell::parser::parse_source("namespace t\nfunc f() {\n    var c = 1\n    c.\n    var d = 2\n}\n");
     assert!(diags.has_errors());
     let Decl::Func(f) = &file.decls[0] else { panic!() };
     let stmts = &f.body.as_ref().unwrap().stmts;

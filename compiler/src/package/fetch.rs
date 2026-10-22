@@ -1,17 +1,17 @@
 //! Getting module versions: the version list, the manifest and the file
-//! tree of `path@version`, through the proxies of `SLANG_PROXY` or
-//! directly from git, verified against `slang.lock` (by the caller) and the
-//! checksum log (`SLANG_SUMDB`), and kept in the [`Store`].
+//! tree of `path@version`, through the proxies of `ZELL_PROXY` or
+//! directly from git, verified against `zell.lock` (by the caller) and the
+//! checksum log (`ZELL_SUMDB`), and kept in the [`Store`].
 //!
 //! # Environment
 //!
 //! | Variable | Meaning | Default |
 //! |---|---|---|
-//! | `SLANG_PROXY` | proxies to try, `,`-separated (next on 404/410) or `\|`-separated (next on any error); `direct` = git, `off` = fail | `direct` |
-//! | `SLANG_PRIVATE` | globs of module paths fetched directly with system credentials, never through a proxy or the checksum log (`github.com/mycorp/*`) | — |
-//! | `SLANG_NOPROXY` | globs fetched directly (but still checked against the log) | `SLANG_PRIVATE` |
-//! | `SLANG_SUMDB` | base URL of the checksum log, or `off` | `off` |
-//! | `SLANG_NOSUMDB` | globs not checked against the log | `SLANG_PRIVATE` |
+//! | `ZELL_PROXY` | proxies to try, `,`-separated (next on 404/410) or `\|`-separated (next on any error); `direct` = git, `off` = fail | `direct` |
+//! | `ZELL_PRIVATE` | globs of module paths fetched directly with system credentials, never through a proxy or the checksum log (`github.com/mycorp/*`) | — |
+//! | `ZELL_NOPROXY` | globs fetched directly (but still checked against the log) | `ZELL_PRIVATE` |
+//! | `ZELL_SUMDB` | base URL of the checksum log, or `off` | `off` |
+//! | `ZELL_NOSUMDB` | globs not checked against the log | `ZELL_PRIVATE` |
 //!
 //! A glob matches a path prefix with the same number of `/`-segments, each
 //! segment by shell rules (Go's `GOPRIVATE` semantics).
@@ -20,17 +20,17 @@
 //!
 //! ```text
 //! GET <proxy>/<path>/@v/list               versions, one per line (`v1.2.0`)
-//! GET <proxy>/<path>/@v/<version>.info     {"Version":"v1.2.0","Time":"...","Manifest":"slang.toml","Origin":"..."}
+//! GET <proxy>/<path>/@v/<version>.info     {"Version":"v1.2.0","Time":"...","Manifest":"zell.toml","Origin":"..."}
 //! GET <proxy>/<path>/@v/<version>.manifest the module's manifest file, verbatim
 //! GET <proxy>/<path>/@v/<version>.zip      the tree under `<path>@<version>/`, stored (see [`super::sum`])
 //! ```
 //!
 //! `<path>` is case-encoded ([`super::store::escape_path`]).
 //!
-//! # Checksum log (`SLANG_SUMDB`), format v1
+//! # Checksum log (`ZELL_SUMDB`), format v1
 //!
 //! ```text
-//! GET <sumdb>/latest                 "slang-sumdb v1\n<N>\n<base64 sha256 of the first N records>\n"
+//! GET <sumdb>/latest                 "zell-sumdb v1\n<N>\n<base64 sha256 of the first N records>\n"
 //! GET <sumdb>/lookup/<path>@<version>
 //!                                    "<record number>\n<path> <version> h1:...\n<path> <version>/manifest h1:...\n"
 //! GET <sumdb>/log                    every record, in order (two lines each, as above)
@@ -89,7 +89,7 @@ pub fn matches_globs(globs: &[String], path: &str) -> bool {
 
 impl Config {
     pub fn from_env() -> Config {
-        let spec = env("SLANG_PROXY").unwrap_or_else(|| "direct".into());
+        let spec = env("ZELL_PROXY").unwrap_or_else(|| "direct".into());
         let mut proxies = Vec::new();
         let mut cur = String::new();
         for c in spec.chars().chain(std::iter::once(',')) {
@@ -109,10 +109,10 @@ impl Config {
                 cur.push(c);
             }
         }
-        let private = globs(env("SLANG_PRIVATE"));
-        let noproxy = env("SLANG_NOPROXY").map(|s| globs(Some(s))).unwrap_or_else(|| private.clone());
-        let nosumdb = env("SLANG_NOSUMDB").map(|s| globs(Some(s))).unwrap_or_else(|| private.clone());
-        let sumdb = env("SLANG_SUMDB").filter(|s| s != "off").map(|s| s.trim_end_matches('/').to_string());
+        let private = globs(env("ZELL_PRIVATE"));
+        let noproxy = env("ZELL_NOPROXY").map(|s| globs(Some(s))).unwrap_or_else(|| private.clone());
+        let nosumdb = env("ZELL_NOSUMDB").map(|s| globs(Some(s))).unwrap_or_else(|| private.clone());
+        let sumdb = env("ZELL_SUMDB").filter(|s| s != "off").map(|s| s.trim_end_matches('/').to_string());
         Config { proxies, private, noproxy, nosumdb, sumdb }
     }
 
@@ -128,9 +128,9 @@ impl Config {
         self.sumdb.is_some() && !matches_globs(&self.private, path) && !matches_globs(&self.nosumdb, path)
     }
 
-    /// `SLANG_PROXY` as given (for `slang env`).
+    /// `ZELL_PROXY` as given (for `zell env`).
     pub fn proxy_spec() -> String {
-        env("SLANG_PROXY").unwrap_or_else(|| "direct".into())
+        env("ZELL_PROXY").unwrap_or_else(|| "direct".into())
     }
 }
 
@@ -149,7 +149,7 @@ pub struct Fetcher {
     pub offline: bool,
     lists: Mutex<HashMap<String, Vec<Version>>>,
     tags: Mutex<HashMap<String, Vec<git::Tag>>>,
-    /// Checksums from `slang.lock` by (module, version): a download that
+    /// Checksums from `zell.lock` by (module, version): a download that
     /// does not match is rejected before it reaches the store.
     expected: Mutex<HashMap<(String, String), String>>,
 }
@@ -157,7 +157,7 @@ pub struct Fetcher {
 fn tmp_dir(what: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!("slang-{what}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
+    std::env::temp_dir().join(format!("zell-{what}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
 }
 
 impl Fetcher {
@@ -176,7 +176,7 @@ impl Fetcher {
         if let Some(want) = self.expected.lock().unwrap().get(&(path.to_string(), version.to_string())) {
             if *want != h {
                 return Err(format!(
-                    "SECURITY ERROR: checksum mismatch for {path}@{version}\n  downloaded: {h}\n  slang.lock: {want}\nthe module content differs from the locked one; it may have been tampered with"
+                    "SECURITY ERROR: checksum mismatch for {path}@{version}\n  downloaded: {h}\n  zell.lock: {want}\nthe module content differs from the locked one; it may have been tampered with"
                 ));
             }
         }
@@ -185,7 +185,7 @@ impl Fetcher {
 
     fn net(&self, what: &str) -> Result<(), String> {
         if self.offline {
-            return Err(format!("{what}: needs the network, but --offline was given (run `slang install` online first)"));
+            return Err(format!("{what}: needs the network, but --offline was given (run `zell install` online first)"));
         }
         Ok(())
     }
@@ -206,12 +206,12 @@ impl Fetcher {
             return Ok(v.clone());
         }
         self.net(&format!("listing versions of {path}"))?;
-        let mut last_err = format!("{path}: no proxy in SLANG_PROXY could list it");
+        let mut last_err = format!("{path}: no proxy in ZELL_PROXY could list it");
         let route = if url.is_some() { vec![(Entry::Direct, false)] } else { self.config.route(path) };
         let mut found = None;
         for (entry, any) in route {
             match entry {
-                Entry::Off => return Err(format!("{path}: module lookup disabled by SLANG_PROXY=off")),
+                Entry::Off => return Err(format!("{path}: module lookup disabled by ZELL_PROXY=off")),
                 Entry::Direct => {
                     let u = url.map(str::to_string).unwrap_or_else(|| git::url_of(path));
                     match self.git_tags(&u) {
@@ -256,7 +256,7 @@ impl Fetcher {
         if url.is_none() {
             for (entry, any) in self.config.route(path) {
                 match entry {
-                    Entry::Off => return Err(format!("{path}: module lookup disabled by SLANG_PROXY=off")),
+                    Entry::Off => return Err(format!("{path}: module lookup disabled by ZELL_PROXY=off")),
                     Entry::Direct => break,
                     Entry::Url(base) => {
                         let pre = format!("{base}/{}/@v/{version}", escape_path(path));
@@ -294,11 +294,11 @@ impl Fetcher {
             return Ok(Fetched { index: idx, commit: None });
         }
         self.net(&format!("downloading {path}@{version}"))?;
-        let mut last_err = format!("{path}@{version}: no proxy in SLANG_PROXY has it");
+        let mut last_err = format!("{path}@{version}: no proxy in ZELL_PROXY has it");
         let route = if url.is_some() { vec![(Entry::Direct, false)] } else { self.config.route(path) };
         for (entry, any) in route {
             match entry {
-                Entry::Off => return Err(format!("{path}: module download disabled by SLANG_PROXY=off")),
+                Entry::Off => return Err(format!("{path}: module download disabled by ZELL_PROXY=off")),
                 Entry::Direct => {
                     let u = url.map(str::to_string).unwrap_or_else(|| git::url_of(path));
                     let want = Version::parse(version).ok_or_else(|| format!("{path}: `{version}` is not a version"))?;
@@ -339,7 +339,7 @@ impl Fetcher {
     /// A git pin (`{ git, tag|branch|rev }`): (version, fetched). Tags that
     /// are versions keep their version; anything else gets a
     /// pseudo-version `v0.0.0-<UTC commit time>-<12 hex of the commit>`.
-    /// `locked` is (version, commit) from `slang.lock`, reused when the
+    /// `locked` is (version, commit) from `zell.lock`, reused when the
     /// store still has it.
     pub fn git_pin(&self, path: &str, url: &str, r: &GitRef, locked: Option<(&str, &str)>) -> Result<(String, Fetched), String> {
         if let Some((v, c)) = locked {
@@ -383,14 +383,14 @@ impl Fetcher {
         }
         let base = self.config.sumdb.as_deref().unwrap();
         let url = format!("{base}/lookup/{}@{version}", escape_path(path));
-        let body = super::http::get(&url)?.ok_or_else(|| format!("{path}@{version}: not found in the checksum log {base} (SLANG_NOSUMDB or SLANG_PRIVATE skip it for private modules)"))?;
+        let body = super::http::get(&url)?.ok_or_else(|| format!("{path}@{version}: not found in the checksum log {base} (ZELL_NOSUMDB or ZELL_PRIVATE skip it for private modules)"))?;
         let text = String::from_utf8_lossy(&body).to_string();
         let mut lines = text.lines();
         let rec: u64 = lines.next().and_then(|l| l.trim().parse().ok()).ok_or_else(|| format!("{url}: malformed lookup response"))?;
         let latest = super::http::get(&format!("{base}/latest"))?.ok_or_else(|| format!("{base}/latest: not found"))?;
         let latest = String::from_utf8_lossy(&latest).to_string();
         let mut ll = latest.lines();
-        if ll.next() != Some("slang-sumdb v1") {
+        if ll.next() != Some("zell-sumdb v1") {
             return Err(format!("{base}/latest: unknown checksum log format"));
         }
         let size: u64 = ll.next().and_then(|l| l.trim().parse().ok()).ok_or_else(|| format!("{base}/latest: malformed tree head"))?;

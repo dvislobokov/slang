@@ -1,0 +1,20 @@
+// test: std.data migrations as code applied by ctx.Migrate() (see main.zl)
+// status: passing
+// run-flags: --leak-check
+namespace spec.data.migrations.history
+
+import std.data
+
+@migration("20260302100000_AddBody")
+struct AddBody {
+    func Up(m *Migrator) {
+        m.AddColumn("notes", Column{Name: "body", Type: "string"})
+        m.AddColumn("notes", Column{Name: "starred", Type: "bool"})
+        m.Sql("UPDATE notes SET body = 'empty'")
+    }
+
+    func Down(m *Migrator) {
+        m.DropColumn("notes", "starred")
+        m.DropColumn("notes", "body")
+    }
+}

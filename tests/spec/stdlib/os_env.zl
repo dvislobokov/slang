@@ -1,0 +1,14 @@
+// test: Setenv / Getenv round trip; unset variables read as empty
+// status: passing
+namespace spec.stdlib.os_env
+
+import std
+import std.io
+
+func main() {
+    println("[" + os.Getenv("ZELL_SPEC_SURELY_UNSET_VAR") + "]")
+    try os.Setenv("ZELL_SPEC_VAR", "v1") catch err {
+        println("setenv failed", err)
+    }
+    println(os.Getenv("ZELL_SPEC_VAR"))
+}

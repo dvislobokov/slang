@@ -1,4 +1,4 @@
-# Slang specification corpus
+# Zell specification corpus
 
 Small, focused programs that define the expected behaviour of the language,
 written TDD style: features that are **not implemented yet** have tests too.
@@ -11,16 +11,16 @@ so that `DESIGN.md` can be updated.
 ## Running
 
 ```
-cargo test -p slang --test spec                          # whole corpus, one test per area
-cargo test -p slang --test spec spec_errors              # one area
-SPEC_FILTER=errors/trace cargo test -p slang --test spec # tests whose path contains the text
-SPEC_VERBOSE=1 cargo test -p slang --test spec -- --nocapture   # every result + per-area counts
+cargo test -p zell --test spec                          # whole corpus, one test per area
+cargo test -p zell --test spec spec_errors              # one area
+SPEC_FILTER=errors/trace cargo test -p zell --test spec # tests whose path contains the text
+SPEC_VERBOSE=1 cargo test -p zell --test spec -- --nocapture   # every result + per-area counts
 scripts/spec-status.sh                                    # markdown status table (below)
 ```
 
 The runner is `compiler/tests/spec.rs`. It builds each test with the
-`slang` binary (`slang build <path> -o <exe>`, run from the repository root
-with a path relative to it), runs the program with `SLANG_NO_BACKTRACE=1`,
+`zell` binary (`zell build <path> -o <exe>`, run from the repository root
+with a path relative to it), runs the program with `ZELL_NO_BACKTRACE=1`,
 and compares stdout byte for byte with the `.out` file and the exit code with
 the expected one. Each area prints a line like
 `spec errors: 27 tests (7 compile-fail): 19 passing, 8 pending, 0 unexpected`
@@ -29,10 +29,10 @@ the expected one. Each area prints a line like
 ## Layout
 
 ```
-tests/spec/<area>/<name>.sl     one program (namespace spec.<area>.<name>)
+tests/spec/<area>/<name>.zl     one program (namespace spec.<area>.<name>)
 tests/spec/<area>/<name>.out    its exact expected stdout (not for compile-fail tests)
-tests/spec/<area>/<name>/       a multi-file program: all .sl files are compiled together,
-    *.sl                        main is taken from the root namespace; exactly one .out
+tests/spec/<area>/<name>/       a multi-file program: all .zl files are compiled together,
+    *.zl                        main is taken from the root namespace; exactly one .out
     <anything>.out              file, none for a compile-fail test
 ```
 
@@ -41,7 +41,7 @@ attributes reflection stdlib namespaces switch closures pointers`, and the
 second wave `interfaces2 generics2 memory2 errors2 async2 strings2 diagnostics
 programs attributes2 platform stdlib2 stdlib3`, then `operators` (operator
 overloading and its compile errors) and `iteration` (the `for ... in`
-protocol) (`stdlib2`: the tier 0/1 stdlib of docs/STDLIB.md, one or more files per namespace named `<ns>_*.sl`; `stdlib3`: the tier 2 stdlib (regex, compress, archive, encodings, templates, mime, url, text), `*_corpus` tests generated from Go / PyYAML / tomllib oracles; `stdlib4`: the tier 3 stdlib (`std.database.sql` with the SQLite driver and a fake in-test driver, `std.database.postgres` against an in-process mock server, `std.net.mail` against an in-process SMTP server, `std.crypto.kdf/password`, P-384, AES-CBC, RSA-OAEP, the zstd encoder, TLS with P-384; the real-PostgreSQL test is `compiler/tests/database.rs`); `stdlib5`: the tier 3b infrastructure clients (`std.data.redis` codec and client against in-process RESP mock servers incl. Cluster MOVED/ASK and Sentinel switch-over, `std.data.kafka` record batches byte-exact against the Java client and a mock broker with groups/SASL/TLS, `std.cloud.s3` SigV4 vectors and an in-process S3 server that verifies signatures, `std.cloud.blob`; the real-server tests are `compiler/tests/{redis,kafka,s3}.rs`); `diagnostics`: one compile-fail test per sema
+protocol) (`stdlib2`: the tier 0/1 stdlib of docs/STDLIB.md, one or more files per namespace named `<ns>_*.zl`; `stdlib3`: the tier 2 stdlib (regex, compress, archive, encodings, templates, mime, url, text), `*_corpus` tests generated from Go / PyYAML / tomllib oracles; `stdlib4`: the tier 3 stdlib (`std.database.sql` with the SQLite driver and a fake in-test driver, `std.database.postgres` against an in-process mock server, `std.net.mail` against an in-process SMTP server, `std.crypto.kdf/password`, P-384, AES-CBC, RSA-OAEP, the zstd encoder, TLS with P-384; the real-PostgreSQL test is `compiler/tests/database.rs`); `stdlib5`: the tier 3b infrastructure clients (`std.data.redis` codec and client against in-process RESP mock servers incl. Cluster MOVED/ASK and Sentinel switch-over, `std.data.kafka` record batches byte-exact against the Java client and a mock broker with groups/SASL/TLS, `std.cloud.s3` SigV4 vectors and an in-process S3 server that verifies signatures, `std.cloud.blob`; the real-server tests are `compiler/tests/{redis,kafka,s3}.rs`); `diagnostics`: one compile-fail test per sema
 diagnostic, see [Diagnostics coverage](#diagnostics-coverage); `programs`:
 larger programs mixing features; `web`: the `std.web` framework of
 docs/FRAMEWORK.md section 2 — routing, binding, validation, DI scopes,
@@ -68,7 +68,7 @@ directory must also be added to `AREAS` and the `areas!` list in
 
 Directives are the leading `//` comment lines, before `namespace` (or
 before an attribute on the namespace). In a multi-file test they are read from
-the first `.sl` file by name; the other files repeat them for readability.
+the first `.zl` file by name; the other files repeat them for readability.
 
 | Line | Directive | Meaning |
 |------|-----------|---------|
@@ -77,12 +77,12 @@ the first `.sl` file by name; the other files repeat them for readability.
 | 2 | `// status: passing` / `// status: pending` | required, see below |
 | 3+ | `// exit: N` | expected exit code (default 0); e.g. 2 for a panic |
 | 3+ | `// args: a b` | program arguments, split on whitespace |
-| 3+ | `// run-flags: --leak-check` | run with `slang run <path> <flags> -- <args>` instead of build + exec |
+| 3+ | `// run-flags: --leak-check` | run with `zell run <path> <flags> -- <args>` instead of build + exec |
 | 3+ | `// stderr: <text>` | stderr must contain `<text>`; otherwise stderr is not checked |
 | 3+ | `// warning: <text>` | the build's stderr must contain `<text>` (e.g. a W0001 warning); repeatable |
 | 3+ | `// no-warning: <text>` | the build's stderr must not contain `<text>`; repeatable |
-| 3+ | `// env: K=V` | environment variable of the program run (e.g. `SLANG_CYCLES=manual`); repeatable |
-| 3+ | `// build-flags: --x` | extra `slang build` flags, also for compile-fail tests (e.g. `--deny-warnings`) |
+| 3+ | `// env: K=V` | environment variable of the program run (e.g. `ZELL_CYCLES=manual`); repeatable |
+| 3+ | `// build-flags: --x` | extra `zell build` flags, also for compile-fail tests (e.g. `--deny-warnings`) |
 
 Output conventions are those of `examples/README.md` ("Output format"):
 `println` separates arguments with one space, floats print like Go's `%v`
@@ -94,10 +94,10 @@ Output conventions are those of `examples/README.md` ("Output format"):
 - `pending`: the test must currently **fail** (wrong output, wrong exit code,
   build error, or for a compile-fail test: the build succeeds or fails with a
   different message). When it starts passing the runner fails with
-  `tests/spec/x.sl now passes: change status to passing`.
+  `tests/spec/x.zl now passes: change status to passing`.
 
 Flipping a test: implement the feature, run
-`SPEC_FILTER=<area>/<name> cargo test -p slang --test spec`, change line 2 to
+`SPEC_FILTER=<area>/<name> cargo test -p zell --test spec`, change line 2 to
 `// status: passing` (in every file of a multi-file test), and regenerate the
 table below with `scripts/spec-status.sh`. Never edit a `.out` file to match a
 buggy implementation; if the expectation itself is wrong, fix it together with
@@ -179,7 +179,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
 8. **Range bounds are evaluated once**, before the first iteration
    (`for i in 0..n` does not see later changes of `n`). — `control/for_range_bounds_once`
 9. **`break` inside a `switch` case leaves the switch** (Go semantics), while
-   `continue` continues the enclosing loop. Since Slang has no labels, a loop
+   `continue` continues the enclosing loop. Since Zell has no labels, a loop
    cannot be left from inside a switch except by `return`; see
    ambiguities. — `control/break_inside_switch`
 10. **`print(a, b, ...)` follows Go's `fmt.Print`**: a space is added between
@@ -297,10 +297,10 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
 32. **Weak references** are created by assigning a `*T` to a `weak *T` and read
     by assigning back to a `*T` (nil once the target is freed).
     — `memory/weak_becomes_nil`, `memory/parent_child_weak`
-33. **`slang run --leak-check`** prints `leak: N objects` on stderr and exits
+33. **`zell run --leak-check`** prints `leak: N objects` on stderr and exits
     with code 66 when objects are still alive; the report names the field that
     closes a cycle as `Type.Field`. The cycle tests run with
-    `SLANG_CYCLES=manual`, since by default the cycle collector frees those
+    `ZELL_CYCLES=manual`, since by default the cycle collector frees those
     cycles before the report. — `memory/leak_check_*`
 34a. **Cycle collector** (DESIGN.md "Циклы"): `runtime.CollectCycles()`
     returns the number of objects freed, counting slice backings, maps,
@@ -464,7 +464,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
 
 1. **Outputs of the `*_corpus` tests come from reference implementations**
    (Go 1.24 for regex, csv, template, html, mime, url, scanner; PyYAML for
-   yaml; Python's tomllib for toml), not from Slang. Known intentional
+   yaml; Python's tomllib for toml), not from Zell. Known intentional
    divergence: `template_corpus` e9 (a typed template rejects a field that
    `T` lacks even in a branch the data never takes; Go fails only if it runs). — `stdlib3/*_corpus`
 2. **`regex.Pattern("...")` and `text/html.template.Parse<T>("...")` with a
@@ -555,7 +555,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     — `memory2/move_variable_copy_error`, `memory2/move_last_use_error`, `memory2/move_into_function`
 60. **Errors from `main`** (also `async main`) print `error: <message>` and then
     the trace lines (format of decision 23) to stderr; exit code 1.
-    `slang run --no-error-trace` makes `errors.Trace` `""` and `Frames` empty.
+    `zell run --no-error-trace` makes `errors.Trace` `""` and `Frames` empty.
     — `errors2/main_error_stderr`, `errors2/async_main_error_trace`, `errors2/no_error_trace_flag`
 61. **`println` evaluates every argument before writing** (Go); also
     `print`. — `strings2/println_evaluates_args_first`
@@ -574,7 +574,7 @@ and the corpus picked an answer. Each is followed by the tests that encode it.
     a declaration excluded by `@cfg` is not type-checked, using it reports
     `unknown identifier`; two `@cfg` variants of one function or struct may
     coexist; `@cfg(...)` before `namespace` excludes the whole file, like the
-    suffixes `_linux.sl`, `_windows.sl`, `_arm64.sl` (only for files found in
+    suffixes `_linux.zl`, `_windows.zl`, `_arm64.zl` (only for files found in
     a directory; a file named on the command line is always compiled).
     `@cfg` also works on struct fields and methods, takes `any`/`all`/`arch`/
     `feature`, and rejects unknown keys, OS and architecture names.
@@ -707,7 +707,7 @@ Found by the second wave:
   define the implementations as every type of the namespace with the
   methods (decision 52). The `PATTERNS.md` example used `string(float)`,
   which is not a conversion; it uses `fmt.Format` now (it is
-  `examples/sealed_shapes.sl`).
+  `examples/sealed_shapes.zl`).
 - **Arrow lambdas with a block body** (`(x T) => { ...; return v }`) get a
   `void` result: `return v` reports `too many return values`. `DESIGN.md` only
   shows the block form for `void` (`(s *Server) => { s.timeout = sec }`); the
@@ -752,7 +752,7 @@ tests in the other areas and the new ones in `interfaces2`, `generics2`,
   _`), `generic method F must be called` (`needs type arguments to be used as
   a value`), `cannot be stored as an async result of type ...` (`async function
   F cannot return a value with a destructor`);
-- only for packages (`slang.toml` dependencies): `package ... cannot use
+- only for packages (`zell.toml` dependencies): `package ... cannot use
   namespace ...` and its `transitive dependency` note.
 
 **Help lines.** Diagnostics with an obvious fix carry a `= help:` line

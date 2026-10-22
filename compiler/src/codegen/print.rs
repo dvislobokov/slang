@@ -27,10 +27,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
         for (it, v) in items.iter().zip(vals) {
             match it.op {
                 PrintOp::Space => {
-                    self.call_rt("slang_print_space", &[]);
+                    self.call_rt("zell_print_space", &[]);
                 }
                 PrintOp::Newline => {
-                    self.call_rt("slang_print_newline", &[]);
+                    self.call_rt("zell_print_newline", &[]);
                 }
                 op => {
                     let Some(v) = v else { return unsupported("print item without argument") };
@@ -43,21 +43,21 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                             } else {
                                 self.b.build_int_cast_sign_flag(xi, self.i64_ty(), op == PrintOp::Int, "").unwrap()
                             };
-                            let f = if op == PrintOp::Int { "slang_print_int" } else { "slang_print_uint" };
+                            let f = if op == PrintOp::Int { "zell_print_int" } else { "zell_print_uint" };
                             self.call_rt(f, &[w.into()]);
                         }
                         PrintOp::Float => {
                             let d = self.float_for_print(x);
-                            self.call_rt("slang_print_float", &[d.into()]);
+                            self.call_rt("zell_print_float", &[d.into()]);
                         }
                         PrintOp::Bool => {
-                            self.call_rt("slang_print_bool", &[x.into()]);
+                            self.call_rt("zell_print_bool", &[x.into()]);
                         }
                         PrintOp::Char => {
-                            self.call_rt("slang_print_rune", &[x.into()]);
+                            self.call_rt("zell_print_rune", &[x.into()]);
                         }
                         _ => {
-                            self.call_rt("slang_print_str", &[x.into()]);
+                            self.call_rt("zell_print_str", &[x.into()]);
                         }
                     }
                 }
@@ -68,11 +68,11 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     }
 
     /// A float operand as the `double` to format: a `float32` goes through
-    /// `slang_float32_shortest` so it prints with float32 precision.
+    /// `zell_float32_shortest` so it prints with float32 precision.
     fn float_for_print(&mut self, x: BasicValueEnum<'ctx>) -> inkwell::values::FloatValue<'ctx> {
         let f = x.into_float_value();
         if f.get_type() == self.ctx.f32_type() {
-            return self.call_rt_v("slang_float32_shortest", &[f.into()]).into_float_value();
+            return self.call_rt_v("zell_float32_shortest", &[f.into()]).into_float_value();
         }
         f
     }
@@ -98,14 +98,14 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
             Type::Int(k) => {
                 let xi = x.into_int_value();
                 let w = if k.bits() == 64 { xi } else { self.b.build_int_cast_sign_flag(xi, self.i64_ty(), k.signed(), "").unwrap() };
-                Val::owned(self.call_rt_v(if k.signed() { "slang_string_from_int" } else { "slang_string_from_uint" }, &[w.into()]))
+                Val::owned(self.call_rt_v(if k.signed() { "zell_string_from_int" } else { "zell_string_from_uint" }, &[w.into()]))
             }
             Type::Float32 | Type::Float64 => {
                 let d = self.float_for_print(x);
-                Val::owned(self.call_rt_v("slang_string_from_float", &[d.into()]))
+                Val::owned(self.call_rt_v("zell_string_from_float", &[d.into()]))
             }
-            Type::Bool => Val::owned(self.call_rt_v("slang_string_from_bool", &[x.into()])),
-            Type::Char => Val::owned(self.call_rt_v("slang_string_from_rune", &[x.into()])),
+            Type::Bool => Val::owned(self.call_rt_v("zell_string_from_bool", &[x.into()])),
+            Type::Char => Val::owned(self.call_rt_v("zell_string_from_rune", &[x.into()])),
             Type::Error => {
                 let f = self.tostr_fn(t)?;
                 Val::owned(self.b.build_call(f, &[x.into()], "").unwrap().try_as_basic_value().left().unwrap())
@@ -249,7 +249,7 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
                 let s = cg.str_lit("nil");
                 cg.b.build_return(Some(&s)).unwrap();
                 cg.b.position_at_end(some);
-                let m = cg.call_rt_v("slang_error_message", &[arg.into()]);
+                let m = cg.call_rt_v("zell_error_message", &[arg.into()]);
                 cg.b.build_return(Some(&m)).unwrap();
                 return Ok(());
             }
@@ -308,10 +308,10 @@ impl<'a, 'ctx> CodeGen<'a, 'ctx> {
     /// `*acc = *acc + s` (the old accumulator is released).
     fn append_str(&mut self, acc: inkwell::values::PointerValue<'ctx>, s: BasicValueEnum<'ctx>, owned: bool) {
         let old = self.b.build_load(self.ptr_ty(), acc, "").unwrap();
-        let n = self.call_rt_v("slang_string_concat", &[old.into(), s.into()]);
-        self.call_rt("slang_release", &[old.into()]);
+        let n = self.call_rt_v("zell_string_concat", &[old.into(), s.into()]);
+        self.call_rt("zell_release", &[old.into()]);
         if owned {
-            self.call_rt("slang_release", &[s.into()]);
+            self.call_rt("zell_release", &[s.into()]);
         }
         self.b.build_store(acc, n).unwrap();
     }

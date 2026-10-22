@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// gzip level 6: compress then decompress a generated 20 MB text (same text as main.sl).
+// gzip level 6: compress then decompress a generated 20 MB text (same text as main.zl).
 func main() {
 	words := []string{"lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua", "1234567"}
 	var b strings.Builder

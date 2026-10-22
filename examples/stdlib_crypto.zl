@@ -1,0 +1,80 @@
+namespace examples.stdlib_crypto
+
+import std
+import std.crypto
+import std.crypto.hash as chash
+import std.encoding
+import std.io
+
+func main() {
+    // std.crypto.hash: `import std` and `import std.crypto` would both give `hash`
+    // (std.hash vs std.crypto.hash: ambiguous), so alias it or use crypto.hash.X.
+    println("sha256:", chash.Sha256Hex("abc"))
+    println("sha1:", chash.Sha1Hex("abc"))
+    println("md5:", crypto.hash.Md5Hex("The quick brown fox jumps over the lazy dog"))
+    println("sha512:", chash.Sha512Hex("abc"))
+    println("crc32:", chash.Crc32("123456789"))
+    var digest = chash.Sha256("hello")
+    println("digest:", len(digest), "bytes, first", digest[0], "last", digest[len(digest) - 1])
+    println("hex matches:", hex.Encode(digest) == chash.Sha256Hex("hello"))
+
+    // std.crypto.hmac
+    println("hmac:", hmac.Sha256Hex("key", "The quick brown fox jumps over the lazy dog"))
+    var mac = hmac.Sha256("secret", "message")
+    println(
+        "verify:",
+        hmac.Equal(mac, hmac.Sha256("secret", "message")),
+        hmac.Equal(mac, hmac.Sha256("secret", "Message")),
+    )
+
+    // std.encoding.base64 / hex
+    var enc = base64.EncodeString("Zell + base64 = ok")
+    println("base64:", enc)
+    var dec = try base64.DecodeString(enc) else "?"
+    println("decoded:", dec)
+    var bad = try base64.DecodeString("not*base64") else "invalid input"
+    println("bad:", bad)
+    var raw = try hex.Decode("fbff10") catch err {
+        println("hex error:", err)
+        return
+    }
+    println("raw:", raw, "std:", base64.Encode(raw), "url:", base64.EncodeURL(raw))
+    var back = try base64.DecodeURL("-_8Q") catch err {
+        println("url error:", err)
+        return
+    }
+    println("url round trip:", hex.Encode(back))
+    println("hex:", hex.EncodeString("Hi!"), try hex.DecodeString("5a656c6c") else "?")
+    try hex.Decode("abc") catch err {
+        println("odd hex:", err)
+    }
+
+    // std.crypto.rand and std.uuid: random, so only shapes are printed.
+    var token = try rand.Hex(16) else ""
+    println("token length:", len(token))
+    var key = try rand.Bytes(32) catch err {
+        return
+    }
+    println("key length:", len(key))
+    var id = uuid.New()
+    println(
+        "uuid:",
+        len(id),
+        uuid.IsValid(id),
+        uuid.IsValid("not-a-uuid"),
+        uuid.IsValid("123e4567-e89b-12d3-a456-426614174000"),
+    )
+
+    // std.random: deterministic after Seed.
+    random.Seed(2024)
+    var a = [random.IntN(100), random.IntN(100), random.IntN(100)]
+    random.Seed(2024)
+    var b = [random.IntN(100), random.IntN(100), random.IntN(100)]
+    println("same sequence:", a[0] == b[0] && a[1] == b[1] && a[2] == b[2])
+    println("seeded:", a)
+    var deck = [1, 2, 3, 4, 5, 6, 7, 8]
+    random.Shuffle(deck)
+    println("shuffled:", deck)
+    var f = random.Float()
+    println("float in [0, 1):", f >= 0.0 && f < 1.0, "bytes:", len(random.Bytes(5)))
+}

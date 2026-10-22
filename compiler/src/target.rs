@@ -1,5 +1,5 @@
 //! The compilation target (docs/PLATFORMS.md): operating system and
-//! architecture names as Slang sees them (`os.Name`, `os.Arch`, `@cfg`,
+//! architecture names as Zell sees them (`os.Name`, `os.Arch`, `@cfg`,
 //! file-name suffixes).
 //!
 //! The target is process-wide: the host by default, or the one chosen with
@@ -139,7 +139,7 @@ impl Target {
     }
 
     /// True if a file named `path` is excluded on this target by its name
-    /// suffix (Go style): `x_linux.sl`, `x_arm64.sl`, `x_windows_amd64.sl`.
+    /// suffix (Go style): `x_linux.zl`, `x_arm64.zl`, `x_windows_amd64.zl`.
     /// Only known OS and architecture names count as suffixes.
     pub fn excludes_file(&self, path: &str) -> bool {
         let name = std::path::Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -171,7 +171,7 @@ pub enum ObjectFormat {
     Wasm,
 }
 
-/// Slang's name of an LLVM/Rust CPU name.
+/// Zell's name of an LLVM/Rust CPU name.
 fn arch_name(cpu: &str) -> String {
     match cpu {
         "x86_64" | "amd64" => "amd64".into(),
@@ -218,14 +218,14 @@ mod tests {
     #[test]
     fn file_suffixes() {
         let linux = Target::parse("linux-amd64").unwrap();
-        assert!(!linux.excludes_file("src/paths_linux.sl"));
-        assert!(linux.excludes_file("src/paths_windows.sl"));
-        assert!(linux.excludes_file("paths_arm64.sl"));
-        assert!(!linux.excludes_file("paths_amd64.sl"));
-        assert!(!linux.excludes_file("paths_linux_amd64.sl"));
-        assert!(linux.excludes_file("paths_linux_arm64.sl"));
-        assert!(!linux.excludes_file("my_paths.sl"));
-        assert!(!linux.excludes_file("linux.sl"));
+        assert!(!linux.excludes_file("src/paths_linux.zl"));
+        assert!(linux.excludes_file("src/paths_windows.zl"));
+        assert!(linux.excludes_file("paths_arm64.zl"));
+        assert!(!linux.excludes_file("paths_amd64.zl"));
+        assert!(!linux.excludes_file("paths_linux_amd64.zl"));
+        assert!(linux.excludes_file("paths_linux_arm64.zl"));
+        assert!(!linux.excludes_file("my_paths.zl"));
+        assert!(!linux.excludes_file("linux.zl"));
         assert_eq!(linux.path_separator(), "/");
     }
 }
