@@ -3,11 +3,12 @@
 #   irm https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.ps1 | iex
 #   .\install.ps1 [-Version X.Y.Z] [-Dir $env:USERPROFILE\.zell\toolchain] [-From zell-X-windows-amd64.tar.gz]
 #
-# Downloads zell-<version>-windows-amd64.tar.gz ($env:ZELL_DIST_URL, default
-# the GitHub release), checks its .sha256, unpacks it with tar.exe (built into
-# Windows 10 1803+) into <Dir>\zell-<version>-windows-amd64 and adds its bin\
-# to the user's PATH. Linking needs clang for the MinGW target (e.g. MSYS2
-# mingw-w64-x86_64-clang, or llvm-mingw) on PATH.
+# Downloads zell-<version>-windows-amd64.tar.xz ($env:ZELL_DIST_URL, default
+# the GitHub release; the .tar.gz when this tar.exe cannot read xz), checks its
+# .sha256, unpacks it with tar.exe (built into Windows 10 1803+) into
+# <Dir>\zell-<version>-windows-amd64 and adds its bin\ to the user's PATH. The
+# toolchain is self-contained (bin\lld.exe, the MSVC runtime DLLs and the link
+# inputs of every target): nothing else needs to be installed.
 # Not runnable on the Linux CI that builds the release; tested by hand.
 param(
     [string]$Version = $(if ($env:ZELL_VERSION) { $env:ZELL_VERSION } else { "latest" }),
@@ -52,9 +53,8 @@ try {
     $parts = @($path -split ';' | Where-Object { $_ -and ($_ -notlike "*\.zell\toolchain\zell-*\bin") })
     [Environment]::SetEnvironmentVariable("Path", (@($bin) + $parts) -join ';', "User")
     Write-Host "installed $name in $Dir; $bin added to the user PATH (open a new terminal)"
-    if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
-        Write-Host "note: linking needs clang with the MinGW target (MSYS2: pacman -S mingw-w64-x86_64-clang mingw-w64-x86_64-lld)"
-    }
+    & (Join-Path $bin "zell.exe") doctor *> $null
+    if ($LASTEXITCODE -ne 0) { Write-Host "note: ``zell doctor`` reports a problem with the toolchain" }
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

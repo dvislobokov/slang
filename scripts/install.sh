@@ -4,12 +4,14 @@
 #   curl -fsSL https://raw.githubusercontent.com/zell-lang/zell/master/scripts/install.sh | sh
 #   sh install.sh [--version X.Y.Z] [--dir ~/.zell/toolchain] [--from zell-X-host.tar.gz]
 #
-# Downloads zell-<version>-<host>.tar.gz from $ZELL_DIST_URL (a directory
-# of release files; default: the GitHub release of that version, or of the
-# latest one, whose VERSION file names it), checks its .sha256, unpacks it into
-# <dir>/zell-<version>-<host>/ and points <dir>/current at it, then links
-# bin/zell, bin/zell-lsp and bin/zell-mcp into ~/.local/bin (or $ZELL_BIN_DIR).
-# Linking Zell programs needs clang on PATH (and lld for cross targets).
+# Downloads zell-<version>-<host>.tar.xz (or .tar.gz) from $ZELL_DIST_URL (a
+# directory of release files; default: the GitHub release of that version, or
+# of the latest one, whose VERSION file names it), checks its .sha256, unpacks
+# it into <dir>/zell-<version>-<host>/ and points <dir>/current at it, then
+# links bin/zell, bin/zell-lsp and bin/zell-mcp into ~/.local/bin (or
+# $ZELL_BIN_DIR). The toolchain is self-contained (bin/lld and the link inputs
+# of every target in targets/): nothing else needs to be installed; `zell
+# doctor` checks it.
 set -eu
 version=${ZELL_VERSION:-latest}
 dir=${ZELL_TOOLCHAIN_DIR:-$HOME/.zell/toolchain}
@@ -51,18 +53,31 @@ else
         fetch "$url/VERSION" "$tmp/VERSION" || { echo "install.sh: cannot read $url/VERSION; pass --version" >&2; exit 1; }
         version=$(cat "$tmp/VERSION")
     fi
-    archive="$tmp/zell-$version-$host.tar.gz"
-    echo "downloading $url/zell-$version-$host.tar.gz"
-    fetch "$url/zell-$version-$host.tar.gz" "$archive"
-    if fetch "$url/zell-$version-$host.tar.gz.sha256" "$tmp/sum" 2>/dev/null; then
+    # .tar.xz (smaller) when this system's tar can unpack it, else .tar.gz
+    ext=tar.gz
+    if command -v xz >/dev/null 2>&1; then ext=tar.xz; fi
+    archive="$tmp/zell-$version-$host.$ext"
+    echo "downloading $url/zell-$version-$host.$ext"
+    if ! fetch "$url/zell-$version-$host.$ext" "$archive" 2>/dev/null; then
+        [ "$ext" = tar.xz ] || { echo "install.sh: cannot download $url/zell-$version-$host.$ext" >&2; exit 1; }
+        ext=tar.gz
+        archive="$tmp/zell-$version-$host.$ext"
+        echo "downloading $url/zell-$version-$host.$ext"
+        fetch "$url/zell-$version-$host.$ext" "$archive"
+    fi
+    if fetch "$url/zell-$version-$host.$ext.sha256" "$tmp/sum" 2>/dev/null; then
         want=$(cut -d' ' -f1 < "$tmp/sum")
         got=$( (sha256sum "$archive" 2>/dev/null || shasum -a 256 "$archive") | cut -d' ' -f1)
         [ "$want" = "$got" ] || { echo "install.sh: checksum mismatch ($got, expected $want)" >&2; exit 1; }
     fi
 fi
 mkdir -p "$dir"
-tar xzf "$archive" -C "$dir"
-name=$(tar tzf "$archive" | head -1 | cut -d/ -f1)
+case "$archive" in
+    *.xz) unpack="xz -dc" ;;
+    *) unpack="gzip -dc" ;;
+esac
+$unpack < "$archive" | tar xf - -C "$dir"
+name=$($unpack < "$archive" | tar tf - | head -1 | cut -d/ -f1)
 ln -sfn "$dir/$name" "$dir/current"
 mkdir -p "$bindir"
 ln -sf "$dir/current/bin/zell" "$bindir/zell"
@@ -70,4 +85,4 @@ ln -sf "$dir/current/bin/zell-lsp" "$bindir/zell-lsp"
 [ -e "$dir/current/bin/zell-mcp" ] && ln -sf "$dir/current/bin/zell-mcp" "$bindir/zell-mcp"
 echo "installed $name in $dir (current -> $name); zell, zell-lsp and zell-mcp linked into $bindir"
 case ":$PATH:" in *":$bindir:"*) ;; *) echo "add $bindir to PATH:  export PATH=\"$bindir:\$PATH\"" ;; esac
-command -v clang >/dev/null 2>&1 || echo "note: linking needs clang (apt install clang lld / xcode-select --install)"
+"$dir/current/bin/zell" doctor >/dev/null 2>&1 || echo "note: \`zell doctor\` reports a problem with the toolchain"
