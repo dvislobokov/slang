@@ -6,9 +6,17 @@
 # install.ps1 read VERSION from releases/latest/download), and creates the
 # GitHub Release with all of them. The test suites run in ci.yml, not here.
 #
+# Every host archive is self-contained (docs/PLATFORMS.md, "Дистрибутив"):
+# bin/lld (scripts/build-lld.sh, per host) and targets/ with the link inputs
+# of every tier-1/2 target, built once: the `targets` job on Linux
+# (scripts/bundle-targets.sh: glibc 2.31 stubs, musl, mingw-w64, compiler-rt,
+# runtimes) and `targets-macos` on a Mac (the macOS runtimes against the real
+# SDK, libSystem.tbd checked against it).
+#
 # Assets of release v<version>:
-#   zell-<version>-<host>.tar.gz(.sha256)          host: linux-amd64, linux-arm64,
+#   zell-<version>-<host>.tar.xz(.sha256)          host: linux-amd64, linux-arm64,
 #                                                  macos-arm64, macos-amd64, windows-amd64
+#                                                  (windows-amd64 also .tar.gz)
 #   zell-runtime-<version>-<triple>.tar.gz(.sha256) one per runtime that built
 #   SHA256SUMS, VERSION
 name: release
@@ -54,9 +62,58 @@ jobs:
             exit 1
           fi
 
+  targets:
+    name: targets (Linux, Windows link inputs)
+    needs: meta
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - name: LLVM 18
+        run: sudo ./scripts/setup.sh
+      - name: Cache of the pinned downloads
+        uses: actions/cache@v4
+        with:
+          path: build/bundle-cache
+          key: bundle-cache-${{ hashFiles('scripts/bundle-targets.sh') }}
+          restore-keys: bundle-cache-
+      - name: Link inputs
+        run: |
+          ./scripts/bundle-targets.sh x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+            x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-gnu
+          du -sh build/targets/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: targets-linux
+          path: build/targets/
+          if-no-files-found: error
+
+  targets-macos:
+    name: targets (macOS, real SDK)
+    needs: meta
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+      - name: LLVM 18
+        run: brew install llvm@18
+      - name: Link inputs (runtimes built against the SDK)
+        run: |
+          export CLANG="$(brew --prefix llvm@18)/bin/clang"
+          ./scripts/bundle-targets.sh aarch64-apple-darwin x86_64-apple-darwin
+          ./scripts/bundle-targets.sh --check-darwin-tbd
+          cat build/targets/*/BUNDLE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: targets-macos
+          path: build/targets/
+          if-no-files-found: error
+
   unix:
     name: ${{ matrix.host }}
-    needs: meta
+    needs: [meta, targets, targets-macos]
     strategy:
       fail-fast: false
       matrix:
@@ -100,14 +157,29 @@ jobs:
       - name: Runtime
         run: |
           if [ "$RUNNER_OS" = macOS ]; then make -C runtime CC=clang -j"$(sysctl -n hw.ncpu)"; else make -C runtime -j"$(nproc)"; fi
-      - name: Cross runtimes for `zell target add` (best effort)
-        if: matrix.host == 'linux-amd64'
+      - uses: actions/download-artifact@v4
+        with:
+          name: targets-linux
+          path: build/targets
+      - uses: actions/download-artifact@v4
+        with:
+          name: targets-macos
+          path: build/targets
+      - name: Cache of bin/lld
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: build/lld
+          key: lld-18-${{ matrix.os }}-${{ hashFiles('scripts/build-lld.sh', 'scripts/lld/lld-main.cpp') }}
+      - name: bin/lld
         run: |
-          sudo apt-get install -y mingw-w64 gcc-aarch64-linux-gnu musl-tools || true
-          for t in x86_64-w64-mingw32 aarch64-linux-gnu x86_64-linux-musl; do
-            if make -C runtime CROSS=$t -j"$(nproc)"; then echo "built runtime for $t"
-            else echo "::warning::runtime for $t did not build; its archive is left out"; fi
-          done
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get install -y liblld-18-dev libzstd-dev zlib1g-dev libncurses-dev
+            ./scripts/build-lld.sh
+          else
+            brew install ninja
+            [ -x build/lld/lld ] || LLVM_CONFIG="$(brew --prefix llvm@18)/bin/llvm-config" ./scripts/build-lld.sh
+          fi
       - name: Compiler (release)
         run: cargo build --release --bin zell --bin zell-lsp --bin zell-mcp
       - name: Package
@@ -120,7 +192,7 @@ jobs:
 
   windows:
     name: windows-amd64
-    needs: meta
+    needs: [meta, targets, targets-macos]
     runs-on: windows-latest
     defaults:
       run:
@@ -153,7 +225,7 @@ jobs:
           $prefix = Join-Path $env:RUNNER_TEMP $name
           if (-not (Test-Path "$prefix\bin\llvm-config.exe")) {
             Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/$name.tar.xz" -OutFile "$env:RUNNER_TEMP\llvm.tar.xz"
-            tar -xf "$env:RUNNER_TEMP\llvm.tar.xz" -C "$env:RUNNER_TEMP" "$name/bin/llvm-config.exe" "$name/bin/clang-cl.exe" "$name/bin/llvm-lib.exe" "$name/lib" "$name/include"
+            tar -xf "$env:RUNNER_TEMP\llvm.tar.xz" -C "$env:RUNNER_TEMP" "$name/bin/llvm-config.exe" "$name/bin/clang-cl.exe" "$name/bin/llvm-lib.exe" "$name/bin/lld.exe" "$name/lib" "$name/include"
             if ($LASTEXITCODE -ne 0) { throw "extracting LLVM failed" }
             Remove-Item "$env:RUNNER_TEMP\llvm.tar.xz"
           }
@@ -181,6 +253,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path target\release | Out-Null
           Copy-Item target\x86_64-pc-windows-msvc\release\zell.exe, target\x86_64-pc-windows-msvc\release\zell-lsp.exe, target\x86_64-pc-windows-msvc\release\zell-mcp.exe target\release\
           .\target\release\zell.exe version
+      - uses: actions/download-artifact@v4
+        with:
+          name: targets-linux
+          path: build/targets
+      - uses: actions/download-artifact@v4
+        with:
+          name: targets-macos
+          path: build/targets
+      # bin/lld.exe: the official LLVM 18.1.8 lld (same /MD runtime as zell.exe;
+      # package-toolchain.sh copies the Visual C++ DLLs next to both)
+      - name: bin/lld
+        run: LLD_BINARY="$(cygpath -u "$RUNNER_TEMP")/clang+llvm-18.1.8-x86_64-pc-windows-msvc/bin/lld.exe" ./scripts/build-lld.sh
       - name: Package
         run: ./scripts/package-toolchain.sh --no-build --out dist && ls -l dist
       - uses: actions/upload-artifact@v4
@@ -212,16 +296,17 @@ jobs:
           for d in artifacts/dist-windows-amd64 artifacts/dist-macos-arm64 artifacts/dist-macos-amd64 \
                    artifacts/dist-linux-arm64 artifacts/dist-linux-amd64; do
             [ -d "$d" ] || { echo "::warning::no assets from ${d#artifacts/dist-}"; continue; }
-            for f in "$d"/*.tar.gz; do
+            for f in "$d"/*.tar.gz "$d"/*.tar.xz; do
+              [ -f "$f" ] || continue
               b=$(basename "$f")
               [ -e "release/$b" ] && continue
               cp "$f" "$f.sha256" release/
             done
           done
           printf '%s\n' "$VERSION" > release/VERSION
-          (cd release && sha256sum -c ./*.sha256 && sha256sum ./*.tar.gz | sed 's| \./| |' > SHA256SUMS)
+          (cd release && sha256sum -c ./*.sha256 && sha256sum ./*.tar.* | grep -v '\.sha256$' | sed 's| \./| |' > SHA256SUMS)
           for h in linux-amd64 macos-arm64 macos-amd64 windows-amd64; do
-            [ -f "release/zell-$VERSION-$h.tar.gz" ] || { echo "::error::missing zell-$VERSION-$h.tar.gz"; exit 1; }
+            ls "release/zell-$VERSION-$h".tar.* >/dev/null 2>&1 || { echo "::error::missing zell-$VERSION-$h.tar.xz"; exit 1; }
           done
           ls -l release
       - uses: actions/upload-artifact@v4
