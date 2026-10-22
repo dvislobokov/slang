@@ -2,10 +2,11 @@
 //! files kept in memory and re-analysed on demand (docs/TOOLING.md,
 //! "Session API").
 //!
-//! The first version re-runs semantic analysis over the whole project on
-//! every [`Session::analyze`], but parsing is cached per file and clients
-//! only use [`Session::update_file`] / [`Session::analyze`], so incremental
-//! analysis can be added later without changing them.
+//! Analysis is incremental (see [`incr`]): files are parsed (and their
+//! `@cfg` applied) once per text, the project is split into units (the
+//! files of one namespace) whose results are cached, and an edit re-runs
+//! only the units it can affect. The result is the same as analysing the
+//! whole project again ([`Session::analyze_full`]).
 //!
 //! Error resilience: the parser always produces an AST (with error nodes
 //! where the text is incomplete, see [`crate::parser`]), so every file
@@ -20,28 +21,51 @@
 //! every std symbol of the analysis gets its location and doc comment
 //! there, so navigation, hover and workspace symbols reach into `std/`.
 
+mod assemble;
+mod compare;
+mod facts;
+mod fragment;
+mod incr;
+mod remap;
+mod stdblock;
+
+pub use incr::Stats;
+
 use crate::ast;
-use crate::diagnostics::{codes, Diagnostic, Diagnostics, Fix, Severity, TextEdit};
+use crate::diagnostics::{codes, Diagnostic, Diagnostics, Fix, TextEdit};
 use crate::hir::Program;
 use crate::sema::index::{self, Location, Reference, SymKey, SymbolId, SymbolIndex, SymbolKind};
 use crate::span::{SourceFile, Span};
-use crate::{lexer, parser};
 use crate::stdindex::StdIndex;
+use crate::{lexer, parser};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
+/// A parsed file.
 struct FileState {
-    source: SourceFile,
+    source: Arc<SourceFile>,
     parse_diags: Vec<Diagnostic>,
-    ast: ast::File,
+    /// The AST as parsed.
+    ast: Arc<ast::File>,
+    /// The AST with the declarations `@cfg` excludes on this target removed
+    /// (the same allocation as `ast` when nothing is excluded).
+    cfg_ast: Arc<ast::File>,
+    /// Diagnostics of `@cfg` (file index 0).
+    cfg_diags: Vec<Diagnostic>,
+    facts: facts::FileFacts,
 }
 
 /// In-memory project: path -> source text.
-#[derive(Default)]
+///
+/// Cloning is cheap (parsed files are shared, and so are the cached
+/// analysis results), so a tool can analyse a snapshot on another thread
+/// while it keeps editing the session.
+#[derive(Clone, Default)]
 pub struct Session {
-    files: BTreeMap<String, FileState>,
+    files: BTreeMap<String, Arc<FileState>>,
     read_only: BTreeSet<String>,
     std: Option<Arc<StdIndex>>,
+    cache: Arc<Mutex<incr::Cache>>,
 }
 
 impl Session {
@@ -60,9 +84,22 @@ impl Session {
         }
         let mut diags = Diagnostics::new();
         let tokens = lexer::lex(&text, &mut diags);
-        let ast = parser::parse_file(tokens, &mut diags);
-        let state = FileState { source: SourceFile::new(path.clone(), text), parse_diags: diags.items, ast };
-        self.files.insert(path, state);
+        let ast = Arc::new(parser::parse_file(tokens.clone(), &mut diags));
+        // Declarations excluded by `@cfg` (or files by their suffix) on
+        // this target are not analysed, as in a build.
+        let env = crate::cfg::CfgEnv::current();
+        let mut cfg_diags = Diagnostics::new();
+        let cfg_ast = if text.contains("@cfg") || env.target.excludes_file(&path) {
+            let mut one = [(*ast).clone()];
+            crate::cfg::apply(&mut one, &[path.as_str()], &env, &mut cfg_diags);
+            let [a] = one;
+            Arc::new(a)
+        } else {
+            ast.clone()
+        };
+        let facts = facts::facts(&text, &tokens, &cfg_ast);
+        let state = FileState { source: Arc::new(SourceFile::new(path.clone(), text)), parse_diags: diags.items, ast, cfg_ast, cfg_diags: cfg_diags.items, facts };
+        self.files.insert(path, Arc::new(state));
     }
 
     pub fn remove_file(&mut self, path: &str) -> bool {
@@ -106,71 +143,52 @@ impl Session {
         self.files.get(path).map(|f| f.source.text.as_str())
     }
 
-    /// Parses (cached) and analyses all files.
-    pub fn analyze(&self) -> Analysis {
-        let files: Vec<SourceFile> = self.files.values().map(|f| f.source.clone()).collect();
-        let mut asts: Vec<ast::File> = self.files.values().map(|f| f.ast.clone()).collect();
-        let texts: Vec<&str> = files.iter().map(|f| f.text.as_str()).collect();
-        let mut diagnostics = Vec::new();
-        for (i, f) in self.files.values().enumerate() {
-            diagnostics.extend(f.parse_diags.iter().cloned().map(|d| d.in_file(i)));
-        }
-        let mut diags = Diagnostics::new();
-        // Declarations excluded by `@cfg` (or files by their suffix) on
-        // this target are not analysed, as in a build.
-        crate::driver::apply_cfg(&mut asts, &files, &crate::cfg::CfgEnv::current(), &mut diags);
-        let (hir, index) = index::analyze_indexed(&asts, &texts, &mut diags);
-        let ok = !diags.has_errors() && !diagnostics.iter().any(|d: &Diagnostic| d.severity == Severity::Error);
-        diagnostics.extend(diags.items);
-        complete_fixes(&mut diagnostics, &files, &asts);
-        let read_only = self.files.keys().map(|p| self.read_only.contains(p)).collect();
-        let mut a = Analysis { files, asts, diagnostics, index, hir, ok, read_only };
-        if let Some(std) = &self.std {
-            attach_std(&mut a, std);
-        }
-        a
+    /// The parsed (possibly partial) AST of `path`.
+    pub fn ast(&self, path: &str) -> Option<&ast::File> {
+        self.files.get(path).map(|f| &*f.ast)
     }
-}
 
-/// Appends the std files to `a` and points std symbols at their source.
-fn attach_std(a: &mut Analysis, std: &StdIndex) {
-    let base = a.files.len();
-    a.files.extend(std.files.iter().cloned());
-    a.read_only.extend(std::iter::repeat_n(true, std.files.len()));
-    a.index.files.extend(std::iter::repeat_n(None, std.files.len()));
-    for sym in &mut a.index.symbols {
-        if sym.loc.is_some() || !(sym.full_name == "std" || sym.full_name.starts_with("std.")) {
-            continue;
-        }
-        let Some(d) = std.lookup(&sym.full_name) else { continue };
-        sym.loc = Some(Location { file: base + d.file, name_span: d.name_span, full_span: d.full_span });
-        sym.is_std = true;
-        if sym.doc.is_none() {
-            sym.doc = d.doc.clone();
-        }
-        // Placeholder signatures of stdlib templates (`func Get`).
-        if !sym.signature.contains('(') && !sym.signature.contains('{') && matches!(sym.kind, SymbolKind::Func | SymbolKind::Method | SymbolKind::Struct | SymbolKind::Enum) {
-            sym.signature = d.signature.clone();
-        }
+    /// Analyses all files (incrementally: see the module docs).
+    pub fn analyze(&self) -> Analysis {
+        self.analyze_cancellable(None).expect("analysis without a cancel flag completes")
+    }
+
+    /// [`Session::analyze`] that returns `None` as soon as it notices that
+    /// `cancel` was set (between units, phases and function bodies). The
+    /// units finished before are kept for the next analysis.
+    pub fn analyze_cancellable(&self, cancel: Option<&std::sync::atomic::AtomicBool>) -> Option<Analysis> {
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        incr::analyze(self, &mut cache, cancel)
+    }
+
+    /// Analyses all files from scratch, without the cache (the reference
+    /// result of [`Session::analyze`]).
+    pub fn analyze_full(&self) -> Analysis {
+        incr::analyze(self, &mut incr::Cache::default(), None).expect("analysis without a cancel flag completes")
+    }
+
+    /// What the last [`Session::analyze`] re-analysed.
+    pub fn last_stats(&self) -> Stats {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).stats.clone()
     }
 }
 
 /// Finishes the quick fixes of semantic diagnostics with what needs the
 /// source text and syntax: deletions that leave a line blank remove the
 /// whole line, and an unused `var x = ...` can also be removed.
-fn complete_fixes(diags: &mut [Diagnostic], files: &[SourceFile], asts: &[ast::File]) {
+fn complete_fixes<'f>(diags: &mut [Diagnostic], text_of: &dyn Fn(usize) -> Option<&'f str>, ast_of: &dyn Fn(usize) -> Option<&'f ast::File>) {
     for d in diags.iter_mut() {
-        let Some(file) = files.get(d.file) else { continue };
+        let Some(text) = text_of(d.file) else { continue };
         if d.code == Some(codes::UNUSED_VARIABLE) {
-            if let Some(stmt) = asts.get(d.file).and_then(|a| var_stmt_declaring(a, d.span)) {
-                let name = file.text.get(d.span.start as usize..d.span.end as usize).unwrap_or("variable").to_string();
+            if let Some(stmt) = ast_of(d.file).and_then(|a| var_stmt_declaring(a, d.span)) {
+                let name = text.get(d.span.start as usize..d.span.end as usize).unwrap_or("variable").to_string();
                 d.fixes.push(Fix::edit(format!("Remove unused variable {name}"), stmt, ""));
             }
         }
         for fix in &mut d.fixes {
             for e in &mut fix.edits {
                 if e.new_text.is_empty() {
-                    e.span = whole_lines(&file.text, e.span);
+                    e.span = whole_lines(text, e.span);
                 }
             }
         }
@@ -253,26 +271,48 @@ pub struct DocumentSymbol {
 
 /// Result of [`Session::analyze`].
 pub struct Analysis {
-    /// Current texts, in session order; indices are the `file` of
-    /// diagnostics, locations and references.
-    pub files: Vec<SourceFile>,
-    /// The (possibly partial) AST of each file, same order as `files`.
-    pub asts: Vec<ast::File>,
+    /// Current texts, in session order, then the std sources; indices are
+    /// the `file` of diagnostics, locations and references. Shared with
+    /// the session and the std index.
+    pub files: Vec<Arc<SourceFile>>,
+    /// The (possibly partial) AST of each session file after `@cfg`, same
+    /// order as `files`.
+    pub asts: Vec<Arc<ast::File>>,
     /// Lexer, parser and semantic diagnostics, with their file index.
     pub diagnostics: Vec<Diagnostic>,
     pub index: SymbolIndex,
-    /// The HIR program, possibly partial (with `Invalid` types) when there
-    /// were errors. Its `file` fields index `files`.
+    /// The types and type declarations of the program (structs with their
+    /// fields, interfaces, enums; no functions): `Symbol::ty` and the
+    /// struct ids of [`SymKey::Struct`] refer to it. Possibly partial (with
+    /// `Invalid` types) when there were errors.
     pub hir: Program,
     ok: bool,
     /// Per file: a read-only library file (dependency or std source).
     pub read_only: Vec<bool>,
+    /// The complete program, analysed on demand by [`Analysis::program`].
+    full: OnceLock<Option<Program>>,
 }
 
 impl Analysis {
-    /// The analysed program when every file parsed and checked cleanly.
+    fn new(files: Vec<Arc<SourceFile>>, asts: Vec<Arc<ast::File>>, diagnostics: Vec<Diagnostic>, index: SymbolIndex, hir: Program, ok: bool, read_only: Vec<bool>) -> Analysis {
+        Analysis { files, asts, diagnostics, index, hir, ok, read_only, full: OnceLock::new() }
+    }
+
+    /// The analysed program (with function bodies) when every file parsed
+    /// and checked cleanly; analysed on the first call.
     pub fn program(&self) -> Option<&Program> {
-        self.ok.then_some(&self.hir)
+        if !self.ok {
+            return None;
+        }
+        self.full
+            .get_or_init(|| {
+                let asts: Vec<ast::File> = self.asts.iter().map(|a| (**a).clone()).collect();
+                let texts: Vec<&str> = self.files.iter().take(asts.len()).map(|f| f.text.as_str()).collect();
+                let mut diags = Diagnostics::new();
+                let (p, _) = index::analyze_indexed(&asts, &texts, &mut diags);
+                Some(p)
+            })
+            .as_ref()
     }
 
     pub fn file_index(&self, path: &str) -> Option<usize> {
@@ -486,5 +526,62 @@ mod tests {
         assert_eq!(f.utf16_offset(1, 4), off);
         assert_eq!(f.utf16_offset(1, 99), "a\nпр𝄞x".len() as u32);
         assert_eq!(f.utf16_offset(9, 0), f.text.len() as u32);
+    }
+
+    const LIB: &str = "namespace app.lib\n\nfunc Twice(x int) int {\n    return x * 2\n}\n";
+    const APP: &str = "namespace app\n\nimport app.lib\n\nfunc main() {\n    var y int = Twice(2)\n    _ = y\n}\n";
+    const OTHER: &str = "namespace other\n\nfunc main() {\n}\n";
+
+    #[test]
+    fn edits_reanalyse_only_the_units_they_reach() {
+        let mut s = Session::new();
+        s.update_file("lib.sl", LIB);
+        s.update_file("main.sl", APP);
+        s.update_file("other.sl", OTHER);
+        let a = s.analyze();
+        assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+        assert!(s.last_stats().full_run);
+        // A body: only its own unit.
+        s.update_file("lib.sl", LIB.replace("x * 2", "x + x"));
+        let a = s.analyze();
+        assert_eq!(s.last_stats(), Stats { dirty: 1, unit_runs: 1, full_run: false, units: 3 });
+        assert_eq!(a.canonical(), s.analyze_full().canonical());
+        // A signature: also the importer, which now has an error.
+        s.update_file("lib.sl", LIB.replace("x int) int", "x int) string").replace("x * 2", "\"\""));
+        let a = s.analyze();
+        assert_eq!(s.last_stats().dirty, 2);
+        let main = a.file_index("main.sl").unwrap();
+        assert!(a.diagnostics_for(main).count() > 0, "{:?}", a.diagnostics);
+        assert_eq!(a.canonical(), s.analyze_full().canonical());
+        // Nothing changed: nothing re-analysed.
+        let _ = s.analyze();
+        assert_eq!(s.last_stats().dirty, 0);
+        // References across units resolve to the declaration.
+        s.update_file("lib.sl", LIB);
+        let a = s.analyze();
+        let main = a.file_index("main.sl").unwrap();
+        let loc = a.definition_at(main, APP.find("Twice").unwrap() as u32).unwrap();
+        assert_eq!(a.files[loc.file].path, "lib.sl");
+        let id = a.symbol_at(main, APP.find("Twice").unwrap() as u32).unwrap();
+        assert_eq!(a.references_of(id).len(), 1);
+        assert_eq!(a.index.symbol(id).signature, "func Twice(x int) int");
+        let y = a.symbol_at(main, APP.find("y int").unwrap() as u32).unwrap();
+        assert_eq!(index::short_type_name(&a.hir, a.index.symbol(y).ty.unwrap()), "int");
+    }
+
+    #[test]
+    fn cancelled_analysis_returns_none_and_recovers() {
+        let mut s = Session::new();
+        s.update_file("lib.sl", LIB);
+        s.update_file("main.sl", APP);
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        assert!(s.analyze_cancellable(Some(&cancel)).is_none());
+        let clone = s.clone();
+        let a = clone.analyze();
+        assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+        // The clone shares the cache.
+        let _ = s.analyze();
+        assert_eq!(s.last_stats().dirty, 0);
+        assert!(a.program().is_some_and(|p| p.entry.is_some()));
     }
 }
