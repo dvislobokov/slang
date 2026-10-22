@@ -229,6 +229,20 @@ zell_string *zell_string_from_bytes(const zell_slice *bytes) {
 
 void zell_string_to_bytes(zell_slice *out, const zell_string *s) {
     int64_t n = zell_string_len(s);
-    zell_slice_new(out, 1, n, n);
-    if (n) memcpy(out->data, zell_string_data(s), (size_t)n);
+    if (n == 0) {
+        memset(out, 0, sizeof *out);
+        return;
+    }
+    /* Every byte is written: no need to zero the backing first. */
+    check_size(1, n);
+    zell_backing *b = (zell_backing *)zell__object_new_uninit(&zell__backing_type, (int64_t)sizeof(zell_backing) + n);
+    b->elem_size = 1;
+    b->cap = n;
+    b->ops = NULL;
+    b->_pad = 0;
+    memcpy(b->data, zell_string_data(s), (size_t)n);
+    out->data = b->data;
+    out->len = n;
+    out->cap = n;
+    out->backing = &b->hdr;
 }

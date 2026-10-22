@@ -319,8 +319,19 @@ zell_string *zell_strings_repeat(const zell_string *s, int64_t count) {
     int64_t n = slen(s);
     if (count == 0 || n == 0) return zell__string_alloc(0);
     if (n > (INT64_MAX - 64) / count) zell_panic("strings: Repeat output length overflow");
-    zell_string *r = zell__string_alloc(n * count);
-    for (int64_t i = 0; i < count; i++) memcpy(r->data + i * n, s->data, (size_t)n);
+    int64_t total = n * count;
+    zell_string *r = zell__string_alloc_uninit(total);
+    if (n == 1) {
+        memset(r->data, (unsigned char)s->data[0], (size_t)total);
+        return r;
+    }
+    /* Doubling copies (as Go does): log2(count) calls instead of count. */
+    memcpy(r->data, s->data, (size_t)n);
+    for (int64_t done = n; done < total;) {
+        int64_t c = done < total - done ? done : total - done;
+        memcpy(r->data + done, r->data, (size_t)c);
+        done += c;
+    }
     return r;
 }
 
