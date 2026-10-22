@@ -1,0 +1,248 @@
+namespace bench.file_io
+
+import io
+
+// File I/O (os, io, fs): write and read a 1 GB file in 1 MB chunks
+// (File.Write / File.Read into one reused buffer), the same through
+// BufferedWriter / BufferedReader with 1 KB calls, io.Copy of the file,
+// Scanner over a 1 GB text file line by line, and a directory tree of
+// 100k small files: create, walk with stat (os.ReadDir + DirEntry.Info),
+// remove. Everything lives in a temporary directory (fs.TempDir(), i.e.
+// $TMPDIR or /tmp) that is removed at the end; at most 2 GB at a time.
+// SCALE=small: 16 MB files, 2 000 small files. Same work as main.go.
+
+func itoa(n int) string {
+    return fmt.Format("{0}", n)
+}
+
+func chunk() []byte {
+    var out []byte = []
+    var s = 12345
+    for _ in 0..1048576 {
+        s = (s * 1103515245 + 12345) % 2147483648
+        out = append(out, byte((s >> 16) & 255))
+    }
+    return out
+}
+
+// Adds the bytes at absolute offsets that are multiples of 4096 in
+// buf[0..n] (the data at offset pos) to sum.
+func sample(sum int, buf []byte, n int, pos int) int {
+    var k = (pos + 4095) / 4096 * 4096
+    var s = sum
+    for k < pos + n {
+        s = (s * 31 + int(buf[k - pos])) % 1000000007
+        k += 4096
+    }
+    return s
+}
+
+func report(name string, t0 int, t1 int, bytes int) {
+    var d = t1 - t0
+    if d <= 0 {
+        d = 1
+    }
+    if bytes > 0 {
+        io.Eprintln(fmt.Format("{0}: {1} ms, {2} MB/s", name, d / 1000000, bytes * 1000 / d))
+    } else {
+        io.Eprintln(fmt.Format("{0}: {1} ms", name, d / 1000000))
+    }
+}
+
+func readChecked(path string, small bool) (int, int)! {
+    var f = os.Open(path)?
+    var total = 0
+    var sum = 0
+    if small {
+        var r = io.NewBufferedReader(f)
+        var buf = slices.Of(byte(0), 1024)
+        for {
+            var n = r.Read(buf)?
+            if n == 0 {
+                break
+            }
+            sum = sample(sum, buf, n, total)
+            total += n
+        }
+    } else {
+        var buf = slices.Of(byte(0), 1048576)
+        for {
+            var n = f.Read(buf)?
+            if n == 0 {
+                break
+            }
+            sum = sample(sum, buf, n, total)
+            total += n
+        }
+    }
+    f.Close()?
+    return (total, sum)
+}
+
+func walk(dir string, files *int, bytes *int, dirs *int) void! {
+    for e in os.ReadDir(dir)? {
+        if e.IsDir {
+            *dirs += 1
+            walk(e.Path, files, bytes, dirs)?
+        } else {
+            var info = e.Info()?
+            *files += 1
+            *bytes += info.Size
+        }
+    }
+}
+
+func main() void! {
+    var mb = 1024
+    var topDirs = 100
+    var subDirs = 10
+    if os.Getenv("SCALE") == "small" {
+        mb = 16
+        topDirs = 10
+        subDirs = 2
+    }
+    var root = fs.Join(fs.TempDir(), "zell-bench-file_io-" + itoa(os.Pid()))
+    fs.MkdirAll(root)?
+    var big = fs.Join(root, "big.bin")
+    var buf = chunk()
+    var size = mb * 1048576
+
+    // 1. write in 1 MB chunks
+    var t0 = time.NowNanos()
+    var f = os.Create(big)?
+    for i in 0..mb {
+        buf[0] = byte(i & 255)
+        buf[1] = byte(i >> 8)
+        _ = f.Write(buf)?
+    }
+    f.Close()?
+    var t1 = time.NowNanos()
+    report("write 1MB chunks", t0, t1, size)
+
+    // 2. read in 1 MB chunks
+    t0 = time.NowNanos()
+    var (n1, s1) = readChecked(big, false)?
+    t1 = time.NowNanos()
+    println("read chunks:", n1, s1)
+    report("read 1MB chunks", t0, t1, size)
+
+    // 3. buffered write, 1 KB per call
+    var big2 = fs.Join(root, "big2.bin")
+    t0 = time.NowNanos()
+    var f2 = os.Create(big2)?
+    var w = io.NewBufferedWriter(f2)
+    for i in 0..mb {
+        buf[0] = byte(i & 255)
+        buf[1] = byte(i >> 8)
+        var off = 0
+        for off < 1048576 {
+            _ = w.Write(buf[off..off + 1024])?
+            off += 1024
+        }
+    }
+    w.Flush()?
+    f2.Close()?
+    t1 = time.NowNanos()
+    report("buffered write 1KB", t0, t1, size)
+    fs.Remove(big2)?
+
+    // 4. buffered read, 1 KB per call
+    t0 = time.NowNanos()
+    var (n2, s2) = readChecked(big, true)?
+    t1 = time.NowNanos()
+    println("read buffered:", n2, s2)
+    report("buffered read 1KB", t0, t1, size)
+
+    // 5. io.Copy
+    var copy = fs.Join(root, "copy.bin")
+    t0 = time.NowNanos()
+    var src = os.Open(big)?
+    var dst = os.Create(copy)?
+    var copied = io.Copy(dst, src)?
+    dst.Close()?
+    src.Close()?
+    t1 = time.NowNanos()
+    println("copy:", copied, os.Stat(copy)?.Size)
+    report("io.Copy", t0, t1, size)
+    fs.Remove(copy)?
+    fs.Remove(big)?
+
+    // 6. line scan of a text file (lines of 1..15 words)
+    var words = [
+        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do",
+        "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua", "veniam",
+    ]
+    var text = fs.Join(root, "text.txt")
+    var tf = os.Create(text)?
+    var tw = io.NewBufferedWriter(tf)
+    var seed = 999
+    var written = 0
+    var lines = 0
+    for written < size {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        var nw = 1 + (seed >> 8) % 15
+        var line = strings.Builder{}
+        for k in 0..nw {
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            if k > 0 {
+                line.Write(" ")
+            }
+            line.Write(words[(seed >> 8) % 20])
+        }
+        line.Write("\n")
+        var s = line.String()
+        _ = tw.WriteString(s)?
+        written += len(s)
+        lines += 1
+    }
+    tw.Flush()?
+    tf.Close()?
+    t0 = time.NowNanos()
+    var rf = os.Open(text)?
+    var sc = io.NewScanner(rf)
+    var nlines = 0
+    var nbytes = 0
+    var longest = 0
+    for sc.Scan() {
+        var b = sc.Bytes()
+        nlines += 1
+        nbytes += len(b)
+        if len(b) > longest {
+            longest = len(b)
+        }
+    }
+    rf.Close()?
+    t1 = time.NowNanos()
+    println("scan:", nlines, nbytes, longest, nlines == lines)
+    report("scan lines", t0, t1, written)
+    fs.Remove(text)?
+
+    // 7. tree of small files
+    var tree = fs.Join(root, "tree")
+    t0 = time.NowNanos()
+    var made = 0
+    for d in 0..topDirs {
+        for s in 0..subDirs {
+            var sub = fs.Join(tree, "d" + itoa(d) + "/s" + itoa(s))
+            fs.MkdirAll(sub)?
+            for k in 0..100 {
+                io.WriteFile(fs.Join(sub, "f" + itoa(k) + ".txt"), strings.Repeat("x", (made * 7) % 200))?
+                made += 1
+            }
+        }
+    }
+    t1 = time.NowNanos()
+    report("create files", t0, t1, 0)
+    t0 = time.NowNanos()
+    var files = 0
+    var bytes = 0
+    var dirs = 0
+    walk(tree, &files, &bytes, &dirs)?
+    t1 = time.NowNanos()
+    println("walk:", files, dirs, bytes)
+    report("walk + stat", t0, t1, 0)
+    t0 = time.NowNanos()
+    fs.RemoveAll(root)?
+    t1 = time.NowNanos()
+    report("remove tree", t0, t1, 0)
+}

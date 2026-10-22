@@ -1,0 +1,267 @@
+namespace bench.json_codec
+
+import encoding
+import io
+
+// encoding.json: a generated ~100 MB document parsed into typed structs
+// (json.Parse<T>), formatted back (json.Format), parsed again schema-less
+// (json.ParseValue) with path lookups, and 1M small (~200 byte) API
+// messages parsed and formatted one at a time. Same data as main.go.
+// SCALE=small runs a 1 MB document and 10k messages.
+
+struct Item {
+    @json(name: "id") Id int
+    @json(name: "name") Name string
+    @json(name: "price") Price float
+    @json(name: "qty") Qty int
+    @json(name: "active") Active bool
+    @json(name: "tags") Tags []string
+}
+
+struct Doc {
+    @json(name: "items") Items []Item
+}
+
+struct Msg {
+    @json(name: "id") Id int
+    @json(name: "user") User string
+    @json(name: "email") Email string
+    @json(name: "action") Action string
+    @json(name: "ts") Ts int
+    @json(name: "ok") Ok bool
+    @json(name: "score") Score float
+    @json(name: "tags") Tags []string
+    @json(name: "note") Note string
+}
+
+struct Rng {
+    s int
+
+    func Next() int {
+        this.s = (this.s * 1103515245 + 12345) % 2147483648
+        return this.s >> 8
+    }
+}
+
+func words() []string {
+    return [
+        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do",
+        "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua", "veniam",
+    ]
+}
+
+func itoa(n int) string {
+    return fmt.Format("{0}", n)
+}
+
+// "D.CC" for cents (two fraction digits, as main.go writes them).
+func money(cents int) string {
+    var c = cents % 100
+    if c < 10 {
+        return itoa(cents / 100) + ".0" + itoa(c)
+    }
+    return itoa(cents / 100) + "." + itoa(c)
+}
+
+func genDoc(target int) string {
+    var ws = words()
+    var r = Rng{s: 12345}
+    var b = strings.Builder{}
+    b.Write("{\"items\":[")
+    var i = 0
+    for b.Len() < target {
+        if i > 0 {
+            b.Write(",\n")
+        }
+        b.Write("{\"id\":")
+        b.Write(itoa(i * 7 + 1))
+        b.Write(",\"name\":\"")
+        b.Write(ws[r.Next() % 20])
+        b.Write("-")
+        b.Write(ws[r.Next() % 20])
+        b.Write("-")
+        b.Write(itoa(i))
+        b.Write("\",\"price\":")
+        b.Write(money(r.Next() % 100000))
+        b.Write(",\"qty\":")
+        b.Write(itoa(r.Next() % 1000))
+        if r.Next() % 2 == 0 {
+            b.Write(",\"active\":true,\"tags\":[")
+        } else {
+            b.Write(",\"active\":false,\"tags\":[")
+        }
+        var nt = r.Next() % 4
+        for t in 0..nt {
+            if t > 0 {
+                b.Write(",")
+            }
+            b.Write("\"")
+            b.Write(ws[r.Next() % 20])
+            b.Write("\"")
+        }
+        b.Write("]}")
+        i += 1
+    }
+    b.Write("]}")
+    return b.String()
+}
+
+func genMsg(r *Rng, i int) string {
+    var ws = words()
+    var u = r.Next() % 100000
+    var b = strings.Builder{}
+    b.Write("{\"id\":")
+    b.Write(itoa(i))
+    b.Write(",\"user\":\"user-")
+    b.Write(itoa(u))
+    b.Write("\",\"email\":\"user")
+    b.Write(itoa(u))
+    b.Write("@example.com\",\"action\":\"")
+    b.Write(ws[r.Next() % 20])
+    b.Write("\",\"ts\":")
+    b.Write(itoa(1700000000 + r.Next() % 100000000))
+    b.Write(",\"ok\":true,\"score\":0.")
+    b.Write(itoa(10 + r.Next() % 90))
+    b.Write(",\"tags\":[\"")
+    b.Write(ws[r.Next() % 20])
+    b.Write("\",\"")
+    b.Write(ws[r.Next() % 20])
+    b.Write("\"],\"note\":\"")
+    b.Write(ws[r.Next() % 20])
+    b.Write(" ")
+    b.Write(ws[r.Next() % 20])
+    b.Write(" ")
+    b.Write(ws[r.Next() % 20])
+    b.Write("\"}")
+    return b.String()
+}
+
+func checksum(d Doc) string {
+    var sumId = 0
+    var sumQty = 0
+    var sumCents = 0
+    var active = 0
+    var tags = 0
+    var nameBytes = 0
+    for it in d.Items {
+        sumId += it.Id
+        sumQty += it.Qty
+        sumCents += int(math.Round(it.Price * 100.0))
+        if it.Active {
+            active += 1
+        }
+        tags += len(it.Tags)
+        nameBytes += len(it.Name)
+    }
+    return fmt.Format(
+        "items={0} id={1} qty={2} cents={3} active={4} tags={5} names={6}",
+        len(d.Items),
+        sumId,
+        sumQty,
+        sumCents,
+        active,
+        tags,
+        nameBytes,
+    )
+}
+
+func ms(t0 int, t1 int) int {
+    return (t1 - t0) / 1000000
+}
+
+// MB/s (10^6 bytes) of bytes processed between t0 and t1 (nanoseconds).
+func mbs(bytes int, t0 int, t1 int) int {
+    var d = t1 - t0
+    if d <= 0 {
+        d = 1
+    }
+    return bytes * 1000 / d
+}
+
+func main() void! {
+    var docSize = 100000000
+    var nMsgs = 1000000
+    if os.Getenv("SCALE") == "small" {
+        docSize = 1000000
+        nMsgs = 10000
+    }
+    var text = genDoc(docSize)
+
+    // 1. typed parse
+    var t0 = time.NowNanos()
+    var doc = json.Parse<Doc>(text)?
+    var t1 = time.NowNanos()
+    var sum = checksum(doc)
+    println("typed:", sum)
+
+    // 2. format back, check the round trip
+    var t2 = time.NowNanos()
+    var out = json.Format(doc)
+    var t3 = time.NowNanos()
+    // The size is not printed: an empty decoded slice formats as null here
+    // and as [] in Go (benchmarks/RESULTS-stdlib.md, open items).
+    var again = json.Parse<Doc>(out)?
+    println("roundtrip:", checksum(again) == sum)
+
+    // 3. schema-less Value + path lookups
+    var t4 = time.NowNanos()
+    var v = json.ParseValue(text)?
+    var t5 = time.NowNanos()
+    var items = v.Get("items")
+    var sumId = 0
+    var sumCents = 0
+    var firstTags = 0
+    for i in 0..items.Len() {
+        var it = items.Index(i)
+        sumId += it.Get("id").Int()?
+        sumCents += int(math.Round(it.Get("price").Float()? * 100.0))
+        var tg = it.Get("tags")
+        if tg.Len() > 0 {
+            firstTags += len(tg.Index(0).String()?)
+        }
+    }
+    var t6 = time.NowNanos()
+    println("value:", items.Len(), sumId, sumCents, firstTags)
+    var vout = v.Format()
+    var t7 = time.NowNanos()
+    println("value format bytes:", len(vout))
+
+    // 4. small messages
+    var r = Rng{s: 777}
+    var msgs []string = []
+    for i in 0..1024 {
+        msgs = append(msgs, genMsg(&r, i))
+    }
+    var t8 = time.NowNanos()
+    var acc = 0
+    var inBytes = 0
+    for i in 0..nMsgs {
+        var s = msgs[i % 1024]
+        inBytes += len(s)
+        var m = json.Parse<Msg>(s)?
+        acc += m.Id + m.Ts % 1000 + len(m.User) + len(m.Tags) + len(m.Note)
+        if m.Ok {
+            acc += 1
+        }
+        acc += int(math.Round(m.Score * 100.0))
+        var f = json.Format(m)
+        acc += len(f)
+    }
+    var t9 = time.NowNanos()
+    println("messages:", nMsgs, acc, "avg bytes:", inBytes / nMsgs)
+
+    io.Eprintln(fmt.Format("doc {0} bytes", len(text)))
+    io.Eprintln(fmt.Format("typed parse   {0} ms ({1} MB/s)", ms(t0, t1), mbs(len(text), t0, t1)))
+    io.Eprintln(fmt.Format("typed format  {0} ms ({1} MB/s)", ms(t2, t3), mbs(len(out), t2, t3)))
+    io.Eprintln(fmt.Format("value parse   {0} ms ({1} MB/s)", ms(t4, t5), mbs(len(text), t4, t5)))
+    io.Eprintln(fmt.Format("value lookups {0} ms", ms(t5, t6)))
+    io.Eprintln(fmt.Format("value format  {0} ms", ms(t6, t7)))
+    io.Eprintln(
+        fmt.Format(
+            "messages      {0} ms ({1} msg/s, {2} MB/s in)",
+            ms(t8, t9),
+            nMsgs * 1000 / (ms(t8, t9) + 1),
+            mbs(inBytes, t8, t9),
+        ),
+    )
+}

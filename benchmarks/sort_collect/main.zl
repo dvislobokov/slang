@@ -1,0 +1,261 @@
+namespace bench.sort_collect
+
+import io
+
+// slices, collections, strings.Builder, text.template: sort 10M ints and
+// 2M strings (slices.Sort), 10M binary searches (slices.BinarySearch),
+// collections.Deque (10M pushes, pops at the front), Heap<int> and
+// PriorityQueue<Job> (1M push + pop each), LinkedList (2M pushes at both
+// ends + iteration), OrderedMap (50k random inserts + 1M lookups),
+// strings.Builder building 100 MB from 10-byte pieces and a text.template
+// rendering 1M rows. Same data and checksums as main.go.
+// SCALE=small divides every size by 100.
+
+const M = 1000000007
+
+struct Rng {
+    s int
+
+    func Next() int {
+        this.s = (this.s * 1103515245 + 12345) % 2147483648
+        return this.s >> 8
+    }
+
+    // 46 random bits.
+    func Big() int {
+        var a = this.Next()
+        return (a << 23) ^ this.Next()
+    }
+}
+
+struct Job {
+    Prio int
+    Id   int
+}
+
+struct Row {
+    Id     int
+    Name   string
+    Price  float
+    Active bool
+}
+
+struct Page {
+    Title string
+    Rows  []Row
+}
+
+func itoa(n int) string {
+    return fmt.Format("{0}", n)
+}
+
+func report(name string, t0 int, t1 int) {
+    io.Eprintln(fmt.Format("{0}: {1} ms", name, (t1 - t0) / 1000000))
+}
+
+func main() void! {
+    var div = 1
+    if os.Getenv("SCALE") == "small" {
+        div = 100
+    }
+    var r = Rng{s: 2024}
+
+    // 1. sort ints
+    var n = 10000000 / div
+    var xs []int = []
+    for _ in 0..n {
+        xs = append(xs, r.Big())
+    }
+    var t0 = time.NowNanos()
+    slices.Sort(xs)
+    var t1 = time.NowNanos()
+    var sum = 0
+    var i = 0
+    for i < n {
+        sum = (sum * 31 + xs[i] % M) % M
+        i += 997
+    }
+    println("sort ints:", n, slices.IsSorted(xs), xs[0], xs[n - 1], sum)
+    report("sort 10M ints", t0, t1)
+
+    // 2. binary search
+    var nq = 10000000 / div
+    var found = 0
+    var isum = 0
+    t0 = time.NowNanos()
+    for k in 0..nq {
+        var q = 0
+        if k % 2 == 0 {
+            q = xs[(k * 7919) % n]
+        } else {
+            q = r.Big()
+        }
+        var (pos, ok) = slices.BinarySearch(xs, q)
+        if ok {
+            found += 1
+        }
+        isum = (isum + pos) % M
+    }
+    t1 = time.NowNanos()
+    println("binary search:", nq, found, isum)
+    report("binary search 10M", t0, t1)
+    xs = []
+
+    // 3. sort strings
+    var ns = 2000000 / div
+    var ss []string = []
+    for _ in 0..ns {
+        ss = append(ss, "key-" + itoa(r.Big() % 1000000000000))
+    }
+    t0 = time.NowNanos()
+    slices.Sort(ss)
+    t1 = time.NowNanos()
+    var ssum = 0
+    i = 0
+    for i < ns {
+        ssum = (ssum * 31 + len(ss[i]) + int(ss[i][len(ss[i]) - 1])) % M
+        i += 101
+    }
+    println("sort strings:", ns, slices.IsSorted(ss), ss[0], ss[ns - 1], ssum)
+    report("sort 2M strings", t0, t1)
+    ss = []
+
+    // 4. Deque: push back, pop front every third push, then drain
+    var nd = 10000000 / div
+    t0 = time.NowNanos()
+    var dq = collections.Deque<int>{}
+    var dsum = 0
+    for k in 0..nd {
+        dq.PushBack(k)
+        if k % 3 == 0 {
+            dsum = (dsum + dq.PopFront()? * 3) % M
+        }
+    }
+    var maxLen = dq.Len()
+    for dq.Len() > 0 {
+        dsum = (dsum * 7 + dq.PopFront()?) % M
+    }
+    t1 = time.NowNanos()
+    println("deque:", nd, maxLen, dsum)
+    report("deque 10M", t0, t1)
+
+    // 5. Heap<int>
+    var nh = 1000000 / div
+    t0 = time.NowNanos()
+    var h = collections.Heap<int>{}
+    for _ in 0..nh {
+        h.Push(r.Big())
+    }
+    var hsum = 0
+    var prev = -1
+    var ordered = true
+    for h.Len() > 0 {
+        var x = h.Pop()?
+        if x < prev {
+            ordered = false
+        }
+        prev = x
+        hsum = (hsum * 31 + x % M) % M
+    }
+    t1 = time.NowNanos()
+    println("heap:", nh, ordered, hsum)
+    report("heap 1M", t0, t1)
+
+    // 6. PriorityQueue<Job> (unique priorities; highest first)
+    t0 = time.NowNanos()
+    var pq = collections.PriorityQueue<Job>.New((a Job, b Job) => a.Prio > b.Prio)
+    for k in 0..nh {
+        pq.Push(Job{Prio: (r.Next() << 20) | k, Id: k})
+    }
+    var psum = 0
+    for pq.Len() > 0 {
+        var j = pq.Pop()?
+        psum = (psum * 31 + j.Id) % M
+    }
+    t1 = time.NowNanos()
+    println("priority queue:", nh, psum)
+    report("priority queue 1M", t0, t1)
+
+    // 7. LinkedList
+    var nl = 1000000 / div
+    t0 = time.NowNanos()
+    var ll = collections.LinkedList<int>{}
+    for k in 0..nl {
+        ll.PushBack(k)
+        ll.PushFront(-k)
+    }
+    var lsum = 0
+    var it = ll.Iter()
+    for {
+        var (v, ok) = it.Next()
+        if !ok {
+            break
+        }
+        lsum = (lsum * 31 + v + M) % M
+    }
+    t1 = time.NowNanos()
+    println("linked list:", ll.Len(), lsum)
+    report("linked list 2M", t0, t1)
+
+    // 8. OrderedMap (a sorted array: O(n) inserts)
+    var no = 50000 / div
+    var nlk = 1000000 / div
+    t0 = time.NowNanos()
+    var om = collections.OrderedMap<int, int>{}
+    var keys []int = []
+    for k in 0..no {
+        var key = r.Big() % 10000000
+        keys = append(keys, key)
+        om.Set(key, k)
+    }
+    var osum = 0
+    for k in 0..nlk {
+        osum = (osum + om.Get(keys[(k * 31) % no])) % M
+    }
+    t1 = time.NowNanos()
+    println("ordered map:", om.Len(), om.Min()?, om.Max()?, osum)
+    report("ordered map 50k+1M", t0, t1)
+
+    // 9. strings.Builder: 100 MB from ~10-byte pieces
+    var target = 100000000 / div
+    t0 = time.NowNanos()
+    var b = strings.Builder{}
+    var pieces = 0
+    var k = 0
+    for b.Len() < target {
+        b.Write("item")
+        b.Write(itoa(k % 100000))
+        b.Write(";")
+        pieces += 3
+        k += 1
+    }
+    var built = b.String()
+    t1 = time.NowNanos()
+    println("builder:", len(built), pieces, built[0..20], built[len(built) - 20..])
+    report("builder 100MB", t0, t1)
+    built = ""
+
+    // 10. text.template, 1M rows
+    var nr = 1000000 / div
+    var words = ["lorem", "ipsum", "dolor", "sit", "amet", "elit", "sed", "magna"]
+    var rows []Row = []
+    for q in 0..nr {
+        var cents = r.Next() % 100000
+        rows = append(rows, Row{Id: q, Name: words[q % 8] + "-" + itoa(q), Price: float(cents) / 100.0, Active: q % 3 != 0})
+    }
+    var page = Page{Title: "report", Rows: rows}
+    var tpl = text.template.Parse<Page>(
+        "{{.Title}}\n{{range .Rows}}{{.Id}};{{.Name}};{{.Price}};{{if .Active}}yes{{else}}no{{end}}\n{{end}}",
+    )?
+    t0 = time.NowNanos()
+    var out = tpl.Execute(page)?
+    t1 = time.NowNanos()
+    var tsum = 0
+    i = 0
+    for i < len(out) {
+        tsum = (tsum * 31 + int(out[i])) % M
+        i += 1009
+    }
+    println("template:", nr, len(out), tsum)
+    report("template 1M rows", t0, t1)
+}
