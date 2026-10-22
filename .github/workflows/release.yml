@@ -143,7 +143,11 @@ jobs:
           echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
           # llvm-config --system-libs names -lzstd (Homebrew), which is not on
           # the default linker path
-          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+          # the static libzstd only (a directory without the .dylib), so the
+          # binaries do not need Homebrew on the user's Mac
+          mkdir -p "$RUNNER_TEMP/staticlibs"
+          cp "$(brew --prefix zstd)/lib/libzstd.a" "$RUNNER_TEMP/staticlibs/"
+          echo "LIBRARY_PATH=$RUNNER_TEMP/staticlibs:$(brew --prefix)/lib" >> "$GITHUB_ENV"
           echo "$(brew --prefix llvm@18)/bin" >> "$GITHUB_PATH"
       # rustup is preinstalled on the hosted runners; retried, since the
       # download of the toolchain sometimes fails on a DNS error.
@@ -181,7 +185,19 @@ jobs:
             [ -x build/lld/lld ] || LLVM_CONFIG="$(brew --prefix llvm@18)/bin/llvm-config" ./scripts/build-lld.sh
           fi
       - name: Compiler (release)
-        run: cargo build --release --bin zell --bin zell-lsp --bin zell-mcp
+        run: |
+          cargo build --release --bin zell --bin zell-lsp --bin zell-mcp
+          if [ "$RUNNER_OS" = macOS ]; then
+            # self-contained: only libraries of the OS
+            for b in zell zell-lsp zell-mcp; do
+              otool -L "target/release/$b"
+              if otool -L "target/release/$b" | tail -n +2 | grep -v -e '^[[:space:]]*/usr/lib/' -e '^[[:space:]]*/System/'; then
+                echo "::error::target/release/$b depends on libraries outside macOS"; exit 1
+              fi
+            done
+          else
+            ldd target/release/zell
+          fi
       - name: Package
         run: ./scripts/package-toolchain.sh --no-build --out dist && ls -l dist
       - uses: actions/upload-artifact@v4
