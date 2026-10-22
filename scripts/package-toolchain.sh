@@ -80,6 +80,7 @@ Linking needs clang (and lld for cross targets) on PATH. Other targets:
 docs/PLATFORMS.md in the repository.
 README
 mkdir -p "$out"
+out=$(cd "$out" && pwd)   # absolute: the tar commands below run from other directories
 sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi; }
 (cd "$stage" && tar czf "$out/$name.tar.gz" "$name")
 (cd "$out" && sum "$name.tar.gz" > "$name.tar.gz.sha256")
