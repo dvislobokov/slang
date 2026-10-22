@@ -1,6 +1,7 @@
 //! `zell build` / `run` / `check` / `test`: front end -> LLVM module ->
 //! verification -> optimisation (new pass manager) -> object file(s) ->
-//! link with `clang` against `libzell_rt.a`.
+//! link against `libzell_rt.a`: with the toolchain's bundled lld and link
+//! inputs, or the system `clang` (see [`crate::crosslink`]).
 //!
 //! Two kinds of builds:
 //!
@@ -219,6 +220,18 @@ pub fn find_runtime() -> Result<PathBuf, String> {
         "cannot find libzell_rt.a (set ZELL_RUNTIME or run `make -C runtime`); looked in: {}",
         cands.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ")
     ))
+}
+
+/// The program that merges partial objects (`<prog> -r -nostdlib -o out
+/// parts...`, [`crate::parcodegen`]): the system clang, else the bundled
+/// `ld.lld`.
+fn partial_linker() -> Option<String> {
+    if crate::crosslink::linker_choice() != crate::crosslink::LinkerChoice::Clang {
+        if let Some(p) = crate::crosslink::find_lld().filter(|l| l.multi).and_then(|l| l.elf_program()) {
+            return Some(p.display().to_string());
+        }
+    }
+    find_clang().ok().or_else(|| crate::crosslink::find_lld().and_then(|l| l.elf_program()).map(|p| p.display().to_string()))
 }
 
 fn find_clang() -> Result<String, String> {
@@ -625,7 +638,7 @@ fn optimise(module: &Module, machine: &TargetMachine, opt: u8) -> Result<(), Str
 fn write_object_par(machine: &TargetMachine, module: &Module, path: &Path, opts: &BuildOptions) -> Result<(), String> {
     {
         let _t = phase("object-par");
-        match crate::parcodegen::write_object_parallel(module, opt_level(opts.opt), path, || find_clang().ok()) {
+        match crate::parcodegen::write_object_parallel(module, opt_level(opts.opt), path, partial_linker) {
             Ok(true) => return Ok(()),
             Ok(false) => {}
             Err(e) => log(opts, format!("parallel code generation failed, retrying serially: {e}")),
@@ -647,29 +660,41 @@ fn module_link_libs(module: &Module) -> Vec<&'static str> {
 }
 
 /// Links `objs` with the runtime (and the system libraries `libs`) into
-/// the executable `output`.
+/// the executable `output`: with the bundled lld when the runtime comes
+/// with link inputs (an installed toolchain, [`crate::crosslink`]), else
+/// with the system clang driver.
 fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> Result<(), String> {
     let _t = phase("link");
     let target = crate::target::current();
-    if !target.is_host() || target.os == "windows" {
-        // Cross link (docs/PLATFORMS.md): the target's runtime and toolchain
-        // (on a Windows host too: the MinGW runtime and clang driver).
-        crate::crosslink::preflight(&target)?;
-        let rt = crate::crosslink::find_runtime(&target)?;
-        let clang = find_clang()?;
-        let lo = crate::crosslink::LinkOpts { release: opts.release, strip: opts.strip || (opts.release && !opts.debug_info), static_link: opts.static_link, clang: &clang };
-        let mut cmd = crate::crosslink::link_command(&target, objs, &rt, output, libs, &lo)?;
-        log(opts, format!("linking {} for {} ({} object(s))", output.display(), target.triple, objs.len()));
-        let out = cmd.output().map_err(|e| format!("cannot run {clang}: {e}"))?;
-        if !out.status.success() {
-            return Err(format!("linking failed:\n{}", String::from_utf8_lossy(&out.stderr)));
-        }
-        return Ok(());
+    let clang = find_clang().unwrap_or_else(|_| "clang".into());
+    let strip = opts.strip || (opts.release && !opts.debug_info);
+    let lo = crate::crosslink::LinkOpts { release: opts.release, strip, static_link: opts.static_link, export_dynamic: !opts.release && !opts.static_link, clang: &clang };
+    let cross = !target.is_host() || target.os == "windows";
+    let rt = if cross { crate::crosslink::find_runtime(&target)? } else { find_runtime()? };
+    let (mut cmd, linker) = if let Some(r) = crate::crosslink::bundled_link(&target, objs, &rt, output, libs, &lo) {
+        r?
+    } else if cross {
+        // Cross link with the system clang (docs/PLATFORMS.md): the
+        // target's runtime and C library (on a Windows host too: the MinGW
+        // runtime and clang driver).
+        find_clang()?;
+        crate::crosslink::link_command(&target, objs, &rt, output, libs, &lo)?
+    } else {
+        (host_clang_command(objs, &rt, output, libs, opts, &find_clang()?), clang.clone())
+    };
+    log(opts, format!("linking {} for {} ({} object(s), runtime {}) with {linker}", output.display(), target.triple, objs.len(), rt.display()));
+    let out = cmd.output().map_err(|e| format!("cannot run {}: {e}", cmd.get_program().to_string_lossy()))?;
+    if !out.status.success() {
+        return Err(format!("linking failed:\n{}{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout)));
     }
-    let rt = find_runtime()?;
-    let clang = find_clang()?;
-    let mut cmd = Command::new(&clang);
-    cmd.args(objs).arg(&rt);
+    Ok(())
+}
+
+/// The host link through the system clang driver (a runtime without
+/// bundled link inputs, e.g. `runtime/libzell_rt.a` of the repository).
+fn host_clang_command(objs: &[PathBuf], rt: &Path, output: &Path, libs: &[&str], opts: &BuildOptions, clang: &str) -> Command {
+    let mut cmd = Command::new(clang);
+    cmd.args(objs).arg(rt);
     for l in libs {
         cmd.arg(format!("-l{l}"));
     }
@@ -692,12 +717,7 @@ fn link(objs: &[PathBuf], output: &Path, libs: &[&str], opts: &BuildOptions) -> 
     if opts.static_link {
         cmd.arg("-static");
     }
-    log(opts, format!("linking {} ({} object(s), runtime {})", output.display(), objs.len(), rt.display()));
-    let out = cmd.output().map_err(|e| format!("cannot run {clang}: {e}"))?;
-    if !out.status.success() {
-        return Err(format!("linking failed:\n{}", String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(())
+    cmd
 }
 
 // -- package builds ---------------------------------------------------------------

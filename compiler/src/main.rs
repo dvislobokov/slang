@@ -44,7 +44,8 @@ commands:
   why <module|name>              print every chain of requirements leading to a package
   vendor                         copy all modules into vendor/ (builds then use it)
   store verify|prune|path        check, clean up or locate the module store
-  env [NAME ...]                 print ZELL_STD, ZELL_HOME, ZELL_STORE, ZELL_PROXY, ...
+  env [NAME ...]                 print ZELL_STD, ZELL_HOME, ZELL_STORE, ZELL_LINKER, ZELL_TARGETS, ...
+  doctor                         check that the toolchain (linker, std, every target's link inputs) is complete
   proxy serve --dir <cache> [--addr host:port] [--upstream direct|off|<url>] [--sumdb]
                                  serve a module proxy (static layout) and checksum log
   manifest schema                print the manifest JSON Schema
@@ -129,6 +130,7 @@ fn main() {
         "lsp" => lsp(rest),
         "tool" => tool(rest),
         "target" => print(zell::toolchain::run(rest)),
+        "doctor" => print(zell::toolchain::doctor(rest)),
         "fmt" => exit(zell::fmt::cli::run(rest)),
         "data" => match zell::datacli::run(rest) {
             Ok(code) => exit(code),

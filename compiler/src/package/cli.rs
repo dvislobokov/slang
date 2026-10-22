@@ -292,6 +292,8 @@ pub fn env(args: &[String]) -> Result<String, String> {
         ("ZELL_PRIVATE", get("ZELL_PRIVATE")),
         ("ZELL_SUMDB", std::env::var("ZELL_SUMDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "off".into())),
         ("ZELL_NOSUMDB", get("ZELL_NOSUMDB")),
+        ("ZELL_LINKER", crate::toolchain::linker_description()),
+        ("ZELL_TARGETS", crate::toolchain::targets_description()),
     ];
     if args.is_empty() {
         return Ok(vars.iter().map(|(k, v)| format!("{k}=\"{v}\"\n")).collect());
