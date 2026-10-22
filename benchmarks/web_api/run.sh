@@ -18,21 +18,24 @@ here=$root/benchmarks/web_api
 ZELL=${ZELL:-$root/target/release/zell}
 RUNS=${RUNS:-5}
 out=$(mktemp -d)
-cleanup() { kill $(jobs -p) 2>/dev/null || true; rm -rf "$out"; }
+# Servers are started in this shell (not in a $(...) subshell) and
+# killed by PID, so none outlives the script.
+declare -A pid port
+cleanup() { kill "${pid[@]}" 2>/dev/null || true; rm -rf "$out"; }
 trap cleanup EXIT
 "$ZELL" build "$here/server.zl" --release -o "$out/zell"
 (cd "$here/go" && go build -o "$out/gin" ./gin && go build -o "$out/nethttp" ./nethttp && go build -o "$out/load" ./load)
 
-start() { # name -> port (server keeps running in the background)
+start() { # name: starts the server, sets pid[name] and port[name]
     "$out/$1" > /dev/null 2> "$out/port.$1" &
+    pid[$1]=$!
     for _ in $(seq 100); do [ -s "$out/port.$1" ] && break; sleep 0.05; done
-    head -n 1 "$out/port.$1"
+    port[$1]=$(head -n 1 "$out/port.$1")
 }
 
 servers="zell gin nethttp"
-declare -A port
 for s in $servers; do
-    port[$s]=$(start "$s")
+    start "$s"
     "$out/load" -check "127.0.0.1:${port[$s]}" > "$out/check.$s"
     echo "== $s check: $(tr '\n' ' ' < "$out/check.$s")"
 done
@@ -54,6 +57,6 @@ for ((i = 1; i <= RUNS; i++)); do
     done
 done
 for s in $servers; do
-    rss=$(awk '/VmHWM/ {print $2}' "/proc/$(pgrep -f "^$out/$s\$" | head -n 1)/status" 2>/dev/null || echo "?")
+    rss=$(awk '/VmHWM/ {print $2}' "/proc/${pid[$s]}/status" 2>/dev/null || echo "?")
     echo "== $s peak RSS ${rss} kB"
 done

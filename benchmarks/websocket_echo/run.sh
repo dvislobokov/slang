@@ -11,17 +11,22 @@ here=$root/benchmarks/websocket_echo
 ZELL=${ZELL:-$root/target/release/zell}
 RUNS=${RUNS:-5}
 out=$(mktemp -d)
-cleanup() { kill $(jobs -p) 2>/dev/null || true; rm -rf "$out"; }
+# Servers are started in this shell (not in a $(...) subshell) and
+# killed by PID, so none outlives the script.
+pids=()
+cleanup() { kill "${pids[@]}" 2>/dev/null || true; rm -rf "$out"; }
 trap cleanup EXIT
 "$ZELL" build "$here/main.zl" --release -o "$out/zell"
 (cd "$here" && go build -o "$out/go" main.go)
-start() { # binary flag name -> port
+start() { # binary flag name: starts the server in the background
     "$1" "$2" > /dev/null 2> "$out/port.$3" &
+    pids+=($!)
     for _ in $(seq 100); do [ -s "$out/port.$3" ] && break; sleep 0.05; done
-    head -n 1 "$out/port.$3"
 }
-zp=$(start "$out/zell" --server zell)
-gp=$(start "$out/go" -server go)
+start "$out/zell" --server zell
+start "$out/go" -server go
+zp=$(head -n 1 "$out/port.zell")
+gp=$(head -n 1 "$out/port.go")
 ref=""
 for ((i = 1; i <= RUNS; i++)); do
     for srv in "zell:$zp" "go:$gp"; do

@@ -306,7 +306,13 @@ stdlib fixes belong with their owners. Each item says where the code is.
     55433 (as the `postgres` user, since the session runs as root). Zell's
     pure-Zell `database.postgres` driver, GORM and pgx all passed the
     checksum comparison at smoke scale.
-13. **Not covered:** HTTP/2 or TLS for `web_api` (`http_hello` covers the
+13. **`benchmarks/http_hello/run.sh` leaves its servers running.** It
+    starts them with `sp=$(start ...)`, so they run in a command
+    substitution subshell, and the trap's `kill $(jobs -p)` does not see
+    them. The servers outlive the script and keep their ports. The scripts
+    added here had the same bug; they now start servers in the main shell
+    and kill them by PID. `http_hello/run.sh` was left unchanged.
+14. **Not covered:** HTTP/2 or TLS for `web_api` (`http_hello` covers the
     transport); `web` features beyond the four endpoints (JWT `UseAuth`,
     OpenAPI, gzip); `data` relations (`Include`) and grouping; WebSocket
     compression (`net.ws` has none).
