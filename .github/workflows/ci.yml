@@ -90,7 +90,10 @@ jobs:
             exit 1
           }
       - name: Compiler, examples, spec corpus
-        run: cargo build --workspace && cargo test --workspace
+        run: |
+          which -a lldb dsymutil || true
+          lldb --version || true
+          cargo build --workspace && cargo test --workspace --no-fail-fast
       - name: macOS port checks (kqueue, sampler, symbols, tz, roots, processes, packaging)
         run: cargo build --release && ./scripts/macos-verify.sh --quick
       - name: Toolchain archive
