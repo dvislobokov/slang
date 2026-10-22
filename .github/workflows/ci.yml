@@ -148,6 +148,9 @@ jobs:
           make -C runtime CROSS=x86_64-w64-mingw32 -j"$(nproc)"
           make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
           ZELL_POLLER=wsapoll make -C runtime CROSS=x86_64-w64-mingw32 test-wine WINE=
+          # the compiler tests look for runtime/libzell_rt.a (`make -C runtime`
+          # elsewhere); here that is the Windows runtime
+          cp runtime/build/x86_64-pc-windows-gnu/libzell_rt.a runtime/libzell_rt.a
       # llvm-sys needs llvm-config and static LLVM libraries with every
       # target the compiler initialises (X86, AArch64, WebAssembly): the
       # official clang+llvm tarball for MSVC has both (the installer has
