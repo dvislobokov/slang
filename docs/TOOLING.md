@@ -349,6 +349,49 @@ sema — режим единиц `sema::units`).
 В CI тест проверяет, что все `examples/*.zl` разбираются и парсером
 компилятора, и грамматикой из BNF (через сгенерированный парсер).
 
+## AI agents
+
+Агентам (Claude Code, Codex CLI, Gemini CLI, Cursor, Windsurf, Cline,
+Aider, Zed, Copilot) Zell отдаётся двумя каналами; всё лежит в `agents/`
+(самодостаточный каталог, может стать репозиторием `zell-lang/zell-agents`),
+подробности и исследование других языков — `agents/README.md`.
+
+- **LSP** там, где агент сам умеет язык-серверы. Claude Code — через
+  плагин `agents/claude-code` (`lspServers` в
+  `.claude-plugin/plugin.json`: `zell-lsp`, `extensionToLanguage:
+  {".zl": "zell"}`, push-диагностики): после каждой правки агент видит
+  диагностики, плюс инструмент `LSP` (определение, ссылки, hover). Плагин
+  несёт и MCP-сервер, хук PostToolUse (`zell fmt` правленого файла и
+  `zell check` проекта; ошибки возвращаются агенту) и навыки `zell`
+  (язык для агента: синтаксис, импорты без `std`, `T!`/`?`/`try`,
+  async, память, `@test`, CLI, формат вывода) и `zell-packages`.
+  Установка: `claude plugin marketplace add zell-lang/zell` (корневой
+  `.claude-plugin/marketplace.json` указывает на `agents/claude-code`),
+  `claude plugin install zell@zell`. Агенты внутри VS Code (Cursor,
+  Windsurf, Cline, Copilot) получают диагностики от расширения
+  `editors/vscode`.
+- **MCP** для всех остальных: `zell-mcp` (`agents/mcp`, крейт рабочей
+  области, stdio, подмножество MCP вручную на `serde_json`). Работает на
+  `Session`/`Analysis` в процессе, как `zell-lsp`, и перечитывает файлы с
+  диска перед каждым вызовом. Инструменты: `diagnostics`, `definition`,
+  `references`, `hover`, `document_symbols`, `workspace_symbols`,
+  `rename` (по умолчанию dry run → unified diff), `format`,
+  `run_tests` (`zell test --json`), `build`, `run`, `doc`
+  (`zell::doc::describe`), `std_index` (поиск по `StdIndex`). Позиции —
+  `path:line:col` с 1, колонки в символах; вместо колонки можно `name`,
+  вместо позиции — `symbol` (`User.Hello`, `strings.Split`). Тесты —
+  `agents/mcp/tests/server.rs` через stdio.
+- **`zell init --agents claude,codex,gemini,cursor,windsurf,cline,aider,zed,copilot`**
+  (или `all`; в существующем пакете пишет только файлы агентов,
+  `compiler/src/package/agents.rs`): инструкции (оба навыка без
+  frontmatter) секцией между маркерами в `AGENTS.md`/`GEMINI.md`/
+  `CONVENTIONS.md` или правилами `.cursor/rules/zell.mdc`,
+  `.windsurf/rules/zell.md`, `.clinerules/zell.md`; `zell-mcp` в
+  `.codex/config.toml`, `.gemini/settings.json`, `.cursor/mcp.json`,
+  `.zed/settings.json`, `.vscode/mcp.json`; для Claude Code —
+  `.claude/settings.json` с маркетплейсом и включённым плагином.
+  Существующие файлы дополняются, а не перезаписываются.
+
 ## Форматтер (`zell fmt`)
 
 Канонический стиль, без настроек (как `gofmt`): 4 пробела, фигурные

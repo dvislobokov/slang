@@ -57,7 +57,7 @@ async func main() {
 
 ## Install
 
-**A prebuilt toolchain** (`bin/zell`, `bin/zell-lsp`, `std/`, the
+**A prebuilt toolchain** (`bin/zell`, `bin/zell-lsp`, `bin/zell-mcp`, `std/`, the
 runtime for the machine in `targets/<triple>/`, debugger formatters):
 
 ```sh
@@ -90,7 +90,7 @@ need Rust, LLVM 18, clang and lld:
 git clone https://github.com/zell-lang/zell && cd zell
 ./scripts/setup.sh                    # Ubuntu 24.04: llvm-18-dev, clang-18, lld-18 (run as root)
 make -C runtime                       # the C runtime (libzell_rt.a)
-cargo build --release                 # target/release/zell and zell-lsp
+cargo build --release                 # target/release/zell, zell-lsp and zell-mcp
 export PATH="$PWD/target/release:$PATH"
 make -C runtime CROSS=x86_64-w64-mingw32   # optional: the Windows runtime (mingw-w64)
 make -C runtime CROSS=aarch64-linux-gnu    # optional: linux-arm64 (gcc-aarch64-linux-gnu)
@@ -208,7 +208,7 @@ zell check [path] [--dump-hir]          # type-check only
 zell test  [path] [-v] [--filter re] [--json] [--bench] [--parallel N]   # tests, benchmarks, examples
 zell doc   [path|namespace|symbol] [--html dir] [--json] [--check]      # documentation
 zell fmt   [paths] [--check] [--diff] [--stdin]   # format in the canonical style
-zell init  [dir] [--name n] [--format toml|json|yaml] [--lib]
+zell init  [dir] [--name n] [--format toml|json|yaml] [--lib] [--agents claude,codex,...]
 zell install | update | tree | why <module> | vendor   # dependencies
 zell store verify|prune|path | env [NAME] | proxy serve --dir <cache>
 zell lsp                                # language server on stdio
@@ -234,6 +234,18 @@ zell target list | add <target>...      # prebuilt runtimes for cross-compilatio
 | `--workspace`, `-p <name>` | all members / one member of a workspace |
 | `--locked`, `--offline` | fail if `zell.lock` would change / use only the lock and the store |
 
+## AI coding agents
+
+Claude Code, Codex CLI, Gemini CLI, Cursor, Windsurf, Cline, Aider, Zed
+and Copilot get Zell language intelligence from [`agents/`](agents/README.md):
+a Claude Code plugin (`zell-lsp` diagnostics and navigation after every
+edit, a format/check hook, Zell skills; `claude plugin marketplace add
+zell-lang/zell`, then `claude plugin install zell@zell`), the `zell-mcp`
+MCP server (diagnostics, definition, references, rename, format, tests,
+std docs) for every MCP-capable agent, and `zell init --agents
+claude,codex,cursor,...` to write the instructions and MCP configuration
+into a project.
+
 ## Repository layout
 
 | Path | What |
@@ -242,6 +254,7 @@ zell target list | add <target>...      # prebuilt runtimes for cross-compilatio
 | `runtime/` | the C runtime: allocator, refcounting, strings, slices, maps, scheduler, I/O, the C parts of the stdlib (`runtime/ABI.md`) |
 | `std/` | the standard library sources (written by `compiler/build.rs` from `compiler/src/sema/stdlib_src/`), plus its tests and examples (`*_test.zl`) |
 | `lsp/`, `editors/vscode/`, `grammar/` | language server, VS Code extension, Grammar-Kit grammar |
+| `agents/` | AI agent tooling: Claude Code plugin, `zell-mcp` MCP server, agent configuration snippets |
 | `examples/` | runnable programs with byte-exact expected output |
 | `tests/spec/` | the specification corpus |
 | `benchmarks/` | Zell vs Go programs and scripts |
