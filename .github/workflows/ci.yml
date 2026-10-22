@@ -93,7 +93,17 @@ jobs:
         run: |
           which -a lldb dsymutil || true
           lldb --version || true
-          cargo build --workspace && cargo test --workspace --no-fail-fast
+          # macOS caps listen backlogs at kern.ipc.somaxconn (128): the
+          # many-connections tests dial thousands at once (Linux: 4096)
+          sudo sysctl -w kern.ipc.somaxconn=4096 || true
+          cargo build --workspace
+          # where debug info ends up (the lldb tests rely on the dSYM)
+          mkdir -p "$RUNNER_TEMP/dbg"
+          ./target/debug/zell build --verbose examples/hello.zl -o "$RUNNER_TEMP/dbg/hello" || true
+          ls -la "$RUNNER_TEMP/dbg" || true
+          dwarfdump --uuid "$RUNNER_TEMP/dbg/hello" "$RUNNER_TEMP/dbg/hello.dSYM" || true
+          lldb --batch -o "image list" -o "b hello.zl:6" -o "image lookup -n main" "$RUNNER_TEMP/dbg/hello" || true
+          cargo test --workspace --no-fail-fast
       - name: macOS port checks (kqueue, sampler, symbols, tz, roots, processes, packaging)
         run: cargo build --release && ./scripts/macos-verify.sh --quick
       - name: Toolchain archive
