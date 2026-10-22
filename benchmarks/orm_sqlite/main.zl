@@ -3,8 +3,9 @@ namespace bench.orm_sqlite
 import data
 import io
 
-// orm_sqlite: the `data` ORM on SQLite (the Go side is main.go:
-// database/sql and GORM over mattn/go-sqlite3). Phases:
+// orm_sqlite: the `data` ORM on SQLite, and on PostgreSQL when the DSN is
+// a postgres:// URL (the Go side is main.go: database/sql and GORM over
+// mattn/go-sqlite3 or pgx). Phases:
 //   migrate  one @migration (table + index) applied by ctx.Migrate()
 //   insert   N rows in batches of 1000 (AddRange + SaveChanges)
 //   lookup   L point lookups by primary key (no tracking)
@@ -13,7 +14,8 @@ import io
 //   update   U rows changed through change tracking (100 rows loaded,
 //            changed, saved per SaveChanges)
 // Usage: main [dsn]   (default ":memory:"; a file path for an on-disk
-// database, which is deleted first). SCALE=small: N=10k, L=20k, Q=1k,
+// database, which is deleted first; postgres://...: its products and
+// __migrations tables are dropped first). SCALE=small: N=10k, L=20k, Q=1k,
 // U=1k. Checksums on stdout (equal for every implementation), times on
 // stderr: "phase <name> <ms>".
 
@@ -72,12 +74,21 @@ async func main() void! {
     }
     var args = os.Args()
     var dsn = ":memory:"
+    var provider = Provider.Sqlite
     if len(args) > 1 {
         dsn = args[1]
-        _ = fs.Remove(dsn)
+        if strings.HasPrefix(dsn, "postgres://") {
+            provider = Provider.Postgres
+        } else {
+            _ = fs.Remove(dsn)
+        }
+    }
+    var ctx = Open<Shop>(provider, dsn)?
+    if provider == Provider.Postgres {
+        _ = await ctx.ExecuteSql("DROP TABLE IF EXISTS products", [])?
+        _ = await ctx.ExecuteSql("DROP TABLE IF EXISTS __migrations", [])?
     }
     t0 = time.NowNanos()
-    var ctx = Open<Shop>(Provider.Sqlite, dsn)?
     await ctx.Migrate()?
     phase("migrate")
 

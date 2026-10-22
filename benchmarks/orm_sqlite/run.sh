@@ -1,20 +1,36 @@
 #!/bin/bash
 # orm_sqlite: data (main.zl) vs GORM and database/sql (main.go -impl=...),
-# all on SQLite, in memory and in a file (under $TMPDIR). RUNS rounds
-# (default 5), implementations alternating within a round; every run's
-# stdout (the checksums) must equal Zell's. Prints the phase times of
-# every run ("phase <name> <ms>") and the best of each phase per variant.
+# on SQLite in memory and in a file (under $TMPDIR), and on PostgreSQL
+# when its server binaries are installed (pg.sh starts a throwaway cluster
+# on PGPORT, default 55433; PG=0 skips it). RUNS rounds (default 5),
+# implementations alternating within a round; every run's stdout (the
+# checksums) must equal Zell's. Prints the phase times of every run
+# ("phase <name> <ms>") and the best of each phase per variant.
 # Usage: benchmarks/orm_sqlite/run.sh   (SCALE=small for a smoke test)
-# PostgreSQL is not covered (no server on the benchmark machine).
 set -e
 root=$(cd "$(dirname "$0")/../.." && pwd)
 here=$root/benchmarks/orm_sqlite
 ZELL=${ZELL:-$root/target/release/zell}
 RUNS=${RUNS:-5}
 out=$(mktemp -d)
-trap 'rm -rf "$out"' EXIT
+pgdir=""
+cleanup() {
+    [ -n "$pgdir" ] && { "$here/pg.sh" stop "$pgdir/c"; rm -rf "$pgdir"; }
+    rm -rf "$out"
+}
+trap cleanup EXIT
 "$ZELL" build "$here/main.zl" --release -o "$out/zell"
 (cd "$here" && go build -o "$out/go" main.go)
+
+stores="memory file"
+if [ "${PG:-1}" != 0 ] && ls /usr/lib/postgresql/*/bin/postgres > /dev/null 2>&1; then
+    pgdir=$(mktemp -d /tmp/zell-bench-pg.XXXXXX)
+    chmod 755 "$pgdir"
+    pgdsn=$("$here/pg.sh" start "$pgdir/c" "${PGPORT:-55433}")
+    stores="$stores postgres"
+else
+    echo "== PostgreSQL: no server binaries (or PG=0), SQLite only"
+fi
 
 variants="zell gorm sql"
 cmd() { # variant -> command
@@ -24,11 +40,12 @@ cmd() { # variant -> command
         sql) echo "$out/go -impl=sql" ;;
     esac
 }
-for store in memory file; do
+for store in $stores; do
     for ((i = 1; i <= RUNS; i++)); do
         for v in $variants; do
             dsn=""
             [ $store = file ] && dsn="$out/$v.db"
+            [ $store = postgres ] && dsn=$pgdsn
             $(cmd $v) $dsn > "$out/stdout.$v" 2> "$out/phases.$v.$i"
             if [ $v = zell ]; then cp "$out/stdout.zell" "$out/ref"; elif ! cmp -s "$out/ref" "$out/stdout.$v"; then
                 echo "MISMATCH: $v ($store) differs from zell:" >&2

@@ -1,7 +1,9 @@
 // orm_sqlite, Go side: the phases of main.zl with GORM (default) or plain
 // database/sql (-impl=sql), both over mattn/go-sqlite3 (cgo, its bundled
-// SQLite). Usage: main [-impl=gorm|sql] [dsn]  (default ":memory:"; a file
-// path is deleted first). SCALE=small: N=10k, L=20k, Q=1k, U=1k.
+// SQLite), or over pgx for a postgres:// DSN. Usage: main
+// [-impl=gorm|sql] [dsn]  (default ":memory:"; a file path is deleted
+// first; on PostgreSQL the tables are dropped first). SCALE=small: N=10k,
+// L=20k, Q=1k, U=1k.
 // Checksums on stdout (equal to main.zl), "phase <name> <ms>" on stderr.
 package main
 
@@ -13,7 +15,9 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/mattn/go-sqlite3"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -48,12 +52,40 @@ func newProduct(j int) Product {
 	return Product{Name: fmt.Sprintf("p-%d", j), Category: cats[j%8], Price: (j * 7919) % 100000, Stock: j % 100}
 }
 
+func isPG(dsn string) bool { return strings.HasPrefix(dsn, "postgres://") }
+
+// q rewrites ? placeholders to $1, $2, ... on PostgreSQL.
+func q(dsn, query string) string {
+	if !isPG(dsn) {
+		return query
+	}
+	var b strings.Builder
+	n := 0
+	for _, c := range query {
+		if c == '?' {
+			n++
+			fmt.Fprintf(&b, "$%d", n)
+		} else {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
 func runGorm(dsn string, s sizes) {
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
+	dial := sqlite.Open(dsn)
+	if isPG(dsn) {
+		dial = postgres.Open(dsn)
+	}
+	db, err := gorm.Open(dial, &gorm.Config{Logger: logger.Discard})
 	check(err)
 	sqlDB, _ := db.DB()
 	if dsn == ":memory:" {
 		sqlDB.SetMaxOpenConns(1)
+	}
+	if isPG(dsn) {
+		check(db.Exec("DROP TABLE IF EXISTS products").Error)
+		t0 = time.Now()
 	}
 	check(db.AutoMigrate(&Product{}))
 	phase("migrate")
@@ -115,23 +147,34 @@ func runGorm(dsn string, s sizes) {
 }
 
 func runSQL(dsn string, s sizes) {
-	db, err := sql.Open("sqlite3", dsn)
+	driver, id, now := "sqlite3", "INTEGER PRIMARY KEY AUTOINCREMENT", "datetime('now')"
+	if isPG(dsn) {
+		driver, id, now = "pgx", "BIGSERIAL PRIMARY KEY", "now()::text"
+	}
+	db, err := sql.Open(driver, dsn)
 	check(err)
 	if dsn == ":memory:" {
 		db.SetMaxOpenConns(1)
 	}
+	if isPG(dsn) {
+		for _, t := range []string{"products", "__migrations"} {
+			_, err = db.Exec("DROP TABLE IF EXISTS " + t)
+			check(err)
+		}
+		t0 = time.Now()
+	}
 	// the migration, recorded like data's __migrations
 	tx, err := db.Begin()
 	check(err)
-	for _, q := range []string{
+	for _, ddl := range []string{
 		`CREATE TABLE IF NOT EXISTS __migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`,
-		`CREATE TABLE products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category TEXT NOT NULL, price INTEGER NOT NULL, stock INTEGER NOT NULL)`,
+		`CREATE TABLE products (id ` + id + `, name TEXT NOT NULL, category TEXT NOT NULL, price BIGINT NOT NULL, stock BIGINT NOT NULL)`,
 		`CREATE INDEX ix_products_category ON products (category)`,
 	} {
-		_, err = tx.Exec(q)
+		_, err = tx.Exec(ddl)
 		check(err)
 	}
-	_, err = tx.Exec(`INSERT INTO __migrations (id, applied_at) VALUES (?, datetime('now'))`, "20260101000000_CreateProducts")
+	_, err = tx.Exec(q(dsn, `INSERT INTO __migrations (id, applied_at) VALUES (?, `+now+`)`), "20260101000000_CreateProducts")
 	check(err)
 	check(tx.Commit())
 	phase("migrate")
@@ -145,13 +188,13 @@ func runSQL(dsn string, s sizes) {
 		}
 		tx, err := db.Begin()
 		check(err)
-		_, err = tx.Exec("INSERT INTO products (name, category, price, stock) VALUES "+values, args...)
+		_, err = tx.Exec(q(dsn, "INSERT INTO products (name, category, price, stock) VALUES "+values), args...)
 		check(err)
 		check(tx.Commit())
 	}
 	phase("insert")
 
-	get, err := db.Prepare("SELECT id, name, category, price, stock FROM products WHERE id = ?")
+	get, err := db.Prepare(q(dsn, "SELECT id, name, category, price, stock FROM products WHERE id = ?"))
 	check(err)
 	sum := 0
 	for k := 0; k < s.lookups; k++ {
@@ -162,7 +205,7 @@ func runSQL(dsn string, s sizes) {
 	phase("lookup")
 	fmt.Println("lookup", sum)
 
-	filter, err := db.Prepare("SELECT id, name, category, price, stock FROM products WHERE category = ? AND price > ? ORDER BY id LIMIT 10")
+	filter, err := db.Prepare(q(dsn, "SELECT id, name, category, price, stock FROM products WHERE category = ? AND price > ? ORDER BY id LIMIT 10"))
 	check(err)
 	found, idsum := 0, 0
 	for k := 0; k < s.queries; k++ {
@@ -182,7 +225,7 @@ func runSQL(dsn string, s sizes) {
 
 	changed := 0
 	for lo := 1; changed < s.updates; lo += 100 {
-		rows, err := db.Query("SELECT id, name, category, price, stock FROM products WHERE id >= ? AND id < ?", lo, lo+100)
+		rows, err := db.Query(q(dsn, "SELECT id, name, category, price, stock FROM products WHERE id >= ? AND id < ?"), lo, lo+100)
 		check(err)
 		var ps []Product
 		for rows.Next() {
@@ -193,7 +236,7 @@ func runSQL(dsn string, s sizes) {
 		rows.Close()
 		tx, err := db.Begin()
 		check(err)
-		upd, err := tx.Prepare("UPDATE products SET stock = ?, name = ? WHERE id = ?")
+		upd, err := tx.Prepare(q(dsn, "UPDATE products SET stock = ?, name = ? WHERE id = ?"))
 		check(err)
 		for _, p := range ps {
 			_, err = upd.Exec(p.Stock+1, p.Name+"*", p.Id)
@@ -222,7 +265,9 @@ func main() {
 	dsn := ":memory:"
 	if flag.NArg() > 0 {
 		dsn = flag.Arg(0)
-		os.Remove(dsn)
+		if !isPG(dsn) {
+			os.Remove(dsn)
+		}
 	}
 	t0 = time.Now()
 	switch *impl {
