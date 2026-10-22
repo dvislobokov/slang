@@ -39,7 +39,8 @@ static inline int symlink(const char *target, const char *path) {
 #define STR_IS(s, lit) (zell_string_len(s) == (int64_t)strlen(lit) && memcmp(zell_string_data(s), (lit), strlen(lit)) == 0)
 
 #define TEST(name) static void name(void)
-#define RUN(name) do { name(); printf("  ok  %s\n", #name); } while (0)
+/* Flushed, so a test that crashes shows which steps passed (stdout is a pipe under make). */
+#define RUN(name) do { name(); printf("  ok  %s\n", #name); fflush(stdout); } while (0)
 
 #if !defined(_WIN32)
 /* Run fn in a child process; capture its fd (1 or 2); return exit status. */
