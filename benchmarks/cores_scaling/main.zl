@@ -1,0 +1,191 @@
+namespace bench.coresscaling
+
+import io
+
+// Scaling over cores with 1, 2 and 4 workers (tasks on the scheduler's
+// thread pool; ZELL_WORKERS defaults to the CPU count). The total work is
+// the same for every worker count, so the times give the speedup.
+//  1. wordfreq: word frequency over 400 MB of generated text (one shared
+//     read-only []byte, split at spaces); each worker counts into its own
+//     map[int]int keyed by an FNV-1a hash, the maps are merged at the end.
+//  2. trees: each worker builds and checks its share of 2048 binary trees
+//     of depth 14 (its own nodes, no sharing): allocator contention.
+// stdout: deterministic checksums (equal to main.go's);
+// stderr: "ms <phase> <workers> <ms>".
+//   SCALE=small  4 MB of text and 32 trees (smoke test)
+
+const MASK = 4294967295
+
+struct Node {
+    Left  *Node
+    Right *Node
+}
+
+func now() int {
+    return diag.rtMonoNanos()
+}
+
+func lcg(x int) int {
+    return (x * 1103515245 + 12345) & 2147483647
+}
+
+// A vocabulary of 1000 words of 2..9 lowercase letters.
+func vocabulary() [][]byte {
+    var words [][]byte = []
+    var r = 42
+    for _ in 0..1000 {
+        r = lcg(r)
+        var n = 2 + (r >> 8) % 8
+        var w []byte = []
+        for _ in 0..n {
+            r = lcg(r)
+            w = append(w, byte(97 + (r >> 10) % 26))
+        }
+        words = append(words, w)
+    }
+    return words
+}
+
+func generate(size int) []byte {
+    var words = vocabulary()
+    var text []byte = []
+    var r = 7
+    for len(text) < size {
+        r = lcg(r)
+        // skewed choice: small indices are more frequent
+        var a = (r >> 4) % 1000
+        r = lcg(r)
+        var b = (r >> 4) % 1000
+        var w = words[a * b / 1000]
+        for c in w {
+            text = append(text, c)
+        }
+        text = append(text, 32)
+    }
+    return text
+}
+
+// Start of the first word at or after i (i itself when it follows a space).
+func align(text []byte, i int) int {
+    if i == 0 {
+        return 0
+    }
+    var j = i
+    for j < len(text) && text[j - 1] != 32 {
+        j += 1
+    }
+    return j
+}
+
+func count(text []byte, lo int, hi int) map[int]int {
+    var m = map[int]int{}
+    var h = 2166136261
+    var inWord = false
+    for i in lo..hi {
+        var c = int(text[i])
+        if c == 32 {
+            if inWord {
+                m[h] = m[h] + 1
+            }
+            h = 2166136261
+            inWord = false
+        } else {
+            h = ((h ^ c) * 16777619) & MASK
+            inWord = true
+        }
+    }
+    if inWord {
+        m[h] = m[h] + 1
+    }
+    return m
+}
+
+async func countTask(text []byte, lo int, hi int) map[int]int {
+    await task.Yield()
+    return count(text, lo, hi)
+}
+
+async func wordfreq(text []byte, workers int) {
+    var t0 = now()
+    var tasks []Task<map[int]int> = []
+    for k in 0..workers {
+        var lo = align(text, len(text) * k / workers)
+        var hi = align(text, len(text) * (k + 1) / workers)
+        tasks = append(tasks, countTask(text, lo, hi))
+    }
+    var total = map[int]int{}
+    for t in tasks {
+        var m = await t
+        for h, n in m {
+            total[h] = total[h] + n
+        }
+    }
+    var words = 0
+    var sum = 0
+    var top = 0
+    for h, n in total {
+        words += n
+        sum = (sum + h * n) & MASK
+        if n > top {
+            top = n
+        }
+    }
+    io.Eprintln(fmt.Format("ms wordfreq {0} {1}", workers, (now() - t0) / 1000000))
+    println("wordfreq", workers, len(total), words, top, sum)
+}
+
+func build(depth int) *Node {
+    if depth == 0 {
+        return new Node{}
+    }
+    return new Node{Left: build(depth - 1), Right: build(depth - 1)}
+}
+
+func check(n *Node) int {
+    if n.Left == nil {
+        return 1
+    }
+    return 1 + check(n.Left) + check(n.Right)
+}
+
+async func treeTask(count int, depth int) int {
+    await task.Yield()
+    var long = build(depth)
+    var s = 0
+    for _ in 0..count {
+        s += check(build(depth))
+    }
+    return s + check(long)
+}
+
+async func trees(total int, depth int, workers int) {
+    var t0 = now()
+    var tasks []Task<int> = []
+    for _ in 0..workers {
+        tasks = append(tasks, treeTask(total / workers, depth))
+    }
+    var s = 0
+    for t in tasks {
+        s += await t
+    }
+    io.Eprintln(fmt.Format("ms trees {0} {1}", workers, (now() - t0) / 1000000))
+    // one long-lived tree per worker: subtract it so the sum does not depend on workers
+    println("trees", workers, s - workers * check(build(depth)))
+}
+
+async func main() {
+    var size = 400000000
+    var ntrees = 2048
+    if os.Getenv("SCALE") == "small" {
+        size = 4000000
+        ntrees = 32
+    }
+    var text = generate(size)
+    println("text", len(text))
+    for w in [1, 2, 4] {
+        await wordfreq(text, w)
+    }
+    for w in [1, 2, 4] {
+        await trees(ntrees, 14, w)
+    }
+}

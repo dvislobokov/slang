@@ -6,6 +6,9 @@
 #           run with the best wall time (default 1),
 #   NOGO=1  skip the Go programs.
 #   Extra arguments for a benchmark's binary: benchmarks/<b>/args (one line).
+#   A benchmark with its own driver, benchmarks/<b>/bench.sh (a load
+#   generator, percentiles, one row per mechanism or worker count), is run
+#   through it instead (it gets ZELL and RUNS; SCALE=small is passed on).
 set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
 ZELL=${ZELL:-$root/target/release/zell}
@@ -33,6 +36,11 @@ langs="zl go"
 printf '%-12s %-6s %8s %8s %8s  %s\n' bench lang wall_s cpu_s rss_mb output
 for b in $benches; do
     [ -f "$b/main.zl" ] || continue
+    if [ -x "$b/bench.sh" ]; then
+        echo "== $b ($b/bench.sh)"
+        ZELL="$ZELL" RUNS="$RUNS" "./$b/bench.sh"
+        continue
+    fi
     "$ZELL" build "$b/main.zl" --release -o "$out/$b.zl.bin" >/dev/null
     if [ -z "$NOGO" ]; then (cd "$b" && go build -o "$out/$b.go.bin" main.go); fi
     args=()
