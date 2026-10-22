@@ -47,7 +47,8 @@ async func main() void! {
     // a write deadline while the peer does not read: the socket buffer fills up
     c.SetWriteBuffer(4096)?
     c.SetWriteDeadline(time.Now() + 50)
-    var chunk = strings.Bytes(strings.Repeat("w", 65536))
+    // (chunks small enough that the first one fits: macOS buffers less than Linux)
+    var chunk = strings.Bytes(strings.Repeat("w", 1024))
     var wrote = 0
     for {
         var n = try await c.Write(chunk) catch err {

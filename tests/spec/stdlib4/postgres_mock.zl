@@ -439,7 +439,8 @@ async func serve(l net.Listener) *server! {
 
 async func main() void! {
     // DSN defaults come from the PG* variables (as in libpq); CI images set some
-    for k in ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE"] {
+    // (and the user to $USER)
+    for k in ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE", "USER"] {
         os.Setenv(k, "")?
     }
     // connection strings
