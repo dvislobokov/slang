@@ -14,8 +14,7 @@ and `main` may be `async`.
 ```zell
 namespace guide.async.tasks
 
-import std
-import std.io
+import io
 
 async func work(name string, ms int) string {
     await task.Delay(ms)
@@ -48,8 +47,7 @@ first error cancels the remaining tasks.
 ```zell
 namespace guide.async.errors
 
-import std
-import std.io
+import io
 
 async func fetch(id int) string! {
     await task.Delay(id)
@@ -86,8 +84,7 @@ panics.
 ```zell
 namespace guide.async.channels
 
-import std
-import std.io
+import io
 
 async func squares(src task.Channel<int>, out task.Channel<int>) {
     for v in src {
@@ -120,13 +117,12 @@ async func main() {
 Prefer channels for passing data between tasks; when tasks share a
 value, protect it with `task.Mutex` (its zero value is unlocked; waiters
 get it in FIFO order). `task.WaitGroup` waits for a group of tasks.
-`std.sync` adds `RwMutex`, `Semaphore`, `Once`, `Barrier` and atomics.
+`sync` adds `RwMutex`, `Semaphore`, `Once`, `Barrier` and atomics.
 
 ```zell
 namespace guide.async.mutex
 
-import std
-import std.io
+import io
 
 struct Counter {
     mu task.Mutex
@@ -180,8 +176,7 @@ context**, which every task inherits from the code that started it.
 ```zell
 namespace guide.async.cancel
 
-import std
-import std.io
+import io
 
 async func consume(ch task.Channel<int>) string {
     var total = 0
@@ -226,14 +221,13 @@ whether `t` finished within `ms` milliseconds, and `t` keeps running.
 
 `task.Key<T>()` creates a typed key; `task.With(key, value, f)` runs `f`
 with the value set, and every task started inside sees it through
-`task.Get(key)` (like C#'s `AsyncLocal`). `std.log` uses this for request
-properties and `std.diag` for the current trace span.
+`task.Get(key)` (like C#'s `AsyncLocal`). `log` uses this for request
+properties and `diag` for the current trace span.
 
 ```zell
 namespace guide.async.context
 
-import std
-import std.io
+import io
 
 var RequestId = task.Key<string>()
 
@@ -265,8 +259,7 @@ the thread and belong in synchronous code.
 ```zell
 namespace guide.async.timers
 
-import std
-import std.io
+import io
 
 async func main() {
     var t = time.NewTicker(time.Milliseconds(5))

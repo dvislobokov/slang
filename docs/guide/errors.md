@@ -20,8 +20,7 @@ either a `T` or an error; the compiler tells them apart by type.
 ```zell
 namespace guide.errors.basics
 
-import std
-import std.io
+import io
 
 func divide(a int, b int) int! {
     if b == 0 {
@@ -66,8 +65,7 @@ substitutes a default and drops the error.
 ```zell
 namespace guide.errors.handling
 
-import std
-import std.io
+import io
 
 func parseAll(lines []string) []int {
     var out []int = []
@@ -99,8 +97,7 @@ execution continues after the `catch`.
 ```zell
 namespace guide.errors.block
 
-import std
-import std.io
+import io
 
 func main() {
     var total = 0
@@ -129,8 +126,7 @@ struct with that method is an error, so errors can carry data. A type
 ```zell
 namespace guide.errors.typed
 
-import std
-import std.io
+import io
 
 const ErrNotFound = error("not found")
 
@@ -184,8 +180,7 @@ search the whole chain, so wrapping never hides what happened.
 ```zell
 namespace guide.errors.wrap
 
-import std
-import std.io
+import io
 
 struct Timeout {
     Ms int
@@ -230,8 +225,7 @@ records.
 ```zell
 namespace guide.errors.trace
 
-import std
-import std.io
+import io
 
 func open(path string) string! {
     return error("open " + path + ": not found")
@@ -275,8 +269,7 @@ is nobody to return it to. Defer a closure that does:
 ```zell
 namespace guide.errors.defer
 
-import std
-import std.io
+import io
 
 func cleanup(name string) void! {
     return error("cannot remove " + name)

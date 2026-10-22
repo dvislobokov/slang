@@ -8,11 +8,11 @@
 компиляции; там, где Go использует строковые теги и `interface{}`, Zell
 использует атрибуты и generics.
 
-Разделение: стандартная библиотека `std.*` содержит базовые протоколы и
+Разделение: стандартная библиотека (корни `io`, `net`, `web`, …) содержит базовые протоколы и
 форматы; фреймворк `zell.web`, `zell.data`, `zell.log`, `zell.diag` —
 отдельные пакеты в реестре с той же командой разработки.
 
-## 1. Форматы: `std.encoding.{json,xml,yaml,toml}`
+## 1. Форматы: `encoding.{json,xml,yaml,toml}`
 
 Единая модель для всех четырёх форматов:
 
@@ -61,13 +61,13 @@ switch any {
 - TOML и YAML дополнительно: сохранение комментариев при round-trip
   (`toml.Document`), якоря YAML, многодокументные YAML-потоки.
 
-## 2. HTTP-сервер: `std.net.http` и `zell.web`
+## 2. HTTP-сервер: `net.http` и `zell.web`
 
 Два уровня, как `Kestrel` + ASP.NET Core.
 
-### `std.net.http` (низкий уровень)
+### `net.http` (низкий уровень)
 
-- HTTP/1.1, HTTP/2 (h2 и h2c), HTTP/3 позже; TLS через `std.net.tls`.
+- HTTP/1.1, HTTP/2 (h2 и h2c), HTTP/3 позже; TLS через `net.tls`.
 - Полностью асинхронный: один запрос — одна задача на пуле потоков, без
   потока на соединение. Zero-copy чтение тела, streaming ответов,
   backpressure.
@@ -77,15 +77,15 @@ switch any {
   `http.Get<T>(url)` с автоматическим разбором JSON.
 - WebSocket, Server-Sent Events, graceful shutdown, Unix-сокеты.
 
-**Статус (реализовано, `std.net.http`, `std.net.http.hpack`,
-`std.net.http.test`, `std.net.ws`; см. DESIGN.md «Сеть и протоколы» и
+**Статус (реализовано, `net.http`, `net.http.hpack`,
+`net.http.test`, `net.ws`; см. DESIGN.md «Сеть и протоколы» и
 `runtime/ABI.md` §16.4–16.5):**
 
 - ✓ HTTP/1.1 сервер: задача на соединение, keep-alive, разбор заголовков в
   буфере соединения на C (без строки на строку заголовка), один `write` на
   ответ с кэшированным `Date`; на `benchmarks/http_hello` — на уровне Go
   `net/http` (см. `benchmarks/README.md`).
-- ✓ HTTP/2 (RFC 9113) сервер и клиент: h2 по ALPN поверх `std.net.tls`,
+- ✓ HTTP/2 (RFC 9113) сервер и клиент: h2 по ALPN поверх `net.tls`,
   h2c с prior knowledge (`Server{H2C: true}`, `Transport{H2C: true}`),
   HPACK со статической/динамической таблицами и Хаффманом, управление
   потоком, SETTINGS/PING/GOAWAY/RST_STREAM, задача на поток, тот же
@@ -98,12 +98,12 @@ switch any {
   (подключение, TLS, заголовок ответа, весь запрос — через контекст задачи),
   gzip, `CookieJar`, построитель запроса, потоковое тело (`io.AsyncReader`),
   `JSON<T>`; `http.GetJSON<T>(url)`.
-- ✓ WebSocket (`std.net.ws`), Server-Sent Events (`ServerSentEvents`,
+- ✓ WebSocket (`net.ws`), Server-Sent Events (`ServerSentEvents`,
   `EventSource`), `ServeFile`/`ServeDir` (диапазоны, ETag, sendfile),
-  middleware в роутере (`Recover`, `Logging` через `std.log`, `CORS`,
+  middleware в роутере (`Recover`, `Logging` через `log`, `CORS`,
   `Gzip`, `BodyLimit`, `TimeoutHandler`), лимиты заголовков и тел, graceful
   shutdown (HTTP/2 — GOAWAY), Unix-сокеты (`Addr: "unix:/path"`),
-  `std.net.http.test` (`NewServer`, `NewRecorder`, `NewRequest`).
+  `net.http.test` (`NewServer`, `NewRecorder`, `NewRequest`).
 - Нет: HTTP/3, server push, permessage-deflate, `http.Context`-обработчики
   (`Handler` пока `Serve(req, res)`), WebSocket поверх HTTP/2 (RFC 8441),
   (потоковое чтение тела запроса на сервере есть: `Server{StreamBodies}` +
@@ -142,7 +142,7 @@ switch any {
 - **Результат**: TLS добавляет ~300–400 KB к бинарнику, одна сборка под
   все платформы, wasm и мобильные без C-зависимостей.
 
-**Статус (реализовано, `std.net.tls` + `std.crypto.*`, см. DESIGN.md
+**Статус (реализовано, `net.tls` + `crypto.*`, см. DESIGN.md
 «Сеть и протоколы» / «Криптография» и `runtime/ABI.md` §19):**
 
 - ✓ TLS 1.3 и TLS 1.2 (ECDHE + AEAD), клиент и сервер, все перечисленные
@@ -245,7 +245,7 @@ async func main() {
 - **Тестирование**: `web.TestServer(app)` — запросы в памяти без сокетов.
 - **gRPC** (`zell.grpc`) и **GraphQL** — отдельными пакетами на той же базе.
 
-**Статус (реализовано как `std.web`, пока нет реестра пакетов; исходники —
+**Статус (реализовано как `web`, пока нет реестра пакетов; исходники —
 `compiler/src/sema/stdlib_src/web_*.zl`, генерация при компиляции —
 `compiler/src/sema/web.rs`; пример — `examples/web_app/`, тесты —
 `tests/spec/web/`):**
@@ -255,7 +255,7 @@ async func main() {
   компилятору: он читает `@route("/api/users")` структуры и
   `@get/@post/@put/@delete/@patch("{id}")` её методов (несколько глаголов
   на одном методе можно; путь с `/` — абсолютный), классифицирует
-  параметры и порождает исходник шаблона stdlib в `std.web`, параметры
+  параметры и порождает исходник шаблона stdlib в `web`, параметры
   типа которого связаны с конкретными типами (типы не пишутся текстом),
   с одним endpoint на действие: привязка, проверка, создание контроллера,
   вызов, запись результата и метаданные OpenAPI. Ошибки компиляции:
@@ -304,18 +304,18 @@ async func main() {
   регистраций (условные регистрации, типы stdlib).
 - ✓ **Middleware**: `app.Use(async func(c *web.Context, next *web.Next)
   void! { ...; await next.Run(c)? })` в порядке добавления (внешний
-  первым), `UseHttp(mw)` — middleware `std.net.http` вокруг всего
-  приложения. Встроенные: `UseLogging` (одно событие `std.log` на запрос:
+  первым), `UseHttp(mw)` — middleware `net.http` вокруг всего
+  приложения. Встроенные: `UseLogging` (одно событие `log` на запрос:
   `HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed}
   ms` + `Route`), `UseRecover`, `UseCors(http.CORSOptions)`, `UseGzip`,
   `UseStaticFiles(prefix, dir)`, `UseRateLimit` (token bucket на IP, 429 +
   `Retry-After`), `UseRequestId` (заголовок, `ctx.RequestId`, свойство лога
-  `RequestId`), `UseTracing` (span `std.diag` вида Server `HTTP GET
+  `RequestId`), `UseTracing` (span `diag` вида Server `HTTP GET
   /api/users/{id}`), `UseAuth(AuthOptions{Key, Issuer, Audience, Leeway,
   Clock})`, `UseBodyLimit(n)` (413), `UseTimeout(ms)`
   (`http.TimeoutHandler`); `AddHealthCheck(name, f)` + `MapHealthChecks
   ("/health")`.
-- ✓ **JWT** (`std.web.auth.jwt`): ключи `HS256(secret)`, `RS256(der)`,
+- ✓ **JWT** (`web.auth.jwt`): ключи `HS256(secret)`, `RS256(der)`,
   `RS256Public(n, e)`, `ES256(priv)`, `ES256Public(pub)`; `Sign(claims,
   key)`, `Verify(token, key, VerifyOptions{Issuer, Audience, Leeway,
   Clock})` (алгоритм из заголовка должен совпасть с ключом, `none` не
@@ -323,7 +323,7 @@ async func main() {
   ExpiresAt, NotBefore, IssuedAt, Id, Name, Email, Roles, Extra}`.
   `@authorize` / `@authorize(roles: [...])` на контроллере или действии,
   `@allowAnonymous`: 401 без пользователя, 403 без роли.
-- ✓ **Конфигурация** (`std.web.config`): `config.Load(LoadOptions{Dir,
+- ✓ **Конфигурация** (`web.config`): `config.Load(LoadOptions{Dir,
   Name, Environment, EnvPrefix, Args, NoArgs, NoFiles, Defaults})`:
   встроенные `Defaults` (JSON) < `appsettings.{json,yaml,yml,toml}` <
   `appsettings.<env>.*` < `APP__Section__Key` < `--Section:Key=value`;
@@ -347,15 +347,15 @@ async func main() {
   (параметры, тела и ответы со схемами `json.Schema<T>()`, теги по
   контроллеру, `@summary`, bearer-security для `@authorize`, 400/401/403);
   `app.MapSwagger("/swagger", "/openapi.json")` — страница swagger-ui с
-  CDN (unpkg), без бандлинга. `std.encoding.json.Schema<T>()` — JSON Schema
+  CDN (unpkg), без бандлинга. `encoding.json.Schema<T>()` — JSON Schema
   2020-12 через compile-time рефлексию с ключевыми словами `@validate`.
 - ✓ **Тестирование**: `web.TestServer(app)` → `*web.TestClient` без сокетов
   (`Get`, `Post`, `Put`, `Patch`, `Delete`, `Send`, `WithHeader`,
   `WithBearer`, `GetJSON<T>`, `PostJSON<T, R>`); приложение — обычный
   `http.Handler`, `app.Run(":8080")` / `Listen` + `Port` для реального
   сервера.
-- Отличия от эскиза выше: пространство имён `std.web` (`import std.web` или
-  `import std` и `web.X`); пользователь запроса — `web.Principal`
+- Отличия от эскиза выше: пространство имён `web` (`import web` или
+  полный путь `web.X`); пользователь запроса — `web.Principal`
   (`ctx.User`), чтобы не конфликтовать с моделями `User`; middleware
   получает `*web.Next`; RFC 9457 вместо 7807.
 - Нет: cookie/OAuth2/OIDC-аутентификации и политик сверх ролей,
@@ -365,9 +365,9 @@ async func main() {
   (`{id:int}`), привязки multipart-форм; переменные окружения ищутся по
   именам полей (`APP__Db__Host`), списка окружения нет.
 
-## 3. Данные: `std.database.sql` и `zell.data` (ORM уровня EF Core)
+## 3. Данные: `database.sql` и `zell.data` (ORM уровня EF Core)
 
-### `std.database.sql`
+### `database.sql`
 
 - Единый интерфейс `sql.DB`, `Conn`, `Tx`, `Rows`; асинхронный; пул
   соединений; драйверы PostgreSQL, MySQL, SQLite (нативные, на Zell),
@@ -375,7 +375,7 @@ async func main() {
 - Типизированные запросы: `db.Query<User>("select ... where id = $1", id)`
   маппит строки в структуры по именам столбцов и `@column`.
 
-#### Статус реализации (`std.database.sql`)
+#### Статус реализации (`database.sql`)
 
 Реализовано (Zell: `sema/stdlib_src/sql.zl`, драйверы `postgres.zl`,
 `postgres_types.zl`, `sqlite.zl`; C — только SQLite и сигнальные ошибки,
@@ -419,8 +419,8 @@ async func main() {
   Stmt!`, `Conn()` (выделенное соединение), `Raw(f)` (доступ к соединению
   драйвера). Таймауты — `task.WithTimeout`: отменённый запрос прерывается,
   его соединение выбрасывается.
-- PostgreSQL (`std.database.postgres`, на Zell поверх `std.net`/
-  `std.net.tls`): DSN `postgres://user:pass@host:port/db?sslmode=...` и
+- PostgreSQL (`database.postgres`, на Zell поверх `net`/
+  `net.tls`): DSN `postgres://user:pass@host:port/db?sslmode=...` и
   `key=value`, переменные `PG*`, Unix-сокеты (`host=/dir`); sslmode
   `disable/allow/prefer/require/verify-ca/verify-full` (`sslrootcert`);
   аутентификация trust, password, MD5, SCRAM-SHA-256 (без channel
@@ -437,7 +437,7 @@ async func main() {
   (соединение просто закрывается), бинарного кодирования аргументов
   (передаются текстом, `[]byte` — бинарно), многомерных массивов,
   SCRAM-SHA-256-PLUS.
-- SQLite (`std.database.sqlite`): системная libsqlite3 через C-обёртку;
+- SQLite (`database.sqlite`): системная libsqlite3 через C-обёртку;
   компилятор добавляет `-lsqlite3` только программам, использующим драйвер
   (`stdlib.rs` `LINK_LIBS`). DSN — путь, `:memory:` или URI `file:`, опции
   `_busy_timeout`, `_foreign_keys`, `_journal_mode`, `_synchronous`,
@@ -495,10 +495,10 @@ await ctx.SaveChanges()?        // change tracking: UPDATE только изме
   (`db.Query<T>(sql, args)`) без трекинга.
 - NoSQL: `zell.data.redis`, `zell.data.mongo` отдельными пакетами.
 
-#### Статус реализации (`std.data`)
+#### Статус реализации (`data`)
 
-Реализовано как `std.data` (пока нет реестра пакетов; `import std.data` —
-короткие имена `@table`, `Context`, `Set<T>`, или `import std` и
+Реализовано как `data` (пока нет реестра пакетов; `import data` —
+короткие имена `@table`, `Context`, `Set<T>`, или полный путь
 `data.X`). Исходники — `compiler/src/sema/stdlib_src/data*.zl`
 (контекст, запросы, сохранение, миграции), раскрытие при компиляции —
 `compiler/src/sema/orm.rs` (вызовы), `orm_model.rs` (модель),
@@ -592,7 +592,7 @@ CLI миграций), пример — `examples/web_app` (API пользова
   `Where`/`OrderBy` после `Select` (до проекции — можно), анонимных записей
   в `Select` (кортежи и структуры есть), составного `g.Key` вне `Select`,
   compiled queries в виде кэша планов (фрагменты — константы, склейка при
-  каждом вызове), интеграции журнала с `std.log`, `AlterColumn` в SQLite
+  каждом вызове), интеграции журнала с `log`, `AlterColumn` в SQLite
   (комментарий в скрипте). Суммы `big.Decimal` в SQLite считаются в
   `REAL`. Отслеживаемые сущности, загруженные в обе стороны
   (`u.Orders[i].User == u`), держат друг друга (сборщика мусора нет):
@@ -646,10 +646,10 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 - Интеграция: `zell.web` пишет запросы одной строкой на запрос
   (как Serilog RequestLogging), `zell.data` логирует SQL с параметрами.
 
-### Статус реализации (`std.log`)
+### Статус реализации (`log`)
 
 Пока нет реестра пакетов, логгер живёт в стандартной библиотеке как
-`std.log` (`compiler/src/sema/stdlib_src/log.zl`, C-помощники файлового
+`log` (`compiler/src/sema/stdlib_src/log.zl`, C-помощники файлового
 приёмника — `runtime/src/diag.c`). Пример — `examples/log.zl`, тесты —
 `compiler/tests/log_diag.rs`, `tests/spec/stdlib/log_*`.
 
@@ -704,7 +704,7 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   `task`-контекста с ключом -101, наследуется дочерними задачами) и
   возвращает `ContextScope`; `scope.Pop()` (нет `using` — пишите `defer
   scope.Pop()`). `Enrich.FromContext()` добавляет эти свойства и
-  `TraceId`/`SpanId` текущего span'а `std.diag`.
+  `TraceId`/`SpanId` текущего span'а `diag`.
 - Нет: Seq, Elasticsearch/Loki/Splunk/Syslog/OTLP-logs/Email/webhook
   приёмников, батчинга (кроме `Async`), `Destructure.ByTransforming`,
   `Enrich.WithRequestId`/потока/окружения, logfmt, интеграции со
@@ -742,9 +742,9 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 - **Отладка**: DWARF по умолчанию, `zell tool debug` поверх lldb с
   форматтерами типов Zell (см. docs/TOOLING.md).
 
-### Статус реализации (`std.diag`)
+### Статус реализации (`diag`)
 
-Живёт в `std.diag` (`compiler/src/sema/stdlib_src/diag.zl`, рантайм —
+Живёт в `diag` (`compiler/src/sema/stdlib_src/diag.zl`, рантайм —
 `runtime/src/diag.c`, `runtime/src/profile.c`, сэмплер в
 `runtime/src/platform/posix.c`). Примеры — `examples/metrics.zl`,
 `examples/tracing.zl`, `examples/cpuprofile.zl`; тесты —
@@ -815,7 +815,7 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
   `PrometheusText` `zell_cycles_collected_total` (объекты, освобождённые
   сборщиком), `zell_cycle_collections_total`, `zell_cycle_candidates`
   (возможные корни, ждущие сборки) и `zell_cycle_candidates_total`;
-  подробности — `std.runtime.CycleStats()` (DESIGN.md «Циклы»).
+  подробности — `runtime.CycleStats()` (DESIGN.md «Циклы»).
 - **CLI**: `zell tool pprof [флаги] файл` вызывает `go tool pprof` (или
   `pprof`).
 - Нет: эндпоинтов `/debug/pprof/*`, профилей задач/блокировок, `diag.Trace`
@@ -858,10 +858,10 @@ using (log.Context.Push("RequestId", reqId)) { ... }   // или через asyn
 ## Порядок реализации
 
 1. Generics, compile-time рефлексия, атрибуты как значения (компилятор).
-2. `std.encoding.json` (+ Value, Reader/Writer), `std.net` async-сокеты,
-   `std.net.http` 1.1, `zell.log` с Console/File/JSON.
+2. `encoding.json` (+ Value, Reader/Writer), `net` async-сокеты,
+   `net.http` 1.1, `zell.log` с Console/File/JSON.
 3. `zell.web`: маршруты, биндинг, middleware, DI, конфигурация, OpenAPI.
-4. `std.database.sql` + PostgreSQL/SQLite, `zell.data` базовый (✓ как `std.data`)
+4. `database.sql` + PostgreSQL/SQLite, `zell.data` базовый (✓ как `data`)
    (запросы, трекинг, миграции).
 5. `zell.diag`: CPU/heap/tasks профили в формате pprof, метрики,
    OpenTelemetry; `zell tool pprof/trace/counters`.

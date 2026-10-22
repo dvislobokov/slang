@@ -24,8 +24,7 @@ what Go makes you write by hand:
 ```zell
 namespace hello
 
-import std
-import std.io
+import io
 
 struct User {
     Name string
@@ -108,7 +107,7 @@ The compiler finds the standard library sources in the repository's
 ```zell
 namespace hello
 
-import std.io
+import io
 
 func main() {
     println("Hello, Zell!")
@@ -134,7 +133,7 @@ zell build --release                 # an optimized, stripped binary
 | [Packages](docs/guide/packages.md) | projects, dependencies, workspaces |
 | [Testing](docs/guide/testing.md) | `zell test`, benchmarks, runnable examples |
 | [Debugging](docs/guide/debugging.md) | traces, logging, leak checks, the debugger, profiles |
-| [Web services](docs/guide/web.md) | `std.web` quickstart |
+| [Web services](docs/guide/web.md) | `web` quickstart |
 | [FAQ](docs/guide/faq.md) | differences from Go and C# |
 | API reference | `zell doc strings.Split`, or `zell doc std --html out/` for a searchable site |
 
@@ -176,7 +175,7 @@ stable, and there is no binary release.
 | Standard library | most of Go's standard library has a counterpart; see [docs/STDLIB.md](docs/STDLIB.md) for each package |
 | Networking: TCP/UDP, HTTP/1.1 + HTTP/2 client and server, WebSocket, TLS 1.2/1.3 | works |
 | Data: SQL (PostgreSQL, SQLite), Redis, Kafka, S3 clients | works |
-| `std.web` framework (routing, binding, validation, DI, auth, OpenAPI) | works |
+| `web` framework (routing, binding, validation, DI, auth, OpenAPI) | works |
 | Tools: `fmt`, `test` (with examples), `doc`, LSP + VS Code, debugger (in-process agent, DAP, lldb/gdb) | works |
 | Packages: manifests, workspaces, git modules with MVS, lock file, module proxy | works |
 | Platforms: Linux x86-64/arm64 | works; macOS and Windows (mingw-w64 cross builds) in progress |
@@ -197,7 +196,7 @@ x86-64, wall time, best of 5; Go 1.24):
 
 (Zell time / Go time: below 1 is faster.) A TCP echo of 2 GB through
 1000 connections runs at about 1.9 GB/s against Go's 1.6 GB/s, and the
-`std.net.http` server handles about the same keep-alive load as Go's
+`net.http` server handles about the same keep-alive load as Go's
 `net/http`. Details and methodology: [benchmarks/README.md](benchmarks/README.md).
 
 ## Command line
@@ -214,7 +213,7 @@ zell install | update | tree | why <module> | vendor   # dependencies
 zell store verify|prune|path | env [NAME] | proxy serve --dir <cache>
 zell lsp                                # language server on stdio
 zell debug run [path] | debug attach [host:]port | debug [--lldb|--gdb] [path]
-zell tool pprof [args] <profile>        # inspect a std.diag CPU profile
+zell tool pprof [args] <profile>        # inspect a diag CPU profile
 zell target list | add <target>...      # prebuilt runtimes for cross-compilation
 ```
 
@@ -253,6 +252,6 @@ describes the architecture, the rules (spec first, ABI contracts, output
 format) and how to build and test.
 
 Programs link only the Zell runtime, libc, libm and pthreads, plus a
-system library when a module needs one (`std.database.sqlite` links
+system library when a module needs one (`database.sqlite` links
 `-lsqlite3`). TLS, crypto, compression and the PostgreSQL driver are
 self-contained.

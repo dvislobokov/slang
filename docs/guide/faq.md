@@ -38,8 +38,7 @@ with no options (`zell fmt`).
 ```zell
 namespace guide.faq.go
 
-import std
-import std.io
+import io
 
 struct User {
     Name  string
@@ -83,10 +82,10 @@ func main() {
 | `async Task<T>` / `await` | `async func F() T` returns `Task<T>`; same `await` |
 | `CancellationToken` parameters | implicit task context: `task.WithTimeout`, `task.NewCancel` |
 | `AsyncLocal<T>` | `task.Key<T>()`, `task.With`, `task.Get` |
-| LINQ | `std.slices` (`Map`, `Filter`, `Reduce`, `SortBy`, `GroupBy`) and lambdas |
+| LINQ | `slices` (`Map`, `Filter`, `Reduce`, `SortBy`, `GroupBy`) and lambdas |
 | attributes + reflection | attributes + compile-time reflection (`reflect.Fields<T>()`): JSON, SQL mapping and DI without run-time cost |
-| ASP.NET Core minimal APIs / controllers | `std.web` (see [web.md](web.md)) |
-| Serilog | `std.log` |
+| ASP.NET Core minimal APIs / controllers | `web` (see [web.md](web.md)) |
+| Serilog | `log` |
 | `IDisposable` / `using` | `func Drop()`: runs when the value goes away, no `using` needed |
 | inheritance | composition: embedded structs and interfaces with default methods |
 | `null` everywhere | `nil` only for pointers, interfaces, slices, maps and functions |
@@ -94,8 +93,7 @@ func main() {
 ```zell
 namespace guide.faq.csharp
 
-import std
-import std.io
+import io
 
 interface Notifier {
     func Send(to string, text string)
@@ -144,7 +142,7 @@ that test).
 
 ## Can I call C?
 
-`std.unsafe.CallFunc` and `std.plugin` exist for the standard library's
+`unsafe.CallFunc` and `plugin` exist for the standard library's
 debugger and low-level packages; they need `[capabilities] unsafe = true`
 in the manifest. A proper FFI is on the roadmap.
 

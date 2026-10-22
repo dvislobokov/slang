@@ -17,14 +17,12 @@ zell test std                 # the standard library's own tests and examples
 ## Tests
 
 A test is a function marked `@test` that takes a `*testing.T` (or no
-parameters at all). Assertions from `std.testing` report a failure and
+parameters at all). Assertions from `testing` report a failure and
 keep going; their `...Fatal` variants stop the test.
 
 ```zell
 // zell test
 namespace guide.testing.basics
-
-import std
 
 func Add(a int, b int) int {
     return a + b
@@ -77,8 +75,7 @@ Tables are slices of structs; `t.Run(name, fn)` runs a named subtest
 // zell test
 namespace guide.testing.table
 
-import std
-import std.io
+import io
 
 struct Case {
     Name string
@@ -121,8 +118,6 @@ A benchmark takes a `*testing.B` and runs the measured code `b.N` times;
 // zell test
 namespace guide.testing.bench
 
-import std
-
 @bench func BenchJoin(b *testing.B) {
     var parts = ["a", "b", "c", "d"]
     b.ResetTimer()
@@ -157,8 +152,7 @@ An example may also be `async` or return `void!` (an error fails it).
 // zell test
 namespace guide.testing.examples
 
-import std
-import std.io
+import io
 
 // Greet returns a greeting for name.
 func Greet(name string) string {

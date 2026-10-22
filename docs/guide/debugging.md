@@ -23,8 +23,7 @@ In code, `errors.Trace(err)` returns the same text and
 ```zell
 namespace guide.debugging.trace
 
-import std
-import std.io
+import io
 
 func step(n int) int! {
     if n == 0 {
@@ -58,7 +57,7 @@ exits with status 2. Deferred calls and destructors do not run. Set
 
 ## Logging
 
-`std.log` is structured logging in the style of Serilog: message
+`log` is structured logging in the style of Serilog: message
 templates are checked by the compiler, properties are kept as values
 (for JSON sinks), and a disabled level costs nothing because the
 arguments are not evaluated. `log.Info("...")` uses the default logger
@@ -66,8 +65,6 @@ arguments are not evaluated. `log.Info("...")` uses the default logger
 
 ```zell
 namespace guide.debugging.log
-
-import std
 
 struct Order {
     Id    int
@@ -117,7 +114,7 @@ to manual. This program leaks two nodes then:
 // check-only
 namespace guide.debugging.leak
 
-import std.io
+import io
 
 struct Node {
     Name string
@@ -182,14 +179,13 @@ zell build app.zl --emit=llvm-ir    # the LLVM IR
 
 ## Profiling
 
-`std.diag` writes CPU profiles in pprof format, exposes Prometheus
+`diag` writes CPU profiles in pprof format, exposes Prometheus
 metrics and records trace spans (exported to stdout or OTLP):
 
 ```zell
 namespace guide.debugging.profile
 
-import std
-import std.io
+import io
 
 func fib(n int) int {
     if n < 2 {

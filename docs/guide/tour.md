@@ -17,7 +17,7 @@ English introduction.
 ```zell
 namespace tour.hello
 
-import std.io
+import io
 
 func main() {
     println("Hello, Zell!")
@@ -26,10 +26,10 @@ func main() {
 // Hello, Zell!
 ```
 
-Every file starts with `namespace`. `import std.io` makes the members of
-`std.io` (here `println`) available by their short names; without the
-import you would write `std.io.println`. `import std` is the common middle
-ground: then you write `io.println`, `strings.Split`, `fmt.Format`.
+Every file starts with `namespace`. `import io` makes the members of
+`io` (here `println`) available by their short names; without the
+import you would write `io.println`. The standard library namespaces are
+top-level, so `strings.Split` or `fmt.Format` work with no import at all.
 Unused imports are compile errors, as in Go.
 
 ## Variables and types
@@ -37,8 +37,7 @@ Unused imports are compile errors, as in Go.
 ```zell
 namespace tour.vars
 
-import std
-import std.io
+import io
 
 const Pi = 3.14159
 
@@ -78,7 +77,7 @@ Control flow is Go's, without parentheses:
 ```zell
 namespace tour.control
 
-import std.io
+import io
 
 func main() {
     for i in 0..3 {
@@ -118,8 +117,7 @@ letter.
 ```zell
 namespace tour.structs
 
-import std
-import std.io
+import io
 
 struct Point {
     X float
@@ -169,7 +167,7 @@ dynamic type.
 ```zell
 namespace tour.interfaces
 
-import std.io
+import io
 
 interface Shape {
     func Area() float
@@ -227,7 +225,7 @@ them, and a `switch` that covers every variant needs no `default`.
 ```zell
 namespace tour.enums
 
-import std.io
+import io
 
 enum Color { Red, Green, Blue }
 
@@ -269,7 +267,7 @@ compiled per type (monomorphized), so they cost nothing at run time.
 ```zell
 namespace tour.generics
 
-import std.io
+import io
 
 func Max<T: Ordered>(a T, b T) T {
     if a > b {
@@ -329,8 +327,7 @@ trace of where they were created and returned. See [errors.md](errors.md).
 ```zell
 namespace tour.errors
 
-import std
-import std.io
+import io
 
 func parsePort(s string) int! {
     var n = strings.ToInt(s)?("port " + strconv.Quote(s))
@@ -362,8 +359,7 @@ never blocks a thread. `task.All` waits for several tasks at once.
 ```zell
 namespace tour.async
 
-import std
-import std.io
+import io
 
 async func fetch(name string, ms int) string {
     await task.Delay(ms)
@@ -394,8 +390,7 @@ cancelled waits fail with `task.ErrCancelled`. See [async.md](async.md).
 ```zell
 namespace tour.tasks
 
-import std
-import std.io
+import io
 
 async func produce(ch task.Channel<int>) {
     for i in 1..4 {
@@ -429,15 +424,14 @@ async func main() {
 
 ## Collections
 
-Slices and maps are built in; `std.slices` and `std.maps` have the usual
-algorithms, and `std.collections` adds ordered maps, sets, queues, heaps,
+Slices and maps are built in; `slices` and `maps` have the usual
+algorithms, and `collections` adds ordered maps, sets, queues, heaps,
 deques and LRU caches.
 
 ```zell
 namespace tour.collections
 
-import std
-import std.io
+import io
 
 struct User {
     Name string
@@ -486,8 +480,7 @@ file with fallible steps, in the style of a real tool:
 ```zell
 namespace tour.packages
 
-import std
-import std.io
+import io
 
 struct Config {
     Name string
@@ -532,6 +525,6 @@ func main() void! {
 - [packages.md](packages.md): projects, dependencies, workspaces.
 - [testing.md](testing.md): `zell test`, benchmarks, examples.
 - [debugging.md](debugging.md): traces, the debugger, leak checks, profiles.
-- [web.md](web.md): HTTP services with `std.web`.
+- [web.md](web.md): HTTP services with `web`.
 - [faq.md](faq.md): how Zell differs from Go and C#.
 - `zell doc strings.Split`, `zell doc std --html out/`: the API reference.

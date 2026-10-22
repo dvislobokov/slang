@@ -23,7 +23,7 @@ the middle of objects.
 ```zell
 namespace guide.memory.values
 
-import std.io
+import io
 
 struct Point {
     X int
@@ -62,7 +62,7 @@ Use it for resources: files, sockets, locks, temporary directories.
 ```zell
 namespace guide.memory.drop
 
-import std.io
+import io
 
 struct TempFile {
     name string
@@ -137,7 +137,7 @@ object is gone, and converts from `*T` implicitly.
 ```zell
 namespace guide.memory.weak
 
-import std.io
+import io
 
 struct Node {
     Name     string
@@ -206,8 +206,7 @@ frees them:
 ```zell
 namespace guide.memory.cycles
 
-import std
-import std.io
+import io
 
 struct Session {
     Id   int
@@ -262,15 +261,14 @@ compiler run every example this way.
 
 ## Arenas
 
-For work with a clear lifetime (one request, one parse) `std.arena`
+For work with a clear lifetime (one request, one parse) `arena`
 allocates many objects in one region and frees them all at once. Objects
 in an arena have no reference count, so allocation is a pointer bump.
 
 ```zell
 namespace guide.memory.arena
 
-import std
-import std.io
+import io
 
 struct Token {
     Text string
@@ -318,7 +316,7 @@ alive until the end of its block).
 ```zell
 namespace guide.memory.interior
 
-import std.io
+import io
 
 struct Account {
     Balance int
@@ -374,7 +372,7 @@ func main() {
   reference goes, or at the end of the block.
 - No use-after-free and no dangling pointers in safe code; `nil`
   dereference and out-of-range indexing panic with a message instead of
-  corrupting memory; there is no pointer arithmetic (`std.unsafe` is the
+  corrupting memory; there is no pointer arithmetic (`unsafe` is the
   explicit, capability-gated exception).
 - Counts are thread-safe, so values can be shared between tasks; a count
   used by one worker thread only is updated without atomic instructions
@@ -382,5 +380,5 @@ func main() {
   or a channel.
 - Freed memory goes back to the operating system: a reserve up to the
   recent peak is kept for reuse, the rest is returned within about half a
-  second (`std.runtime.FreeOSMemory()` returns it at once;
-  `std.diag.Runtime()` shows `HeapInUse`, `HeapRetained`, `HeapReleased`).
+  second (`runtime.FreeOSMemory()` returns it at once;
+  `diag.Runtime()` shows `HeapInUse`, `HeapRetained`, `HeapReleased`).

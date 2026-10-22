@@ -1,13 +1,13 @@
-# Web services with `std.web`
+# Web services with `web`
 
-`std.web` is the batteries-included HTTP framework of the standard
+`web` is the batteries-included HTTP framework of the standard
 library, in the spirit of ASP.NET Core minimal APIs: routes map to plain
 functions or controller methods, parameters are bound from the path,
 query and JSON body by their types (checked at compile time), results
 are written with content negotiation, errors become RFC 9457 Problem
 Details, and dependency injection, validation, authentication,
 middleware and an OpenAPI document come with it. Underneath is
-`std.net.http` (HTTP/1.1 and HTTP/2, TLS), which you can also use
+`net.http` (HTTP/1.1 and HTTP/2, TLS), which you can also use
 directly. The design is [docs/FRAMEWORK.md](../FRAMEWORK.md).
 
 ## Hello, web
@@ -16,7 +16,7 @@ directly. The design is [docs/FRAMEWORK.md](../FRAMEWORK.md).
 // check-only
 namespace guide.web.hello
 
-import std.web
+import web
 
 async func main() void! {
     var app = NewApp()
@@ -36,8 +36,8 @@ the examples use it, so they run as they are:
 ```zell
 namespace guide.web.minimal
 
-import std.io
-import std.web
+import io
+import web
 
 struct Todo {
     Id    int
@@ -76,9 +76,8 @@ a `Result<T>` return value chooses the status.
 ```zell
 namespace guide.web.controllers
 
-import std
-import std.io
-import std.web
+import io
+import web
 
 struct Book {
     Id    int
@@ -130,8 +129,8 @@ that breaks them gets one 400 response listing every failed field.
 ```zell
 namespace guide.web.validation
 
-import std.io
-import std.web
+import io
+import web
 
 struct SignUp {
     @validate(required: true, email: true) Email string
@@ -171,9 +170,8 @@ handlers call `Resolve<T>()`.
 ```zell
 namespace guide.web.di
 
-import std
-import std.io
-import std.web
+import io
+import web
 
 interface Clock {
     func Now() string
@@ -226,14 +224,13 @@ OpenAPI 3.1 document generated from the routes and types, and
 `MapSwagger` a UI for it; `AddHealthCheck` and `MapHealthChecks` serve
 readiness checks. Configuration comes from `appsettings.json`,
 `appsettings.<Environment>.json` and environment variables
-(`std.web.config`).
+(`web.config`).
 
 ```zell
 // check-only
 namespace guide.web.production
 
-import std
-import std.web
+import web
 
 async func main() void! {
     var app = NewApp()
@@ -248,7 +245,7 @@ async func main() void! {
 }
 ```
 
-## Plain `std.net.http`
+## Plain `net.http`
 
 Without the framework, a `http.Router` maps patterns to handler
 functions and `http.Server` serves it; `http.Get`, `http.Post` and
@@ -257,9 +254,8 @@ functions and `http.Server` serves it; `http.Get`, `http.Post` and
 ```zell
 namespace guide.web.nethttp
 
-import std
-import std.io
-import std.net
+import io
+import net
 
 async func main() void! {
     var r = http.NewRouter()

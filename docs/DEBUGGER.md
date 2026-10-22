@@ -154,10 +154,10 @@ Windows, wasm в браузере, контейнеры без `CAP_SYS_PTRACE`;
 
 ### Агент написан на Zell
 
-`std.debug` — обычный модуль стандартной библиотеки на Zell: DAP-сервер
-на `std.net` + `std.encoding.json`, парсер DWARF на `std.encoding.binary`
-(секции собственного бинарника через `std.debug.elf/macho/pe`), таблица
-точек, шаги, стек по frame pointers, список задач через `std.task`,
+`debug` — обычный модуль стандартной библиотеки на Zell: DAP-сервер
+на `net` + `encoding.json`, парсер DWARF на `encoding.binary`
+(секции собственного бинарника через `debug.elf/macho/pe`), таблица
+точек, шаги, стек по frame pointers, список задач через `task`,
 форматирование значений по типам DWARF. Это первая большая программа на
 языке и его нагрузочный тест.
 
@@ -165,24 +165,24 @@ Windows, wasm в браузере, контейнеры без `CAP_SYS_PTRACE`;
 
 - хук `zell_dbg_stmt(id)`, вызывающий зарегистрированную Zell-функцию;
 - `thread.Spawn(fn)` — выделенный поток агента вне пула задач, чтобы он
-  отвечал, когда все задачи остановлены (входит в `std.sync`);
-- `std.unsafe`: чтение/запись памяти по адресу, адрес объекта, вызов по
+  отвечал, когда все задачи остановлены (входит в `sync`);
+- `unsafe`: чтение/запись памяти по адресу, адрес объекта, вызов по
   адресу — capability, доступная только пакетам с разрешением в манифесте;
-- `std.plugin`: `dlopen`/`dlsym` для загрузки скомпилированных выражений.
+- `plugin`: `dlopen`/`dlsym` для загрузки скомпилированных выражений.
 
 Выражения и условия компилирует не агент, а процесс `zell serve`
 (компилятор как сервер): агент отправляет выражение и описание типов
-текущего кадра, получает объектный файл, загружает его через `std.plugin`
+текущего кадра, получает объектный файл, загружает его через `plugin`
 и вызывает. Бинарник не тянет компилятор, а `zell` и так есть там, где
 отлаживают.
 
 ### Архитектура
 
 ```
-editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процессе (std.debug, на Zell)
+editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процессе (debug, на Zell)
                                        ├─ hooks (C): zell_dbg_stmt → Zell
                                        ├─ dwarf (Zell): типы, локации
-                                       ├─ expr: `zell serve` → объект → std.plugin
+                                       ├─ expr: `zell serve` → объект → plugin
                                        ├─ tasks: планировщик напрямую
                                        ├─ unsafe/thread (C): память, поток агента
                                        └─ cli: `zell debug` — тонкий клиент
@@ -193,7 +193,7 @@ editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процес
 - **Хуки** (`compiler/src/codegen/debug_agent.rs`, флаг `--debug-agent`;
   включён по умолчанию в debug-сборке, в `--release` только явно,
   `--no-debug-agent` выключает): в каждой функции пользовательского кода
-  (не `std.*`) запись кадра `zell_dbg_frame` (32 байта в кадре функции или
+  (не стандартной библиотеки) запись кадра `zell_dbg_frame` (32 байта в кадре функции или
   корутины) и одна загрузка `zell_dbg_on` на входе; за `if (on)` —
   `zell_dbg_enter` после записи параметров, `zell_dbg_stmt(id)` перед
   каждым оператором и на закрывающей скобке, `zell_dbg_leave` на выходе,
@@ -201,7 +201,7 @@ editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процес
   `{file, line, col, func, kind}`, функций `{name, file, line, locals}` и
   локальных `{name, TypeInfo*, slot, cell?, видимость по строкам}`, байты
   точек останова — runtime/ABI.md §22. Типы локальных — полные таблицы
-  `std.reflect.TypeInfo` (рефлексия включается вместе с агентом).
+  `reflect.TypeInfo` (рефлексия включается вместе с агентом).
 - **Release без потерь**: в оптимизированной сборке с агентом каждая
   функция (кроме async) есть в двух копиях — с хуками (`sym.dbg`) и без
   (`sym`, на входе `if (zell_dbg_on) return sym.dbg(...)`); прямые вызовы
@@ -219,14 +219,14 @@ editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процес
   котором корутина приостановилась, не завершает шаг — он продолжается,
   когда она возобновится, в её задаче), заморозка всех задач при остановке,
   остановка одной задачи (`singleThread`), перехват паники и создания
-  ошибок, `stopOnEntry`, ожидание `configurationDone`; `std.unsafe`,
-  `std.thread` (поток вне планировщика), `std.plugin` (`dlopen`).
-- **Агент на Zell** (`std.debug`, `sema/stdlib_src/debug.zl`,
+  ошибок, `stopOnEntry`, ожидание `configurationDone`; `unsafe`,
+  `thread` (поток вне планировщика), `plugin` (`dlopen`).
+- **Агент на Zell** (`debug`, `sema/stdlib_src/debug.zl`,
   `debug_dap.zl`, `debug_vars.zl`, ~2000 строк): DAP-сервер на выделенном
-  потоке с блокирующим сокетом (не через `std.net`: асинхронный `std.net`
+  потоке с блокирующим сокетом (не через `net`: асинхронный `net`
   нуждается в worker'ах планировщика, а они стоят в остановленных
   задачах), `Content-Length`-фрейминг, разбор через
-  `std.encoding.json.ParseValue`. Запросы: `initialize`, `launch`/`attach`
+  `encoding.json.ParseValue`. Запросы: `initialize`, `launch`/`attach`
   (программа уже запущена), `setBreakpoints` (строка → операторы всех
   инстансов generic-функции; `condition`, `hitCondition`, `logMessage` с
   `{expr}`), `setFunctionBreakpoints`, `setExceptionBreakpoints` (`panic`;
@@ -251,7 +251,7 @@ editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процес
   варианты enum (`c == Green`, `c == Color.Green`); они же — условия точек
   и `{...}` в логпоинтах, вычисляются в процессе без остановки. Арифметики
   и вызовов нет; компиляция произвольных выражений через `zell serve` +
-  `std.plugin` — следующий шаг (рантайм для неё готов, сервера нет).
+  `plugin` — следующий шаг (рантайм для неё готов, сервера нет).
 - **Запуск**: `ZELL_DEBUG=[host]:port[,wait]` (`:0` — свободный порт,
   объявляется в stderr строкой `zell-debug: listening on 127.0.0.1:PORT`;
   `,wait` держит `main` до `configurationDone`). `zell debug run file.zl
@@ -261,11 +261,10 @@ editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процес
   `task N`, `catch panic|error [T]`, `q`; `--headless [--wait]` — только
   агент, для редактора; `zell debug attach [host:]port` — клиент к уже
   запущенной программе.
-- **Capability**: `std.unsafe` и `std.plugin` импортирует только
+- **Capability**: `unsafe` и `plugin` импортирует только
   стандартная библиотека и пакеты с `[capabilities] unsafe = true` /
   `plugin = true` в манифесте; обычный файл без манифеста — нет. Обращение
-  по полному пути без импорта (`std.unsafe.ReadInt(...)`, `unsafe.X` через
-  `import std`) проверяется так же.
+  по полному пути без импорта (`unsafe.ReadInt(...)`) проверяется так же.
 - **VS Code**: `"adapter": "agent"` (по умолчанию) — `launch` запускает
   программу с `ZELL_DEBUG=127.0.0.1:0,wait`, читает порт и подключается
   через `DebugAdapterServer` (вывод программы — в debug console);
@@ -298,7 +297,7 @@ editors (VS Code, IDEA) ──DAP/сокет──▶ агент в процес
 1. DWARF в кодогенерации (все типы, локальные переменные, корутины),
    форматтеры lldb/gdb, `lldb-dap` в VS Code, тесты: скрипты lldb,
    проверяющие значения на точках останова в examples/.
-2. In-process агент на Zell (`std.debug`): хуки операторов в кодогенерации, `std.unsafe`/`thread`/`plugin` в рантайме, таблица точек,
+2. In-process агент на Zell (`debug`): хуки операторов в кодогенерации, `unsafe`/`thread`/`plugin` в рантайме, таблица точек,
    шаги, стек и переменные по DWARF, DAP по сокету, тонкий клиент
    `zell debug`; замена `lldb-dap` в VS Code.
 3. Компилируемые условия и выражения, логпоинты, список задач и шаги по

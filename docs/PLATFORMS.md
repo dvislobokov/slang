@@ -65,13 +65,13 @@ arm64. Это требование к компилятору, рантайму, 
 Правила:
 
 - Пути и строки внутри языка всегда UTF-8; на границе Win32 конвертация в
-  UTF-16. `std.fs` принимает и `/`, и `\` на Windows, отдаёт платформенный
+  UTF-16. `fs` принимает и `/`, и `\` на Windows, отдаёт платформенный
   разделитель.
 - Переводы строк: `println` пишет `\n` везде; текстовые функции чтения
   понимают `\r\n`.
 - Сигналы: `os.OnInterrupt(handler)` абстрагирует SIGINT/SIGTERM и
   `SetConsoleCtrlHandler`.
-- `std.process`, `std.os`, `std.fs`, `std.net`, `std.time` реализуются
+- `process`, `os`, `fs`, `net`, `time` реализуются
   поверх этого слоя, без `#ifdef` вне `platform/`.
 
 ## Компилятор и инструменты
@@ -113,7 +113,7 @@ x86-64 с clang-18, mingw-w64, Wine 9.0, qemu-user 8, musl-tools; macOS и
 
 Не прошедшие 2 из 49 на arm64/musl — `sql` и `web_app`: им нужен
 `libsqlite3` цели (в кросс-sysroot arm64 его нет, статического для musl
-тоже; рантайм musl собран без `<sqlite3.h>`, `std.database.sqlite`
+тоже; рантайм musl собран без `<sqlite3.h>`, `database.sqlite`
 отвечает «not available»). Всё перечисленное — `compiler/tests/cross.rs`
 (тесты пропускаются с объяснением, если инструмента нет) и кросс-джоб CI.
 
@@ -176,7 +176,7 @@ mingw статически; C hello — 14 КБ).
   `BCryptGenRandom`; `LoadLibraryW`; argv в UTF-8 из `CommandLineToArgvW`;
   консоль — `WriteConsoleW` с переносом неполных UTF-8-последовательностей,
   `CP_UTF8` и ANSI-цвета; файлы через `CreateFileW` + `_open_osfhandle`,
-  UTF-16 и оба разделителя, `pread` без сдвига позиции; `std.fs` разбирает
+  UTF-16 и оба разделителя, `pread` без сдвига позиции; `fs` разбирает
   `/` и `\`, буквы дисков и отдаёт `\`; сигналы — `SetConsoleCtrlHandler`;
   пользователи — только текущий (`GetUserNameW`, `USERPROFILE`), групп нет.
   Новое:
@@ -250,7 +250,7 @@ mingw статически; C hello — 14 КБ).
     бандлом). `$SSL_CERT_FILE` — в приоритете. Оговорка: Windows
     докачивает редкие корни по требованию (Automatic Root Update), корня,
     который ни разу не использовался на машине, в хранилище может не быть.
-  - **SQLite**: `std.database.sqlite` на Windows связывается во время
+  - **SQLite**: `database.sqlite` на Windows связывается во время
     выполнения (`platform/sqlite_dyn.h`, `sqlite_win32.c`): сначала
     `sqlite3.dll` приложения (рядом с exe или в `PATH`), затем системный
     `winsqlite3.dll` (Windows 10+, System32); без них `rtAvailable()` —
@@ -377,7 +377,7 @@ macos-arm64|macos-amd64 --emit=obj` даёт Mach-O для всех 49 прим�
 4. Сэмплер `SIGPROF` (`ITIMER_PROF`, регистры из `__darwin_mcontext64`)
    и символы `LC_SYMTAB` — `examples/cpuprofile.zl` и backtrace с именами.
 5. Часовые пояса из `/usr/share/zoneinfo`/`/etc/localtime`, корни из
-   `/etc/ssl/cert.pem`, `std.process` (`posix_spawn`), сетевые примеры.
+   `/etc/ssl/cert.pem`, `process` (`posix_spawn`), сетевые примеры.
 6. `scripts/package-toolchain.sh` на Mac (архив `zell-<ver>-macos-<arch>`).
 
 ### Установка и цели (дистрибуция тулчейна)

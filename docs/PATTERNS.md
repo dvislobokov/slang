@@ -200,8 +200,7 @@ struct UserService {
 ```zell
 namespace app.shapes
 
-import std
-import std.io
+import io
 
 sealed interface Shape {
     func Area() float

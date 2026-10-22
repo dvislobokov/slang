@@ -43,8 +43,6 @@ namespace.
 // check-only
 namespace mylib.money
 
-import std
-
 // Money is an amount in cents.
 struct Money {
     Cents int
@@ -69,11 +67,14 @@ Imports shorten names; the full path always works:
 
 | Import | You write |
 |---|---|
-| none | `std.strings.Split(s, ",")` |
-| `import std` | `strings.Split(s, ",")` |
-| `import std.strings` | `Split(s, ",")` |
-| `import std.strings as str` | `str.Split(s, ",")` |
-| `import mylib.money.Money` | `Money{Cents: 5}` |
+| none | `strings.Split(s, ",")`, `mylib.money.Money{Cents: 5}` |
+| `import strings` | `Split(s, ",")` |
+| `import strings as str` | `str.Split(s, ",")` |
+| `import mylib.money` | `Money{Cents: 5}` |
+| `import mylib.money.Money` | `Money{Cents: 5}` (only `Money`) |
+
+The standard library namespaces (`io`, `strings`, `net.http`, ...) are
+top-level and reserved: a package cannot use one as its namespace root.
 
 ## Dependencies
 
@@ -130,8 +131,8 @@ members = ["services/*", "libs/*"]
 
 `[features]` turn optional code on and off with `@cfg(feature: "tls")`
 on declarations. `[capabilities]` grants the low-level std modules a
-package may import: `unsafe = true` for `std.unsafe`, `plugin = true` for
-`std.plugin`; without it, importing them is a compile error.
+package may import: `unsafe = true` for `unsafe`, `plugin = true` for
+`plugin`; without it, importing them is a compile error.
 
 ```toml
 [features]
@@ -147,6 +148,6 @@ unsafe = false
 
 The standard library ships as source next to the compiler
 (`<prefix>/std/`, or `$ZELL_STD`), so editors can navigate into it and
-`zell doc std.net.http` works offline. Functions implemented in the C
+`zell doc net.http` works offline. Functions implemented in the C
 runtime have declaration files (`std/strings/strings_extern.zl`) with
 their documentation.

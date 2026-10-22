@@ -3,7 +3,7 @@
 // A debug configuration of `type: "zell"` is resolved here and served by
 // one of two adapters (`"adapter"`):
 //
-// * `"agent"` (default, stage 2): the in-process debug agent (`std.debug`,
+// * `"agent"` (default, stage 2): the in-process debug agent (`debug`,
 //   linked into every debug build). `launch` starts the program with
 //   `ZELL_DEBUG=127.0.0.1:0,wait`, reads the announced port from its
 //   stderr (`zell-debug: listening on HOST:PORT`) and connects VS Code to

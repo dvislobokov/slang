@@ -86,7 +86,7 @@ The extension contributes the debug type **`zell`** with two adapters,
 chosen by `"adapter"`:
 
 - **`"agent"`** (default): the in-process debug agent that every debug
-  build links (`std.debug`, docs/DEBUGGER.md stage 2). `launch` starts the
+  build links (`debug`, docs/DEBUGGER.md stage 2). `launch` starts the
   program with `ZELL_DEBUG=127.0.0.1:0,wait`, reads the port it announces
   on stderr (`zell-debug: listening on 127.0.0.1:PORT`) and connects VS
   Code to it (`DebugAdapterServer`); the program's output goes to the debug

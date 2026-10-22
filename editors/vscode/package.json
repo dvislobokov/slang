@@ -178,7 +178,7 @@
                 ],
                 "default": "agent",
                 "enumDescriptions": [
-                  "The in-process debug agent (std.debug): the program is started with ZELL_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
+                  "The in-process debug agent (debug): the program is started with ZELL_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
                   "lldb-dap with the Zell formatters (stage 1; DWARF, needs LLDB 18+)."
                 ],
                 "description": "Debug adapter: the in-process agent (default) or lldb-dap."
@@ -262,7 +262,7 @@
                 ],
                 "default": "agent",
                 "enumDescriptions": [
-                  "The in-process debug agent (std.debug): the program is started with ZELL_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
+                  "The in-process debug agent (debug): the program is started with ZELL_DEBUG=127.0.0.1:0,wait and VS Code connects to it over DAP (docs/DEBUGGER.md stage 2).",
                   "lldb-dap with the Zell formatters (stage 1; DWARF, needs LLDB 18+)."
                 ],
                 "description": "Debug adapter: the in-process agent (default) or lldb-dap."
