@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/event.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -90,6 +91,16 @@ void zell__plat_poller_free(zell__plat_poller *p) {
     free(p);
 }
 
+/* kqueue refuses some descriptors that are open but cannot be polled
+ * (character devices such as /dev/null: EINVAL or ENODEV); report those
+ * as ZELL_PLAT_ENOTPOLLABLE like the other pollers. */
+static int not_pollable(int64_t fd, int err) {
+    struct stat st;
+    if (err == EBADF || fstat((int)fd, &st) != 0) return err;
+    if (S_ISSOCK(st.st_mode) || S_ISFIFO(st.st_mode) || isatty((int)fd)) return err;
+    return ZELL_PLAT_ENOTPOLLABLE;
+}
+
 int zell__plat_poller_arm(zell__plat_poller *p, int64_t fd, int32_t interest, uint64_t token, bool registered) {
     (void)registered;
     struct kevent ch[2], res[2];
@@ -112,7 +123,7 @@ int zell__plat_poller_arm(zell__plat_poller *p, int64_t fd, int32_t interest, ui
     while (r < 0 && errno == EINTR);
     if (r < 0) return errno;
     for (int i = 0; i < r; i++)
-        if ((res[i].flags & EV_ERROR) && res[i].data != 0) return (int)res[i].data;
+        if ((res[i].flags & EV_ERROR) && res[i].data != 0) return not_pollable(fd, (int)res[i].data);
     return 0;
 }
 
