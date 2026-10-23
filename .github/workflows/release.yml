@@ -33,6 +33,11 @@ on:
         description: "Build and upload the assets as workflow artifacts only (no GitHub Release)"
         type: boolean
         default: true
+      hosts:
+        description: "Hosts to build: all, or linux (linux-amd64 + linux-arm64 only; the other hosts can be added to the same release later by re-running with hosts=all)"
+        type: choice
+        options: [all, linux]
+        default: all
 
 permissions:
   contents: read
@@ -48,10 +53,21 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
+      unix_matrix: ${{ steps.m.outputs.unix_matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.REF }}
+      - id: m
+        name: Hosts to build
+        env:
+          HOSTS: ${{ github.event_name == 'push' && 'all' || inputs.hosts }}
+        run: |
+          linux='{"host":"linux-amd64","os":"ubuntu-24.04"},{"host":"linux-arm64","os":"ubuntu-24.04-arm","optional":true}'
+          macos='{"host":"macos-arm64","os":"macos-14"},{"host":"macos-amd64","os":"macos-15-intel"}'
+          if [ "$HOSTS" = linux ]; then m="[$linux]"; else m="[$linux,$macos]"; fi
+          echo "unix_matrix=$m" >> "$GITHUB_OUTPUT"
+          echo "building: $m"
       - id: v
         name: Tag matches Cargo.toml
         run: |
@@ -117,16 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - host: linux-amd64
-            os: ubuntu-24.04
-          - host: linux-arm64
-            os: ubuntu-24.04-arm
-            optional: true
-          - host: macos-arm64
-            os: macos-14
-          - host: macos-amd64
-            os: macos-15-intel
+        include: ${{ fromJSON(needs.meta.outputs.unix_matrix) }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.optional == true }}
     steps:
@@ -209,6 +216,7 @@ jobs:
   windows:
     name: windows-amd64
     needs: [meta, targets, targets-macos]
+    if: github.event_name == 'push' || inputs.hosts == 'all'
     runs-on: windows-latest
     defaults:
       run:
@@ -291,6 +299,8 @@ jobs:
 
   release:
     needs: [meta, unix, windows]
+    # The Windows job is skipped for hosts=linux; every job that ran must have passed.
+    if: always() && needs.meta.result == 'success' && needs.unix.result == 'success' && (needs.windows.result == 'success' || needs.windows.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -305,6 +315,7 @@ jobs:
       - name: Collect assets
         env:
           VERSION: ${{ needs.meta.outputs.version }}
+          HOSTS: ${{ github.event_name == 'push' && 'all' || inputs.hosts }}
         run: |
           mkdir -p release
           # A host's own runtime archive wins over the same triple cross-built
@@ -321,7 +332,9 @@ jobs:
           done
           printf '%s\n' "$VERSION" > release/VERSION
           (cd release && sha256sum -c ./*.sha256 && sha256sum ./*.tar.* | grep -v '\.sha256$' | sed 's| \./| |' > SHA256SUMS)
-          for h in linux-amd64 macos-arm64 macos-amd64 windows-amd64; do
+          hosts="linux-amd64 macos-arm64 macos-amd64 windows-amd64"
+          [ "$HOSTS" = linux ] && hosts="linux-amd64"
+          for h in $hosts; do
             ls "release/zell-$VERSION-$h".tar.* >/dev/null 2>&1 || { echo "::error::missing zell-$VERSION-$h.tar.xz"; exit 1; }
           done
           ls -l release
